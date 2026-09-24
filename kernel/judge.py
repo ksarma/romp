@@ -19450,9 +19450,18 @@ Deadness = collections.namedtuple("Deadness", "closed rule why")
 #   why     one token per arm, matched by value in tests/test_dead_session_staleness.py and
 #           tests/test_judge_propagate_loads.py: parsed, parse-failed (rules 1 and 2); ext (3);
 #           named-by-reachable-host (4); no-reachable-host-names-it (5); and the cannot-determine arms
-#           no-mirror, mirror-unparsable, named-by-unreachable-host, no-host-vouches-absence, carry-lost (the
-#           bus's lost-carry mark stands where rule 5 would fire: "carry-lost: <the mark's cause> at <its UTC
-#           second>"; round 3 of fork PR #897, the reviewer's ruling of 14:57Z, the twenty-second commit). The rule is
+#           no-mirror, mirror-unparsable, named-by-unreachable-host, no-host-vouches-absence,
+#           listing-unanswered (a host vouches for absence and none names the sid, but a REACHABLE row's roster
+#           is unanswered, the last answered rows its host's exchange served while its kernel listing did not
+#           answer, so a session started on that host since is in no row: "listing-unanswered: <each such row
+#           with why it cannot vouch>"; round 4 of fork PR #897, the reviewer's ruling on its round-3
+#           refuters' finding, the twenty-ninth commit), carry-lost (the bus's lost-carry mark stands where
+#           rule 5 would fire: "carry-lost: <the mark's cause> at <its UTC second>"; round 3 of fork PR #897,
+#           the reviewer's ruling of 14:57Z, the twenty-second commit). THE ORDER of the last two:
+#           listing-unanswered answers first where both hold, since it names the source whose next answering
+#           exchange releases it, and carry-lost, a stamp on the whole document, answers once no reachable row
+#           is unanswered (PresumedClosed's ladder pins the rung where both hold, red under the other order).
+#           The rule is
 #           two-sided (round 2 of fork PR #897, the reviewer's ruling): a heard source that is not held
 #           down vouches for the PRESENCE of the sids it names (`reachable`), and a source vouches for the
 #           ABSENCE of a sid it does not name (`vouchesAbsence`) only when its link is known up (or, under
@@ -19461,15 +19470,18 @@ Deadness = collections.namedtuple("Deadness", "closed rule why")
 #           fact) AND its roster is an answered listing (`answered`; round 3 of
 #           fork PR #897: a host serving its last answered rows through a kernel blink says nothing about a
 #           session started there since). Unreachable is one arm whatever made the source so (not heard
-#           since the bus started, expired, its link held down by the kernel), and the two arms that turn
+#           since the bus started, expired, its link held down by the kernel), and the three arms that turn
 #           on a source's state NAME the sources after the token, each with why it cannot vouch
 #           (_source_causes: "named-by-unreachable-host: <key> (link down)"; "no-host-vouches-absence:
 #           <key> (not heard), <key> (expired), <key> (no link state), <key> (listing unanswered)"; a mirror
-#           with no row at all, "no-host-vouches-absence: no source"), so the reason says which host cannot
-#           vouch and why.
+#           with no row at all, "no-host-vouches-absence: no source"; "listing-unanswered: <key> (listing
+#           unanswered)", or "(no link state, listing unanswered)" for such a row the kernel never reported
+#           up), so the reason says which host cannot vouch and why.
 #           Rule 5's token stays "no-reachable-host-names-it", true whenever it fires (a vouching host is
-#           reachable, and no reachable host names the sid); the arm before it carries the vouching
-#           precondition, so a reachable host with no link state reaches that arm, never rule 5
+#           reachable, and no reachable host names the sid); the arms before it carry its other conditions (a
+#           row vouches for absence, no reachable row is unanswered, no lost-carry mark stands), so a reachable
+#           host with no link state reaches the no-vouching arm, and a reachable host serving a cache beside a
+#           vouching host the listing-unanswered arm, never rule 5
 
 
 def _source_causes(rows):
@@ -19518,8 +19530,9 @@ def _presumed_closed_verdict(sid, now):
          whatever its link state: a host the kernel never notified, or a far bus filed under the hostname
          it declares before the bus's own dial has folded it under the alias the kernel dials, has no link
          state and still answers rule 4 for its own sids;
-      5. at least one host VOUCHES FOR ABSENCE, none names it, and no unreachable host's last roster names
-         it either → a dead determination, True. A host vouches for absence (`vouchesAbsence`, the writer's
+      5. at least one host VOUCHES FOR ABSENCE, none names it, no unreachable host's last roster names it
+         either, no REACHABLE host's roster is unanswered, and no lost-carry mark stands → a dead
+         determination, True. A host vouches for absence (`vouchesAbsence`, the writer's
          second flag, read here and never recomputed) only when heard, not expired, its roster an ANSWERED
          listing (`answered`, the writer's seventh flag: the `presenceAnswered` its exchange carried, False
          while its kernel listing did not answer and the exchange served the last answered rows; round 3 of
@@ -19531,20 +19544,33 @@ def _presumed_closed_verdict(sid, now):
          4's and a sid it does not name is cannot-determine by it; round 3 of fork PR #897, the reviewer's
          ruling); a far host gossiped through a hub vouches by the
          hub's link and by its own bit, which the hub stamps on the gossip.
-    Cannot determine, False, in five arms: no mirror file (the bus has not written under this root); a
+    Cannot determine, False, in six arms: no mirror file (the bus has not written under this root); a
     mirror not in the bus's shape (a document whose `v` is not 2, a row without the seven booleans, bytes that
     are not UTF-8, a lost-carry mark of another shape: _remote_sids_mirror; said once in this process's log;
     never read as an empty roster); the sid named only by an UNREACHABLE host, whose last roster stands until
     the host is heard again; no host vouches for absence (a bus that has heard nobody since it started, a
     mirror carried from before, every heard host expired or held down, every heard host with NO LINK STATE, or
-    every heard host whose last exchange served a cached roster); and a host vouches for absence, none names
-    the sid, but the bus's LOST-CARRY MARK stands ("carry-lost", its cause and its second: the bus could not
+    every heard host whose last exchange served a cached roster); a host vouches for absence and none names the
+    sid, but a REACHABLE host's roster is UNANSWERED ("listing-unanswered", naming each such host with why it
+    cannot vouch; round 4 of fork PR #897, the reviewer's ruling on its round-3 refuters' finding, the
+    twenty-ninth commit): heard in the bus's current process, not expired and not held down, its last exchange
+    serving the rows of its kernel's last answered listing, whether a peer's own row or a hub's word about a far
+    host carrying that host's unanswered bit, whatever its link state; a session started on that host during
+    the blink is in no roster, and its own mail reaches this judge on the exchange that omits it, so another
+    host's vouch says nothing about it (until that commit rule 5 presumed it closed whenever any other row
+    vouched, the refuters' four roads through the real builders, handler, writer and reader); the release is
+    that source's next answering exchange, which the bus already records (for a hub's word, the far host's
+    answering exchange with the hub and then the hub's next exchange here), with no new event and no timer; it
+    answers before the carry-lost arm where both hold, naming the source that releases it; and a host vouches
+    for absence, none names the sid and no reachable host's roster is unanswered, but the bus's LOST-CARRY
+    MARK stands ("carry-lost", its cause and its second: the bus could not
     read its previous file whole, so a session a lost row named is in no row; round 3 of fork PR #897, the
     reviewer's ruling of 14:57Z, the twenty-second commit), which the bus clears once it has heard every host
     its kernel links to since. After the clear the mirror knows what a fresh bus knows, and rule 5 there is the
     design's first-start answer (the reviewer's ruling of 15:45Z, the twenty-fourth commit): a session on a host
     that no linked host hears now is outside every source after the clear, as on a first start, and answers rule
-    5 while a host vouches for absence (postal_service.py _remote_sids_lost_cleared states it; ReaderFollowsTheWriter
+    5 while a host vouches for absence and no reachable host's roster is unanswered (postal_service.py
+    _remote_sids_lost_cleared states it; ReaderFollowsTheWriter
     witnesses it with a hub the only link, restarted and no longer hearing its far host). The rule is
     two-sided (round 2 of fork PR #897, the reviewer's ruling): a heard host vouches for presence; a host
     vouches for absence only when its link is known up,
@@ -19552,9 +19578,16 @@ def _presumed_closed_verdict(sid, now):
     does, and rule 4 for the sids it names; and so does a heard host whose roster is a cache (round 3): the
     sessions it names were live at its last answered listing, rule 4, and a session started there since is
     in no roster while the listing does not answer, so its silence is no word, and the event that releases
-    it is its next exchange with an answered listing. Unreachable is one arm
+    it is its next exchange with an answered listing. Since the twenty-ninth commit that silence also holds
+    every sid nothing names at cannot-determine while another host vouches (the listing-unanswered arm), by
+    reachability: a cached host's session reaches this judge through its own mail, on the exchange that
+    omits it, where a session started on a host held down reaches it only through a roster that names it (a
+    hub's word, rule 4), so a held-down or a carried row's roster, answered or not, is no gate on rule 5.
+    What the arm leaves open and what it costs are stated at postal_service.py _remote_sids_document, each
+    with its named witness: a far host whose cached roster is empty, behind a heard hub, whose session still
+    answers rule 5; and every state in which the arm holds rule 5 at cannot-determine. Unreachable is one arm
     whatever made the host so: rule 4 is a positive determination, live on another host, that only a host
-    the bus can vouch for makes, and the closed field is False either way; the reason of each of the two
+    the bus can vouch for makes, and the closed field is False either way; the reason of each of the three
     arms that turn on a source's state names the sources it turns on and why each cannot vouch
     (_source_causes: not heard, expired, link down, no link state, listing unanswered), so a reader of the
     verdict sees which host cannot vouch, and why, without the mirror in hand. The link gate's reason: a session started on a
@@ -19630,10 +19663,14 @@ def _presumed_closed_verdict(sid, now):
         return Deadness(False, None, "named-by-unreachable-host: " + _source_causes(naming))
     if not any(row["vouchesAbsence"] for row in hosts.values()):         # the writer's second flag: nobody heard with its
         return Deadness(False, None, "no-host-vouches-absence: " + _source_causes(hosts))   # link known up (or a live beat)
+    unanswered = {k: row for k, row in hosts.items() if row["reachable"] and not row["answered"]}
+    if unanswered:                                                       # a reachable host serving a cache: a session started
+        return Deadness(False, None, "listing-unanswered: " + _source_causes(unanswered))   # there since is in no row
     if lost is not None:                                                 # the bus lost the rows it would have carried: a sid
         return Deadness(False, None, "carry-lost: %s at %s" % (           # nothing names may be one of theirs (the mark)
             lost["cause"], time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(lost["at"]))))
-    return Deadness(True, 5, "no-reachable-host-names-it")               # a vouching host is reachable and none names it
+    return Deadness(True, 5, "no-reachable-host-names-it")               # a vouching host is reachable and none names it;
+    #                                                                      no reachable roster a cache, no mark
 
 
 def _presumed_closed(sid, now):
