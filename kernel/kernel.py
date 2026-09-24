@@ -35489,7 +35489,8 @@ def _subagent_tree(d, faults=None):
     tree whose root could not be read, so a file it did not find there is not memoized as missing (the pass applying
     round 2 of #882's rulings; until then such
     a walk's miss was memoized on stamps a chmod or a transient EIO does not move, and served after the fault cleared,
-    tests/test_subagent_tree_memo.py FaultBelowTheRoot). The other readers pass none.
+    tests/test_subagent_tree_memo.py FaultBelowTheRoot). The other readers pass none; the sample reports its faults to
+    this function either way, and a sample that reported one is never held in the cycle scope (below).
 
     Memoized per root in _SUBAGENT_TREES on the identities (_stat_ident: ino, mtime_ns, size, ctime_ns) of every directory
     it listed, the root included. Exact because the directory list changes only by the creation, removal or renaming of a
@@ -35540,7 +35541,13 @@ def _subagent_tree(d, faults=None):
     not a directory) carries no stamp and is therefore NOT scoped: _subagent_file_walk stamps the root itself with a fresh
     _dir_stamp and reads its listing through _find_agent_file, and served an older empty sample it would memoize a nested
     agent's miss under a stamp newer than the listing it read, a stale miss that outlives the cycle because
-    _subagent_file's hit path re-stats and never re-walks; so such a root costs each caller its one lstat, as before. The
+    _subagent_file's hit path re-stats and never re-walks; so such a root costs each caller its one lstat, as before. A
+    sample that reported a fault below its root (`faults` above: a listing, an entry's type or a child's lstat that
+    failed for a reason other than absence) is NOT scoped either: a held pair reports no fault to a later reader, so the
+    agent-file walk served it would take the unread places for read ones and memoize a miss under them, which the pass
+    applying round 2 of #882's rulings closed for the walk's own read; the next reader in the cycle samples again, as it
+    did before the scope (tests/test_subagent_tree_stamps_per_cycle.py Guards
+    test_a_walk_with_a_failed_listing_is_not_held_while_a_clean_walk_is). The
     `stats` list is shared by every reader of the cycle and read-only by contract, as _sessions' rows are (the readers
     zip, iterate or copy it). Outside a scope every call samples afresh, as _live_map, _sessions, _path_of and
     _auth_avail_status behave (a WS viewer handler, GET /feed.json read fresh)."""
@@ -35551,12 +35558,15 @@ def _subagent_tree(d, faults=None):
         if got is not None:
             _SUBAGENT_TREE_STATS["scoped"] += 1
             return got
-    out = _subagent_tree_sample(d, faults)
-    if scope is not None and out[0]:
+    told = [] if faults is None else faults               # the sample's faults, read here whether or not the caller asked
+    n0 = len(told)
+    out = _subagent_tree_sample(d, told)
+    if scope is not None and out[0] and len(told) == n0:
         # only an answer with at least one directory is scoped (2026-09-18): it carries a stamp per directory it listed,
         # so a reader folding those stamps into its own memo re-derives next cycle; the two zero-directory answers carry
         # none, and a scoped empty answer would let _subagent_file_walk memoize a nested agent's miss under the root's
-        # fresh stamp for good (its hit path re-stats and never re-walks)
+        # fresh stamp for good (its hit path re-stats and never re-walks). And only a sample that reported no fault below
+        # its root: a held pair tells a later reader of no fault (the docstring)
         scope[d] = out
     return out
 

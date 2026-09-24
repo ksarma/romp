@@ -213,9 +213,37 @@ def _age(root):
         os.utime(r, ns=(t, t))
 
 
+SLOTS = ("subagent_trees", "subagent_stamps", "subagent_launches")   # the tree scope's slots on _live_scope: upstream's
+#   held samples ({root: (directories, stats)}) and the two this branch derives from them, the stamp index ({directory:
+#   (directory, mtime_ns)}) and the launch folds ({(transcript, agentId): (launch ids, noted pairs)}); every site that
+#   opens or clears subagent_trees opens or clears all three
+
+
 def _scope():
-    """This thread's open cycle scope, or None: outside a cycle, or on a kernel without the scope."""
-    return getattr(km, "_subagent_scope", lambda: None)()
+    """This thread's open tree scope as {"trees", "stamps", "launches"}, the three slots' own objects (read live, so an
+    entry a test reads is the one the kernel holds), or None when no tree scope is open: outside a cycle."""
+    trees = getattr(km._live_scope, "subagent_trees", None)
+    if trees is None:
+        return None
+    return {"trees": trees, "stamps": getattr(km._live_scope, "subagent_stamps", None),
+            "launches": getattr(km._live_scope, "subagent_launches", None)}
+
+
+def _scope_open():
+    """Open the tree scope's three slots on this thread, as _pusher_cycle's try opens them."""
+    for slot in SLOTS:
+        setattr(km._live_scope, slot, {})
+
+
+def _scope_close():
+    """Clear them, as _pusher_cycle's finally does."""
+    for slot in SLOTS:
+        setattr(km._live_scope, slot, None)
+
+
+def _scope_closed():
+    """Every slot of the tree scope is None on this thread."""
+    return all(getattr(km._live_scope, slot, None) is None for slot in SLOTS)
 
 
 class _Spy:
@@ -545,8 +573,8 @@ class _World(unittest.TestCase):
             setattr(jd, n, v)
         with km._clients_lock:
             km._clients[:] = self.saved_clients
-        for slot in ("snapshot", "sessions", "paths", "names", "files_stat", "files_dirty", "subtrees"):
-            setattr(km._live_scope, slot, None)          # every scope slot, the tree scope included
+        for slot in ("snapshot", "sessions", "paths", "names", "files_stat", "files_dirty") + SLOTS:
+            setattr(km._live_scope, slot, None)          # every scope slot, the tree scope's three included
         self._files_stat_reset()
         km._compact_clicked.clear()
         self._forget_memos()
@@ -603,9 +631,9 @@ class _World(unittest.TestCase):
     def _open(self):
         """This thread's cycle scope opened directly (the Guards and ScopedInvalidation cases; the clearing point itself is
         pinned through the real cycles), closed by cleanup."""
-        km._subagent_scope_open()
-        self.addCleanup(km._subagent_scope_close)
-        return km._subagent_scope()
+        _scope_open()
+        self.addCleanup(_scope_close)
+        return _scope()
 
     def _read_on_a_thread_with_no_scope(self, root):
         """`root` read once on a helper thread that holds no scope (_live_scope is thread-local): the read a thread holding
@@ -666,10 +694,10 @@ class _World(unittest.TestCase):
 
             def asking(d, *a, **k):
                 sc = _scope()
-                held = (sc["trees"].get(str(d)) if sc is not None else None)   # (the (dirs, stats) pair, the gen it was held under)
+                held = (sc["trees"].get(str(d)) if sc is not None else None)   # the (dirs, stats) pair the scope holds, or None
                 out = real(d, *a, **k)
                 if str(d) == root:
-                    rec["asked"][-1].append("served" if held is not None and out is held[0] else "validated")
+                    rec["asked"][-1].append("served" if held is not None and out is held else "validated")
                 return out
             with mock.patch.object(km, "_subagent_tree", asking):   # what _subagent_dirs, _subagent_meta_map and the file walk look up
                 for _ in range(CALLS):
@@ -693,7 +721,7 @@ class _World(unittest.TestCase):
         self.assertEqual(len(asks), reads, "one list of asks per driven read in one %s: %r" % (what, asks))
         self.assertTrue(all(asks), "every read in one %s reached the tree memo at least once (a bound met because a read never asked is "
                                    "no bound): %r" % (what, asks))
-        self.assertEqual(flat, ["validated"] + ["scoped"] * (len(flat) - 1),
+        self.assertEqual(flat, ["validated"] + ["served"] * (len(flat) - 1),
                          "the asks on the root over one %s, flattened: %r; keyed on the shape, the first ask validating and every later "
                          "one served the held pair, not on their number (a later ask that validated again is the per-reader cost the "
                          "scope removes)" % (what, asks))
@@ -719,7 +747,7 @@ class _World(unittest.TestCase):
                          % (D, what, t["dir_stat"], CALLS * A * D))
         self.assertEqual(t["dir_lstat"], D,
                          "os.lstat on the tree's directories over one %s: %d; the bound is D = %d, the one validation (the root's "
-                         "lstat plus one per known directory) held for the cycle by _subagent_scope_hold; before the scope it was "
+                         "lstat plus one per known directory) held for the cycle in _live_scope.subagent_trees; before the scope it was "
                          "CALLS x D = %d, one validation per _session_awaiting call" % (what, t["dir_lstat"], D, CALLS * D))
         self.assertEqual((d["hit"], d["miss"], d["evict"]), (1, 0, 0),
                          "memos.subagentTree over one %s: hit %d, miss %d, evict %d; expected one validated hit (was CALLS = %d), "
@@ -738,9 +766,9 @@ class _World(unittest.TestCase):
                          "{lstat: D = %d, stat: A = %d}, the one validation's lstats and the A agent-file stats and nothing else, "
                          "so a read of the tree through any other class, or one more of these, fails here by the class's name (a "
                          "guarded listing, an access or an open on a served path moves none of the counts above)" % (what, ", ".join(_Spy.CLASSES), c, D, A))
-        self.assertIsNotNone(rec.get("scope"), "the %s opened the subagents-tree scope on its thread (_subagent_scope_open)" % what)
-        self.assertTrue(getattr(km._live_scope, "subtrees", None) is None,
-                        "the scope ends with the %s (_subagent_scope_close in its finally): the slot still holds a scope" % what)
+        self.assertIsNotNone(rec.get("scope"), "the %s opened the tree scope on its thread (_live_scope.subagent_trees)" % what)
+        self.assertTrue(_scope_closed(),
+                        "the scope ends with the %s (its finally clears %s): a slot still holds a map" % (what, ", ".join(SLOTS)))
 
 
     def _miss_walk_cycle(self, G):
@@ -1717,6 +1745,13 @@ class Guards(_World):
         self.assertIsNone(held[1], "an own stat: no root the scope can name, so vouched by no root")
 
     def test_a_walk_with_a_failed_listing_is_not_held_while_a_clean_walk_is(self):
+        """The one rule in which this branch's store differs from upstream's (#1822 holds any answer with a directory): a
+        sample that reported a fault below its root is not stored in `subagent_trees`. workflows/'s listing fails once with
+        EMFILE, a fault and not an absence, so the first read walks a truncated tree and is not held; the next read in the
+        same scope walks again and finds the D directories, and that clean walk is held and served to the read after it at
+        no lstat, keyed on identity. Red under upstream's store rule: the truncated pair is held, and the second read is
+        served it with no fault reported to that reader, so the agent-file walk served it would take workflows/'s children
+        for read and memoize a miss under them."""
         km._SUBAGENT_TREES.pop(str(self.sub), None)     # the next read walks
         sc = self._open()
         real_scandir = os.scandir
@@ -1732,7 +1767,7 @@ class Guards(_World):
             dirs1, _s1 = km._subagent_tree(str(self.sub))
         self.assertEqual(self._delta(b)["miss"], 1)
         self.assertLess(len(dirs1), D, "the failed listing lost the directories under workflows/")
-        self.assertNotIn(str(self.sub), sc["trees"], "refused: a walk whose listing failed is not held for the cycle")
+        self.assertNotIn(str(self.sub), sc["trees"], "refused: a walk whose listing failed (a fault, EMFILE) is not held in subagent_trees")
         dirs2, _s2 = km._subagent_tree(str(self.sub))     # the next call this cycle walks again (an unvouched entry never hits)
         self.assertEqual(self._delta(b)["miss"], 2, "the next call re-walked instead of being served the unclean pair")
         self.assertEqual(len(dirs2), D)
@@ -1742,7 +1777,7 @@ class Guards(_World):
             out3 = km._subagent_tree(str(self.sub))
         self.assertEqual(sp.total()["dir_lstat"], 0, "os.lstat on the tree's directories on the read after the held clean walk: %d; keyed on 0"
                          % sp.total()["dir_lstat"])
-        self.assertIs(out3, held[0], "that read was answered the pair the clean walk left in the scope (served), keyed on identity")
+        self.assertIs(out3, held, "that read was answered the pair the clean walk left in the scope (served), keyed on identity")
         self.assertEqual(self._delta(b)["miss"], 2)
         self.assertEqual(out3[0], dirs2)
 
@@ -4202,7 +4237,7 @@ class SumOverRoots(_World):
             out = real(d, *a, **k)
             sid = by_root.get(str(d))
             if sid is not None:
-                rec["asked"][sid][-1].append("served" if held is not None and out is held[0] else "validated")
+                rec["asked"][sid][-1].append("served" if held is not None and out is held else "validated")
             return out
 
         def job(now, live_map, **kw):
@@ -4223,8 +4258,8 @@ class SumOverRoots(_World):
             es.enter_context(self._counting_fold(folded))
             run()
         d = self._delta(b)
-        self.assertIsNotNone(rec.get("scope"), "the %s opened the subagents-tree scope on its thread" % what)
-        self.assertTrue(getattr(km._live_scope, "subtrees", None) is None, "the scope ends with the %s" % what)
+        self.assertIsNotNone(rec.get("scope"), "the %s opened the tree scope on its thread (_live_scope.subagent_trees)" % what)
+        self.assertTrue(_scope_closed(), "the scope ends with the %s: every one of %s is None after it" % (what, ", ".join(SLOTS)))
         sum_d = sum(len(dirs) for _s, _p, _r, dirs, _a in sess)
         sum_a = sum(len(aids) for _s, _p, _r, _d, aids in sess)
         lstats = sum(sp.total()["dir_lstat"] for sp in spies.values())
@@ -4244,7 +4279,7 @@ class SumOverRoots(_World):
             flat = [a for bucket in asks for a in bucket]
             self.assertEqual(len(asks), CALLS)
             self.assertTrue(all(asks), "every read of the session reached the tree memo at least once: %r" % (asks,))
-            self.assertEqual(flat, ["validated"] + ["scoped"] * (len(flat) - 1),
+            self.assertEqual(flat, ["validated"] + ["served"] * (len(flat) - 1),
                              "the asks on the session's root over one %s, flattened: %r; keyed on the shape, the first validating and every "
                              "later one served the held pair, with the other sessions' reads in between (a scope holding one root at a time "
                              "validates again after each of them)" % (what, asks))
