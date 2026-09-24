@@ -4233,10 +4233,10 @@ class TheCountersOneSite(unittest.TestCase):
                 second = [(ln, k) for ln, k in deep if k in SHARED_SECOND_KEYS]
                 self.assertEqual(len(second), 1,
                                  "the statement list holding the second-key bump at line %d holds exactly one second-key bump over the full "
-                                 "subtrees of its statements, the form this clause refuses (among them a helper defined inside the door, a "
-                                 "return whose "
-                                 "expression raises into a bumping handler, or an exception from another statement caught by one can still bump "
-                                 "twice on a path through it; the door witness holds the at-most-one by execution): %r"
+                                 "subtrees of its statements, the form this clause refuses (constructs the clause does not read can still bump twice "
+                                 "on a path through the list, among them a helper defined inside the door, a return whose expression raises "
+                                 "into a bumping handler and an exception from another statement caught by one, each stated in this pin's "
+                                 "docstring; the door witness holds the at-most-one by execution): %r"
                                  % (second[0][0], second))
                 self.assertIsInstance(blk[-1], (ast.Return, ast.Raise),
                                       "and ends in a Return or a Raise, so the path leaves the door after its one second bump (the clean door "
