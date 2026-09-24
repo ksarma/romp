@@ -4070,7 +4070,8 @@ class TheCountersOneSite(unittest.TestCase):
         outside = ["line %d: %s" % (n.lineno, lines[n.lineno - 1].strip()) for n in refs if id(n) not in admitted]
         self.assertEqual(outside, [], "every reference to %s by Name in kernel/kernel.py is one of the admitted forms: the one module-level "
                                       "assignment of its dict display, a plain or augmented store to a constant key, `.get` with a constant "
-                                      "key, or a `dict(...)` copy; any other form (an alias, a key that is not a constant, a method that "
+                                      "key, or a `dict(...)` copy; any other form (among them an alias, a key that is not a constant, a method "
+                                      "that "
                                       "writes, a second definition) could write the counter where this census does not read: %s"
                                       % (name, "; ".join(outside)))
         # every other spelling of the counter's name, in each file the glob kernel/*.py matches, non-recursive, whose text holds it
@@ -4125,10 +4126,11 @@ class TheCountersOneSite(unittest.TestCase):
                     ln = getattr(n, "lineno", 0)
                     spellings.append("%s line %d, %s: %s" % (fname, ln, what, flines[ln - 1].strip() if ln else ""))
         self.assertEqual(spellings, [], "no other spelling of %s in the kernel/*.py files whose text holds it, %s: no node naming it in an "
-                                        "identifier field (an attribute on any receiver, a keyword, a parameter, an import alias, a global "
+                                        "identifier field (among them an attribute on any receiver, a keyword, a parameter, an import alias, a "
+                                        "global "
                                         "declaration, a def; outside the kernel a Name as well), no str or bytes constant whose text reads "
                                         "as it whole through _door_text, and none whose text so read contains it reaching a subscript key "
-                                        "or a call of a name in _DYNAMIC_LOOKUPS or _DICT_READS (an exec of a statement naming it, a key "
+                                        "or a call of a name in _DYNAMIC_LOOKUPS or _DICT_READS (among them an exec of a statement naming it, a key "
                                         "sliced from a longer constant; a string there that only contains the name, an environment "
                                         "variable's name say, is refused as well); a write through the kernel module object, globals(), vars(), "
                                         "setattr, getattr or exec leaves no Name for the census above to classify: %s"
@@ -4231,7 +4233,8 @@ class TheCountersOneSite(unittest.TestCase):
                 second = [(ln, k) for ln, k in deep if k in SHARED_SECOND_KEYS]
                 self.assertEqual(len(second), 1,
                                  "the statement list holding the second-key bump at line %d holds exactly one second-key bump over the full "
-                                 "subtrees of its statements, the form this clause refuses (a helper defined inside the door, a return whose "
+                                 "subtrees of its statements, the form this clause refuses (among them a helper defined inside the door, a "
+                                 "return whose "
                                  "expression raises into a bumping handler, or an exception from another statement caught by one can still bump "
                                  "twice on a path through it; the door witness holds the at-most-one by execution): %r"
                                  % (second[0][0], second))
