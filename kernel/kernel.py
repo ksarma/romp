@@ -34120,17 +34120,17 @@ def _awaiting_nest(agents, commands, cmd_owner, path):
     # _subagent_tree_memo_report's docstring states). Only on a thread that holds no slot is the map this call's
     # own, so each agent is resolved and folded once per call. The attribution then sees an agent's file as it stood at
     # the fold; a launch appended after it nests at the slot's next fold (the next cycle, pass or push), the one-cycle lag
-    # the tree slot accepts. A
-    # fold that did not read the file (the reader's fail path, or a raise), or whose resolution could not be made (the file
-    # found under no tree the walk could read while one could not be: _subagent_file's faults, since 2026-09-21; a file
-    # found past such a tree is resolved, and faults nothing), answers set() and is held in `faulted`, this call's own map
-    # and never the slot, so the call's other owner lookups are served it (each of the A agents' lookups consults every
-    # other agent's launches, so a fault re-folded per lookup cost A x (A - 1) folds per call where the call-local map
-    # `launch_sets` (#1822's, and the code's before this change) cost A: round 1 of #882's extra9-2) and the next call
-    # reads again. A file that resolved to nothing (ap None) is
-    # a state, held. A held fold answers without calling _subagent_file, so it replays the pairs its entry stores to the
-    # build it answers, once per call (round 2 of #882, group B), never the agent-file memo's entry, which can be gone or
-    # newer by then: that memo is cleared whole past 1024 entries by any thread's lookup
+    # the tree slot accepts. A fold that did not read the file (the reader's fail path, or a raise) answers set(). A fold
+    # whose resolution could not be made (the file found under no tree the walk could read while one could not be:
+    # _subagent_file's faults; a file found past such a tree is resolved, and faults nothing) answers what that
+    # resolution gave: set() when _subagent_file answered None, and the file's launch ids when it answered the standing
+    # resolution under a place the walk could not read (_subagent_walk_excluded). Either fold is held in `faulted`, this
+    # call's own map and never the slot, so the call's other owner lookups are served it (each of the A agents' lookups
+    # consults every other agent's launches, so a fault re-folded per lookup cost A x (A - 1) folds per call where the
+    # call-local map `launch_sets` (upstream's, and the code's before this change) cost A) and the next call reads again.
+    # A file that resolved to nothing (ap None) is a state, held. A held fold answers without calling _subagent_file, so
+    # it replays the pairs its entry stores to the build it answers, once per call, never the agent-file memo's entry,
+    # which can be gone or newer by then: that memo is cleared whole past 1024 entries by any thread's lookup
     # (tests/test_subagent_tree_stamps_per_cycle.py DependencyKey
     # test_a_held_fold_replays_its_own_walks_notes_after_the_agent_file_memo_was_cleared), and a later lookup's walk
     # replaces the entry with pairs the held ids never reflected: a lookup on a thread that holds no slot, whose walk reads
@@ -35421,8 +35421,7 @@ _TREE_UNREADABLE = "unreadable"     # the key recorded where a stat's key would 
 #                                     lstat failed (_SubagentTreeUnreadable, raised by _subagent_tree, whose docstring states the
 #                                     shape), and _subagent_walk_unreadable (the chat
 #                                     build's note) for the first place the agent-file walk excluded; which places the walk excludes
-#                                     is stated once, in _subagent_file_walk's docstring (round 3 of #882, regression-1: this comment
-#                                     named the root alone after the walk had begun recording places below it)
+#                                     is stated once, in _subagent_file_walk's docstring
 
 
 def _subagents_dir(path):
@@ -35483,11 +35482,11 @@ def _subagent_tree(d, faults=None):
     _subagent_meta_map its cached map, _subagent_file its cached resolution when that lies under what the walk could not
     read) or, with none standing, an answer no readable and no absent tree produces where the reader can carry one
     (_subagent_dirs_ident (d,), (_TREE_UNREADABLE,), which it also answers for an entry holding an unvouched (None)
-    identity, since a lone root's such entry equals the missing root's key;
+    identity: _subagent_tree_sample never serves such an entry as a hit, and a lone root's equals the missing root's key;
     _subagent_file None with a fault, to a caller that passes a faults list, which gives it the call's lifetime
     (_awaiting_nest)), and tells a running chat build the tree is
     unreadable (_chat_dep_note_taskout under _TREE_UNREADABLE, a key no stat equals, so the tab is rebuilt next cycle and
-    reads again) (2026-09-21; until then the branch took every OSError for absence, and an EIO popped the entry,
+    reads again) (the code before this change, #1822's sample, took every OSError for absence: an EIO popped the entry,
     answered (), () and noted the tree absent, which the tab showed as no subagents until the fault cleared;
     tests/test_subagent_tree_memo.py UnreadableRoot executes an EIO by mock and a real EACCES at both edges). Either
     None _subagent_file answers stands only for a file under no tree the walk could read, since a fault excludes its own
@@ -35502,7 +35501,7 @@ def _subagent_tree(d, faults=None):
     (the no-holder road) memoizes nothing and walks again on every call, and its chat build is told the tree is
     unreadable, so the tab is rebuilt every cycle until the fault clears; the four cases named
     test_control_no_holder_... in tests/test_subagent_tree_memo.py FaultExcludesItsOwnTree are its witness, and the same
-    class executes a file found past the fault (round 2 of #882, group A). What every read pays under the fault: the
+    class executes a file found past the fault. What every read pays under the fault: the
     unreadable-tree entry of _subagent_tree_memo_report's docstring.
 
     `faults`, a list when given, receives (directory, OSError) for each place below the root the walk could not read: a
@@ -35510,11 +35509,10 @@ def _subagent_tree(d, faults=None):
     reason other than absence (ENOENT and ENOTDIR say the place is gone since its parent was listed, and its parent's
     stamp moved with it). Only a walk can report one: a validated hit answers a tree whose every listing succeeded (a
     failed listing is never vouched, below). The agent-file walk passes it and excludes those places, as it excludes a
-    tree whose root could not be read, so a file it did not find there is not memoized as missing (the pass applying
-    round 2 of #882's rulings; until then such
-    a walk's miss was memoized on stamps a chmod or a transient EIO does not move, and served after the fault cleared,
-    tests/test_subagent_tree_memo.py FaultBelowTheRoot). The other readers pass none; the sample reports its faults to
-    this function either way, and a sample that reported one is never held in the cycle scope (below).
+    tree whose root could not be read, so a file it did not find there is not memoized as missing (the code before this
+    change memoized such a walk's miss on stamps a chmod or a transient EIO does not move, and served it after the fault
+    cleared; tests/test_subagent_tree_memo.py FaultBelowTheRoot). The other readers pass none; the sample reports its
+    faults to this function either way, and a sample that reported one is never held in the cycle scope (below).
 
     Memoized per root in _SUBAGENT_TREES on the identities (_stat_ident: ino, mtime_ns, size, ctime_ns) of every directory
     it listed, the root included. Exact because the directory list changes only by the creation, removal or renaming of a
@@ -35569,8 +35567,8 @@ def _subagent_tree(d, faults=None):
     _subagent_file's hit path re-stats and never re-walks; so such a root costs each caller its one lstat, as before. A
     sample that reported a fault below its root (`faults` above: a listing, an entry's type or a child's lstat that
     failed for a reason other than absence) is NOT scoped either: a held pair reports no fault to a later reader, so the
-    agent-file walk served it would take the unread places for read ones and memoize a miss under them, which the pass
-    applying round 2 of #882's rulings closed for the walk's own read; the next reader in the cycle samples again, as it
+    agent-file walk served it would take the unread places for read ones and memoize a miss under them (the walk
+    excludes the places its own read of the tree reports, above); the next reader in the cycle samples again, as it
     did before the scope (tests/test_subagent_tree_stamps_per_cycle.py Guards
     test_a_walk_with_a_failed_listing_is_not_held_while_a_clean_walk_is). The
     `stats` list is shared by every reader of the cycle and read-only by contract, as _sessions' rows are (the readers
@@ -35585,7 +35583,8 @@ def _subagent_tree(d, faults=None):
     directory from the index with no stat, so the agent-file memo's re-check (_subagent_file's hit, _dir_stamps over the
     directories its walk read) and the walk's own stamp of a held root cost nothing after the cycle's first read of the
     tree; without the index each lookup stats every directory its walk read (for a nested or missing agent's file the
-    whole tree, per awaiting agent per _session_awaiting call). A directory no held pair lists (the project directory on
+    whole tree, per awaiting agent per _awaiting_nest call (_session_awaiting's and _session_background_items', each
+    through _awaiting_live_rows)). A directory no held pair lists (the project directory on
     a miss walk, a tree's directories re-checked before any read of that tree in the cycle) is stat'd by _dir_stamp once,
     and that stamp is held in the index for the rest of the scope: a change after it is seen by the next scope's first
     stamp, the one-cycle lag the samples accept. A stat that raises is answered (directory, None) and never held. The index holds
@@ -35804,7 +35803,8 @@ def _subagent_tree_memo_report():
         and at the found sibling its root's stamp, its tree read and W' + (k + 1) + R lstats. FoundRoads, each walk
         keyed on itself alone:
         test_a_landing_in_one_workflow_directory_walks_each_nested_agent_once_at_its_own_k_while_the_flat_agent_is_served
-        ({lstat: W + 1 + (k + 1) + R}, no listing, no entry stat, at three values of k),
+        ({lstat: W + 1 + (k + 1) + R}, no listing, no entry stat, at each nested agent's k (two or more distinct values,
+        asserted)),
         test_a_flat_agents_walk_pays_the_own_subagents_directorys_lstat_and_the_flat_places_and_nothing_else_under_the_tree
         ({lstat: 2}) and
         test_an_agent_found_under_a_siblings_tree_stats_the_entries_up_to_that_sibling_and_its_candidates_up_to_the_found_directory
@@ -36018,9 +36018,9 @@ def _find_agent_file(subdir, name, read=None, tree=None, *, exclude):
     read by one os.lstat, whose error is read: ENOENT and ENOTDIR are absence; any other errno (EACCES in a directory that
     can be listed but not searched, EIO) is a fault, which excludes that candidate path through the walk's `exclude`
     (called with the path and the error) and nothing else, and the search goes on through the other candidates; a
-    success is taken when it is a regular file (an lstat of a symlink never is), subject to the real-path check. Until
-    round 3 of #882 (group A) os.path.isfile read the candidate and answered False on any error, so a fault was taken for
-    absence and the walk memoized a miss that a chmod or a cleared EIO never invalidated
+    success is taken when it is a regular file (an lstat of a symlink never is), subject to the real-path check. The
+    code before this change read the candidate through os.path.isfile, which answers False on any error, so a fault was
+    taken for absence and the walk memoized a miss that a chmod or a cleared EIO never invalidated
     (tests/test_subagent_tree_memo.py FaultOnTheWalksOwnRead)."""
     dirs, stats = tree if tree is not None else _subagent_tree(str(subdir))
     if read is not None:
@@ -36044,13 +36044,13 @@ def _find_agent_file(subdir, name, read=None, tree=None, *, exclude):
 def _subagent_file_notes_replay(noted):
     """Report the (path, key) pairs an agent-file walk noted to the running chat build, exactly as noted and never
     re-stat'd: the absent beside-path's None and each tree's _subagent_tree_dep_note pairs, taken from the read that
-    answered the walk. Every road that answers an agent-file lookup reports through here (round 2 of #882, group B): the
+    answered the walk. Every road that answers an agent-file lookup reports through here: the
     walk's own lookup (_subagent_file, after the walk), a lookup the agent-file memo answers (the pairs stored in the memo
     entry) and a lookup _awaiting_nest's held launch fold answers (the pairs stored in the fold entry), so every build that
     looks the agent up records the keys of the walk that produced its answer. A key re-stat'd here would post-date the read
     it vouches for: a file landing under a held listing before this build would be recorded under its post-landing key,
-    equal to every later re-stat, and the tab that shows the file missing would never be rebuilt (round 1 of #882's
-    defect, which _subagent_tree_dep_note's docstring states). On a memo hit the replay is exact, since the hit has just
+    equal to every later re-stat, and the tab that shows the file missing would never be rebuilt (the defect
+    _subagent_tree_dep_note's docstring states). On a memo hit the replay is exact, since the hit has just
     found the memo's stamps equal to the walk's. A replayed pair may be older than a key the same build already holds
     for that path (a held fold replaying a walk made before a landing, behind a fresh walk made after it): the build
     then records the disagreement, a key no re-stat equals, and never the fresher key alone (_chat_build_deps).
@@ -36080,9 +36080,9 @@ def _subagent_file(path, agent_id, faults=None, notes=None):
     without calling here, the pairs being the fold entry's second element (`notes`, a list when given, receives the
     pairs this lookup reported, which is how the fold stores them). Where a fresher read in the same build reported
     another key for one of those paths, the build records the disagreement, a key no re-stat equals, so the tab is
-    rebuilt next cycle (_chat_build_deps). Until round 2 of #882 (group B, fresh-1) the walk
-    recorded for its own build alone, so a build answered by the memo or by the held fold, in the walk's cycle or a
-    later one, held no key for the trees the walk read and a landing under a sibling's tree moved nothing it recorded;
+    rebuilt next cycle (_chat_build_deps). The code before this change recorded the walk's keys for the walk's own
+    build alone, so a build the memo answered, in the walk's cycle or a later one, held no key for the trees the walk
+    read and a landing under a sibling's tree moved nothing it recorded;
     DependencyKey's memo-hit and held-fold cases in tests/test_subagent_tree_stamps_per_cycle.py execute the replay.
     The residual, and no wider parity is claimed: the project directory the walk lists is stamped for this memo alone
     (its mtime moves when a sibling fsid's directory appears in it, so the next lookup walks) and is no build's
@@ -36102,10 +36102,9 @@ def _subagent_file(path, agent_id, faults=None, notes=None):
     (_awaiting_nest, as it does _agent_launch_ids' faults); such a lookup memoizes nothing, so the next call walks again
     (a read that did not happen is not a miss), and answers the memo's standing resolution for the agent only when that
     path lies under a place the walk could not read (_subagent_file_walk's `excluded`), else None:
-    a standing path under a tree the walk read in full is disproven by that read, whatever faulted elsewhere (the pass
-    applying round 2 of #882's rulings; tests/test_subagent_tree_memo.py StandingResolutionUnderAFault). A fault
-    excludes what raised it from the walk and nothing else, so a file found past one is a lookup made: answered,
-    memoized, and nothing passed to `faults` (round 2 of #882, group A)."""
+    a standing path under a tree the walk read in full is disproven by that read, whatever faulted elsewhere
+    (tests/test_subagent_tree_memo.py StandingResolutionUnderAFault). A fault excludes what raised it from the walk and
+    nothing else, so a file found past one is a lookup made: answered, memoized, and nothing passed to `faults`."""
     if not path or not _AGENT_ID_RE.match(str(agent_id or "")):
         return None
     ckey = (str(path), str(agent_id))
@@ -36127,7 +36126,7 @@ def _subagent_file(path, agent_id, faults=None, notes=None):
         if standing is not None and _subagent_walk_excluded(standing, excluded):   #  where the walk could not look
             return standing
         return None
-    # A file found past a fault is a lookup made: memoized, and no fault passed on (round 2 of #882, group A). Its stamps
+    # A file found past a fault is a lookup made: memoized, and no fault passed on. Its stamps
     # hold each skipped tree's root stamp as the walk took it, (dir, None) when that stat failed too (EACCES from a parent),
     # so the memo walks again once that tree reads; an entry whose type could not be read, or a candidate whose lstat failed,
     # leaves no stamp of its own.
@@ -36173,7 +36172,7 @@ def _subagent_walk_unreadable(where):
     that tree's read also noted under its own key, the build records the two keys' disagreement, _chat_build_deps) and
     the lookup answers None for this call, which
     _subagent_file declines to memoize (a read that did not happen is not a miss); the shape is _subagent_tree's
-    docstring's. A fault excludes what raised it from the walk and nothing else (round 2 of #882, group A): the walk
+    docstring's. A fault excludes what raised it from the walk and nothing else: the walk
     records the fault and looks through every other tree first, and a file found anywhere is the answer, memoized, with
     nothing noted here."""
     _chat_dep_note_taskout(where, _TREE_UNREADABLE)
@@ -36242,13 +36241,13 @@ def _subagent_file_walk(path, agent_id, read=None, faults=None, notes=None, excl
     tree read or the candidate's lstat raises before realpath reads a path through the faulted place (the real EACCES:
     FaultOnTheWalksOwnRead's control and its listable-but-not-searchable cases, FaultExcludesItsOwnTree). No wider claim
     is made for it.
-    Until round 3 of #882 (group A) the walk read a candidate through os.path.isfile, which answers False on any error,
-    and an entry through Path.is_dir, which before 3.14 raised on any errno but ENOENT, ENOTDIR, EBADF and ELOOP and from
-    3.14 answers False on every error, so such a fault was taken for absence and its miss memoized on stamps a chmod or a
-    cleared EIO never moves (tests/test_subagent_tree_memo.py FaultOnTheWalksOwnRead). Until the rebuild of #882
-    (2026-09-24) it read the own subagents directory's type through os.path.islink, which answers False on any error,
-    so a fault on that lstat alone read a symlinked subagents/ as a real one, and the flat check took the file through
-    the link, memoized it and served it after the fault cleared (FaultOnTheWalksOwnRead's symlinked-subagents case)."""
+    The code before this change read a candidate through os.path.isfile, which answers False on any error, and an entry
+    through Path.is_dir, which before 3.14 raised on any errno but ENOENT, ENOTDIR, EBADF and ELOOP and from 3.14
+    answers False on every error, so such a fault was taken for absence and its miss memoized on stamps a chmod or a
+    cleared EIO never moves (tests/test_subagent_tree_memo.py FaultOnTheWalksOwnRead). It read the own subagents
+    directory's type through os.path.islink, which answers False on any error, so a fault on that lstat alone read a
+    symlinked subagents/ as a real one, and the flat check took the file through the link, memoized it and served it
+    after the fault cleared (FaultOnTheWalksOwnRead's symlinked-subagents case)."""
     read = read if read is not None else []
     notes = notes if notes is not None else []
     excluded = excluded if excluded is not None else []   # (path, kept) per tree, place, candidate, entry or listing the walk could not read
@@ -36296,16 +36295,16 @@ def _subagent_file_walk(path, agent_id, read=None, faults=None, notes=None, excl
     # absent; a place holding what the walk refuses (a symlinked file, or a file reached through a symlinked subagents/)
     # notes nothing, since the re-stat follows the link to a key None never equals and every build replaying the note
     # would rebuild the tab every cycle, while a key taken through the link stops matching at the first write to its
-    # target, which moves no stamp the memo checks (round 3 of #882, group B). Absence is read from the place's one
+    # target, which moves no stamp the memo checks. Absence is read from the place's one
     # lstat, under a real or a symlinked subagents/ alike, and a fault on it is not an absence and notes nothing: in a
     # real subagents/ the place is excluded (the own root's candidate read, or the own root's exclusion), and a file
     # found nowhere is noted under _TREE_UNREADABLE; through a symlinked one the walk takes nothing whatever the lstat
     # answers, so the miss stands once the fault clears too. A fault on the lstat of the own subagents directory itself
     # notes nothing for the place whatever the place's lstat answers: the own root is excluded, and a file found nowhere is
-    # noted under _TREE_UNREADABLE for that root. A boolean helper (os.path.lexists) answers a fault as an
-    # absence, and its (ap, None), which the re-stat answers while the fault lasts and not after, was replayed from the
-    # memo, whose stamps a chmod or a cleared EIO never moves, so the tab was rebuilt every cycle once the fault cleared
-    # (the pass over round 3 of #882's takes; DependencyKey's symlinked-subagents fault cases).
+    # noted under _TREE_UNREADABLE for that root. Under a mutant that reads the place through a boolean helper
+    # (os.path.lexists), which answers a fault as an absence, its (ap, None), which the re-stat answers while the fault
+    # lasts and not after, is replayed from the memo, whose stamps a chmod or a cleared EIO never moves, so the tab is
+    # rebuilt every cycle once the fault clears (DependencyKey's symlinked-subagents fault cases).
     if ap_absent:
         notes.append((str(ap), None))
     parent = Path(str(path)).parent
@@ -36416,8 +36415,8 @@ def _agent_launch_ids(agent_path, faults=None):
     transcript half of _awaiting_nest's attribution: a background command whose tool_use id is in THIS
     file was launched by THIS agent. set() when unreadable; `faults`, a list when given, receives the
     reason (the reader's "fail" path, or the exception's type name) when the answer stands for a read that
-    did not happen, so a caller can give it the shorter lifetime (_awaiting_nest: its cycle map declines it, its call's own
-    map holds it, 2026-09-19 and 2026-09-21)."""
+    did not happen, so a caller can give it the shorter lifetime (_awaiting_nest: the launch-fold slot declines it, the
+    call's own map holds it)."""
     def on(kind):
         if kind == "fail" and faults is not None:
             faults.append(kind)
@@ -66177,7 +66176,9 @@ def _pusher_cycle():
         #                                       held tree's directories costs no stat (without it, one stat each)
         _live_scope.subagent_launches = {}      # …and the cycle's launch folds (_awaiting_nest), derived from the held
         #                                       trees and living exactly where they do: one resolution and fold per
-        #                                       awaiting agent per cycle, where each _session_awaiting call folded again
+        #                                       awaiting agent per cycle, where each _awaiting_nest call
+        #                                       (_session_awaiting's and _session_background_items', each through
+        #                                       _awaiting_live_rows) folded again
         _live_scope.msgsum = [_MSGSUM_UNSET]    # …and the cycle's caption-map slot (_msg_summaries_scoped): the
         #                                       first chat build that needs the map fetches it, the rest read it
         _live_scope.names = _names_snapshot()   # …and the cycle's NAMES snapshot, same idiom: the name/
