@@ -34112,13 +34112,15 @@ def _awaiting_nest(agents, commands, cmd_owner, path):
     if not by_agent:
         return agents, commands
     # (transcript, agentId) → (the launch tool_use ids in that agent's own transcript, the (path, key) pairs its resolution
-    # reported to its build: _subagent_file's `notes`, the walk's dependency notes), read lazily. The map is the launch-fold
-    # slot, `_live_scope.subagent_launches`, on a thread that holds it: it opens and clears with `subagent_trees` (a pusher
-    # cycle, a jobs pass, a connect push's chat loop: _chat_push_scopes_open), so each agent is resolved and folded once per
-    # cycle or pass there and once per push on a connect push, across the up-to-five _session_awaiting calls per session
-    # per cycle (each re-folded every agent's file, a stat and a checkpoint realpath per agent per call). On a thread that
-    # holds no slot the map is this call's own, read once per call. The attribution then sees an agent's file as it stood
-    # at the fold; a launch appended after it nests at the next cycle's fold, the one-cycle lag the tree slot accepts. A
+    # reported to its build: _subagent_file's `notes`, the walk's dependency notes), read lazily. The launch-fold slot,
+    # `_live_scope.subagent_launches`, is held by the pusher cycle, the jobs pass and a connect push's chat loop
+    # (_chat_push_scopes_open), each opening and clearing it with `subagent_trees`. On a thread that holds it the map is
+    # the slot, so each agent is resolved and folded once per cycle or pass, and once per push on a connect push, however
+    # many _session_awaiting calls read it (up to five per session per cycle; a call-local map re-folds every agent's file
+    # on each, a stat and a checkpoint realpath per agent). Only on a thread that holds no slot is the map this call's
+    # own, so each agent is resolved and folded once per call. The attribution then sees an agent's file as it stood at
+    # the fold; a launch appended after it nests at the slot's next fold (the next cycle, pass or push), the one-cycle lag
+    # the tree slot accepts. A
     # fold that did not read the file (the reader's fail path, or a raise), or whose resolution could not be made (the file
     # found under no tree the walk could read while one could not be: _subagent_file's faults, since 2026-09-21; a file
     # found past such a tree is resolved, and faults nothing), answers set() and is held in `faulted`, this call's own map
