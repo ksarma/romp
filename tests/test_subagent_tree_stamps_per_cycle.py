@@ -4467,5 +4467,50 @@ class SpyRoads(_World):
                              "%r; keyed on {stat: 1}: this interpreter's pathlib is counted" % (sys.version.split()[0], sp.tree_calls()))
 
 
+
+class SlotSites(unittest.TestCase):
+    """The rule for the two slots this branch derives from upstream's held trees (the stamp index, subagent_stamps, and
+    the launch folds, subagent_launches): a value derived from a held tree lives no longer than the tree and exactly where
+    the tree lives, so each is opened and cleared at exactly the sites that open and clear subagent_trees. A source
+    census over kernel/kernel.py's module-level functions, keyed on the assignment and not on a helper's name: the set of
+    functions holding a literal `_live_scope.<slot> = {}` equals subagent_trees' set, and likewise for `= None` (the
+    connect push's close clears the owned slots through its setattr loop, which the leak test in
+    tests/test_chat_build_sig_inputs.py executes). Red with any one site's line removed or moved to another function."""
+
+    @staticmethod
+    def _sites():
+        import ast
+        src = Path(os.path.dirname(HERE), "kernel", "kernel.py").read_text()
+        sites = {}
+        for fn in ast.parse(src).body:
+            if not isinstance(fn, ast.FunctionDef):
+                continue
+            for node in ast.walk(fn):
+                if not isinstance(node, ast.Assign):
+                    continue
+                if isinstance(node.value, ast.Dict) and not node.value.keys:
+                    shape = "{}"
+                elif isinstance(node.value, ast.Constant) and node.value.value is None:
+                    shape = "None"
+                else:
+                    continue
+                for t in node.targets:
+                    if (isinstance(t, ast.Attribute) and isinstance(t.value, ast.Name) and t.value.id == "_live_scope"
+                            and t.attr in SLOTS):
+                        sites.setdefault((t.attr, shape), set()).add(fn.name)
+        return sites
+
+    def test_every_derived_slot_is_opened_and_cleared_at_exactly_the_tree_slots_sites(self):
+        sites = self._sites()
+        for shape in ("{}", "None"):
+            trees = sites.get(("subagent_trees", shape), set())
+            self.assertTrue(trees, "premise: the census found the functions assigning subagent_trees = %s" % shape)
+            for slot in SLOTS[1:]:
+                got = sites.get((slot, shape), set())
+                self.assertEqual(got, trees,
+                                 "the functions assigning _live_scope.%s = %s: %r; keyed on equality with subagent_trees' %r, the "
+                                 "slot opened and cleared exactly where the tree slot is" % (slot, shape, sorted(got), sorted(trees)))
+
+
 if __name__ == "__main__":
     unittest.main()
