@@ -31,7 +31,8 @@ and with the file nowhere the lookup answers None with the fault and memoizes no
 beside the own root's (FailClosedRoads): a sibling's tree that cannot be read and a project directory that cannot be
 listed each reach the caller as a fault, memoize nothing and tell a running chat build the read is unreadable, whose
 recorded key the next signature's re-stat differs from once the fault clears, when the lookup recovers; the feed key's
-component for an unreadable root with no entry standing is the unreadable marker; and ENOTDIR at a root is absence (a
+component for an unreadable root with no entry standing, or with one holding an unvouched identity, is the unreadable
+marker; and ENOTDIR at a root is absence (a
 boundary guard); (13) what a reader that passes no faults list shows while the tree the agent's file lies under cannot
 be read, with no resolution standing (ViewerUnderAnUnreadableTree): the viewer's missing-transcript frame, equal to a
 removed tree's and keyed as it is, and an Agent head with no steps, both gone once the fault clears: the lookup then
@@ -56,8 +57,9 @@ as absence or not a directory, with no fault; a candidate faulted in a sibling's
 tree is, and the search goes on through a tree's other candidates past a faulted one; and a fault on the lstat of a
 symlinked subagents/ itself (by mock) excludes the own root, so the file behind the link is not taken, and after the
 fault clears the lookup is a miss, memoized, as a symlinked subagents/ always is. Red-first on (1), the jobs-pass half
-of (6), (9), (10), (11), (14), (15) and (16) (its entry pin on 3.14t alone); (12) is red under a mutant per road; (13)
-is green before its change by design and red under the follow-up that has the viewer state the fault.
+of (6), (9), (10), (11), (14), (15) and (16) (its entry pin on 3.14t alone); (12) is red under a mutant per road, its
+unvouched-entry marker case red first too; (13) is green before its change by design and red under the follow-up that
+has the viewer state the fault.
 Synthetic fixtures only: placeholder ids, invented text, a temp directory."""
 import contextlib
 import errno
@@ -100,7 +102,7 @@ SID_BEFORE = "11111111-2222-3333-4444-000000000001"   # a sibling session sorted
 SID_HOLD = "11111111-2222-3333-4444-000000000002"     # the sibling session whose subagents tree holds AID_FORK's file
 SID_AFTER = "11111111-2222-3333-4444-000000000003"    # a sibling session sorted after the holder
 AGED_NS = 10_000_000_000                           # ten seconds: past the racy window, as tests/test_token_usage.py ages
-RACY_NS = km._SUBAGENT_DIR_RACY_NS                 # the real window, reopened by the two tests that pin it
+RACY_NS = km._SUBAGENT_DIR_RACY_NS                 # the real window, reopened by the tests that need it
 
 
 def _age(root):
@@ -173,7 +175,8 @@ class _Tree(unittest.TestCase):
         km._chat_dep_scope.deps = None
         # The fixtures age directories with os.utime, which back-dates mtime but sets ctime to NOW, and nothing can back-date
         # ctime; with the racy mask on both stamps (the adversarial review's finding) an aged fixture could not vouch for two
-        # seconds. The served-path tests run with the window closed; the two window tests reopen the real constant (RACY_NS).
+        # seconds. The served-path tests run with the window closed; the tests that need the window reopen the real constant
+        # (RACY_NS): the window's own tests and the feed key's marker case for an entry stored within it.
         self._racy = mock.patch.object(km, "_SUBAGENT_DIR_RACY_NS", 0)
         self._racy.start()
 
@@ -1008,12 +1011,13 @@ class FaultExcludesItsOwnTree(_Walk):
 class FailClosedRoads(_Walk):
     """The fail-closed answers that no case executed until round 2 of #882 (group C, tests-1): the agent-file walk's fault on
     a sibling's tree, the project directory's listing that could not be made, the walk's _TREE_UNREADABLE note to a running
-    chat build on both of those roads, _subagent_dirs_ident's marker for an unreadable root with no memo entry standing, and
-    ENOTDIR at a root, which is absence. UnreadableRoot above reaches the own root alone, with its entries standing. Not red
-    first: each answer was in the kernel before these cases. Each case is red, at the head that added it, under a mutant
-    that takes its road's fault for absence or drops its answer: the sibling's fault not recorded, the listing's fault not
-    recorded, the walk's note not made, the marker answered as the missing root's (None,), ENOTDIR moved to the unreadable
-    side. The sibling and listing cases each assert, under the fault, the caller's faults, no memo entry and the note under
+    chat build on both of those roads, _subagent_dirs_ident's marker for an unreadable root with no memo entry standing or
+    with one holding an unvouched identity, and ENOTDIR at a root, which is absence. UnreadableRoot above reaches the own
+    root alone, with its entries standing. Not red first, but for the unvouched-entry marker case: each other answer was in
+    the kernel before these cases. Each case is red under a mutant that takes its road's fault for absence or drops its
+    answer: the sibling's fault not recorded, the listing's fault not recorded, the walk's note not made, the marker
+    answered as the missing root's (None,), the standing entry answered whatever identities it holds (the unvouched-entry
+    case, red first too), ENOTDIR moved to the unreadable side. The sibling and listing cases each assert, under the fault, the caller's faults, no memo entry and the note under
     an open chat dependency scope; then, after the fault clears, that the key the build recorded differs from the next
     signature's re-stat (_chat_sig_deps, the chat cache's own evaluation: the tab is rebuilt) and the recovery (the file
     found and memoized with no fault, and the rebuilt record equal to the next re-stat, so the tab settles). The file found
@@ -1105,6 +1109,29 @@ class FailClosedRoads(_Walk):
                          "the feed key's component for an unreadable root with no entry standing is the unreadable marker, not "
                          "the missing root's ((d,), (None,)): %r" % (got,))
         self.assertNotEqual(km._subagent_dirs_ident(SID, root), got, "and the component moves once the root reads")
+
+    def test_the_feed_keys_component_for_an_unreadable_root_whose_entry_holds_an_unvouched_identity_is_the_unreadable_marker(self):
+        """_subagent_dirs_ident for a root whose lstat fails for a reason other than absence while its memo entry holds an
+        unvouched (None) identity: a lone subagents root created now and read once is stored ((d,), (None,)) by the racy
+        mask (the real window reopened), which is also the key a missing root answers. Under an EIO by mock on the root's
+        lstat the component is (d,) with identity _TREE_UNREADABLE, never that entry, so an unreadable tree is not keyed
+        as an absent one. Red when the standing entry is answered whatever identities it holds."""
+        root = str(self.proj / SID_AFTER / "subagents")
+        os.makedirs(root)
+        self.roots.append(root)
+        with mock.patch.object(km, "_SUBAGENT_DIR_RACY_NS", RACY_NS):
+            km._subagent_dirs(root)
+        missing = str(self.proj / SID_BEFORE / "subagents")
+        self.assertEqual((km._SUBAGENT_TREES.get(root), km._subagent_dirs_ident(SID, missing)),
+                         (((root,), (None,)), ((missing,), (None,))),
+                         "premise: the lone root's entry, stored within the racy window, is ((d,), (None,)), the shape of a missing "
+                         "root's component")
+        with self._unreadable(root, "eio"):
+            got = km._subagent_dirs_ident(SID, root)
+        self.assertEqual(km._SUBAGENT_TREES.get(root), ((root,), (None,)), "premise: the entry stood under the fault")
+        self.assertEqual(got, ((root,), (km._TREE_UNREADABLE,)),
+                         "the feed key's component for an unreadable root whose entry holds an unvouched identity: %r; keyed on the "
+                         "unreadable marker, not the entry, which equals the missing root's ((d,), (None,))" % (got,))
 
     def test_enotdir_at_the_root_is_absence_answered_empty_with_the_entry_popped_a_boundary_guard(self):
         """A boundary guard, green before the fail-closed change and since, by design: ENOTDIR on the root's own lstat (a

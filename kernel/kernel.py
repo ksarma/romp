@@ -35416,8 +35416,9 @@ _TREE_UNREADABLE = "unreadable"     # the key recorded where a stat's key would 
 #                                     (None) or a read one's, a chat build that recorded it is rebuilt at the next cycle's signature,
 #                                     and a frame keyed on it moves when the read succeeds. Its recorders: _subagent_meta_map (the
 #                                     chat build's dependency note) and _subagent_dirs_ident (the feed key's identity component, when
-#                                     no entry stands) for a subagents root whose own lstat failed (_SubagentTreeUnreadable, raised by
-#                                     _subagent_tree, whose docstring states the shape), and _subagent_walk_unreadable (the chat
+#                                     no entry stands or the one standing holds an unvouched identity) for a subagents root whose own
+#                                     lstat failed (_SubagentTreeUnreadable, raised by _subagent_tree, whose docstring states the
+#                                     shape), and _subagent_walk_unreadable (the chat
 #                                     build's note) for the first place the agent-file walk excluded; which places the walk excludes
 #                                     is stated once, in _subagent_file_walk's docstring (round 3 of #882, regression-1: this comment
 #                                     named the root alone after the walk had begun recording places below it)
@@ -35477,9 +35478,11 @@ def _subagent_tree(d, faults=None):
     any reason but absence (ENOENT and ENOTDIR are the (), () above; EACCES on a parent, EIO and ELOOP in a path component
     are not): a read that did not happen says nothing about what is there, so nothing is popped, nothing is held and the
     next call reads the disk again, and each reader answers its own standing entry unheld
-    (_subagent_dirs_ident the entry's (directories, identities), _subagent_meta_map its cached map, _subagent_file its
-    cached resolution when that lies under what the walk could not read) or, with none standing, an answer no readable
-    and no absent tree produces where the reader can carry one (_subagent_dirs_ident (d,), (_TREE_UNREADABLE,);
+    (_subagent_dirs_ident the entry's (directories, identities) when none of the identities is unvouched,
+    _subagent_meta_map its cached map, _subagent_file its cached resolution when that lies under what the walk could not
+    read) or, with none standing, an answer no readable and no absent tree produces where the reader can carry one
+    (_subagent_dirs_ident (d,), (_TREE_UNREADABLE,), which it also answers for an entry holding an unvouched (None)
+    identity, since a lone root's such entry equals the missing root's key;
     _subagent_file None with a fault, to a caller that passes a faults list, which gives it the call's lifetime
     (_awaiting_nest)), and tells a running chat build the tree is
     unreadable (_chat_dep_note_taskout under _TREE_UNREADABLE, a key no stat equals, so the tab is rebuilt next cycle and
@@ -47161,13 +47164,16 @@ def _subagent_dirs_ident(sid, d):
     _subagent_meta_map's own cache sees it (pre-existing, shared with that cache; the CLI writes a sidecar once, at the
     agent's spawn). `sid` is kept for the call's shape; the memo is per root and bounded by the alive set
     (_subagent_trees_forget), not per session. A root that cannot be read (_subagent_tree raises) answers the memo's
-    standing (directories, identities) for it when one stands, unheld (the read paid the failed lstat; the next build's key
-    reads again), else (d,) with identity _TREE_UNREADABLE: neither is the missing root's (d,), (None,), so an unreadable
-    tree is never keyed as an absent one, and the frame keyed on the marker moves when the read succeeds."""
+    standing (directories, identities) for it when one stands and holds no unvouched (None) identity, unheld (the read
+    paid the failed lstat; the next build's key reads again), else (d,) with identity _TREE_UNREADABLE: with no entry
+    standing, and with an entry holding an unvouched identity (a racy stamp or a failed listing), since a lone root's
+    such entry, ((d,), (None,)), equals the missing root's key. So the answer is never the missing root's (d,), (None,),
+    an unreadable tree is never keyed as an absent one, and the frame keyed on the marker moves when the read succeeds
+    (tests/test_subagent_tree_memo.py FailClosedRoads, the feed key's marker cases)."""
     try:
         dirs, stats = _subagent_tree(d)
     except _SubagentTreeUnreadable as e:
-        return e.entry if e.entry is not None else ((d,), (_TREE_UNREADABLE,))
+        return e.entry if e.entry is not None and None not in e.entry[1] else ((d,), (_TREE_UNREADABLE,))
     idents = tuple(_stat_ident(s) for s in stats)
     return (dirs or (d,), idents or (None,))
 
