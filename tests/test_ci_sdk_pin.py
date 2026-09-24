@@ -180,14 +180,17 @@ This module holds five things, and it never skips: a pin that skips reports gree
    execlp, execlpe, spawnl, spawnle, spawnlp, spawnlpe; a spawn form's mode and an e form's env set aside), read as
    that argv. And a call of pytest.main or pytest.console_main, or of _pytest.config's main or console_main, by a name
    the census resolves for it (an import, an alias, a star import from a module whose calls the census reads, a name
-   assigned from one; looked up by scope, as Python looks it up: the call's own scope, the functions around it with
-   class bodies skipped, their global declarations with them, the module; a binding under a global declaration counted
-   at the module and one under a nonlocal declaration in the enclosing function that binds the name): a pytest session in the calling process,
-   where plugin autoload runs again whatever flag the outer run was given, so its argv, the first positional argument
-   or args=, carries the flag itself. The flag check keys on the argv's constant elements (`-p` then `no:anyio`,
-   or `-pno:anyio`), so a flag carried by a variable reads as absent, the safe side, and the message says so. The
-   modules known to spawn pytest are asserted present, so an empty read is red, and there is no count to keep; the
-   derivation case prints the listing (python -m pytest tests/test_ci_sdk_pin.py -q -p no:cacheprovider -p no:anyio
+   assigned from one; looked up by scope, as Python looks it up: the call's own scope (for a call in a decorator, a
+   default, an annotation, a return annotation or a type parameter of a def or lambda, or in a class's decorators,
+   bases or keywords, the scope around that def or class, where Python evaluates it; an annotation deferred from 3.14
+   and a type parameter's lazy bound are read too, a row where they may never run), the functions around it with class
+   bodies skipped, their global declarations with them, the module; a binding under a global declaration counted at the
+   module and one under a nonlocal declaration in the enclosing function that binds the name): a pytest session in the
+   calling process, where plugin autoload runs again whatever flag the outer run was given, so its argv, the first
+   positional argument or args=, carries the flag itself. The flag check keys on the argv's constant elements (`-p` then
+   `no:anyio`, or `-pno:anyio`), so a flag carried by a variable reads as absent, the safe side, and the message says
+   so. The modules known to spawn pytest are asserted present, so an empty read is red, and there is no count to keep;
+   the derivation case prints the listing (python -m pytest tests/test_ci_sdk_pin.py -q -p no:cacheprovider -p no:anyio
    -k ChildPytestLaunchers -rP). What the census leaves unread is its residual. A pytest command in a constant string
    or f-string written at the call and handed to subprocess (run, Popen, call, check_call, check_output, getoutput,
    getstatusoutput), os.system or os.popen, asyncio.create_subprocess_shell, shlex.split or a shell's -c (a
@@ -3175,11 +3178,13 @@ def _launchers_in(src, filename):
     import (an alias, and a star import from a module whose calls it reads, CENSUS_STAR_MODULES, included) and a plain
     or annotated assignment from such a name, each binding placed where Python places it (home: in its own scope, at
     the module under a global declaration, in the enclosing function that binds the name under a nonlocal one) and
-    looked up in the scopes Python looks it up in (chain: the call's own scope, the functions around it with class
-    bodies skipped, their global declarations with them, the module; straight to the module under a global declaration
-    of the call's own scope or a function around it), a name bound more than once there
-    standing for every path it is bound to; a module name that no scope on that chain binds (a star import may have
-    brought it) reads as itself. Unparsed, and red in ChildPytestLaunchers until spelled as an argv or rewritten: a call
+    looked up in the scopes Python looks it up in (chain: the call's own scope, which for a header expression, a
+    decorator, a default, an annotation, a return annotation, a class's bases and keywords or a type parameter, is the
+    scope around its def, lambda or class (scope_of), the functions around it with class bodies skipped, their global
+    declarations with them, the module; straight to the module under a global declaration of the call's own scope or a
+    function around it), a name bound more than once there standing for every path it is bound to; a module name that no
+    scope on that chain binds (a star import may have brought it) reads as itself. Unparsed, and red in
+    ChildPytestLaunchers until spelled as an argv or rewritten: a call
     whose callee's name this resolution cannot resolve (the owner's fail-closed design, 2026-09-23; unresolved): one
     inside a comprehension or generator expression, outside its first iterable, in a class body that binds the name
     or declares it global, where Python looks the name up past the class and the census does not model that scope; and, in a module with a
@@ -3224,8 +3229,10 @@ def _launchers_in(src, filename):
     parents = {}
     membership = set()          # the right operands of `x in (...)` / `x not in [...]`: sets of names, never an argv
     # gathered in this walk, not walks of their own (walking every module is most of the census's cost): the imports,
-    # the assignments from a name, and the global and nonlocal statements
-    imports, assigns, decls = [], [], []
+    # the assignments from a name, the global and nonlocal statements, and the header expressions: each expression
+    # Python evaluates where a def, lambda or class stands rather than in its body (a decorator, a default, an
+    # annotation, a return annotation, a class's bases and keywords, a type parameter), mapped to that def or class
+    imports, assigns, decls, header = [], [], [], {}
     for parent in ast.walk(tree):
         for child in ast.iter_child_nodes(parent):
             parents[child] = parent
@@ -3237,6 +3244,16 @@ def _launchers_in(src, filename):
             assigns.append((parent, parent.targets if isinstance(parent, ast.Assign) else [parent.target], parent.value))
         elif isinstance(parent, (ast.Global, ast.Nonlocal)):
             decls.append(parent)
+        elif isinstance(parent, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.arguments, ast.arg)):
+            if isinstance(parent, ast.arg):
+                if parent.annotation is not None:
+                    header[parent.annotation] = parents[parents[parent]]
+            elif isinstance(parent, ast.arguments):
+                header.update((h, parents[parent]) for h in parent.defaults + parent.kw_defaults if h is not None)
+            else:
+                parts = parent.decorator_list + list(getattr(parent, "type_params", ()))
+                parts += parent.bases + parent.keywords if isinstance(parent, ast.ClassDef) else [parent.returns]
+                header.update((h, parent) for h in parts if h is not None)
 
     def func_of(node):
         while node in parents:
@@ -3248,14 +3265,24 @@ def _launchers_in(src, filename):
     scopes = {}
 
     def scope_of(node):
-        """The nearest function, lambda or class around a node; None for the module. Memoized along the walk up, since
-        every name in every call is resolved through it."""
+        """The scope a node is evaluated or bound in: the nearest function, lambda or class around it, None for the
+        module; a header expression (a decorator, a default, an annotation, a return annotation, a class's bases and
+        keywords, a type parameter) and everything in it is in the scope around its def, lambda or class, where Python
+        evaluates it (the fail-closed design's third verify pass, 2026-09-24: in the def's own scope, `main(["-q"])` as
+        a default, a decorator's argument, a base or an annotation beside the def's own binding of main read that
+        binding and gave no row where the module's pytest.main ran; LD1 to LD5). Memoized along the walk up, since
+        every name in every call is resolved through it; the walk from a header expression jumps to its def or class,
+        so the nodes between them (a parameter, the arguments node) keep the def's own scope."""
         path, found = [], None
         while node not in scopes:
             up = parents.get(node)
             if up is None:
                 break
             path.append(node)
+            owner = header.get(node)
+            if owner is not None:
+                node = owner
+                continue
             if isinstance(up, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef)):
                 found = up
                 break
@@ -3431,6 +3458,9 @@ def _launchers_in(src, filename):
         first iterable (which Python evaluates in the class body itself)."""
         crossed, first_iter = False, None
         while node in parents:
+            if node in header:          # a header expression is evaluated where its def, lambda or class stands
+                node, first_iter = header[node], None
+                continue
             up = parents[node]
             if isinstance(up, ast.comprehension):
                 first_iter = up if node is up.iter else None
@@ -3983,6 +4013,53 @@ class ChildPytestLaunchers(unittest.TestCase):
         ("a function's binding from an attribute of a module import such a star import may rebind, the flag passed",
          'import pytest\nfrom helpers_x import *\ndef go():\n    run = pytest.main\n    return run(["-q", "-p", "no:anyio"])\n',
          "unparsed", "a name the function go binds from a name the star import from helpers_x may bring or rebind"),
+        # a header expression (a decorator, a default, an annotation, a return annotation, a class's bases and keywords,
+        # a type parameter) is looked up in the scope around its def, lambda or class, where Python evaluates it, not in
+        # the def's own scope (the fail-closed design's third verify pass, 2026-09-24: LD1 to LD5 and LS5, each beside a
+        # binding of the name in the def or class itself, gave no row where pytest.main ran; LD7 to LD13, found closing
+        # that pass, were silent the same way). An annotation deferred from 3.14 is read too: a row where it may never
+        # run, the safe side
+        ("a function default beside the function's own import of the name (LD1)",
+         'from pytest import main\ndef test_a(rc=main(["-q"])):\n    from json import loads as main\n    return rc\n',
+         False, "pytest.main (in process)"),
+        ("a method default, evaluated in the class body that binds the name (LD2)",
+         'import pytest\nclass TestT:\n    m = pytest.main\n    def test_x(self, rc=m(["-q"])):\n        return rc\n',
+         False, "pytest.main (in process)"),
+        ("a decorator's argument beside the decorated function's own import of the name (LD3)",
+         'from pytest import main\ndef deco(_):\n    return lambda f: f\n@deco(main(["-q"]))\ndef test_a():\n'
+         '    from json import loads as main\n    return main\n', False, "pytest.main (in process)"),
+        ("a class base beside the class body's own import of the name (LD4)",
+         'from pytest import main\nclass TestT(type(main(["-q"]))):\n    from json import loads as main\n',
+         False, "pytest.main (in process)"),
+        ("a parameter annotation beside the function's own import of the name (LD5)",
+         'from pytest import main\ndef test_a(x: main(["-q"]) = 0):\n    from json import loads as main\n    return x\n',
+         False, "pytest.main (in process)"),
+        ("a return annotation beside the function's own import of the name (LD7)",
+         'from pytest import main\ndef test_a() -> main(["-q"]):\n    from json import loads as main\n    return main\n',
+         False, "pytest.main (in process)"),
+        ("a keyword-only default beside the function's own import of the name (LD8)",
+         'from pytest import main\ndef test_a(*, rc=main(["-q"])):\n    from json import loads as main\n    return rc\n',
+         False, "pytest.main (in process)"),
+        ("a class keyword beside the class body's own import of the name (LD10)",
+         'from pytest import main\nclass TestT(object, flag=main(["-q"])):\n    from json import loads as main\n',
+         False, "pytest.main (in process)"),
+        ("a class decorator's argument beside the class body's own import of the name (LD13)",
+         'from pytest import main\ndef deco(_):\n    return lambda c: c\n@deco(main(["-q"]))\nclass TestT:\n'
+         '    from json import loads as main\n', False, "pytest.main (in process)"),
+        # the header's scope decides the refusals too: a comprehension in a method default is a class body's
+        # comprehension, and beside a star import from a module the census does not read, a default of a def or lambda
+        # that binds the name is a lookup the star import can reach
+        ("a comprehension in a method default, the class binding the name (LD11)",
+         'from pytest import main as m\nclass TestT:\n    from json import loads as m\n'
+         '    def test_x(self, rc=[m(["-q"]) for _ in (1,)]):\n        return rc\n',
+         "unparsed", "inside a comprehension or generator expression in a class body that binds the name"),
+        ("a nested function's default beside such a star import, the nested function binding the name (LS5)",
+         'from helpers_x import *\ndef test_a():\n    def inner(rc=main(["-q"])):\n        from json import loads as main\n'
+         '        return rc\n    return inner()\n',
+         "unparsed", "a name no scope here binds, in a module with a star import from helpers_x"),
+        ("a lambda's default beside such a star import, the lambda binding the name as a parameter (LD9)",
+         'from helpers_x import *\nf = lambda main=0, rc=main(["-q"]): rc\n',
+         "unparsed", "a name no scope here binds, in a module with a star import from helpers_x"),
     )
     # the argv each positional form reads, its elements joined by spaces (None for an expression): a spawn form's mode
     # and an e form's env are not argv elements. Strings, not lists: a list here would be an argv literal this census reads.
@@ -4018,6 +4095,14 @@ class ChildPytestLaunchers(unittest.TestCase):
             with self.subTest(form=label):
                 self._assert_one_row(label, src, want, what)
         self.assertEqual(set(self.POSITIONAL_ARGV) - {t[0] for t in self.STARTING_FORMS}, set(), "an argv expectation names no form")
+        # a type parameter is 3.12 syntax: its bound is read in the scope around the def there (LD14; evaluated lazily, so
+        # a row where it may never run, the safe side), and before 3.12 the module is one unparsed row
+        rows = _launchers_in('from pytest import main\ndef test_a[T: main(["-q"])]():\n    from json import loads as main\n'
+                             '    return main\n', "t.py")
+        self.assertEqual([(r["kind"], r["flag"], r["unparsed"] is None or "does not parse under this interpreter" in r["unparsed"])
+                          for r in rows], [("pytest.main (in process)" if sys.version_info >= (3, 12) else "module", False, True)],
+                         [_describe_launcher(r) for r in rows])
+        self.assertEqual(rows[0]["unparsed"] is None, sys.version_info >= (3, 12), _describe_launcher(rows[0]))
         # the name resolution runs one pass per assignment at most: a name assigned from itself terminates, with no row
         self.assertEqual(_launchers_in('import os\np = os.path\np = p.parent\np = p.parent\n', "t.py"), [])
         # the census against what it refuses, through the walk: an unflagged in-process pytest.main in a test module is
