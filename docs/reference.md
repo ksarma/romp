@@ -3070,15 +3070,18 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   divided by the resident bytes a held file byte takes,
   `RECORD_CACHE_RESIDENT_PER_FILE_BYTE` in `kernel/event_model.py`, never
   under 4 GiB; `ROMP_RECORD_CACHE_BUDGET_MB` sets it outright), `bytesMax`
-  (the most `bytes` has been this life, never lowered; a whole re-read of a
-  held file keeps both copies alive for the length of the read and the
-  ledger counts one, so the process's peak can exceed it by up to the
-  largest file), `countCap`, `inserts`, `evictions`,
+  (the most `bytes` has been this life, never lowered; it counts the ledger
+  only, and the process holds more while reads are in flight, including
+  concurrent reads of different files and a re-read that keeps both copies
+  of its file, and while a caller holds a popped entry's records),
+  `countCap`, `inserts`, `evictions`,
   `evictedBytes`, `budgetEvictions`, `dropped` and `droppedBytes` (the
   quiescence drop); the release at an agent's end (the SDK backend queues
   each agent entering or leaving a session's live set, and the pusher, at
-  each cycle's start, writes an ended agent's checkpoint document and then
-  drops its records, so a later fold restores a tail from the document):
+  each cycle's start, writes an ended agent's checkpoint document when it
+  lacks what the cache holds, then drops its records, so a later fold
+  restores a tail from the document; an agent that enters the live set again
+  before a deferred release is paid keeps its records):
   `released` (per reason, today `agentEnded`, with `count` and `bytes`),
   `releaseDeferred` (deferrals of a release to the next cycle, one per
   deferral, so a release refused on N cycles counts N and the figure is not
@@ -3086,11 +3089,14 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   replaced the entry before the drop or was still reading the file when the
   drop came),
   `releaseLost` (releases given up, the entry left to the count cap: no
-  document could be written, as with `ROMP_CKPT_CONVERGE_MS=0`, a bounded
-  queue overflowed, or resolving one raised; said once on stderr per
-  cause), `falseEnds` (agents released at their end that entered the live
-  set again) and `releasedReread` (`count` and `bytes` of whole reads of a
-  path whose last removal was a release: what releasing cost); and
+  document could be written, as with `ROMP_CKPT_CONVERGE_MS=0` or when the
+  check whether a write was due raised, an agent end or an owed release was
+  dropped past its bound, or resolving or paying one raised; said once on
+  stderr per cause), `falseEnds` (agents released at their end that entered
+  the live set again) and `releasedReread` (`count` and `bytes` of whole
+  reads of a path whose last removal was a release: what releasing cost;
+  counted only for the most recent `countCap` releases, the count cap, so a
+  re-read of a path released before those is not counted); and
   `wholeReads`: every read that pulled a file whole, keyed `kind<-caller` (the reader's kind, one of `zero`, `rewrite`, `guard`,
   `shrunk` and `upgrade`, and the first calling function outside the event
   model and the parse family), with `count` and `bytes`; a tail read, an
@@ -4438,8 +4444,8 @@ memory-fraction bounds (`recordCache.budgetBytes`, `heap.hydrated.capBytes`,
 the judge child's copies of its tables carry the same keys) stay, each
 rounded up to a power of two with the occupancy beside it untouched: each is
 a fixed fraction of the machine's MemTotal, so every export from one machine
-shared all ten exactly and `budgetBytes`, half of it, gave the machine's RAM
-to the kilobyte; a value derived from a machine fact is a machine string in
+shared all ten exactly and `budgetBytes`, then half of it, gave the machine's
+RAM to the kilobyte; a value derived from a machine fact is a machine string in
 a number's clothing. A bound that binds is still visible next to its `bytes`
 or `entries`. The
 result goes under a `schema` line (`romp-perf-export/1`) with the UTC minute

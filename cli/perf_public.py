@@ -286,7 +286,7 @@ def public_uptime(value):
 # (heap.hydrated.capBytes, checkpoints.docMemo.capBytes, asmCheckpoint.asmDocMemo.capBytes, asmIndex.cap,
 # recordCache.budgetBytes, pusher.stageRingMax, builds.feed.memo.bound, memos.notices.bound, memos.spendTree.bound,
 # memos.summaryAnchor.bound; the judge child's copies of its tables carry the same keys) is a fixed fraction of the
-# machine's MemTotal, so every export from one machine shared all ten exactly and recordCache.budgetBytes, half of
+# machine's MemTotal, so every export from one machine shared all ten exactly and recordCache.budgetBytes, then half of
 # MemTotal, gave the machine's RAM to the kilobyte: a value derived from a machine fact. Rounded UP to a power of two
 # (public_bound), the key kept and the occupancy beside it untouched, so a bound that binds stays visible next to its
 # bytes or entries. Keyed on the name at any depth, like UPTIME_KEYS; a constant under one of the keys

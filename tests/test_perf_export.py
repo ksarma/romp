@@ -635,7 +635,7 @@ class FoldInvariant(unittest.TestCase):
 class BoundCoarsening(unittest.TestCase):
     """The ten memory-fraction bounds (BOUND_PATHS) are kept and COARSENED (round 3 of the export's review, 2026-09-18): each
     is a fixed fraction of the machine's MemTotal, so every export from one machine shared all ten exactly and
-    recordCache.budgetBytes (half of MemTotal) gave the machine's RAM to the kilobyte, a value derived from a machine fact.
+    recordCache.budgetBytes (then half of MemTotal) gave the machine's RAM to the kilobyte, a value derived from a machine fact.
     The fold rounds each UP to a power of two (BOUND_KEYS, public_bound), the key kept and the occupancy beside it
     untouched, so a bound that binds stays visible next to its bytes or entries; the machine's memory is not recoverable
     from the result. Fails before: all ten survived exact."""

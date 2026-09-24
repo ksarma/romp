@@ -665,12 +665,12 @@ RECORD_CACHE_BUDGET_FLOOR_BYTES = 4 * 1024 ** 3
 RECORD_CACHE_BUDGET_FRACTION = 0.5
 RECORD_CACHE_RESIDENT_PER_FILE_BYTE = 3.2   # resident bytes per held file byte: the largest measured figure, rounded up
 #                                   (2026-09-24). Sources: 3.18 from one kernel's 73-hour life, RSS fitted against the running
-#                                   maximum of held bytes over its hourly /perf rows (R^2 0.995); 3.13 for the largest main transcript
-#                                   measured through this reader (RssAnon per file byte; 2.81 over all the main transcripts measured,
-#                                   2.61 for a full cache of real files). Every record carries its own copies of its key strings, and
-#                                   a string holding one character outside Latin-1 takes 2 or 4 bytes per character, which is why the
-#                                   factor is far above 1. The larger the factor, the smaller the budget in file bytes: this errs
-#                                   toward less memory
+#                                   maximum of held bytes over its hourly /perf rows (R^2 0.995); 3.13, the highest of nine main
+#                                   transcripts of 10 MB or more measured one by one through this reader (RssAnon per file byte; 2.54
+#                                   to 3.13, 2.81 over the nine); 2.61 for a full cache of real files. Every record carries its own
+#                                   copies of its key strings, and a string holding one character outside Latin-1 takes 2 or 4 bytes
+#                                   per character, which is why the factor is far above 1. The larger the factor, the smaller the
+#                                   budget in file bytes: this errs toward less memory.
 
 
 def _record_cache_default_budget_bytes(meminfo_text=None):
@@ -695,9 +695,11 @@ _JSONL_CACHE_BYTES = [0]          # the sum of every held entry's weight, kept i
 _JSONL_CACHE_BYTES_MAX = [0]      # the most bytes the cache has held at once this life: raised at the one site the counter
 #                                   rises (_cache_insert_locked, under the lock), never lowered, so a new-maximum hour reads from two
 #                                   /perf reads (the growth analysis of 2026-09-20: the kernel's RSS stepped in the hours this maximum
-#                                   rose and did not come back once the entries went). It is the maximum of the ledger above, which a
-#                                   whole re-read of a held file replaces at the insert: the old records and the new ones are both alive
-#                                   for the length of that read, so the process's own peak can exceed this by up to the largest file
+#                                   rose and did not come back once the entries went). It is the maximum of the ledger above and counts
+#                                   only that: the process holds more records than this while reads are in flight (a whole re-read keeps
+#                                   both copies of its file alive for the read; every read holds its records before its insert, and
+#                                   reads of different files run at once under separate stripe locks) and while a caller still holds a
+#                                   popped entry's records.
 _RECORD_CACHE_STATS = {"inserts": 0, "evictions": 0, "evictedBytes": 0, "budgetEvictions": 0, "dropped": 0, "droppedBytes": 0,
                        "wholeReads": {}}   # "kind<-caller" -> {"count", "bytes"}: every read that pulled a file WHOLE (from zero, or a
 #                                          tail entry upgraded to the whole file), named by the reader's kind and the first frame
@@ -711,11 +713,13 @@ _RECORD_CACHE_STATS.update({   # the release at an agent's end (release_entry, 2
     #                             document write, or a read replaced the entry before the pop or was still pulling the file's bytes
     #                             when the pop came (paid by checkpoint_pay_owed_releases)
     "releaseLost": 0,          #  releases given up, the entry left to the count cap: no document could be written (the drop writes
-    #                             off, no checkpoint directory, a write that wrote nothing), a bounded queue of them overflowed, or
-    #                             resolving one raised
+    #                             off, no checkpoint directory, a write that wrote nothing, or the check whether a write was due
+    #                             raised), an agent end or an owed release was dropped past its queue's bound, or resolving or
+    #                             paying one raised
     "falseEnds": 0,            #  agents released at their end that entered their session's live set again (a resumed agent, or an
     #                             end reported early): note_false_end, counted by the kernel
-    "releasedReread": {"count": 0, "bytes": 0}})   # whole reads of a path whose last removal was a release: what releasing cost
+    "releasedReread": {"count": 0, "bytes": 0}})   # whole reads of a path whose last removal was a release: what releasing cost;
+#                                                    only for the last _JSONL_CACHE_MAX releases (the marks' bound)
 _RELEASED_MARKS = {}              # path -> True for the paths a release popped, under _JSONL_CACHE_LOCK: taken by the path's next whole
 #                                   read (releasedReread), cleared by any other pop of it, kept by a same-path replace (a restored tail
 #                                   growing); at most _JSONL_CACHE_MAX, oldest first

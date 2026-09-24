@@ -234,7 +234,7 @@ class RecordCacheByteBudget(unittest.TestCase):
     def test_the_life_maximum_of_held_bytes_survives_the_eviction(self):
         # the growth analysis (2026-09-20): the kernel's RSS stepped in the hours the cache's held bytes set a new maximum
         # and never came back once the entries went. bytesMax is the most the cache has held at once this life, never
-        # lowered, so a new-maximum hour reads from two /perf reads or two self-sample rows, not from watching bytes.
+        # lowered, so a new-maximum hour reads from two /perf reads, not from watching bytes.
         small = self._file("small.jsonl", 5); big = self._file("big.jsonl", 200)
         em._read_jsonl_incremental(small); em._read_jsonl_incremental(big)
         peak = os.path.getsize(small) + os.path.getsize(big)
@@ -432,10 +432,11 @@ _WIDE = ("\u2192", "\u2713", "\u2014", "\u6570", "\u636e", "\U0001f600")   # out
 
 
 def _claude_shaped(path, profile, target, seed):
-    """A synthetic transcript shaped like Claude Code's: user and assistant records of about thirty keys, nested message
-    and content blocks, tool calls and results, invented notes-api text, placeholder uuids. A share of the strings end in
-    a character outside Latin-1 (26 percent for a main transcript, 40 for an agent's), the shares measured on real ones
-    (2026-09-24), because such a string is stored at 2 or 4 bytes per character."""
+    """A synthetic transcript shaped like Claude Code's: user and assistant records of 22 and 33 keys (nested keys
+    counted), nested message and content blocks, tool calls and results, invented notes-api text, placeholder uuids. Of
+    the free-text strings, 26 percent (main transcript) or 40 percent (agent) end in a character outside Latin-1, the
+    rates the 2026-09-24 lab generator used (real transcripts hold 30 and 41 percent of their string memory in such
+    strings), because such a string is stored at 2 or 4 bytes per character."""
     import random
     rnd = random.Random(seed)
     wide = 0.26 if profile == "leaf" else 0.40
@@ -508,12 +509,12 @@ class RecordCacheDefaultBudget(unittest.TestCase):
         """The budget names half of MemTotal, and an entry weighs FILE bytes, so a full budget of entries must fit in that half
         once parsed. This test checks the UNIT: synthetic Claude-shaped records
         measured by a deep size walk, a lower bound on what they take, per file byte, times the default budget, against the
-        memory the fraction names. It does not check the factor's value: the synthetic records measure 1.73 to 2.26 per file
+        memory the fraction names. It does not check the factor's value: the synthetic records measure 1.73 to 2.25 per file
         byte across 3.10 to 3.14t (2026-09-24), so a factor cut to about 2.3 still passes, below the real 2.61 to 3.18. That
         figure, RECORD_CACHE_RESIDENT_PER_FILE_BYTE's 3.2, comes from a kernel's 73-hour life (RSS fitted against the running
-        maximum of held bytes, 3.18) and the largest main transcript measured (3.13 RssAnon per file byte), 2026-09-24. Red
-        before by the assertion: the budget was half of MemTotal in FILE bytes, so a full one held 1.7 to 2.3 times the memory
-        it named."""
+        maximum of held bytes, 3.18) and the highest of nine main transcripts of 10 MB or more measured one by one (3.13
+        RssAnon per file byte), 2026-09-24. Red before by the assertion: the budget was half of MemTotal in FILE bytes, so a
+        full one held 1.7 to 2.3 times the memory it named."""
         mem_kb = 268435456                                            # a synthetic 256 GiB machine
         budget = em._record_cache_default_budget_bytes("MemTotal: %d kB\n" % mem_kb)
         named = mem_kb * 1024 * 0.5                                   # the memory the budget is named for, half of MemTotal: a
