@@ -6744,13 +6744,18 @@ class HermeticKernelPostal(unittest.TestCase):
         fixture as set up). When the module's first test is ended before its module-scoped fixtures are set up, it sets
         up none of them, and a session fixture the second test requests by name is named by neither check: a skipif or a
         skip mark, an xfail mark with run=False, a skip in the setup of a session fixture it requests by name, through a
-        function fixture or by a usefixtures mark, a skip in the setup of a package fixture it requests by name, and an
-        error in the setup of a session fixture it requests. A session fixture that is autouse and skips ends the second
+        function fixture or by a usefixtures mark, a skip in the setup of a package fixture it requests by name, an
+        error in the setup of a session fixture it requests, and a skip by a conftest's pytest_runtest_setup, which runs
+        before pytest's runner sets the test's fixtures up. A session fixture that is autouse and skips ends the second
         test as well, so nothing writes the value and the later child inherits none. When the first test is ended after
         that point it was set up, and the module check names the module: a skip in its body, in a module-, class- or
-        function-scoped fixture it requests, in setUpClass, or by a unittest skip decorator on its method or its class,
-        and an xfail mark with run=False under --runxfail, which runs it. The child's PYTEST_ADDOPTS is popped in every
-        case but that last one, which sets --runxfail there."""
+        function-scoped fixture it requests, in setUpModule (which skips the second test too, after the session fixture
+        that test requests has written the value), in setUpClass, by a unittest skip decorator on its method or its
+        class, or by a conftest's pytest_runtest_setup marked trylast, which runs after the runner's, and an xfail mark
+        with run=False under --runxfail, which runs it. The two hook cases put the hook in a pkg/conftest.py beside the
+        planted modules (the verifier's finding on round 2 of fork PR #894, where the texts' lists of routes had left a
+        conftest's hook out). The child's PYTEST_ADDOPTS is popped in every case but that last one, which sets
+        --runxfail there."""
         later = textwrap.dedent("""\
             import os, subprocess, sys
 
@@ -6802,6 +6807,10 @@ class HermeticKernelPostal(unittest.TestCase):
 
         def gate(scope, body="pytest.skip('synthetic')", autouse=False):
             return "@pytest.fixture(scope=%r, autouse=%r)\ndef skip_gate():\n    %s\n\n\n" % (scope, autouse, body)
+
+        def hook(mark=""):
+            return ("import pytest\n\n\n%sdef pytest_runtest_setup(item):\n    if item.name == 'test_one':\n"
+                    "        pytest.skip('synthetic')\n" % mark)
         cases = [("a session fixture that is autouse", "", plant("session", True), [], []),
                  ("a session fixture the first test requests by name", "", plant("session", False, ("seam", "pass")),
                   [], []),
@@ -6873,6 +6882,16 @@ class HermeticKernelPostal(unittest.TestCase):
                   behind("class TestOne(unittest.TestCase):\n    @classmethod\n    def setUpClass(cls):\n"
                          "        raise unittest.SkipTest('synthetic')\n\n    def test_one(self):\n        pass"), [],
                   ["test_p1.py"], "2 passed, 1 skipped"),
+                 ("a session fixture the second test requests by name, the first skipped by a conftest's "
+                  "pytest_runtest_setup, which runs before the runner's", "pkg/", behind("def test_one():\n    pass"),
+                  [], [], "2 passed, 1 skipped", {"files": {"pkg/conftest.py": hook()}}),
+                 ("a session fixture the second test requests by name, the first skipped by a conftest's "
+                  "pytest_runtest_setup marked trylast, which runs after the runner's", "pkg/",
+                  behind("def test_one():\n    pass"), [], ["pkg/test_p1.py"], "2 passed, 1 skipped",
+                  {"files": {"pkg/conftest.py": hook("@pytest.hookimpl(trylast=True)\n")}}),
+                 ("a session fixture the second test requests by name, the first in a module whose setUpModule skips",
+                  "", behind("def setUpModule():\n    raise unittest.SkipTest('synthetic')\n\n\ndef test_one():\n"
+                             "    pass"), [], ["test_p1.py"], "1 passed, 2 skipped"),
                  ("a session fixture the second test requests by name, the first under xfail(run=False) with "
                   "--runxfail", "", behind("@pytest.mark.xfail(run=False, reason='synthetic')\ndef test_one():\n    pass"),
                   [], ["test_p1.py"], "3 passed", {"env": {"PYTEST_ADDOPTS": "--runxfail"}})]
@@ -6886,6 +6905,7 @@ class HermeticKernelPostal(unittest.TestCase):
             modules = {where + "test_p1.py": text, where + "test_p2_later.py": later}
             if where:
                 modules[where + "__init__.py"] = ""
+            modules.update(opts.get("files", {}))
             env = {"ROMP_TEST_MODULE_ENV_MARKER": marker, "ROMP_TEST_PLANT_DIR": plant_dir, "ROMP_SESSIONS_FILE": None,
                    "PYTEST_ADDOPTS": None}
             env.update(opts.get("env", {}))
@@ -6915,10 +6935,11 @@ class HermeticKernelPostal(unittest.TestCase):
         and the list _fixtures_scoped_above_module derives is held EQUAL to empty. Over a planted tree it lists a
         session fixture, a package fixture, a fixture imported by its bare name and one whose scope is a name; a fixture
         registered by a call applied to its function, or passed it, a decorator imported under another name or bound to
-        one by an assignment, every name of a chained assignment, both of two (`ch1 = ch2 = pytest.fixture`) and the
-        middle one of three (`ch3 = ch4 = ch5 = pytest.fixture`, a fixture under ch4, which a scan reading only the
-        first and the last target misses; the verifier's findings on round 2 of fork PR #894), an alias bound before the
-        binding it copies in the walk's order (read on the fixed point's second pass; the fixed point itself is held by
+        one by an assignment, every name of a chained assignment, both of two (`ch1 = ch2 = pytest.fixture`) and each
+        of three (`ch3 = ch4 = ch5 = pytest.fixture`, a fixture under each name, so a scan that reads any two of the
+        three targets misses one: the first and the last miss ch4's, the first two ch5's, the last two ch3's; the
+        verifier's findings on round 2 of fork PR #894), an alias bound before the binding it copies in the walk's
+        order (read on the fixed point's second pass; the fixed point itself is held by
         test_the_fixture_spelling_scan_follows_an_alias_chain_to_the_pass_that_adds_nothing), a factory held in a name,
         and wrapper defs; yield_fixture as an attribute, by its bare name and under an as-name a from-import gives it;
         and a parametrization's scope above module, by keyword, as the fifth argument (also in a file whose text has
@@ -7141,8 +7162,16 @@ class HermeticKernelPostal(unittest.TestCase):
 
                 ch3 = ch4 = ch5 = pytest.fixture
 
-                @ch4(scope="session")
+                @ch3(scope="package")
                 def o3():
+                    yield
+
+                @ch4(scope="session")
+                def o4():
+                    yield
+
+                @ch5(scope="session")
+                def o5():
                     yield
             """))
         with open(os.path.join(d, "sub", "helpers.py"), "w", encoding="utf-8") as f:
@@ -7163,7 +7192,8 @@ class HermeticKernelPostal(unittest.TestCase):
                           (at, "?", "scope"), (at, "n", "'session'"), (at, "y1", "'session'"), (at, "y2", "'package'"),
                           (at, "y3", "'session'"), (at, "test_p1", "'session'"), (at, "test_p2", "'package'"),
                           (at, "?", "'session'"), (at, "o1", "'session'"), (at, "o2", "'package'"),
-                          (at, "o3", "'session'"), (os.path.join("sub", "test_positional.py"), "test_q", "'session'")])
+                          (at, "o3", "'package'"), (at, "o4", "'session'"), (at, "o5", "'session'"),
+                          (os.path.join("sub", "test_positional.py"), "test_q", "'session'")])
 
     def test_the_fixture_spelling_scan_follows_an_alias_chain_to_the_pass_that_adds_nothing(self):
         """_fixture_spellings's fixed point, run (the verifier's finding on round 2 of fork PR #894: with the loop cut

@@ -1022,15 +1022,20 @@ def restore_env(name, prior):
 # snapshot and before that test's, so this check names the module and the per-test check does not. The first test to be
 # set up need not be the module's first. A test counts as set up once its module-scoped fixtures are set up, this one
 # before the module's own; a test pytest ends before that point sets up none of them, so a fixture requested by name by
-# the first test that is set up is read by neither check, however many tests before it were ended. Ended before that
-# point: a test a skip or skipif mark skips, or an xfail mark with run=False ends (pytest's skipping plugin ends it in
-# its setup hook before any fixture is set up; under --runxfail an xfail mark ends nothing, and the test is set up), and
-# a test that requests a session- or package-scoped fixture whose setup skips or raises (by name, through a fixture it
-# requests, by a usefixtures mark, or as autouse, which ends every test the fixture reaches), since pytest sets a test's
-# fixtures up highest scope first. Set up: a test skipped in its body, in a module-, class- or function-scoped fixture,
-# in setUpClass, or by one of unittest's skip decorators. Each case of the three sentences before this one is a plant in
+# the first test that is set up is read by neither check, however many tests before it were ended. That rule decides
+# every route; the two lists below name the routes planted, not every route there is. Ended before that point: a test a
+# skip or skipif mark skips, or an xfail mark with run=False ends (pytest's skipping plugin ends it in its setup hook
+# before any fixture is set up; under --runxfail an xfail mark ends nothing, and the test is set up); a test that
+# requests a session- or package-scoped fixture whose setup skips or raises (by name, through a fixture it requests, by
+# a usefixtures mark, or as autouse, which ends every test the fixture reaches), since pytest sets a test's fixtures up
+# highest scope first; and a test a hook skips before pytest's runner sets its fixtures up, as a conftest's
+# pytest_runtest_setup does when it runs before the runner's (a plain one does). Set up: a test skipped in its body, in
+# a module-, class- or function-scoped fixture (setUpModule, which pytest runs as a module-scoped fixture, included), in
+# setUpClass, by one of unittest's skip decorators, or by a conftest's pytest_runtest_setup that runs after the runner's
+# (one marked trylast does). Each route either list names, and the rule's own case, is a plant in
 # test_a_write_by_a_fixture_scoped_above_module_is_named_by_each_check_whose_snapshot_its_setup_follows (the verifier's
-# finding on round 2 of fork PR #894, where this text had counted a skip in a session or package fixture as set up). A
+# findings on round 2 of fork PR #894, where this text had counted a skip in a session or package fixture as set up, and
+# then left a conftest's hook out of the lists). A
 # fixture requested at run time (request.getfixturevalue) is set up where the call runs: in a test's body or in a
 # function-scoped fixture the test requests by name, after that test's per-test snapshot, so both checks read it, the
 # per-test one naming the test; in a module-scoped fixture, after this snapshot and before the test's, so only this
