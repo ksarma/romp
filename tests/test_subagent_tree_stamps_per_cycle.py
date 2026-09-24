@@ -160,8 +160,8 @@ candidates up to the found directory in its tree (FoundRoads).
 
 Named mutants, each applied alone at this head and red on the cases named (each run is recorded outside the repo with its
 command, interpreter and head):
-- the fix reverted (kernel/kernel.py of the review base: fork main, #1822 and the dependency-key fix): the bound's
-  pusher case, on its os.stat count on the tree's directories (CALLS x A x D);
+- the fix reverted (kernel/kernel.py of the code before this change: fork main, #1822 and the dependency-key fix): the
+  bound's pusher case, on its os.stat count on the tree's directories (CALLS x A x D);
 - a sticky slot, _pusher_cycle's try reopening one map carried across cycles: (2) for each slot, the samples at the
   case where a directory and an agent land between cycles, the stamp index at the stamps' release case (by identity)
   and the launch folds at the appended-launch case;
@@ -373,8 +373,8 @@ class _Spy:
     directory (normalization is lexical), test_open_road_a_symlinked_spelling_of_the_root; and pathlib on 3.10, which
     calls the os functions it bound at import (the pathlib of 3.11 to 3.14 looks them up at call time, or lists through
     the globber patched above, and is counted), test_open_road_pathlib_on_3_10. An os.statvfs planted on the served tree
-    read leaves the module green, where an os.listdir, os.readlink or os.path.exists planted there reds it by the
-    class's name."""
+    read, guarded so that it cannot raise on a root removed while held, leaves the module green, where an os.listdir,
+    os.readlink or os.path.exists planted there, guarded the same way, reds it by the class's name."""
     KEYS = ("dir_stat", "dir_lstat", "file_stat")
     CLASSES = ("stat", "lstat", "scandir", "listdir", "access", "readlink", "open", "walk")   # the os functions wrapped; io.open and io.FileIO beside them
 
@@ -2682,8 +2682,8 @@ class Guards(_World):
         on disk, its pair and its stamps, at no stat and with no pop (the cross-cycle entry stands), until the scope ends;
         the next scope's first read lstats the root, pops the entry and answers (), (), and its stamp call stats the
         removed directory afresh and answers None. Keys on (D directories, 0 lstats, 0 stats) served after the removal, and
-        on the next scope's (answer, lstats, stamp). Red under the root checked on disk before the held pair is served (the
-        option the review measured and declined for its per-read cost: () at one lstat per read there), under a tree slot
+        on the next scope's (answer, lstats, stamp). Red under the root checked on disk before the held pair is served (an
+        option declined for its per-read cost: () at one lstat per read there), under a tree slot
         kept past its scope (the next scope served the pair) and under a stamp index kept past its scope (the next scope
         served the held stamp)."""
         root, target = str(self.sub), self.dirs[3]
