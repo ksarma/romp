@@ -22,8 +22,14 @@ contract); (3) a directory change landing after a cycle's sample is seen by the 
 miss; (4) the jobs pass opens and closes the slot like the pusher; (5) a connect push on a handler thread shares one
 sample across its chat loop and closes its own scope with it; (6) an EMPTY answer (no root, or not a directory) is never
 scoped, so a tree appearing under an open scope is found by _subagent_file rather than memoized as a miss under a stamp
-newer than the listing it read (the refuter's amendment). Synthetic fixtures only: placeholder ids, the notes-api demo
-world (sessions web and api), a temp directory."""
+newer than the listing it read (the refuter's amendment); (7) the dependency key the agent-file lookup's miss walk records
+for each tree it looked through, a sibling fsid's or its own, comes from the read that answered the lookup, every
+directory of that tree under the (st_mtime, st_size) of the read's own stat, so a file landing after the cycle's sample
+leaves the recorded key behind the next signature's re-stat (2026-09-24; red on the fresh root stat the walk noted
+before); (8) a live link or a file at a sibling's or the own subagents path (never listed) is noted under that path's
+own stat key, as the walk noted it before, so a tree replacing it moves the key, and a path that changed between the
+read and that stat is noted under a key its re-stat differs from. Synthetic fixtures only: placeholder ids, the
+notes-api demo world (sessions web and api), a temp directory."""
 import json
 import os
 import tempfile
@@ -59,6 +65,8 @@ SID2 = "11111111-2222-3333-4444-565656565656"      # api: a plain session, no su
 AID = "a1111111111111111"                          # the top-level agent
 AID_WF = "a2222222222222222"                       # a workflow agent, one level down
 AID_NEW = "a3333333333333333"                      # the agent whose directory lands mid-test
+AID_GHOST = "a4444444444444444"                    # the agent the dependency-key cases look up: its file lands under a sibling
+SIB = "11111111-2222-3333-4444-575757575757"       # a sibling fsid in web's and api's project directory (a /clear fork's)
 TU, TU_WF, TU_NEW = "toolu_tree_0001", "toolu_tree_0002", "toolu_tree_0003"
 AGED_NS = 10_000_000_000                           # ten seconds: past the racy window, as tests/test_subagent_tree_memo.py ages
 
@@ -292,6 +300,273 @@ class OneSampleOfEachRootPerCycle(_World):
             km._live_scope.subagent_trees = None
         self.assertEqual(km._subagent_file(tpath, AID_NEW), wf / ("agent-%s.jsonl" % AID_NEW),
                          "and after the scope: the memo holds the path, not a None")
+
+
+class DependencyKeyFromTheHeldRead(_World):
+    """The key a chat build records for a subagents tree that the agent-file lookup's miss walk looked through
+    (_subagent_file_walk), a sibling fsid's or its own, comes from the read that answered the lookup, never from a stat
+    taken after it (2026-09-24). Inside a cycle scope _find_agent_file is answered the cycle's held pair for a root
+    another reader sampled earlier; a note taken from a fresh _chat_stat_key stat after that post-dates the listing, so a file
+    landing after the sample under a directory the listing lacked is recorded under its own post-landing key, which every
+    later re-stat equals, and the tab that showed the file missing is never rebuilt. And every directory of the tree is
+    noted, not the root alone, since a landing under a listed child (workflows/) moves that child and not the root.
+    The world: api's transcript looks up AID_GHOST, whose file is nowhere until it lands, after the tree's sample, under
+    the sibling fsid SIB's tree (api has no tree of its own there) or under api's own tree (the own-tree case), each
+    tree aged into the past so the landing moves a stamp."""
+
+    def setUp(self):
+        super().setUp()
+        self.tpath = self.paths[SID2]
+        self.sib = Path(self.tpath).parent / SIB / "subagents"
+        self.root = str(self.sib)
+        self.landed = self.sib / "workflows" / "wf_1" / ("agent-%s.jsonl" % AID_GHOST)
+        self.addCleanup(km._SUBAGENT_TREES.pop, self.root, None)
+
+    def _land(self):
+        """The agent's file created with its parents under the sibling's tree."""
+        self.landed.parent.mkdir(parents=True, exist_ok=True)
+        self.landed.write_text("")
+
+    def _lookup_recorded(self):
+        """The lookup under a chat build's record: (the answer, {path: key} as _chat_build_deps records it)."""
+        km._chat_dep_scope.deps = {"task_outs": [], "postal_any": False}
+        try:
+            got = km._subagent_file(self.tpath, AID_GHOST)
+            rec = dict(km._chat_build_deps(SID2, {"events": []})["task_outs"])
+        finally:
+            km._chat_dep_scope.deps = None
+        return got, rec
+
+    def _next_scope_lookup(self):
+        """The next scope's lookup of the same agent, opened and closed as a cycle opens and closes the slot."""
+        km._live_scope.subagent_trees = {}
+        try:
+            return km._subagent_file(self.tpath, AID_GHOST)
+        finally:
+            km._live_scope.subagent_trees = None
+
+    @staticmethod
+    def _pair(st):
+        return (st.st_mtime, st.st_size)
+
+    def test_a_held_sibling_roots_key_is_the_held_stats_pair_not_a_re_stat_after_the_landing_moved_it(self):
+        """D2a. The sibling's tree is its root alone. Red before the fix on (2): the walk noted the root under a fresh
+        _chat_stat_key taken after the held listing was served, the post-landing pair, equal to the re-stat."""
+        self.sib.mkdir(parents=True)
+        _age(self.root)
+        km._live_scope.subagent_trees = {}
+        try:
+            held = km._subagent_tree(self.root)
+            self.assertEqual(held[0], (self.root,), "premise: the sampled tree is the root alone")
+            self.assertIs(km._live_scope.subagent_trees.get(self.root), held, "premise: the scope holds the sample")
+            held_pair = self._pair(held[1][0])
+            self._land()
+            restat = km._chat_stat_key(self.root)
+            self.assertNotEqual(restat, held_pair, "premise: the root's re-stat after the landing differs from the held "
+                                "stat's pair (re-stat %r, held %r)" % (restat, held_pair))
+            got, rec = self._lookup_recorded()
+        finally:
+            km._live_scope.subagent_trees = None
+        self.assertIsNone(got, "(1) the lookup inside the scope answers None (the held listing lacks workflows/)")
+        restat = km._chat_stat_key(self.root)
+        self.assertEqual(rec.get(self.root), held_pair,
+                         "(2) the key recorded for the sibling root equals the held stat's (st_mtime, st_size) "
+                         "(recorded %r, held %r, re-stat %r)" % (rec.get(self.root), held_pair, restat))
+        self.assertNotEqual(rec.get(self.root), restat,
+                            "(2) the key recorded for the sibling root differs from its re-stat "
+                            "(recorded %r, re-stat %r)" % (rec.get(self.root), restat))
+        self.assertEqual(self._next_scope_lookup(), self.landed, "(3) the next scope's lookup answers the landed file")
+
+    def test_a_held_sibling_trees_listed_child_is_recorded_under_its_held_stats_pair(self):
+        """D2b. The sibling's tree is its root and an empty workflows/, so the landing moves workflows/ and not the root.
+        Red before the fix: the walk recorded no key for workflows/, and the root's recorded key equalled its re-stat."""
+        wf = self.sib / "workflows"
+        wf.mkdir(parents=True)
+        _age(self.root)
+        km._live_scope.subagent_trees = {}
+        try:
+            held = km._subagent_tree(self.root)
+            self.assertEqual(held[0], (self.root, str(wf)), "premise: the sampled tree is the root and workflows/")
+            self.assertIs(km._live_scope.subagent_trees.get(self.root), held, "premise: the scope holds the sample")
+            root_pair, wf_pair = self._pair(held[1][0]), self._pair(held[1][1])
+            self._land()
+            wf_restat, root_restat = km._chat_stat_key(str(wf)), km._chat_stat_key(self.root)
+            self.assertNotEqual(wf_restat, wf_pair, "premise: workflows/'s re-stat after the landing differs from its "
+                                "held stat's pair (re-stat %r, held %r)" % (wf_restat, wf_pair))
+            self.assertEqual(root_restat, root_pair, "premise: the root's re-stat after the landing equals its held "
+                             "stat's pair (re-stat %r, held %r)" % (root_restat, root_pair))
+            got, rec = self._lookup_recorded()
+        finally:
+            km._live_scope.subagent_trees = None
+        self.assertIsNone(got, "the lookup inside the scope answers None (the held listing lacks workflows/wf_1/)")
+        wf_restat = km._chat_stat_key(str(wf))
+        self.assertEqual(rec.get(str(wf)), wf_pair,
+                         "the key recorded for workflows/ equals its held stat's (st_mtime, st_size) (recorded %r, held "
+                         "%r, re-stat %r; recorded for the root %r, the root's re-stat %r)"
+                         % (rec.get(str(wf)), wf_pair, wf_restat, rec.get(self.root), km._chat_stat_key(self.root)))
+        self.assertNotEqual(rec.get(str(wf)), wf_restat, "the key recorded for workflows/ differs from its re-stat "
+                            "(recorded %r, re-stat %r)" % (rec.get(str(wf)), wf_restat))
+        self.assertEqual(self._next_scope_lookup(), self.landed, "the next scope's lookup answers the landed file")
+
+    def test_the_own_trees_listed_child_is_recorded_under_its_held_stats_pair(self):
+        """The same rule on the walk's own tree, which it reads once and notes when the project directory's listing
+        reaches it: api's own tree is its root and an empty workflows/, sampled first in the scope, and the file lands
+        under workflows/. Red before the fix: the own root was noted under a fresh _chat_stat_key stat (equal to its held
+        pair, since the landing did not move it) and workflows/ not at all."""
+        own = km._subagents_dir(self.tpath)
+        wf = own / "workflows"
+        wf.mkdir(parents=True)
+        _age(str(own))
+        landed = wf / "wf_1" / ("agent-%s.jsonl" % AID_GHOST)
+        self.addCleanup(km._SUBAGENT_TREES.pop, str(own), None)
+        km._live_scope.subagent_trees = {}
+        try:
+            held = km._subagent_tree(str(own))
+            self.assertEqual(held[0], (str(own), str(wf)), "premise: the sampled tree is the own root and workflows/")
+            self.assertIs(km._live_scope.subagent_trees.get(str(own)), held, "premise: the scope holds the sample")
+            wf_pair = self._pair(held[1][1])
+            landed.parent.mkdir()
+            landed.write_text("")
+            wf_restat = km._chat_stat_key(str(wf))
+            self.assertNotEqual(wf_restat, wf_pair, "premise: workflows/'s re-stat after the landing differs from its "
+                                "held stat's pair (re-stat %r, held %r)" % (wf_restat, wf_pair))
+            got, rec = self._lookup_recorded()
+        finally:
+            km._live_scope.subagent_trees = None
+        self.assertIsNone(got, "the lookup inside the scope answers None (the held listing lacks workflows/wf_1/)")
+        wf_restat = km._chat_stat_key(str(wf))
+        self.assertEqual(rec.get(str(wf)), wf_pair,
+                         "the key recorded for the own workflows/ equals its held stat's (st_mtime, st_size) (recorded "
+                         "%r, held %r, re-stat %r; recorded for the own root %r, its re-stat %r)"
+                         % (rec.get(str(wf)), wf_pair, wf_restat, rec.get(str(own)), km._chat_stat_key(str(own))))
+        self.assertNotEqual(rec.get(str(wf)), wf_restat, "the key recorded for the own workflows/ differs from its "
+                            "re-stat (recorded %r, re-stat %r)" % (rec.get(str(wf)), wf_restat))
+        self.assertEqual(self._next_scope_lookup(), landed, "the next scope's lookup answers the landed file")
+
+    def test_with_no_scope_open_the_same_sequence_finds_the_file(self):
+        """The control: D2a's sequence with no scope open. The lookup samples the sibling's tree afresh after the landing
+        and answers the file, so the None inside a scope is the held sample's one-cycle lag."""
+        self.sib.mkdir(parents=True)
+        _age(self.root)
+        self.assertIsNone(getattr(km._live_scope, "subagent_trees", None), "premise: no scope is open")
+        self.assertEqual(km._subagent_tree(self.root)[0], (self.root,), "premise: the sampled tree is the root alone")
+        self._land()
+        got, _rec = self._lookup_recorded()
+        self.assertEqual(got, self.landed, "with no scope open the lookup answers the landed file")
+
+
+class WalkNoteForAPathThatHoldsNoTree(_World):
+    """The miss walk's note for a subagents path, a sibling fsid's or its own, that holds a live link or a file (never
+    listed, never scoped) is that path's _chat_stat_key, as the walk noted every such path before its note moved to the
+    tree read (2026-09-24): the link target's (st_mtime, st_size), or the file's. So a real tree replacing the link or
+    the file, holding the agent's file under workflows/wf_1/, moves the key against the next signature's re-stat and the
+    tab that showed the file missing is rebuilt. The first form of the read-keyed note recorded nothing for such a path,
+    as _subagent_meta_map records nothing for it, and nothing then moved when the tree replaced it: every case but the
+    dangling-link control is red there on the key's presence. The world: api's transcript looks up AID_GHOST, whose file
+    is nowhere; the link's target and the file are aged into the past, so the tree that replaces them differs in
+    mtime from what the note recorded."""
+
+    def setUp(self):
+        super().setUp()
+        self.tpath = self.paths[SID2]
+        self.target = Path(self.tpath).parent.parent / "elsewhere"   # outside the project directory: no fsid of its own
+
+    def _lookup_recorded(self):
+        """The lookup under a chat build's record: (the answer, {path: key} as _chat_build_deps records it)."""
+        km._chat_dep_scope.deps = {"task_outs": [], "postal_any": False}
+        try:
+            got = km._subagent_file(self.tpath, AID_GHOST)
+            rec = dict(km._chat_build_deps(SID2, {"events": []})["task_outs"])
+        finally:
+            km._chat_dep_scope.deps = None
+        return got, rec
+
+    def _place(self, p, kind):
+        """A live link to an aged directory, a dangling link, or an aged file at `p`, its fsid directory created."""
+        p.parent.mkdir(parents=True, exist_ok=True)
+        if kind == "file":
+            p.write_text("x")
+            t = time.time_ns() - AGED_NS
+            os.utime(str(p), ns=(t, t))
+        elif kind == "link":
+            self.target.mkdir()
+            _age(str(self.target))
+            os.symlink(str(self.target), str(p))
+        else:
+            os.symlink(str(self.target), str(p))                    # the target is never created: a dangling link
+        self.assertEqual(km._subagent_tree(str(p))[0], (), "premise: the read at %s answers no directory" % kind)
+
+    @staticmethod
+    def _replace_with_tree(p):
+        """The link or file at `p` replaced by a real subagents tree holding the agent's file one workflow down."""
+        os.unlink(str(p))
+        landed = p / "workflows" / "wf_1" / ("agent-%s.jsonl" % AID_GHOST)
+        landed.parent.mkdir(parents=True)
+        landed.write_text("")
+        return landed
+
+    def _check(self, p, kind):
+        self._place(p, kind)
+        before = km._chat_stat_key(str(p))
+        got, rec = self._lookup_recorded()
+        self.assertIsNone(got, "the lookup answers None: nothing is read through a %s" % kind)
+        self.assertIn(str(p), rec, "a key is recorded for the %s at the subagents path (recorded paths %r)"
+                      % (kind, sorted(rec)))
+        self.assertEqual(rec[str(p)], before, "the key recorded for the %s is the path's _chat_stat_key (recorded %r, "
+                         "stat key %r)" % (kind, rec[str(p)], before))
+        landed = self._replace_with_tree(p)
+        restat = km._chat_stat_key(str(p))
+        self.assertNotEqual(rec[str(p)], restat, "the key recorded for the %s differs from the path's re-stat once a "
+                            "tree replaced it (recorded %r, re-stat %r)" % (kind, rec[str(p)], restat))
+        self.assertEqual(km._subagent_file(self.tpath, AID_GHOST), landed, "the next lookup answers the landed file")
+
+    def test_a_live_link_at_a_sibling_path_is_noted_under_the_targets_stat_key(self):
+        self._check(Path(self.tpath).parent / SIB / "subagents", "link")
+
+    def test_a_file_at_a_sibling_path_is_noted_under_its_stat_key(self):
+        self._check(Path(self.tpath).parent / SIB / "subagents", "file")
+
+    def test_a_live_link_at_the_own_path_is_noted_under_the_targets_stat_key(self):
+        self._check(km._subagents_dir(self.tpath), "link")
+
+    def test_a_file_at_the_own_path_is_noted_under_its_stat_key(self):
+        self._check(km._subagents_dir(self.tpath), "file")
+
+    def test_a_dangling_link_at_a_sibling_path_is_noted_none(self):
+        """The control, green before and after the read-keyed note: a dangling link notes None, what its re-stat
+        answers until something real is placed there."""
+        p = Path(self.tpath).parent / SIB / "subagents"
+        self._place(p, "dangling")
+        got, rec = self._lookup_recorded()
+        self.assertIsNone(got, "the lookup answers None")
+        self.assertIn(str(p), rec, "a key is recorded for the dangling link (recorded paths %r)" % sorted(rec))
+        self.assertIsNone(rec[str(p)], "the key recorded for the dangling link is None (recorded %r)" % (rec[str(p)],))
+
+    def test_a_link_replaced_by_a_tree_between_the_read_and_the_note_leaves_a_key_the_re_stat_differs_from(self):
+        """The note's stat is taken after the read. When a tree replaces the link in between (injected right after the
+        read of the sibling's path returns), the recorded key must still differ from the path's re-stat, so the tab
+        that showed the file missing is rebuilt; a bare stat after the read would record the replacing tree's own key,
+        equal to every later re-stat."""
+        p = Path(self.tpath).parent / SIB / "subagents"
+        self._place(p, "link")
+        real = km._subagent_tree
+        swapped = []
+
+        def read_then_swap(d, *args, **kwargs):           # the walk passes the tree read's `faults` list by keyword
+            out = real(d, *args, **kwargs)
+            if str(d) == str(p) and not swapped:
+                swapped.append(self._replace_with_tree(p))
+            return out
+        with mock.patch.object(km, "_subagent_tree", read_then_swap):
+            got, rec = self._lookup_recorded()
+        self.assertEqual(len(swapped), 1, "premise: the sibling's path was read once and then replaced")
+        self.assertIsNone(got, "the lookup answers None: the read saw the link")
+        self.assertIn(str(p), rec, "a key is recorded for the sibling's path (recorded paths %r)" % sorted(rec))
+        restat = km._chat_stat_key(str(p))
+        self.assertNotEqual(rec[str(p)], restat, "the key recorded for the sibling's path differs from its re-stat "
+                            "after the replacement (recorded %r, re-stat %r)" % (rec[str(p)], restat))
+        self.assertEqual(km._subagent_file(self.tpath, AID_GHOST), swapped[0],
+                         "the next lookup answers the landed file")
 
 
 if __name__ == "__main__":
