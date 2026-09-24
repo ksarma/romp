@@ -990,6 +990,10 @@ export class FederationManager {
   // that host's new order (the kernel omits the key only when its set is empty, but the pane shim's
   // FIFO replaces a queued strip with a newer one, so absent means "no news", never "none").
   private perHostSkeleton: Record<string, string[]> = {};
+  // each host's createIdEcho, from its own latest strip (kernel.py _tab_order_frame: the field says the kernel echoes a
+  // comment create's createId): only a fresh emission, which that host's strip drives, hands it to the panes
+  // (emitMergedOrder)
+  private perHostEcho: Record<string, boolean> = {};
   private localViews: any = null;   // the LOCAL kernel's session-views blob, carried on merged tabOrder re-emits
   private localSelfHost = "";       // the LOCAL kernel's own name (its tabOrder frame's selfHost), carried the same way
   private localViewsRejected: any = null;   // the last LOCAL tabOrder blob the seq gate turned away since it last adopted one — the caps frame adopts it (inbound)
@@ -1282,8 +1286,14 @@ export class FederationManager {
       (this.perHostSids[host] ||= new Set()).add(m.id);
     }
     // a kernel's `caps` frame describes THAT kernel; the panes hold only the LOCAL kernel's (its views
-    // store is the one they write). A remote's would read as the local kernel's — dropped here.
-    if (m && m.type === "caps" && host !== LOCAL) return;
+    // store is the one they write). A remote's would read as the local kernel's, so it is dropped here, and its list
+    // handed to the panes under its host's name instead (romp:hostCaps, in the host's frame order: the chat's comment
+    // dialog takes its mode from each host's latest evidence, render.ts createIdEcho)
+    if (m && m.type === "caps" && host !== LOCAL) {
+      const caps = Array.isArray(m.caps) ? m.caps.filter((x: unknown): x is string => typeof x === "string") : [];
+      window.dispatchEvent(new CustomEvent("romp:hostCaps", { detail: { host, caps } }));
+      return;
+    }
     // The local kernel's caps frame is the reconnect event: each replayed views store adopts the blob its
     // gate last turned away when the frame names it (the 2026-09-05 review; capsAdopts),
     // as the panes do — the kernel sends its connect push before this frame and `viewsSeq` is the seq of
@@ -1368,6 +1378,7 @@ export class FederationManager {
       if (host === LOCAL && typeof m.selfHost === "string" && m.selfHost) this.localSelfHost = m.selfHost;
       this.ensureHost(host);
       this.absorbHostReport(host, prevOrder, prevTabs);   // a host just reported its sessions → the one
+      this.perHostEcho[host] = m.createIdEcho === true;   // this host's marker, for the fresh emission below (emitMergedOrder)
       this.emitMergedOrder(true, host);                   //   moment the stored arrangement may be touched
       return;
     }
@@ -1579,6 +1590,11 @@ export class FederationManager {
     // confirms a close by absence like any order, but is never evidence that a kernel still has a tab.
     if (fresh) data.freshHost = freshHost;
     else data.reemit = true;
+    // A fresh emission also carries the fresh host's own createIdEcho, when its frame had it (the field says the kernel
+    // echoes a comment create's createId, kernel.py _tab_order_frame): the field is that host's alone, so a re-emit,
+    // which re-serves every host's slice, carries none, and the chat reads it per host on each connection's first strip
+    // (render.ts noteConnectPush), where a fresh emission without it is a kernel from before the echo
+    if (fresh && this.perHostEcho[freshHost]) data.createIdEcho = true;
     this.emit(data);
   }
 
@@ -1784,9 +1800,22 @@ export class FederationManager {
   // `warn` (render.ts toasts it), naming the host and the action so the user knows what didn't land.
   // Only for a gesture: the pane's own bookkeeping is held instead (BOOKKEEPING), since a toast about a
   // message the user never sent reads as a failure of the tap they did make (2026-09-10).
+  // A chat comment's create whose frame carries a createId (every page since upstream stamped the gesture) is also
+  // answered, on this page, as a TRANSIENT refusal naming the create, marked relayDrop because it comes from this page
+  // and not from the host's kernel. It is for a create the popover holds in echo mode, whose sent dialog stays busy
+  // until an answer naming its id, which after a drop here would never come: the hold keeps it, and the relay's next
+  // connection posts it again once that connection's connect push shows the echo (render.ts noteConnectPush), as does
+  // each session frame on such a connection until its answer, while a give-up past the retry bound hands its words
+  // back; a connection whose connect push shows no echo hands it back to the person, with no re-post (render.ts
+  // handBackEchoCreates). For a main-mode create it changes nothing: main's handling gets it inside main's own post,
+  // where it leaves no hold armed that main's did not (render.ts, the routing of the answers), and answers the drop with
+  // the warn's hand-back, as on main.
   private dropWarn(host: string, msg: any): void {
     window.dispatchEvent(new MessageEvent("message", { data: { type: "warn",
       text: `${host} is unreachable (its kernel isn't answering) — “${(msg && msg.type) || "action"}” was not delivered` } }));
+    if (msg && msg.type === "commentCreate" && typeof msg.createId === "string" && msg.createId)
+      window.dispatchEvent(new MessageEvent("message", { data: { type: "commentCreateFailed", id: prefixId(host, String(msg.id || "")),
+        uuid: String(msg.uuid || ""), transient: true, text: `${host} is unreachable`, createId: msg.createId, relayDrop: true } }));
   }
 
   private ensureHost(h: string): void {

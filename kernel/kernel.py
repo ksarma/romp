@@ -6898,8 +6898,17 @@ def _tab_order_frame(order, tabs, live, c=None):
     client; and the federated merge keeps a host's last list when a frame carries no key, so an emptied set
     must be SAID ([]) for the strip to stop showing skeletons (integration find 2026-09-07). A client that
     never had a set (a fresh page) sends no key, as before. The caller holds _client_lock(c) (see
-    _send_tab_order); with no client the frame is the bare shape."""
-    fr = {"type": "tabOrder", "order": list(order), "tabs": tabs, "selfHost": _self_host(),
+    _send_tab_order); with no client the frame is the bare shape.
+
+    `createIdEcho` (always true): this kernel echoes a comment create's createId in every commentCreated and
+    commentCreateFailed it sends (KERNEL_WS_CAPS commentCreateId). It rides the strip because every chat connection,
+    local or relayed, a fresh page's or a redial's, is sent a strip ahead of its sessions (tabs-first, by whichever of
+    the three senders reaches it first), so a page can read it on each connection before it re-posts anything there:
+    the chat re-posts a comment create still held from an earlier connection only on a connection whose first strip
+    carries this field, and a connection whose first strip lacks it (a kernel older than the echo) makes the chat hand
+    the creates still out on that host back to the person, with no re-post (render.ts noteConnectPush).
+    Kernel to page only: no page sends it, and the caps frame still comes after the pushes, on a ready alone."""
+    fr = {"type": "tabOrder", "order": list(order), "tabs": tabs, "selfHost": _self_host(), "createIdEcho": True,
           **_views_payload(), "live": sorted({str(x) for x in live})}
     if c is not None and "skeletonOrder" in c:       # a set has existed for this client
         sk = c.get("skeleton") or set()
@@ -22064,8 +22073,11 @@ def _release_create(key):
 def _retry_parked_creates():
     """One pusher cycle's pass over lag-parked comment creates: re-run each against the (now
     possibly caught-up) transcript; success acks commentCreated + a fresh comments frame to every
-    chat client (the creating client's socket may be gone — the adopt keys on the uuid, and clients
-    without a matching pending simply ignore it). Still lagging → keep, bounded; any OTHER error →
+    chat client (the creating client's socket may be gone: the ack names the create's id, and a page that minted
+    it in echo mode settles that create by it; any other page takes it to its handling of a kernel without the
+    echo, by the message, where it settles none of that page's echo-mode creates, and so does a page given the ""
+    a create that carried none is acked with; the key shows each page that this kernel echoes the id). Still
+    lagging → keep, bounded; any OTHER error →
     drop (the client's own attempt cap surfaces the failure honestly)."""
     if not _parked_creates:
         return
@@ -22102,7 +22114,7 @@ def _retry_parked_creates():
                     if fr:
                         c["send"](json.dumps(fr))
                     c["send"](json.dumps({"type": "commentCreated", "id": pk["sid"], "tid": tid,
-                                          "uuid": pk["uuid"]}))
+                                          "uuid": pk["uuid"], "createId": pk.get("createId", "")}))
                 except Exception:
                     pass
 
@@ -24044,6 +24056,14 @@ def _refuse_drive_records(client, op, sid, msg, what, cause, lead):
         client["send"](json.dumps({"type": "err", "title": "That %s was not delivered" % what,
                                    "text": detail, "copy": text, "sid": sid,
                                    "op": op, "itemId": msg.get("itemId") or ""}))
+        if op == "commentCreate":
+            # a comment refused here is answered as the create door answers a refusal, naming the gesture: a page
+            # that sent it from an echo-mode dialog hands that dialog back with its words, where it otherwise waited
+            # busy until closed; a main-mode dialog stays busy until closed, as on main, whose handling of the refusal
+            # drops the hold and the working mark and hands back only on a warn, which this gate does not send
+            client["send"](json.dumps({"type": "commentCreateFailed", "id": sid, "uuid": str(msg.get("uuid") or ""),
+                                       "transient": False, "text": lead,
+                                       "createId": str(msg.get("createId") or "")}))
     except Exception:
         pass
 
@@ -24629,7 +24649,15 @@ def _drive(msg, client):
         # parked copy that landed) is the same comment: answer with the same thread, never a twin (T289).
         # The repeat is known by the createId the popover minted at the send gesture, so a second comment
         # in the same words on the same passage, a new id, is a new thread (review, 2026-09-09).
-        key = _create_key(sid, msg["uuid"], msg["exact"], msg["text"], msg.get("createId") or "")
+        # Every answer echoes the gesture's id, so the popover settles the create it sent and not whichever
+        # create on that message it holds. A frame that carried none (a page from before the id) is answered with "".
+        # A page routes an answer by that id: one naming a create the page minted in echo mode goes to its echo-mode
+        # handling, which settles that create. Every other answer goes to its handling of a kernel without the echo,
+        # by the message's uuid: "" or an id the page did not mint in echo mode settles none of its echo-mode creates
+        # and shows it the echo; an answer with no createId key (an older kernel's) shows it that the host has no echo,
+        # and first hands its echo-mode creates still out on that host back to the person, with no re-post.
+        cid = str(msg.get("createId") or "")
+        key = _create_key(sid, msg["uuid"], msg["exact"], msg["text"], cid)
         state, again = _reserve_create(key)
         if state == "repeat":
             sys.stderr.write("comment create repeated (%s): the same comment again, answered with thread %s\n"
@@ -24637,13 +24665,14 @@ def _drive(msg, client):
             fr = _comments_frame(sid)
             if fr:
                 client["send"](json.dumps(fr))
-            client["send"](json.dumps({"type": "commentCreated", "id": sid, "tid": again, "uuid": str(msg["uuid"])}))
+            client["send"](json.dumps({"type": "commentCreated", "id": sid, "tid": again, "uuid": str(msg["uuid"]),
+                                       "createId": cid}))
             return True
         if state == "busy":
             # the other door holds this create (parked, or mid-create on the pusher): the typed transient
             # nack keeps the popover's mark alive, and the pusher's success acks every chat client
             client["send"](json.dumps({"type": "commentCreateFailed", "id": sid, "uuid": str(msg["uuid"]),
-                                       "transient": True, "text": ANCHOR_LAG_ERR}))
+                                       "transient": True, "text": ANCHOR_LAG_ERR, "createId": cid}))
             return True
         try:
             err, tid = _comment_create(sid, str(msg["uuid"]), str(msg["exact"]), str(msg["text"]),
@@ -24670,7 +24699,7 @@ def _drive(msg, client):
                                                 "effort": str(msg.get("effort") or ""),
                                                 "fast": str(msg.get("fast") or ""),
                                                 "color": str(msg.get("color") or ""),
-                                                "createId": str(msg.get("createId") or ""), "tries": 0})
+                                                "createId": cid, "tries": 0})
             else:
                 client["send"](json.dumps({"type": "warn", "text": err}))
                 # the kernel log carries the refusal too (T289): a name refused at this door showed only
@@ -24678,7 +24707,7 @@ def _drive(msg, client):
                 sys.stderr.write("comment create refused (%s, name %r): %s\n" % (sid[:8], str(msg.get("name") or "")[:80], err))
             client["send"](json.dumps({"type": "commentCreateFailed", "id": sid,
                                        "uuid": str(msg["uuid"]), "transient": err == ANCHOR_LAG_ERR,
-                                       "text": err}))
+                                       "text": err, "createId": cid}))
         else:
             # the FRAME rides ahead of the ack: the ack's handler adopts the new thread from the
             # client's thread map, so the thread must be in it first (reversed, the popover looked
@@ -24687,7 +24716,7 @@ def _drive(msg, client):
             if fr:
                 client["send"](json.dumps(fr))
             client["send"](json.dumps({"type": "commentCreated", "id": sid, "tid": tid,
-                                       "uuid": str(msg["uuid"])}))
+                                       "uuid": str(msg["uuid"]), "createId": cid}))
     elif t == "commentReply" and msg.get("tid") and msg.get("text"):
         err = _comment_reply(sid, str(msg["tid"]), str(msg["text"]))
         if err:
@@ -56564,7 +56593,16 @@ READY_GATE_CAP = "readyGate"
 #   tagEdit — the targeted `tagEdit` op (create / rename / recolor / addMember / removeMember /
 #             delete / move, by tag id), the `tagEditAck` / `viewsAck` answers on the poster's socket,
 #             and the write sequence (`seq`) on every views blob.
-KERNEL_WS_CAPS = ("tagEdit", "chatProto2")   # chatProto2: the uuid-anchored chat wire (T323 stage 4b)
+#   commentCreateId: every commentCreated and commentCreateFailed carries the createId of the create it
+#             answers ("" for a create that carried none). A page opens a comment dialog in echo mode (the
+#             create settled by the answer naming it) only for a session whose kernel is last known to echo it
+#             (createIdEcho on its connection's first strip, _tab_order_frame; this cap in its caps frame; or the
+#             key on a create answer), and keeps main's handling for any other. It re-posts an echo-mode create
+#             held from an earlier connection only on a connection whose first strip carries createIdEcho, and a
+#             first strip without it (or a caps frame without this cap, or an answer without the key) makes it hand
+#             the echo-mode creates still out on that host back to the person, with no re-post (render.ts
+#             handBackEchoCreates).
+KERNEL_WS_CAPS = ("tagEdit", "chatProto2", "commentCreateId")   # chatProto2: the uuid-anchored chat wire (T323 stage 4b)
 # The caps frame: {type: "caps", caps: [...], viewsSeq: int|null}. `viewsSeq` (the 2026-09-05
 # review) is the write seq of the views blob the READY HANDLER'S OWN connect push served this client — the
 # tabOrder frame's for a chat page, the timeline skeleton's (`data.views`), the feed frame's — read from
@@ -66666,6 +66704,7 @@ def _shim(app, v=0, caps="", no_stale=False):
     return """
 %s
 (function(){/*shim-core*/var queue=[],ws=null,everConnected=false;
+var sockGen=0;window.__rompSockGen=0;window.__rompSockOpen=function(){return !!ws&&ws.readyState===1;};   // this page's socket generation: 0 for the first socket, one more at each reopen, published as window.__rompSockGen before that reopen's romp:wsup and stamped on its socket-flip frame; and whether its socket is OPEN now (window.__rompSockOpen: a send made otherwise, a CLOSING socket's included, waits in the queue and goes out first on the next socket to open). The bundle reads them to tell which socket a frame belongs to and whether a post would wait for the next socket (render.ts cmtFlipGen, sockOpen); only this shim assigns them
 var bundleReady=false,readyQueued=false,readyAcked=false,readyProto=0,readyMsg=null;   // readyProto/readyMsg: the bundle's ready as sent, for the redial's dial term (&proto=) and for a fresh dial after a ready no caps frame answered (the socket died between the kernel's pushes and its frame): onopen posts it again, so the kernel serves the page whole, answers, and the redials after carry the flag (round 3, C); one the flush just sent is not doubled   // the BUNDLE's own {type:"ready"} has passed through send() on this page / is waiting in `queue` for an open (onopen clears it once the flush has carried it) / has been ANSWERED: the kernel's caps frame has arrived on a socket of this page (onmessage), the ready arm's own statement (_send_caps, sent after that arm's pushes) that it processed the bundle's ready and served the page whole ahead of it; the dial's reconnect term (connect) keys on all three
 var queuedDiag=0,DIAG_QUEUE_MAX=20;   // clientDiag rows waiting in `queue` for a reconnect, capped (an outage must not pile up breadcrumbs); other queued messages are untouched
 var failedConnects=0,firstFailT=0;   // handshakes that never OPENED since the last open: reported as ONE wsconnfail row on the next open, never one wsclose per redial
@@ -66937,8 +66976,8 @@ if(failedConnects){send({type:"clientDiag",surface:"pane-shim",what:"wsconnfail"
 if(wasReconn){var ann=restartAnnounced&&Date.now()-restartAnnounced<30000;restartAnnounced=0;   // one-shot: spent here
 if(window.__rompReload&&!window.__rompReload.inShell())window.__rompReload.checkBoot();   // T265: a REOPEN is the restart signal — a standalone page asks /version whose kernel answered; inside the shell, the shell asks on its own socket (since 2026-09-16 the answer counts the restart and offers a newer build; it reloads nothing)
 if(!ann)armStale(pendingWhy||"reconnect");   // T217: an ANNOUNCED restart's reconnect skips the arm — the resync lands in a beat and the flash was pure noise; a restart that never comes back stays loud through the disconnected state itself, and a SECOND reconnect arms as always
-pendingWhy="";freshPending=true;armFresh();try{window.dispatchEvent(new Event("romp:wsup"));}catch(e){}
-enqueue({type:"wsup"});}};   // the flip as a FRAME too: frames of the dead socket may still be draining from the FIFO, and a bundle that scopes "loaded on this socket" must see the flip between them and the new socket's frames, not at onopen (review find 2026-09-07)
+pendingWhy="";freshPending=true;armFresh();sockGen++;window.__rompSockGen=sockGen;try{window.dispatchEvent(new Event("romp:wsup"));}catch(e){}
+enqueue({type:"wsup",gen:sockGen});}};   // the flip as a FRAME too: frames of the dead socket may still be draining from the FIFO, and a bundle that scopes "loaded on this socket" must see the flip between them and the new socket's frames, not at onopen (review find 2026-09-07); it carries the new socket's generation, so a bundle that did not hear this reopen's romp:wsup (it loaded after the open) still tells the flip of the socket that opened last from a dropped one's
 ws.onmessage=function(ev){lastRecv=Date.now();resumeProvisional=0;PM.wsBytes+=(ev.data&&ev.data.length)||0;if(returnAt)returnBytes+=(ev.data&&ev.data.length)||0;var msg;try{msg=JSON.parse(ev.data);}catch(e){return;}
 if(msg&&msg.type==="caps")readyAcked=true;   // the kernel's answer to a ready it processed: _send_caps, which the ready arm alone sends, after its own pushes. From here a redial may declare itself (the dial term in connect); the frame goes on to the bundle below like any other
 if(msg&&msg.type==="reloadRequired"){try{if(window.__rompReload)window.__rompReload.require(msg.why);}catch(e){}return;}   // the safety valve (2026-09-16): a kernel that must force a reload for correctness; the core honours it through its holds; nothing sends it today

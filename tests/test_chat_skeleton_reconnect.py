@@ -323,9 +323,11 @@ class SkeletonReconnect(unittest.TestCase):
         self.assertEqual(self._statuses(c), [], "no status frames for a client that declared no reconnect")
         to = self._tab_orders(c)
         self.assertEqual(len(to), 1)
-        self.assertEqual(set(to[0]), {"type", "order", "tabs", "views", "live", "selfHost"},
+        self.assertEqual(set(to[0]), {"type", "order", "tabs", "views", "live", "selfHost", "createIdEcho"},
                          "today's frame, key for key (T258's `live` rides every strip; `selfHost` names the viewing "
-                         "kernel since 2026-09-06): no new key for a client that did not declare a reconnect")
+                         "kernel since 2026-09-06; `createIdEcho`, the comment create echo's marker, rides every strip "
+                         "too, tests/test_comment_create_idempotent.py ConnectPushMarker): no new key for a client that "
+                         "did not declare a reconnect")
         for sid in TAB_ORDER:
             self.assertIn(("chat", sid), c["sent"])
         self.assertNotIn("skeleton", c)

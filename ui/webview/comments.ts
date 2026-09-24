@@ -5,6 +5,7 @@
 // re-rendered turn, and the small derivations the popover renders from. All DOM wiring lives in
 // render.ts (source-pinned by comments.test.ts, the repo convention).
 import type { PickHeld } from "./pick-held";
+import { hostOf } from "./host-prefix";
 
 export type CommentMsg = { who: "you" | "agent"; text: string; t: number };
 
@@ -243,6 +244,98 @@ export function newCommentCreate(anchor: { sid: string; uuid: string; exact: str
   return { sid: anchor.sid, uuid: anchor.uuid, exact: anchor.exact, text, name, model: anchor.model || "",
            effort: anchor.effort || "", fast: anchor.fast || "", color: anchor.color || "",
            createId: mintCreateId(), tries: 0 };
+}
+
+/** A create dialog's draft keys in echo mode: the PASSAGE's, not the message's. Keyed by the message, one passage's
+ *  unsent or refused words opened in a comment on another passage of it. The uuid comes first and holds no newline.
+ *  A main-mode dialog keeps main's keys, the message's ("new:" and "newname:" + its uuid), which hold no newline. */
+export const createDraftKey = (a: { uuid: string; exact: string }): string => "new:" + a.uuid + "\n" + a.exact;
+export const createNameKey = (a: { uuid: string; exact: string }): string => "newname:" + a.uuid + "\n" + a.exact;
+
+/** An echo-mode dialog opening on a passage whose own draft is empty, words and typed name both, takes main's draft of
+ *  the message ("new:" + uuid, "newname:" + uuid) and moves it, the words and the typed name together, so words typed
+ *  while the host was in main mode are not lost when it reaches echo mode. A passage with words or a typed name of its
+ *  own takes nothing, and main's draft waits whole in the dialog's note (render.ts paintHeldNotes): a comment's typed
+ *  name travels with its words, so one never rides another comment's words. The other direction is no move: a
+ *  main-mode dialog shows the passage's echo-mode draft in its note, and only the person's Bring it back puts it in
+ *  main's keys, since main's handling deletes and prunes main's keys as main does. Returns what it moved (null when it
+ *  moved nothing), which render.ts records when main's retry gave up on the message's comment (noteMainBrought). */
+export function carryMainDraft(drafts: Map<string, string>, a: { uuid: string; exact: string }): { text: string; name: string } | null {
+  const own = [createDraftKey(a), createNameKey(a)], main = ["new:" + a.uuid, "newname:" + a.uuid];
+  if (own.some((k) => drafts.get(k)) || !main.some((k) => drafts.get(k))) return null;
+  const carried = { text: drafts.get(main[0]) || "", name: drafts.get(main[1]) || "" };
+  for (let i = 0; i < 2; i++) {
+    const moved = drafts.get(main[i]);
+    if (moved) drafts.set(own[i], moved);
+    drafts.delete(main[i]);
+  }
+  return carried;
+}
+
+/** The kernel's comments frame sends each thread's passage cut to its first 500 characters (kernel.py, the frame's
+ *  `"exact": str(th.get("exact") or "")[:500]`), so an echo-mode synthetic thread holding the whole selection is
+ *  compared with a real one on that same cut, counted in code points as Python counts them. */
+export const FRAME_EXACT_CUT = 500;
+export const frameExact = (exact: string): string => Array.from(exact).slice(0, FRAME_EXACT_CUT).join("");
+
+/** The capability a kernel announces (its caps frame, in reply to a page's ready; KERNEL_WS_CAPS in kernel.py) when
+ *  every commentCreated and commentCreateFailed it sends carries the createId of the create it answers. */
+export const CREATE_ID_ECHO_CAP = "commentCreateId";
+
+/** What a caps frame says of a host's create answers: whether its list names the echo. */
+export const capsAnnounceEcho = (caps: unknown): boolean => Array.isArray(caps) && caps.includes(CREATE_ID_ECHO_CAP);
+
+/** What a kernel answer (commentCreated, commentCreateFailed) says of its host: a createId key (a string, even "")
+ *  comes only from a kernel with the echo, and none only from one without it. null for federation's own answer to a
+ *  create it could not deliver (relayDrop), which comes from this page and says nothing of the host's kernel. */
+export function answerEchoEvidence(m: { id?: unknown; uuid?: unknown; createId?: unknown; relayDrop?: unknown }): boolean | null {
+  return m.relayDrop === true ? null : typeof m.createId === "string";
+}
+
+/** A create dialog's mode, taken when it opens: echo mode when its session's host's latest evidence is the echo (its
+ *  latest connection's connect push, whose marker render.ts noteConnectPush reads, or the last caps frame or answer that
+ *  host sent: capsAnnounceEcho, answerEchoEvidence), main mode otherwise, a host that has shown none of them included.
+ *  The evidence is kept per host name for the page's life. */
+export const hostEchoMode = (evidence: ReadonlyMap<string, boolean>, sid: string): boolean => evidence.get(hostOf(sid)) === true;
+
+/** Where a kernel answer (commentCreated, commentCreateFailed) goes: to the echo-mode code when its createId names a
+ *  create this page minted in echo mode (`minted`, kept for the page's life, so a late answer to one it settled, gave
+ *  up on or handed back goes there too), and to main's code otherwise: the key absent, "", or an id this page did not
+ *  mint in echo mode (a main-mode create's own, or another page's), so main's code sees the answers main saw. */
+export const echoAnswer = (m: { id?: unknown; uuid?: unknown; createId?: unknown }, minted: ReadonlySet<string>): m is { createId: string } =>
+  typeof m.createId === "string" && minted.has(m.createId);
+
+/** The echo-mode create an answer settles: the one its createId names among those held, and none otherwise. */
+export function heldCreateFor(holds: ReadonlyMap<string, CommentCreate>, m: { id?: unknown; uuid?: unknown; createId?: unknown }): CommentCreate | null {
+  return typeof m.createId === "string" ? holds.get(m.createId) || null : null;
+}
+
+/** A passage named in a notice or a note: on one line, cut to 72 characters (as fork PR 915 does for the file
+ *  viewer's comments), in quote marks. */
+export function passageLabel(exact: string): string {
+  const t = exact.replace(/\s+/g, " ").trim();
+  return "“" + (t.length > 72 ? t.slice(0, 71) + "…" : t) + "”";
+}
+
+/** The toast for a refused comment whose passage has no unsent echo-mode dialog open to take its words back: they wait
+ *  in the note a create dialog shows on any passage of that message, so it says how to open one: a selection's context
+ *  menu, opened with a right-click, offers Comment (render.ts showSelectionMenu); selecting alone shows no Comment. An
+ *  existing comment opens its thread, which shows no note. */
+export function refusedCreateToast(exact: string): string {
+  return "Your comment on " + passageLabel(exact) + " was not saved. Its words are kept: select text anywhere in that message, right-click it and choose Comment to see them.";
+}
+
+/** The toast for an echo-mode comment the page handed back when its kernel came back as a build without the echo
+ *  (render.ts handBackEchoCreates): its dialog closed, and its words wait in the note a create dialog shows on any
+ *  passage of that message, reached as the refused comment's toast says. */
+export function handedBackToast(exact: string): string {
+  return "Your comment on " + passageLabel(exact) + " may or may not have been saved, because the kernel restarted as an older version. Its words are kept: select text anywhere in that message, right-click it and choose Comment to see them.";
+}
+
+/** The toast for a comment the page gave up on that the kernel saved after all, when the words handed back to its
+ *  passage's box have been changed there since: the box keeps them, and its thread is on the page. */
+export function savedAfterAllToast(exact: string): string {
+  return "Your comment on " + passageLabel(exact) + " was saved after all. What you typed in its box since is still there.";
 }
 
 /** The commentCreate frame for a held create: the send and every re-post of it build the same one, so

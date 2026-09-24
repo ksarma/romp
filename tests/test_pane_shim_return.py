@@ -820,6 +820,59 @@ out({first:first,afterRedial:afterRedial,delivered:delivered.map(function(m){ret
         self.assertEqual(r["delivered"], ["wsup"])
 
 
+class SocketGeneration(unittest.TestCase):
+    """The shim numbers its sockets for the bundle (the chat comment create's connection reading, render.ts cmtFlipGen):
+    0 for the first socket, one more at each reopen, published as window.__rompSockGen before that reopen's romp:wsup and
+    stamped on its socket-flip frame ({type:"wsup",gen}); and it says whether its socket is OPEN now
+    (window.__rompSockOpen, render.ts sockOpen). A page that loaded after a reopen's open, and so never heard its
+    romp:wsup, still tells that socket's flip frame from a dropped socket's by the generation; and a send made while the
+    socket is not open (before the first open, while it is down, or while it is CLOSING with the page's netState still
+    up) waits in the queue and goes out first on the next socket to open, so the chat's re-post of a held comment create
+    reads the socket's state first and posts nothing that would wait for a socket whose kernel may be another build."""
+
+    def test_each_socket_carries_its_generation_and_the_bundle_reads_whether_it_is_open(self):
+        r = _run(r"""
+var gens=[];var dispatch=window.dispatchEvent;
+window.dispatchEvent=function(e){if(e.type==="romp:wsup")gens.push(window.__rompSockGen);return dispatch(e);};
+function nums(s){return s.sent.map(function(x){return JSON.parse(x);}).filter(function(m){return m.type==="commentCreate";}).map(function(m){return m.n;});}
+var atLoad=window.__rompSockGen;var openAtLoad=window.__rompSockOpen();
+send({type:"commentCreate",n:0});
+open();var s1=sock();var onFirst=nums(s1);var openFirst=window.__rompSockOpen();
+s1.readyState=2;var openClosing=window.__rompSockOpen();var upWhileClosing=window.__rompLocalUp;
+send({type:"commentCreate",n:1});var onFirstClosing=nums(s1);
+s1.readyState=3;s1.onclose({code:1000,reason:"",wasClean:true});var openDown=window.__rompSockOpen();
+timers.filter(function(t){return t.live&&t.fn.name==="connect";}).forEach(function(t){t.live=false;t.fn();});
+open();var s2=sock();var onSecond=nums(s2);var openSecond=window.__rompSockOpen();
+var flips=FIFO.filter(function(m){return m.type==="wsup";});
+out({atLoad:atLoad,openAtLoad:openAtLoad,onFirst:onFirst,openFirst:openFirst,openClosing:openClosing,upWhileClosing:upWhileClosing,
+onFirstClosing:onFirstClosing,openDown:openDown,onSecond:onSecond,openSecond:openSecond,flips:flips,gens:gens,now:window.__rompSockGen});""", app="chat")
+        self.assertEqual(r["atLoad"], 0, "the first socket's generation is published before any socket opens")
+        self.assertIs(r["openAtLoad"], False, "before the first open the shim says its socket is not open")
+        self.assertEqual(r["onFirst"], [0], "and a send made then waits for the first open, which flushes it there")
+        self.assertIs(r["openFirst"], True, "an open socket reads open")
+        self.assertIs(r["upWhileClosing"], True, "a CLOSING socket still reads up to the page (netState moves only at onclose)")
+        self.assertIs(r["openClosing"], False, "but the shim says it is not open")
+        self.assertEqual(r["onFirstClosing"], [0], "and a send made then is not written to the closing socket")
+        self.assertIs(r["openDown"], False, "a socket that closed reads not open")
+        self.assertEqual(r["onSecond"], [1], "the reopen sends the closing socket's send first, on the next socket")
+        self.assertIs(r["openSecond"], True, "the reopened socket reads open")
+        self.assertEqual(r["gens"], [1], "the reopen publishes its generation before its romp:wsup, which reads it")
+        self.assertEqual(r["flips"], [{"type": "wsup", "gen": 1}], "and stamps it on its socket-flip frame, handed on in frame order")
+        self.assertEqual(r["now"], 1, "the current socket's generation")
+
+    def test_the_shim_assigns_the_generation_at_load_and_at_each_reopen_and_defines_the_open_read_once(self):
+        # a source pin of where the shim assigns them (executed above, in
+        # test_each_socket_carries_its_generation_and_the_bundle_reads_whether_it_is_open); that no page code writes either
+        # is comments.test.ts's census over the page code
+        js = km._shim("chat")
+        self.assertEqual(js.count("window.__rompSockGen="), 2, "the generation is assigned in two places: at load and at each reopen")
+        self.assertIn("var sockGen=0;window.__rompSockGen=0;", js, "0 at load, for the first socket")
+        self.assertIn("sockGen++;window.__rompSockGen=sockGen;", js, "one more at each reopen, before its romp:wsup")
+        self.assertEqual(js.count("window.__rompSockOpen="), 1, "the open read is defined once, at the shim's start")
+        self.assertIn("window.__rompSockOpen=function(){return !!ws&&ws.readyState===1;};", js,
+                      "it reads the shim's current socket's readyState at the moment of the call")
+
+
 class LocalUpFlag(unittest.TestCase):
     """The shim publishes its socket's state as window.__rompLocalUp beside the wsState post to the shell (2026-09-18):
     federation.ts, in the same document, gates its relay dial on it. The relay is this same kernel's /remote/<host>/ws on

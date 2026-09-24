@@ -348,7 +348,9 @@ class GateDifferential(unittest.TestCase):
         to = self._tab_orders(c)
         self.assertEqual(len(to), 1)
         self.assertNotIn("skeleton", to[0], "a fresh page's strip has no key")
-        self.assertEqual(set(to[0]), {"type", "order", "tabs", "views", "live", "selfHost"}, "today's frame, key for key")
+        self.assertEqual(set(to[0]), {"type", "order", "tabs", "views", "live", "selfHost", "createIdEcho"},
+                         "today's frame, key for key (createIdEcho, the comment create echo's marker, on every strip: "
+                         "tests/test_comment_create_idempotent.py ConnectPushMarker)")
         self.assertEqual(sorted(self._sessions(c)), sorted(TAB_ORDER), "every full")
         self.assertEqual(self._statuses(c), [], "no status frames: nothing is a skeleton")
         self.assertNotIn("skeleton", c)

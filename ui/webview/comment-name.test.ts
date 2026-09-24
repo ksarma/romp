@@ -76,6 +76,19 @@ test("a typed name's draft dies with the ack, popover open or closed", () => {
   assert.match(RENDER, /if \(m\.uuid\) commentDrafts\.delete\("new:" \+ String\(m\.uuid\)\);\s*\n\s*if \(m\.uuid\) commentDrafts\.delete\("newname:" \+ String\(m\.uuid\)\);/);
 });
 
+test("an echo-mode dialog's typed name is spent at the send, with the words", () => {
+  // (main mode keeps main's ack-time delete above.) An echo-mode dialog's drafts are its passage's, and its send spends
+  // both, the words and the typed name, since the held create carries them and a refusal hands them back; a dialog closed
+  // before its answer puts them in the passage's note, never its drafts. Where the code lives; the executed witnesses,
+  // named per half, are in comment-create-gesture-browser.test.ts
+  const send = RENDER.slice(RENDER.indexOf("function sendEchoCreate("));
+  const sendBody = send.slice(0, send.indexOf("\nfunction ", 10));
+  assert.match(sendBody, /commentDrafts\.delete\(createDraftKey\(create\)\);[^\n]*\n\s*commentDrafts\.delete\(createNameKey\(create\)\);/,
+    "the echo-mode send spends the dialog's words and its typed name (where the code lives; executed in comment-create-gesture-browser.test.ts, "
+    + "where each half, removed alone, reds 'a second comment on the same passage, opened while the first comment's create is unanswered, opens "
+    + "empty under the suggested name')");
+});
+
 test("the break-out dialog prefills through the module", () => {
   const br = RENDER.slice(RENDER.indexOf("function showBreakoutPrompt("));
   const brBody = br.slice(0, br.indexOf("\nfunction ", 10));
