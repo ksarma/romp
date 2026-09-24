@@ -70,8 +70,9 @@ RENDER_FELL_SAYS = ("When a file cannot be shown as rendered Markdown, its text 
                     "it, under a line that says so and names the error; **Rendered** stays chosen, and the next reload "
                     "or click of that button tries again.")
 FIGURE_SAYS = ("A figure that cannot be loaded, because its file is missing or is not an image, shows a line where the "
-               "picture would be: **Image failed to load**, then the figure's path as written in the file (a web address "
-               "without its sign-in part, query and fragment), and its alt text when it has one.")
+               "picture would be: **Image failed to load**, then the figure's path as written in the file (for a web "
+               "address, only its origin: its scheme, host and port; for a source with an @ that may be a sign-in, a note "
+               "that its address is withheld), and its alt text when it has one.")
 DECODE_SAYS = ("A picture opened as a file of its own whose bytes will not decode, because it is still being written or "
                "was cut short, shows a line in its place (**this image failed to decode: it may be mid-write or "
                "truncated**), then the file's path, and **Download**, which saves the file to your device.")
@@ -91,6 +92,7 @@ ENDINGS_SAYS = ("Without pending changes such a file can be edited, and when its
 SHARED = {
     "RENDER_FELL": (RENDER_FELL_SAYS, ("shown as rendered Markdown", "shown as written")),
     "FIGURE_FAILED": (FIGURE_SAYS, ("Image failed to load",)),
+    "FIGURE_ADDRESS_WITHHELD": (FIGURE_SAYS, ("withheld", "sign-in")),
     "DECODE_FAILED": (DECODE_SAYS, ("failed to decode", "mid-write or truncated")),
     "BYTES_FAILED": (BYTES_SAYS, ("could not be read again",)),
     "EMPTY_FILE": (EMPTY_SAYS, ("This file is empty",)),
@@ -103,6 +105,7 @@ SHARED = {
 EXPORTS = {
     "RENDER_FELL": 'export const RENDER_FELL = "This file could not be shown as rendered Markdown, so its text is shown as written";',
     "FIGURE_FAILED": 'export const FIGURE_FAILED = "Image failed to load:";',
+    "FIGURE_ADDRESS_WITHHELD": 'export const FIGURE_ADDRESS_WITHHELD = "address withheld because it appears to carry a sign-in";',
     "DECODE_FAILED": 'export const DECODE_FAILED = "this image failed to decode: it may be mid-write or truncated";',
     "BYTES_FAILED": 'export const BYTES_FAILED = "The file could not be read again";',
     "EMPTY_FILE": 'export const EMPTY_FILE = "This file is empty.";',
@@ -236,8 +239,9 @@ class TheViewerDoesIt(unittest.TestCase):
     def test_a_failed_figure_wears_a_label_the_body_hears_the_error_for_and_both_text_walks_skip(self):
         # the source the label names: the candidate the browser asked for as the author wrote it (failedSource: pictureDest's rule
         # for the img's own src, the srcset candidate in currentSrc otherwise), a data: source cut to its head and a source with a
-        # scheme or a leading // shown as origin plus path (shownSource, whose rule file-view-figure-error.test.ts executes); the
-        # Slice 7 review's round 1
+        # scheme or a leading // shown as its origin alone, and a source that appears to carry a sign-in as the withheld address
+        # (shownSource, whose rule file-view-figure-error.test.ts and file-view-outline.test.ts execute); the Slice 7 review's
+        # round 1, and the file review's round 15 (correctness-1 with extra9-2)
         # ...and the words in the source's place when the figure names none (an empty destination; the review's round 2)
         self.assertIn('const src = failedSource(img);', self.viewer)
         self.assertIn('return FIGURE_FAILED + " " + (src ? shownSource(src) : FIGURE_NO_SOURCE) + (alt ? " (" + alt + ")" : "");', self.viewer)

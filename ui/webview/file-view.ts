@@ -4674,8 +4674,9 @@ export function rewriteFigureSrcs(root: ParentNode, dir: string, sid: string | n
   // img's src alone, the one attribute the comments panel pairs an embed by, and in `data-fv-srcset` (FV_SRCSET) for a
   // rewritten srcset, the img's or a `<source>`'s, so a failed figure's label can name the candidate the browser asked for
   // as the author wrote it (failedSource; Slice 7 of plans/markdown-viewer.md, item 2, the review's round 1), except that
-  // the label shows a candidate with a scheme or a leading // through shownSource: with no userinfo, query or fragment, and
-  // in the spelling URL parsing gives it (the scheme and the host lower-cased, a space percent-encoded). An svg
+  // the label shows a candidate with a scheme or a leading // through shownSource: its origin alone, in the spelling URL
+  // parsing gives it (the scheme and the host lower-cased), and a source that appears to carry a sign-in as the withheld
+  // address (figureSourceCredentialed). An svg
   // image's xlink:href is moved to the plain `href` as the anchors' is in mdBlock, so the element carries one attribute
   // every reader agrees on.
   const path = (src: string): string | null => {
@@ -4758,13 +4759,23 @@ export const FIGURE_OPEN_TITLE = "Open the picture";
  *  the file review's round 11, ui-1 with extra8-1: the owner's decision of 2026-09-22 kept every gesture that opens a web picture's
  *  address in a tab and asked that the case show before the click, where a remote and a local picture had presented one surface). */
 const FIGOPEN_WEB_CLASS = FIGOPEN_CLASS + "-web";
-/** The control's words for a picture from the web: the open is a new tab at the address's host. The host alone, never the address
- *  with whatever credentials an author wrote into it, in words a hover and a screen reader both read. */
+/** The control's words for a picture from the web: the open is a new tab at the address's host (targetHost), in words a hover and a
+ *  screen reader both read. The host is the parse's, and the URL parser can read a sign-in part as a host and a port, so a source
+ *  that appears to carry a sign-in never reaches these words: its control reads FIGURE_OPEN_WEB_WITHHELD (figureSourceCredentialed,
+ *  dressFigureControl). */
 export function figureOpenWebTitle(host: string): string { return "Open the picture in a new tab at " + host; }
 /** The line the picture itself carries in its title for a web target, for the two gestures that have no control to carry words (the
- *  plain click and the Cmd/Ctrl-click on the picture where the press reaches it): the address the open leaves for. An author's own
- *  title stands before it on its own line (dressFigureTitle). */
+ *  plain click and the Cmd/Ctrl-click on the picture where the press reaches it): the address the open leaves for, as shownAddress
+ *  shows it (its origin), or FIGURE_ADDRESS_WITHHELD when the source appears to carry a sign-in. An author's own title stands before
+ *  it on its own line (dressFigureTitle). */
 export function figureWebTitleLine(address: string): string { return "Opens in a new tab: " + address; }
+/** The words that stand in an address's place when its source appears to carry a sign-in (figureSourceCredentialed), inside each
+ *  surface's own frame: the picture's title line (figureWebTitleLine), the failed figure's label (shownSource, after
+ *  FIGURE_FAILED) and the web control's words (FIGURE_OPEN_WEB_WITHHELD). No part of the address appears beside them. */
+export const FIGURE_ADDRESS_WITHHELD = "address withheld because it appears to carry a sign-in";
+/** The web control's title and aria-label when the picture's source appears to carry a sign-in: the open and the new tab, and the
+ *  withheld address in place of the host (dressFigureControl). */
+export const FIGURE_OPEN_WEB_WITHHELD = "Open the picture in a new tab (" + FIGURE_ADDRESS_WITHHELD + ")";
 /** The mark on a picture whose title the viewer composed (dressFigureTitle): it holds the author's own title, "" for none, so a
  *  decision that finds the picture's candidate local again restores that title and takes the mark off. Found by the mark, never
  *  by the title's text: the sanitizer keeps an author's `title` and lets no data-* attribute through. */
@@ -4785,41 +4796,107 @@ const FIGTITLE_MARK = "data-fv-figtitle";
  *  opacities in theme-parity.test.ts; the painted-contrast ask of 2026-09-23, where the anchor's opacity 0.7 had painted it at 2.82:1
  *  in the light theme). */
 const FIGWEB_MARK = "data-fv-figweb";
-/** The host the control's words name for a web target: the address's host (with its port when one is written), never its
- *  credentials or its path; the address as written when it does not parse. */
+/** The three at signs the sign-in rule reads (figureSourceCredentialed): the ASCII one, the fullwidth commercial at (U+FF20) and
+ *  the small commercial at (U+FE6B). marked writes a markdown-authored lookalike into the src percent-encoded, and the URL parser
+ *  writes it so when it resolves a source, so the rule reads them after decodeEscapes. */
+const AT_SIGNS = /[@\uFF20\uFE6B]/;
+/** One pass of percent-decoding for the sign-in rule: each maximal run of `%XX` escapes is read as UTF-8, sequence by sequence,
+ *  and an invalid or malformed sequence keeps its first byte as written (upper-cased) while the rest of the run is still read.
+ *  A decodeURIComponent over the whole run would throw on one bad byte and hide a %40 beside it (`%FF%40`). */
+function decodeEscapesOnce(s: string): string {
+  return s.replace(/(?:%[0-9A-Fa-f]{2})+/g, (run) => {
+    const bytes = (run.match(/%[0-9A-Fa-f]{2}/g) || []).map((x) => parseInt(x.slice(1), 16));
+    let out = "", i = 0;
+    while (i < bytes.length) {
+      const b = bytes[i];
+      const n = b < 0x80 ? 1 : (b & 0xe0) === 0xc0 ? 2 : (b & 0xf0) === 0xe0 ? 3 : (b & 0xf8) === 0xf0 ? 4 : 0;
+      let ok = n > 0 && i + n <= bytes.length;
+      for (let k = 1; ok && k < n; k++) if ((bytes[i + k] & 0xc0) !== 0x80) ok = false;
+      if (ok) {
+        const seq = bytes.slice(i, i + n).map((x) => "%" + x.toString(16).padStart(2, "0")).join("");
+        try { out += decodeURIComponent(seq); i += n; continue; } catch { /* a malformed sequence: its first byte as written */ }
+      }
+      out += "%" + b.toString(16).toUpperCase().padStart(2, "0"); i += 1;
+    }
+    return out;
+  });
+}
+/** The text with its percent-escapes decoded until it stops changing (decodeEscapesOnce), so a double-encoded at sign (`%2540`)
+ *  reads as one. A pass that decodes an escape shortens the text and upper-casing a malformed escape changes it once, so the
+ *  loop ends. */
+function decodeEscapes(s: string): string {
+  let was: string;
+  do { was = s; s = decodeEscapesOnce(s); } while (s !== was);
+  return s;
+}
+/** Whether a picture's source appears to carry a sign-in: the ONE rule every visible word of an address reads (the file review's
+ *  round 15, correctness-1 with extra5-1, extra6-2, tests-1 and extra9-3, on the coordinator's decision: the URL parser reads more
+ *  spellings of a sign-in than the two once disclosed as a host, a port or a path, and each printed, so the rule reads the text and
+ *  not the parse). Its readers are the picture's title line (dressFigureTitle), the web control's title and aria-label
+ *  (dressFigureControl) and the failed figure's label (shownSource, which figureLabelText calls); each shows
+ *  FIGURE_ADDRESS_WITHHELD in its own frame, and no part of the address, when this answers true. It reads the source the viewer
+ *  holds, as the author wrote it where the viewer keeps that (chosenSource's answer: data-fv-src, FV_SRCSET or the attribute as
+ *  written), and on a URL document the address resolveFigureRefs resolved: the text with every ASCII tab and line break removed
+ *  and leading control characters and spaces trimmed, as the parser reads it. An at sign (AT_SIGNS) is looked for in the text
+ *  with its percent-escapes decoded until it stops changing (decodeEscapes), so an encoded or a double-encoded one counts and no
+ *  list of encoded forms is kept. Where it must stand: anywhere after a scheme other than data: (in any letter case), in the
+ *  authority, the path, the query or the fragment; anywhere after a leading run of two or more slashes or backslashes; in a
+ *  data: source, only in the head the label prints (through the first comma, else the first forty characters), so an inline
+ *  image's payload is not read; and in a source with neither, after a colon. The cost, stated and accepted: no rule on the text
+ *  or the parse tells a sign-in part holding a slash from an at sign in a path, so every address with an at sign after its
+ *  scheme is withheld, https://cdn/img/a@2x.png and a profile path such as https://social.example/@api/avatar.png among them, a
+ *  relative a@2x.png on a URL document (its label reads the resolved address) and a workspace file name with a colon before an
+ *  at sign; the cost is an address missing from a tooltip or a label, with no privacy or activation effect. Outside the rule,
+ *  as stated boundaries that print and are not chased: a data: source whose sign-in part runs past the head the label prints,
+ *  and a source with no scheme, no leading run and no ASCII colon before its at sign after the decode (a fullwidth colon does
+ *  not count), which the Files pane and the modals' file view show as a workspace path. */
+export function figureSourceCredentialed(src: string): boolean {
+  const read = src.replace(/[\t\n\r]/g, "").replace(/^[\u0000-\u0020]+/, "");
+  const atIn = (text: string): boolean => AT_SIGNS.test(decodeEscapes(text));
+  const scheme = /^([a-z][a-z0-9+.-]*):/i.exec(read);
+  if (scheme) {
+    if (scheme[1].toLowerCase() !== "data") return atIn(read.slice(scheme[0].length));
+    const comma = read.indexOf(",");
+    return atIn(comma >= 0 ? read.slice(0, comma + 1) : read.slice(0, 40));
+  }
+  const lead = /^[/\\]{2,}/.exec(read);
+  if (lead) return atIn(read.slice(lead[0].length));
+  const plain = decodeEscapes(read), colon = plain.indexOf(":");
+  return colon >= 0 && AT_SIGNS.test(plain.slice(colon + 1));
+}
+/** A refused address cut at its authority, for shownAddress and targetHost: the scheme with its slashes, or a leading run of two
+ *  slashes or backslashes, then the text up to the first slash, backslash, question mark or hash, so no path, query or fragment
+ *  prints (an out-of-range port: http://example.test:99999/a.png shows http://example.test:99999). A refused address holding an
+ *  at sign never reaches it: figureSourceCredentialed withholds it first. */
+function authorityCut(s: string): string {
+  const lead = (/^(?:[a-z][a-z0-9+.-]*:[/\\]*|[/\\]{2})/i.exec(s) || [""])[0];
+  const rest = s.slice(lead.length), end = rest.search(/[/\\?#]/);
+  return lead + (end >= 0 ? rest.slice(0, end) : rest);
+}
+/** The host the control's words name for a web target: the address's host, with its port when one is written, and for an address
+ *  the parser refuses its authority cut (authorityCut). It prints the parse, which can read a sign-in part as a host and a port,
+ *  so a source that appears to carry a sign-in never reaches it (figureSourceCredentialed, read first by dressFigureControl). */
 function targetHost(href: string): string {
-  try { return new URL(href).host; } catch { return href; }
+  try { return new URL(href).host; } catch { return authorityCut(href); }
 }
 /** A picture's address as the viewer's words show it, in the picture's title (dressFigureTitle) and in the failed figure's
- *  label (shownSource): origin plus path, never a userinfo, a query or a fragment. A `user:pass@`, a `?token=`, a presigned
- *  URL's X-Amz-Credential and X-Amz-Signature or an `#access_token` an author wrote into a source would otherwise stand in a
- *  tooltip or in visible text, and the whole query and the whole fragment go, so no reader here decides which parameters are
- *  secret (the file review's round 14, correctness-1 with extra5-3). An address that parses, against `base` when one is given
- *  (a protocol-relative source has no scheme of its own), is printed as its href with those four parts emptied, never as
- *  `origin` plus the path, which prints "null" for a file: address or for one resolved against a VS Code webview, and the host
- *  twice for a blob: address. An opaque path (`blob:` followed by an address) is shown the same way after its scheme. An
- *  address the parser refuses (an out-of-range port, say) is cut as text: from the scheme's slashes, or a leading //, through
- *  the LAST @, then from the first ? or #. So no userinfo of a refused address prints even when the password holds a /, ? or #,
- *  at the cost that a refused address with an @ in its path or query prints a wrong host (`http://example.test:99999/a@2x.png?x=1`
- *  prints as `http://2x.png`), never a secret. An address that parses is read as the parser reads it, and two spellings of a
- *  credential parse with no userinfo at all, so they print: a password whose part before a /, ? or # is a number parses as a port,
- *  the username before it as the host and, after a /, the rest as the path, and an `http:` source written without its slashes on
- *  an http page resolves as a path of the page's own origin. Those two print by the coordinator's ruling, a disclosed residual whose
- *  executed witness is the case in file-view-outline.test.ts titled "two spellings of a credential that the URL parser reads with no
- *  sign-in part ...". URL parsing normalises the spelling (the scheme and the host lower-cased, a space percent-encoded). */
+ *  label (shownSource): its origin alone, the scheme, the host and the port, never a path, a path parameter, a query, a fragment
+ *  or a userinfo (the file review's round 15, extra9-2, on the coordinator's answer: a ;jsessionid= parameter or an opaque
+ *  token segment in the path printed while the file review's round 14, correctness-1 with extra5-3, kept origin plus path,
+ *  having dropped the userinfo, the query and the fragment). A source that appears to carry a sign-in never reaches it:
+ *  figureSourceCredentialed decides that first, for every surface, and the address is withheld whole. An address that parses,
+ *  against `base` when one is given (a protocol-relative source has no scheme of its own), is printed as its protocol, two
+ *  slashes and its host, never as `origin`, which prints "null" for a file: address or for one resolved against a VS Code
+ *  webview; a blob: address as blob: and the origin of the address it wraps; an address with no host (s3:bucket/key.png,
+ *  file:///srv/x.png) as its scheme alone. An address the parser refuses (an out-of-range port, say) is cut at its authority
+ *  (authorityCut). URL parsing normalises the spelling (the scheme and the host lower-cased). The cost: neither the tooltip
+ *  nor the label names the file on the web, and on a URL document every failed picture's label names the document's origin. */
 export function shownAddress(href: string, base?: string): string {
-  const cut = (s: string): string => {
-    const lead = (/^(?:[a-z][a-z0-9+.-]*:[/\\]*|[/\\]{2})/i.exec(s) || [""])[0];
-    const at = lead ? s.lastIndexOf("@") : -1;
-    const kept = at >= lead.length ? lead + s.slice(at + 1) : s;
-    const q = kept.search(/[?#]/);
-    return q >= 0 ? kept.slice(0, q) : kept;
-  };
   try {
     const u = new URL(href, base);
-    u.username = ""; u.password = ""; u.search = ""; u.hash = "";
-    return u.host || u.pathname.startsWith("/") ? u.href : u.protocol + shownAddress(u.pathname);
-  } catch { return cut(href); }
+    if (u.host) return u.protocol + "//" + u.host;
+    return u.protocol === "blob:" ? u.protocol + shownAddress(u.pathname) : u.protocol;
+  } catch { return authorityCut(href); }
 }
 /** The element the label follows: the img, or the outermost of the wrappers standing between it and its block that the label
  *  must not go inside, climbed while one stands: a `<picture>` (a span is not a picture's content), the regions layer's
@@ -4908,12 +4985,15 @@ function chosenSource(img: Element): string | null {
  *  the sheet's wrap turns into a box the height of the column (the review's round 1: a label 1518 px tall at 380 px, two
  *  screens of base64 where the note should go on), so it is cut to its head, the scheme and the media type through the
  *  comma, with an ellipsis. A source with any other scheme, or a protocol-relative one, is shown as shownAddress shows an
- *  address, resolved against `base`, the document's own address by default, as the browser resolved the fetch: origin plus
- *  path, with no userinfo, query or fragment in a visible word. The scheme is read as the URL parser reads it (an ASCII tab or
- *  line break removed, leading control characters and spaces trimmed), so a tab inside `http` does not hide an address from
- *  the rule. A source with no scheme and no leading // (a workspace path) is shown as written. */
+ *  address, resolved against `base`, the document's own address by default, as the browser resolved the fetch: its origin
+ *  alone, never a path, a query, a fragment or a userinfo in a visible word. The scheme is read as the URL parser reads it (an
+ *  ASCII tab or line break removed, leading control characters and spaces trimmed), so a tab inside `http` does not hide an
+ *  address from the rule. A source with no scheme and no leading // (a workspace path) is shown as written. First of all, a
+ *  source that appears to carry a sign-in (figureSourceCredentialed, the one rule every surface reads) is shown as
+ *  FIGURE_ADDRESS_WITHHELD, whatever its form: a web address, a data: source's head and a workspace path alike. */
 export function shownSource(src: string, base: string | undefined = typeof document !== "undefined" ? document.baseURI : undefined): string {
   const read = src.replace(/[\t\n\r]/g, "").replace(/^[\u0000-\u0020]+/, "");
+  if (figureSourceCredentialed(src)) return FIGURE_ADDRESS_WITHHELD;
   if (/^data:/i.test(read)) { const comma = read.indexOf(","); return (comma >= 0 ? read.slice(0, comma + 1) : read.slice(0, 40)) + "…"; }
   if (/^[a-z][a-z0-9+.-]*:/i.test(read) || read.startsWith("//")) return shownAddress(read, base);
   return src;
@@ -4926,9 +5006,10 @@ export function shownSource(src: string, base: string | undefined = typeof docum
 const FIGURE_NO_SOURCE = "the source is empty";
 /** The label's words (the slice's contract C2, and its round 1 line): FIGURE_FAILED, the source the browser asked for as the
  *  author wrote it (failedSource: pictureDest's rule, `data-fv-src` when rewriteFigureSrcs rewrote the src, else `src`, or
- *  the srcset candidate the browser chose), as shownSource shows it (a data: source cut to its head, a source with a scheme
- *  or a leading // as origin plus path, with no userinfo, query or fragment, in the spelling URL parsing gives it), or
- *  FIGURE_NO_SOURCE when there is none to name, and the alt in parentheses when it is not empty. */
+ *  the srcset candidate the browser chose), as shownSource shows it (a source that appears to carry a sign-in as
+ *  FIGURE_ADDRESS_WITHHELD, a data: source cut to its head, a source with a scheme or a leading // as its origin alone, in the
+ *  spelling URL parsing gives it), or FIGURE_NO_SOURCE when there is none to name, and the alt in parentheses when it is not
+ *  empty. */
 function figureLabelText(img: Element): string {
   const alt = img.getAttribute("alt");
   const src = failedSource(img);
@@ -5084,8 +5165,10 @@ function resolveFigureRefs(root: ParentNode, base: string): void {
 // figure's click opened a tab at a host whose image request had answered 404, while the control was already withheld; the
 // two readers of "is there something to open" now answer alike). The target is read again at the click. A gated
 // placeholder (figure-gate.ts) gets none until its figure is loaded: armFigureControls hears the load on the body.
-/** What "Open the picture" opens for a figure, or null when there is nothing to open. `filePath` is the shown file's. */
-type FigureTarget = { kind: "file"; path: string } | { kind: "web"; href: string };
+/** What "Open the picture" opens for a figure, or null when there is nothing to open. `filePath` is the shown file's. A web
+ *  target carries the resolved address its tab opens (`href`) and the source as the author wrote it (`src`, chosenSource's
+ *  answer), which the words read for the sign-in rule (figureSourceCredentialed, in dressFigureTitle and dressFigureControl). */
+type FigureTarget = { kind: "file"; path: string } | { kind: "web"; href: string; src: string };
 function figureTarget(img: Element, filePath: string): FigureTarget | null {
   const state = figureState(img);
   if (!figureHasPicture(state)) return null;   // the rule, not a list: a target only for a state with a picture to name (loaded; a stand-in outside a browser). Fetching (the browser has not answered, no candidate to name until the load or the error decides) and failed (no picture to open) are the refused states today, and a state the type gains later is refused with them; the control is withheld on the same rule (figureWantsControl), so the click and the control agree (the file review's round 2 made the two readers agree; the guard became a rule before its round 3)
@@ -5096,7 +5179,7 @@ function figureTarget(img: Element, filePath: string): FigureTarget | null {
   // web address and the browser fetched it from the web (file-view-figures-absolute.test.ts). Read after the join, the web
   // arm was unreachable for that source, and the control opened the viewer on the kernel's /file route at path `//host/pic.svg`
   // (a 404 and a bogus entry on the trail) in place of the tab (the review's round 1).
-  if (/^https?:/i.test(dest) || dest.startsWith("//")) return { kind: "web", href: absUrl(dest) };   // resolved against the page, as the browser resolved the fetch
+  if (/^https?:/i.test(dest) || dest.startsWith("//")) return { kind: "web", href: absUrl(dest), src: dest };   // resolved against the page, as the browser resolved the fetch, and the source as written beside it for the words
   const p = figurePath(filePath, dest);
   if (p !== null) return { kind: "file", path: p };
   return null;
@@ -5284,13 +5367,16 @@ function decideFigureControl(img: Element, filePath: string): void {
 /** The control's dress, keyed on the target's kind and applied at every decision, to a control just made and to one standing (a
  *  `<picture>` re-selecting between a local and a remote candidate at a media change flips the kind with no add or remove, and a
  *  control dressed once at its add kept stale words; the file review's round 11, ui-1 with extra8-1): for a picture from the web
- *  the words name the host and the new tab (figureOpenWebTitle), the class FIGOPEN_WEB_CLASS carries the sheets' dress, and the
- *  glyph is the outbound one (ICON_OUTBOUND); for a file of the session the one word set, no web class and the corner arrows.
+ *  the words name the host and the new tab (figureOpenWebTitle), or the new tab and the withheld address when the source appears
+ *  to carry a sign-in (FIGURE_OPEN_WEB_WITHHELD, on figureSourceCredentialed over the source the target carries, read before
+ *  targetHost's parse, which can name a sign-in part as a host and a port), the class FIGOPEN_WEB_CLASS carries the sheets' dress,
+ *  and the glyph is the outbound one (ICON_OUTBOUND); for a file of the session the one word set, no web class and the corner
+ *  arrows.
  *  The glyph is swapped only when the kind it was drawn for differs (the web class on the control is that record) or none stands
  *  yet, so a decision that changes nothing writes nothing. */
 function dressFigureControl(b: HTMLElement, target: FigureTarget | null): void {
   const web = target !== null && target.kind === "web";
-  const words = target !== null && target.kind === "web" ? figureOpenWebTitle(targetHost(target.href)) : FIGURE_OPEN_TITLE;
+  const words = target !== null && target.kind === "web" ? (figureSourceCredentialed(target.src) ? FIGURE_OPEN_WEB_WITHHELD : figureOpenWebTitle(targetHost(target.href))) : FIGURE_OPEN_TITLE;
   if (b.title !== words) { b.title = words; b.setAttribute("aria-label", words); }
   const drawn = b.firstElementChild;
   if (!drawn || b.classList.contains(FIGOPEN_WEB_CLASS) !== web) { const glyph = figureControlGlyph(web); if (drawn) drawn.remove(); if (glyph) b.appendChild(glyph); }
@@ -5302,8 +5388,9 @@ function dressFigureControl(b: HTMLElement, target: FigureTarget | null): void {
  *  the click is the link's and the line is withheld; inside a dead link or an author's named anchor the click is the figure's
  *  and the line stands; and no summary that toggles a fold holds it, figureFoldOf, since the fold takes the click on the picture,
  *  plain or modified, and the control there carries its own words; the control after a link holding the figure alone carries its own words)
- *  the outbound address, origin plus path with no userinfo, query or fragment, on a line of its own after the author's title
- *  when one stands (figureWebTitleLine, shownAddress); for a file, or nothing to open, the author's title alone or none. The author's title is kept under FIGTITLE_MARK while the viewer's
+ *  the outbound address, its origin alone (shownAddress over the resolved address), or FIGURE_ADDRESS_WITHHELD when the source
+ *  the target carries appears to carry a sign-in (figureSourceCredentialed), on a line of its own after the author's title when
+ *  one stands (figureWebTitleLine); for a file, or nothing to open, the author's title alone or none. The author's title is kept under FIGTITLE_MARK while the viewer's
  *  line stands, so the next decision restores it when the candidate is local again (a `<picture>` at a media change) and a
  *  decision never appends the line twice. Whatever the control's verdict: a remote picture under the floor wears no control and,
  *  outside a fold's summary, its plain click still opens the tab (the guide's sentence), so its title says so too, and the mark for the picture no control
@@ -5313,7 +5400,8 @@ function dressFigureTitle(img: Element, target: FigureTarget | null): void {
   const held = img.getAttribute(FIGTITLE_MARK);
   if (web) {
     const author = held !== null ? held : img.getAttribute("title") || "";
-    const title = (author ? author + "\n" : "") + figureWebTitleLine(shownAddress((target as { href: string }).href));
+    const t = target as { href: string; src: string };
+    const title = (author ? author + "\n" : "") + figureWebTitleLine(figureSourceCredentialed(t.src) ? FIGURE_ADDRESS_WITHHELD : shownAddress(t.href));
     if (held === null) img.setAttribute(FIGTITLE_MARK, author);
     if (img.getAttribute("title") !== title) img.setAttribute("title", title);
   } else if (held !== null) {

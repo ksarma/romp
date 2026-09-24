@@ -5461,12 +5461,19 @@ why, and the test that holds it:
    comma with an ellipsis (`shownSource`; the first forty characters when there is no comma): a broken inline image's
    label printed the whole encoded payload, 1518 px tall at 380 px, two screens of base64 where the note should go on.
    Since the link-navigation follow-on, `shownSource` sends a source with any other scheme, or a protocol-relative
-   one, through `shownAddress`, the stripper the web picture's title uses: a source that parses is resolved against
-   the document and shown as origin plus path, with no userinfo, query or fragment, and one the URL parser refuses
-   (an out-of-range port) is cut as text, through the last `@` and then from the first `?` or `#`, so a refused
-   source with an `@` in its path prints a wrong host, never a secret. The scheme is read as the parser reads it, URL
-   parsing normalises the spelling, and a workspace path still prints as written. Chromium never requests a
-   `user:pass@` source, so its label was where such a credential showed.
+   one, through `shownAddress`, the address the web picture's title shows: a source that parses is resolved against
+   the document and shown as its origin alone, the scheme, the host and the port, never a path, a query, a fragment or
+   a userinfo, and one the URL parser refuses (an out-of-range port) is cut at its authority, so a path parameter or
+   an opaque token segment in the path prints nowhere either (the follow-on's L3 records the finding). Before any of
+   that, a source that appears to carry a sign-in (`figureSourceCredentialed`, the one rule the picture's title, the
+   web control's words and this label all read: an at sign, ASCII or a lookalike, after its percent-escapes are
+   decoded until the text stops changing, anywhere after a scheme other than `data:` or after a leading run of two or
+   more slashes or backslashes, in a `data:` source's printed head, or after a colon in a source with neither) shows
+   `FIGURE_ADDRESS_WITHHELD` in its place, which replaced the disclosed residual of two credential spellings the
+   parser reads with no sign-in part (L3 again). Its cost is stated: every address with an at sign after its scheme
+   is withheld, a harmless `https://cdn/img/a@2x.png` among them. The scheme is read
+   as the parser reads it, URL parsing normalises the spelling, and a workspace path still prints as written.
+   Chromium never requests a source with a sign-in part, so its label was where such a credential showed.
    One label per img, found by the mark and never by the class (the figure gate's rule: an author can type the class):
    a second `error`, the chat page's heal retrying, rewrites the one label's text; the img's `load` removes it. The
    img keeps every attribute and its place, `img.onerror` is never set (the heal skips an img with one), the insertion
@@ -8366,8 +8373,10 @@ under the size floor, a figure inside a link holding more than it), wears an "Op
 button of the bar's family (icons.ts `ICON_EXPAND`, two arrows out of opposite
 corners, for a picture from the file tree, and `ICON_OUTBOUND`, an arrow leaving a box, for a picture from the web, whose
 control names the host in its title and aria-label and wears `fv-figopen-web` beside the class below, the sheets' dashed
-rule for an open that leaves for another host, the picture's own title carrying the address after an author's title (origin
-plus path through `shownAddress`, since the fixes for the file review's round 14, correctness-1), the
+rule for an open that leaves for another host, the picture's own title carrying the address after an author's title
+(its origin alone through `shownAddress`, since the fixes for the file review's round 15, extra9-2, and the withheld
+address, `FIGURE_ADDRESS_WITHHELD`, in the title and in the control's words, `FIGURE_OPEN_WEB_WITHHELD`, when the source
+appears to carry a sign-in, `figureSourceCredentialed`, since the fixes for the same round's correctness-1), the
 dress re-decided with the control (`dressFigureControl`; the file review's round 11, ui-1 with extra8-1: a remote and a
 local picture had presented one surface before the click); `button.fileview-btn.fileview-icon.fv-figopen`, the words in its
 title and aria-label, found by its mark
@@ -9139,7 +9148,8 @@ Playwright browser).
     file-view-figure-chosen-browser.test.ts from each of the three gestures, and since the fixes for the file review's
     round 11 (ui-1 with extra8-1) the surface says where the open goes before the click: for a web target the control's
     title, aria-label, class and glyph name the outbound open and its host, and the picture's own title carries the
-    address as origin plus path, an author's title kept before it (L3), and since the fixes for the file review's round 12 (fresh-1) a web picture
+    address's origin, an author's title kept before it, or the withheld address when the source appears to carry a
+    sign-in (L3), and since the fixes for the file review's round 12 (fresh-1) a web picture
     that wears no control, one under the floor, wears the dashed dress itself, an outline keyed on the mark `data-fv-figweb`
     that `dressFigureMark` sets right after the title, on hover on a fine pointer and at rest where hover is none or any pointer
     is coarse (L3); (b) the narrow road, not taken: the tab for the

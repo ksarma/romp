@@ -771,9 +771,11 @@ test("the convention: the branch's review has rounds 1 and 2, the file review's 
  *  round); twenty-three since the fixes for the same round's ui-1 with extra9-1 (the comment in the body's mousedown listener
  *  on the press cancelled on the web control, and the comment over the key gate that opens it only in view, each names that
  *  round); twenty-four since the fixes for the same round's fresh-1 (the docstring of figureFoldOf, the summary that toggles a
- *  fold, the sibling of the figure link set the title and the mark read, names that round). A property pin: the count is compared
- *  to the derived list, whose lines the message prints. */
-const VIEWER_UNITS = 24;
+ *  fold, the sibling of the figure link set the title and the mark read, names that round); twenty-five since the fixes for the
+ *  file review's round 15 (correctness-1 with extra5-1, extra6-2, tests-1 and extra9-3: the docstring of figureSourceCredentialed,
+ *  the one sign-in rule every visible word of a picture's address reads, names that round). A property pin: the count is
+ *  compared to the derived list, whose lines the message prints. */
+const VIEWER_UNITS = 25;
 
 test("road 1, every checkout, a rule over the tree: every file git lists at the repo root, tracked or untracked and not ignored, whose text names the file review or carries an id of the author's family, plus the files the branch created, the plan's section, the guide's Links paragraph and the browser plan's pointer; the created files and the three records in full, the rest keyed on the review named, so another review's rounds are left alone; no round outside the convention and no finding of the author's outside a pass; road 2, on the open PR branch where main has moved past its last merge (the merge-base off origin/main and the diff adding this module): every unit the branch added or touched, the working tree against the merge-base", (t) => {
   const reviews = convention();

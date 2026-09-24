@@ -23,7 +23,7 @@ import { headingSlug, uniqueSlugs } from "./md-links";
 import { OUTLINE_NOTE, OUTLINE_HEADINGS, FOLD_HEADING, MATH_HEADING, CODE_HEADING, QUOTED_HEADING } from "./file-view-outline-fixture";
 import type { FileViewActionCtx, At } from "./file-view";
 import { setMdSanitizer } from "./md-sanitize";   // the sanitizer seam the node suites install a stand-in through (Slice 7 of plans/markdown-viewer.md)
-import { loadGatedHost, forgetLoadedHosts } from "./figure-gate";   // the gate lifted for a synthetic host before a paint of remote pictures (the picture-title case)
+import { loadGatedHost, forgetLoadedHosts, remoteHost } from "./figure-gate";   // the gate lifted for a synthetic host before a paint of remote pictures (the picture-title cases; the sign-in table derives the hosts with the gate's own reader)
 import { cssRules, renderRule } from "./css-rules.mjs";
 import { hostSheets } from "./host-sheets.mjs";
 
@@ -396,9 +396,11 @@ win.__rompEditor = {
 // ── the kernel's /file, /version and /sessions, as the viewer fetches them ──────────────────────────
 type Served = { bytes: string; type: string; mtimeNs: string };
 const disk: Record<string, Served> = {};
+const urls: Record<string, string> = {};   // a URL document for the URL viewer, by its address (the sign-in table's URL-document rows)
 (globalThis as any).fetch = async (url: string) => {
   if (url.startsWith("/version")) return { json: async () => ({ fileEditing: true }) };
   if (url.startsWith("/sessions")) return { json: async () => [{ id: SID, name: "api", bg: "#123456", fg: "#ffffff" }] };
+  if (urls[url] !== undefined) return new Response(urls[url], { status: 200, headers: { "Content-Type": "text/markdown; charset=utf-8" } });   // the URL viewer streams a real Response's body (the figure-error suite's branch, so openUrlView paints through the real resolveFigureRefs)
   const p = decodeURIComponent((/[?&]path=([^&]*)/.exec(url) || [])[1] || "");
   const f = disk[p];
   const headers = { get: (h: string) => (f ? (h === "Content-Type" ? f.type : h === "X-Romp-Mtime-Ns" ? f.mtimeNs : h === "X-Romp-Text-Utf8" ? "1" : null) : null) };
@@ -1025,8 +1027,14 @@ test("a landing under a press on the Outline BUTTON (PR review round 2): the lan
 
 // ── the picture's title and the control's words for a picture from the web, over the stand-in's paint (the file review's round 12,
 // tests-1): the address with credentials is ASSEMBLED at run time through the URL API, never written as a literal (the repository's
-// rule against credential-shaped literals in fixtures)
-test("a picture from the web whose address carries credentials, and one whose address carries a written port, painted with the host loaded: the picture's title is the address with the username and password taken out and the port kept (shownAddress), after the author's title when one stands; the control's title PROPERTY and aria-label name the host with its port (targetHost), with the web class; the local picture keeps the one word set and no title. file-figure-open.test.ts pins the call site's spelling alone, so this executed case is what holds the strip: red under a `return href;` body (a property pin over the paint)", async (t) => {
+// rule against credential-shaped literals in fixtures). Since the file review's round 15 (correctness-1 with extra9-2) a source that
+// appears to carry a sign-in shows the withheld address on every surface, and any other address its origin alone.
+/** The words in a withheld address's place and each surface's frame around them, as the ruling's wording reads (literals, so the
+ *  expected text never moves with the product: file-view.ts FIGURE_ADDRESS_WITHHELD, figureWebTitleLine, FIGURE_OPEN_WEB_WITHHELD). */
+const WITHHELD = "address withheld because it appears to carry a sign-in";
+const WITHHELD_TITLE = "Opens in a new tab: " + WITHHELD;
+const WITHHELD_WORDS = "Open the picture in a new tab (" + WITHHELD + ")";
+test("a picture from the web whose address carries credentials, and one whose address carries a written port, painted with the host loaded: the credentialed picture's title and its control's title PROPERTY and aria-label show the withheld address in their own frames and no part of the address (figureSourceCredentialed, since the file review's round 15, tests-1 with extra9-3: the control's words print the parse, which reads some sign-in spellings as a host and a port, so they read the rule first); the ported picture's title is its origin, the port kept, after the author's title, and its control names the host with its port (targetHost), with the web class; the local picture keeps the one word set and no title. file-figure-open.test.ts pins the call sites' spelling alone, so this executed case holds the property: red under a `return href;` body or a words line that skips the rule (a property pin over the paint)", async (t) => {
   const cred = new URL("http://example.test/p.svg"); cred.username = "user"; cred.password = "pass";
   assert.deepEqual([cred.username, cred.password, cred.host, cred.pathname], ["user", "pass", "example.test", "/p.svg"], "the assembled address carries the credentials (read back as its parts: the whole is spelled nowhere in this file, not as a pattern either)");
   loadGatedHost("example.test", doc as unknown as ParentNode);   // the host on no list: lifted for this document before the paint (remoteHost keys on the hostname, so the ported address is lifted with it)
@@ -1034,21 +1042,21 @@ test("a picture from the web whose address carries credentials, and one whose ad
   const o = await open(REPORT, '# R\n\n<img src="' + cred.href + '" alt="cred">\n\n<img src="http://example.test:8080/q.svg" alt="port" title="Figure 9">\n\n![local](figs/plot.svg)\n', t);
   const imgs = o.body.querySelector(".fileview-md")!.querySelectorAll("img");
   assert.deepEqual(imgs.map((i) => i.getAttribute("alt")), ["cred", "port", "local"], "the three pictures painted, none gated");
-  assert.deepEqual(imgs.map((i) => i.getAttribute("title")), ["Opens in a new tab: http://example.test/p.svg", "Figure 9\nOpens in a new tab: http://example.test:8080/q.svg", null],
-    "the picture's title: the address with its credentials emptied (never the username or the password in a tooltip), the port kept, the author's title first on its own line; the local picture none");
+  assert.deepEqual(imgs.map((i) => i.getAttribute("title")), [WITHHELD_TITLE, "Figure 9\nOpens in a new tab: http://example.test:8080", null],
+    "the picture's title: the withheld address for the credentialed one (never the username, the password or the path in a tooltip), the origin with its port for the other, the author's title first on its own line; the local picture none");
   const controls = imgs.map((i) => { const n = i.nextSibling; return n instanceof El && n.hasAttribute("data-fv-figopen") ? n : null; });
   assert.ok(controls.every((c) => c !== null), "a control after each picture (a stand-in is decided from its source: no floor, no state)");
-  const words = ["Open the picture in a new tab at example.test", "Open the picture in a new tab at example.test:8080", "Open the picture"];
-  assert.deepEqual(controls.map((c) => c!.title), words, "the control's title PROPERTY (dressFigureControl writes the property; no attribute is set here): the host with its port, never the credentials or the path");
+  const words = [WITHHELD_WORDS, "Open the picture in a new tab at example.test:8080", "Open the picture"];
+  assert.deepEqual(controls.map((c) => c!.title), words, "the control's title PROPERTY (dressFigureControl writes the property; no attribute is set here): the withheld address for the credentialed picture, the host with its port for the other, never a credential or a path");
   assert.deepEqual(controls.map((c) => c!.getAttribute("aria-label")), words, "and the aria-label, the same words");
   assert.deepEqual(controls.map((c) => c!.classList.contains("fv-figopen-web")), [true, true, false], "the web class on the two remote controls alone");
 });
 
-// ── a credential in the address's query or fragment (the file review's round 14, correctness-1): the picture's title shows origin
-// plus path, the whole query and the whole fragment dropped beside the userinfo, so a raw link's token, a presigned URL's
-// signature pair or an OAuth fragment never stands in a tooltip. Every address is assembled at run time through the URL API and
-// every planted value from parts, so no credential-shaped literal stands in this file.
-test("a picture from the web whose address carries a query token, an S3 presigned signature pair, a fragment access_token, a userinfo plus a query, or a query plus a fragment, painted with its hosts loaded: the picture's title is origin plus path alone (shownAddress), after the author's title when one stands, with no planted value in it; the control's words name the host as before (a property pin over the paint, red at the head the round read, where the title kept the query and the fragment)", async (t) => {
+// ── a credential in the address's query or fragment (the file review's round 14, correctness-1): the picture's title drops the whole
+// query and the whole fragment, so a raw link's token, a presigned URL's signature pair or an OAuth fragment never stands in a
+// tooltip, and since the file review's round 15 (extra9-2) the path too, the title showing the origin alone. Every address is
+// assembled at run time through the URL API and every planted value from parts, so no credential-shaped literal stands in this file.
+test("a picture from the web whose address carries a query token, an S3 presigned signature pair, a fragment access_token, a userinfo plus a query, or a query plus a fragment, painted with its hosts loaded: the picture's title is its origin alone (shownAddress), after the author's title when one stands, and the withheld address for the one with a userinfo (figureSourceCredentialed), with no planted value and no path in any; the control's words name the host, and the withheld address for the userinfo (a property pin over the paint, red at the head the round read, where the title kept the path)", async (t) => {
   const tok = "tok" + "en", qv = "Q" + "TOKVAL" + String(7 * 13);
   const q = new URL("https://example.test/q.svg"); q.searchParams.set(tok, qv);
   const s3 = new URL("https://bucket.example.test/fig.png");
@@ -1060,7 +1068,7 @@ test("a picture from the web whose address carries a query token, an S3 presigne
   const qf = new URL("http://example.test/p.svg"), sv = "S" + "ECRETVALUE", fv2 = "H" + "ASHVALUE"; qf.searchParams.set(tok, sv); qf.hash = "access_" + "token=" + fv2;
   assert.deepEqual([q.search.includes(qv), s3.search.includes("X-Amz-Signature=" + sig), fr.hash.includes(hv), uq.username, uq.password, uq.search.includes(cv), qf.search.includes(sv), qf.hash.includes(fv2)], [true, true, true, us, pw, true, true, true],
     "each assembled address carries its planted value (read back as parts)");
-  const planted = [qv, cred, encodeURIComponent(cred), sig, "X-Amz-", hv, "access_", us + ":", pw, cv, sv, fv2, "?", "#"];
+  const planted = [qv, cred, encodeURIComponent(cred), sig, "X-Amz-", hv, "access_", us + ":", pw, cv, sv, fv2, "?", "#", ".svg", ".png"];
   loadGatedHost("example.test", doc as unknown as ParentNode); loadGatedHost("bucket.example.test", doc as unknown as ParentNode);   // the hosts on no list: lifted for this document before the paint
   t.after(() => { forgetLoadedHosts(); });
   const hrefs = [q.href, s3.href, fr.href, uq.href, qf.href];
@@ -1068,67 +1076,259 @@ test("a picture from the web whose address carries a query token, an S3 presigne
   const imgs = o.body.querySelector(".fileview-md")!.querySelectorAll("img");
   assert.deepEqual(imgs.map((i) => i.getAttribute("alt")), ["c0", "c1", "c2", "c3", "c4"], "the five pictures painted, none gated");
   const titles = imgs.map((i) => i.getAttribute("title"));
-  assert.deepEqual(titles, ["Opens in a new tab: https://example.test/q.svg", "Fig\nOpens in a new tab: https://bucket.example.test/fig.png", "Opens in a new tab: http://example.test/f.svg", "Opens in a new tab: http://example.test/c.svg", "Opens in a new tab: http://example.test/p.svg"],
-    "origin plus path in every title, the author's title first on its own line: no query, no fragment, no userinfo (a property pin over the title attribute)");
+  assert.deepEqual(titles, ["Opens in a new tab: https://example.test", "Fig\nOpens in a new tab: https://bucket.example.test", "Opens in a new tab: http://example.test", WITHHELD_TITLE, "Opens in a new tab: http://example.test"],
+    "the origin alone in every title, the author's title first on its own line, and the withheld address for the userinfo: no path, no query, no fragment, no userinfo (a property pin over the title attribute)");
   for (const ti of titles) for (const x of planted) assert.ok(!(ti || "").includes(x), "no planted value in a title (a property pin): " + JSON.stringify(x) + " in " + JSON.stringify(ti));
   const words = imgs.map((i) => { const n = i.nextSibling; return n instanceof El && n.hasAttribute("data-fv-figopen") ? n.title : null; });
-  assert.deepEqual(words, ["Open the picture in a new tab at example.test", "Open the picture in a new tab at bucket.example.test", "Open the picture in a new tab at example.test", "Open the picture in a new tab at example.test", "Open the picture in a new tab at example.test"],
-    "the control's words name the host alone, as before (targetHost; a control, green at the head the round read by design)");
+  assert.deepEqual(words, ["Open the picture in a new tab at example.test", "Open the picture in a new tab at bucket.example.test", "Open the picture in a new tab at example.test", WITHHELD_WORDS, "Open the picture in a new tab at example.test"],
+    "the control's words name the host alone (targetHost), and the withheld address for the userinfo (figureSourceCredentialed)");
 });
 
-test("a picture from the web whose address the stand-in cannot resolve, a protocol-relative one (the node DOM has no base to resolve it against) and one with an out-of-range port, each carrying a userinfo and a query token: the picture's title is cut as text, no userinfo and nothing from the first ? (shownAddress's refused arm, which the label shares; in a browser neither loads, so neither gets a title there, and the failed label holds the same cut in file-view-figure-error.test.ts) (a property pin over the paint, red at the head the round read, where the title printed the address as written)", async (t) => {
-  const tok = "tok" + "en", us = "u" + "ser", pw = "p" + "w" + String(4 * 4), v1 = "PR" + "TOK" + String(9 * 9), v2 = "UP" + "TOK" + String(8 * 8);
+test("a picture from the web whose address the stand-in cannot resolve, a protocol-relative one (the node DOM has no base to resolve it against) and one with an out-of-range port: each carrying a userinfo and a query token shows the withheld address in its title and its control's words (figureSourceCredentialed), and each carrying a query token alone shows its authority cut, no path and nothing from the first ?, in its title and in its control's words (shownAddress's and targetHost's refused arm, authorityCut, which the label shares; in a browser neither loads, so neither gets a title there, and the failed label holds the same cut in file-view-figure-error.test.ts) (a property pin over the paint, red at the head the round read, where the title printed the path and the control's words the address as written)", async (t) => {
+  const tok = "tok" + "en", us = "u" + "ser", pw = "p" + "w" + String(4 * 4), v1 = "PR" + "TOK" + String(9 * 9), v2 = "UP" + "TOK" + String(8 * 8), v3 = "PN" + "TOK" + String(7 * 7), v4 = "UN" + "TOK" + String(6 * 6);
   const pr = "//" + us + ":" + pw + "@example.test/r.svg?" + tok + "=" + v1;
   const up = "http://" + us + ":" + pw + "@example.test:99999/u.svg?" + tok + "=" + v2;
+  const pn = "//example.test/rn.svg?" + tok + "=" + v3;
+  const un = "http://example.test:99999/un.svg?" + tok + "=" + v4;
   loadGatedHost("example.test", doc as unknown as ParentNode);
   t.after(() => { forgetLoadedHosts(); });
-  const o = await open(REPORT, '# R\n\n<img src="' + pr + '" alt="pr">\n\n<img src="' + up + '" alt="up">\n', t);
+  const o = await open(REPORT, "# R\n\n" + [[pr, "pr"], [up, "up"], [pn, "pn"], [un, "un"]].map(([s, a]) => '<img src="' + s + '" alt="' + a + '">').join("\n\n") + "\n", t);
   const imgs = o.body.querySelector(".fileview-md")!.querySelectorAll("img");
-  assert.deepEqual(imgs.map((i) => i.getAttribute("alt")), ["pr", "up"], "the two pictures painted, none gated");
+  assert.deepEqual(imgs.map((i) => i.getAttribute("alt")), ["pr", "up", "pn", "un"], "the four pictures painted, none gated");
   const titles = imgs.map((i) => i.getAttribute("title"));
-  assert.deepEqual(titles, ["Opens in a new tab: //example.test/r.svg", "Opens in a new tab: http://example.test:99999/u.svg"], "each title cut as text: the userinfo and the query gone, the port kept (a property pin over the title attribute)");
-  for (const ti of titles) for (const x of [us + ":", pw, v1, v2, "?"]) assert.ok(!(ti || "").includes(x), "no planted value in a title (a property pin): " + JSON.stringify(x) + " in " + JSON.stringify(ti));
+  assert.deepEqual(titles, [WITHHELD_TITLE, WITHHELD_TITLE, "Opens in a new tab: //example.test", "Opens in a new tab: http://example.test:99999"], "the two with a userinfo withheld, the two without cut at their authority, the port kept (a property pin over the title attribute)");
+  const words = imgs.map((i) => { const n = i.nextSibling; return n instanceof El && n.hasAttribute("data-fv-figopen") ? n.title : null; });
+  assert.deepEqual(words, [WITHHELD_WORDS, WITHHELD_WORDS, "Open the picture in a new tab at //example.test", "Open the picture in a new tab at http://example.test:99999"], "the control's words: withheld, and for a refused address its authority cut (targetHost's fallback, which printed the address as written, query and all)");
+  for (const s of [...titles, ...words]) for (const x of [us + ":", pw, v1, v2, v3, v4, "?", ".svg"]) assert.ok(!(s || "").includes(x), "no planted value and no path in a title or the control's words (a property pin): " + JSON.stringify(x) + " in " + JSON.stringify(s));
 });
 
-// ── two spellings of a credential that the URL parser reads with no sign-in part: a disclosed residual (the coordinator's ruling
-// of 2026-09-24, on the file review's round 14, correctness-1 with extra5-3). shownAddress reads an address that parses as the
-// parser reads it, and the parser gives these no userinfo at all, so they print in the picture's title and in the failed label: a
-// password whose part before a /, a ? or a # is a number parses as a port, the username as the host and, after a /, the rest of
-// the password as the path; and an http: source written without its slashes on an http page resolves as a path of the page's own
-// origin (against a VS Code webview's address, which is not http, it parses with its sign-in part and prints none). The ruling's
-// two reasons: the author's text is ambiguous even to the standard, and the credential is already in the file being viewed; and a
-// text cut that caught these would also mangle ordinary addresses, a picture named a@2x.png among them. This case is the
-// executed witness: it records what the title and the label print for each spelling, through the paint and the real error
-// listener over the dashboard's base, so a change to either text reds here, and a control, an ordinary address with an @ in its
-// path, printed whole, so a text cut at the last @ reds here too. Every value is assembled at run time.
-test("two spellings of a credential that the URL parser reads with no sign-in part print in the picture's title and in the failed label, as measured: a password whose part before a /, a ? or a # is a number (read as a port, the username as the host and, after the /, the rest of the password as the path) and an http: source written without its slashes on an http page (read as a path of the page's own origin); against a VS Code webview's address the slashless spelling prints no credential, and an ordinary address with an @ in its path prints whole (a disclosed residual, the coordinator's ruling of 2026-09-24; an executed witness over the paint and the error listener, holding the texts as measured, so a change to either reds)", async (t) => {
-  const us = "u" + "ser", pw = "p" + "w" + String(4 * 4), port = String(2000 + 24);
-  const base = "http://notes-api.test/", vsBase = "vscode-webview://abc123/index.html?id=x";
-  const srcs = [
-    "http://" + us + ":" + port + "/" + pw + "@example.test/i.png",   // a password beginning with a number, then a /
-    "http://" + us + ":" + port + "?" + pw + "@example.test/j.png",   // then a ?
-    "http://" + us + ":" + port + "#" + pw + "@example.test/k.png",   // then a #
-    "http:" + us + ":" + pw + "@example.test/a.png",                    // an http: source written without its slashes
-    "http://example.test/figs/a@2x.png",                                 // the control: an ordinary address with an @ in its path
+// ── the sign-in rule over the paint (the file review's round 15, correctness-1 with extra5-1, extra6-2, tests-1 and extra9-3, on the
+// coordinator's decision): the rule that replaced the disclosed residual of two credential spellings, whose witness stood here. The
+// URL parser reads many spellings of a sign-in with no userinfo, as a host and a port, a path of the page's own origin or an opaque
+// path, so the viewer's words read the source's text instead: an at sign (ASCII, U+FF20 or U+FE6B, after the percent-escapes are
+// decoded until the text stops changing) anywhere after a scheme other than data: or a leading run of two or more slashes or
+// backslashes, in the head a data: source's label prints, or after a colon in a source with neither, withholds the whole address on
+// every surface: the picture's title line, the web control's title property and aria-label, and the failed label. One table, each
+// row painted over the stand-in (real marked, the sanitizer's stand-in, the real rewrite, gate and decision) on the base it names,
+// then failed through the real error listener; the stand-in keeps a web picture's control through the error, so a web row reads all
+// four surfaces here. A row that is not a web target (s3:, data:, and on the Files pane a workspace path: the two-backslash, the
+// leading-control, the tab-in-scheme and the schemeless forms) has no title, and its control, where one stands, is the local one.
+// Each row is red at the head the round read on each surface that printed any part of its address (every surface, since none
+// withheld it), and each surface's print there is recorded as a diagnostic line of this case, so the run at either head shows what
+// printed. The cost rows print their address at that head and show the withheld address now: the rule's stated cost. The controls,
+// outside the rule, print their words at both heads. Every value is assembled at run time.
+test("the sign-in rule over the paint, one table (the file review's round 15, correctness-1): every spelling the rulings name, the refuters' (https: with no slash, one slash or one backslash on an https base; http: likewise, and HTTP:, on an http base; a tab before one slash; a password beginning with a slash or a backslash; a numeric head before a backslash; a backslash in the sign-in name; s3:), those an authority-only rule missed (a numeric password head before a /, a ? or a #; a token or a name holding a slash; https: with a numeric head on an https base), the leading run, the tab and control-character forms, the schemeless forms marked renders, the encoded, double-encoded and lookalike at signs, the data: forms and a plain userinfo or token on an http, an https and a VS Code webview base, and on a URL document the two-backslash form, shows the withheld address and no part of itself on every surface it has: the picture's title line, the control's title property and aria-label, and the failed label; a picture in a fold's own summary and one in a link holding it alone carry it in the control's words, their title withheld; the cost rows (an @ in a web address's path, a profile path, a refused address with an @, a relative a@2x.png on a URL document) are withheld too; the controls print as before: a relative a@2x.png on the Files pane, an inline svg holding @media after its comma, a ported address as its origin, a refused one cut at its authority (a property pin over the paint, red at the head the round read on each surface that printed)", async (t) => {
+  const fv = await mod();
+  const US = "u" + "ser", PW = "p" + "w" + String(4 * 4), PORT = String(2000 + 24), TK = "tok" + "en", H = "example.test", BS = "\\", TAB = "\t";
+  const SIGN = US + ":" + PW + "@", NUM = US + ":" + PORT;
+  const FF20 = String.fromCharCode(0xff20), FE6B = String.fromCharCode(0xfe6b), ZW = String.fromCharCode(0x200b), C1 = String.fromCharCode(1);
+  const BASES: Record<string, string> = { http: "http://notes-api.test/", https: "https://notes-api.test/", vscode: "vscode-webview://abc123/index.html?id=x" };
+  const ALL = ["http", "https", "vscode"];
+  /** A row: its markup (raw HTML, attribute text written with entities where a character must reach the attribute, or markdown), the
+   *  source the viewer must hold for it (read back before any surface: data-fv-src when the viewer rewrote the src, else src), whether
+   *  it is a web target, the bases it paints on, and the parts of its address that must never print. */
+  type Row = { name: string; md: (alt: string) => string; holds: string; web: boolean; bases: string[]; planted: string[]; place?: "fold" | "link" };
+  const html = (attr: string) => (alt: string) => '<img src="' + attr + '" alt="' + alt + '">';
+  const raw = (src: string, name: string, web: boolean, bases: string[], planted: string[]): Row => ({ name, md: html(src), holds: src, web, bases, planted });
+  const ent = (attr: string, holds: string, name: string, web: boolean, bases: string[], planted: string[]): Row => ({ name, md: html(attr), holds, web, bases, planted });
+  const mdRow = (dest: string, holds: string, name: string, web: boolean, bases: string[], planted: string[]): Row => ({ name, md: (alt) => "![" + alt + "](" + dest + ")", holds, web, bases, planted });
+  const rows: Row[] = [
+    // the refuters' spellings
+    raw("https:" + SIGN + H + "/x.png", "https: with no slash, on an https base (the phone's road)", true, ["https"], [PW, US + ":"]),
+    raw("https:/" + SIGN + H + "/x.png", "https: with one slash, on an https base", true, ["https"], [PW, US + ":"]),
+    raw("https:" + BS + SIGN + H + "/x.png", "https: with one backslash, on an https base", true, ["https"], [PW, US + ":"]),
+    raw("http:" + SIGN + H + "/a.png", "http: with no slash, on an http base (the withdrawn residual's second spelling)", true, ["http"], [PW, US + ":"]),
+    raw("http:/" + SIGN + H + "/a.png", "http: with one slash, on an http base", true, ["http"], [PW, US + ":"]),
+    raw("http:" + BS + SIGN + H + "/a.png", "http: with one backslash, on an http base", true, ["http"], [PW, US + ":"]),
+    raw("HTTP:" + SIGN + H + "/a.png", "HTTP: in upper case, on an http base", true, ["http"], [PW, US + ":"]),
+    ent("http:&#9;/" + SIGN + H + "/x.png", "http:" + TAB + "/" + SIGN + H + "/x.png", "http: with a tab before its one slash, on an http base", true, ["http"], [PW, US + ":"]),
+    raw("http://" + US + ":/" + PW + "@" + H + "/e.png", "a password that begins with a slash", true, ALL, [PW, US]),
+    raw("http://" + US + ":" + BS + PW + "@" + H + "/e.png", "a password that begins with a backslash", true, ALL, [PW, US]),
+    raw("http://" + NUM + BS + PW + "@" + H + "/i.png", "a numeric password head followed by a backslash", true, ALL, [PW, NUM]),
+    raw("http://" + US + BS + PW + "@" + H + "/i.png", "a sign-in name holding a backslash", true, ALL, [PW, US]),
+    raw("s3:" + SIGN + H + "/a.png", "s3: written without slashes (the label only: no target)", false, ALL, [PW, US + ":"]),
+    // the spellings a rule reading the authority alone missed
+    raw("http://" + NUM + "/" + PW + "@" + H + "/i.png", "a numeric password head, then a / (the withdrawn residual's first spelling)", true, ALL, [PW, NUM]),
+    raw("http://" + NUM + "?" + PW + "@" + H + "/j.png", "a numeric password head, then a ?", true, ALL, [PW, NUM]),
+    raw("http://" + NUM + "#" + PW + "@" + H + "/k.png", "a numeric password head, then a #", true, ALL, [PW, NUM]),
+    raw("http://" + TK.slice(0, 3) + "/" + TK.slice(3) + "16@" + H + "/t.png", "a sign-in token holding a slash", true, ALL, [TK.slice(3) + "16", TK.slice(0, 3) + "/"]),
+    raw("http://" + US + "/x:" + PW + "@" + H + "/t.png", "a sign-in name holding a slash before its password", true, ALL, [PW, US]),
+    raw("https://AbCx/dEf" + String(4 * 33) + "@img." + H + "/b.png", "a mixed-case token holding a slash", true, ALL, ["dEf" + String(4 * 33), "AbCx", "abcx"]),
+    raw("https:" + NUM + "?" + PW + "@" + H + "/x.png", "https: with a numeric password head and a ?, on an https base", true, ["https"], [PW, NUM]),
+    // the leading run
+    raw("//" + SIGN + H + "/x.png", "a leading // before a userinfo", true, ALL, [PW, US + ":"]),
+    raw("//" + TK + "@" + H + "/x.png", "a leading // before a token with no colon", true, ALL, [TK]),
+    raw("//" + NUM + "/" + PW + "@" + H + "/x.png", "a leading // before a numeric password head and a /", true, ALL, [PW, NUM]),
+    raw("//" + NUM + BS + PW + "@" + H + "/x.png", "a leading // before a numeric password head and a backslash", true, ALL, [PW, NUM]),
+    raw(BS + BS + NUM + "/" + PW + "@" + H + "/x.png", "two leading backslashes, a workspace path on the Files pane (the label only)", false, ALL, [PW, NUM]),
+    // the parser's normalisation: a tab inside the scheme and a leading control character, in raw HTML
+    ent("ht&#9;tp://" + NUM + "/" + PW + "@" + H + "/i.png", "ht" + TAB + "tp://" + NUM + "/" + PW + "@" + H + "/i.png", "raw HTML with a tab inside the scheme, a workspace path here (the label only)", false, ALL, [PW, NUM]),
+    ent("ht&#9;tp:" + SIGN + H + "/a.png", "ht" + TAB + "tp:" + SIGN + H + "/a.png", "raw HTML with a tab inside a slashless scheme, on an http base (the label only)", false, ["http"], [PW, US + ":"]),
+    ent("&#1;http://" + NUM + "/" + PW + "@" + H + "/i.png", C1 + "http://" + NUM + "/" + PW + "@" + H + "/i.png", "raw HTML with a leading control character (the label only)", false, ALL, [PW, NUM]),
+    // the schemeless forms, workspace paths on the Files pane (the label only)
+    mdRow("<ht" + TAB + "tp://" + NUM + "/" + PW + "@" + H + "/i.png>", "ht%09tp://" + NUM + "/" + PW + "@" + H + "/i.png", "markdown with a tab inside the scheme, which marked writes as %09", false, ALL, [PW, NUM]),
+    mdRow("<" + C1 + "http://" + NUM + "/" + PW + "@" + H + "/i.png>", "%01http://" + NUM + "/" + PW + "@" + H + "/i.png", "markdown with a leading control character, which marked writes as %01", false, ALL, [PW, NUM]),
+    mdRow(ZW + "http://" + NUM + "/" + PW + "@" + H + "/i.png", "%E2%80%8Bhttp://" + NUM + "/" + PW + "@" + H + "/i.png", "markdown with a pasted zero-width space before the scheme", false, ALL, [PW, NUM]),
+    mdRow("./http://" + SIGN + H + "/x.png", "./http://" + SIGN + H + "/x.png", "markdown with ./ before the scheme", false, ALL, [PW, US + ":"]),
+    ent("&#127;http://" + NUM + "/" + PW + "@" + H + "/i.png", String.fromCharCode(127) + "http://" + NUM + "/" + PW + "@" + H + "/i.png", "raw HTML with a leading U+007F", false, ALL, [PW, NUM]),
+    ent("&#8203;http://" + NUM + "/" + PW + "@" + H + "/i.png", ZW + "http://" + NUM + "/" + PW + "@" + H + "/i.png", "raw HTML with a leading U+200B", false, ALL, [PW, NUM]),
+    ent("&#1;//" + TK + "@" + H + "/x.png", C1 + "//" + TK + "@" + H + "/x.png", "raw HTML with a leading control character before //token, no colon (red at the head the round read by the missing words: its label dropped the token)", false, ALL, [TK]),
+    // the encoded and lookalike at signs
+    raw("http://" + US + ":" + PW + "%40" + H + "/x.png", "a %40 in place of the at sign, which the parser refuses", true, ALL, [PW, US + ":"]),
+    raw("http://" + TK.slice(0, 3) + "%40" + H + "/x.png", "a token before a %40, which the parser refuses", true, ALL, [TK.slice(0, 3) + "%40"]),
+    raw("https:" + US + ":" + PW + "%40" + H + "/x.png", "https: with no slash and a %40, on an https base", true, ["https"], [PW, US + ":"]),
+    mdRow("https:" + US + ":" + PW + FF20 + H + "/x.png", "https:" + US + ":" + PW + "%EF%BC%A0" + H + "/x.png", "markdown https: with no slash and a fullwidth at sign, which marked writes as %EF%BC%A0, on an https base", true, ["https"], [PW, US + ":"]),
+    mdRow("https:" + US + ":" + PW + FE6B + H + "/x.png", "https:" + US + ":" + PW + "%EF%B9%AB" + H + "/x.png", "markdown https: with no slash and a small at sign, which marked writes as %EF%B9%AB, on an https base", true, ["https"], [PW, US + ":"]),
+    ent("https:" + US + ":" + PW + "&#xFF20;" + H + "/x.png", "https:" + US + ":" + PW + FF20 + H + "/x.png", "raw HTML https: with no slash and a fullwidth at sign, on an https base", true, ["https"], [PW, US + ":"]),
+    ent("https:" + US + ":" + PW + "&#xFE6B;" + H + "/x.png", "https:" + US + ":" + PW + FE6B + H + "/x.png", "raw HTML https: with no slash and a small at sign, on an https base", true, ["https"], [PW, US + ":"]),
+    mdRow("http://" + US + ":" + PW + FF20 + H + "/x.png", "http://" + US + ":" + PW + "%EF%BC%A0" + H + "/x.png", "markdown http:// with a fullwidth at sign, which the parser refuses", true, ALL, [PW, US + ":"]),
+    raw("http://" + US + ":" + PW + "%2540" + H + "/x.png", "a double-encoded at sign, which the parser refuses", true, ALL, [PW, US + ":"]),
+    // the data: forms (the label only)
+    raw("data://" + SIGN + H + "/x.png", "raw HTML data: with a sign-in in its printed head", false, ALL, [PW, US + ":"]),
+    mdRow("data://" + SIGN + H + "/x.png", "data://" + SIGN + H + "/x.png", "markdown data: with a sign-in in its printed head", false, ALL, [PW, US + ":"]),
+    raw("data://" + SIGN + H + "/,x", "raw HTML data: with a sign-in before its comma", false, ALL, [PW, US + ":"]),
+    mdRow("data://" + SIGN + H + "/,x", "data://" + SIGN + H + "/,x", "markdown data: with a sign-in before its comma", false, ALL, [PW, US + ":"]),
+    // a plain userinfo and a token
+    raw("https://" + SIGN + H + "/x.png", "a standard userinfo (red at the head the round read by the missing words: its sign-in part was dropped, its path printed)", true, ALL, [PW, US + ":"]),
+    raw("https://" + TK + "@" + H + "/x.png", "a username-only token (red there the same way)", true, ALL, [TK]),
+    // the placements where the control is the only surface carrying the address: a fold's own summary, a link holding the picture alone
+    { name: "a credentialed picture in a details element's own first summary (the title withheld, the control carries the words)", md: (alt) => '<details><summary><img src="http://' + NUM + "/" + PW + "@" + H + '/i.png" alt="' + alt + '"> fold</summary>body</details>', holds: "http://" + NUM + "/" + PW + "@" + H + "/i.png", web: true, bases: ["http"], planted: [PW, NUM], place: "fold" },
+    { name: "a credentialed picture in a link holding it alone (the title withheld, the control carries the words)", md: (alt) => '<a href="https://notes-api.test/next"><img src="http://' + NUM + "/" + PW + "@" + H + '/i.png" alt="' + alt + '"></a>', holds: "http://" + NUM + "/" + PW + "@" + H + "/i.png", web: true, bases: ["http"], planted: [PW, NUM], place: "link" },
   ];
-  const parts = srcs.map((s) => { const u = new URL(s, base); return [u.username, u.password, u.host, u.pathname]; });
-  assert.deepEqual(parts, [["", "", us + ":" + port, "/" + pw + "@example.test/i.png"], ["", "", us + ":" + port, "/"], ["", "", us + ":" + port, "/"], ["", "", "notes-api.test", "/" + us + ":" + pw + "@example.test/a.png"], ["", "", "example.test", "/figs/a@2x.png"]],
-    "the premise: the URL parser reads each against the dashboard's base with no username and no password (read back as parts)");
-  const vs = new URL(srcs[3], vsBase);
-  assert.deepEqual([vs.username, vs.password, vs.host], [us, pw, "example.test"], "and against a VS Code webview's address the slashless spelling parses with its sign-in part (the premise of the contrast)");
-  (doc as any).baseURI = base;   // the stand-in's document has no base: the dashboard's own address, as document.baseURI reads there
-  t.after(() => { delete (doc as any).baseURI; });
-  loadGatedHost(us, doc as unknown as ParentNode); loadGatedHost("example.test", doc as unknown as ParentNode);   // the hosts the parser reads in the first three and in the control: lifted for this document before the paint (the fourth is the page's own origin, which the gate never holds)
+  /** The rule's cost: harmless addresses withheld, printed whole at the head the round read. */
+  const cost: Row[] = [
+    raw("https://cdn/img/a@2x.png", "the cost: an at sign in a web address's path", true, ALL, ["cdn", "a@2x"]),
+    raw("https://social.example/@api/avatar.png", "the cost: a profile path", true, ALL, ["social.example", "@api"]),
+    raw("http://" + H + ":99999/a@2x.png", "the cost: a refused address with an at sign in its path (the round-14 cut printed a wrong host)", true, ALL, ["99999", "2x.png"]),
+  ];
+  /** The controls, outside the rule: [row, the label's source, the title (null for none), the control's words (null for none)]. */
+  const controls: Array<[Row, string, string | null, string | null]> = [
+    [raw("a@2x.png", "a relative a@2x.png on the Files pane, a workspace path with no colon before its at sign", false, ALL, []), "a@2x.png", null, "Open the picture"],
+    [ent("data:image/svg+xml;utf8,&lt;svg xmlns='http://www.w3.org/2000/svg'&gt;&lt;style&gt;@media (min-width:1px){rect{fill:red}}&lt;/style&gt;&lt;rect width='4' height='4'/&gt;&lt;/svg&gt;", "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg'><style>@media (min-width:1px){rect{fill:red}}</style><rect width='4' height='4'/></svg>", "an inline svg whose CSS holds @media after the comma (the rule reads a data: source's printed head alone)", false, ALL, []), "data:image/svg+xml;utf8,…", null, null],
+    [raw("http://" + H + ":8080/a.png", "a ported address: its origin, and the host with its port in the control's words", true, ALL, []), "http://" + H + ":8080", "Opens in a new tab: http://" + H + ":8080", "Open the picture in a new tab at " + H + ":8080"],
+    [raw("http://" + H + ":99999/a.png", "a refused address: its authority cut", true, ALL, []), "http://" + H + ":99999", "Opens in a new tab: http://" + H + ":99999", "Open the picture in a new tab at http://" + H + ":99999"],
+  ];
+  t.after(() => { delete (doc as any).baseURI; forgetLoadedHosts(); });
+  const fails: string[] = [];
+  const surfacesOf = (img: El): { title: string | null; words: string | null; aria: string | null; web: boolean | null; label: string | null } => {
+    const a = img.parentNode instanceof El && img.parentNode.tagName === "A" && img.parentNode.children.length === 1 ? img.parentNode : img;
+    const c = a.nextSibling instanceof El && a.nextSibling.hasAttribute("data-fv-figopen") ? a.nextSibling : null;
+    const l = (c || a).nextSibling;
+    return { title: img.getAttribute("title"), words: c ? c.title : null, aria: c ? c.getAttribute("aria-label") : null, web: c ? c.classList.contains("fv-figopen-web") : null, label: l instanceof El && l.hasAttribute("data-fv-figerr") ? l.textContent : null };
+  };
+  const heldOf = (img: El): string | null => img.hasAttribute("data-fv-src") ? img.getAttribute("data-fv-src") : img.getAttribute("src");
+  for (const b of ALL) {
+    const base = BASES[b];
+    const here = [...rows, ...cost].filter((r) => r.bases.includes(b));
+    const ctl = controls.filter(([r]) => r.bases.includes(b));
+    (doc as any).baseURI = base;   // the stand-in's document has no base: the page's own address, as document.baseURI reads there
+    for (const r of [...here, ...ctl.map(([r]) => r)]) { const h = remoteHost(r.holds, base); if (h) loadGatedHost(h, doc as unknown as ParentNode); }   // the hosts the gate would hold, lifted before the paint (derived with the gate's own reader)
+    const alts = [...here.map((_, i) => "r" + i), ...ctl.map((_, i) => "k" + i)];
+    const o = await open(REPORT, "# R\n\n" + [...here, ...ctl.map(([r]) => r)].map((r, i) => r.md(alts[i])).join("\n\n") + "\n", t);
+    const imgs = o.body.querySelector(".fileview-md")!.querySelectorAll("img");
+    const byAlt = new Map(imgs.map((i) => [i.getAttribute("alt"), i] as [string | null, El]));
+    for (const alt of alts) {
+      const i = byAlt.get(alt);
+      assert.ok(i, b + ": the row " + alt + " painted an img");
+      assert.equal(i!.closest('[data-act="fv-load"]'), null, b + ": the row " + alt + " is not gated (a gated figure has no src, no title and no error: a silent green)");
+    }
+    here.forEach((r, k) => assert.equal(heldOf(byAlt.get("r" + k)!), r.holds, b + ": " + r.name + ": the source the viewer holds is the spelling the row means (read back before any surface)"));
+    ctl.forEach(([r], k) => assert.equal(heldOf(byAlt.get("k" + k)!), r.holds, b + ": " + r.name + ": the source the viewer holds"));
+    for (const i of imgs) i.dispatchEvent(new Ev("error"));
+    here.forEach((r, k) => {
+      const alt = "r" + k, s = surfacesOf(byAlt.get(alt)!);
+      t.diagnostic(b + " " + alt + " " + JSON.stringify(r.name) + " printed " + JSON.stringify(s));
+      const want = {
+        title: r.web && !r.place ? WITHHELD_TITLE : null,
+        words: r.web ? WITHHELD_WORDS : null, aria: r.web ? WITHHELD_WORDS : null, web: r.web ? true : null,
+        label: fv.FIGURE_FAILED + " " + WITHHELD + " (" + alt + ")",
+      };
+      if (!r.web && s.words !== null) { want.words = "Open the picture"; want.aria = "Open the picture"; want.web = false; }   // a workspace path's local control, where one stands
+      if (r.place) {
+        // the placement rows: the control's words are what the row holds, the one surface a browser leaves carrying the address there
+        // (file-figure-open-browser.test.ts asserts the title's withholding inside a fold's summary and a link holding the picture
+        // alone). This stand-in has no firstElementChild, so figureFoldOf finds no fold, and its getAttributeNS reads a plain href as
+        // the XLink one, so mdBlock's fold takes every anchor's href off and the link is dead here: the title may stand, and when it
+        // does it must be the withheld line; the placement itself is read back so the row is what it names
+        const img = byAlt.get(alt)!, host = img.parentNode as El;
+        assert.equal(r.place === "fold" ? host.tagName : host.tagName + ":" + host.children.length, r.place === "fold" ? "SUMMARY" : "A:1", b + ": " + r.name + ": the picture stands where the row says");
+        if (s.title === WITHHELD_TITLE) want.title = WITHHELD_TITLE;
+      }
+      for (const k2 of ["title", "words", "aria", "web", "label"] as const) if (s[k2] !== want[k2]) fails.push(b + " " + alt + " (" + r.name + "): the " + k2 + " is " + JSON.stringify(s[k2]) + ", not " + JSON.stringify(want[k2]));
+      for (const k2 of ["title", "words", "aria", "label"] as const) for (const x of r.planted) if ((s[k2] || "").includes(x)) fails.push(b + " " + alt + " (" + r.name + "): the " + k2 + " prints " + JSON.stringify(x));
+    });
+    ctl.forEach(([r, label, title, words], k) => {
+      const alt = "k" + k, s = surfacesOf(byAlt.get(alt)!);
+      t.diagnostic(b + " " + alt + " " + JSON.stringify(r.name) + " printed " + JSON.stringify(s));
+      const want = { title, words, aria: words, web: words === null ? null : r.web, label: fv.FIGURE_FAILED + " " + label + " (" + alt + ")" };
+      for (const k2 of ["title", "words", "aria", "web", "label"] as const) if (s[k2] !== want[k2]) fails.push(b + " " + alt + " (" + r.name + "): the " + k2 + " is " + JSON.stringify(s[k2]) + ", not " + JSON.stringify(want[k2]));
+    });
+    o.fv.closeFileView();
+    forgetLoadedHosts();
+  }
+  // a URL document (labels alone: the URL view arms the labels and no control or title), whose figures resolveFigureRefs resolves
+  // against the document before any reader, so the two-backslash form reaches the label as a web address, and a relative a@2x.png
+  // too: the rule's cost there
+  const NOTE = "https://notes-api.test/notes/note.md";
+  (doc as any).baseURI = BASES.https;
+  const docRows: Array<[string, string, string, string[]]> = [
+    ["two leading backslashes on a URL document", BS + BS + NUM + "/" + PW + "@" + H + "/x.png", WITHHELD, [PW, NUM]],
+    ["the cost: a relative a@2x.png on a URL document", "a@2x.png", WITHHELD, ["a@2x", "/notes/"]],
+    ["a control: a relative figs/p.png on a URL document shows the document's origin", "figs/p.png", "https://notes-api.test", ["/notes/", "p.png"]],
+  ];
+  urls[NOTE] = "# Note\n\n" + docRows.map(([, src], i) => '<img src="' + src + '" alt="u' + i + '">').join("\n\n") + "\n";
+  for (const [, src] of docRows) { const h = remoteHost(new URL(src, NOTE).href, BASES.https); if (h && h !== "notes-api.test") loadGatedHost(h, doc as unknown as ParentNode); }
+  fv.openUrlView(NOTE);
+  t.after(() => { fv.closeFileView(); doc.activeElement = null; delete urls[NOTE]; delete (doc as any).baseURI; forgetLoadedHosts(); });
+  await settle();
+  const md = doc.getElementById("romp-fileview")!.querySelector(".fileview-md")!;
+  const uimgs = md.querySelectorAll("img");
+  assert.deepEqual(uimgs.map((i) => i.getAttribute("alt")), docRows.map((_, i) => "u" + i), "the URL document's figures painted");
+  assert.ok(uimgs.every((i) => i.closest('[data-act="fv-load"]') === null), "none gated on the URL document");
+  assert.equal(uimgs[0].getAttribute("src"), new URL(docRows[0][1], NOTE).href, "resolveFigureRefs resolved the two-backslash form to a web address before any reader (read back)");
+  for (const i of uimgs) i.dispatchEvent(new Ev("error"));
+  docRows.forEach(([name, , want, planted], k) => {
+    const s = surfacesOf(uimgs[k]);
+    t.diagnostic("url u" + k + " " + JSON.stringify(name) + " printed " + JSON.stringify(s));
+    const wantLabel = fv.FIGURE_FAILED + " " + want + " (u" + k + ")";
+    if (s.label !== wantLabel) fails.push("url u" + k + " (" + name + "): the label is " + JSON.stringify(s.label) + ", not " + JSON.stringify(wantLabel));
+    if (s.title !== null || s.words !== null) fails.push("url u" + k + " (" + name + "): a URL document's figure wears no title line and no control: " + JSON.stringify(s));
+    for (const x of planted) if ((s.label || "").includes(x)) fails.push("url u" + k + " (" + name + "): the label prints " + JSON.stringify(x));
+  });
+  assert.deepEqual(fails, [], "every row shows the withheld address and no part of itself on each surface it has, the cost rows too, and the controls print as before (a property pin over the paint; each surface's print is in this case's diagnostic lines)");
+});
+
+// ── a credential in the path (the file review's round 15, extra9-2, on the coordinator's answer): the picture's title and the failed
+// label show the origin alone, so a path parameter carrying a session or an opaque capability segment never prints; the control's
+// words were host-only already. Each planted value is assembled at run time.
+test("a picture from the web whose path carries a ;jsessionid= parameter, and one whose path carries an opaque token segment, painted with the host loaded and failed through the real error listener: the picture's title and the failed label show the origin alone, with no planted value, and the control's words name the host as before (a property pin over the paint, red at the head the round read by the planted value in both texts; the control's words are the control, green at both heads)", async (t) => {
+  const fv = await mod();
+  const sess = "S" + "ESS" + String(41 * 41) + "abcdef", seg = "k" + "ey" + String(97 * 89) + "ZyXw";
+  const srcs = ["https://example.test/img/a.png;jsessionid=" + sess, "https://example.test/s/" + seg + "/a.png"];
+  assert.deepEqual(srcs.map((s) => new URL(s).pathname.includes(s === srcs[0] ? sess : seg)), [true, true], "each planted value is in the path the parser reads (read back)");
+  loadGatedHost("example.test", doc as unknown as ParentNode);
   t.after(() => { forgetLoadedHosts(); });
-  const o = await open(REPORT, "# R\n\n" + srcs.map((s, i) => '<img src="' + s + '" alt="s' + i + '">').join("\n\n") + "\n", t);
+  const o = await open(REPORT, "# R\n\n" + srcs.map((s, i) => '<img src="' + s + '" alt="b' + i + '">').join("\n\n") + "\n", t);
   const imgs = o.body.querySelector(".fileview-md")!.querySelectorAll("img");
-  assert.deepEqual(imgs.map((i) => i.getAttribute("alt")), ["s0", "s1", "s2", "s3", "s4"], "the five pictures painted, none gated");
-  const shown = ["http://" + us + ":" + port + "/" + pw + "@example.test/i.png", "http://" + us + ":" + port + "/", "http://" + us + ":" + port + "/", base + us + ":" + pw + "@example.test/a.png", "http://example.test/figs/a@2x.png"];
-  assert.deepEqual(imgs.map((i) => i.getAttribute("title")), shown.map((s) => "Opens in a new tab: " + s),
-    "the picture's title prints each address as the parser reads it: the password after a / and the username as the host in the first, the username as the host in the next two, and the whole sign-in part as a path of the page's origin in the fourth (the residual as measured), and the control whole, its @ read as the path's (a text cut at the last @ would print a wrong host there, the ruling's second reason)");
+  assert.deepEqual(imgs.map((i) => i.getAttribute("alt")), ["b0", "b1"], "the two pictures painted, none gated");
   for (const i of imgs) i.dispatchEvent(new Ev("error"));
-  const labels = imgs.map((i) => { let n = i.nextSibling; if (n instanceof El && n.hasAttribute("data-fv-figopen")) n = n.nextSibling; return n instanceof El && n.hasAttribute("data-fv-figerr") ? n.textContent : null; });
-  assert.deepEqual(labels, shown.map((s, k) => o.fv.FIGURE_FAILED + " " + s + " (s" + k + ")"), "the failed label, through the real error listener, prints the same five addresses (the residual as measured)");
-  assert.deepEqual([o.fv.shownSource(srcs[3], vsBase), o.fv.shownAddress(vs.href)], ["http://example.test/a.png", "http://example.test/a.png"],
-    "against a VS Code webview's address the slashless spelling's label and title address print no credential (the label builder, and the stripper the title reads over the address the figure resolves to)");
+  const read = imgs.map((i) => { const c = i.nextSibling instanceof El && i.nextSibling.hasAttribute("data-fv-figopen") ? i.nextSibling : null; const l = (c || i).nextSibling; return { title: i.getAttribute("title"), words: c ? c.title : null, label: l instanceof El && l.hasAttribute("data-fv-figerr") ? l.textContent : null }; });
+  assert.deepEqual(read.map((r) => r.title), ["Opens in a new tab: https://example.test", "Opens in a new tab: https://example.test"], "the picture's title: the origin alone (a property pin over the title attribute)");
+  assert.deepEqual(read.map((r) => r.label), [fv.FIGURE_FAILED + " https://example.test (b0)", fv.FIGURE_FAILED + " https://example.test (b1)"], "the failed label: the origin alone (a property pin over the label's text)");
+  for (const r of read) for (const x of [sess, seg, "jsessionid", ";", "/s/", "a.png"]) for (const v of [r.title, r.label]) assert.ok(!(v || "").includes(x), "no planted value and no path (a property pin): " + JSON.stringify(x) + " in " + JSON.stringify(v));
+  assert.deepEqual(read.map((r) => r.words), ["Open the picture in a new tab at example.test", "Open the picture in a new tab at example.test"], "the control's words name the host alone, as before (a control, green at both heads by design)");
+});
+
+// ── the one rule, called directly: the rows no painted table can hold (the file review's round 15, correctness-1). The sanitizer's
+// default list removes a file: source and an upper-case DATA: source before any reader (DOMPurify's data: test is case-sensitive),
+// so these are calls on the label builder and on the rule itself, beside an s3: and a blob: source in upper case, which a rule
+// that judged http and https alone would pass.
+test("the one rule called directly (figureSourceCredentialed, through the label builder shownSource first): a file: source written without slashes and an upper-case DATA: source, which the sanitizer removes before any painted reader, and an upper-case S3: and BLOB: source, each holding a sign-in, are withheld on no base and on an https base, and the rule answers true for each and false for the controls (a property pin over the returned strings, red at the head the round read, where the label printed each address, the file: one as file:///user:pw16@... on both bases)", async () => {
+  const fv = await mod();
+  const US = "u" + "ser", PW = "p" + "w" + String(4 * 4), H = "example.test";
+  const srcs = ["file:" + US + ":" + PW + "@" + H + "/x.png", "DATA://" + US + ":" + String(2000 + 24) + "/" + PW + "@" + H + "/x.png", "S3:" + US + ":" + PW + "@" + H + "/a.png", "BLOB:https://" + US + ":" + PW + "@" + H + "/x.png"];
+  const out = srcs.map((s) => [fv.shownSource(s, undefined), fv.shownSource(s, "https://notes-api.test/")]);
+  assert.deepEqual(out, srcs.map(() => [WITHHELD, WITHHELD]), "each withheld by the label builder on no base and on an https base (a property pin over the returned strings)");
+  assert.deepEqual(srcs.map((s) => (fv as any).figureSourceCredentialed(s)), [true, true, true, true], "and the rule answers true for each (a property pin over the rule's answers)");
+  assert.deepEqual(["a@2x.png", "/img/a@2x.png", "https://cdn.example/plot.png", "data:image/png;base64,iVBORw0KGgo"].map((s) => (fv as any).figureSourceCredentialed(s)), [false, false, false, false], "and false for the controls: a relative and a root-relative at sign with no colon before it, a plain address, a data: head with no at sign (controls, outside the rule)");
 });

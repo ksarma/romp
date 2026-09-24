@@ -556,8 +556,11 @@ tab, and a picture from the web opens its address in a new tab, as a link to tha
 does (from the keyboard, Enter or Space on its button opens it only while the button is
 on the screen), and the button and the picture both show that before the click: the button's
 tooltip says it opens a new tab at the address's host, its border is dashed and its glyph
-is an arrow leaving a box, and the picture's own tooltip shows the address without its
-sign-in part, query and fragment, on a line after the author's title when there is one; a
+is an arrow leaving a box, and the picture's own tooltip shows the address's origin (its
+scheme, host and port, never its path, query or fragment), on a line after the author's
+title when there is one; when the address has an @ anywhere after its scheme, so that it may
+carry a sign-in, both tooltips say the address is withheld and show none of it, even for a
+harmless name such as a@2x.png; a
 click on a picture in a fold's title line (a `<details>` block's summary) opens or closes
 the fold and opens nothing, with or without Cmd, and a picture from the web there shows
 no address in its tooltip, while its button, where it has one, still opens it; a figure
@@ -761,7 +764,8 @@ viewer paints the rectangle on the picture. Drawing a rectangle needs a mouse or
 on a phone, comment on the file as a whole instead.
 A figure that cannot be loaded, because its file is missing or is not an image, shows a line
 where the picture would be: **Image failed to load**, then the figure's path as written in the
-file (a web address without its sign-in part, query and fragment), and its alt text when it has
+file (for a web address, only its origin: its scheme, host and port; for a source with an @
+that may be a sign-in, a note that its address is withheld), and its alt text when it has
 one.
 A picture opened as a file of its own whose bytes will not decode, because it is still being
 written or was cut short, shows a line in its place (**this image failed to decode: it may be

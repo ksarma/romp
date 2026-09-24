@@ -495,7 +495,7 @@ const WEB_HOST = "example.test";
 const WEB_PORT = "http://example.test:8443";                          // the same name with a written port, relayed to the second server too: the control's words keep the port (URL.host), so two servers on one name read apart (the file review's round 12, fresh-2)
 const WEB_PORT_HOST = "example.test:8443";
 const WEB_WORDS = "Open the picture in a new tab at " + WEB_HOST;      // the control's title and aria-label for a picture from the web (file-view.ts figureOpenWebTitle)
-const WEB_LINE = (href: string): string => "Opens in a new tab: " + href;   // the picture's own title line for the two click roads (file-view.ts figureWebTitleLine)
+const WEB_LINE = (origin: string): string => "Opens in a new tab: " + origin;   // the picture's own title line for the two click roads (file-view.ts figureWebTitleLine over shownAddress: the address's origin alone since the file review's round 15, extra9-2)
 const AUTHOR_TITLE = "Figure 2: an author's title";
 const PLOT3 = ROOT + "/docs/figs/plot3.svg";
 // a local figure; a remote one with an author's title; a remote one with none; a <picture> whose wide candidate is remote and
@@ -564,15 +564,15 @@ test("in a browser: a LOADED picture from the web beside a local one shows where
       assert.deepEqual([d[0].title, d[0].aria, d[0].web], ["Open the picture", "Open the picture", false], "the local picture's control keeps the one word set and no web class");
       assert.deepEqual([d[2].title, d[2].web, d[3].title, d[3].web], [WEB_WORDS, true, WEB_WORDS, true], "the bare remote picture and the <picture> on its remote candidate wear the web words and class too");
       // the written port is part of the words (URL.host, never hostname: two servers on one name read apart) and of the title's address
-      assert.deepEqual([d[4].title, d[4].aria, d[4].web, d[4].imgTitle], ["Open the picture in a new tab at " + WEB_PORT_HOST, "Open the picture in a new tab at " + WEB_PORT_HOST, true, WEB_LINE(WEB_PORT + "/port.svg")], "the ported address: the control's words name the host WITH its port and the picture's title carries the address with it (the file review's round 12, fresh-2: red under a .hostname read, which every fixture without a port left green; a property pin over the control's title property)");
+      assert.deepEqual([d[4].title, d[4].aria, d[4].web, d[4].imgTitle], ["Open the picture in a new tab at " + WEB_PORT_HOST, "Open the picture in a new tab at " + WEB_PORT_HOST, true, WEB_LINE(WEB_PORT)], "the ported address: the control's words name the host WITH its port and the picture's title carries the address with it (the file review's round 12, fresh-2: red under a .hostname read, which every fixture without a port left green; a property pin over the control's title property)");
       assert.ok(d[1].glyph && d[0].glyph && d[1].glyph !== d[0].glyph, "the outbound glyph differs from the local control's corner arrows");
       assert.match(d[1].glyph!, /<path /, "the outbound glyph draws a box"); assert.match(d[1].glyph!, /<line /, "with an arrow leaving it");
       assert.equal(d[2].glyph, d[1].glyph, "one outbound drawing for every web control"); assert.equal(d[3].glyph, d[1].glyph);
       assert.notEqual(d[1].borderStyle, d[0].borderStyle, "the sheets dress the web control apart from the local one: " + d[1].borderStyle + " vs " + d[0].borderStyle);
-      // the picture itself: the address on its own line after the author's title; the line alone with no author's title; the local one untouched
-      assert.equal(d[1].imgTitle, AUTHOR_TITLE + "\n" + WEB_LINE(WEB + "/pic.svg"), "the author's title kept, the address on its own line after it");
-      assert.equal(d[2].imgTitle, WEB_LINE(WEB + "/bare.svg"), "no author's title: the line alone");
-      assert.equal(d[3].imgTitle, "Figure 4\n" + WEB_LINE(WEB + "/wide.svg"), "the <picture>'s img names the candidate shown, the remote one");
+      // the picture itself: the address's origin on its own line after the author's title; the line alone with no author's title; the local one untouched
+      assert.equal(d[1].imgTitle, AUTHOR_TITLE + "\n" + WEB_LINE(WEB), "the author's title kept, the address on its own line after it");
+      assert.equal(d[2].imgTitle, WEB_LINE(WEB), "no author's title: the line alone");
+      assert.equal(d[3].imgTitle, "Figure 4\n" + WEB_LINE(WEB), "the <picture>'s img carries the line for the candidate shown, the remote one, as its origin (on the local candidate at 600 px the line goes, below)");
       assert.equal(d[0].imgTitle, null, "the local picture carries no title of the viewer's");
       assert.equal(d[1].imgCursor, d[0].imgCursor, "the cursor is unchanged");
       // the media change: at 600 px the <picture> falls to its img src, a local file; the standing control is re-dressed with no add or remove
@@ -591,7 +591,7 @@ test("in a browser: a LOADED picture from the web beside a local one shows where
       await frames(page, 3);
       const w = await dress(page);
       assert.equal(await page.evaluate(() => (document.querySelectorAll(".fileview-md [data-fv-figopen]")[3] as HTMLElement).dataset.probeId), "standing", "still the same control");
-      assert.deepEqual([w[3].title, w[3].web, w[3].imgTitle, w[3].glyph === w[1].glyph], [WEB_WORDS, true, "Figure 4\n" + WEB_LINE(WEB + "/wide.svg"), true], "the web dress again");
+      assert.deepEqual([w[3].title, w[3].web, w[3].imgTitle, w[3].glyph === w[1].glyph], [WEB_WORDS, true, "Figure 4\n" + WEB_LINE(WEB), true], "the web dress again");
       assert.deepEqual(errors, [], "no page errors");
       await page.close();
     });
@@ -666,7 +666,7 @@ test("in a browser: a LOADED remote picture inside an author's named anchor or a
       assert.equal(d[5].anchorHref, WEB + "/page.html", "the live web link keeps its href");
       // FAILS BEFORE: the picture's own title carries the address on every one of the five, the click being the figure's own, and it is the tooltip the reader sees (before: null, or the dead link's words)
       for (let i = 0; i < 5; i++) {
-        assert.equal(d[i].imgTitle, WEB_LINE(WEB + "/" + d[i].alt + ".svg"), d[i].alt + ": the address line as the picture's title");
+        assert.equal(d[i].imgTitle, WEB_LINE(WEB), d[i].alt + ": the address line as the picture's title");
         assert.equal(d[i].tooltip, d[i].imgTitle, d[i].alt + ": and the tooltip the browser shows is that line, not the anchor's words");
       }
       assert.equal(d[5].imgTitle, null, "inside a live web link the click is the browser's: no line of the viewer's");
@@ -1227,8 +1227,8 @@ test("in a browser: a remote picture under the floor (20 by 20, from the second 
       assert.ok(badge.w < 48 && badge.h < 48 && badge.w > 0, "the badge is under the floor on both sides: " + badge.w + " by " + badge.h);
       // tests-2: the title of a remote picture under the floor, read off the real paint
       assert.equal(badge.control, false, "no control under the floor");
-      assert.equal(badge.title, WEB_LINE(WEB + "/tiny.svg"), "the picture's own title carries the address, decided before the control's verdict (red when dressFigureTitle moves inside the control's branches)");
-      assert.deepEqual([big.control, big.title, big.mark, big.outline], [true, WEB_LINE(WEB + "/pic.svg"), false, "none"], "the loaded picture over the floor: its control and title, and no mark of its own (the mark's population is the title's less the pictures a control stands on)");
+      assert.equal(badge.title, WEB_LINE(WEB), "the picture's own title carries the address, decided before the control's verdict (red when dressFigureTitle moves inside the control's branches)");
+      assert.deepEqual([big.control, big.title, big.mark, big.outline], [true, WEB_LINE(WEB), false, "none"], "the loaded picture over the floor: its control and title, and no mark of its own (the mark's population is the title's less the pictures a control stands on)");
       assert.deepEqual([badge.outline, badge.border], ["none", "none 0px"], "at rest on a fine pointer the badge wears no mark: the hover shows it, as it reveals the control");
       await page.mouse.move(rest.centre.x, rest.centre.y);
       await frames(page, 2);
@@ -1349,7 +1349,7 @@ test("in a browser, under CDP touch emulation (hover none, a coarse pointer) ena
       const touch = await under(page);
       assert.deepEqual([touch.hoverNone, touch.coarse], [true, true], "hover none and a coarse pointer under the emulation");
       assert.deepEqual(touch.imgs.map((x) => x.alt), TINY_ALTS, "the tiny report's figures");
-      assert.deepEqual([touch.imgs[1].control, touch.imgs[1].title], [false, WEB_LINE(WEB + "/tiny.svg")], "the badge: no control under the floor, the address in its title");
+      assert.deepEqual([touch.imgs[1].control, touch.imgs[1].title], [false, WEB_LINE(WEB)], "the badge: no control under the floor, the address in its title");
       // FAILS BEFORE: outline none, the tap's open shown nowhere
       assert.deepEqual([touch.imgs[1].mark, touch.imgs[1].outline, touch.imgs[1].outlineWidth], [true, "dashed", "1px"], "at rest on a coarse pointer, no pointer ever over it, the badge wears the mark: the open is visible before the tap");
       assert.equal(touch.imgs[2].outline, "none", "the picture with a control: no mark on the picture");
@@ -1477,7 +1477,7 @@ test("in Chromium launched as a trackpad-plus-touchscreen laptop (hover: hover, 
       assert.deepEqual([laptop.hoverNone, laptop.hoverHover, laptop.pointerFine, laptop.anyCoarse], [false, true, true, true], "the laptop: the primary pointer fine and hovering, a coarse pointer present (the context, asserted before the dress)");
       const rest = await under(page);
       assert.deepEqual(rest.imgs.map((x) => x.alt), TINY_ALTS, "the tiny report's figures");
-      assert.deepEqual([rest.imgs[1].control, rest.imgs[1].title], [false, WEB_LINE(WEB + "/tiny.svg")], "the badge: no control under the floor, the address in its title");
+      assert.deepEqual([rest.imgs[1].control, rest.imgs[1].title], [false, WEB_LINE(WEB)], "the badge: no control under the floor, the address in its title");
       // FAILS BEFORE: outline none and the control at opacity 0, (hover: none) false on this laptop
       assert.deepEqual([rest.imgs[1].mark, rest.imgs[1].outline, rest.imgs[1].outlineWidth], [true, "dashed", "1px"], "at rest on the laptop, no pointer ever over it, the badge wears the mark: the finger's open is visible before the tap");
       assert.equal(rest.imgs[2].outline, "none", "the picture with a control: no mark on the picture");
@@ -2340,7 +2340,7 @@ test("in a browser (a fine pointer), the fold's two controls: the web control of
     log({ name: "sbig's control", ...control });
     cell("sbig's web control inside the summary: its tab, once", [WEB + "/sbig.svg"], control.opened);
     cell("sbig's web control inside the summary: the fold stays shut", [], control.toggled);
-    cell("stray: the address line in its title, as anywhere else", WEB_LINE(WEB + "/stray.svg"), figs[4].title);
+    cell("stray: the address line in its title, as anywhere else", WEB_LINE(WEB), figs[4].title);
     const s = await foldClick(page, "stray", false); log(s);
     cell("stray plain click: its tab", [WEB + "/stray.svg"], s.opened);
     cell("stray plain click: the viewer stays on the report", "report.md", s.base);

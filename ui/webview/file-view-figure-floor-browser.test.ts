@@ -59,7 +59,7 @@ const DOCS: Record<string, string> = { [REPORT]: REPORT_TEXT, [WIDE]: svg(761, 7
 // from the page's routed origin is refused by Chromium's private network access, as file-figure-open-browser.test.ts records), so
 // it is gated until its placeholder's click and, loaded, wears the outbound mark under the floor and its control above it
 const WEB = "http://example.test";
-const WEB_LINE = (href: string): string => "Opens in a new tab: " + href;   // the picture's own title line (file-view.ts figureWebTitleLine)
+const WEB_LINE = (origin: string): string => "Opens in a new tab: " + origin;   // the picture's own title line (file-view.ts figureWebTitleLine over shownAddress: the address's origin alone since the file review's round 15, extra9-2)
 const TWIN_TEXT = "# Report\n\n![wide](figs/wide.svg)\n\n![webwide](" + WEB + "/wide.svg)\n\nA sentence under the figures.\n\n![proto](" + PROTO + ")\n\n"
   + Array.from({ length: 30 }, (_, i) => PARA(i + 1)).join("\n\n") + "\n";
 const TWIN_DOCS: Record<string, string> = { [REPORT]: TWIN_TEXT, [WIDE]: svg(761, 76, "#468") };
@@ -161,7 +161,7 @@ test("in a browser: a 761 by 76 figure wears its control at a 900 px viewport, l
     const tw = await twin(page);
     t.diagnostic("wide twin: " + fmtTwin(tw));
     assert.ok(tw.w >= FLOOR && tw.h >= FLOOR, "the twin is above the floor on both sides at the wide column: " + fmtTwin(tw));
-    assert.deepEqual([tw.control, tw.mark, tw.title, tw.outline], [true, false, WEB_LINE(WEB + "/wide.svg"), "none"], "the twin at the wide column: its control, the address in its title, no mark and no outline: " + fmtTwin(tw));
+    assert.deepEqual([tw.control, tw.mark, tw.title, tw.outline], [true, false, WEB_LINE(WEB), "none"], "the twin at the wide column: its control, the address in its title, no mark and no outline: " + fmtTwin(tw));
     // the viewport narrowed: the column shrinks the figure in its own ratio, under the floor on its short side
     await page.setViewportSize({ width: 381, height: 600 });
     await settle(page, false);
@@ -176,7 +176,7 @@ test("in a browser: a 761 by 76 figure wears its control at a 900 px viewport, l
     const tn = await twin(page);
     t.diagnostic("narrowed twin: " + fmtTwin(tn));
     assert.ok(tn.h < FLOOR, "the twin fell under the floor on its short side: " + fmtTwin(tn));
-    assert.deepEqual([tn.control, tn.mark, tn.title], [false, true, WEB_LINE(WEB + "/wide.svg")], "the twin under the floor: no control, the mark on, the address in its title: " + fmtTwin(tn));
+    assert.deepEqual([tn.control, tn.mark, tn.title], [false, true, WEB_LINE(WEB)], "the twin under the floor: no control, the mark on, the address in its title: " + fmtTwin(tn));
     assert.equal(tn.outline, "none", "at rest on a fine pointer the mark's outline waits for the hover: " + fmtTwin(tn));
     // under CDP touch emulation (hover none, which Chromium keeps through the widen below) the mark stands at rest: the dashed outline
     const cdp = await page.context().newCDPSession(page);

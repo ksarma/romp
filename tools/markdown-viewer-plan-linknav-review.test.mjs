@@ -138,7 +138,7 @@ test('L3 opens on the exceptions it names, and names the floor by the source\'s 
 
 test('L3 puts the web test first in figureTarget, as the source does, and names the bare figure\'s yield to an anchor with an href, which the figure listener carries after the links\' yield', () => {
   const target = between(viewer, 'function figureTarget(img: Element, filePath: string): FigureTarget | null {', '\n}\n');
-  inOrder(target, ['if (/^https?:/i.test(dest) || dest.startsWith("//")) return { kind: "web", href: absUrl(dest) };', 'const p = figurePath(filePath, dest);'], 'figureTarget');
+  inOrder(target, ['if (/^https?:/i.test(dest) || dest.startsWith("//")) return { kind: "web", href: absUrl(dest), src: dest };', 'const p = figurePath(filePath, dest);'], 'figureTarget');
   assert.ok(L3.includes('What it opens (`figureTarget`): a remote picture (an http or https source, a protocol-relative one) in a tab, never the viewer, the web test run FIRST, before the model\'s join'));
   const clicks = viewer.split('body.addEventListener("click", (ev) => {');
   assert.equal(clicks.length, 3, 'two click listeners on the body: the links\' and the figures\'');
@@ -180,7 +180,7 @@ const trailTest = read('ui', 'webview', 'file-trail.test.ts');
 test('L3 names the candidate the browser chose by its function, which figureTarget reads first and the failed label delegates to, and names the two chosen modules, as the Tests paragraph does; both exist and name the follow-on', () => {
   assert.ok(viewer.includes('function chosenSource(img: Element): string | null {'), 'the source defines chosenSource');
   const target = between(viewer, 'function figureTarget(img: Element, filePath: string): FigureTarget | null {', '\n}\n');
-  inOrder(target, ['const dest = chosenSource(img);', 'if (/^https?:/i.test(dest) || dest.startsWith("//")) return { kind: "web", href: absUrl(dest) };', 'const p = figurePath(filePath, dest);'], 'figureTarget');
+  inOrder(target, ['const dest = chosenSource(img);', 'if (/^https?:/i.test(dest) || dest.startsWith("//")) return { kind: "web", href: absUrl(dest), src: dest };', 'const p = figurePath(filePath, dest);'], 'figureTarget');
   assert.ok(!target.includes('pictureDest(img)'), 'figureTarget reads the src alone nowhere: chosenSource applies that rule when the browser chose the src or has not picked');
   assert.ok(viewer.includes('function failedSource(img: Element): string | null {\n  return chosenSource(img);\n}'), 'the failed label delegates');
   assert.ok(L3.includes('else the file named by the candidate the browser chose for the figure, as the author wrote it (`chosenSource`'), 'L3 names chosenSource where the join was the authored source');

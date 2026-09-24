@@ -61,7 +61,7 @@ test("figureTarget reads the web address before the model's join, so a protocol-
   inOrder(fn, [
     "const dest = chosenSource(img);",
     "if (dest === null) return null;",
-    'if (/^https?:/i.test(dest) || dest.startsWith("//")) return { kind: "web", href: absUrl(dest) };',
+    'if (/^https?:/i.test(dest) || dest.startsWith("//")) return { kind: "web", href: absUrl(dest), src: dest };',
     "const p = figurePath(filePath, dest);",
     'if (p !== null) return { kind: "file", path: p };',
     "return null;",

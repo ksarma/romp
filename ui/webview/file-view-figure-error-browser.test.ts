@@ -325,30 +325,32 @@ const fromRemote = (port: number, p: string): Promise<{ status: number; type: st
   http.get({ host: "127.0.0.1", port, path: p }, (res) => { let b = ""; res.on("data", (c) => { b += c; }); res.on("end", () => resolve({ status: res.statusCode || 0, type: String(res.headers["content-type"] || ""), body: b })); }).on("error", reject);
 });
 
-test("in a browser: a failed figure's label never prints a userinfo, a query or a fragment for a source with a scheme other than data:, or a protocol-relative one (an http userinfo, a query token, an S3 presigned pair, a fragment's access token, a userinfo plus a query, a protocol-relative source in HTML and in markdown, a srcset candidate the browser chose, an ftp source, an out-of-range port, a tab inside the scheme, a refused source whose password holds a / or a ?), a loaded picture's title shows origin plus path, and a data: head and a workspace path print as they did (a property pin over the page, red at the head the round read, where each label printed its source as written and the title kept the query and the fragment)", { timeout: 300000 }, async (t) => {
+test("in a browser: a failed figure's label never prints a path, a userinfo, a query or a fragment for a source with a scheme other than data:, or a protocol-relative one: a source with a sign-in part (an http userinfo, a userinfo plus a query, a protocol-relative one in HTML and in markdown, a srcset candidate the browser chose, an ftp source, an out-of-range port, a tab inside the scheme, a refused source whose password holds a / or a ?) shows the withheld address and no part of itself (the file review's round 15, correctness-1), and any other (a query token, an S3 presigned pair, a fragment's access token, an out-of-range port with a query alone) its origin alone, a refused one cut at its authority (the same round's extra9-2); a loaded picture's title shows its origin alone, and a data: head and a workspace path print as they did (a property pin over the page, red at the head the round read, where each label printed its path and the title kept its path)", { timeout: 300000 }, async (t) => {
   const TOK = "tok" + "en", UI = "u" + "ser" + ":" + "p" + "w" + String(4 * 4) + "@";
   const V = (k: string): string => k + "TOK" + String(k.length * 37);
   const S3C = "AKID" + "EXAMPLE" + "%2F20260923%2Fus-east-1%2Fs3%2Faws4_request", S3S = "abc" + "def0123456789" + "fedcba";
+  const W = "address withheld because it appears to carry a sign-in";   // the words in a withheld address's place (file-view.ts FIGURE_ADDRESS_WITHHELD), a literal so the expected text never moves with the product
   /** [case, the paragraph's figure, the label's words (null for the loaded picture, which wears none)] */
   const cases: Array<[string, string, string | null]> = [
-    ["an http userinfo", '<img src="http://' + UI + 'example.test/a.svg" alt="">', "http://example.test/a.svg"],
-    ["an https query token", '<img src="https://example.test/b.svg?' + TOK + "=" + V("QB") + '" alt="">', "https://example.test/b.svg"],
-    ["an S3 presigned pair", '<img src="https://bucket.example.test/fig.png?X-Amz-Algorithm=AWS4-HMAC-SHA256&amp;X-Amz-Credential=' + S3C + "&amp;X-Amz-Signature=" + S3S + '" alt="">', "https://bucket.example.test/fig.png"],
-    ["a fragment's access token", '<img src="http://example.test/f.svg#access_' + "token=" + V("FR") + '" alt="">', "http://example.test/f.svg"],
-    ["a userinfo plus a query", '<img src="http://' + UI + "example.test/c.svg?" + TOK + "=" + V("UQ") + '" alt="">', "http://example.test/c.svg"],
-    ["a protocol-relative userinfo plus a query", '<img src="//' + UI + "example.test/r.svg?" + TOK + "=" + V("PR") + '" alt="">', "http://example.test/r.svg"],
-    ["a srcset 1x candidate with a userinfo plus a query", '<img src="figs/fallback.png" srcset="http://' + UI + "example.test/s.svg?" + TOK + "=" + V("SS") + ' 1x" alt="">', "http://example.test/s.svg"],
-    ["an ftp userinfo plus a query", '<img src="ftp://' + UI + "example.test/g.svg?" + TOK + "=" + V("FT") + '" alt="">', "ftp://example.test/g.svg"],
-    ["an out-of-range port with a userinfo plus a query", '<img src="http://' + UI + "example.test:99999/u.svg?" + TOK + "=" + V("UP") + '" alt="">', "http://example.test:99999/u.svg"],
-    ["a markdown protocol-relative userinfo plus a query", "![](//" + UI + "example.test/m.svg?" + TOK + "=" + V("MD") + ")", "http://example.test/m.svg"],
-    ["a tab inside the scheme", '<img src="ht&#9;tp://' + UI + "example.test/t.svg?" + TOK + "=" + V("TB") + '" alt="">', "http://example.test/t.svg"],
-    ["a refused source whose password holds a /", '<img src="http://u' + "ser:p/" + V("SL") + '@example.test/x1.png" alt="">', "http://example.test/x1.png"],
-    ["a refused source whose password holds a ?", '<img src="http://u' + "ser:p?" + V("QM") + '@example.test/x2.png" alt="">', "http://example.test/x2.png"],
+    ["an http userinfo", '<img src="http://' + UI + 'example.test/a.svg" alt="">', W],
+    ["an https query token", '<img src="https://example.test/b.svg?' + TOK + "=" + V("QB") + '" alt="">', "https://example.test"],
+    ["an S3 presigned pair", '<img src="https://bucket.example.test/fig.png?X-Amz-Algorithm=AWS4-HMAC-SHA256&amp;X-Amz-Credential=' + S3C + "&amp;X-Amz-Signature=" + S3S + '" alt="">', "https://bucket.example.test"],
+    ["a fragment's access token", '<img src="http://example.test/f.svg#access_' + "token=" + V("FR") + '" alt="">', "http://example.test"],
+    ["a userinfo plus a query", '<img src="http://' + UI + "example.test/c.svg?" + TOK + "=" + V("UQ") + '" alt="">', W],
+    ["a protocol-relative userinfo plus a query", '<img src="//' + UI + "example.test/r.svg?" + TOK + "=" + V("PR") + '" alt="">', W],
+    ["a srcset 1x candidate with a userinfo plus a query", '<img src="figs/fallback.png" srcset="http://' + UI + "example.test/s.svg?" + TOK + "=" + V("SS") + ' 1x" alt="">', W],
+    ["an ftp userinfo plus a query", '<img src="ftp://' + UI + "example.test/g.svg?" + TOK + "=" + V("FT") + '" alt="">', W],
+    ["an out-of-range port with a userinfo plus a query", '<img src="http://' + UI + "example.test:99999/u.svg?" + TOK + "=" + V("UP") + '" alt="">', W],
+    ["an out-of-range port with a query alone, cut at its authority", '<img src="http://example.test:99999/v.svg?' + TOK + "=" + V("UV") + '" alt="">', "http://example.test:99999"],
+    ["a markdown protocol-relative userinfo plus a query", "![](//" + UI + "example.test/m.svg?" + TOK + "=" + V("MD") + ")", W],
+    ["a tab inside the scheme", '<img src="ht&#9;tp://' + UI + "example.test/t.svg?" + TOK + "=" + V("TB") + '" alt="">', W],
+    ["a refused source whose password holds a /", '<img src="http://u' + "ser:p/" + V("SL") + '@example.test/x1.png" alt="">', W],
+    ["a refused source whose password holds a ?", '<img src="http://u' + "ser:p?" + V("QM") + '@example.test/x2.png" alt="">', W],
     ["a loaded picture whose address carries a query and a fragment", '<img src="https://example.test/ok.svg?' + TOK + "=" + V("LQ") + "#access_" + "token=" + V("LF") + '" alt="loaded">', null],
     ["a control, a data: source", '<img src="data:image/png;base64,' + "A".repeat(40) + '" alt="">', "data:image/png;base64,…"],
     ["a control, a workspace path with a query-looking tail", "![](figs/q.png?x=1)", "figs/q.png?x=1"],
   ];
-  const planted = ["user:", "pw16", S3C, S3S, "X-Amz-", "access_", "?" + TOK, ...["QB", "FR", "UQ", "PR", "SS", "FT", "UP", "MD", "TB", "SL", "QM", "LQ", "LF"].map(V)];
+  const planted = ["user:", "pw16", S3C, S3S, "X-Amz-", "access_", "?" + TOK, ...["QB", "FR", "UQ", "PR", "SS", "FT", "UP", "UV", "MD", "TB", "SL", "QM", "LQ", "LF"].map(V)];
   const note = "# Report\n\n" + cases.map(([n, h], i) => "Case " + i + " (" + n + "): " + h + " end.").join("\n\n") + "\n";
   const served: string[] = [];
   const remote = await remoteServer(served);
@@ -372,10 +374,10 @@ test("in a browser: a failed figure's label never prints a userinfo, a query or 
       t.diagnostic("remote requests " + JSON.stringify(served));
       assert.equal(rows.length, cases.length, "one paragraph per case");
       assert.deepEqual(rows.map((r) => r.label), cases.map(([, , w]) => (w === null ? null : FAILED + " " + w)),
-        "each failed figure's label names its source as origin plus path, with no userinfo, query or fragment (the refused ones cut as text through the last @, then from the first ? or #), the data: head and the workspace path as they were, and the loaded picture none (a property pin over the label's text)");
+        "each failed figure's label: the withheld address for a source with a sign-in part, the origin alone for the rest (a refused one cut at its authority), the data: head and the workspace path as they were, and the loaded picture none (a property pin over the label's text)");
       const loaded = rows[cases.length - 3];
       assert.ok(loaded.natural > 0, "the loaded case decoded, relayed from the remote server: " + JSON.stringify(served));
-      assert.equal(loaded.title, "Opens in a new tab: https://example.test/ok.svg", "the loaded picture's title is origin plus path: no query, no fragment (a property pin over the title attribute)");
+      assert.equal(loaded.title, "Opens in a new tab: https://example.test", "the loaded picture's title is its origin alone: no path, no query, no fragment (a property pin over the title attribute)");
       const leaks: string[] = [];
       rows.forEach((r, k) => { for (const x of planted) for (const [where, text] of [["label", r.label], ["title", r.title], ["visible text", r.visible]] as const) if ((text || "").includes(x)) leaks.push(cases[k][0] + ": the " + where + " carries " + JSON.stringify(x)); });
       assert.deepEqual(leaks, [], "no planted value in a label, a title or a paragraph's visible text (a property pin)");
