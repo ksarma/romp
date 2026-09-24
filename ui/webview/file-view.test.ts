@@ -906,7 +906,7 @@ test("SVG renders via <img> ONLY — never innerHTML, never an iframe: its scrip
   const live = mediaBranch.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
   assert.match(live, /body\.replaceChildren\(codeBlock\(svgText, path, true\)\)/,
     "the SVG Source view renders through codeBlock, uncommented (born wrapped, like every code view)");
-  assert.match(VIEW, /isSvgImage = ct === "image\/svg\+xml";/, "the toggle keys on the kernel's verdict too");
+  assert.match(VIEW, /isSvgImage = v\.isImage && ct\.split\(";"\)\[0\]\.trim\(\)\.toLowerCase\(\) === "image\/svg\+xml";/, "the toggle keys on the kernel's verdict too, its media type alone, for an answer the viewer takes as an image (executed: file-view-seam.test.ts, the svg answers with a charset parameter and the answer typed IMAGE/SVG+XML)");
   assert.match(VIEW, /mediaBlob\.text\(\)/, "the source view decodes the SAME fetched bytes — no second request");
 });
 

@@ -678,9 +678,10 @@ let probeLive: (() => void) | null = null;
 function dropProbe(): void {
   if (probeLive) { const f = probeLive; probeLive = null; f(); }
 }
-// ONE live media object URL at a time (images used to render as line-numbered mojibake; now an
-// image/PDF view holds its bytes in an object URL). The URL is per-open state, but — like editHooks
-// and onKeyLive above — the teardown must be reachable from BOTH exits (closeFileView and the replace
+// ONE live media object URL at a time (images used to render as line-numbered mojibake; now a PDF, or
+// an image other than an svg, shows from an object URL of its bytes; an svg's picture loads from its
+// /file address, which holds nothing to release). The URL is per-open state, but, like editHooks and
+// onKeyLive above, the teardown must be reachable from BOTH exits (closeFileView and the replace
 // path), so the open viewer registers its URL here and each exit revokes it. Without the revoke
 // every image view leaks its blob for the page's life.
 let mediaUrlLive: string | null = null;
@@ -690,6 +691,9 @@ function dropMediaUrl(): void {
     mediaUrlLive = null;
   }
 }
+// The version key of an svg picture's address when its answer carried no mtime (a kernel that sends no X-Romp-Mtime-Ns):
+// each such landing takes the next number, so no two share an address in the page's life (fetchFile's svg landing).
+let svgLandingSeq = 0;
 // ONE in-flight URL read at a time, the same shape as mediaUrlLive: the URL viewer registers its
 // AbortController here and BOTH exits (closeFileView and either replace path) abort it, so a modal
 // torn down mid-body cancels its fetch and its stream — a stale read must never keep pulling bytes
@@ -1193,13 +1197,13 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // r.text() on ANY 200. All read from the KERNEL's Content-Type, never a client-side extension
   // re-test (the authoritative-source rule; the kernel derives the mime locally and the relay
   // re-derives it, so the header is a verdict, not an echo).
-  let isImage = false;                        // image/* → one <img> at an object URL
+  let isImage = false;                        // image/* → one <img> at an object URL of the bytes, or an svg's /file address
   let isPdf = false;                          // application/pdf → the lightbox's iframe treatment
-  let isSvgImage = false;                     // image/svg+xml exactly — unlocks the Source toggle
+  let isSvgImage = false;                     // an answer the viewer takes as an image whose media type is image/svg+xml, any parameter aside: unlocks the Source toggle
   let svgSource = false;                      // the SVG Source view is up (the highlighted XML)
   let svgText: string | null = null;          // the decoded SVG bytes: read on the first toggle, a reload's replace or drop it
   let mediaBlob: Blob | null = null;          // the fetched bytes — the Source toggle decodes THESE, the PDF chunk renders them
-  let objUrl: string | null = null;           // this open's object URL (registered as mediaUrlLive)
+  let objUrl: string | null = null;           // this open's picture or frame URL: an object URL (registered as mediaUrlLive), or an svg's /file address with its version key
   // ── the PDF pages (plans/file-review.md Slice 4): with the Comments panel open, a PDF's body is the pages the pdf.js
   // chunk draws (one canvas per page, so a region comment has a page to sit on); closed, it is the browser's own frame
   // as before. `asideOpen` follows the seam's aside() — the panel mounting IS the event — and the body re-renders on the
@@ -3472,11 +3476,12 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
       v.mtimeNs = r.headers.get("X-Romp-Mtime-Ns") || "";
       // Media branches on the SAME kernel verdict (an image 200 wears image/* and no X-Romp-Text-Utf8 —
       // tests/test_kernel_preview.py pins that contract server-side). The bytes below are the one fetch
-      // either way: media takes them as a blob for an object URL, never a second request.
+      // either way: media takes them as a blob for an object URL, except an svg, whose <img> loads its picture from the
+      // /file address (the Source view decodes this blob).
       const ct = r.headers.get("Content-Type") || "";
       v.isImage = ct.startsWith("image/");
       v.isPdf = ct.startsWith("application/pdf");
-      v.isSvgImage = ct === "image/svg+xml";
+      v.isSvgImage = v.isImage && ct.split(";")[0].trim().toLowerCase() === "image/svg+xml";   // the media type alone: a parameter such as charset changes nothing
       // The Latin-1 verdict keys on the header's VALUE with the text type, never on !isText: an image or a PDF carries no
       // X-Romp-Text-Utf8 at all (tests/test_kernel_preview.py pins that absence), and an old kernel that sends none leaves
       // isText true with Edit off through !mtimeNs. The text landing below says so in the note bar (LATIN1_NOTICE;
@@ -3503,8 +3508,18 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
         // REPLACED mid-flight creates nothing to leak, and never clobbers the new open's mediaUrlLive registration.
         if (objUrl !== null) dropMediaUrl();    // a reload: the previous bytes' URL goes before the new one is minted
         mediaBlob = t;
-        objUrl = URL.createObjectURL(t);
-        mediaUrlLive = objUrl;                   // registered so close/replace can revoke (dropMediaUrl)
+        if (isSvgImage) {
+          // An svg's picture loads from its /file address, as the composer chip, the lightbox, a notice attachment, the file
+          // hover card and a chat image's first attempt already do; these bytes stay for the Source view, so the picture's
+          // load fetches the file a second time. The address carries the landed mtime as a version key (v,
+          // which the kernel ignores): a new <img> at an address the page has already loaded shows the picture it holds
+          // and asks for nothing, so a reload that brings new bytes needs a new address. An answer with no mtime takes the
+          // next number of svgLandingSeq instead. Nothing is minted, so nothing is registered for the teardowns to release.
+          objUrl = fileUrl(path, sid) + "&v=" + encodeURIComponent(mtimeNs || String(++svgLandingSeq));
+        } else {
+          objUrl = URL.createObjectURL(t);
+          mediaUrlLive = objUrl;                 // registered so close/replace can revoke (dropMediaUrl)
+        }
         if (svgSource && svgText !== null) {
           // A reload under the Source view: the XML swaps in when the new bytes decode, and the old
           // text stands until then — nulling it first would flap mode() to "media" and flash the image
@@ -4785,7 +4800,7 @@ function whenShown(shown: HTMLElement, cb: () => void): void {
   img.addEventListener("load", () => { if (img.isConnected) cb(); }, { once: true });
 }
 
-// The image body: ONE <img> aimed at the object URL — never innerHTML, never an iframe. That is the
+// The image body: ONE <img> aimed at objUrl (an object URL, or an svg's /file address), never innerHTML, never an iframe. That is the
 // whole SVG-safety story (an <img> never runs SVG scripts — the same surface the kernel's preview
 // comments and the relay's local type re-derivation rely on), and for every other image it is simply
 // the right element. Centered and capped like the lightbox's image (.romp-lightbox-img), so a huge

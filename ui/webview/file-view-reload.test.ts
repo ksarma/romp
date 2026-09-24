@@ -400,6 +400,42 @@ test("reload on an image: the previous object URL is revoked once, the <img> get
   assert.deepEqual(revoked, [first, second], "close revokes the CURRENT URL — the registration moved with the reload");
 });
 
+// An svg's picture loads from its /file address, which carries the landed mtime as a version key: a new <img> at an address the
+// page has already loaded shows the picture it holds and asks for nothing, so the reload's picture needs the new mtime's address.
+const figAt = (key: string) => "/file?path=" + encodeURIComponent(FIG) + "&sid=" + SID + "&v=" + key;
+
+test("reload on an svg picture: the picture's /file address follows the landed mtime, a new <img> at the new mtime's address, and no object URL is released at the reload or the close", async (t) => {
+  const revoked = watchRevokes(t);
+  const { fv, ctx, body } = await open(FIG, t);
+  const first = img(body)!;
+  assert.equal(first.src, figAt(MT), "the open's picture: the /file address at the landed mtime; got " + first.src);
+  disk[FIG] = { bytes: SVG2, type: "image/svg+xml", mtimeNs: MT2 };   // a session regenerated the figure
+  ctx.reload();
+  await settle();
+  const second = img(body)!;
+  assert.notEqual(second, first, "the reload built a new picture");
+  assert.equal(second.src, figAt(MT2), "the reload's picture: the address at the new mtime; got " + second.src);
+  assert.equal(ctx.mtimeNs(), MT2);
+  assert.equal(body.querySelectorAll("img").length, 1, "the reload replaced the picture, it did not stack one");
+  fv.closeFileView();
+  assert.deepEqual(revoked, [], "no object URL was made, so none is released");
+});
+
+test("an svg answer that carries no mtime: each landing's picture takes a key of its own, so a reload still shows the new picture", async (t) => {
+  const { ctx, body } = await open(FIG, t);
+  disk[FIG] = { bytes: SVG2, type: "image/svg+xml", mtimeNs: "" };   // a kernel that sends no X-Romp-Mtime-Ns
+  ctx.reload();
+  await settle();
+  const k1 = img(body)!.src;
+  disk[FIG] = { bytes: SVG3, type: "image/svg+xml", mtimeNs: "" };
+  ctx.reload();
+  await settle();
+  const k2 = img(body)!.src;
+  const keyOf = (src: string) => (src.startsWith(figAt("")) ? src.slice(figAt("").length) : null);
+  assert.ok(/^\d+$/.test(keyOf(k1) ?? "") && /^\d+$/.test(keyOf(k2) ?? ""), "the /file address with a numeric key: " + k1 + " then " + k2);
+  assert.notEqual(k2, k1, "a key per landing");
+});
+
 test("reload under the SVG Source view: text() and the body follow the new XML, the view stays Source, one repaint", async (t) => {
   const { ctx, body, src } = await open(FIG, t);
   assert.equal(src.hidden, false, "an image/svg+xml body unlocks Source");

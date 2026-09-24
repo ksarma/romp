@@ -73,6 +73,7 @@ async function armedBox(file = PATH) {   // a path per test: a resolved picture 
   assert.ok(img && img.onerror, "the plain <img> carries the onerror that hands the box to the retry machinery");
   img.onerror();
   await sleep(10);   // failAfterBeat(0): no beat on the first attempt
+  assert.notEqual(box.style.display, "none", "a verified box stays shown when its first attempt's picture fails to load; only an unverified box hides");
   return { P, box };
 }
 
@@ -181,6 +182,176 @@ test("a link failure while the tunnel row never left up heals once on the recove
   assert.match(FED, /if \(prev !== undefined && seq !== prev && !down\.has\(host\) && !recovered\.includes\(host\)\) recovered\.push\(host\);/, "a bump while up is a recovery");
   const RENDER = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "render.ts"), "utf8");
   assert.match(RENDER, /if \(m\.type === "hostUp"\) \{ refreshSettledPreviews\(\); healPathImgs\(\); \}/, "hostUp drains the settled previews");
+});
+
+// ── an svg shown after the resumed fetch loads from its /file address, the one the first attempt used; any other image shows
+// from its fetched bytes. The fetch itself (its progress, its errors, its retry rules) is the same for both ──
+let blobs = 0;
+function stubBlobs(): void {
+  (globalThis as any).URL.createObjectURL = () => "blob:fake-" + blobs++;
+  (globalThis as any).URL.revokeObjectURL = () => {};
+  (globalThis as any).Blob = class { constructor(public parts: any[], public opts: any) {} };
+}
+/** A 200 whose body streams chunks of these sizes (Content-Length their sum); `hold`, when given, keeps the second chunk back until it resolves. */
+const streams = (sizes: number[], hold?: Promise<void>) => () => Promise.resolve({ status: 200, ok: true,
+  headers: { get: (h: string) => (h === "Content-Length" ? String(sizes.reduce((a, b) => a + b, 0)) : null) },
+  body: { getReader: () => { let i = 0; return { read: async () => {
+    if (i === 1 && hold) await hold;
+    return i < sizes.length ? { done: false, value: new Uint8Array(sizes[i++]) } : { done: true, value: undefined };
+  } }; } } });
+const shownImg = (box: FakeEl) => box.children.find((c) => c.tag === "img" && c._cls.has("path-full-img"));
+/** The preview's /file address: SID's host relays it, with the bare sid. */
+const addressOf = (file: string) => "/remote/TESTHOST/file?path=" + encodeURIComponent(file) + "&sid=11111111-2222-4333-8444-000000000291";
+/** A fresh box for the same mention, as a re-render of the turn builds it (the earlier boxes leave the document). */
+async function rerendered(file: string): Promise<FakeEl> {
+  const P = await import("./preview");
+  for (const b of minted) b.isConnected = false;
+  const box = P.previewFull(file, SID, true) as unknown as FakeEl;
+  minted.push(box);
+  return box;
+}
+
+test("an svg after a retry: the resumed fetch keeps its error words and its progress, then the picture shows from the /file address the first attempt used; a re-render shows the same address with no fetch", async () => {
+  stubBlobs();
+  fetchCalls = 0;
+  const file = "/home/user/notes-api/plots/diagram.svg";
+  const { P, box } = await armedBox(file);
+  // a link failure first: classified and worded as for any image
+  fetchAnswer = failWith(502, "tunnel to TESTHOST is not answering; re-dialing");
+  P.retryFailedPreviews(); await sleep(20); await sleep(450);
+  assert.match(box.shape(), /tunnel to TESTHOST is not answering; re-dialing \u2014 retries when the link is back · tap to retry now/, "the server's words and the link's plan");
+  // the link is back: the fetch narrates its progress while the second chunk is held
+  let release!: () => void;
+  fetchAnswer = streams([1200000, 1800000], new Promise<void>((r) => { release = r; }));
+  P.refreshSettledPreviews();
+  await sleep(20);
+  assert.equal(box.querySelector("path-load-note")?.textContent, "fetching… 1.2 MB of 3.0 MB", "the progress, as for any image");
+  release();
+  await sleep(30);
+  assert.equal(fetchCalls, 2, "the two managed attempts, nothing more");
+  const img = shownImg(box);
+  assert.ok(img, "the picture replaced the wait box");
+  assert.ok(!img!.src.startsWith("blob:"), "the svg's picture is its /file address, not an object URL; got " + img!.src);
+  assert.equal(img!.src, addressOf(file), "the /file address the first attempt used");
+  const again = await rerendered(file);
+  assert.equal(shownImg(again)?.src, addressOf(file), "the re-render's picture: the same address");
+  assert.equal(fetchCalls, 2, "and no fetch for it");
+});
+
+test("a png after a retry shows from the object URL of its fetched bytes, and so does its re-render (the control for the svg case above)", async () => {
+  stubBlobs();
+  fetchCalls = 0;
+  const file = "/home/user/notes-api/plots/p99-latency.png";
+  const { P, box } = await armedBox(file);
+  fetchAnswer = streams([3]);
+  P.retryFailedPreviews();
+  await sleep(40);
+  const src = shownImg(box)?.src || "";
+  assert.match(src, /^blob:fake-\d+$/, "a png shows from its bytes; got " + src);
+  const again = await rerendered(file);
+  assert.equal(shownImg(again)?.src, src, "the re-render reads the same object URL");
+  assert.equal(fetchCalls, 1, "one managed fetch in all");
+});
+
+test("an svg picture whose load fails after the resumed fetch takes the first attempt's failure path: no broken picture stays, the wait box says what the first attempt's does, and the heal shows a fresh <img> at the same address with no second fetch", async () => {
+  stubBlobs();
+  fetchCalls = 0;
+  const file = "/home/user/notes-api/plots/error-budget.svg";
+  const { P, box } = await armedBox(file);
+  fetchAnswer = streams([3]);
+  P.retryFailedPreviews();
+  await sleep(40);
+  const img = shownImg(box)!;
+  assert.equal(img?.src, addressOf(file), "the picture shows from its /file address; got " + img?.src);
+  assert.ok(img.onerror, "and carries an onerror, as the first attempt's <img> does");
+  img.onerror();
+  await sleep(10);
+  assert.notEqual(box.style.display, "none", "the verified box stays shown when its picture fails to load after the resumed fetch; only an unverified box hides");
+  assert.equal(shownImg(box), undefined, "no broken picture stays in the box");
+  assert.match(box.shape(), /span\.path-load-note\[\]\{"connection dropped \u2014 retrying · tap to retry now"\}/, "the first attempt's words (no byte count: the bytes were not kept)");
+  const calls = fetchCalls;
+  P.retryFailedPreviews();
+  await sleep(20);
+  const retried = shownImg(box);
+  assert.ok(retried && retried !== img, "the heal built a fresh picture");
+  assert.notEqual(box.style.display, "none", "and the verified box shows it");
+  assert.equal(retried!.src, addressOf(file), "at the same address");
+  assert.equal(typeof retried!.onerror, "function", "the healed picture carries its failure handler, as the first one does");
+  assert.equal(fetchCalls, calls, "with no second managed fetch");
+  // the budget still bounds it: every further failure spends an attempt, and the spent budget settles on the chip
+  for (let i = 0; i < 6; i++) { const cur = shownImg(box); if (!cur) break; cur.onerror(); await sleep(10); P.retryFailedPreviews(); await sleep(10); }
+  assert.match(box.shape(), /span\.path-full-retry\[\]\{"⚠ still unavailable \u2014 tap to retry"\}/, "the chip, once the attempts are spent");
+  const settled = box.shape();
+  for (let i = 0; i < 30; i++) P.retryFailedPreviews();
+  await sleep(20);
+  assert.equal(box.shape(), settled, "the same failure again is no new evidence: the chip stays");
+  assert.equal(fetchCalls, calls, "no managed fetch at any point after the bytes arrived");
+});
+
+test("the memo's eviction releases object URLs only: an evicted svg entry, which holds its /file address, releases nothing; an evicted png entry releases its object URL", async () => {
+  stubBlobs();
+  const revoked: string[] = [];
+  (globalThis as any).URL.revokeObjectURL = (u: string) => { revoked.push(u); };
+  const resolve = async (file: string): Promise<string> => {
+    const { P, box } = await armedBox(file);
+    fetchAnswer = streams([3]);
+    P.retryFailedPreviews();
+    await sleep(20);
+    const src = shownImg(box)?.src || "";
+    assert.ok(src, file + ": the picture shows");
+    return src;
+  };
+  // the memo keeps 24 entries: after the svg and twenty-five pngs, the svg's entry and the first png's are gone, whatever came before
+  const svgSrc = await resolve("/home/user/notes-api/plots/cache-hits.svg");
+  const pngSrcs: string[] = [];
+  for (let i = 0; i < 25; i++) pngSrcs.push(await resolve("/home/user/notes-api/plots/shard-" + i + ".png"));
+  assert.ok(!revoked.includes(svgSrc), "the svg's entry released nothing: " + svgSrc + " in " + revoked.join(" | "));
+  assert.ok(revoked.includes(pngSrcs[0]), "the first png's entry released its object URL: " + pngSrcs[0] + " in " + revoked.join(" | "));
+  assert.ok(revoked.every((u) => u.startsWith("blob:")), "only object URLs are released: " + revoked.join(" | "));
+});
+
+test("an unverified svg preview whose picture fails to load after the resumed fetch hides its box, as it does when the first attempt's picture fails, and then takes the same failure path: registered for the heal, which builds a fresh picture from the memo", async () => {
+  stubBlobs();
+  fetchCalls = 0;
+  const P = await import("./preview");
+  for (const b of minted) b.isConnected = false;
+  const file = "/home/user/notes-api/plots/slo-burn.svg";
+  const box = P.previewFull(file, SID, false) as unknown as FakeEl;   // unverified: no word from the kernel that the file exists
+  minted.push(box);
+  shownImg(box)!.onerror();                                           // the first attempt's picture failed to load
+  await sleep(10);
+  assert.equal(box.style.display, "none", "the first attempt's failure hides the unverified box");
+  fetchAnswer = streams([3]);
+  P.retryFailedPreviews();
+  await sleep(40);
+  const img = shownImg(box)!;
+  assert.equal(img?.src, addressOf(file), "the picture shows from its /file address; got " + img?.src);
+  assert.equal(box.style.display, "", "the box shows with its picture");
+  img.onerror();
+  assert.equal(box.style.display, "none", "the unverified box hides when its picture fails to load after the resumed fetch, as when the first attempt's does");
+  await sleep(10);
+  assert.equal(shownImg(box), undefined, "no broken picture stays in the box");
+  assert.match(box.shape(), /span\.path-load-note\[\]\{"connection dropped \u2014 retrying · tap to retry now"\}/, "then the first attempt's failure path: the wait box and its words");
+  const calls = fetchCalls;
+  P.retryFailedPreviews();
+  await sleep(20);
+  const again = shownImg(box);
+  assert.ok(again && again !== img, "registered for the heal, which built a fresh picture");
+  assert.equal(again!.src, addressOf(file), "at the same address, from the memo");
+  assert.equal(fetchCalls, calls, "with no second managed fetch");
+});
+
+test("an upper-case .SVG path is an svg too: after the resumed fetch its picture is its /file address", async () => {
+  stubBlobs();
+  fetchCalls = 0;
+  const file = "/home/user/notes-api/plots/TOPOLOGY.SVG";
+  const { P, box } = await armedBox(file);
+  fetchAnswer = streams([3]);
+  P.retryFailedPreviews();
+  await sleep(40);
+  const src = shownImg(box)?.src || "";
+  assert.equal(src, addressOf(file), "the svg's picture is its /file address, not an object URL; got " + src);
+  assert.equal(fetchCalls, 1, "after the one managed fetch");
 });
 
 test("the source keeps the two rules where the behaviour lives", () => {

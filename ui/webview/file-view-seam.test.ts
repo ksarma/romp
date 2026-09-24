@@ -558,6 +558,78 @@ test("an image body is media: mode() media, media() image, text() null, no Edit;
   assert.equal(revoked, 1, "the bytes leave with the viewer");
 });
 
+// ── an svg's picture loads from the kernel's /file address, as the composer chip, the lightbox, a notice attachment, the file
+// hover card and a chat image's first attempt already do; any other image keeps the object URL of its fetched bytes ──
+/** Record every URL.createObjectURL and URL.revokeObjectURL for the test's duration; both still run. */
+function watchObjectUrls(t: TestContext): { minted: string[]; revoked: string[] } {
+  const minted: string[] = [], revoked: string[] = [];
+  const realCreate = URL.createObjectURL, realRevoke = URL.revokeObjectURL;
+  URL.createObjectURL = ((b: any) => { const u = realCreate.call(URL, b); minted.push(u); return u; }) as typeof URL.createObjectURL;
+  URL.revokeObjectURL = ((u: string) => { revoked.push(u); realRevoke.call(URL, u); }) as typeof URL.revokeObjectURL;
+  t.after(() => { URL.createObjectURL = realCreate; URL.revokeObjectURL = realRevoke; });
+  return { minted, revoked };
+}
+
+test("an svg picture shows from its /file address, the one the viewer fetched, keyed on the landed mtime (v); no object URL is made for it, so the close releases none", async (t) => {
+  const urls = watchObjectUrls(t);
+  const { fv, ctx, body } = await open(FIG, t);
+  assert.equal(ctx.media(), "svg"); assert.equal(ctx.mode(), "media");
+  const src = body.querySelector("img.fileview-img")!.src;
+  assert.ok(!src.startsWith("blob:"), "the svg's picture is its /file address, not an object URL; got " + src);
+  assert.equal(src, "/file?path=" + encodeURIComponent(FIG) + "&sid=" + SID + "&v=" + MT, "the fetched address with the landed mtime as its key");
+  assert.ok(fetches.includes("GET /file?path=" + encodeURIComponent(FIG) + "&sid=" + SID), "the viewer's own fetch read the same address, unkeyed: " + fetches.join(" | "));
+  assert.deepEqual(urls.minted, [], "no object URL for the svg");
+  fv.closeFileView();
+  assert.deepEqual(urls.revoked, [], "so the close releases none");
+});
+
+test("a remote session's svg picture shows from the relay's /file address with the bare sid, keyed on the landed mtime; no object URL is made for it", async (t) => {
+  const urls = watchObjectUrls(t);
+  const { body } = await open(FIG, t, "TESTHOST:" + SID);
+  const src = body.querySelector("img.fileview-img")!.src;
+  assert.ok(!src.startsWith("blob:"), "the svg's picture is its /file address, not an object URL; got " + src);
+  assert.equal(src, "/remote/TESTHOST/file?path=" + encodeURIComponent(FIG) + "&sid=" + SID + "&v=" + MT, "the relay's address with the landed mtime as its key");
+  assert.deepEqual(urls.minted, [], "no object URL for the svg");
+});
+
+test("an svg answer whose Content-Type carries a parameter (image/svg+xml; charset=utf-8) is an svg all the same, and so is one whose subtype is upper-case with a space before the parameter: the picture is its /file address keyed on the landed mtime, the Source toggle offered, no object URL made", async (t) => {
+  const urls = watchObjectUrls(t);
+  for (const [name, type] of [["figure-utf8.svg", "image/svg+xml; charset=utf-8"], ["figure-upper.svg", "image/SVG+XML ; charset=UTF-8"]]) {
+    const fig = ROOT + "/docs/" + name;
+    disk[fig] = { bytes: SVG, type, mtimeNs: MT };
+    t.after(() => { delete disk[fig]; });
+    const { ctx, wrap, body } = await open(fig, t);
+    const src = body.querySelector("img.fileview-img")!.src;
+    assert.equal(src, "/file?path=" + encodeURIComponent(fig) + "&sid=" + SID + "&v=" + MT, type + ": the svg's picture is its /file address, not an object URL; got " + src);
+    assert.equal(ctx.media(), "svg", type + ": the media type decides, the parameter aside");
+    assert.equal(wrap.querySelector(".fileview-acts")!.querySelectorAll("button").find((x) => x.textContent === "Source")?.hidden, false, type + ": the Source toggle is offered");
+  }
+  assert.deepEqual(urls.minted, [], "no object URL for either svg");
+});
+
+test("a png's picture keeps the object URL of its fetched bytes (the control for the svg cases above)", async (t) => {
+  const urls = watchObjectUrls(t);
+  const { body } = await open(PLOT, t);
+  const src = body.querySelector("img.fileview-img")!.src;
+  assert.ok(src.startsWith("blob:"), "a png shows from its object URL; got " + src);
+  assert.deepEqual(urls.minted, [src], "the one object URL made is the picture's");
+});
+
+test("an answer typed IMAGE/SVG+XML is not taken as an svg picture: the viewer takes only a type that starts with image/ as an image, so it reads this one as text (raw, no Edit, media() null), with no picture and so no /file picture address, no Source toggle and no object URL", async (t) => {
+  const urls = watchObjectUrls(t);
+  const fig = ROOT + "/docs/figure-caps.svg";
+  disk[fig] = { bytes: SVG, type: "IMAGE/SVG+XML", mtimeNs: MT };
+  t.after(() => { delete disk[fig]; });
+  const { ctx, wrap, body, b } = await open(fig, t);
+  assert.equal(ctx.media(), null, "IMAGE/SVG+XML is no image to the viewer, so no svg verdict either; got " + ctx.media());
+  assert.equal(ctx.mode(), "raw", "read as text");
+  assert.equal(ctx.text(), SVG, "the answer's text is the body");
+  assert.equal(b.edit.hidden, true, "not text/plain: no Edit");
+  assert.deepEqual(body.querySelectorAll("img").map((i) => i.src), [], "no picture, so no /file picture address");
+  assert.equal(wrap.querySelector(".fileview-acts")!.querySelectorAll("button").find((x) => x.textContent === "Source")?.hidden, true, "no Source toggle");
+  assert.deepEqual(urls.minted, [], "no object URL");
+});
+
 // ── Slice 3: the media paint, the media element, the rendered figures (plans/file-review.md, Images and PDFs) ──
 
 test("onRendered for an image fires on the img's load, once; mediaElement() is that img until the decode-failure pane replaces it, which is a paint of its own; a load on the replaced img fires nothing", async (t) => {

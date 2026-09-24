@@ -73,23 +73,25 @@ const loadedOnce = new Set<string>();
 const MIN_RETRY_SPIN_MS = 400;
 
 // Blob types for the resumable retry's assembled bytes (an <img> renders a typed blob everywhere;
-// untyped leans on sniffing). Keyed by extension, mirroring IMG_EXT.
+// untyped leans on sniffing). Keyed by extension, mirroring IMG_EXT except svg: after the retry an
+// svg's picture is its /file address, not an object URL of its bytes (resumeFetch).
 const IMG_MIME: Record<string, string> = {
   png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif",
-  webp: "image/webp", bmp: "image/bmp", svg: "image/svg+xml",
+  webp: "image/webp", bmp: "image/bmp",
 };
 
-// Fully-fetched previews for this page life: original URL → object URL. The chat re-renders its
+// Fully-fetched previews for this page life: the preview's /file URL → the URL its picture shows
+// from, an object URL of the bytes, or for an svg that same /file URL. The chat re-renders its
 // messages constantly, and a resumable fetch bypasses the HTTP cache (no-store) — without this memo
 // every re-render would re-pull the whole image over the very link that struggled to deliver it
-// once. Bounded; the evicted entry's blob is released.
+// once. Bounded; the evicted entry's blob is released (an svg's entry holds none).
 const resolvedUrls = new Map<string, string>();
 function rememberResolved(url: string, objUrl: string): void {
   resolvedUrls.set(url, objUrl);
   if (resolvedUrls.size > 24) {
     const oldest = resolvedUrls.entries().next().value as [string, string];
     resolvedUrls.delete(oldest[0]);
-    URL.revokeObjectURL(oldest[1]);
+    if (oldest[1].startsWith("blob:")) URL.revokeObjectURL(oldest[1]);
   }
 }
 
@@ -698,15 +700,33 @@ export function previewFull(path: string, sid?: string | null, verified = false,
         if (got > gotBefore) autoRetries = 3;        // progress refills the budget — the link works sometimes
       }
       if (total && got < total) throw new Error("cut at " + got);   // stream ended early → resume next attempt
+      // An svg's picture shows from its /file address, as the first attempt's does: the attempt above narrated the
+      // transfer and classified its failures, and the <img> now loads the picture from that address. The bytes are
+      // dropped, so a failure of that load reads as the first attempt's failure does (resolvedImg below).
+      if (path.slice(path.lastIndexOf(".") + 1).toLowerCase() === "svg") { parts = []; got = 0; total = 0; return url; }
       const blob = new Blob(parts as BlobPart[], { type: IMG_MIME[path.slice(path.lastIndexOf(".") + 1).toLowerCase()] || "" });
       return URL.createObjectURL(blob);
+    };
+    // The resolved picture. One shown from the preview's own address (an svg's: the memo holds the address itself) can
+    // still fail to load, and that failure takes the first attempt's path: the box hidden while unverified, then
+    // failAfterBeat, whose registration brings it back here as a fresh <img> at the same address from the memo, with no
+    // second managed fetch. A picture shown from its fetched bytes (an object URL) keeps the plain <img>.
+    const resolvedImg = (src: string) => {
+      const img = mkImg(src);
+      if (src === url) {
+        img.onerror = () => {
+          if (!verified) box.style.display = "none";
+          failAfterBeat(0);
+        };
+      }
+      return img;
     };
     const build = (bust: boolean) => {
       const done = resolvedUrls.get(url);
       if (done) {                                    // already fully fetched this page-life → instant
         box.style.display = "";                      // a hidden unverified sentinel that healed comes back
         box.textContent = "";
-        box.appendChild(mkImg(done));
+        box.appendChild(resolvedImg(done));
         return;
       }
       if (!bust) {                                   // first attempt: the plain <img> happy path
@@ -738,7 +758,7 @@ export function previewFull(path: string, sid?: string | null, verified = false,
         if (!box.isConnected) return;
         box.style.display = "";                      // a hidden unverified sentinel that healed comes back
         box.textContent = "";
-        box.appendChild(mkImg(objUrl));
+        box.appendChild(resolvedImg(objUrl));
       }).catch((e: unknown) => {
         fetching = false;
         lastErr = String((e as Error)?.message || "");
