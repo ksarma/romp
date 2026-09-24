@@ -71,7 +71,11 @@
 // to a picture in a sub inside a hundred nested small elements, where the margin has fallen to the ring's 3px, the worst scene the
 // sweep below 0.7em read, held within 1 and 30 pixels (FLOOR_BOUND) at those two sizes and at 200%, where that maximum was read (the
 // file review's round 15, extra5-3: a residual disclosed and measured, green before the round's fixes by design, red under a margin
-// that covers more and under one that covers nothing). The ring's line pin
+// that covers more and under one that covers nothing); and an italic run in a level-2 heading glued to a picture inside a hundred
+// nested small elements, the worst scene a sweep of larger f's read, held within 1 and 40 pixels (FLOOR_LARGE_BOUND), its maximum
+// read in the 150% pass. A case of its own at a device scale of 2 on the chat modal counts in device pixels the ink a bold italic
+// run in a big element loses to the ring beside a picture in sup at the floor, held within 1 and 135 (FLOOR_D2_BOUND) at 200%,
+// where that maximum was read, red the same two ways. The ring's line pin
 // (ringClearsTheLines), in a case
 // of its own at a device scale of 2 on the chat modal, reads a picture under a line of descenders holding an inline code span and
 // under a line of keys for the paint the ring covers, and one in a note callout, an even table row and a highlight for the ring's
@@ -996,27 +1000,48 @@ const HEADINGS: Scene[] = [["nh2", "an italic f run in a level-2 heading", GLUED
  *  it are reworded: red at 3px plus 0.6em across the line, where it reads 0, and at 3px, where it reads 12 at 100% and 17 at 150%.
  *  Text smaller than 0.7em of the f's is FLOOR_BOUND's. */
 const SMALLER_BOUND: [number, number] = [1, 4];
-/** The bound the sheets state below 0.7em of the f's, at the floor (the file review's round 15, extra5-3, a residual disclosed and
- *  measured): Chromium sets no floor on a nested small element's text size, which falls by 1.2 a level to 1.8e-7px a hundred deep
- *  at 200%, so the margin across the line falls to the ring's own 3px, where 0.3em is under a layout unit, and the ring covers the
- *  most of an italic or bold italic f glued before the picture there, most with the picture lowered by a sub inside the deepest.
- *  Measured by screenshot pixels over 24,576 reads (the Files pane and the chat modal under touch, device scales 1 and 2, both
- *  themes, text sizes 100% to 200% in the viewer's steps, the line moved by each eighth of a pixel; small elements nested 3 to 16,
- *  20, 30, 40, 60 and 100 deep, sub and sup inside the deepest, font elements of size 1, 2 and 3 with sub and sup inside each),
- *  the worst read is this scene's, a bold italic run before a picture in sub inside a hundred nested small elements, at 200%: 30
- *  pixels at a device scale of 1 and 102 device pixels at 2, sampled maxima, since the count moves with the subpixel position.
- *  Every dash still reads 4.83:1 dark and 4.90:1 light, and no read covers ink past the margin box. FLOOR_BOUND is the bound at a
- *  device scale of 1, read in PANE_NEIGHBOURS at 100% and 150% and once more at the configuration of that maximum, the Files pane
- *  at 200%; the neighbour pin reads one screenshot pixel per CSS pixel (paintedRatio refuses any other scale), so the 102 device
- *  pixels at a device scale of 2 stand as the sweep measured them. At least 1, so the row records the residual both ways, as
- *  SMALLER_BOUND does. */
+/** The bound the sheets state below 0.7em of the f's, at the floor, for an f in the paragraph's own text (the file review's round 15,
+ *  extra5-3, a residual disclosed and measured): Chromium sets no floor on a nested small element's text size, which falls by 1.2 a
+ *  level to 3.6e-7px a hundred deep at 200% (1.8e-7px at 100%), so the margin across the line falls to the ring's own 3px, where
+ *  0.3em is under a layout unit, and the ring covers the most of an italic or bold italic f glued before the picture there, most
+ *  with the picture lowered by a sub inside the deepest. Measured by screenshot pixels over 24,576 reads (the Files pane and the chat
+ *  modal under touch, device scales 1 and 2, both themes, text sizes 100% to 200% in the viewer's steps, the line moved by each
+ *  eighth of a pixel; small elements nested 3 to 16, 20, 30, 40, 60 and 100 deep, sub and sup inside the deepest, font elements of
+ *  size 1, 2 and 3 with sub and sup inside each), the worst read with the f in the paragraph's text is this scene's, a bold italic
+ *  run before a picture in sub inside a hundred nested small elements, at 200%: 30 pixels at a device scale of 1 and 102 device
+ *  pixels at 2, sampled maxima, since the count moves with the subpixel position. Every dash still reads 4.83:1 dark and 4.90:1
+ *  light, and no read covers ink past the margin box. FLOOR_BOUND is read in PANE_NEIGHBOURS at 100% and 150% and once more at 200%,
+ *  where that maximum was read; the Files pane reads 29 there at the line's own position, the 30 at a quarter to half a pixel along.
+ *  A larger f, in a heading, a font element or a big one, covers more: FLOOR_LARGE_BOUND. At least 1, so the row records the
+ *  residual both ways, as SMALLER_BOUND does. */
 const FLOOR_BOUND: [number, number] = [1, 30];
+/** The bound below 0.7em of the f's at the floor for an f LARGER than the paragraph's text (a verifier of the fixes for the
+ *  file review's round 15 found that the first sweep read the paragraph's f alone): over 39,936 more reads by screenshot pixels, the same
+ *  configurations with the whole line inside a level-1 to level-6 heading, a font element of size 4 to 7 or one to three nested big
+ *  elements, the picture 20 by 20 in two nested small elements or at the floor with a sub or a sup inside the deepest, the worst read
+ *  is 40 pixels at a device scale of 1, the scene of this row among those at it, an italic run in a level-2 heading at 150% on the
+ *  Files pane at the line's own position (a bold italic f in a big element or a level-3 heading reads it too, at 130% to 175%), and
+ *  135 device pixels at 2 (FLOOR_D2_BOUND), every dash still at 4.83:1 dark and 4.90:1 light and none past the margin box. Read in
+ *  PANE_NEIGHBOURS at 100% (21) and 150% (40, the configuration of that maximum) and at 200% (22). The count stops growing with the f
+ *  near an f of 33px because a 20 by 20 picture's ring reaches no higher than its top; a picture under the floor on its width
+ *  alone can be any height, and beside a taller one the count grows with the f without a bound (204 pixels at a device scale of 1
+ *  and 761 device pixels at 2 for a bold italic f of 185px, ten nested big elements at 200%, beside a picture 20 by 200, and nested
+ *  big elements grow the f without end), which the sheets state and no row holds. */
+const FLOOR_LARGE_BOUND: [number, number] = [1, 40];
+const FLOOR_LARGE_SCENE = "an italic f run in a level-2 heading glued to a picture inside a hundred nested small elements, the margin across the line at the ring's 3px";
+/** The bound at a device scale of 2 below 0.7em of the f's, in device pixels (ringInkDevicePixels): the worst read of both sweeps
+ *  there, a bold italic run in a big element before a picture in sup inside a hundred nested small elements, on the chat modal at
+ *  200% at the line's own position, 135 device pixels in both themes; the paragraph's own f read at most 102 there. At least 1. */
+const FLOOR_D2_BOUND: [number, number] = [1, 135];
 const FLOOR_SCENE = "a bold italic f run glued to a picture in sub inside a hundred nested small elements, the margin across the line at the ring's 3px (the floor)";
 /** The Files pane report's scenes (PANE_TEXT): the runs, the heading runs, a left-floated picture in a note callout, the text it
  *  wraps starting at its margin box, where at a horizontal margin of the ring's width the dash's outer side read that text's first
- *  glyph, and an italic run glued to a picture in two nested small elements (SMALLER_RUN), held to SMALLER_BOUND. */
+ *  glyph, an italic run glued to a picture in two nested small elements (SMALLER_RUN), held to SMALLER_BOUND, a bold italic run
+ *  glued to a picture in sub inside a hundred nested small elements (FLOOR_RUN), held to FLOOR_BOUND, and an italic run in a level-2
+ *  heading glued to a picture inside a hundred nested small elements (FLOOR_LARGE_RUN), held to FLOOR_LARGE_BOUND. */
 const PANE_NEIGHBOURS: Scene[] = [...RUNS, ...HEADINGS, ["cfloat", "a left float in a note callout", ["the glyph after it"]],
-  ["nss", "an italic f run glued to a picture in two nested small elements", GLUED, SMALLER_BOUND], ["nfl", FLOOR_SCENE, GLUED, FLOOR_BOUND]];
+  ["nss", "an italic f run glued to a picture in two nested small elements", GLUED, SMALLER_BOUND], ["nfl", FLOOR_SCENE, GLUED, FLOOR_BOUND],
+  ["nfh", FLOOR_LARGE_SCENE, GLUED, FLOOR_LARGE_BOUND]];
 /** The ring covers no neighbouring ink at the picture's own text size, and the ink of a run glued before a picture in smaller text
  *  only within the scene's bound, and the dash beside a neighbour reads 3:1 on both sides (the file review's round 14,
  *  correctness-2 with extra5-1 and extra5-2, and the margin ruling of 2026-09-24): a box-shadow takes no layout and paints with the
@@ -1582,7 +1607,10 @@ const SMALLER_RUN = "Smaller *ffff*<small><small>![nss](" + WEB + "/nss.svg)</sm
 /** A bold italic run of f glued on both sides to a picture under the floor in sub inside a hundred nested small elements, the
  *  worst scene the sweep below 0.7em read (FLOOR_BOUND), spelled as the sweep spelled it. */
 const FLOOR_RUN = "Bold italic ***ffff***" + "<small>".repeat(100) + "<sub>![nfl](" + WEB + "/nfl.svg)</sub>" + "</small>".repeat(100) + "***ffff*** glued\n\n";
-const PANE_TEXT = "# Report\n\n" + PARA(1) + "\n\n" + GLYPH_RUNS + HEADING_RUNS + SMALLER_RUN + FLOOR_RUN
+/** An italic run of f in a level-2 heading glued on both sides to a picture under the floor inside a hundred nested small elements,
+ *  the worst scene the sweep of larger f's read at a device scale of 1 (FLOOR_LARGE_BOUND), spelled as that sweep spelled it. */
+const FLOOR_LARGE_RUN = "## Italic *ffff*" + "<small>".repeat(100) + "![nfh](" + WEB + "/nfh.svg)" + "</small>".repeat(100) + "*ffff* glued\n\n";
+const PANE_TEXT = "# Report\n\n" + PARA(1) + "\n\n" + GLYPH_RUNS + HEADING_RUNS + SMALLER_RUN + FLOOR_RUN + FLOOR_LARGE_RUN
   + "> [!note]\n> " + '<img src="' + WEB + '/cfloat.svg" alt="cfloat" align="left">' + "jTW " + FLOAT_WORDS.repeat(5) + "\n\n" + PARA(2) + "\n";
 /** The viewer's text size stepped up `n` times by its own control: the zoom glyph opens the flyout, A+ takes one step of the table. */
 async function stepTextSizeUp(page: any, n: number): Promise<void> {
@@ -1592,8 +1620,8 @@ async function stepTextSizeUp(page: any, n: number): Promise<void> {
     await frames(page, 3);
   }
 }
-test("in a browser, under CDP touch emulation on the Files pane, the ring's neighbour pin: runs of f glued to a remote picture under the floor on both sides, upright, italic and bold italic, and italic runs in a level-2 and a level-1 heading keep all their ink, the ink past their own boxes too, and a left-floated one in a note callout, the text it wraps starting at its margin box, reads its dash at 3:1 or better on both sides, and an italic run glued to one inside two nested small elements loses 1 to 4 pixels of ink to the ring, the bound the sheets state for a picture in smaller text than the f before it, and a bold italic run glued to one in a sub inside a hundred nested small elements, the floor below 0.7em of the f's, 1 to 30 pixels, the residual the sheets state there (the file review's round 15, extra5-3; read at 200% too, the configuration of that maximum), each dash at 3:1 or better, in both themes, at the viewer's default text size and at 150% (ringCoversNoNeighbour; the margin ruling of 2026-09-24: at a margin of the ring's width on every side the runs lost the ink past their boxes to the ring and the float's dash read its wrapped text's first glyph at 2.06:1 dark and 2.91:1 light; the second margin ruling that day: at a fixed 7px across the line the heading runs lost ink to the ring, and at 150% the italic and bold italic runs; a property pin read off the page)", { timeout: 240000 }, async (t) => {
-  const second = await secondServer([], Object.fromEntries(["ngf", "ngi", "ngb", "nh2", "nh1", "cfloat", "nss", "nfl"].map((n) => ["/" + n + ".svg", [20, 20] as [number, number]])));
+test("in a browser, under CDP touch emulation on the Files pane, the ring's neighbour pin: runs of f glued to a remote picture under the floor on both sides, upright, italic and bold italic, and italic runs in a level-2 and a level-1 heading keep all their ink, the ink past their own boxes too, and a left-floated one in a note callout, the text it wraps starting at its margin box, reads its dash at 3:1 or better on both sides, and an italic run glued to one inside two nested small elements loses 1 to 4 pixels of ink to the ring, the bound the sheets state for a picture in smaller text than the f before it, and a bold italic run glued to one in a sub inside a hundred nested small elements, the floor below 0.7em of the f's, 1 to 30 pixels, the residual the sheets state there (the file review's round 15, extra5-3; read at 200% too, the configuration of that maximum), and an italic run in a level-2 heading glued to one inside a hundred nested small elements, the larger f's floor, 1 to 40 pixels (its maximum read in the 150% pass), each dash at 3:1 or better, in both themes, at the viewer's default text size and at 150% (ringCoversNoNeighbour; the margin ruling of 2026-09-24: at a margin of the ring's width on every side the runs lost the ink past their boxes to the ring and the float's dash read its wrapped text's first glyph at 2.06:1 dark and 2.91:1 light; the second margin ruling that day: at a fixed 7px across the line the heading runs lost ink to the ring, and at 150% the italic and bold italic runs; a property pin read off the page)", { timeout: 240000 }, async (t) => {
+  const second = await secondServer([], Object.fromEntries(["ngf", "ngi", "ngb", "nh2", "nh1", "cfloat", "nss", "nfl", "nfh"].map((n) => ["/" + n + ".svg", [20, 20] as [number, number]])));
   try {
     await inBrowser(t, async (browser) => {
       const before = async (pg: any): Promise<void> => {
@@ -1604,7 +1632,7 @@ test("in a browser, under CDP touch emulation on the Files pane, the ring's neig
       };
       const { page, errors } = await openViewer(browser, "pane", 900, 600, { docs: { [REPORT]: PANE_TEXT }, before });
       await page.click('[data-act="fv-load"]');
-      await page.waitForFunction(() => { const imgs = Array.from(document.querySelectorAll(".fileview-md img")) as HTMLImageElement[]; return imgs.length === 8 && imgs.every((i) => i.complete && i.naturalWidth > 0 && i.hasAttribute("data-fv-figweb")); }, null, { timeout: 10000 });
+      await page.waitForFunction(() => { const imgs = Array.from(document.querySelectorAll(".fileview-md img")) as HTMLImageElement[]; return imgs.length === 9 && imgs.every((i) => i.complete && i.naturalWidth > 0 && i.hasAttribute("data-fv-figweb")); }, null, { timeout: 10000 });
       const cdp = await page.context().newCDPSession(page);
       await cdp.send("Emulation.setTouchEmulationEnabled", { enabled: true, maxTouchPoints: 1 });
       await frames(page, 3);
@@ -1628,8 +1656,9 @@ test("in a browser, under CDP touch emulation on the Files pane, the ring's neig
         await frames(page, 3);
         await ringCoversNoNeighbour(page, theme + " theme, at a text size of 150%, at rest under touch emulation on the Files pane", fails, (m) => t.diagnostic(m), false, PANE_NEIGHBOURS);
       }
-      // the configuration of the maximum at a device scale of 1 below 0.7em (FLOOR_BOUND's 30 pixels, read on the Files pane under
-      // touch at 200% in both themes): two more steps of the viewer's own control, the floor's scene alone
+      // the configuration of the paragraph's f's maximum at a device scale of 1 below 0.7em (FLOOR_BOUND's 30 pixels, read on the Files
+      // pane under touch at 200% in both themes; the larger f's maximum, FLOOR_LARGE_BOUND's 40, is the 150% pass's): two more steps
+      // of the viewer's own control, the two floor scenes alone
       await stepTextSizeUp(page, 2);
       const [pct200, font200] = await sizeOf();
       const floorMargin = await page.evaluate(() => getComputedStyle(Array.from(document.querySelectorAll(".fileview-md img")).find((x) => x.getAttribute("alt") === "nfl")!).marginLeft);
@@ -1638,12 +1667,12 @@ test("in a browser, under CDP touch emulation on the Files pane, the ring's neig
       for (const theme of ["dark", "light"] as const) {
         await page.evaluate((light: boolean) => document.body.classList.toggle("theme-light", light), theme === "light");
         await frames(page, 3);
-        await ringCoversNoNeighbour(page, theme + " theme, at a text size of 200%, the configuration of the maximum, at rest under touch emulation on the Files pane", fails, (m) => t.diagnostic(m), false, PANE_NEIGHBOURS.filter(([alt]) => alt === "nfl"));
+        await ringCoversNoNeighbour(page, theme + " theme, at a text size of 200%, the configuration of the maximum, at rest under touch emulation on the Files pane", fails, (m) => t.diagnostic(m), false, PANE_NEIGHBOURS.filter(([alt]) => alt === "nfl" || alt === "nfh"));
       }
       await page.evaluate(() => document.body.classList.remove("theme-light"));
       assert.deepEqual(errors, [], "no page errors");
       await page.close();
-      assert.deepEqual(fails, [], "the ring covers no ink of the runs of f, in a paragraph and in both headings, at the default text size and at 150%, the float's dash reads 3:1 on both sides, and the run before a picture in smaller text loses ink within the bound the sheets state, at the floor too, at 100%, 150% and 200%, its dash at 3:1 (a property pin read off the page):\n" + fails.join("\n"));
+      assert.deepEqual(fails, [], "the ring covers no ink of the runs of f, in a paragraph and in both headings, at the default text size and at 150%, the float's dash reads 3:1 on both sides, and the run before a picture in smaller text loses ink within the bound the sheets state, at the floor too, for the paragraph's f and a heading's, at 100%, 150% and 200%, its dash at 3:1 (a property pin read off the page):\n" + fails.join("\n"));
     });
   } finally { await second.close(); }
 });
@@ -1771,6 +1800,59 @@ async function ringClearsTheLines(page: any, where: string, fails: string[], not
   await page.evaluate((y: number) => { (document.querySelector(".fileview-body") as HTMLElement).scrollTop = y; }, top);
   await frames(page, 2);
 }
+/** The ink the ring covers around one picture under the floor, counted in DEVICE pixels at a device scale of `k` (the file review's
+ *  round 15, extra5-3, read at the device scale where the sweep below 0.7em found its maximum there: ringCoversNoNeighbour and
+ *  paintedRatio index a screenshot one pixel per CSS pixel, so neither reads a page at a device scale of 2). A clip 40 CSS px round
+ *  the picture, the run glued before it inside, is shot three times: as painted, with every mark's box-shadow overridden to none (the
+ *  page without the ring, the margin kept, so nothing moves), and with the ring off and the text of the picture's line transparent
+ *  (the page without that text's ink). A device pixel counts where the ring changes it and the ring-off shot differs from the
+ *  ink-off one, as the sweep counted. Guards: the page's device scale is `k`, the picture wears the mark's outline at rest over a
+ *  ring, and the overrides take the ring off and move nothing. Returns the count, each read handed to `note`. */
+async function ringInkDevicePixels(page: any, alt: string, k: number, where: string, note: (m: string) => void): Promise<number> {
+  await page.mouse.move(5, 5);
+  const layout = (scroll: boolean): Promise<{ img: number[]; outline: string; shadow: string; dpr: number }> => page.evaluate(([alt, scroll]: [string, boolean]) => {
+    const img = Array.from(document.querySelectorAll(".fileview-md img")).find((x) => x.getAttribute("alt") === alt) as HTMLElement;
+    if (scroll) img.scrollIntoView({ block: "center" });
+    const r = img.getBoundingClientRect(), cs = getComputedStyle(img);
+    return { img: [r.left, r.top, r.right, r.bottom], outline: cs.outlineStyle, shadow: cs.boxShadow, dpr: window.devicePixelRatio };
+  }, [alt, scroll]);
+  await layout(true);
+  await frames(page, 2);
+  const lay = await layout(false);
+  const spread = /(-?[\d.]+)px$/.exec(lay.shadow.trim());
+  assert.deepEqual([lay.dpr, lay.outline, !!spread && Number(spread[1]) > 0], [k, "dashed", true], where + ": " + alt + ": the page's device scale is " + k + " and the picture wears the mark's outline at rest over a ring (" + lay.shadow + ")");
+  const cx = Math.max(0, Math.floor(lay.img[0] - 40)), cy = Math.max(0, Math.floor(lay.img[1] - 40));
+  const cw = Math.ceil(lay.img[2] + 40) - cx, ch = Math.ceil(lay.img[3] + 40) - cy;
+  const shot = async () => decodePng(await page.screenshot({ clip: { x: cx, y: cy, width: cw, height: ch } }));
+  const withRing = await shot();
+  await page.evaluate((alt: string) => {
+    let host = Array.from(document.querySelectorAll(".fileview-md img")).find((x) => x.getAttribute("alt") === alt) as Element;
+    while (host.parentElement && getComputedStyle(host.parentElement).display === "inline" && host.parentElement.childNodes.length === 1) host = host.parentElement;
+    host.parentElement!.setAttribute("data-device-ink-line", "");
+    const st = document.createElement("style"); st.id = "device-ink-noring"; st.textContent = ".fileview-md img[data-fv-figweb] { box-shadow: none !important; }"; document.head.appendChild(st);
+  }, alt);
+  await frames(page, 3);
+  const noRing = await shot();
+  const still = await layout(false);
+  await page.evaluate(() => { const st = document.createElement("style"); st.id = "device-ink-noink"; st.textContent = "[data-device-ink-line], [data-device-ink-line] * { color: transparent !important; -webkit-text-fill-color: transparent !important; text-decoration-color: transparent !important; }"; document.head.appendChild(st); });
+  await frames(page, 3);
+  const noInk = await shot();
+  const inkless = await layout(false);
+  await page.evaluate(() => { document.getElementById("device-ink-noink")!.remove(); document.getElementById("device-ink-noring")!.remove(); document.querySelector("[data-device-ink-line]")!.removeAttribute("data-device-ink-line"); });
+  await frames(page, 2);
+  assert.deepEqual([still.img, still.shadow, inkless.img], [lay.img, "none", lay.img], where + ": " + alt + ": the overrides take the ring off (the picture's computed box-shadow none under them) and move nothing");
+  assert.deepEqual([withRing.width, withRing.height], [cw * k, ch * k], where + ": " + alt + ": the shot holds " + k + " device pixels per CSS pixel on each axis");
+  const at = (png: { width: number; bpp: number; data: Buffer }, x: number, y: number) => { const q = (y * png.width + x) * png.bpp; return [png.data[q], png.data[q + 1], png.data[q + 2]]; };
+  const same = (a: number[], b: number[]) => a[0] === b[0] && a[1] === b[1] && a[2] === b[2];
+  let covered = 0;
+  for (let y = 0; y < withRing.height; y++) for (let x = 0; x < withRing.width; x++) {
+    const b = at(noRing, x, y);
+    if (same(at(withRing, x, y), b) || same(b, at(noInk, x, y))) continue;
+    covered++;
+  }
+  note("device ink, " + where + ": " + alt + ": " + covered + " device pixels of the text's ink covered by the ring (a clip of " + cw + " by " + ch + " CSS px at a device scale of " + k + ")");
+  return covered;
+}
 test("in a browser at a device scale of 2, under CDP touch emulation on the chat modal, the ring's line pin: a remote picture under the floor under a line of descenders holding an inline code span, and under a line of keys, leaves their paint uncovered, and one in a note callout, an even table row and a highlight paints no pixel past its margin box over the tint, in both themes (ringClearsTheLines; the second margin ruling of 2026-09-24: at 1px up and down the ring covered the code span's box, at 2px a key's bottom row and a row of each tint past the margin box; a property pin read off the page)", { timeout: 240000 }, async (t) => {
   const names = LINE_SCENES.map(([alt]) => alt);
   const second = await secondServer([], Object.fromEntries(names.map((n) => ["/" + n + ".svg", [20, 20] as [number, number]])));
@@ -1801,6 +1883,50 @@ test("in a browser at a device scale of 2, under CDP touch emulation on the chat
       assert.deepEqual(fails, [], "the ring covers no paint of the lines above and paints no pixel past the picture's margin box over a tint (a property pin read off the page):\n" + fails.join("\n"));
       assert.deepEqual(errors, [], "no page errors");
       await page.close();
+    });
+  } finally { await second.close(); }
+});
+
+/** A bold italic run of f in a big element glued on both sides to a picture under the floor in sup inside a hundred nested small
+ *  elements, the worst scene the sweeps below 0.7em read at a device scale of 2 (FLOOR_D2_BOUND), spelled as that sweep spelled it. */
+const FLOOR_D2_TEXT = "# Report\n\n" + PARA(1) + "\n\n<big>Bold italic ***ffff***" + "<small>".repeat(100) + "<sup>![nfd](" + WEB + "/nfd.svg)</sup>" + "</small>".repeat(100) + "***ffff*** glued</big>\n\n" + PARA(2) + "\n";
+test("in a browser at a device scale of 2, under CDP touch emulation on the chat modal, below 0.7em of the f's at the floor: a bold italic run in a big element glued to a remote picture under the floor in sup inside a hundred nested small elements loses 1 to 135 device pixels of its ink to the ring at 200%, where the sweeps read their maximum at a device scale of 2, in both themes (ringInkDevicePixels, which counts device pixels where the neighbour pin reads one pixel per CSS pixel; the file review's round 15, extra5-3: a residual disclosed and measured, green at the head the round read by design, red under a margin that covers more and under one that covers nothing; a property pin read off the page)", { timeout: 240000 }, async (t) => {
+  const second = await secondServer([], { "/nfd.svg": [20, 20] });
+  try {
+    await inBrowser(t, async (browser) => {
+      const before = async (pg: any): Promise<void> => {
+        await pg.context().route((u: URL) => u.href.startsWith(WEB + "/"), async (route: any) => {
+          const a = await fromSecond(second.port, new URL(route.request().url()).pathname);
+          return route.fulfill({ status: a.status, contentType: a.type, body: a.body });
+        });
+      };
+      const scaled = { newPage: (o: Record<string, unknown>) => browser.newPage({ ...o, deviceScaleFactor: 2 }) };
+      const { page, errors } = await openViewer(scaled, "chat", 900, 600, { docs: { [REPORT]: FLOOR_D2_TEXT }, before });
+      // the gate's placeholder stands inside the hundred nested small elements, with no box a pointer's click can land on: its click
+      // is dispatched on the element
+      await page.waitForSelector('[data-act="fv-load"]', { state: "attached", timeout: 10000 });
+      await page.evaluate(() => { (document.querySelector('[data-act="fv-load"]') as HTMLElement).click(); });
+      await page.waitForFunction(() => { const imgs = Array.from(document.querySelectorAll(".fileview-md img")) as HTMLImageElement[]; return imgs.length === 1 && imgs.every((i) => i.complete && i.naturalWidth > 0 && i.hasAttribute("data-fv-figweb")); }, null, { timeout: 10000 });
+      const cdp = await page.context().newCDPSession(page);
+      await cdp.send("Emulation.setTouchEmulationEnabled", { enabled: true, maxTouchPoints: 1 });
+      await frames(page, 3);
+      await stepTextSizeUp(page, 5);
+      const got = await page.evaluate(() => [(document.querySelector(".fileview") as HTMLElement).dataset.fvText, getComputedStyle(Array.from(document.querySelectorAll(".fileview-md img")).find((x) => x.getAttribute("alt") === "nfd")!).marginLeft]);
+      t.diagnostic("the floor's picture at 200%: its margin across the line " + got[1] + " (the ring's 3px under the sheets' rule)");
+      assert.equal(got[0], "200", "five steps of the viewer's own control take the text size to 200%, the configuration of the maximum at a device scale of 2 (a precondition)");
+      const fails: string[] = [];
+      for (const theme of ["dark", "light"] as const) {
+        await page.evaluate((light: boolean) => document.body.classList.toggle("theme-light", light), theme === "light");
+        await frames(page, 3);
+        const where = theme + " theme, at a text size of 200%, at a device scale of 2, at rest under touch emulation on the chat modal";
+        const n = await ringInkDevicePixels(page, "nfd", 2, where, (m) => t.diagnostic(m));
+        // FAILS under a margin that covers more (more than 135) and under one that covers nothing (0)
+        if (n < FLOOR_D2_BOUND[0] || n > FLOOR_D2_BOUND[1]) fails.push(where + ": " + n + " device pixels of the text's ink covered by the ring, outside the bound the sheets state at a device scale of 2 below 0.7em of the f's, " + FLOOR_D2_BOUND[0] + " to " + FLOOR_D2_BOUND[1]);
+      }
+      await page.evaluate(() => document.body.classList.remove("theme-light"));
+      assert.deepEqual(errors, [], "no page errors");
+      await page.close();
+      assert.deepEqual(fails, [], "the run before a picture at the floor loses ink within the bound the sheets state at a device scale of 2, counted in device pixels (a property pin read off the page):\n" + fails.join("\n"));
     });
   } finally { await second.close(); }
 });

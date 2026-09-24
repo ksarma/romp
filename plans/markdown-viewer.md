@@ -8550,12 +8550,16 @@ both themes, 100% to 200% with the line moved by each eighth of a pixel, `<small
 `<sub>` and `<sup>` inside the deepest, and a `<font>` of size 1, 2 or 3 with `<sub>` and `<sup>` inside it) the worst read was a bold italic f before
 a picture in a `<sub>` inside a hundred nested `<small>` at 200%, 30 pixels at a device scale of 1 and 102 device pixels at 2,
 sampled maxima, every dash still at 4.83:1 dark and 4.90:1 light (the open leg's FLOOR_BOUND holds that scene within 1 and 30
-pixels at a device scale of 1); up and down the ring's width, so the ring
+pixels at a device scale of 1), and with the f larger than the paragraph's text, over 39,936 more reads with the line inside a
+heading, a `<font>` of size 4 to 7 or nested `<big>`, 40 pixels at a device scale of 1 and 135 device pixels at 2 (FLOOR_LARGE_BOUND
+and FLOOR_D2_BOUND hold those scenes), those pictures 20 by 20, and beside a taller picture, since one under the floor on its width
+alone can be any height, the count grows with the f without a bound (204 pixels and 761 device pixels for an f of 185px beside a
+picture 20 by 200); up and down the ring's width, so the ring
 stands inside the picture's margin box, where at 2px it covered the bottom row of a key on the line above), a line holding such a
 picture up to 6px taller and the text after it 14.97px along at the default size (the file review's round 14, correctness-2 with
 extra5-1 and extra5-2, the margin measured per axis on the two margin rulings of 2026-09-24; the open leg's neighbour pin reads runs
 of f, heading runs, a callout's float and an italic run glued to a picture in two nested `<small>`, held to that bound, at the
-default text size and at 150%, and the floor's scene held within 1 and 30 pixels there and at 200%, and its line pin, at a device scale of 2, a code span and keys on the line above and three tinted
+default text size and at 150%, and the floor's scene held within 1 and 30 pixels there and at 200%, and the larger f's within 1 and 40, and its line pin, at a device scale of 2, a code span and keys on the line above and three tinted
 grounds), so a tap's open is shown before it
 happens where the title is no surface; the file review's round 12, fresh-1; the web control rests at full opacity where the at-rest rule
 stands, a local one at 0.8, any focus reveals it, a keyboard's or one a script gives it with no ring, no mouse press of any button

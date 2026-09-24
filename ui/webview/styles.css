@@ -5027,15 +5027,23 @@ body.filebrowse-open { overflow: hidden; }
    on both sides, since the f paints before the picture and the ring over it (file-figure-open-browser.test.ts holds one such picture,
    in two nested <small>, to that bound, SMALLER_BOUND). Below 0.7em of the f's the ring covers more, a residual disclosed and
    measured (the file review's round 15, extra5-3): Chromium sets no floor on a nested <small>'s text size, which falls by 1.2 a
-   level (1.8e-7px a hundred deep at 200%), so the margin across the line falls to the ring's own 3px, and there the ring covers
-   the most of that f, the most of all with the picture lowered by a <sub>. Over 24,576 reads by screenshot pixels (the Files pane
-   and the chat modal under touch, at device scales of 1 and 2, in both themes, at every text size from 100% to 200% with the line
-   moved by each eighth of a pixel; <small> nested 3 to 16, 20, 30, 40, 60 and 100 deep, <sub> and <sup> inside the deepest, a <font> of size 1,
-   2 or 3, whose size does not follow the viewer's text size, with <sub> and <sup> inside it) the worst read was a bold italic f
-   before a picture in a <sub> inside a hundred nested <small> at 200%: 30 pixels at a device scale of 1 and 102 device pixels at
-   2, sampled maxima that move with the subpixel position, every dash still at 4.83:1 dark and 4.90:1 light and no ink covered
-   past the margin box (file-figure-open-browser.test.ts holds that scene within 1 and 30 pixels at a device scale of 1,
-   FLOOR_BOUND). Up and down 3px, the
+   level (3.6e-7px a hundred deep at 200%, 1.8e-7px at 100%), so the margin across the line falls to the ring's own 3px, and there
+   the ring covers the most of that f, the most of all with the picture lowered by a <sub>. Over 24,576 reads by screenshot pixels
+   (the Files pane and the chat modal under touch, at device scales of 1 and 2, in both themes, at every text size from 100% to 200%
+   with the line moved by each eighth of a pixel; <small> nested 3 to 16, 20, 30, 40, 60 and 100 deep, <sub> and <sup> inside the
+   deepest, a <font> of size 1, 2 or 3, whose size does not follow the viewer's text size, with <sub> and <sup> inside it) the worst
+   read with the f in the paragraph's own text was a bold italic f before a picture in a <sub> inside a hundred nested <small> at
+   200%: 30 pixels at a device scale of 1 and 102 device pixels at 2, sampled maxima that move with the subpixel position. A larger
+   f covers more: over 39,936 more reads in the same configurations with the whole line inside a level-1 to level-6 heading, a
+   <font> of size 4 to 7 or one to three nested <big>, the worst read was 40 pixels at a device scale of 1 (an italic f in a
+   level-2 heading at 150%, a bold italic one in a <big> or a level-3 heading too) and 135 device pixels at 2 (a bold italic f in a
+   <big> before a picture in a <sup> at 200%), every dash still at 4.83:1 dark and 4.90:1 light and no ink covered past the margin
+   box. Those pictures are 20 by 20, and the count stops growing near an f of 33px since the ring reaches no higher than the
+   picture's top; a picture under the floor on its width alone can be any height, and beside a taller one the count grows with the
+   f without a bound (204 pixels at a device scale of 1 and 761 device pixels at 2 for a bold italic f of 185px in ten nested <big>
+   at 200% beside a picture 20 by 200), no figure bounding it (file-figure-open-browser.test.ts holds the paragraph's scene within 1
+   and 30 pixels at a device scale of 1, FLOOR_BOUND, the heading's within 1 and 40, FLOOR_LARGE_BOUND, and the <big>'s within 1
+   and 135 device pixels at a device scale of 2, FLOOR_D2_BOUND). Up and down 3px, the
    ring's width, so the ring stands inside the picture's margin
    box on every side, which the picture's own line holds, and reaches no other line: at 2px it covered the bottom row of a key (kbd)
    on the line above, whose box reaches its line's edge, and painted the page's ground over the tint of the highlight, table row or
