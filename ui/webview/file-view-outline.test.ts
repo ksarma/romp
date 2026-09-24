@@ -1089,3 +1089,46 @@ test("a picture from the web whose address the stand-in cannot resolve, a protoc
   assert.deepEqual(titles, ["Opens in a new tab: //example.test/r.svg", "Opens in a new tab: http://example.test:99999/u.svg"], "each title cut as text: the userinfo and the query gone, the port kept (a property pin over the title attribute)");
   for (const ti of titles) for (const x of [us + ":", pw, v1, v2, "?"]) assert.ok(!(ti || "").includes(x), "no planted value in a title (a property pin): " + JSON.stringify(x) + " in " + JSON.stringify(ti));
 });
+
+// ── two spellings of a credential that the URL parser reads with no sign-in part: a disclosed residual (the coordinator's ruling
+// of 2026-09-24, on the file review's round 14, correctness-1 with extra5-3). shownAddress reads an address that parses as the
+// parser reads it, and the parser gives these no userinfo at all, so they print in the picture's title and in the failed label: a
+// password whose part before a /, a ? or a # is a number parses as a port, the username as the host and, after a /, the rest of
+// the password as the path; and an http: source written without its slashes on an http page resolves as a path of the page's own
+// origin (against a VS Code webview's address, which is not http, it parses with its sign-in part and prints none). The ruling's
+// two reasons: the author's text is ambiguous even to the standard, and the credential is already in the file being viewed; and a
+// text cut that caught these would also mangle ordinary addresses, a picture named a@2x.png among them. This case is the
+// executed witness: it records what the title and the label print for each spelling, through the paint and the real error
+// listener over the dashboard's base, so a change to either text reds here, and a control, an ordinary address with an @ in its
+// path, printed whole, so a text cut at the last @ reds here too. Every value is assembled at run time.
+test("two spellings of a credential that the URL parser reads with no sign-in part print in the picture's title and in the failed label, as measured: a password whose part before a /, a ? or a # is a number (read as a port, the username as the host and, after the /, the rest of the password as the path) and an http: source written without its slashes on an http page (read as a path of the page's own origin); against a VS Code webview's address the slashless spelling prints no credential, and an ordinary address with an @ in its path prints whole (a disclosed residual, the coordinator's ruling of 2026-09-24; an executed witness over the paint and the error listener, holding the texts as measured, so a change to either reds)", async (t) => {
+  const us = "u" + "ser", pw = "p" + "w" + String(4 * 4), port = String(2000 + 24);
+  const base = "http://notes-api.test/", vsBase = "vscode-webview://abc123/index.html?id=x";
+  const srcs = [
+    "http://" + us + ":" + port + "/" + pw + "@example.test/i.png",   // a password beginning with a number, then a /
+    "http://" + us + ":" + port + "?" + pw + "@example.test/j.png",   // then a ?
+    "http://" + us + ":" + port + "#" + pw + "@example.test/k.png",   // then a #
+    "http:" + us + ":" + pw + "@example.test/a.png",                    // an http: source written without its slashes
+    "http://example.test/figs/a@2x.png",                                 // the control: an ordinary address with an @ in its path
+  ];
+  const parts = srcs.map((s) => { const u = new URL(s, base); return [u.username, u.password, u.host, u.pathname]; });
+  assert.deepEqual(parts, [["", "", us + ":" + port, "/" + pw + "@example.test/i.png"], ["", "", us + ":" + port, "/"], ["", "", us + ":" + port, "/"], ["", "", "notes-api.test", "/" + us + ":" + pw + "@example.test/a.png"], ["", "", "example.test", "/figs/a@2x.png"]],
+    "the premise: the URL parser reads each against the dashboard's base with no username and no password (read back as parts)");
+  const vs = new URL(srcs[3], vsBase);
+  assert.deepEqual([vs.username, vs.password, vs.host], [us, pw, "example.test"], "and against a VS Code webview's address the slashless spelling parses with its sign-in part (the premise of the contrast)");
+  (doc as any).baseURI = base;   // the stand-in's document has no base: the dashboard's own address, as document.baseURI reads there
+  t.after(() => { delete (doc as any).baseURI; });
+  loadGatedHost(us, doc as unknown as ParentNode); loadGatedHost("example.test", doc as unknown as ParentNode);   // the hosts the parser reads in the first three and in the control: lifted for this document before the paint (the fourth is the page's own origin, which the gate never holds)
+  t.after(() => { forgetLoadedHosts(); });
+  const o = await open(REPORT, "# R\n\n" + srcs.map((s, i) => '<img src="' + s + '" alt="s' + i + '">').join("\n\n") + "\n", t);
+  const imgs = o.body.querySelector(".fileview-md")!.querySelectorAll("img");
+  assert.deepEqual(imgs.map((i) => i.getAttribute("alt")), ["s0", "s1", "s2", "s3", "s4"], "the five pictures painted, none gated");
+  const shown = ["http://" + us + ":" + port + "/" + pw + "@example.test/i.png", "http://" + us + ":" + port + "/", "http://" + us + ":" + port + "/", base + us + ":" + pw + "@example.test/a.png", "http://example.test/figs/a@2x.png"];
+  assert.deepEqual(imgs.map((i) => i.getAttribute("title")), shown.map((s) => "Opens in a new tab: " + s),
+    "the picture's title prints each address as the parser reads it: the password after a / and the username as the host in the first, the username as the host in the next two, and the whole sign-in part as a path of the page's origin in the fourth (the residual as measured), and the control whole, its @ read as the path's (a text cut at the last @ would print a wrong host there, the ruling's second reason)");
+  for (const i of imgs) i.dispatchEvent(new Ev("error"));
+  const labels = imgs.map((i) => { let n = i.nextSibling; if (n instanceof El && n.hasAttribute("data-fv-figopen")) n = n.nextSibling; return n instanceof El && n.hasAttribute("data-fv-figerr") ? n.textContent : null; });
+  assert.deepEqual(labels, shown.map((s, k) => o.fv.FIGURE_FAILED + " " + s + " (s" + k + ")"), "the failed label, through the real error listener, prints the same five addresses (the residual as measured)");
+  assert.deepEqual([o.fv.shownSource(srcs[3], vsBase), o.fv.shownAddress(vs.href)], ["http://example.test/a.png", "http://example.test/a.png"],
+    "against a VS Code webview's address the slashless spelling's label and title address print no credential (the label builder, and the stripper the title reads over the address the figure resolves to)");
+});
