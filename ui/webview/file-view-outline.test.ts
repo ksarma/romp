@@ -1202,7 +1202,7 @@ test("the sign-in rule over the paint, one table (the file review's round 15, co
   const cost: Row[] = [
     raw("https://cdn/img/a@2x.png", "the cost: an at sign in a web address's path", true, ALL, ["cdn", "a@2x"]),
     raw("https://social.example/@api/avatar.png", "the cost: a profile path", true, ALL, ["social.example", "@api"]),
-    raw("http://" + H + ":99999/a@2x.png", "the cost: a refused address with an at sign in its path (the round-14 cut printed a wrong host)", true, ALL, ["99999", "2x.png"]),
+    raw("http://" + H + ":99999/a@2x.png", "the cost: a refused address with an at sign in its path (the file review's round 14 cut printed a wrong host)", true, ALL, ["99999", "2x.png"]),
   ];
   /** The controls, outside the rule: [row, the label's source, the title (null for none), the control's words (null for none)]. */
   const controls: Array<[Row, string, string | null, string | null]> = [

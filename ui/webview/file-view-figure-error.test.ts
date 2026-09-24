@@ -718,7 +718,7 @@ test("two failing figures under one wrapper (the Slice 7 review's closing pass):
 // one the parser refuses is cut at its authority, and a workspace path prints as written. Before any of that, a source that
 // appears to carry a sign-in (figureSourceCredentialed: an at sign after its scheme or its leading run, after its
 // percent-escapes are decoded) prints FIGURE_ADDRESS_WITHHELD and no part of its address, a refused address with an @ in its
-// path among them, which the round-14 cut had printed with a wrong host; that is the rule's stated cost, not a secret kept.
+// path among them, which the file review's round 14 cut had printed with a wrong host; that is the rule's stated cost, not a secret kept.
 // Chromium never requests a source with a sign-in part, so the picture fails and its label is where such a source would show.
 // CI runs this module (the Test step of the vscode-extension job) and skips the Chromium leg, so the rule is executed here
 // twice: on the label builder itself (shownSource, form a) and through the real error listener over the stand-in (form b).
@@ -755,7 +755,7 @@ const L_CASES: Array<[string, string, string, string]> = [
   ["a refused source whose password holds a /", "http://" + L_US + ":p/" + L_V("SL") + "@example.test/x.png", L_WITHHELD, L_WITHHELD],
   ["a refused source whose password holds a ?", "http://" + L_US + ":p?" + L_V("QM") + "@example.test/x.png", L_WITHHELD, L_WITHHELD],
   ["a refused source whose password holds a #", "http://" + L_US + ":p#" + L_V("HM") + "@example.test/x.png", L_WITHHELD, L_WITHHELD],
-  ["the rule's cost: a refused source with an @ in its path is withheld (the round-14 cut printed a wrong host there)", "http://example.test:99999/a@2x.png?" + L_TOK + "=" + L_V("AT"), L_WITHHELD, L_WITHHELD],
+  ["the rule's cost: a refused source with an @ in its path is withheld (the file review's round 14 cut printed a wrong host there)", "http://example.test:99999/a@2x.png?" + L_TOK + "=" + L_V("AT"), L_WITHHELD, L_WITHHELD],
   ["a path parameter carrying a session", "https://example.test/img/a.png;jsessionid=" + L_V("JS"), "https://example.test", "https://example.test"],
   ["an opaque token segment in the path", "https://example.test/s/" + L_V("SEG") + "/a.png", "https://example.test", "https://example.test"],
   ["a plain https source, its origin alone", "https://cdn.example/plot.png", "https://cdn.example", "https://cdn.example"],
