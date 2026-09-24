@@ -35553,7 +35553,8 @@ def _subagent_tree_dep_note(d, dirs, stats):
     recorded key and the tab is rebuilt. An absent root, or a dangling link in its place, notes None (what _chat_stat_key
     re-evaluates to, so its appearance is a change too); anything else in the root's place (a live link, a file: not this
     session's tree, never listed) notes nothing, since a None note could never match its re-stat and the target's key
-    would rebuild the tab on changes no reader shows. The key comes from the pair the reader was answered and never from
+    would rebuild the tab on changes no reader shows (_subagent_meta_map's rule; _subagent_file_walk notes such a path
+    under its stat key via _subagent_walk_dep_note). The key comes from the pair the reader was answered and never from
     a stat taken after it (2026-09-24): inside a cycle scope (_live_scope.subagent_trees: a pusher cycle, a jobs pass, a
     connect push's chat loop) the pair may be the sample another reader took earlier in the cycle, and a fresh stat would
     post-date the listing it vouches for, so a file landing after the sample under a directory the listing lacked would
@@ -35668,10 +35669,11 @@ def _subagent_file(path, agent_id):
     fork's fsid — the one file of that name anywhere in the project dir, nested or not. None when missing.
     A miss is a dependency of the chat payload that asked (the taskout idiom, _chat_dep_note_taskout;
     re-review 2026-09-08): the absent beside-path and, for the own tree and every sibling subagents tree the
-    fallback looked through, each directory's identity as the read that answered the walk saw it
-    (_subagent_tree_dep_note, 2026-09-24) are recorded for the running build, so the file landing in any of
-    them, or a directory appearing for it to land in, moves the key (a resolved file is recorded by
-    _agent_steps when it is read)."""
+    fallback looked through, each directory's identity as the read that answered the walk saw it, or the path's
+    stat key when a link or a file is there in place of a tree (_subagent_walk_dep_note, 2026-09-24), are
+    recorded for the running build, so the file landing in any of them, a directory appearing for it to land
+    in, or a tree replacing the link or the file, moves the key (a resolved file is recorded by _agent_steps
+    when it is read)."""
     if not path or not _AGENT_ID_RE.match(str(agent_id or "")):
         return None
     ckey = (str(path), str(agent_id))
@@ -35687,12 +35689,36 @@ def _subagent_file(path, agent_id):
     return found                                   #  sibling's tree moves that directory and re-walks
 
 
+def _subagent_walk_dep_note(d, tree):
+    """_subagent_file_walk's report to the running chat build for the subagents path `d` it looked through, read as
+    `tree` (the pair _subagent_tree answered). A tree at `d`, or nothing there, is noted by _subagent_tree_dep_note:
+    every directory under the stat of the read, or None. Anything else at `d` (a live link, a file or a dangling link:
+    never listed, so the lookup found nothing there) is noted under _chat_stat_key(d), as the walk noted every path it
+    looked through before that helper (2026-09-24): the link target's (st_mtime, st_size), the file's, or None. So a
+    real tree that replaces it moves the key against the next signature's re-stat, and the tab that showed the agent's
+    file missing is rebuilt; _subagent_meta_map notes nothing for such a path. That stat is taken after the read, so its
+    key is kept only while `d` still holds what the read saw: when an lstat taken after the stat has an identity
+    (_stat_ident) other than the read's lstat, the path changed in between and None is noted instead, which no re-stat
+    of a directory, a live link or a file equals, so a tree placed there in between is never recorded under its own key.
+    Such an answer carries no directory and is never held by a cycle scope (_subagent_tree), so the read is always this
+    walk's own."""
+    dirs, stats = tree
+    if dirs or not stats:
+        _subagent_tree_dep_note(d, dirs, stats)
+        return
+    key = _chat_stat_key(d)
+    if key is not None and _stat_ident(_lstat_or_none(d)) != _stat_ident(stats[0]):
+        key = None                                        # `d` changed after the read: a key no re-stat of it matches
+    _chat_dep_note_taskout(d, key)
+
+
 def _subagent_file_walk(path, agent_id, read=None):
     """_subagent_file's walk itself (no memo); `read` collects every directory it looked at, the memo's stamps. Each tree
     it looks through, its own and each sibling's, is read once (_subagent_tree: inside a cycle scope, possibly the sample
     another reader took earlier in the cycle), and that one read answers both the lookup (_find_agent_file's `tree`) and
-    the running chat build's dependency note (_subagent_tree_dep_note: every directory of the tree under the stat of
-    that read, never a stat taken after it; its docstring says why, 2026-09-24)."""
+    the running chat build's dependency note (_subagent_walk_dep_note: for a tree, every directory under the stat of
+    that read, never a stat taken after it, _subagent_tree_dep_note's docstring says why; for a link or a file at the
+    path, the path's stat key, as before; 2026-09-24)."""
     read = read if read is not None else []
     name = "agent-%s.jsonl" % agent_id
     own = _subagents_dir(path)
@@ -35713,11 +35739,11 @@ def _subagent_file_walk(path, agent_id, read=None):
             if d.is_dir():                                # the directory the walk below reads: a file landing in
                 sd = d / "subagents"                      # <sib>/subagents/ moves ITS mtime, not the sibling's
                 if sd == own:
-                    _subagent_tree_dep_note(str(sd), *own_tree)   # the own tree: the read above, looked through already
+                    _subagent_walk_dep_note(str(sd), own_tree)    # the own tree: the read above, looked through already
                     continue
                 read.append(_dir_stamp(str(sd)))
                 tree = _subagent_tree(str(sd))            # the sibling's tree, once: the note and the lookup below share it
-                _subagent_tree_dep_note(str(sd), *tree)
+                _subagent_walk_dep_note(str(sd), tree)
                 cand = _find_agent_file(sd, name, read, tree=tree)
                 if cand is not None:
                     return cand

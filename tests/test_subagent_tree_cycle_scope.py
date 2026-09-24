@@ -26,7 +26,10 @@ newer than the listing it read (the refuter's amendment); (7) the dependency key
 for each tree it looked through, a sibling fsid's or its own, comes from the read that answered the lookup, every
 directory of that tree under the (st_mtime, st_size) of the read's own stat, so a file landing after the cycle's sample
 leaves the recorded key behind the next signature's re-stat (2026-09-24; red on the fresh root stat the walk noted
-before). Synthetic fixtures only: placeholder ids, the notes-api demo world (sessions web and api), a temp directory."""
+before); (8) a live link or a file at a sibling's or the own subagents path (never listed) is noted under that path's
+own stat key, as the walk noted it before, so a tree replacing it moves the key, and a path that changed between the
+read and that stat is noted under a key its re-stat differs from. Synthetic fixtures only: placeholder ids, the
+notes-api demo world (sessions web and api), a temp directory."""
 import json
 import os
 import tempfile
@@ -450,6 +453,120 @@ class DependencyKeyFromTheHeldRead(_World):
         self._land()
         got, _rec = self._lookup_recorded()
         self.assertEqual(got, self.landed, "with no scope open the lookup answers the landed file")
+
+
+class WalkNoteForAPathThatHoldsNoTree(_World):
+    """The miss walk's note for a subagents path, a sibling fsid's or its own, that holds a live link or a file (never
+    listed, never scoped) is that path's _chat_stat_key, as the walk noted every such path before its note moved to the
+    tree read (2026-09-24): the link target's (st_mtime, st_size), or the file's. So a real tree replacing the link or
+    the file, holding the agent's file under workflows/wf_1/, moves the key against the next signature's re-stat and the
+    tab that showed the file missing is rebuilt. The first form of the read-keyed note recorded nothing for such a path,
+    as _subagent_meta_map records nothing for it, and nothing then moved when the tree replaced it: every case but the
+    dangling-link control is red there on the key's presence. The world: api's transcript looks up AID_GHOST, whose file
+    is nowhere; the link's target and the file are aged into the past, so the tree that replaces them differs in
+    mtime from what the note recorded."""
+
+    def setUp(self):
+        super().setUp()
+        self.tpath = self.paths[SID2]
+        self.target = Path(self.tpath).parent.parent / "elsewhere"   # outside the project directory: no fsid of its own
+
+    def _lookup_recorded(self):
+        """The lookup under a chat build's record: (the answer, {path: key} as _chat_build_deps records it)."""
+        km._chat_dep_scope.deps = {"task_outs": [], "postal_any": False}
+        try:
+            got = km._subagent_file(self.tpath, AID_GHOST)
+            rec = dict(km._chat_build_deps(SID2, {"events": []})["task_outs"])
+        finally:
+            km._chat_dep_scope.deps = None
+        return got, rec
+
+    def _place(self, p, kind):
+        """A live link to an aged directory, a dangling link, or an aged file at `p`, its fsid directory created."""
+        p.parent.mkdir(parents=True, exist_ok=True)
+        if kind == "file":
+            p.write_text("x")
+            t = time.time_ns() - AGED_NS
+            os.utime(str(p), ns=(t, t))
+        elif kind == "link":
+            self.target.mkdir()
+            _age(str(self.target))
+            os.symlink(str(self.target), str(p))
+        else:
+            os.symlink(str(self.target), str(p))                    # the target is never created: a dangling link
+        self.assertEqual(km._subagent_tree(str(p))[0], (), "premise: the read at %s answers no directory" % kind)
+
+    @staticmethod
+    def _replace_with_tree(p):
+        """The link or file at `p` replaced by a real subagents tree holding the agent's file one workflow down."""
+        os.unlink(str(p))
+        landed = p / "workflows" / "wf_1" / ("agent-%s.jsonl" % AID_GHOST)
+        landed.parent.mkdir(parents=True)
+        landed.write_text("")
+        return landed
+
+    def _check(self, p, kind):
+        self._place(p, kind)
+        before = km._chat_stat_key(str(p))
+        got, rec = self._lookup_recorded()
+        self.assertIsNone(got, "the lookup answers None: nothing is read through a %s" % kind)
+        self.assertIn(str(p), rec, "a key is recorded for the %s at the subagents path (recorded paths %r)"
+                      % (kind, sorted(rec)))
+        self.assertEqual(rec[str(p)], before, "the key recorded for the %s is the path's _chat_stat_key (recorded %r, "
+                         "stat key %r)" % (kind, rec[str(p)], before))
+        landed = self._replace_with_tree(p)
+        restat = km._chat_stat_key(str(p))
+        self.assertNotEqual(rec[str(p)], restat, "the key recorded for the %s differs from the path's re-stat once a "
+                            "tree replaced it (recorded %r, re-stat %r)" % (kind, rec[str(p)], restat))
+        self.assertEqual(km._subagent_file(self.tpath, AID_GHOST), landed, "the next lookup answers the landed file")
+
+    def test_a_live_link_at_a_sibling_path_is_noted_under_the_targets_stat_key(self):
+        self._check(Path(self.tpath).parent / SIB / "subagents", "link")
+
+    def test_a_file_at_a_sibling_path_is_noted_under_its_stat_key(self):
+        self._check(Path(self.tpath).parent / SIB / "subagents", "file")
+
+    def test_a_live_link_at_the_own_path_is_noted_under_the_targets_stat_key(self):
+        self._check(km._subagents_dir(self.tpath), "link")
+
+    def test_a_file_at_the_own_path_is_noted_under_its_stat_key(self):
+        self._check(km._subagents_dir(self.tpath), "file")
+
+    def test_a_dangling_link_at_a_sibling_path_is_noted_none(self):
+        """The control, green before and after the read-keyed note: a dangling link notes None, what its re-stat
+        answers until something real is placed there."""
+        p = Path(self.tpath).parent / SIB / "subagents"
+        self._place(p, "dangling")
+        got, rec = self._lookup_recorded()
+        self.assertIsNone(got, "the lookup answers None")
+        self.assertIn(str(p), rec, "a key is recorded for the dangling link (recorded paths %r)" % sorted(rec))
+        self.assertIsNone(rec[str(p)], "the key recorded for the dangling link is None (recorded %r)" % (rec[str(p)],))
+
+    def test_a_link_replaced_by_a_tree_between_the_read_and_the_note_leaves_a_key_the_re_stat_differs_from(self):
+        """The note's stat is taken after the read. When a tree replaces the link in between (injected right after the
+        read of the sibling's path returns), the recorded key must still differ from the path's re-stat, so the tab
+        that showed the file missing is rebuilt; a bare stat after the read would record the replacing tree's own key,
+        equal to every later re-stat."""
+        p = Path(self.tpath).parent / SIB / "subagents"
+        self._place(p, "link")
+        real = km._subagent_tree
+        swapped = []
+
+        def read_then_swap(d):
+            out = real(d)
+            if str(d) == str(p) and not swapped:
+                swapped.append(self._replace_with_tree(p))
+            return out
+        with mock.patch.object(km, "_subagent_tree", read_then_swap):
+            got, rec = self._lookup_recorded()
+        self.assertEqual(len(swapped), 1, "premise: the sibling's path was read once and then replaced")
+        self.assertIsNone(got, "the lookup answers None: the read saw the link")
+        self.assertIn(str(p), rec, "a key is recorded for the sibling's path (recorded paths %r)" % sorted(rec))
+        restat = km._chat_stat_key(str(p))
+        self.assertNotEqual(rec[str(p)], restat, "the key recorded for the sibling's path differs from its re-stat "
+                            "after the replacement (recorded %r, re-stat %r)" % (rec[str(p)], restat))
+        self.assertEqual(km._subagent_file(self.tpath, AID_GHOST), swapped[0],
+                         "the next lookup answers the landed file")
 
 
 if __name__ == "__main__":
