@@ -15,8 +15,8 @@ restored the floor, so this pin holds both.
 
 The walk's load is its one decision read, `jd.load_goals_shared_or_fault(sid)` in `_auto_nudge_session`, the read ruling
 A counted (its wording: every alive session walked wake-only with exactly one load_goals_shared_or_fault and zero plain
-load_goals in the decision path). Three witnesses count it. By execution: a recorder stands on `jd.load_goals_shared`, the
-one door both of the judge's boundary wrappers reach (`load_goals_shared_or_fault` resolves the name from the judge's globals at
+load_goals in the decision path). Three witnesses count it. By execution: a recorder stands on `jd.load_goals_shared`
+(`load_goals_shared_or_fault` resolves the name from the judge's globals at
 each call and hands the object to `_or_fault`, which resolves no door name itself, so every spelling of the shared read
 arrives at this door), and a
 second recorder on `jd.load_goals`, the writer's door. Each records the call with its caller's function, file and line,
