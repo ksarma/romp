@@ -8546,10 +8546,14 @@ grounds), so a tap's open is shown before it
 happens where the title is no surface; the file review's round 12, fresh-1; the web control rests at full opacity where the at-rest rule
 stands, a local one at 0.8, any focus reveals it, a keyboard's or one a script gives it with no ring, no mouse press of any button
 focuses it (the press cancelled in the body's mousedown listener) and Enter or Space opens it only while it is in view at the key,
-its box intersecting the viewport and the scrollport of every ancestor whose overflow on that axis is not visible (`controlInView`,
-read per key; out of view a Space presses nothing and scrolls nothing), since a focus a click or a press dragged off it left stood
-unpainted on a fine pointer once the pointer left and a later Enter or Space opened the tab again with nothing shown
-(the file review's round 14, ui-1 with extra9-1), its focus ring stands 2px off its border so the dashed line shows under a keyboard
+its box intersecting the viewport and the scrollport of every ancestor whose overflow on that axis is not visible, then, walked up
+through the same-origin frames that host the viewer as the dashboard does, each parent's viewport and the scrollports of the frame's
+ancestors there, and last the visual viewport of the topmost window reached, so a control a pinch zoom leaves off the screen is out
+of view; a parent of another origin, VS Code's webview host among them, ends the walk with the reads made so far and is no out, and
+any other read that fails answers out (`controlInView`, read per key; out of view a Space presses nothing and scrolls nothing), since
+a focus a click or a press dragged off it left stood unpainted on a fine pointer once the pointer left and a later Enter or Space
+opened the tab again with nothing shown (the file review's round 14, ui-1 with extra9-1; the visual viewport and the frame walk since
+the file review's round 15, extra5-2, where a keyboard focus off a zoomed screen opened the tab), its focus ring stands 2px off its border so the dashed line shows under a keyboard
 focus, the button family's press cue is off on it since the release that opens the tab comes while it is held (under the cue the line spread over two
 pixel rows, a modal 1.59:1 dark and 1.39:1 light), the browser's tap highlight is off on it and on the mark, since in the pressed frames of
 a finger's tap, while the control matches :active, a phone's default highlight took the line to 2.578:1 dark and 2.531:1 light (the

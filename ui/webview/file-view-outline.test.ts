@@ -1332,3 +1332,112 @@ test("the one rule called directly (figureSourceCredentialed, through the label 
   assert.deepEqual(srcs.map((s) => (fv as any).figureSourceCredentialed(s)), [true, true, true, true], "and the rule answers true for each (a property pin over the rule's answers)");
   assert.deepEqual(["a@2x.png", "/img/a@2x.png", "https://cdn.example/plot.png", "data:image/png;base64,iVBORw0KGgo"].map((s) => (fv as any).figureSourceCredentialed(s)), [false, false, false, false], "and false for the controls: a relative and a root-relative at sign with no colon before it, a plain address, a data: head with no at sign (controls, outside the rule)");
 });
+
+// ── the key gate over the stand-in's paint, the gate's one guard CI runs (the file review's round 15, tests-3 with extra5-2; the
+// browser leg that presses the keys skips in CI): Enter or Space on a web picture's control is cancelled while the control is out
+// of view (keyOnHiddenWebControl, registered on the viewer's body for keydown and, for Space, keyup; controlInView the region it
+// reads). Each key is a synthetic event dispatched on the focused control, so it reaches the gate only through the body's two
+// registrations, and the region answers through its inputs alone: the control's box, the window's layout and visual viewports,
+// the body's scrollport and, for a framed viewer, the frame element's box, the parent's layout viewport, the parent's clipping
+// ancestors and the top's visual viewport. The stand-in's layout gives a control no box and it has no getComputedStyle and no
+// clientLeft or clientTop, and a NaN answers out everywhere, so the scene fills them: the viewer's body clips on both axes at its
+// box (0 to 800 across, 100 to 300 down), its border 0, every other ancestor visible; the window is 1200 by 800 and its own parent.
+type KeyGate = { ctl: El; place: (r: Rect) => void; frame: (f: StandInFrame | null, foreign?: "null" | "throws") => void; gate: () => boolean[] };
+/** A same-origin parent for the framed cells: the frame element's box and border in the parent's viewport, the parent's layout
+ *  viewport, an optional wrapper around the frame element with its padding box and overflow, and the parent's visual viewport. */
+type StandInFrame = { box: Rect; border?: [number, number]; inner: [number, number]; wrap?: { box: Rect; overflow: string }; vv?: [number, number, number, number] };
+const boxAt = (left: number, top: number, width = 22, height = 22): Rect => ({ left, top, right: left + width, bottom: top + height, width, height });
+const vvOf = (v: [number, number, number, number]) => ({ offsetLeft: v[0], offsetTop: v[1], width: v[2], height: v[3] });
+/** The viewer open on one remote picture from a loaded host, its web control focused, and the region's inputs filled for the case
+ *  and restored after it. `place` gives the control its box; `frame` hosts the window in a same-origin parent (a StandInFrame), in a
+ *  parent of another origin (`foreign`: its frameElement reads null, or its read throws, the parent itself throwing on any read),
+ *  or in none (null: the window its own parent); `gate` dispatches keydown Enter, keydown Space and keyup Space on the control and
+ *  returns whether each was prevented. */
+async function keyGateScene(t: TestContext): Promise<KeyGate> {
+  loadGatedHost("example.test", doc as unknown as ParentNode);
+  t.after(() => { forgetLoadedHosts(); });
+  const o = await open(REPORT, '# R\n\n<img src="http://example.test/pic.svg" alt="big">\n', t);
+  const img = o.body.querySelector(".fileview-md")!.querySelectorAll("img")[0];
+  const ctl = img && img.nextSibling;
+  assert.ok(ctl instanceof El && ctl.hasAttribute("data-fv-figopen") && ctl.classList.contains("fv-figopen-web"), "the web control after the remote picture (the scene's premise)");
+  const saved = { gcs: (globalThis as any).getComputedStyle, wgcs: win.getComputedStyle, wdoc: win.document, wvv: win.visualViewport, parent: win.parent };
+  const cs = (e: any) => {   // the viewer's body clips (auto), every other element of the viewer's document is visible; a parent's stand-in says its own
+    if (e.__throws) throw new Error("read " + e.__throws);
+    const o = e instanceof El ? (e.classes.includes("fileview-body") ? "auto" : "visible") : (e.__clip || "visible");
+    return { overflowX: o, overflowY: o };
+  };
+  (globalThis as any).getComputedStyle = cs; win.getComputedStyle = cs; win.document = doc;   // the global too: the viewer before this round read it
+  Object.defineProperty(o.body, "clientLeft", { value: 0, configurable: true });
+  Object.defineProperty(o.body, "clientTop", { value: 0, configurable: true });
+  const unframe = (): void => { win.parent = win; delete win.frameElement; delete win.visualViewport; };
+  t.after(() => {
+    unframe();
+    for (const [k, v] of [["getComputedStyle", saved.wgcs], ["document", saved.wdoc], ["visualViewport", saved.wvv]] as const) if (v === undefined) delete win[k]; else win[k] = v;
+    win.parent = saved.parent;
+    if (saved.gcs === undefined) delete (globalThis as any).getComputedStyle; else (globalThis as any).getComputedStyle = saved.gcs;
+  });
+  ctl.focus();
+  const place = (r: Rect): void => { (ctl as any).getBoundingClientRect = () => r; };
+  const frame = (f: StandInFrame | null, foreign?: "null" | "throws"): void => {
+    unframe();
+    if (foreign) {
+      win.parent = new Proxy({}, { get: () => { throw new Error("a parent of another origin: every read throws"); } });
+      if (foreign === "null") win.frameElement = null;
+      else Object.defineProperty(win, "frameElement", { get: () => { throw new Error("SecurityError: the frame element of a parent of another origin"); }, configurable: true });
+      return;
+    }
+    if (!f) return;
+    const root: any = { parentElement: null, __throws: "the parent's root (its overflow is the viewport's: passed over)" };
+    const body: any = { parentElement: root, __throws: "the parent's body (its overflow is the viewport's: passed over)" };
+    const wrap: any = f.wrap ? { parentElement: body, __clip: f.wrap.overflow, getBoundingClientRect: () => f.wrap!.box, clientLeft: 0, clientTop: 0, clientWidth: f.wrap.box.width, clientHeight: f.wrap.box.height } : null;
+    const fe: any = { parentElement: wrap || body, getBoundingClientRect: () => f.box, clientLeft: (f.border || [0, 0])[0], clientTop: (f.border || [0, 0])[1] };
+    const parent: any = { innerWidth: f.inner[0], innerHeight: f.inner[1], getComputedStyle: cs, document: { body, documentElement: root }, visualViewport: f.vv ? vvOf(f.vv) : null };
+    parent.parent = parent;
+    win.parent = parent; win.frameElement = fe;
+  };
+  const gate = (): boolean[] => ([["keydown", "Enter"], ["keydown", " "], ["keyup", " "]] as const).map(([type, k]) => {
+    const ev = new Ev(type, { key: k });
+    ctl.dispatchEvent(ev);
+    return ev.defaultPrevented;
+  });
+  assert.equal(doc.activeElement, ctl, "the keyboard on the web control (the scene's premise)");
+  return { ctl, place, frame, gate };
+}
+const OUT3 = [true, true, true], IN3 = [false, false, false];
+const IN_BOX = boxAt(342, 206);   // inside the window (1200 by 800) and the body's scrollport (0 to 800, 100 to 300)
+test("the key gate, a guard CI runs (the file review's round 15, tests-3): Enter's keydown, Space's keydown and Space's keyup dispatched on a focused web control inside the viewer's body are each cancelled while the control's box lies outside the window, or inside the window and below the body's scrollport, and none is cancelled while its box lies inside the window and the body's scrollport; each reaches the gate only through the body's keydown and keyup registrations (a property pin over each key's defaultPrevented, red with the keydown registration removed at the Enter and the Space keydown cells, red with the keyup registration removed at the Space release cell, red at the scrollport's cell under a region that reads the viewport alone or clips nothing down, and red at the in-view cells under a gate that always cancels; green at the head the round read, the gate there working, by design)", async (t) => {
+  const g = await keyGateScene(t);
+  g.frame(null);
+  g.place(boxAt(342, 900));
+  assert.deepEqual(g.gate(), OUT3, "the control below the window (900 against a height of 800): Enter's keydown, Space's keydown and Space's keyup each cancelled, [Enter keydown, Space keydown, Space keyup] (a property pin over defaultPrevented)");
+  g.place(boxAt(342, 310));
+  assert.deepEqual(g.gate(), OUT3, "the control inside the window and below the body's scrollport (310, the body's box ending at 300): each of the three cancelled (a property pin over defaultPrevented)");
+  g.place(IN_BOX);
+  assert.deepEqual(g.gate(), IN3, "the control inside the window and the body's scrollport: none of the three cancelled (a property pin over defaultPrevented)");
+});
+test("the key gate's region, the terms the file review's round 15 added (extra5-2), each in a cell of its own where it alone excludes a control every other read keeps: the window's visual viewport, a pinch zoom leaving 300 by 200 of the layout viewport on the screen; and, the viewer's window framed by a same-origin parent as the dashboard frames it, the parent's layout viewport across (the frame element at 700 in a parent 900 wide), the frame element's border (its top border of 10 moves the control past a parent 590 tall), a clipping ancestor of the frame element in the parent's document (a wrapper 300 wide with overflow hidden), and the top's visual viewport read through the parent (300 by 200) while the viewer's own visual viewport is its whole window; and at a parent of another origin, where the walk stops, the viewer's own visual viewport; each cancels the three keys, and the same frame with nothing excluding cancels none, the parent's body and root never read (a property pin over each key's defaultPrevented, red at the head the round read, which read no visual viewport and walked no frame, and each cell red with its own term deleted; the dashboard's cell red too under a walk that reads the viewer's own visual viewport)", async (t) => {
+  const g = await keyGateScene(t);
+  g.place(IN_BOX);
+  const cells: Array<[string, () => void, boolean[]]> = [
+    ["the window's visual viewport (0, 0, 300 by 200): the control at 342 past its right edge", () => { g.frame(null); win.visualViewport = vvOf([0, 0, 300, 200]); }, OUT3],
+    ["the window's visual viewport at a scale of 1.2 (0, 0, 1000 by 667): the control inside (keep)", () => { g.frame(null); win.visualViewport = vvOf([0, 0, 1000, 667]); }, IN3],
+    ["a same-origin parent with nothing excluding: the frame at 0, 0 in a parent 900 by 600 (keep)", () => { g.frame({ box: boxAt(0, 0, 900, 600), inner: [900, 600] }); }, IN3],
+    ["the parent's layout viewport: the frame at 700 across in a parent 900 wide, the control at 1042", () => { g.frame({ box: boxAt(700, 0, 900, 600), inner: [900, 600] }); }, OUT3],
+    ["the frame element's border: the frame at 380 down with a top border of 10 in a parent 590 tall, the control at 596", () => { g.frame({ box: boxAt(0, 380, 900, 600), border: [0, 10], inner: [900, 590] }); }, OUT3],
+    ["a clipping ancestor of the frame element in the parent's document: a wrapper 300 wide with overflow hidden, the control at 342", () => { g.frame({ box: boxAt(0, 0, 900, 600), inner: [900, 600], wrap: { box: boxAt(0, 0, 300, 600), overflow: "hidden" } }); }, OUT3],
+    ["the top's visual viewport through the parent (0, 0, 300 by 200), the viewer's own visual viewport its whole window (0, 0, 1200 by 800)", () => { g.frame({ box: boxAt(0, 0, 900, 600), inner: [900, 600], vv: [0, 0, 300, 200] }); win.visualViewport = vvOf([0, 0, 1200, 800]); }, OUT3],
+    ["the top's visual viewport through the parent at a scale of 1.2 (0, 0, 750 by 500) (keep)", () => { g.frame({ box: boxAt(0, 0, 900, 600), inner: [900, 600], vv: [0, 0, 750, 500] }); win.visualViewport = vvOf([0, 0, 1200, 800]); }, IN3],
+    ["a parent of another origin, its frame element null: the walk stops at the viewer's window, whose own visual viewport (0, 0, 300 by 200) still applies", () => { g.frame(null, "null"); win.visualViewport = vvOf([0, 0, 300, 200]); }, OUT3],
+  ];
+  const got = cells.map(([what, set]) => { set(); return [what, g.gate()] as const; });
+  for (const [what, read] of got) t.diagnostic(what + ": " + JSON.stringify(read));
+  assert.deepEqual(got.map(([what, read]) => [what, read]), cells.map(([what, , want]) => [what, want]), "each cell's three keys, [Enter keydown, Space keydown, Space keyup], cancelled where its term excludes the control and not where every term keeps it (a property pin over defaultPrevented)");
+});
+test("the key gate's region at a parent of another origin (the file review's round 15, extra5-2): the walk stops there with the reads made so far, which is not an out, so a control in view in the viewer's window keeps its keys whether the frame element reads null, as Chromium answers, or its read throws, and the parent itself, which throws on any read, is never read (a property pin over each key's defaultPrevented; green at the head the round read, which walked no frame, by design, and red under a walk that reads a null or a throwing frame element as out; the cell where the viewer's own visual viewport applies at the stop is the region case's)", async (t) => {
+  const g = await keyGateScene(t);
+  g.place(IN_BOX);
+  g.frame(null, "null");
+  assert.deepEqual(g.gate(), IN3, "a parent of another origin whose frame element reads null: none of the three keys cancelled (the stop is not an out; a property pin over defaultPrevented)");
+  g.frame(null, "throws");
+  assert.deepEqual(g.gate(), IN3, "a parent of another origin whose frame element's read throws: none of the three keys cancelled (a property pin over defaultPrevented)");
+});

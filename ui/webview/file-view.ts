@@ -2808,8 +2808,10 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   });
   // Enter or Space on a web picture's control opens the tab only while the control is in view at that key (the file review's
   // round 14, ui-1 with extra9-1): out of view the key's default, the click, is cancelled, so a keyboard focus left on the
-  // control with the control scrolled out of view, by the body or by a table that scrolls on its own, opens nothing while
-  // nothing is shown. In view is read at each key event and never kept (controlInView). Enter clicks a button through its
+  // control with the control scrolled out of view, by the body or by a table that scrolls on its own, or left off the screen
+  // by a pinch zoom of the viewer's page or of a same-origin page framing it, as the dashboard frames it (the file review's
+  // round 15, extra5-2), opens nothing while nothing is shown. In view is read at each key event and never kept
+  // (controlInView, which fails closed). Enter clicks a button through its
   // keydown and Space on its keyup, so both are read, and Space's keydown too: out of view a Space neither presses the control
   // nor scrolls the body, while every other key, PageDown and Tab among them, works as ever. The web control alone, as in the
   // mousedown listener above.
@@ -5189,23 +5191,58 @@ function figureControlOf(target: Element | null, within: Element): HTMLElement |
   const c = target && typeof target.closest === "function" ? target.closest("[" + FIGOPEN_MARK + "]") as HTMLElement | null : null;
   return c && within.contains(c) ? c : null;
 }
-/** Whether a control is in view now: its box intersects the viewport (in VS Code the webview's) and the padding box, the
- *  scrollport with any scrollbar left out, of every ancestor whose computed overflow on that axis is not visible, so the
- *  viewer's body counts and so does a table that scrolls on its own, while the Rendered box, which clips nothing, does not. The
- *  document's body and root are passed over, since their overflow is the viewport's. Read at the call and never kept; a
- *  control partly in view is in view. */
+/** Whether a control is in view now, on the screen and not only laid out: its box intersects every region that decides what
+ *  is shown, and it is out when any of them leaves nothing or any read fails (the key gate then cancels the key's click). The
+ *  regions, in order: the viewer's layout viewport (in VS Code the webview's); the scrollports of the control's ancestors
+ *  (clipToScrollports), so the viewer's body counts and so does a table that scrolls on its own, while the Rendered box, which
+ *  clips nothing, does not; then, for each same-origin frame that hosts this window, walked up while the frame element can be
+ *  read (the dashboard hosts the viewer in same-origin iframes), the box moved into the parent's coordinates by the frame
+ *  element's box and its border (clientLeft, clientTop), the parent's layout viewport, and the scrollports of the frame
+ *  element's ancestors in the parent's document; last, the visual viewport of the topmost window the walk reached, the part of
+ *  its layout viewport a pinch zoom leaves on the screen (a window without one skips that term). Inside a frame the window's
+ *  own visual viewport is the frame's whole layout viewport while the top page is zoomed, so the walk reads the top's. A
+ *  parent of another origin ends the walk with the reads made so far: its frameElement reads null in Chromium, or throws, and
+ *  that stop is not an out, since VS Code's webview host is of another origin and an out there would refuse every key. So in
+ *  VS Code the walk stops at the webview's own window, and whether that host lets a pinch zoom the webview at all is
+ *  unmeasured. The top window, its own parent, ends the walk too. Read at the call and never kept; a control partly in view
+ *  is in view. */
 function controlInView(control: Element): boolean {
-  const r = control.getBoundingClientRect();
-  let x0 = Math.max(r.left, 0), y0 = Math.max(r.top, 0), x1 = Math.min(r.right, window.innerWidth), y1 = Math.min(r.bottom, window.innerHeight);
-  for (let a = control.parentElement; a && a !== document.body && a !== document.documentElement; a = a.parentElement) {
-    const cs = getComputedStyle(a);
+  try {
+    const r = control.getBoundingClientRect();
+    const box: ViewBox = { x0: Math.max(r.left, 0), y0: Math.max(r.top, 0), x1: Math.min(r.right, window.innerWidth), y1: Math.min(r.bottom, window.innerHeight) };
+    clipToScrollports(control, window, box);
+    let w: Window = window;
+    while (w.parent !== w) {                              // the top window is its own parent, where the walk ends
+      let frame: Element | null;
+      try { frame = w.frameElement; } catch { frame = null; }
+      if (!frame) break;                                  // a parent of another origin: the walk stops, the reads so far stand
+      const p = w.parent, fr = frame.getBoundingClientRect();
+      const dx = fr.left + frame.clientLeft, dy = fr.top + frame.clientTop;
+      box.x0 += dx; box.x1 += dx; box.y0 += dy; box.y1 += dy;                      // into the parent's coordinates
+      box.x0 = Math.max(box.x0, 0); box.y0 = Math.max(box.y0, 0); box.x1 = Math.min(box.x1, p.innerWidth); box.y1 = Math.min(box.y1, p.innerHeight);   // the parent's layout viewport
+      clipToScrollports(frame, p, box);                   // the frame element's ancestors in the parent's document
+      w = p;
+    }
+    const vv = w.visualViewport;
+    if (vv) { box.x0 = Math.max(box.x0, vv.offsetLeft); box.y0 = Math.max(box.y0, vv.offsetTop); box.x1 = Math.min(box.x1, vv.offsetLeft + vv.width); box.y1 = Math.min(box.y1, vv.offsetTop + vv.height); }
+    return box.x1 > box.x0 && box.y1 > box.y0;
+  } catch { return false; }
+}
+/** A box in a window's viewport coordinates, controlInView's running intersection. */
+type ViewBox = { x0: number; y0: number; x1: number; y1: number };
+/** Clips `box`, in the viewport coordinates of `view`, the window whose document holds `el`, to the padding box, the
+ *  scrollport with any scrollbar left out, of every ancestor of `el` whose computed overflow on that axis is not visible. The
+ *  document's body and root are passed over, since their overflow is the viewport's, which controlInView reads itself. */
+function clipToScrollports(el: Element, view: Window, box: ViewBox): void {
+  const d = view.document;
+  for (let a = el.parentElement; a && a !== d.body && a !== d.documentElement; a = a.parentElement) {
+    const cs = view.getComputedStyle(a);
     const clipX = cs.overflowX !== "visible", clipY = cs.overflowY !== "visible";
     if (!clipX && !clipY) continue;
     const ar = a.getBoundingClientRect(), padLeft = ar.left + a.clientLeft, padTop = ar.top + a.clientTop;
-    if (clipX) { x0 = Math.max(x0, padLeft); x1 = Math.min(x1, padLeft + a.clientWidth); }
-    if (clipY) { y0 = Math.max(y0, padTop); y1 = Math.min(y1, padTop + a.clientHeight); }
+    if (clipX) { box.x0 = Math.max(box.x0, padLeft); box.x1 = Math.min(box.x1, padLeft + a.clientWidth); }
+    if (clipY) { box.y0 = Math.max(box.y0, padTop); box.y1 = Math.min(box.y1, padTop + a.clientHeight); }
   }
-  return x1 > x0 && y1 > y0;
 }
 /** The figure a control stands after: the img its anchor is or holds (the element before the control: the img itself, its
  *  picture, the regions layer's wrap or the link holding it). Null when nothing stands before it or it holds no img. */
