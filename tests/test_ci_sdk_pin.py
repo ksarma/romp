@@ -2174,6 +2174,11 @@ _TWO = "          python -m pytest -q tests/test_a.py\n          python -m pytes
 _ESCAPE = "a backslash escape in a double-quoted scalar (ci.yml's double-quoted scalars hold none)"
 _INDICATOR = _INDICATOR_WHAT
 _ENTRY = "a sequence entry whose node is not a key one space past its dash"
+# a job appended at the file's end: its env sets the switch to 1, and after its flagged pytest step's run line comes one
+# line (line 8 of the text) that opens as a comment and holds, in order, `# note`, the planted character, `env:`, the
+# character again, and a double-quoted key that spells the switch through a \x52 escape, set to 0
+_HIDDEN_ENV = ("  zz-hidden:\n" + _SW_JOB + "    steps:\n      - name: Hidden env (pytest)\n" + RUN_OK +
+               '        # note%s        env:%s          "ROMP_SDK_\\x52EQUIRE": "0"\n')
 YAML_REFUSED_ROWS = (
     # node properties and the other YAML-only constructs
     ("an anchor on a name: value, aliased by a run (N06)", "first",
@@ -2347,6 +2352,17 @@ YAML_REFUSED_ROWS = (
     ("a CR after the flag at the end of a literal run block's line (YAML reads the CR and the newline as one line break)",
      "first+env", "      - name: CR in block (pytest)\n        run: |\n          python -m pytest tests/test_a.py -q -p no:anyio\r\n",
      ((3, "a tab or other control character ('\\r')"),), True),
+    # a line break YAML 1.1 reads (NEL, LS, PS) in a comment line (the allowlist's second verify pass, N31: with the
+    # three dropped from the refused set every test stayed green, and each plant below read ok). PyYAML ends the comment
+    # at the character and reads the step env behind it, whose double-quoted key spells the switch through a \x52
+    # escape and sets it to 0, while the scan, the parser and the censuses read one comment line; the job's env sets
+    # the switch to 1. Whether GitHub's parser breaks the line there was not measured; each is refused by name
+    ("NEL in a comment line, a step env setting the switch to 0 behind it (N31h)", "end", _HIDDEN_ENV % ("\x85", "\x85"),
+     ((8, "a tab or other control character ('\\x85')"),), True),
+    ("LS in a comment line, a step env setting the switch to 0 behind it (N31g)", "end", _HIDDEN_ENV % ("\u2028", "\u2028"),
+     ((8, "a tab or other control character ('\\u2028')"),), True),
+    ("PS in a comment line, a step env setting the switch to 0 behind it (N31i)", "end", _HIDDEN_ENV % ("\u2029", "\u2029"),
+     ((8, "a tab or other control character ('\\u2029')"),), True),
     # the file's end (the allowlist's first verify pass, X10: a step env's switch key on a last line with no newline
     # after it was unread, and the file, which PyYAML and actionlint accept, was red for another reason than a refusal)
     ("a last line with no newline after it, a step env's switch key on it (X10)", "end",
@@ -3201,11 +3217,13 @@ class PopulationCheckReds(unittest.TestCase):
         # passes planted a pytest run without the switch or the flag behind forms the line reading half-modelled; each
         # row is one of those plants or a form of its own, refused at exactly the lines it names. A row marked alone is
         # red for nothing else here (no population verdict, no census line, no job key), so the refusal is what reds it.
-        # After a refused line the lines indented past it are its own and not scanned, so a construct is named once
+        # After a refused line the lines indented past it are its own and not scanned, so a construct is named once.
+        # The lines are the file's, split at its newlines as the scan splits them: str.splitlines also breaks at NEL,
+        # LS, PS, VT, FF and U+001C to U+001E, which some rows plant inside a comment line
         for label, where, text, named, alone in YAML_REFUSED_ROWS:
             with self.subTest(form=label):
                 src, first = self._splice(where, text)
-                want = [(first + k - 1, src.splitlines()[first + k - 2].strip(), what) for k, what in named]
+                want = [(first + k - 1, src.split("\n")[first + k - 2].strip(), what) for k, what in named]
                 self.assertEqual(yaml_line_forms(src)[1], want, label)
                 if alone:
                     self.assertEqual((self._new_bad(src), pytest_line_census(src)[1], switch_line_census(src)[1], unread_job_keys(src)[1]),
