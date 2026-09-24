@@ -452,9 +452,18 @@ class RecordCacheDefaultBudget(unittest.TestCase):
     (14.9 GB in 3.5 min, 132 s pusher cycles). The default is half of the machine's memory in resident bytes, converted to
     the file bytes entries weigh, never under 4 GiB of file bytes."""
 
+    def test_half_of_the_machine_in_resident_bytes(self):
+        # the user's direction (2026-09-11) is half of MemTotal; since 2026-09-24 that half is resident bytes, divided by 3.2
+        # resident bytes per file byte to give the budget in the unit entries weigh. The expected value is a literal: read from
+        # the module's constants it would move with them, and a budget ten times too small, the thrash the 4 GiB floor was added
+        # against, would pass every other test here
+        mem_kb = 268435456                                            # a synthetic 256 GiB machine: its budget is above the floor
+        self.assertEqual(em._record_cache_default_budget_bytes("MemTotal: %d kB\n" % mem_kb), int(268435456 * 1024 * 0.5 / 3.2),
+                         "half of MemTotal in resident bytes, at 3.2 resident bytes per file byte")
+
     def test_a_full_budget_of_records_fits_in_the_memory_it_names(self):
-        """The budget names a fraction of MemTotal (RECORD_CACHE_BUDGET_FRACTION), and an entry weighs FILE bytes, so a full
-        budget of entries must fit in that fraction once parsed. This test checks the UNIT: synthetic Claude-shaped records
+        """The budget names half of MemTotal, and an entry weighs FILE bytes, so a full budget of entries must fit in that half
+        once parsed. This test checks the UNIT: synthetic Claude-shaped records
         measured by a deep size walk, a lower bound on what they take, per file byte, times the default budget, against the
         memory the fraction names. It does not check the factor's value: the synthetic records measure 1.73 to 2.26 per file
         byte across 3.10 to 3.14t (2026-09-24), so a factor cut to about 2.3 still passes, below the real 2.61 to 3.18. That
@@ -464,7 +473,8 @@ class RecordCacheDefaultBudget(unittest.TestCase):
         it named."""
         mem_kb = 268435456                                            # a synthetic 256 GiB machine
         budget = em._record_cache_default_budget_bytes("MemTotal: %d kB\n" % mem_kb)
-        named = mem_kb * 1024 * em.RECORD_CACHE_BUDGET_FRACTION      # the memory the budget is named for
+        named = mem_kb * 1024 * 0.5                                   # the memory the budget is named for, half of MemTotal: a
+        #                                                               literal, so a changed fraction cannot move both sides
         d = tempfile.mkdtemp(prefix="jsonl-unit-")
         try:
             for profile, seed in (("leaf", 7), ("agent", 8)):
