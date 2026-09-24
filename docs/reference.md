@@ -3746,7 +3746,10 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   is a follow-up fix after #882); the agent-file walk excludes that tree
   from its search and nothing else, answering a file found under any
   other tree (`FaultExcludesItsOwnTree` in the same module), the shape
-  stated once in `_subagent_tree`'s docstring in `kernel/kernel.py`; the
+  stated once in `_subagent_tree`'s docstring in `kernel/kernel.py`, and
+  a fault on any other read the walk makes of a place, a candidate
+  file's among them, excludes that place alone (the places:
+  `_subagent_file_walk`'s docstring; `FaultOnTheWalksOwnRead`); the
   scope also holds each awaiting agent's launch fold, and a fold that did
   not read the file, the reader's fail path, is held for the one read
   that observed it and never for the cycle, so that read folds it once,

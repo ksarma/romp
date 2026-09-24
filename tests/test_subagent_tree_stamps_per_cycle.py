@@ -116,12 +116,12 @@ directories), beside a control with no race. (10) The miss path's roads beside t
 _subagent_tree_memo_report's docstring (round 2 of #882, group D): an absent sibling root costs one failed os.stat per
 lookup of each agent whose file is nowhere, G x K x (1 + M) per cycle, cold or steady, and moves no counter (a boundary
 pin, red under a kernel that holds absence for the cycle); a sibling tree the walk reads is read once per cycle and
-costs a candidate stat per directory per walk, and on a steady cycle one own stat per directory, shared (both in
+costs a candidate lstat per directory per walk, and on a steady cycle one own stat per directory, shared (both in
 MissPathRoads, with a command row whose owner is read from the agents' transcripts before the tree is read, which
 re-stats the tree's D directories once per cycle); each walk lists the project directory once and stats its E entries,
 G listings and G x E stats over the cycle (_miss_walk_cycle); a walk's calls under the tree are {lstat: D, scandir: D} (Guards' stale-hold case); an
-unreadable session directory resolves every agent again on every read, {lstat: CALLS x (2A + 1), stat: CALLS x A x
-(D + 3)} under the tree, with no counter moved but the project directory's one stamp stat (Guards); and the chat
+unreadable session directory resolves every agent again on every read, {lstat: CALLS x (3A + 1), stat: CALLS x A x
+(D + 2)} under the tree, with no counter moved but the project directory's one stamp stat (Guards); and the chat
 signature of a tab whose build walked S sibling trees re-stats its D + 1 + S x D + K recorded paths every cycle, and a
 directory created under any sibling directory rebuilds the tab (DependencyKey).
 
@@ -345,8 +345,8 @@ class _PathCalls:
     listings too, os.listdir and os.scandir by the directory they list (Path.iterdir lists through os.listdir through
     3.12 and os.scandir from 3.13), so the walk's listing of the project directory is counted on every interpreter. On
     3.10 pathlib stats and lists through the accessor it bound at import (the kernel's counting wrapper, which holds the
-    builtin), so the accessor is patched too and Path.is_dir and Path.iterdir are counted on every interpreter the suite
-    runs."""
+    builtin), so the accessor is patched too and Path.iterdir, and any pathlib stat, is counted on every interpreter the
+    suite runs; the walk reads each project-directory entry's type by os.stat itself, counted as such everywhere."""
 
     def __init__(self):
         self.all, self.walk = {}, {}
@@ -405,7 +405,7 @@ class _PathCalls:
 
     def entries(self, cls, parent, walk=True):
         """Calls of class `cls` on the entries of the directory `parent` (a path whose dirname is `parent`), inside the walk
-        alone by default: the agent-file walk's Path.is_dir per project-directory entry."""
+        alone by default: the agent-file walk's os.stat per project-directory entry."""
         src = self.walk if walk else self.all
         return sum(n for (c, p), n in src.items() if c == cls and os.path.dirname(p) == str(parent))
 
@@ -705,11 +705,13 @@ class _World(unittest.TestCase):
         directory of each tree it looked through) come from the pair the lookup was answered, the served tree, so they cost
         no stat on the tree's directories (0 os.stat; round 1 of #882's correctness-1: the own tree's note was a fresh
         _chat_stat_key stat, 1 per walk), and each walk pays W lstats of the own root, its two symlink checks (os.path.islink,
-        and os.path.realpath's lstat per component), counted by running those two calls, and one os.stat per candidate file,
-        the flat place and one per served directory (D + 1). The walk's own ask on the root is among the first read's and is
+        and os.path.realpath's lstat per component), counted by running those two calls, and one os.lstat per candidate
+        file, the flat place and one per served directory (D + 1, the flat place being the own root's candidate, so its
+        path is read twice), counted by path inside the walk (_PathCalls), with no os.stat of any file under the tree but
+        the A folds'. The walk's own ask on the root is among the first read's and is
         served, not a second validation: the asks are asserted by shape, and served by the asks the scope answered
-        (_assert_asks). And each walk lists the project directory once and stats each of its E entries once (Path.is_dir,
-        files included), G listings and G x E stats over the cycle, counted inside the walk (_PathCalls) and paid per walk,
+        (_assert_asks). And each walk lists the project directory once and stats each of its E entries once (os.stat, its
+        type, files included), G listings and G x E stats over the cycle, counted inside the walk (_PathCalls) and paid per walk,
         not shared: the cost home's miss-walk term (_subagent_tree_memo_report's docstring; round 2 of #882, fresh-2, and
         the listing since the pass applying its rulings), the stats red under a kernel that holds the entries' types for
         the cycle (E at G = 2) and the listings under one that lists the directory twice per walk (2G). What the rows SHARE, the project directory's one stamp stat in dirStats,
@@ -731,7 +733,7 @@ class _World(unittest.TestCase):
         t, d = sp.total(), self._delta(b)
         self.assertEqual(pc.entries("stat", proj), G * E,
                          "os.stat on the project directory's entries inside the agent-file walk over one pusher cycle: %d; keyed on "
-                         "G x E = %d x %d, each walk's Path.is_dir per entry, paid per walk and held nowhere (a kernel that shares the "
+                         "G x E = %d x %d, each walk's os.stat per entry (its type), paid per walk and held nowhere (a kernel that shares the "
                          "entries' types across the cycle's walks pays E)" % (pc.entries("stat", proj), G, E))
         self.assertEqual(pc.listings(proj), G,
                          "listings of the project directory inside the agent-file walk over one pusher cycle: %d; keyed on G = %d, "
@@ -750,9 +752,15 @@ class _World(unittest.TestCase):
         self.assertEqual(t["dir_lstat"], D + G * W,
                          "os.lstat on the tree's directories: %d; expected D + G x W = %d + %d x %d, the one validation plus each walk's "
                          "symlink checks of the own root" % (t["dir_lstat"], D, G, W))
-        self.assertEqual(t["file_stat"], A + G * (D + 1),
-                         "os.stat on files under the tree: %d; expected A + G x (D + 1) = %d, one fold per agent with a file plus each "
-                         "walk's candidate stats, the flat place and one per served directory" % (t["file_stat"], A + G * (D + 1)))
+        self.assertEqual(t["file_stat"], A,
+                         "os.stat on files under the tree: %d; expected A = %d, one fold per agent with a file and nothing else: the walk "
+                         "reads its candidates by os.lstat (until round 3 of #882, group A, by os.path.isfile, an os.stat each, A + G x "
+                         "(D + 1) = %d)" % (t["file_stat"], A, A + G * (D + 1)))
+        cand_lstats = sum(pc.count("lstat", [os.path.join(x, "agent-%s.jsonl" % gh) for x in self.dirs], walk=True) for gh in ghosts)
+        self.assertEqual(cand_lstats, G * (D + 1),
+                         "os.lstat on the ghosts' candidate files inside the agent-file walk: %d; expected G x (D + 1) = %d x (%d + 1), each "
+                         "walk's flat place and one candidate per served directory, the own root's candidate being the flat place's path "
+                         "read a second time" % (cand_lstats, G, D))
         self.assertEqual((d["hit"], d["miss"], d["evict"]), (1, 0, 0), "one validated hit, no walk of the tree, nothing evicted: %r" % (d,))
         for ghost in ghosts:
             self.assertIsNone(km._SUBAGENT_FILE_CACHE.get((self.path, ghost), (None, "unset"))[1], "the miss is memoized: the file is nowhere")
@@ -792,7 +800,7 @@ class BoundPerCycleAndPerPass(_World):
         """The project directory's stamp stat, one term of the miss walk in the cost home, is once per cycle, SHARED by
         every agent whose file is nowhere or under a sibling's tree, not once per such agent (the owner's pass before round
         2 of #882: the term's homes read per agent, G such rows paying G project-directory stats where the code pays 1; the
-        home is _subagent_tree_memo_report's docstring). Two such rows: each walks once and pays its own candidate stats and symlink
+        home is _subagent_tree_memo_report's docstring). Two such rows: each walks once and pays its own candidate lstats and symlink
         checks (G x, _miss_walk_cycle), but the project directory's stamp stat is an own stat _dir_stamp holds in the scope
         keyed by directory under root None, so the first walk pays it and the second walk, and every re-check of either row
         in the cycle, is served it: dirStats moves by (D - 1) + 1, not (D - 1) + G, and the scope's stamps map holds the
@@ -984,13 +992,13 @@ class MissPathRoads(_World):
                                      "the project directory's one stamp stat, the failed stats counted nowhere"
                                      % (what, (d["dirStats"], d["hit"], d["miss"], d["evict"])))
 
-    def test_a_sibling_tree_the_walk_reads_is_read_once_per_cycle_and_costs_a_candidate_stat_per_directory_per_walk(self):
+    def test_a_sibling_tree_the_walk_reads_is_read_once_per_cycle_and_costs_a_candidate_lstat_per_directory_per_walk(self):
         """The sibling-tree term: S sibling sessions with subagents trees of DSIB directories each, G agents whose file is
         nowhere. The cold cycle (the ghosts' walks): each sibling's tree read once, a walk (miss S; its listings and lstats
         are the walk term's, pinned in Guards), shared by the G walks, every later walk served it; each sibling root's stamp
         taken once as an own stat before its tree is read (dirStats + S), then served from the tree's index; and per walk,
-        per sibling tree, one lstat of the root by _find_agent_file's realpath (W_sib, counted by running it) and one os.stat
-        per candidate place, one per directory: G x S x DSIB candidate stats and S x DSIB + G x S x W_sib lstats on the
+        per sibling tree, one lstat of the root by _find_agent_file's realpath (W_sib, counted by running it) and one os.lstat
+        per candidate place, one per directory: G x S x DSIB candidate lstats and S x DSIB + G x S x W_sib lstats on the
         sibling directories. The steady cycle (the ghosts' memo hits): no sibling tree is read, and each lookup's re-check
         of the walk's stamps pays one own stat per sibling directory, taken by the first lookup and held under root None,
         so S x DSIB stats per cycle whatever G and M, all in dirStats. Red in the cold cycle under a kernel that reads a
@@ -1006,21 +1014,24 @@ class MissPathRoads(_World):
         ghosts = self._ghosts(G, 0x7e00)
         cands = [os.path.join(x, "agent-%s.jsonl" % gh) for x in sdirs for gh in ghosts]
         pc, d = self._cycle(ghosts, "the cold cycle")
-        got = (d["miss"], pc.count("lstat", sdirs), pc.count("stat", cands), pc.count("stat", sdirs), d["dirStats"])
-        want = (S, S * DSIB + G * S * w_sib, G * S * DSIB, S, (D - 1) + 1 + S)
+        got = (d["miss"], pc.count("lstat", sdirs), pc.count("lstat", cands), pc.count("stat", cands), pc.count("stat", sdirs),
+               d["dirStats"])
+        want = (S, S * DSIB + G * S * w_sib, G * S * DSIB, 0, S, (D - 1) + 1 + S)
         self.assertEqual(got, want,
                          "the cold cycle at S = %d, DSIB = %d, G = %d, W_sib = %d: (miss, lstats on the sibling directories, candidate "
-                         "stats, stats on the sibling directories, dirStats) = %r; keyed on (S, S x DSIB + G x S x W_sib, G x S x DSIB, "
-                         "S, (D - 1) + 1 + S) = %r: each sibling tree walked once for all the walks, each walk's realpath of each root "
-                         "and its candidate stat per directory, each root's stamp once before its tree was read"
+                         "lstats, candidate stats, stats on the sibling directories, dirStats) = %r; keyed on (S, S x DSIB + G x S x "
+                         "W_sib, G x S x DSIB, 0, S, (D - 1) + 1 + S) = %r: each sibling tree walked once for all the walks, each walk's "
+                         "realpath of each root and its candidate lstat per directory (an os.stat each, by os.path.isfile, until round "
+                         "3 of #882, group A), each root's stamp once before its tree was read"
                          % (S, DSIB, G, w_sib, got, want))
         pc, d = self._cycle(ghosts, "the steady cycle")
-        got = (d["miss"], pc.count("lstat", sdirs), pc.count("stat", cands), pc.count("stat", sdirs), d["dirStats"])
-        want = (0, 0, 0, S * DSIB, (D - 1) + 1 + S * DSIB)
+        got = (d["miss"], pc.count("lstat", sdirs), pc.count("lstat", cands), pc.count("stat", cands), pc.count("stat", sdirs),
+               d["dirStats"])
+        want = (0, 0, 0, 0, S * DSIB, (D - 1) + 1 + S * DSIB)
         self.assertEqual(got, want,
-                         "the steady cycle: (miss, lstats on the sibling directories, candidate stats, stats on the sibling "
-                         "directories, dirStats) = %r; keyed on (0, 0, 0, S x DSIB, (D - 1) + 1 + S x DSIB) = %r: no sibling tree read "
-                         "and no walk, and one own stat per sibling directory, held and shared by the G x (1 + M) re-checks"
+                         "the steady cycle: (miss, lstats on the sibling directories, candidate lstats, candidate stats, stats on the "
+                         "sibling directories, dirStats) = %r; keyed on (0, 0, 0, 0, S x DSIB, (D - 1) + 1 + S x DSIB) = %r: no sibling "
+                         "tree read and no walk, and one own stat per sibling directory, held and shared by the G x (1 + M) re-checks"
                          % (got, want))
 
     def test_a_command_rows_owner_lookup_before_the_tree_is_read_re_stats_its_directories_once_per_cycle(self):
@@ -1689,10 +1700,11 @@ class Guards(_World):
         root, whom permission bits do not bind), the A agents' resolutions standing from setUp's warm read. Nothing under
         the tree is held (a read that did not happen is never held), so every read pays again, derived from the code per
         read: _subagent_meta_map's root lstat (1 lstat), and per agent, whose launches the call consults once (the fault
-        holds its fold for the call alone): the memo hit's re-check of its D stamps (D stats), the walk's own-root stamp,
-        flat place and islink (2 stats, 1 lstat), _subagent_tree's root lstat (1 lstat, the raise), and the fold of the
-        standing resolution's file (1 stat). So the census under the tree over one pusher cycle of CALLS reads is
-        {lstat: CALLS x (2A + 1), stat: CALLS x A x (D + 3)}, every call failing. None of them moves a counter: hit, miss,
+        holds its fold for the call alone): the memo hit's re-check of its D stamps (D stats), the walk's own-root stamp
+        (1 stat), the flat place's lstat and islink's (2 lstats; the flat place was an os.stat, by os.path.isfile, until
+        round 3 of #882, group A), _subagent_tree's root lstat (1 lstat, the raise), and the fold of the standing
+        resolution's file (1 stat). So the census under the tree over one pusher cycle of CALLS reads is
+        {lstat: CALLS x (3A + 1), stat: CALLS x A x (D + 2)}, every call failing. None of them moves a counter: hit, miss,
         served and evict stay at 0. dirStats moves by 1, and that 1 is one os.stat: _dir_stamp's stat of the project
         directory (the transcript's parent) in _subagent_file_walk, which the walk now reaches since a fault excludes its own
         tree and nothing else. The project directory lies outside the mode-000 tree, so that stat succeeds where every stamp
@@ -1718,10 +1730,10 @@ class Guards(_World):
             os.chmod(sess, 0o755)
         c, d = sp.tree_calls(), self._delta(b)
         self.assertEqual(rec.get("counts"), [A] * CALLS, "each read still listed the A agents (the live row names them): %r" % (rec,))
-        want = {"lstat": CALLS * (2 * A + 1), "stat": CALLS * A * (D + 3)}
+        want = {"lstat": CALLS * (3 * A + 1), "stat": CALLS * A * (D + 2)}
         self.assertEqual(c, want,
-                         "filesystem calls under the unreadable tree over one pusher cycle, by class: %r; keyed on {lstat: CALLS x (2A + "
-                         "1), stat: CALLS x A x (D + 3)} = %r, every agent resolved again on every read and nothing held"
+                         "filesystem calls under the unreadable tree over one pusher cycle, by class: %r; keyed on {lstat: CALLS x (3A + "
+                         "1), stat: CALLS x A x (D + 2)} = %r, every agent resolved again on every read and nothing held"
                          % (c, want))
         got = tuple(d[k] for k in STAT_KEYS)
         self.assertEqual(got, (0, 0, 0, 0, 1),
