@@ -50,6 +50,9 @@ outside any cycle (a thread with no tree scope open) pays per call, each agent's
 directory its walk read (round 4 of #882, extra6-3): D for a nested agent, 1 for a flat one, and for an agent found
 nowhere the own tree's D and the project directory's 1, one failing stat per absent sibling place and S_d per sibling
 tree its walk read, with dirStats counting the validation's lstats and _dir_stamp's successful stats and not the failing ones;
+and a connect push (a fresh client's full push on a thread that holds no scope) holds the three slots across its chat
+loop, so a push whose chat build reads the session twice pays {lstat: D, stat: A} under the tree, one validation and one
+launch fold per agent, as one cycle does;
 (2) per cycle, not sticky: a directory and a fourth agent landing between two cycles are seen by the second cycle's
 first read (a re-walk; the listing equals os.walk's and the sidecar reaches the map) while its later reads that cycle
 cost nothing, a launch appended to an agent's transcript between two cycles is folded by the second cycle's first read
@@ -145,7 +148,8 @@ held (all in MissPathRoads); a sibling tree the walk reads is read once per cycl
 costs a candidate lstat per directory per walk, and on a steady cycle one own stat per directory, shared (both in
 MissPathRoads, with a command row whose owner is read from the agents' transcripts before the tree is read, which
 re-stats the tree's D directories once per cycle); each walk lists the project directory once and stats its E entries,
-G listings and G x E stats over the cycle (_miss_walk_cycle); a walk's calls under the tree are {lstat: D, scandir: D} (Guards' stale-hold case),
+G listings and G x E stats over the cycle (_miss_walk_cycle); a walk's calls under the tree are {lstat: D, scandir: D}, one
+miss and no dirStats, the walk held with its stamps (Guards' no-entry walk case),
 and a failed validation's and the walk after it {lstat: 2D, scandir: D + 1} for one directory added, one miss with the
 validation's D - 1 in dirStats (Guards, round 3 of #882, extra6-1); an
 unreadable session directory resolves every agent again on every read, {lstat: CALLS x (3A + 1), stat: CALLS x A x
@@ -1125,6 +1129,75 @@ class BoundPerCycleAndPerPass(_World):
                          "absent place's failing stat uncounted" % (d["dirStats"], want_ds))
         self.assertEqual((d["hit"], d["miss"], d["scoped"]), (1, 0, 0), "one validation of the own tree, no walk, nothing scoped: %r" % (d,))
 
+    def test_a_connect_push_validates_the_tree_once_serves_its_stamps_and_folds_each_agent_once_across_its_chat_loop(self):
+        """The connect push's term of the cost home: a push on a thread that holds no tree scope (a fresh client's full
+        push, _push([client], connect=True), as _push_one runs it on a handler thread) opens the tree slot and the two
+        derived slots for its chat loop (_chat_push_scopes_open), so the push pays for the reads inside that loop what one
+        pusher cycle pays for its own. The session's turn is closed, so its chat build reads the session twice (build_session's
+        _session_awaiting and its chip's), each read's _awaiting_nest consulting every agent's launches; the feed is warmed
+        by one pusher cycle with the client connected, so the push's feed stage serves it, and the tab is dropped from the
+        build cache so the push rebuilds it. Keys, derived from D and A: the premises (one tab build, two _awaiting_nest
+        calls, the asks on the root the first validated and every later one served), then (calls under the tree by class,
+        (hit, miss, dirStats), launch folds) by equality with ({lstat: D, stat: A}, (1, 0, D - 1), A), and every slot
+        closed after the push. Red with either derived slot's opening line removed from _chat_push_scopes_open: without
+        the stamp index the lookups re-stat the D directories of each agent, and without the launch folds each read folds
+        every agent."""
+        with open(self.path, "a") as fh:                     # the turn closed: the chat build reads the session's awaiting rows
+            fh.write(json.dumps({"type": "assistant", "timestamp": "2026-06-11T00:00:01.000Z", "uuid": "a1", "parentUuid": "u1",
+                                 "message": {"role": "assistant", "content": [{"type": "text", "text": "tidied the notes"}],
+                                             "stop_reason": "end_turn"}}) + "\n")
+        sent = []
+        client = {"app": "chat", "alive": True, "wid": "", "qbytes": 0, "send": sent.append}
+        saved_feed = list(km._built_feed)
+        self.addCleanup(km._built_feed.__setitem__, slice(None), saved_feed)
+        self.addCleanup(km._built_chat.clear)
+        km._turn_notify_tick = lambda now, live_map: None   # the pusher's tick: no reader of its own here
+        with km._clients_lock:
+            km._clients[:] = [client]
+        km._pusher_cycle()                                    # warms the feed the push's feed stage serves
+        with km._clients_lock:
+            km._clients[:] = []
+        km._built_chat.clear()                                # the tab is rebuilt by the push
+        self.assertIsNone(_scope(), "premise: no tree scope is open on this thread before the push")
+        asks, nests, builds, folds = [], [], [], []
+        real_tree, real_nest, real_build = km._subagent_tree, km._awaiting_nest, km.build_session
+        root = str(self.sub)
+
+        def asking(dd, *a, **k):
+            sc = _scope()
+            held = sc["trees"].get(str(dd)) if sc is not None else None
+            out = real_tree(dd, *a, **k)
+            if str(dd) == root:
+                asks.append("served" if held is not None and out is held else "validated")
+            return out
+
+        def nest(*a, **k):
+            nests.append(1)
+            return real_nest(*a, **k)
+
+        def build(*a, **k):
+            builds.append(a[0] if a else k.get("sid"))
+            return real_build(*a, **k)
+        b = self._stats()
+        with mock.patch.object(km, "_subagent_tree", asking), mock.patch.object(km, "_awaiting_nest", nest), \
+                mock.patch.object(km, "build_session", build), self._counting_fold(folds), self._spy() as sp:
+            km._push([client], connect=True)
+        d = self._delta(b)
+        self.assertEqual(builds, [SID], "premise: the push built the one tab: %r" % (builds,))
+        self.assertEqual(len(nests), 2, "premise: the chat build's two reads each ran _awaiting_nest: %d calls" % len(nests))
+        self.assertEqual(asks, ["validated"] + ["served"] * (len(asks) - 1),
+                         "premise: the asks on the root over the push, %r: the first validated and every later one served the held pair"
+                         % (asks,))
+        self.assertGreaterEqual(len(asks), 2, "premise: the push asked the tree more than once: %r" % (asks,))
+        got = (sp.tree_calls(), (d["hit"], d["miss"], d["dirStats"]), len(folds))
+        want = ({"lstat": D, "stat": A}, (1, 0, D - 1), A)
+        self.assertEqual(got, want,
+                         "(calls under the tree by class, (hit, miss, dirStats), launch folds) over one connect push: %r; keyed on %r at "
+                         "D = %d, A = %d: one validation, the lookups' re-checks served from the stamp index, and one fold per agent "
+                         "across the chat build's two reads" % (got, want, D, A))
+        self.assertTrue(_scope_closed(), "the push's close clears the slots it opened")
+        self.assertIsNone(getattr(km._live_scope, "chat_push_owned", None), "the owned slot list was consumed by the close")
+
 
 class MissPathRoads(_World):
     """(10) The agent-file lookup's roads the cost home names beside the bound, each derived here from the world's sizes
@@ -2083,6 +2156,31 @@ class Guards(_World):
                          "root's lstat and one per child directory, and one listing per directory (an entry's type comes from the "
                          "listing): the cost home's walk term (_subagent_tree_memo_report's docstring)" % (sp.tree_calls(), D))
         self.assertIn(root, sc["trees"], "the walk re-holds the root")
+
+    def test_a_walk_with_no_entry_standing_pays_d_lstats_and_d_listings_in_one_miss_and_is_held_with_its_stamps(self):
+        """The walk entry of the cost home (_subagent_tree_memo_report's docstring): a read with no entry standing for the
+        root walks it. One scope, the entry dropped, one _subagent_tree read under the spy: the root's lstat and one per
+        directory below it, each taken before its listing, and one listing per directory, so {lstat: D, scandir: D} under
+        the tree by equality; (hit, miss, dirStats) moves by (0, 1, 0), a walk's lstats being no validation's; and the walk
+        is held for the scope: the pair answered is the one subagent_trees holds, keyed on identity, and the stamp index
+        holds each of the D directories under the stat the pair carries for it."""
+        root = str(self.sub)
+        km._SUBAGENT_TREES.pop(root, None)
+        sc = self._open()
+        b = self._stats()
+        with self._spy() as sp:
+            pair = km._subagent_tree(root)
+        d = self._delta(b)
+        got = (sp.tree_calls(), (d["hit"], d["miss"], d["dirStats"]))
+        want = ({"lstat": D, "scandir": D}, (0, 1, 0))
+        self.assertEqual(got, want,
+                         "(filesystem calls under the tree by class, (hit, miss, dirStats)) over one read with no entry standing: %r; "
+                         "keyed on ({lstat: D, scandir: D}, (0, 1, 0)) at D = %d: one lstat and one listing per directory, one miss, "
+                         "nothing in dirStats" % (got, D))
+        self.assertIs(sc["trees"].get(root), pair, "held: the pair answered is the one subagent_trees holds")
+        want_stamps = {sd: (sd, st.st_mtime_ns) for sd, st in zip(pair[0], pair[1])}
+        self.assertEqual(sc["stamps"], want_stamps, "held: the stamp index holds each of the D directories under the pair's stat")
+        self.assertEqual(sorted(want_stamps), sorted(self.dirs), "the walk listed the D directories")
 
     def test_a_failed_validation_then_the_walk_pays_both_in_one_miss_with_the_validations_lstats_in_dirstats(self):
         """The walk entry's second population (round 3 of #882, extra6-1): a read that finds an entry whose identities no
