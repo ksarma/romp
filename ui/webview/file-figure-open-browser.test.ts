@@ -1424,7 +1424,8 @@ test("in Chromium launched as a trackpad-plus-touchscreen laptop (hover: hover, 
 // view by PageDown, or by a table that scrolls on its own, opened it on Space.) The three requirements and their pins: no mouse
 // press focuses the web control, pins (a), (b) and (c) and the other-button pin; any focus it holds is painted, pin (e), with (c)'s
 // second branch; Enter or Space opens it only while it is in view at the key, the viewport and every ancestor that clips on that
-// axis, pins (d) and (f), with (a)'s scroll. Four keep checks hold what must still work: Space held on a keyboard focus presses the
+// axis, pins (d) and (f), each by Space and by Enter, and the key-release pin (Space clicks a button on its release, so a Space
+// pressed in view and released out of view is read too), with (a)'s scroll. Four keep checks hold what must still work: Space held on a keyboard focus presses the
 // control and its release opens once, a control in view inside the scrolling table and one half in view each open on their key,
 // and a mouse press held on the control matches :active until its release opens once. The report: a remote picture of 300 by 200
 // from the second server ("big") under the first paragraph, thirty paragraphs, a table wider than the Rendered box, which scrolls
@@ -1637,9 +1638,9 @@ for (const pointer of ["fine", "laptop"] as Pointer[]) for (const gesture of ["c
     });
   });
 }
-for (const surface of ["chat", "feed", "pane"] as Surface[]) {
-  test("in a browser " + onWhat("fine", surface) + ", the web control's focus, pin (d): Tab to the web control, PageDown until it is out of view, then Space: no open (the file review's round 14, extra9-1: before the fixes Space opened one from the control out of view)", { timeout: 120000 }, async (t) => {
-    const rec: Record<string, unknown> = { pin: "d" };
+for (const surface of ["chat", "feed", "pane"] as Surface[]) for (const key of ["Space", "Enter"] as const) {
+  test("in a browser " + onWhat("fine", surface) + ", the web control's focus, pin (d): Tab to the web control, PageDown until it is out of view, then " + key + ": no open (the file review's round 14, extra9-1: before the fixes " + key + " opened one from the control out of view)", { timeout: 120000 }, async (t) => {
+    const rec: Record<string, unknown> = { pin: "d", key };
     await focusCase(t, "fine", surface, rec, async (page, cdp) => {
       await pressPlainText(page, cdp, "fine", "big");
       await pointerAway(page, "fine");
@@ -1651,11 +1652,11 @@ for (const surface of ["chat", "feed", "pane"] as Surface[]) {
       rec.pageDowns = n;
       rec.afterPageDown = s;
       assert.ok(s.ctl.bottom <= s.body.top && s.active === "control", "the focused control is out of view above the body (a precondition): " + s.ctl.bottom + " vs " + s.body.top + ", the keyboard on " + s.active);
-      await page.keyboard.press("Space");
+      await page.keyboard.press(key);
       await settleScroll(page);
       const a = await focusState(page, "big");
-      rec.afterSpace = a;
-      assert.equal(a.opened, 0, "Space on the keyboard-focused control out of view opens nothing (a property pin read off the page)");
+      rec.afterKey = a;
+      assert.equal(a.opened, 0, key + " on the keyboard-focused control out of view opens nothing (a property pin read off the page)");
     });
   });
 }
@@ -1674,8 +1675,8 @@ for (const surface of ["chat", "feed", "pane"] as Surface[]) {
     });
   });
 }
-test("in a browser (a fine pointer), the web control's focus, pin (f): a Tab-focused web control in a table wider than the Rendered box, the table scrolled sideways until the control is outside the table's own scrollport while the body still shows its row, then Space: no open (the file review's round 14, extra9-1: before the fixes Space opened one)", { timeout: 120000 }, async (t) => {
-  const rec: Record<string, unknown> = { pin: "f" };
+for (const key of ["Space", "Enter"] as const) test("in a browser (a fine pointer), the web control's focus, pin (f): a Tab-focused web control in a table wider than the Rendered box, the table scrolled sideways until the control is outside the table's own scrollport while the body still shows its row, then " + key + ": no open (the file review's round 14, extra9-1: before the fixes " + key + " opened one)", { timeout: 120000 }, async (t) => {
+  const rec: Record<string, unknown> = { pin: "f", key };
   await focusCase(t, "fine", "chat", rec, async (page, cdp) => {
     await pressPlainText(page, cdp, "fine", "wide");
     await pointerAway(page, "fine");
@@ -1692,11 +1693,38 @@ test("in a browser (a fine pointer), the web control's focus, pin (f): a Tab-foc
     });
     rec.geometry = g;
     assert.deepEqual([g.outside, g.rowShown, g.active], [true, true, true], "the focused control is outside the table's scrollport while the body shows its row (a precondition): " + JSON.stringify(g));
-    await page.keyboard.press("Space");
+    await page.keyboard.press(key);
     await frames(page, 4);
     const s = await focusState(page, "wide");
-    rec.afterSpace = s;
-    assert.equal(s.opened, 0, "Space on the control outside the table's scrollport opens nothing (a property pin read off the page)");
+    rec.afterKey = s;
+    assert.equal(s.opened, 0, key + " on the control outside the table's scrollport opens nothing (a property pin read off the page)");
+  });
+});
+test("in a browser (a fine pointer), the web control's focus, the key-release pin: Tab to the web control, Space pressed and held while the control is in view, the body scrolled until the control is out of view, then the release: no open (the file review's round 14, extra9-1: Space clicks a button on its release, so the key gate reads the release too; before the fixes the release opened one from the control out of view)", { timeout: 120000 }, async (t) => {
+  const rec: Record<string, unknown> = { pin: "key-release" };
+  await focusCase(t, "fine", "chat", rec, async (page, cdp) => {
+    await pressPlainText(page, cdp, "fine", "big");
+    await pointerAway(page, "fine");
+    rec.tabs = await tabToControl(page, "big");
+    await settleScroll(page);
+    const f = await focusState(page, "big");
+    rec.focused = f;
+    assert.ok(f.active === "control" && f.ctl.bottom > f.body.top && f.ctl.top < f.body.bottom, "the keyboard-focused control is in view (a precondition): " + JSON.stringify(f));
+    await page.keyboard.down("Space");
+    await frames(page, 2);
+    const held = await focusState(page, "big");
+    rec.held = held;
+    assert.deepEqual([held.pressed, held.opened], [true, 0], "Space held on the control in view presses it (:active) with nothing opened (a precondition)");
+    await page.evaluate(() => { (document.querySelector(".fileview-body") as HTMLElement).scrollTop += 3000; });
+    await settleScroll(page);
+    const out = await focusState(page, "big");
+    rec.beforeRelease = out;
+    assert.ok(out.active === "control" && out.ctl.bottom <= out.body.top, "the control, Space still held on it, is out of view above the body (a precondition): " + out.ctl.bottom + " vs " + out.body.top + ", the keyboard on " + out.active);
+    await page.keyboard.up("Space");
+    await frames(page, 3);
+    const s = await focusState(page, "big");
+    rec.afterRelease = s;
+    assert.equal(s.opened, 0, "the release of a Space pressed in view opens nothing once the control is out of view (a property pin read off the page)");
   });
 });
 for (const button of ["right", "middle"] as const) {
