@@ -34115,8 +34115,9 @@ def _awaiting_nest(agents, commands, cmd_owner, path):
     # `_live_scope.subagent_launches`, is held by the pusher cycle, the jobs pass and a connect push's chat loop
     # (_chat_push_scopes_open), each opening and clearing it with `subagent_trees`. On a thread that holds it the map is
     # the slot, so each agent is resolved and folded once per cycle or pass, and once per push on a connect push, however
-    # many _session_awaiting calls read it (up to five per session per cycle; a call-local map re-folds every agent's file
-    # on each, a stat and a checkpoint realpath per agent). Only on a thread that holds no slot is the map this call's
+    # many calls read it (_session_awaiting's and _session_background_items', each through _awaiting_live_rows; a
+    # call-local map resolves and folds every agent's file again on each call, at the cost the launch fold's entry in
+    # _subagent_tree_memo_report's docstring states). Only on a thread that holds no slot is the map this call's
     # own, so each agent is resolved and folded once per call. The attribution then sees an agent's file as it stood at
     # the fold; a launch appended after it nests at the slot's next fold (the next cycle, pass or push), the one-cycle lag
     # the tree slot accepts. A
@@ -35911,8 +35912,8 @@ def _subagent_meta_map(path):
     not exist (older CLIs wrote no subagent files); under a root that cannot be read, the cached map when one stands, else
     {}, with the running chat build told either way (_subagent_tree's docstring: the shape). The directories and their
     stats come from the shared walk memo (_subagent_tree), one sample per cycle across every reader since 2026-09-18: the
-    three reads a chat build makes of this map (_stamp_agents, _awaiting_live_rows, _awaiting_nest) and the feed key's
-    read share the cycle's stamps."""
+    reads a chat build makes of this map (_stamp_agents, _chat_agents_moved, _bg_tasks, _awaiting_live_rows,
+    _awaiting_nest) and the feed key's read share the cycle's stamps."""
     d = str(_subagents_dir(path))
     try:
         dirs, stats = _subagent_tree(d)                   # the shared walk memo (2026-09-16): the directories and the stat each

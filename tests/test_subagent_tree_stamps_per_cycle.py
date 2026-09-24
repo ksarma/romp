@@ -7,10 +7,11 @@ directory its walk read, which for a nested or missing agent's file is the whole
 every awaiting agent's file once per _session_awaiting call; so one call over A such agents paid (A + 1) x D directory
 stats with nothing changed (when there are two or more such agents, or a command row whose owner is read from their
 transcripts; a single agent with no command row is excluded from its own owner lookup and paid D alone), and the
-pusher makes up to five such calls per session per cycle (the chat, feed and timeline builds and the chips), the jobs
-pass one more. On one deployed kernel _dir_stamp's one os.stat was the top self frame of a 20 s py-spy profile, 28
-percent of the samples by that profile's reading, and another's memo counters showed 24.5 million validation lstats in
-6.8 hours over 1,294 directories (2026-09-19; the user 2026-09-05, who wanted the one-core kernel investigated).
+pusher cycle makes several such calls per session (the feed build's, and the timeline and chat builds', each through
+the chip they share, _session_chip, and directly), the jobs pass its own (the nudge walk's among them). On one deployed
+kernel _dir_stamp's one os.stat was the top self frame of a 20 s py-spy profile, 28 percent of the samples by that
+profile's reading, and another's memo counters showed 24.5 million validation lstats in 6.8 hours over 1,294
+directories (2026-09-19; the user 2026-09-05, who wanted the one-core kernel investigated).
 
 The fix keys the re-checks on the event a time window would have stood in for: the cycle. #1822 (upstream, 2026-09-18)
 holds each subagents root's sample once per cycle in _live_scope.subagent_trees, which the pusher cycle, the jobs pass
@@ -189,9 +190,10 @@ command, interpreter and head):
   on its re-check stats and dirStats;
 - the miss-walk unit, a walk that goes on past the file it found through the rest of the own tree, the project directory
   and every sibling before answering it: FoundRoads, each case, on its per-walk census or its project-directory calls;
-- a derived slot's line removed from any one of its ten open and clear sites: SlotSites, on the {function: count}
-  equality (a tree slot's line removed reds its premise); and either derived slot's opening line removed from
-  _chat_push_scopes_open: the connect-push case too, on its census (the stamp index) or its fold count (the launch folds);
+- a derived slot's line removed from any one of its five open and clear sites (SlotSites.SITES): SlotSites, on the
+  {function: count} equality (a tree slot's line removed reds its premise); and either derived slot's opening line
+  removed from _chat_push_scopes_open: the connect-push case too, on its census (the stamp index) or its fold count (the
+  launch folds);
 - each half of the spy's patch of glob._StringGlobber's held functions removed alone, mutants of this module: SpyRoads'
   test_closed_road_path_rglob on 3.13, on its rglob('*') call without the builtin test (the held scandir) and on its
   glob('workflows') call without the _romp_sig_counting test (the held lstat, the kernel's wrapper).
