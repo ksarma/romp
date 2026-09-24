@@ -91,8 +91,9 @@ not heard the carried via row stands beside the cached row, until the far host's
 the eleventh commit the gate read heard and not held down alone, the hub's word folded into the cached row, and the
 hub, vouching for absence, let rule 5 presume a live session closed for one exchange interval of the far host); a
 hub's HELD word (round 4 of fork PR #897, the thirty-first commit): a far host's unanswered word through a hub stays
-heard on the hub's row across the hub's rosters that omit the host, a restarted hub's among them, until the hub names
-the host again, by name or by bus id, while an answered word the hub omits is carried as before; and
+heard on the hub's row across a restarted hub's rosters that omit the host, until the hub names the host again, by
+name or by bus id, while an answered word the hub omits is carried as before, and the same hub process's omission, the
+far host's answer with an empty listing, releases it (the thirty-second commit; a hub with no bus id holds it); and
 the heartbeat row's scheme gate (round 3 of fork PR #897, the reviewer's ruling): a beat through the real recorder
 during a listing blink in peer mode vouching for presence alone, nothing vouching beside a peer the kernel holds down,
 the same rows under ROMP_POSTAL_PEERS=0 vouching by the TTL; the four earlier heartbeat pins of this module that
@@ -2157,6 +2158,46 @@ class Mirror(unittest.TestCase):
         self._far_dials_us(HUB, [{"id": A, "name": "web"}, dict(no_bus, viaAnswered=True)], "hub-bus-restarted-thrice")
         self.assertEqual((pm.PEER_STATE[HUB]["viaHeld"], self._answered()[VIA_FAR]), ([], True),
                          "with no bus id on either word the hub's name for the host is the only match, and it releases")
+
+    def test_a_hubs_held_word_is_released_by_the_same_hub_process_omitting_the_host_and_held_by_a_hub_that_cannot_say(self):
+        """Round 4 of fork PR #897, the thirty-second commit (the reviewer's verifier at the thirty-first, by execution): a
+        hub gossips a far host only through that host's session rows, so the far host's answer with an EMPTY listing
+        reaches here as the hub's roster omitting the host. The SAME hub process (the bus id its exchanges carry, minted
+        per process) omitting a host whose unanswered word its roster named has recorded the host's next exchange, so the
+        word is released, carried heard false; at the thirty-first commit it stayed held for this bus process's life. A
+        RESTARTED hub (a new bus id) omitting it has not heard the host yet, so the word stays held, and it keeps the
+        process that last named it (`hubBus`) across the restarted hub's later exchanges, so a second omission by the
+        restarted process holds it too. A hub that sends no bus id (from before busId) cannot say it is the same process,
+        so its omission holds (the restricted side; cost (g) of the writer's docstring names it). Through the real
+        handler (the recorder) and this writer."""
+        self._forget_presence_cache()
+        self._local_listing_answered_empty()
+        self._notify(HUB, up=True)
+        web = {"id": A, "name": "web"}
+        far_cached = {"id": B, "name": "api", "via": FAR, "viaBus": "far-bus", "viaAnswered": False}
+        self._far_dials_us(HUB, [web, far_cached], "hub-bus")
+        self.assertEqual((self._rows()[VIA_FAR], self._answered()[VIA_FAR]), ((True, False, [B]), False))
+        self._far_dials_us(HUB, [web], "hub-bus")                           # the same hub process: the far host answered empty
+        self.assertEqual((pm.PEER_STATE[HUB]["viaHeld"], self._rows()[VIA_FAR]), ([], (False, False, [B])),
+                         "RELEASED: the same hub process omits FAR, the far host's empty answer; the word is carried, heard "
+                         "false (at the thirty-first commit held: ([(B, FAR)], (True, False, [B])))")
+        self._far_dials_us(HUB, [web, far_cached], "hub-bus-2")             # the hub, restarted, names FAR over its cache
+        self._far_dials_us(HUB, [web], "hub-bus-3")                         # ...restarted again: it has not heard FAR
+        self.assertEqual([(pa["id"], pa["via"], pa.get("hubBus")) for pa in pm.PEER_STATE[HUB]["viaHeld"]], [(B, FAR, "hub-bus-2")],
+                         "HELD across the hub's restart, stamped with the hub process whose roster last named it")
+        self._far_dials_us(HUB, [web], "hub-bus-3")                         # the restarted process's next exchange
+        self.assertEqual(([(pa["id"], pa["via"], pa.get("hubBus")) for pa in pm.PEER_STATE[HUB]["viaHeld"]], self._rows()[VIA_FAR]),
+                         ([(B, FAR, "hub-bus-2")], (True, False, [B])),
+                         "still HELD: the process that omits FAR is not the one that named it (a stamp refreshed at each "
+                         "exchange would release the word here, with no word from the far host)")
+        self._far_dials_us(HUB, [web, dict(far_cached, viaAnswered=True)], "hub-bus-3")
+        self.assertEqual((pm.PEER_STATE[HUB]["viaHeld"], self._answered()[VIA_FAR]), ([], True), "named again, answered: released")
+        self._far_dials_us(HUB, [web, far_cached], "")                      # a hub that sends no bus id
+        self._far_dials_us(HUB, [web], "")
+        self.assertEqual(([(pa["id"], pa["via"]) for pa in pm.PEER_STATE[HUB]["viaHeld"]], self._rows()[VIA_FAR]),
+                         ([(B, FAR)], (True, False, [B])),
+                         "HELD: a hub with no bus id cannot say it is the process that named FAR (two empty ids are no "
+                         "identity)")
 
     def test_a_hubs_answered_word_about_a_directly_held_host_stands_beside_that_hosts_cached_row_until_it_answers(self):
         """Round 3 of fork PR #897, the reviewer's verifier at the eleventh commit, by execution through the real builder,

@@ -19564,11 +19564,12 @@ def _presumed_closed_verdict(sid, now):
     every heard host whose last exchange served a cached roster); a host vouches for absence and none names the
     sid, but the roster of a host HEARD in the bus's current process is UNANSWERED ("listing-unanswered",
     naming each such host with why it cannot vouch; round 4 of fork PR #897, the reviewer's ruling on its
-    round-3 refuters' finding, the twenty-ninth commit, the thirtieth and the thirty-first): its last exchange here serving the
+    round-3 refuters' finding, the twenty-ninth commit, the thirtieth, the thirty-first and the thirty-second): its last exchange here serving the
     rows of its kernel's last answered listing, whether a peer's own row or a hub's word about a far host
     carrying that host's unanswered bit, whatever its link state, held down included (the writer's `heard`
-    True with `answered` False; a hub's word stays heard across the hub's rosters that omit the far host, the
-    hub's restart included, postal_service.py _via_held); a session started on that host during the blink is
+    True with `answered` False; a hub's word stays heard across a RESTARTED hub's rosters that omit the far
+    host, until the hub names it again or the same hub process omits it, the far host's empty answer,
+    postal_service.py _via_held); a session started on that host during the blink is
     in no roster, and its own
     mail reaches this judge on the exchange that omits it, so another host's vouch says nothing about it (until
     the twenty-ninth commit rule 5 presumed it closed whenever any other row vouched, the refuters' four roads
@@ -19578,7 +19579,8 @@ def _presumed_closed_verdict(sid, now):
     thirty-first the hub's restart did the same for a hub's word, its first roster after the restart omitting
     the far host, closed in the writer); the release is
     that source's next answering exchange, which the bus already records (for a hub's word, the far host's
-    answering exchange with the hub and then the hub's next exchange here), or the bus's restart, with no new
+    answering exchange with the hub and then the hub's next exchange here, naming the host or, for an empty
+    listing, omitting it from the same hub process's roster), or the bus's restart, with no new
     event and no timer; it
     answers before the carry-lost arm where both hold, naming the source that releases it; and a host vouches
     for absence, none names the sid and no heard host's roster is unanswered, but the bus's LOST-CARRY
