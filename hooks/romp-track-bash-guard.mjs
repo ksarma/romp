@@ -1658,7 +1658,7 @@ export function lex(command, shell = null, opts = {}) {
         // one whose readings depend on a parameter's value (THE DEFAULT WORD's params, round 6's fifth commit) is recorded there too, so
         // scriptTexts reads the value beside the word
         const rd = readingsOf();
-        if (wordUnresolvable) seg.stdin.push(Object.assign(word(buf, false, raw, { marks }), { fd: null, unresolvableReading: wordUnresolvable, herestring: true }));
+        if (wordUnresolvable) seg.stdin.push(Object.assign(word(buf, false, raw, { marks }), { fd: null, unresolvableReading: wordUnresolvable, herestring: true }, rd.length && !(wordReadings && wordReadings.params) ? { readings: rd } : {}));   // THE PRINTER'S OPERAND VALUE: texts read beside the rest travel with the mark
         else if (wordReadings && wordReadings.params) { const ps = paramsOf(); seg.stdin.push(Object.assign(word(buf, false, raw, { marks }), ps ? { fd: null, readings: rd, readingParams: ps, herestring: true } : { fd: null, unresolvableReading: glueUnresolvable(), herestring: true })); }
         else if (rd.length) seg.heredocs.push(...rd);
         else { seg.heredocs.push(buf); if (marks.includes('x')) seg.fedWords.push(word(buf, false, raw, { marks })); }   // `fedWords`: a fed text's words holding an expansion the body hands over as its spelling (THE UNREAD OPERAND's feed, readFeed)
@@ -2048,10 +2048,14 @@ export function lex(command, shell = null, opts = {}) {
     if (r == null) return false;
     const printed = (props) => Object.assign(word('\0', false, spelling, { marks: 'x' }), props);   // `target`: the segment the producer's printed text is placed on (the producer itself, or the closer of the subshell or group holding it: THE OUTPUT MODEL, round 6's second commit)
     if (r.unresolvableReading) {
-      if (mode === 'segment') { target.printed = printed({ unresolvableReading: { raw: spelling, why: r.unresolvableReading } }); return true; }
+      // THE PRINTER'S OPERAND VALUE (twenty-ninth commit): a reading may hold texts beside the rest it could not establish; both are carried, so
+      // scriptTexts reads the texts (a write they name is refused by name from any cwd) and records the word as one it cannot read
+      const beside = r.texts ? [...new Set(r.texts.map((t) => t.replace(/\n+$/, '')))] : null;
+      if (mode === 'segment') { target.printed = printed({ unresolvableReading: { raw: spelling, why: r.unresolvableReading }, ...(beside ? { readings: beside } : {}) }); return true; }
       if (!sawExpansion) opaqueExpansion(hdInner && mode === 'text' ? spelling : undefined);   // in a here-document body the spelling stays in the text, as for a substitution with no reading
       inWord = true;
       wordUnresolvable = { raw: spelling, why: r.unresolvableReading };
+      if (beside) wordReadings = { raw: spelling, texts: beside, params: null };
       return 'unresolvable';   // placed as a mark: a substitution's caller reads its commands as commands all the same (resolvedSub)
     }
     const trimmed = [...new Set(r.texts.map((t) => t.replace(/\n+$/, '')))];   // trailing newlines dropped as the shells drop them
@@ -4240,6 +4244,7 @@ export const renderWords = (words) => {
   return out.join(' ');
 };
 let activeHeadTexts = null;   // (word) => the texts the name stands for, or null; set by extract while it runs
+let activeOperandTexts = null;   // THE PRINTER'S OPERAND VALUE: (word) => the texts THE HEAD CANDIDATES compose for a printer's operand, or null; set by extract while it runs
 const SPLICE_DEPTH_CAP = 8;
 let spliceDepth = 0;
 function splicedPrinter(s, headIdx) {
@@ -4292,6 +4297,7 @@ const printerOf = (s) => {
 function splicedOutput(cmd) {
   if (cmd.capped) return unresolvable(`the command name \`${cmd.raw}\` stands for a text that is itself a command name standing for a text, nested past the depth I follow, so the text printed is not known`);
   const texts = new Set();
+  let beside = null;
   for (const a of cmd.spliced) {
     const stands = `the command name \`${cmd.raw}\` stands for \`${a.text}\``;
     if (!a.seg) return unresolvable(`${stands}, a text the shell reads as more than one command or as an operator, beside a text under which it is a ${cmd.name}, so the text printed is not known`);
@@ -4301,10 +4307,11 @@ function splicedOutput(cmd) {
     if (cmd.name === 'cat') { const bodies = catOfHeredoc(a.seg); r = bodies ? sound(bodies) : unresolvable(`${stands}, a cat whose here-document I do not read alone, so the text printed is not known`); }
     else r = segmentOutput(a.seg);
     if (r == null) return unresolvable(`${stands}, whose output I do not read, so the text printed is not known`);
-    if (r.unresolvableReading) return r;
+    if (r.unresolvableReading && !r.texts) return r;
+    if (r.unresolvableReading && !beside) beside = r.unresolvableReading;   // THE PRINTER'S OPERAND VALUE: the texts read beside the rest
     for (const t of r.texts) texts.add(t);
   }
-  return sound([...texts]);   // the text depends on a value the command gives: the script road, never plain
+  return beside ? { ...sound([...texts]), ...unresolvable(beside) } : sound([...texts]);   // the text depends on a value the command gives: the script road, never plain
 }
 const shapeOnPrinter = (s, name) => {
   if (s.op && s.op !== ';' && s.op !== '\n' && s.op !== '|' && s.op !== ')') return `the ${name} is followed by \`${s.op}\`, an operator outside the model (whether and when its text reaches the stream depends on it), so the text printed is not known`;
@@ -4321,9 +4328,57 @@ function segmentOutput(s) {
   if (shape) return unresolvable(shape);
   const inner = cmd.args.find((w) => w.unresolvableReading);
   if (inner) return unresolvable(inner.unresolvableReading.why);   // an operand built from a reading the resolver could not establish: neither can this one
-  if (cmd.args.some((w) => (w.marks && w.marks.includes('x')) || w.text.includes('\0'))) return unresolvable(`an operand of the ${cmd.name} is an expansion whose value I do not read, so the text printed is not known`);   // the resolver applies to the command and cannot establish what it prints (a value it never reads: `$(echo $t)`)
+  const unread = `an operand of the ${cmd.name} is an expansion whose value I do not read, so the text printed is not known`;
+  const valued = (w) => (w.marks && w.marks.includes('x')) || w.text.includes('\0');
+  if (cmd.args.some(valued)) return valuedOperandOutput(cmd, valued, unread);   // THE PRINTER'S OPERAND VALUE; the resolver applies to the command and cannot establish what it prints where no value is read (a value it never reads: `$(echo $t)`)
   if (!cmd.args.every((w) => w.literal)) return unresolvable(`an operand of the ${cmd.name} carries a glob character, a brace list or a quoting the shell expands before the ${cmd.name} prints, so the text printed is not the text spelled`);
   return cmd.name === 'echo' ? echoOutput(cmd.args) : printfOutput(cmd.args);
+}
+// THE PRINTER'S OPERAND VALUE (round 7 of fork PR #780 review, twenty-ninth commit, 2026-09-24; the reviewer's verifier on the twenty-eighth commit,
+// a regression round 6's first commit made): an echo or printf operand holding an expansion was UNRESOLVABLE, so from a cwd in no project `X=cp;
+// echo "$X {NA}/base/report.md {NA}/docs/report.md" | bash` was allowed while bash, zsh and dash copied onto the tracked file, where the round-5
+// head read the text the value makes and refused it by name (round 3's B2 ruling: a value the guard can read is resolved and judged; the unquoted
+// operand, printf's `%s` operand and a target the value names alike, and with any later write of X, a `read`, an `unset`, a substitution, an
+// element write, a function body). An operand whose expansions are the `$name` spellings THE HEAD CANDIDATES hold values for (activeOperandTexts,
+// the same reading a command name that is an expansion gets) stands for each text those values compose. Double-quoted whole (dqSingleField), the
+// text is one word in every shell; unquoted, bash and dash split it at blanks into words and zsh does not, so both are read (each field a word of
+// the printer), and a word that quotes a part beside an unquoted expansion, or a value holding a glob character (bash and dash expand it), is not
+// read. Each combination of the operands' words is printed by the printer's own reader. The candidates are the values this command's assignment
+// words give, a union read before the walk, so a construct the resolver does not follow (a `read`, a loop, `printf -v`) may give the name another
+// value: the texts are read beside the rest, which is not read and is refused where a project is in play as before (`{ texts, unresolvableReading
+// }`: placeReading carries both, scriptTexts reads the texts and records the word as one it cannot read). An echo whose words hold a backslash or a
+// word opening with `-` reads by rules that differ by shell beside other output, so it keeps the rest's reading alone.
+function valuedOperandOutput(cmd, valued, unread) {
+  if (!activeOperandTexts) return unresolvable(unread);
+  let combos = [[]];
+  for (const w of cmd.args) {
+    let alts;
+    if (!valued(w)) {
+      if (!w.literal) return unresolvable(`an operand of the ${cmd.name} carries a glob character, a brace list or a quoting the shell expands before the ${cmd.name} prints, so the text printed is not the text spelled`);
+      alts = [[w.text]];
+    } else {
+      const texts = activeOperandTexts(w);
+      if (!texts || !texts.length) return unresolvable(unread);
+      if (dqSingleField(w.raw)) alts = texts.map((t) => [t]);
+      else {
+        if (/['"\\]/.test(w.raw) || texts.some((t) => /[*?[]/.test(t))) return unresolvable(unread);
+        const seen = new Set();
+        alts = [];
+        for (const t of texts) for (const fields of [[t], t.split(/[ \t\n]+/).filter(Boolean)]) { const k = JSON.stringify(fields); if (!seen.has(k)) { seen.add(k); alts.push(fields); } }   // zsh's one word, bash's and dash's fields
+      }
+      if (cmd.name === 'echo' && alts.some((f) => f.some((t) => /^-|\\/.test(t)))) return unresolvable(unread);
+    }
+    combos = combos.flatMap((c) => alts.map((f) => [...c, ...f]));
+    if (combos.length > 64) return unresolvable(unread);
+  }
+  const out = new Set();
+  for (const c of combos) {
+    const words = c.map((t) => ({ text: t, literal: true }));
+    const r = cmd.name === 'echo' ? echoOutput(words) : printfOutput(words);
+    if (r.unresolvableReading) return r;
+    for (const t of r.texts) out.add(t);
+  }
+  return { ...sound([...out]), ...unresolvable(`an operand of the ${cmd.name} is an expansion whose value I read from the values this command assigns, and a construct I do not follow may give it another, so the text printed is not known`) };
 }
 // What a `$(...)`, a backtick or a `<(...)` prints when its command is one echo or printf with literal operands and no redirection,
 // here-document, substitution or further command (THE RESOLVED SUBSTITUTION in lex; the file a `bash <(echo '..')` or a `bash <
@@ -4352,7 +4407,8 @@ function literalOutput(inner, shell, depth = 0) {
 // model, the residual the surfaces name). One printer alone is its own reading unchanged (plain stays plain: the text road is open to
 // `$(echo cp)` as before); several are joined, the union capped at 64 texts (past it, UNRESOLVABLE).
 // THE EXIT (round 7 of fork PR #780 review, twenty-eighth commit, 2026-09-24; the reviewer's correctness-3 as ruled in section E of the round-6
-// rulings): an unwrapped `exit` ends the list it stands in, so nothing after it in that list prints (`(exit; echo 'cp ..') | bash` wrote nothing
+// rulings): an unwrapped `exit` with no operand or one operand that is one word (exitEndsList; any other exit is THE EXIT THAT MAY GO ON, which
+// zsh runs past) ends the list it stands in, so nothing after it in that list prints (`(exit; echo 'cp ..') | bash` wrote nothing
 // in bash, zsh or dash while the guard, reading the exit as silent, refused the copy by name), and a trap the list set before it runs its
 // text there (`(trap "echo 'cp ..'" EXIT; exit; echo ..) | bash` copied in every shell). A printer after an exit is UNRESOLVABLE naming the
 // exit; the exit ends only the subshell it stands in, so one inside a nested `( )` of the list stops mattering at that subshell's `)`
@@ -4366,6 +4422,57 @@ const catOfHeredoc = (s) => {
   if (cmd.args.some((w) => !(w.literal && (w.text === '-' || w.text === '-u')))) return null;
   return s.heredocs.map((b) => b + '\n');   // the body, each alternative the lexer read of it, with the newline the shell ends the data with
 };
+// THE EXIT THAT MAY GO ON (round 7 of fork PR #780 review, twenty-ninth commit, 2026-09-24; the reviewer's verifier on the twenty-eighth commit): zsh
+// does not end the list at an `exit` with more than one operand (`(exit 1 2; echo RAN)` printed `zsh:exit:1: too many arguments` and then RAN)
+// while bash and dash end it there (measured, bash 5.2.21, zsh 5.9, dash 0.5.12), and `exit "$@"`, `exit $*` and any operand the guard cannot
+// prove one word may make several (THE OPTION GRAMMAR's rule for a value word, dqSingleField), so THE EXIT read every such exit as the end of the
+// list and `(exit 1 2; echo 'cp ..') | bash` was UNRESOLVABLE, allowed from a cwd in no project while zsh copied onto the tracked file, where the
+// commit before refused it by name. An exit ends the list in every shell only with no operand, or one operand that is one word (a literal, a
+// double-quoted scalar expansion such as "$?"), after a leading `--` (bash and zsh take it as the end of options, dash rejects it and exits,
+// measured); any other exit is read both ways in listOutput: zsh's list, the exit silent, beside bash's and dash's, cut at the exit
+const exitEndsList = (args) => {
+  const ops = args.length && args[0].literal && args[0].text === '--' ? args.slice(1) : args;
+  return ops.length === 0 || (ops.length === 1 && ((ops[0].literal && !ops[0].glob) || dqSingleField(ops[0].raw)));
+};
+// THE TRAP'S TEXT (round 7 of fork PR #780 review, twenty-eighth commit; the round-6 refuter's EXIT-trap row; its spellings, the twenty-ninth
+// commit): a trap a list sets runs its text on the list's stream when its signal comes, an EXIT trap as the subshell ends (`(trap "echo 'cp ..'"
+// EXIT; exit) | bash` and `(trap "echo 'cp ..'" EXIT) | bash` copied in bash, zsh and dash while nothing in the list printed by the model and the
+// producer was allowed as one outside it), at a moment the model does not place among the other printers. For a segment: undefined when it sets
+// no trap; the reason the list's text is not known when its trap's text prints by the model or is one the shell fills in (`t="echo 'cp ..'";
+// (trap "$t" EXIT) | bash` copied in every shell); null when the trap's literal text prints nothing by the model (it stays a command outside the
+// model, as before). The trap is read in every spelling that sets it (the twenty-ninth commit; the reviewer's verifier: `command trap`, `builtin
+// trap`, a trap before `&&`, `||`, `&` or `|`, and one with a redirection on it were allowed from docs/ while the shells copied): wrapped by
+// `command` or `builtin` (commandOf peels them), escaped or quoted (the text is `trap`), and whatever operator follows or redirection stands on
+// it (listOutput reads it before those, since the trap is set in the frame that runs the segment); a command name that is an expansion standing
+// for `trap` (THE HEAD CANDIDATES: `t=trap; ($t "echo 'cp ..'" EXIT) | bash` copied in every shell) and an `eval` whose literal text sets a trap
+// that prints (`(eval "trap \"echo 'cp ..'\" EXIT") | bash`, the same) are the filled-in case. A trap whose text runs an eval, a function or
+// another shell prints through a producer outside the output model, the residual the surfaces name (RT-trap-eval-text-producer).
+function trapWhy(s, depth = 0) {
+  const cmd = commandOf(s.words);
+  if (cmd && cmd.name === 'trap') {
+    const ops = cmd.args.length && cmd.args[0].literal && cmd.args[0].text === '--' ? cmd.args.slice(1) : cmd.args;
+    if (ops.length > 1 && !ops[0].literal) return `a \`trap\` in the list runs \`${ops[0].raw}\`, a text the shell fills in, when its signal comes, so what it prints then is not known`;
+    const action = ops.length > 1 && !/^-/.test(ops[0].text) ? ops[0].text : null;
+    if (action != null && literalOutput(action, s.shell) != null) return `a \`trap\` in the list runs \`${action}\` when its signal comes, and what that text prints then is not placed among the list's other output, so the text printed is not known`;
+    return null;
+  }
+  const hk = rawHeadIndexOf(s.words);
+  const hw = hk >= 0 ? s.words[hk] : null;
+  if (hw && !hw.literal && hw.marks && hw.marks.includes('x') && activeHeadTexts) {
+    const texts = activeHeadTexts(hw) || [];
+    const t = texts.find((x) => /^\s*(?:(?:command|builtin)\s+)*\\?trap(?:\s|$)/.test(x));
+    if (t != null) return `the command name \`${hw.raw}\` stands for \`${t.trim()}\`, a trap whose text the shell fills in with the words after it and runs when its signal comes, so what it prints then is not known`;
+  }
+  if (cmd && cmd.name === 'eval' && cmd.args.length && cmd.args.every((w) => w.literal) && depth < NESTED_DEPTH_CAP) {
+    const r = lex(cmd.args.map((w) => w.text).join(' '), s.shell || null, { depth: depth + 1 });
+    for (const t of r.segments) {
+      if (t.paren || !t.words.length) continue;
+      const why = trapWhy(t, depth + 1);
+      if (why) return `an \`eval\` in the list sets a trap from its text (${why}), a text the shell fills in when the eval runs`;
+    }
+  }
+  return undefined;
+}
 function listOutput(segs) {
   const parts = [];
   let outside = false;
@@ -4373,12 +4480,15 @@ function listOutput(segs) {
   let exited = null;   // THE EXIT: { depth, spelling } of the first unwrapped `exit` in a subshell still open, or null
   let trapped = null;   // THE TRAP'S TEXT: why the first trap whose text prints makes the list's text unknown, read at the end
   let depth = 0;   // the `( )` nesting inside the list, so an exit ends the subshell it stands in and no other
+  let goesOn = null;   // THE EXIT THAT MAY GO ON: { depth } of the first exit bash and dash end the list at and zsh runs past, in a subshell still open
+  let beside = null;   // THE PRINTER'S OPERAND VALUE: why the texts a printer's operands stand for are read beside a rest not read, or null
+  const push = (p) => parts.push(goesOn ? { ...p, cut: true } : p);   // a part printed after such an exit is zsh's alone
   const afterExit = (name) => unresolvable(`the ${name} stands after \`${exited.spelling}\` in the list, which ends the list there: nothing after it prints, and a trap the list set before it may print a text I do not read, so the text printed is not known`);
   for (let k = 0; k < segs.length; k++) {
     const s = segs[k];
     if (s.paren) {
       if (s.paren === '(') depth++;
-      else if (!s.pattern) { if (exited && exited.depth >= depth) exited = null; depth--; }   // THE EXIT: the subshell it ended closes here (a `)` ending a case pattern closes none: THE PAREN RULE)
+      else if (!s.pattern) { if (exited && exited.depth >= depth) exited = null; if (goesOn && goesOn.depth >= depth) goesOn = null; depth--; }   // THE EXIT: the subshell it ended closes here (a `)` ending a case pattern closes none: THE PAREN RULE)
       continue;
     }
     if (s.subscriptSplit) return unresolvable(`bash reads \`${s.subscriptSplit}\` as one word, blanks and operators inside it included, and what it runs after it is a command I do not read, so the text printed is not known`);   // THE SPLIT SUBSCRIPT
@@ -4389,54 +4499,69 @@ function listOutput(segs) {
     const head0 = compoundHeadOf(s.words);
     if (head0 != null && Object.hasOwn(BODY_CLOSER, head0)) { outside = true; if (!compound) compound = head0; continue; }
     if (s.words.length && s.words.every((w) => plainWord(w) && (Object.hasOwn(CLOSERS, w.text) || w.text === ';;'))) continue;
+    // THE TRAP'S TEXT (trapWhy says which segments set a trap and what their text prints), read before the operator and the redirections: the trap
+    // is set in the frame that runs the segment whatever follows it or stands on it, so its text runs on the stream when its signal comes
+    const tw = trapWhy(s);
+    if (tw !== undefined) { if (tw && !trapped) trapped = tw; outside = true; continue; }   // the refusal is read at the list's end, so a printer after an exit names the exit (the ruling's EXIT-trap row)
     // THE APPLIED RESOLVER: a printer followed by an operator outside the model, or carrying a shape outside it, is UNRESOLVABLE with the
     // shape named; a segment whose head is no printer puts the list outside the model (null when nothing in the list prints)
     const printer = printerOf(s);
     if (printer && s.op && s.op !== ';' && s.op !== '\n' && s.op !== ')') return unresolvable(`the ${printer.name} is followed by \`${s.op}\`, an operator outside the model (whether and when its text reaches the stream depends on it), so the text printed is not known`);
     if (s.op && s.op !== ';' && s.op !== '\n' && s.op !== ')') { outside = true; continue; }
     const cat = catOfHeredoc(s);
-    if (cat) { if (exited) return afterExit('cat'); parts.push({ texts: cat, plain: false, newline: false }); continue; }
+    if (cat) { if (exited) return afterExit('cat'); push({ texts: cat, plain: false, newline: false }); continue; }
     if (s.redirects.length || s.heredocs.length || (s.stdin && s.stdin.length) || s.subs.length || s.viaSubs.length || s.arith.length || (s.closerTail && s.closerTail.length)) {
       if (printer) return unresolvable(shapeOnPrinter({ ...s, op: '' }, printer.name));
       outside = true;
       continue;
     }
     // THE SPLICED PRINTER: a command name that is an expansion, one of whose texts makes it a printer, prints the union over its texts
-    if (printer && printer.spliced) { if (exited) return afterExit(printer.name); const r = splicedOutput(printerOf({ ...s, op: '' })); if (r.unresolvableReading) return r; parts.push({ texts: r.texts, plain: false, newline: printer.name === 'echo', echo: printer }); continue; }   // spliced again with the list's own operator cleared, as segmentOutput is called below
+    if (printer && printer.spliced) { if (exited) return afterExit(printer.name); const r = splicedOutput(printerOf({ ...s, op: '' })); if (r.unresolvableReading && !r.texts) return r; if (r.unresolvableReading && !beside) beside = r.unresolvableReading; push({ texts: r.texts, plain: false, newline: printer.name === 'echo', echo: printer }); continue; }   // spliced again with the list's own operator cleared, as segmentOutput is called below
     const cmd = commandOf(s.words);
     if (!cmd) { if (s.words.every((w) => isAssignmentWord(w) || (plainWord(w) && RESERVED.has(w.text)))) continue; outside = true; continue; }
     if (cmd.unknown || cmd.opaque || 'script' in cmd || cmd.chdirs.length || cmd.writes.length) { outside = true; continue; }
-    if (cmd.name === 'exit' && !cmd.wrapped) { if (!exited) exited = { depth, spelling: ['exit', ...cmd.args.map((w) => w.raw)].join(' ') }; continue; }   // THE EXIT (a wrapped one is a command the model does not read: `command exit` ran the printer after it in zsh, `builtin exit` in dash)
+    // THE EXIT (a wrapped one is a command the model does not read: `command exit` ran the printer after it in zsh, `builtin exit` in dash);
+    // THE EXIT THAT MAY GO ON (exitEndsList says when): bash and dash end the list there, zsh runs on, so the parts after it are marked cut
+    if (cmd.name === 'exit' && !cmd.wrapped) {
+      if (exitEndsList(cmd.args)) { if (!exited) exited = { depth, spelling: ['exit', ...cmd.args.map((w) => w.raw)].join(' ') }; }
+      else if (!goesOn) goesOn = { depth };
+      continue;
+    }
     if (SILENT_COMMANDS.has(cmd.name) && !cmd.wrapped) continue;
     // a `cat` of the standard input with nothing in the list feeding it prints what the CALLER feeds the command, a text this reading cannot
     // see (round 6's third commit, 2026-09-21: `echo 'cp a b' | { bash -c "$(cat)"; }` and `| bash -c 'eval "$(cat)"'` ran the piped text in
     // every shell while the substitution was outside the model and the script went unread): UNRESOLVABLE, refused where a script or a
     // target is built from it; a cat after a `|` inside the list reads that pipe and stays outside the model with it (the residual)
     if (cmd.name === 'cat' && !cmd.wrapped && !(k > 0 && segs[k - 1].op === '|') && cmd.args.every((w) => w.literal && (w.text === '-' || w.text === '-u' || isStdinName(w.text)))) return unresolvable('a cat of the standard input stands in the list, and what the command feeds it is a text I do not read here, so the text printed is not known');
-    // THE TRAP'S TEXT (with THE EXIT, round 7 of fork PR #780 review, twenty-eighth commit; the round-6 refuter's EXIT-trap row): a trap the list
-    // sets runs its text on the list's stream when its signal comes, an EXIT trap as the subshell ends (`(trap "echo 'cp ..'" EXIT; exit) | bash`
-    // and `(trap "echo 'cp ..'" EXIT) | bash` copied in bash, zsh and dash while nothing in the list printed by the model and the producer was
-    // allowed as one outside it), at a moment the model does not place among the other printers; a trap whose text prints by the model makes the
-    // list UNRESOLVABLE, the trap named, as does one whose text the shell fills in (`t="echo 'cp ..'"; (trap "$t" EXIT) | bash` copied in every
-    // shell: the text may print anything), and one whose literal text prints nothing by the model stays a command outside it as before
-    if (cmd.name === 'trap' && !cmd.wrapped) {
-      const ops = cmd.args.length && cmd.args[0].literal && cmd.args[0].text === '--' ? cmd.args.slice(1) : cmd.args;
-      const action = ops.length > 1 && ops[0].literal && !/^-/.test(ops[0].text) ? ops[0].text : null;
-      if (!trapped && ops.length > 1 && !ops[0].literal) trapped = `a \`trap\` in the list runs \`${ops[0].raw}\`, a text the shell fills in, when its signal comes, so what it prints then is not known`;
-      else if (!trapped && action != null && literalOutput(action, s.shell) != null) trapped = `a \`trap\` in the list runs \`${action}\` when its signal comes, and what that text prints then is not placed among the list's other output, so the text printed is not known`;
-      outside = true;   // the refusal is read at the list's end, so a printer after an exit names the exit (the ruling's EXIT-trap row)
-      continue;
-    }
     if (cmd.name !== 'echo' && cmd.name !== 'printf') { outside = true; continue; }
     if (exited) return afterExit(cmd.name);   // THE EXIT
     const r = segmentOutput({ ...s, op: '' });
     if (r == null) { outside = true; continue; }
-    if (r.unresolvableReading) return r;
-    parts.push({ texts: r.texts, plain: !!r.plain, newline: cmd.name === 'echo', echo: cmd });
+    if (r.unresolvableReading && !r.texts) return r;
+    if (r.unresolvableReading && !beside) beside = r.unresolvableReading;   // THE PRINTER'S OPERAND VALUE: its texts are read, the rest refused where a project is in play
+    push({ texts: r.texts, plain: !!r.plain && !r.unresolvableReading, newline: cmd.name === 'echo', echo: cmd });
   }
   if (trapped) return unresolvable(trapped);   // THE TRAP'S TEXT
   if (!parts.length) return null;
   if (outside) return unresolvable(compound ? `a \`${compound}\` runs the echo, printf or cat inside it a number of times I do not count, so the text printed is not known` : 'a command whose output I do not read stands in the list beside an echo, a printf or a cat of a here-document, so the text printed is not known');
+  const whole = joinParts(parts);
+  if (whole.unresolvableReading) return whole;
+  let r = whole;
+  // THE EXIT THAT MAY GO ON: zsh's reading (the whole list, the exit silent) beside bash's and dash's (the parts before the exit and after the `)`
+  // of the subshell it ended); where bash and dash print nothing the whole list's reading stands alone (the empty script writes nothing), plain
+  // staying plain, so a text road target the list prints is judged by name as the commit before judged it
+  const kept = parts.filter((p) => !p.cut);
+  if (kept.length && kept.length < parts.length) {
+    const cut = joinParts(kept);
+    if (cut.unresolvableReading) return cut;
+    const texts = [...new Set([...whole.texts, ...cut.texts])];
+    if (texts.length > 64) return unresolvable('a list printing more alternative texts than I hold');
+    r = sound(texts);
+  }
+  return beside ? { ...sound(r.texts), ...unresolvable(beside) } : r;   // THE PRINTER'S OPERAND VALUE: the texts read beside the rest not read (never plain)
+}
+// the reading of a list's printed parts, in order: one part is its own reading (plain stays plain); several are joined with the newline an echo adds
+function joinParts(parts) {
   if (parts.length === 1) return parts[0].plain ? plain(parts[0].texts) : sound(parts[0].texts);
   let texts = [''];
   for (const p of parts) {
@@ -5139,7 +5264,8 @@ function withDashPieces(segs) {
 }
 function extract(command, ctx) {
   const prevHeads = activeHeadTexts;   // THE SPLICED PRINTER: the resolver is this text's while it is read and the caller's again after, whatever ends the read
-  try { return extractIn(command, ctx); } finally { activeHeadTexts = prevHeads; }
+  const prevOperands = activeOperandTexts;   // THE PRINTER'S OPERAND VALUE, the same
+  try { return extractIn(command, ctx); } finally { activeHeadTexts = prevHeads; activeOperandTexts = prevOperands; }
 }
 function extractIn(command, ctx) {
   const { shell, depth } = ctx;
@@ -5177,6 +5303,16 @@ function extractIn(command, ctx) {
     const texts = c ? c.texts.slice() : [];
     for (const t of vanishedHeadTexts(w)) if (!texts.includes(t)) texts.push(t);   // THE VANISHING HEAD: the empty text where the command never gives the name a value (`e=echo; $e .. | bash` keeps its one text, echo, and its refusal by name)
     return texts.length ? texts : null;
+  };
+  // THE PRINTER'S OPERAND VALUE (valuedOperandOutput says why): an echo or printf operand holding `$name` spellings stands for the texts THE HEAD
+  // CANDIDATES compose for it (a vanished value's texts too: the rest is read as not read beside them); none while the command names IFS (the
+  // fields and the `"$*"` join follow a rule the resolver does not compute) or a name holds a value the resolver could not establish
+  const callerOperands = activeOperandTexts;
+  activeOperandTexts = (w) => {
+    if (!headTextsOf) return callerOperands ? callerOperands(w) : null;
+    if (ifsNamed) return null;
+    const c = headTextsOf(w);
+    return c && !c.unread && c.texts && c.texts.length ? c.texts : null;
   };
   let lexed = lex(command, shell, lexOpts);
   let segments = withDashPieces(lexed.segments);
@@ -5229,10 +5365,26 @@ function extractIn(command, ctx) {
   const unreadValueWhy = ctx.unreadValueWhy || new Map();   // why a name of unreadValues holds a value not read, where the reading said (round 7's twenty-fifth commit: a value composed from a positional parameter of a list rebound to values not read)
   const unreadValues = ctx.unreadValues || new Set();   // the names a value the resolver looked at and could not establish is given (round 6's fifth commit): a command name or script formed from such a name is UNRESOLVABLE
   const noteCandidate = (w) => {
-    // THE SUBSCRIPTED ASSIGNMENT: `NAME[subscript]=value` writes an element of NAME, and which text `$NAME` stands for after it (bash's element 0,
-    // zsh's characters of a scalar) is not a value the candidates read, so the name is marked, refused where it is a command name or a script
-    const sub = subscriptAssignmentLen(w.raw) ? w.raw.match(/^([A-Za-z_][A-Za-z0-9_]*)\[/) : null;
-    if (sub) { unreadValues.add(sub[1]); if (!unreadValueWhy.has(sub[1])) unreadValueWhy.set(sub[1], `\`${w.raw}\` writes an element of \`${sub[1]}\`, and which text \`$${sub[1]}\` stands for after it is not a value I read`); return; }
+    // THE ELEMENT WRITE (round 7 of fork PR #780 review, twenty-ninth commit, 2026-09-24; the reviewer's verifier on the twenty-eighth commit, which
+    // marked the name wholly unread here): `NAME[subscript]=value` writes an element of NAME. bash's `$NAME` is `${NAME[0]}`, which an element other
+    // than 0 leaves as it was and element 0 makes the value; dash runs the word as a command and leaves NAME as it was; zsh splices the value into
+    // a scalar's characters (measured). So the name keeps every value it held, gains the element's value as a plain assignment gives it (`+=`
+    // appends, as there), and holds a text not read beside them (THE VANISHED VALUE: zsh's splice, bash's other elements), so `X=cp; X[1]=a;
+    // eval "$X {NA}/base/report.md {NA}/docs/report.md"`, allowed from a cwd in no project at the twenty-eighth commit while bash and dash copied,
+    // reads the copy and is refused by name from any cwd, and the rest not read takes the roads a vanished value takes (THE UNHELD ROAD, THE UNREAD
+    // OPERAND). A word whose subscript this reader does not place in the text keeps the name unread, as before.
+    const subLen = subscriptAssignmentLen(w.raw);
+    if (subLen) {
+      const name = w.raw.match(/^([A-Za-z_][A-Za-z0-9_]*)\[/)[1];
+      const tLen = subscriptShapeLen(w.text, w.marks || 'u'.repeat(w.text.length));
+      if (!tLen) { unreadValues.add(name); if (!unreadValueWhy.has(name)) unreadValueWhy.set(name, `\`${w.raw}\` writes an element of \`${name}\`, and which text \`$${name}\` stands for after it is not a value I read`); return; }
+      vanishedValues.add(name);
+      const op = w.text.slice(0, tLen).endsWith('+=') ? '+=' : '=';
+      const valueText = w.text.slice(tLen);
+      const valueMarks = (w.marks || 'u'.repeat(w.text.length)).slice(tLen);
+      noteCandidate({ ...w, text: name + op + valueText, marks: 'u'.repeat(name.length + op.length) + valueMarks, raw: name + op + w.raw.slice(subLen), literal: !valueMarks.includes('x') && !valueText.includes('\0'), glob: false });
+      return;
+    }
     const m = w.text.match(/^([A-Za-z_][A-Za-z0-9_]*)(\+?=)([^]*)$/);
     if (!m || (w.marks && /x/.test(w.marks.slice(0, m[1].length)))) return;   // the name itself an expansion: no candidate (the NUL a substitution stands as is in the value of a word whose readings scriptTexts answers below)
     if (!candidates.has(m[1])) candidates.set(m[1], new Set());
@@ -6383,7 +6535,7 @@ function extractIn(command, ctx) {
     const optionWord = role === 'option';   // THE SHELL'S OPTION WORD: a text role whose empty answer is a refusal (the caller records the word), so THE VANISHED TEXT, one reading beside the residual, does not stand in for it (`a=(-c); bash "${a[@]}" 'cp a b'` would read as a script file and pass)
     if (optionWord) role = 'text';
     if (role === 'value' && (w.unresolvableReading || w.readingParams)) return null;   // THE HEAD CANDIDATES' value road: an assignment value the resolver looked at and could not establish, or one that depends on a parameter's value (`y=${c:-x}`, read before the walk knows any value), marks its name (noteCandidate, unreadValues) and refuses where the name is used as a command name or a script, never here (`OUT=${OUT:-out}` alone is no write)
-    if (w.unresolvableReading) { cannotRead(w, how, { kind: 'unresolvableReading', spelling: w.unresolvableReading.raw, text: w.unresolvableReading.why }); return []; }
+    if (w.unresolvableReading) { cannotRead(w, how, { kind: 'unresolvableReading', spelling: w.unresolvableReading.raw, text: w.unresolvableReading.why }); return w.readings && !w.readingParams ? w.readings : []; }   // THE PRINTER'S OPERAND VALUE: texts read beside the rest are read too (placeReading carries both), the word recorded all the same
     if (w.why && w.why.kind === 'ifsNamed') { cannotRead(w, how, w.why); return []; }   // THE IFS RULE: a `$name` the shell splits by a rule the resolver does not compute is a text it cannot read here
     // THE FED SUBSTITUTION (round 6's fourth commit, 2026-09-21; the body auditor: `echo 'cp a b' | bash -c "$(head -1)"`, `$(sed '')`, `$(tr a a)`,
     // `$(awk 1)`, `$(dd)`, `$(</dev/stdin)`, `$(command cat)`, `$(busybox cat)` and `bash <(cat)` each ran the piped text in bash and dash while

@@ -6462,7 +6462,7 @@ test("round 5's fifth addendum, second fix-up, the rows: an expansion nested in 
       // (5) the residual, named: a producer outside THE OUTPUT MODEL (round 6's second commit narrowed it: a subshell or a `{ }` group
       // holding echo or printf commands, and silent ones, is read as what it prints; a cat of a file, a further pipe (tee) and a call of a
       // function the command defines stay outside the model, allowed while every shell writes, the residual named on the surfaces)
-      ['R-value', 'nad', "s='cp ../base/report.md report.md'; echo \"$s\" | bash", A, ['text', 'an operand of the echo is an expansion whose value I do not read']],   // a value with whitespace is never resolved (the readability rule); round 6: the echo is a producer the resolver reads and its operand one it cannot establish, UNRESOLVABLE, so the piped script refuses (`bash <<< \"$s\"` stays the unread residual: no resolver applies to a here-string word)
+      ['R-value', 'nad', "s='cp ../base/report.md report.md'; echo \"$s\" | bash", A, 'name'],   // a value with whitespace is never resolved (the readability rule); round 6: the echo is a producer the resolver reads and its operand one it cannot establish, UNRESOLVABLE, so the piped script refused; round 7's twenty-ninth commit (THE PRINTER'S OPERAND VALUE): the operand stands for the text THE HEAD CANDIDATES hold for `s`, so the copy it prints is refused by name, as at the round-5 head, beside the rest not read
       ['R-cat', 'nad', 'cat ../scratch/other.md | bash', N, 'allow'],
       ['R-tee', 'nad', "echo 'cp ../base/report.md report.md' | tee /dev/null | bash", A, 'allow'],
       ['R-subshell', 'nad', "(echo 'cp ../base/report.md report.md') | bash", A, 'name'],   // round 6's second commit: THE OUTPUT MODEL reads the subshell's list (round 5's tests-1 found this row pinned allowed as a residual)
@@ -7529,6 +7529,8 @@ const RESIDUAL_TABLE = [
   ['RT-called-body-python-system', 'a reader outside the roads', 'python3', "f() { python3 -; }; echo 'import os; os.system(\"cp ../base/report.md report.md\")' | f", ['bash', 'zsh', 'dash']],
   ['RT-python-system-fd3', 'a reader outside the roads', 'python3', "python3 /dev/fd/3 3< <(echo 'import os; os.system(\"cp ../base/report.md report.md\")')", ['bash', 'zsh']],
   ['RT-eval-echo-bare-producer', 'a producer outside the output model', null, "eval echo \"'cp ../base/report.md report.md'\" | bash", ['bash', 'zsh', 'dash']],
+  ['RT-eval-echo-dq-producer', 'a producer outside the output model', null, "(eval \"echo 'cp ../base/report.md report.md'\") | bash", ['bash', 'zsh', 'dash']],   // round 7's twenty-ninth commit: the reviewer's verifier's spelling of RT-eval-echo-producer (the eval's text one double-quoted word)
+  ['RT-trap-eval-text-producer', 'a producer outside the output model', null, "(trap \"eval \\\"echo 'cp ../base/report.md report.md'\\\"\" EXIT) | bash", ['bash', 'zsh', 'dash']],   // round 7's twenty-ninth commit: a trap whose text prints through an eval, a producer outside the output model inside the trap's text (THE TRAP'S TEXT reads a text that prints by the model, trapWhy)
   ['RT-yes-head-producer', 'a producer outside the output model', 'yes', "(yes 'cp ../base/report.md report.md' | head -1) | bash", ['bash', 'zsh', 'dash']],
   ['RT-bash-bash-producer', 'a producer outside the output model', null, "(echo 'echo cp ../base/report.md report.md') | bash | bash", ['bash', 'zsh', 'dash']],
   ['RT-tee-in-subshell-consumer', 'a producer outside the output model', 'tee', "echo 'cp ../base/report.md report.md' | (tee /dev/null | bash)", ['bash', 'zsh', 'dash']],
@@ -9951,6 +9953,7 @@ test("round 7, seventeenth commit, the rows: a brace list beside a spliced print
       // the head splice beside a brace list: refused before and after (the list re-lexed to its words)
       ['S17-hs-brace', 'nad', `c=cp; $c {../base/report.md,report.md}`, BZ, 'name'],
       ['S17-hs-assign-brace', 'nad', `c=cp; A={1,2} $c ${OPS}`, A, 'name'],
+      ['S17-hs-declare-assign-brace', 'nad', `declare c=cp; A={1,2} $c ${OPS}`, BZ, 'name'],   // the splice-road twin in the round-6 ruling's form (section E, correctness-4), pinned in this table as ruled since the twenty-ninth commit: a prefix `A={1,2}` renders as one word, `A='{1,2}'` (the renderer pin below); dash has no `declare`
       ['S17-hs-mixed-brace', 'nad', `c=cp; $c {$s,report.md}`, N, ['text', NOT_LITERAL]],
       // THE SPLICE RENDERER at the head splice: a quoted prefix assignment before a head a road splices, allowed at the round-6 head while the shells ran the copy
       ['S17-hs-declare-dq', 'nad', `declare c=cp; X="a" $c ${OPS}`, BZ, 'name'],
@@ -10070,7 +10073,7 @@ test("round 7, seventeenth commit, the rows: a brace list beside a spliced print
     };
     let n = 0;
     for (const [id, cwd, raw, writers, expect, outside] of rows) { judge(id, cwd, raw, writers, expect, outside); n++; }
-    assert.equal(n, 102);
+    assert.equal(n, 103);
     // the mechanisms in-process: the words the lexer makes of a resolved substitution, the renderer over lexed words, the spelling helper, the group id
     const words = (s) => lex(s).segments[0].words;
     assert.deepEqual(words("cp a $(echo ' report.md')").map((x) => x.text), ['cp', 'a', 'report.md'], 'THE LEADING BLANK: no empty word before the first field (behaviour: S17-lb-cp)');
@@ -12713,7 +12716,6 @@ const E28_ROWS = (() => {
   const EXIT = ['text', 'stands after `exit`'];
   const TRAP = ['text', 'a `trap` in the list runs'];
   const SPLIT = ['text', 'as one word, the blanks and operators inside its brackets included'];
-  const ELEMENT = ['text', 'writes an element of `X`'];
   const OUTSIDE_MODEL = ['text', 'a command whose output I do not read'];
   const NOT_LITERAL = ['text', 'not a literal path'];
   // [id, cwd, command, the shells that write (measured), the verdict ('name', 'allow', or ['text', a substring]), the verdict from a cwd in no
@@ -12723,7 +12725,7 @@ const E28_ROWS = (() => {
     ['E28-exit-sub-pipe', 'nad', `(exit; ${ECHO}) | bash`, N, EXIT],
     ['E28-exit-operand-0', 'nad', `(exit 0; ${ECHO}) | bash`, N, ['text', 'stands after `exit 0`']],
     ['E28-exit-operand-1', 'nad', `(exit 1; ${ECHO}) | bash`, N, ['text', 'stands after `exit 1`']],
-    ['E28-exit-operand-status', 'nad', `(exit $?; ${ECHO}) | bash`, N, ['text', 'stands after `exit $?`']],
+    ['E28-exit-operand-status', 'nad', `(exit $?; ${ECHO}) | bash`, N, 'name'],   // the twenty-ninth commit: an unquoted `$?` is an operand the guard cannot prove one word (THE EXIT THAT MAY GO ON), so zsh's reading, the exit silent, is read beside bash's and the copy is refused by name where no shell writes (a cost); `exit "$?"` ends the list (E29-goes-ends-dq-status)
     ['E28-exit-quoted', 'nad', `('exit'; ${ECHO}) | bash`, N, EXIT],
     ['E28-exit-escaped', 'nad', `(\\exit; ${ECHO}) | bash`, N, EXIT],
     ['E28-exit-newline', 'nad', `(exit\n${ECHO}) | bash`, N, EXIT],
@@ -12867,10 +12869,11 @@ const E28_ROWS = (() => {
     ['E28-sub-substitution', 'nad', 'X[$(echo 1)]=a cp ../base/report.md report.md', BZ, 'name'],
     ['E28-sub-substitution-blank', 'nad', 'X[$(echo 1 2)]=a cp ../base/report.md report.md', B, 'name'],   // bash reads the text inside the subscript unsplit (the text road had cut the word at the blank)
     ['E28-sub-nested-brackets', 'nad', 'X[a[1]]=a cp ../base/report.md report.md', B, 'name'],
-    // alone, the word writes an element: bash's `$X` is `${X[0]}`, so the value `$X` stands for after it is not read
-    ['E28-sub-element-head', 'nad', 'X=ls; X[0]=cp; $X ../base/report.md report.md', B, ELEMENT],
-    ['E28-sub-element-head-braced', 'nad', 'X=ls; X[0]=cp; ${X} ../base/report.md report.md', B, ELEMENT],
-    ['E28-sub-element-eval', 'nad', 'X=ls; X[0]=cp; eval "$X ../base/report.md report.md"', B, ELEMENT],
+    // alone, the word writes an element: bash's `$X` is `${X[0]}`; since the twenty-ninth commit (THE ELEMENT WRITE) the name keeps its values and
+    // gains the element's, a text not read beside them, so the copy bash runs is refused by name (the twenty-eighth commit refused it as unread)
+    ['E28-sub-element-head', 'nad', 'X=ls; X[0]=cp; $X ../base/report.md report.md', B, 'name'],
+    ['E28-sub-element-head-braced', 'nad', 'X=ls; X[0]=cp; ${X} ../base/report.md report.md', B, 'name'],
+    ['E28-sub-element-eval', 'nad', 'X=ls; X[0]=cp; eval "$X ../base/report.md report.md"', B, 'name'],
     ['E28-sub-element-target', 'nad', 'X=other.md; X[0]=report.md; cp ../base/report.md $X', B, ['text', 'a subscript']],
     // THE SPLIT SUBSCRIPT: bash reads a subscript holding a blank or an operator as one word; zsh and dash split it and run nothing of it
     ['E28-split-blank', 'nad', 'X[a b]=a cp ../base/report.md report.md', B, SPLIT],
@@ -12983,11 +12986,245 @@ test("round 7, twenty-eighth commit: the population by group and where the code 
   // where the code lives (the rows above prove what it does; each pin names the rows that red without it)
   const hook = fs.readFileSync(HOOK, 'utf8');
   assert.ok(hook.includes("const SILENT_COMMANDS = new Set(['true', ':', 'false', 'test', '[', 'sleep', 'shift', 'break', 'continue', 'return', 'wait']);"), 'correctness-3 as ruled: `exit` leaves SILENT_COMMANDS and `return`, `break` and `continue` stay (behaviour: E28-exit-sub-pipe, E28-silent-*)');
-  assert.ok(hook.includes("if (cmd.name === 'exit' && !cmd.wrapped) { if (!exited) exited = { depth, spelling:"), 'THE EXIT: an unwrapped exit is recorded with its depth (behaviour: E28-exit-*)');
-  assert.ok(hook.includes('else if (!s.pattern) { if (exited && exited.depth >= depth) exited = null; depth--; }'), 'THE EXIT: the subshell it ended closes at its `)` (behaviour: E28-exit-ctl-nested-harmless)');
+  assert.ok(hook.includes("if (cmd.name === 'exit' && !cmd.wrapped) {") && hook.includes('if (exitEndsList(cmd.args)) { if (!exited) exited = { depth, spelling:'), 'THE EXIT: an unwrapped exit that ends the list in every shell is recorded with its depth (behaviour: E28-exit-*; the exit zsh runs past, E29-goes-*)');
+  assert.ok(hook.includes('else if (!s.pattern) { if (exited && exited.depth >= depth) exited = null; if (goesOn && goesOn.depth >= depth) goesOn = null; depth--; }'), 'THE EXIT: the subshell it ended closes at its `)` (behaviour: E28-exit-ctl-nested-harmless, E29-goes-cut-nested)');
   assert.ok(hook.includes("const alts = !oneWord && plainPrefixAssignment() ? [[buf, marks]] : braceExpand(buf, marks);"), 'correctness-4 as ruled: endWord skips braceExpand for a plain prefix assignment (behaviour: E28-assign-*)');
   assert.ok(/const plainPrefixAssignment = \(\) => [^\n]*seg\.words\.every\(\(w\) => isAssignmentWord\(w\) \|\| \(plainWord\(w\) && RESERVED\.has\(w\.text\)\)\);/.test(hook) && !/const plainPrefixAssignment = [^\n]*VAR_ASSIGNERS/.test(hook), 'and never for a declaration\'s operand (behaviour: E28-decl-*)');
-  assert.ok(hook.includes("if (cmd.name === 'trap' && !cmd.wrapped) {"), 'THE TRAP\'S TEXT in listOutput (behaviour: E28-trap-*)');
+  assert.ok(hook.includes('const tw = trapWhy(s);') && hook.includes("if (cmd && cmd.name === 'trap') {"), 'THE TRAP\'S TEXT in listOutput, read through trapWhy before the operator and the redirections since the twenty-ninth commit (behaviour: E28-trap-*, E29-trap-*)');
   assert.ok(hook.includes('const isAssignmentWord = (w) => /^[A-Za-z_][A-Za-z0-9_]*\\+?=/.test(w.raw) || subscriptAssignmentLen(w.raw) > 0;') && hook.includes('while (k < words.length && (isAssignmentWord(words[k]) ||'), 'THE SUBSCRIPTED ASSIGNMENT: commandOf skips it as an assignment (behaviour: E28-sub-note-*, E28-sub-one)');
   assert.ok(hook.includes("if (!inWord && !expect && !oneWord && !seg.subscriptSplit && /[A-Za-z_]/.test(c)") && hook.includes('if (splitSubscript) for (const w of seg.words) cannotRead(w, \'command\', splitSubscript);'), 'THE SPLIT SUBSCRIPT: the lexer marks the segment and the walk reads every word from it on as one it cannot read (behaviour: E28-split-*)');
+});
+
+// ── round 7 of fork PR #780 review, twenty-ninth commit (2026-09-24): the reviewer's verifier on the twenty-eighth commit (group E) ──
+//
+// THE EXIT THAT MAY GO ON: THE EXIT read every unwrapped `exit` as the end of the list, but zsh runs past an `exit` with more than one operand (it
+// prints `zsh:exit:1: too many arguments` and goes on) while bash and dash end the list there, and `exit "$@"`, `exit $*` and any operand the guard
+// cannot prove one word may make several; the twenty-eighth commit made the printer after such an exit UNRESOLVABLE, allowed from a cwd in no
+// project while zsh copied onto the tracked file, where the commit before refused it by name. Such an exit is read both ways: zsh's list, the exit
+// silent, beside bash's and dash's, cut at the exit to the `)` of its subshell. THE ELEMENT WRITE: noteCandidate marked a name wholly unread on any
+// `NAME[subscript]=value`, where bash's `$NAME` is element 0 and dash leaves the name as it was, so a script over the name was UNRESOLVABLE, allowed
+// from a cwd in no project while bash and dash copied; the name keeps its values, gains the element's, and holds a text not read beside them (THE
+// VANISHED VALUE). THE PRINTER'S OPERAND VALUE (a regression round 6's first commit made, refused by name at the round-5 head): an echo or printf
+// operand holding an expansion the command gives values was UNRESOLVABLE, allowed from a cwd in no project while every shell copied; the operand
+// stands for the texts THE HEAD CANDIDATES compose, read beside the rest not read. THE TRAP'S TEXT's spellings: a trap wrapped by `command` or
+// `builtin`, before an operator, with a redirection, a command name standing for `trap` and an eval setting one make the list UNRESOLVABLE as the
+// plain trap does; a trap whose text prints through an eval, and an eval that prints, are producers outside the output model (the residual table).
+// Each row runs through the hook as a process from its cwd and from a cwd in no project, then unguarded in bash, zsh and dash over a fresh world,
+// the writers pinned (r7-e29-measure-rows.log in the notes); a row whose one writer is zsh keeps its hook legs on a runner without zsh, where the
+// zsh leg is NOT RUN and says so.
+// [id, cwd (a key of the world's cwds, or web: the second project's root), command, the shells that write (measured), the verdict ('name', 'allow',
+// or ['text', a substring]), the verdict from a cwd in no project ('allow' unless given; null: the row's cwd is that cwd)]
+const E29_ROWS = (() => {
+  const A = ['bash', 'zsh', 'dash'];
+  const BZ = ['bash', 'zsh'];
+  const BD = ['bash', 'dash'];
+  const B = ['bash'];
+  const Z = ['zsh'];
+  const D = ['dash'];
+  const N = [];
+  const EXIT = ['text', 'stands after `exit'];
+  const TRAP = ['text', 'a `trap` in the list runs'];
+  const TRAP_SPLICED = ['text', 'stands for `trap`'];
+  const TRAP_EVAL = ['text', 'sets a trap from its text'];
+  const VALUE_BESIDE = ['text', 'whose value I read from the values this command assigns'];
+  const UNREAD_OPERAND = ['text', 'an operand of the echo is an expansion whose value I do not read'];
+  const OUTSIDE_MODEL = ['text', 'a command whose output I do not read'];
+  return [
+    // THE EXIT THAT MAY GO ON: the verifier's rows from a cwd in no project (zsh writes), every road a printed list reaches a shell by, the in-project
+    // twins, bash's and dash's reading cut at the exit (a text printed before it), the nested subshell, the spellings that end the list in every
+    // shell, the costs and the control
+    ['E29-goes-pipe-out', 'out', "(exit 1 2; echo 'cp {NA}/base/report.md {NA}/docs/report.md') | bash", Z, 'name', null],
+    ['E29-goes-sh-out', 'out', "(exit 1 2; echo 'cp {NA}/base/report.md {NA}/docs/report.md') | sh", Z, 'name', null],
+    ['E29-goes-zsh-out', 'out', "(exit 1 2; echo 'cp {NA}/base/report.md {NA}/docs/report.md') | zsh", Z, 'name', null],
+    ['E29-goes-dash-out', 'out', "(exit 1 2; echo 'cp {NA}/base/report.md {NA}/docs/report.md') | dash", Z, 'name', null],
+    ['E29-goes-three-out', 'out', "(exit 0 0 0; echo 'cp {NA}/base/report.md {NA}/docs/report.md') | bash", Z, 'name', null],
+    ['E29-goes-at-out', 'out', "set -- 1 2; (exit \"$@\"; echo 'cp {NA}/base/report.md {NA}/docs/report.md') | bash", Z, 'name', null],
+    ['E29-goes-star-out', 'out', "set -- 1 2; (exit $*; echo 'cp {NA}/base/report.md {NA}/docs/report.md') | bash", Z, 'name', null],
+    ['E29-goes-brace-out', 'out', "(exit {1,2}; echo 'cp {NA}/base/report.md {NA}/docs/report.md') | bash", Z, 'name', null],
+    ['E29-goes-dashdash-two-out', 'out', "(exit -- 1 2; echo 'cp {NA}/base/report.md {NA}/docs/report.md') | bash", Z, 'name', null],
+    ['E29-goes-text-target-out', 'out', "cp {NA}/base/report.md $(exit 1 2; echo {NA}/docs/report.md)", Z, 'name', null],
+    ['E29-goes-text-redirect-out', 'out', "echo x > $(exit 1 2; echo {NA}/docs/report.md)", Z, 'name', null],
+    ['E29-goes-cmdsub-c-out', 'out', "bash -c \"$(exit 1 2; echo 'cp {NA}/base/report.md {NA}/docs/report.md')\"", Z, 'name', null],
+    ['E29-goes-backtick-c-out', 'out', "bash -c \"`exit 1 2; echo 'cp {NA}/base/report.md {NA}/docs/report.md'`\"", Z, 'name', null],
+    ['E29-goes-eval-out', 'out', "eval \"$(exit 1 2; echo 'cp {NA}/base/report.md {NA}/docs/report.md')\"", Z, 'name', null],
+    ['E29-goes-source-out', 'out', "source <(exit 1 2; echo 'cp {NA}/base/report.md {NA}/docs/report.md')", Z, 'name', null],
+    ['E29-goes-dot-out', 'out', ". <(exit 1 2; echo 'cp {NA}/base/report.md {NA}/docs/report.md')", Z, 'name', null],
+    ['E29-goes-procsub-out', 'out', "bash <(exit 1 2; echo 'cp {NA}/base/report.md {NA}/docs/report.md')", Z, 'name', null],
+    ['E29-goes-procsub-stdin-out', 'out', "bash < <(exit 1 2; echo 'cp {NA}/base/report.md {NA}/docs/report.md')", Z, 'name', null],
+    ['E29-goes-herestring-out', 'out', "bash <<< \"$(exit 1 2; echo 'cp {NA}/base/report.md {NA}/docs/report.md')\"", Z, 'name', null],
+    ['E29-goes-printf-out', 'out', "(exit 1 2; printf 'cp {NA}/base/report.md {NA}/docs/report.md') | bash", Z, 'name', null],
+    ['E29-goes-cat-heredoc-out', 'out', "(exit 1 2; cat <<'EOF'\ncp {NA}/base/report.md {NA}/docs/report.md\nEOF\n) | bash", Z, 'name', null],
+    ['E29-goes-spliced-out', 'out', "e=echo; (exit 1 2; $e 'cp {NA}/base/report.md {NA}/docs/report.md') | bash", Z, 'name', null],
+    ['E29-goes-group-out', 'out', "{ exit 1 2; echo 'cp {NA}/base/report.md {NA}/docs/report.md'; } | bash", Z, 'name', null],
+    ['E29-goes-mv-out', 'out', "(exit 1 2; echo 'mv {NA}/base/report.md {NA}/docs/report.md') | bash", Z, 'name', null],
+    ['E29-goes-redir-text-out', 'out', "(exit 1 2; echo 'echo x > {NA}/docs/report.md') | bash", Z, 'name', null],
+    ['E29-goes-notes-out', 'out', "(exit 1 2; echo 'cp {NA}/base/report.md {NA}/notes/new.md') | bash", Z, 'name', null],
+    ['E29-goes-relproj-out', 'out', "(exit 1 2; echo 'cp ../notes-api/base/report.md ../notes-api/docs/report.md') | bash", Z, 'name', null],
+    ['E29-goes-web-cwd', 'web', "(exit 1 2; echo 'cp {NA}/base/report.md {NA}/docs/report.md') | bash", Z, 'name', 'name'],
+    ['E29-goes-pipe', 'nad', "(exit 1 2; echo 'cp ../base/report.md report.md') | bash", Z, 'name'],
+    ['E29-goes-root', 'na', "(exit 1 2; echo 'cp base/report.md docs/report.md') | bash", Z, 'name'],
+    ['E29-goes-notes', 'nan', "(exit 1 2; echo 'cp ../base/report.md n1.md') | bash", Z, 'name'],
+    ['E29-goes-backtick-c', 'nad', "bash -c \"`exit 1 2; echo 'cp ../base/report.md report.md'`\"", Z, 'name'],
+    ['E29-goes-cat-heredoc', 'nad', "(exit 1 2; cat <<'EOF'\ncp ../base/report.md report.md\nEOF\n) | bash", Z, 'name'],
+    ['E29-goes-cut-printf', 'nad', "(printf 'cp ../base/report.md report.md'; exit 1 2; printf '.bak\\n') | bash", BD, 'name'],
+    ['E29-goes-cut-printf-out', 'out', "(printf 'cp {NA}/base/report.md {NA}/docs/report.md'; exit 1 2; printf '.bak\\n') | bash", BD, 'name', null],
+    ['E29-goes-cut-echo-first', 'nad', "(echo 'cp ../base/report.md report.md'; exit 1 2; echo ls) | bash", A, 'name'],
+    ['E29-goes-cut-echo-after', 'nad', "(echo ls; exit 1 2; echo 'cp ../base/report.md report.md') | bash", Z, 'name'],
+    ['E29-goes-cut-nested', 'nad', "( (exit 1 2; echo ls); echo 'cp ../base/report.md report.md') | bash", A, 'name'],
+    ['E29-goes-cut-nested-first', 'nad', "( (echo 'cp ../base/report.md report.md'; exit 1 2); echo ls) | bash", A, 'name'],
+    ['E29-goes-ends-dq-status', 'nad', "(exit \"$?\"; echo 'cp ../base/report.md report.md') | bash", N, EXIT],
+    ['E29-goes-ends-dashdash-one', 'nad', "(exit -- 1; echo 'cp ../base/report.md report.md') | bash", N, EXIT],
+    ['E29-goes-ends-literal-word', 'nad', "(exit abc; echo 'cp ../base/report.md report.md') | bash", N, EXIT],
+    ['E29-goes-cost-unquoted-status', 'nad', "(exit $?; echo 'cp ../base/report.md report.md') | bash", N, 'name'],
+    ['E29-goes-cost-split-var', 'nad', "x='1 2'; (exit $x; echo 'cp ../base/report.md report.md') | bash", N, 'name'],
+    ['E29-goes-ctl-harmless', 'nad', "(exit 1 2; echo ls) | bash", N, 'allow'],
+    ['E29-goes-ctl-nested-cleared', 'nad', "(printf 'cp ../base/report.md report.md'; (exit 1 2); printf '.bak\\n') | bash", N, 'allow'],   // an exit in a nested subshell ends that subshell alone: every shell prints the copy onto report.md.bak, untracked
+    // THE ELEMENT WRITE: the verifier's twelve rows from a cwd in no project (bash and dash write), the head, the pipe, the in-project twins, element 0,
+    // zsh's splice, and the control
+    ['E29-elem-eval-out', 'out', "X=cp; X[1]=a; eval \"$X {NA}/base/report.md {NA}/docs/report.md\"", BD, 'name', null],
+    ['E29-elem-bash-c-out', 'out', "X=cp; X[1]=a; bash -c \"$X {NA}/base/report.md {NA}/docs/report.md\"", BD, 'name', null],
+    ['E29-elem-sh-c-out', 'out', "X=cp; X[1]=a; sh -c \"$X {NA}/base/report.md {NA}/docs/report.md\"", BD, 'name', null],
+    ['E29-elem-zsh-c-out', 'out', "X=cp; X[1]=a; zsh -c \"$X {NA}/base/report.md {NA}/docs/report.md\"", BD, 'name', null],
+    ['E29-elem-command-eval-out', 'out', "X=cp; X[1]=a; command eval \"$X {NA}/base/report.md {NA}/docs/report.md\"", BD, 'name', null],
+    ['E29-elem-two-eval-out', 'out', "X=cp; X[2]=a; eval \"$X {NA}/base/report.md {NA}/docs/report.md\"", BD, 'name', null],
+    ['E29-elem-key-eval-out', 'out', "X=cp; X[k]=a; eval \"$X {NA}/base/report.md {NA}/docs/report.md\"", D, 'name', null],
+    ['E29-elem-append-eval-out', 'out', "X=cp; X[1]+=a; eval \"$X {NA}/base/report.md {NA}/docs/report.md\"", BD, 'name', null],
+    ['E29-elem-target-eval-out', 'out', "t={NA}/docs/report.md; t[1]=x; eval \"cp {NA}/base/report.md $t\"", BD, 'name', null],
+    ['E29-elem-target-bash-c-out', 'out', "t={NA}/docs/report.md; t[1]=x; bash -c \"cp {NA}/base/report.md $t\"", BD, 'name', null],
+    ['E29-elem-relproj-eval-out', 'out', "X=cp; X[1]=a; eval \"$X ../notes-api/base/report.md ../notes-api/docs/report.md\"", BD, 'name', null],
+    ['E29-elem-in-bash-c-out', 'out', "bash -c 'X=cp; X[1]=a; eval \"$X {NA}/base/report.md {NA}/docs/report.md\"'", A, 'name', null],
+    ['E29-elem-eval-unq-out', 'out', "X=cp; X[1]=a; eval $X {NA}/base/report.md {NA}/docs/report.md", BD, 'name', null],
+    ['E29-elem-head-out', 'out', "X=cp; X[1]=a; $X {NA}/base/report.md {NA}/docs/report.md", BD, 'name', null],
+    ['E29-elem-pipe-out', 'out', "X=cp; X[1]=a; echo \"$X {NA}/base/report.md {NA}/docs/report.md\" | bash", BD, 'name', null],
+    ['E29-elem-declare-pipe-out', 'out', "X=cp; declare X[1]=a; echo \"$X {NA}/base/report.md {NA}/docs/report.md\" | bash", BD, 'name', null],
+    ['E29-elem-web-cwd', 'web', "X=cp; X[1]=a; eval \"$X {NA}/base/report.md {NA}/docs/report.md\"", BD, 'name', 'name'],
+    ['E29-elem-eval', 'nad', "X=cp; X[1]=a; eval \"$X ../base/report.md report.md\"", BD, 'name'],
+    ['E29-elem-head', 'nad', "X=cp; X[1]=a; $X ../base/report.md report.md", BD, 'name'],
+    ['E29-elem-zero-head', 'nad', "X=ls; X[0]=cp; $X ../base/report.md report.md", B, 'name'],
+    ['E29-elem-zero-quoted-head', 'nad', "X=ls; X[0]=cp; \"$X\" ../base/report.md report.md", B, 'name'],
+    ['E29-elem-zero-derived', 'nad', "X=ls; X[0]=cp; c=$X; $c ../base/report.md report.md", B, 'name'],
+    ['E29-elem-zero-pipe', 'nad', "X=ls; X[0]=cp; echo \"$X ../base/report.md report.md\" | bash", B, 'name'],
+    ['E29-elem-zero-append', 'nad', "X=c; X[0]+=p; $X ../base/report.md report.md", B, 'name'],
+    ['E29-elem-zsh-splice', 'nad', "X=xp; X[1]=c; $X ../base/report.md report.md", Z, 'name'],
+    ['E29-elem-zsh-splice-eval', 'nad', "X=xp; X[1]=c; eval \"$X ../base/report.md report.md\"", Z, 'name'],
+    ['E29-elem-ctl-untracked', 'nad', "X=cp; X[1]=a; eval \"$X ../base/report.md new.md\"", N, 'allow'],
+    // THE PRINTER'S OPERAND VALUE: the regression rows (refused at the round-5 head), every road and every later write, the unquoted value with a
+    // blank (bash's and dash's fields, zsh's one word), the cwds, and the controls: a harmless value is refused where a project is in play (the rest
+    // not read) and allowed from a cwd in no project, a name the command never sets and a glob value stay unread, a value no assignment gives stays
+    // the residual
+    ['E29-val-dq-out', 'out', "X=cp; echo \"$X {NA}/base/report.md {NA}/docs/report.md\" | bash", A, 'name', null],
+    ['E29-val-unq-out', 'out', "X=cp; echo $X {NA}/base/report.md {NA}/docs/report.md | bash", A, 'name', null],
+    ['E29-val-printf-out', 'out', "X=cp; printf '%s\\n' \"$X {NA}/base/report.md {NA}/docs/report.md\" | bash", A, 'name', null],
+    ['E29-val-printf-format-out', 'out', "X=cp; printf \"$X {NA}/base/report.md {NA}/docs/report.md\\n\" | bash", A, 'name', null],
+    ['E29-val-target-out', 'out', "t={NA}/docs/report.md; echo \"cp {NA}/base/report.md $t\" | bash", A, 'name', null],
+    ['E29-val-blank-unq-out', 'out', "X='cp {NA}/base/report.md'; echo $X {NA}/docs/report.md | bash", A, 'name', null],
+    ['E29-val-blank-printf-unq-out', 'out', "X='cp {NA}/base/report.md {NA}/docs/report.md'; printf '%s ' $X | bash", A, 'name', null],
+    ['E29-val-split-printf', 'nad', "X='report.md x'; printf 'cp ../base/report.md %s\\n' $X | bash", BD, 'name'],   // bash's and dash's two fields reuse the format: the first line copies onto report.md; zsh's one word makes a copy into x
+    ['E29-val-split-printf-out', 'out', "X='{NA}/docs/report.md x'; printf 'cp {NA}/base/report.md %s\\n' $X | bash", BD, 'name', null],
+    ['E29-val-sh-out', 'out', "X=cp; echo \"$X {NA}/base/report.md {NA}/docs/report.md\" | sh", A, 'name', null],
+    ['E29-val-zsh-out', 'out', "X=cp; echo \"$X {NA}/base/report.md {NA}/docs/report.md\" | zsh", A, 'name', null],
+    ['E29-val-dash-out', 'out', "X=cp; echo \"$X {NA}/base/report.md {NA}/docs/report.md\" | dash", A, 'name', null],
+    ['E29-val-subshell-out', 'out', "X=cp; (echo \"$X {NA}/base/report.md {NA}/docs/report.md\") | bash", A, 'name', null],
+    ['E29-val-group-out', 'out', "X=cp; { echo \"$X {NA}/base/report.md {NA}/docs/report.md\"; } | bash", A, 'name', null],
+    ['E29-val-cmdsub-c-out', 'out', "X=cp; bash -c \"$(echo \"$X {NA}/base/report.md {NA}/docs/report.md\")\"", A, 'name', null],
+    ['E29-val-backtick-c-out', 'out', "X=cp; bash -c \"`echo \"$X {NA}/base/report.md {NA}/docs/report.md\"`\"", A, 'name', null],
+    ['E29-val-eval-out', 'out', "X=cp; eval \"$(echo \"$X {NA}/base/report.md {NA}/docs/report.md\")\"", A, 'name', null],
+    ['E29-val-procsub-out', 'out', "X=cp; bash <(echo \"$X {NA}/base/report.md {NA}/docs/report.md\")", BZ, 'name', null],
+    ['E29-val-procsub-stdin-out', 'out', "X=cp; bash < <(echo \"$X {NA}/base/report.md {NA}/docs/report.md\")", BZ, 'name', null],
+    ['E29-val-source-out', 'out', "X=cp; source <(echo \"$X {NA}/base/report.md {NA}/docs/report.md\")", BZ, 'name', null],
+    ['E29-val-herestring-cmdsub-out', 'out', "X=cp; bash <<< \"$(echo \"$X {NA}/base/report.md {NA}/docs/report.md\")\"", BZ, 'name', null],
+    ['E29-val-spliced-out', 'out', "X=cp; e=echo; $e \"$X {NA}/base/report.md {NA}/docs/report.md\" | bash", A, 'name', null],
+    ['E29-val-two-lines-out', 'out', "X=cp; (echo ls; echo \"$X {NA}/base/report.md {NA}/docs/report.md\") | bash", A, 'name', null],
+    ['E29-val-later-read-out', 'out', "X=cp; echo \"$X {NA}/base/report.md {NA}/docs/report.md\" | bash; read X < /dev/null", A, 'name', null],
+    ['E29-val-later-cmdsub-out', 'out', "X=cp; echo \"$X {NA}/base/report.md {NA}/docs/report.md\" | bash; X=$(cat /dev/null)", A, 'name', null],
+    ['E29-val-later-unset-out', 'out', "X=cp; echo \"$X {NA}/base/report.md {NA}/docs/report.md\" | bash; unset X", A, 'name', null],
+    ['E29-val-later-fn-out', 'out', "X=cp; echo \"$X {NA}/base/report.md {NA}/docs/report.md\" | bash; f() { X=zz; }", A, 'name', null],
+    ['E29-val-later-literal-out', 'out', "X=cp; echo \"$X {NA}/base/report.md {NA}/docs/report.md\" | bash; X=ls", A, 'name', null],
+    ['E29-val-later-element-out', 'out', "X=cp; echo \"$X {NA}/base/report.md {NA}/docs/report.md\" | bash; X[1]=a", A, 'name', null],
+    ['E29-val-later-eval-element-out', 'out', "X=cp; echo \"$X {NA}/base/report.md {NA}/docs/report.md\" | bash; eval 'X[1]=a'", A, 'name', null],
+    ['E29-val-reassigned-out', 'out', "X[1]=a; X=cp; echo \"$X {NA}/base/report.md {NA}/docs/report.md\" | bash", A, 'name', null],
+    ['E29-val-operand-mark-out', 'out', "X=cp; echo X[1]=a; echo \"$X {NA}/base/report.md {NA}/docs/report.md\" | bash", BD, 'name', null],
+    ['E29-val-web-cwd', 'web', "X=cp; echo \"$X {NA}/base/report.md {NA}/docs/report.md\" | bash", A, 'name', 'name'],
+    ['E29-val-dq', 'nad', "X=cp; echo \"$X ../base/report.md report.md\" | bash", A, 'name'],
+    ['E29-val-root', 'na', "X=cp; echo \"$X base/report.md docs/report.md\" | bash", A, 'name'],
+    ['E29-val-notes', 'nan', "X=cp; echo \"$X ../base/report.md n1.md\" | bash", A, 'name'],
+    ['E29-val-later-element', 'nad', "X=cp; echo \"$X ../base/report.md report.md\" | bash; X[1]=a", A, 'name'],
+    ['E29-val-ctl-harmless', 'nad', "X=ls; echo \"$X\" | bash", N, VALUE_BESIDE],
+    ['E29-val-ctl-harmless-out', 'out', "X=ls; echo \"$X\" | bash", N, 'allow', null],
+    ['E29-val-ctl-unset', 'nad', "echo \"$t cp ../base/report.md report.md\" | bash", A, UNREAD_OPERAND],
+    ['E29-val-ctl-glob-unq', 'nad', "X='*.md'; echo cp ../base/report.md $X | bash", A, UNREAD_OPERAND],   // bash and dash glob the value (report.md alone matches in this world), zsh prints the pattern and the consuming bash globs it: every shell copies
+    ['E29-val-ctl-read-only', 'out', "read X < /dev/null; echo \"$X {NA}/base/report.md {NA}/docs/report.md\" | bash", N, 'allow', null],
+    // THE TRAP'S TEXT's spellings (the verifier's rows), and the controls: a wrapped trap whose text prints nothing, a head standing for another
+    // command, an eval whose trap resets
+    ['E29-trap-command', 'nad', "(command trap \"echo 'cp ../base/report.md report.md'\" EXIT) | bash", BD, TRAP],
+    ['E29-trap-builtin', 'nad', "(builtin trap \"echo 'cp ../base/report.md report.md'\" EXIT) | bash", BZ, TRAP],
+    ['E29-trap-and', 'nad', "(trap \"echo 'cp ../base/report.md report.md'\" EXIT && true) | bash", A, TRAP],
+    ['E29-trap-or', 'nad', "(trap \"echo 'cp ../base/report.md report.md'\" EXIT || true) | bash", A, TRAP],
+    ['E29-trap-redir', 'nad', "(trap \"echo 'cp ../base/report.md report.md'\" EXIT 2>/dev/null) | bash", A, TRAP],
+    ['E29-trap-bg', 'nad', "(trap \"echo 'cp ../base/report.md report.md'\" EXIT & wait) | bash", BD, TRAP],
+    ['E29-trap-pipe-member', 'nad', "(trap \"echo 'cp ../base/report.md report.md'\" EXIT | cat) | bash", BD, TRAP],
+    ['E29-trap-spliced', 'nad', "t=trap; ($t \"echo 'cp ../base/report.md report.md'\" EXIT) | bash", A, TRAP_SPLICED],
+    ['E29-trap-eval', 'nad', "(eval \"trap \\\"echo 'cp ../base/report.md report.md'\\\" EXIT\") | bash", A, TRAP_EVAL],
+    ['E29-trap-escaped', 'nad', "(\\trap \"echo 'cp ../base/report.md report.md'\" EXIT && true) | bash", A, TRAP],
+    ['E29-trap-quoted-name', 'nad', "('trap' \"echo 'cp ../base/report.md report.md'\" EXIT || true) | bash", A, TRAP],
+    ['E29-trap-dashdash-and', 'nad', "(trap -- \"echo 'cp ../base/report.md report.md'\" EXIT && :) | bash", A, TRAP],
+    ['E29-trap-command-root', 'na', "(command trap \"echo 'cp base/report.md docs/report.md'\" EXIT) | bash", BD, TRAP],
+    ['E29-trap-and-notes', 'nan', "(trap \"echo 'cp ../base/report.md n1.md'\" EXIT && :) | bash", A, TRAP],
+    ['E29-trap-and-root', 'na', "(trap \"echo 'cp base/report.md docs/report.md'\" EXIT && true) | bash", A, TRAP],
+    ['E29-trap-command-procsub', 'nad', "bash <(command trap \"echo 'cp ../base/report.md report.md'\" EXIT)", B, TRAP],
+    ['E29-trap-ctl-command-silent', 'nad', "(command trap 'rm -f ../scratch/zz' EXIT; echo ls) | bash", N, OUTSIDE_MODEL],
+    ['E29-trap-ctl-spliced-other', 'nad', "t=ls; ($t \"echo 'cp ../base/report.md report.md'\" EXIT) | bash", N, 'allow'],
+    ['E29-trap-ctl-eval-plain', 'nad', "(eval 'trap - EXIT'; echo ls) | bash", N, OUTSIDE_MODEL],
+  ];
+})();
+const e29Judge = (w, [id, cwd, raw, writers, expect, outside = 'allow']) => {
+  const cmd = w.fill(raw);
+  const at = cwd === 'web' ? w.WEB : w.cwds[cwd];
+  const verdict = (h, want, where) => {
+    assert.ok(!h.reason.includes('an error of my own'), `${id}: no internal error ${where}: ${h.reason.split('\n')[0]}`);
+    if (want === 'allow') { assert.equal(h.status, 0, `${id}: allowed ${where}: ${cmd}: ${h.reason}`); return; }
+    assert.equal(h.status, 2, `${id}: refused ${where}: ${cmd}: ${h.reason}`);
+    assert.ok(!h.reason.includes(String.fromCharCode(0x2014)) && !ROMP_NOUNS.test(h.reason.split(w.W).join('<w>')), `${id}: no em dash, no romp noun`);
+    if (want === 'name') assert.match(h.reason, BY_NAME_RE, `${id}: by name ${where}: ${h.reason.split('\n')[0]}`);
+    else assert.ok(h.reason.includes(want[1]), `${id}: refused ${where}, the reason including (${want[1]}): ${h.reason.split('\n')[0]}`);
+  };
+  w.build();
+  verdict(w.hook(cmd, at), expect, `from ${cwd}`);
+  if (outside != null) { w.build(); verdict(w.hook(cmd, w.cwds.out), outside, 'from a cwd in no project'); }
+  if (namedPresent(cmd, `${id}, whose command names it: ${cmd}`)) for (const shell of shellsFor(['bash', 'zsh', 'dash'], id)) {
+    const r = w.run(cmd, at, shell);
+    assert.equal(r.changed, writers.includes(shell), `${id}: run unguarded, ${shell} ${writers.includes(shell) ? 'writes' : 'leaves'} the tracked subset: ${cmd}: ${r.stderr}`);
+  }
+};
+const e29Group = (prefix) => {
+  const w = sixthPassWorld();
+  const savedHome = process.env.HOME;
+  process.env.HOME = w.HOME;
+  try {
+    const rows = E29_ROWS.filter((r) => r[0].startsWith(prefix));
+    assert.ok(rows.length > 0, 'the group has rows');
+    for (const row of rows) e29Judge(w, row);
+  } finally { process.env.HOME = savedHome; w.rm(); }
+};
+test("round 7, twenty-ninth commit, the rows, THE EXIT THAT MAY GO ON: an exit zsh runs past (more than one operand, or one the guard cannot prove one word) is read both ways, zsh's list with the exit silent beside bash's and dash's cut at the exit, so the printer after it is refused by name from every cwd while zsh writes, a text printed before it is read as the list bash runs, and an exit that ends the list in every shell keeps THE EXIT; each with the shells that write", () => e29Group('E29-goes-'));
+test("round 7, twenty-ninth commit, the rows, THE ELEMENT WRITE: `NAME[subscript]=value` keeps the name's values and adds the element's, a text not read beside them, so a script over the name that names a tracked file is refused by name from every cwd while bash and dash copy; each with the shells that write", () => e29Group('E29-elem-'));
+test("round 7, twenty-ninth commit, the rows, THE PRINTER'S OPERAND VALUE: an echo or printf operand holding an expansion stands for the texts the command's values compose, read beside the rest not read, so the copy it prints is refused by name from every cwd, as at the round-5 head, on every road and after every later write; each with the shells that write", () => e29Group('E29-val-'));
+test("round 7, twenty-ninth commit, the rows, THE TRAP'S TEXT in every spelling that sets it: wrapped by `command` or `builtin`, before an operator, with a redirection, a command name standing for `trap` and an eval setting one make the list UNRESOLVABLE as the plain trap does; each with the shells that write", () => e29Group('E29-trap-'));
+test("round 7, twenty-ninth commit: the population by group and where the code lives (the rows above prove what it does; each pin names the rows that red without it)", () => {
+  const count = (p) => E29_ROWS.filter((r) => r[0].startsWith(p)).length;
+  assert.deepEqual({ goes: count('E29-goes-'), elem: count('E29-elem-'), val: count('E29-val-'), trap: count('E29-trap-'), all: E29_ROWS.length },
+    { goes: 46, elem: 27, val: 42, trap: 19, all: 134 }, 'the population by group, as measured (r7-e29-measure-rows.log)');
+  assert.equal(new Set(E29_ROWS.map((r) => r[0])).size, E29_ROWS.length, 'every id once');
+  // the residual rows this commit adds (THE TRAP'S TEXT reads a text that prints by the model; an eval is a producer outside it)
+  for (const id of ['RT-eval-echo-dq-producer', 'RT-trap-eval-text-producer']) assert.ok(RESIDUAL_TABLE.some((r) => r[0] === id && r[1] === 'a producer outside the output model'), `${id} stands on the residual table under its class`);
+  // the renderer pin the ruling names for the splice-road twin (behaviour: S17-hs-declare-assign-brace in the seventeenth commit's table)
+  assert.equal(guard.renderWords(lex('declare c=cp; A={1,2} $c x').segments[1].words), "A='{1,2}' $c x", 'the splice-road twin re-lexes a prefix `A={1,2}` as the one word it is (behaviour: S17-hs-declare-assign-brace)');
+  // where the code lives (the rows above prove what it does; each pin names the rows that red without it)
+  const hook = fs.readFileSync(HOOK, 'utf8');
+  assert.ok(/const exitEndsList = \(args\) => \{\n  const ops = args\.length && args\[0\]\.literal && args\[0\]\.text === '--' \? args\.slice\(1\) : args;\n  return ops\.length === 0 \|\| \(ops\.length === 1 && \(\(ops\[0\]\.literal && !ops\[0\]\.glob\) \|\| dqSingleField\(ops\[0\]\.raw\)\)\);\n\};/.test(hook), 'THE EXIT THAT MAY GO ON: an exit ends the list in every shell with no operand, or one that is one word, after a leading `--` (behaviour: E29-goes-*-out, E29-goes-ends-*)');
+  assert.ok(hook.includes('const push = (p) => parts.push(goesOn ? { ...p, cut: true } : p);') && hook.includes('const kept = parts.filter((p) => !p.cut);'), 'bash\'s and dash\'s reading is the list cut at the exit, joined with zsh\'s (behaviour: E29-goes-cut-printf, E29-goes-cut-echo-first)');
+  assert.ok(hook.includes('vanishedValues.add(name);') && hook.includes("noteCandidate({ ...w, text: name + op + valueText,"), 'THE ELEMENT WRITE: the name keeps its values, gains the element\'s and holds a text not read (behaviour: E29-elem-*)');
+  assert.ok(hook.includes('if (cmd.args.some(valued)) return valuedOperandOutput(cmd, valued, unread);') && hook.includes('activeOperandTexts = (w) => {'), 'THE PRINTER\'S OPERAND VALUE: the operand stands for the texts THE HEAD CANDIDATES compose (behaviour: E29-val-*)');
+  assert.ok(hook.includes("return w.readings && !w.readingParams ? w.readings : [];") && hook.includes("if (beside) wordReadings = { raw: spelling, texts: beside, params: null };"), 'the texts read beside the rest reach scriptTexts through placeReading, the word recorded all the same (behaviour: E29-val-*-out; E29-val-ctl-harmless refuses in play)');
+  assert.ok(hook.includes('const tw = trapWhy(s);') && hook.includes("const t = texts.find((x) => /^\\s*(?:(?:command|builtin)\\s+)*\\\\?trap(?:\\s|$)/.test(x));") && hook.includes("if (cmd && cmd.name === 'eval' && cmd.args.length && cmd.args.every((w) => w.literal) && depth < NESTED_DEPTH_CAP) {"), 'THE TRAP\'S TEXT in every spelling: read before the operator and the redirections, a head standing for `trap`, an eval setting one (behaviour: E29-trap-*)');
 });
