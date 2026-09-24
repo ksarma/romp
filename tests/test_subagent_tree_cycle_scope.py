@@ -560,10 +560,10 @@ class WalkNoteForAPathThatHoldsNoTree(_World):
         self.assertIsNone(rec[str(p)], "the key recorded for the dangling link is None (recorded %r)" % (rec[str(p)],))
 
     def _replaced_between_the_read_and_the_note(self, p, where):
-        """A live link at `p`, replaced by a tree holding the agent's file under workflows/wf_1/ right after the walk's
-        read of `p` returns. The premise is one read of `p` and then the replacement; the lookup answers None, a key is
-        recorded for `p`, that key differs from the path's re-stat after the replacement, and the next lookup answers
-        the landed file."""
+        """A live link at `p`, replaced by a tree holding the agent's file under workflows/wf_1/. The premise is one
+        replacement, right after the walk's first read of `p` returns; the lookup answers None, a key is recorded for
+        `p`, that key differs from the path's re-stat after the replacement, and the next lookup answers the landed
+        file."""
         self._place(p, "link")
         real = km._subagent_tree
         swapped = []
@@ -575,7 +575,8 @@ class WalkNoteForAPathThatHoldsNoTree(_World):
             return out
         with mock.patch.object(km, "_subagent_tree", read_then_swap):
             got, rec = self._lookup_recorded()
-        self.assertEqual(len(swapped), 1, "premise: the %s was read once and then replaced" % where)
+        self.assertEqual(len(swapped), 1, "premise: a tree replaced the link once, right after the walk's first read "
+                         "of the %s returned" % where)
         self.assertIsNone(got, "the lookup answers None: the read saw the link")
         self.assertIn(str(p), rec, "a key is recorded for the %s (recorded paths %r)" % (where, sorted(rec)))
         restat = km._chat_stat_key(str(p))
@@ -652,13 +653,14 @@ class WalkNoteForAPathThatHoldsNoTree(_World):
 
     def _tree_appears_after_the_read_of_an_absent_path(self, p):
         """Nothing at `p`, its fsid directory present; a tree holding the agent's file under workflows/wf_1/ is created
-        right after the walk's read of `p` returns. The build runs in an open cycle scope under a chat build's record,
-        and the later cycle evaluates the tab's trailing signature components over that record (_chat_sig_deps) and
-        looks the agent up again. The premises are one read of `p`, answered ((), ()). Then, in this order: the lookup
-        answers None; no recorded path but `p` moved (a premise); the tab rebuilds (the later components differ from the
-        record's at_build); `p`'s recorded key is present and None, the read's answer; the rebuild's lookup answers the
-        landed file. With `p` noted under a _chat_stat_key taken after the read, which answers the tree's own key, the
-        later components equal at_build and the rebuild assertion is red."""
+        there. The build runs in an open cycle scope under a chat build's record, and the later cycle evaluates the
+        tab's trailing signature components over that record (_chat_sig_deps) and looks the agent up again. The
+        premises are one creation, right after the walk's first read of `p` returns, and that first read answered
+        ((), ()). Then, in this order: the lookup answers None; no recorded path but `p` moved (a premise); the tab
+        rebuilds (the later components differ from the record's at_build); `p`'s recorded key is present and None, the
+        read's answer; the rebuild's lookup answers the landed file. With `p` noted under a _chat_stat_key taken after
+        the read, which answers the tree's own key, the later components equal at_build and the rebuild assertion is
+        red."""
         p.parent.mkdir(parents=True, exist_ok=True)
         self.assertFalse(os.path.lexists(str(p)), "premise: nothing at the path")
         self.addCleanup(km._SUBAGENT_TREES.pop, str(p), None)
@@ -692,8 +694,9 @@ class WalkNoteForAPathThatHoldsNoTree(_World):
         rec, now = dict(deps["task_outs"]), dict(later[0])
         restat = km._chat_stat_key(str(p))
         shown = repr(rec[str(p)]) if str(p) in rec else "nothing"
-        self.assertEqual(len(made), 1, "premise: the path was read once, then a tree appeared")
-        self.assertEqual(reads, [((), ())], "premise: the read found nothing at the path")
+        self.assertEqual(len(made), 1, "premise: a tree appeared once, right after the walk's first read of the path "
+                         "returned")
+        self.assertEqual(reads, [((), ())], "premise: the walk's first read of the path found nothing")
         self.assertIsNone(got, "the lookup answers None: the read found nothing")
         self.assertEqual({k: v for k, v in now.items() if k != str(p)}, {k: v for k, v in rec.items() if k != str(p)},
                          "premise: no recorded path but the subagents path moved")
