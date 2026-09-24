@@ -163,10 +163,11 @@ jobs:
         # function binds from such a name by a plain or annotated assignment from a name or an attribute); a
         # string anywhere else, or one held in a variable or built with %, + or .format, is outside the read,
         # as is an argv assembled one element at a time and any other call, string or in process, reached through a
-        # name the census does not resolve (tuple unpacking, a conditional expression, a parameter default, a
-        # class or instance attribute, getattr, importlib or runpy, a builtin or a module name such a star
-        # import rebinds, a function's binding from such a name made any other way, a class body's call before
-        # the class binds that name, among others), as is every
+        # name the census does not resolve (tuple unpacking, a conditional expression, a parameter default, an
+        # import by name from a module that does not define the call, a relative one included, a class or
+        # instance attribute, getattr, importlib or runpy, a builtin or a module name such a star import
+        # rebinds, a function's binding from such a name made any other way, a class body's call before the
+        # class binds that name, among others), as is every
         # module whose text spells neither pytest nor py.test and holds no star import, which the census
         # does not parse). The two plugin sets are not equal, and this
         # comment does not say they are: the box's
