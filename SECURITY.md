@@ -112,9 +112,15 @@ UID can read.
   the sanitized markup before any node reaches the page, by the sanitizer and
   again by the strip that the file preview card and the feed's notice cards run,
   so none of them makes a request to another host when a chat message, a
-  previewed file or a notice card renders; a same-document `url(#id)`, a `data:`
-  URL and this origin's own stay (in an editor webview the sanitizer also keeps
-  the kernel's origin), and the file viewer gates the same references behind a
+  previewed file or a notice card renders. A same-document `url(#id)` and this
+  origin's own stay (in an editor webview the sanitizer also keeps the kernel's
+  origin). A `data:` URL stays only when its media type is a raster image (PNG,
+  JPEG, GIF, WebP, AVIF, BMP or an icon), and every other one is removed: in
+  Firefox, a paint attribute that names a `data:` SVG, XHTML or XML document
+  loads that document, and the document fetches its own `@import` from another
+  host. Chromium and WebKit load no such document. The browser checks run in
+  Firefox only where it is installed and `ROMP_BROWSER_ENGINES` names it, since
+  CI installs Chromium alone. The file viewer gates the same references behind a
   click instead (`ui/webview/paint-refs.ts`, checked against the code by
   `ui/webview/paint-refs-census.test.ts` and, in the browser, by
   `ui/webview/chat-paint-refs-browser.test.ts`,

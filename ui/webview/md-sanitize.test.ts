@@ -305,15 +305,18 @@ function paintEl(tag: string, attrs: Record<string, string> = {}, kids: PaintEl[
  *  test does not read the list it checks). */
 const PAINT_EIGHT = ["fill", "stroke", "filter", "clip-path", "mask", "marker-start", "marker-mid", "marker-end"];
 const remoteRef = (a: string) => a === "mask" ? 'image-set("https://remote.invalid/' + a + '.png" 1x)' : a === "filter" ? "blur(2px) url(https://remote.invalid/" + a + ".svg#f)" : "url(https://remote.invalid/" + a + ".svg#p)";
-/** A chat body as DOMPurify hands it back: a paragraph holding an svg whose rects carry one remote paint attribute each, and a
- *  rect with the two references that stay under node (a same-document one and a data: URL). */
-function paintBody(): { body: PaintEl; rects: PaintEl[]; local: PaintEl } {
+/** A chat body as DOMPurify hands it back: a paragraph holding an svg whose rects carry one remote paint attribute each, a
+ *  rect with the two references that stay under node (a same-document one and a raster data: URL), and a rect naming a data:
+ *  SVG document, which goes (paint-refs.ts DATA_RASTER_TYPES: only a raster data: URL stays). */
+const DATA_DOC = "url(data:image/svg+xml,%3Csvg%2F%3E#p)";
+function paintBody(): { body: PaintEl; rects: PaintEl[]; local: PaintEl; doc: PaintEl } {
   const rects = PAINT_EIGHT.map((a) => paintEl("rect", { width: "4", height: "4", [a]: remoteRef(a) }));
-  const local = paintEl("rect", { fill: "url(#g)", stroke: "url(data:image/svg+xml,%3Csvg%2F%3E)" });
-  return { body: paintEl("body", {}, [paintEl("p", {}, [paintEl("svg", {}, [...rects, local])])]), rects, local };
+  const local = paintEl("rect", { fill: "url(#g)", stroke: "url(data:image/png;base64,iVBORw0KGgo=)" });
+  const doc = paintEl("rect", { width: "4", fill: DATA_DOC });
+  return { body: paintEl("body", {}, [paintEl("p", {}, [paintEl("svg", {}, [...rects, local, doc])])]), rects, local, doc };
 }
 
-test("the paint pass runs inside sanitizeMd BY DEFAULT: a chat body whose svg carries each of the eight paint attributes with a url() to another origin comes back without any of them, the rects kept and their other attributes untouched, a same-document url(#g) and a data: URL kept; it runs before the caller's own pass; `remoteRefs: \"keep\"` hands the eight back as DOMPurify left them", () => {
+test("the paint pass runs inside sanitizeMd BY DEFAULT: a chat body whose svg carries each of the eight paint attributes with a url() to another origin comes back without any of them, the rects kept and their other attributes untouched, a same-document url(#g) and a raster data: URL kept, a data: SVG document removed; it runs before the caller's own pass; `remoteRefs: \"keep\"` hands the eight and the document back as DOMPurify left them", () => {
   // guards the fix's default: every sanitizeMd caller but the viewer's mdBlock is covered without asking (the chat's md() and
   // userMd(), the preview card, the feed's notices); a removed call, or a default flipped to keep, fetches on render again
   const seen: string[] = [];
@@ -327,7 +330,8 @@ test("the paint pass runs inside sanitizeMd BY DEFAULT: a chat body whose svg ca
       assert.equal(chat.rects[i].getAttribute(a), null, a + ": a url() naming another origin is removed by default (the chat's call passes no options)");
       assert.deepEqual(chat.rects[i].attrs, { width: "4", height: "4" }, a + ": the attribute alone goes; the rect stays with the rest of its attributes");
     }
-    assert.deepEqual(chat.local.attrs, { fill: "url(#g)", stroke: "url(data:image/svg+xml,%3Csvg%2F%3E)" }, "a same-document reference and a data: URL stay (under node there is no page origin, so these two are what stays)");
+    assert.deepEqual(chat.local.attrs, { fill: "url(#g)", stroke: "url(data:image/png;base64,iVBORw0KGgo=)" }, "a same-document reference and a raster data: URL stay (under node there is no page origin, so these two are what stays)");
+    assert.deepEqual(chat.doc.attrs, { width: "4" }, "a data: SVG document is removed by default: its type is not a raster (Firefox loads it as a resource document, which fetches its own @import)");
     const explicit = paintBody();
     answer = explicit.body;
     sanitizeMd("<svg></svg>", undefined, { remoteRefs: "drop" });
@@ -341,6 +345,7 @@ test("the paint pass runs inside sanitizeMd BY DEFAULT: a chat body whose svg ca
     answer = viewer.body;
     sanitizeMd("<svg></svg>", undefined, { remoteRefs: "keep" });
     for (const [i, a] of PAINT_EIGHT.entries()) assert.equal(viewer.rects[i].getAttribute(a), remoteRef(a), a + ": kept under remoteRefs: \"keep\", the viewer's opt-out (its gate moves the reference behind a click instead)");
+    assert.equal(viewer.doc.getAttribute("fill"), DATA_DOC, "the data: SVG document is kept under remoteRefs: \"keep\" too: the pass does not run");
     assert.equal(seen.length, 4, "one sanitize per call");
   } finally { setMdSanitizer(null); }
 });

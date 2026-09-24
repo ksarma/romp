@@ -7,7 +7,7 @@ request logger on 127.0.0.1:Q records each request's path, Referer, Sec-Fetch-De
 browser reaches it under two names, each another origin and another site to the pages (served from 127.0.0.1):
 http://localhost:Q, a name Chromium counts as trustworthy and so sends its Sec-Fetch headers to, and
 http://remote.invalid:Q (Chromium's --host-resolver-rules maps the name to 127.0.0.1), a host the file viewer's figure
-gate does not list (the gear's figureHosts default names github.com's hosts, localhost and 127.0.0.1). Two scenes:
+gate does not list (the gear's figureHosts default names github.com's hosts, localhost and 127.0.0.1). Three scenes:
 
 test_a_notice_card_s_paint_references_reach_no_other_host: a notice card's body on the feed page (feed.ts
 noticeBodyNodes: a session writes it through POST /notice, and the feed runs it through sanitizeMd and then
@@ -40,9 +40,37 @@ Referrer-Policy changed to unsafe-url the img and the six others carried the bar
 mask still sent the origin alone, so Chromium does not take a mask's Referer from the page's policy), and with the gate
 letting every host through the img and the seven paint references that fetch arrived before any click.
 
+test_a_data_document_in_a_notice_card_or_a_hover_preview_reaches_no_other_host: the data: rule (paint-refs.ts
+DATA_RASTER_TYPES) on the kernel's own pages. In Firefox 153 a paint attribute that names a data: SVG, XHTML or XML
+document with a fragment loads it as a resource document, and that document's own @import fetches another host as the
+card renders. A notice card (POST /notice, then /feed?token=) and a hover preview (the reply's link to
+docs/paint-data.md on /chat?token=, hovered past the dwell) each carry, first, a 40 by 40 rect under a raster data: mask
+(its left half opaque), then the five attributes fill, stroke, mask, filter and clip-path, each naming a data: SVG
+document with its fragment and an @import of its own, the six other spellings Firefox loads the same way on a fill (upper
+case, a charset parameter, base64, application/xhtml+xml, text/xml and application/xml), a data: URL with no type, a
+same-document url(#g), the page's own mask (absolute on the notice, whose strip has no base; relative on the hover) and
+a data: URL typed image/png whose body is an svg with an @import. The @imports name a second server of this class's own on
+http://localhost:Q, listening on 127.0.0.1 and ::1 at one port, which logs each request's path, Referer class and
+Sec-Fetch headers. The scene drives Chromium always, and Firefox and WebKit when ROMP_BROWSER_ENGINES names them (a comma
+list; any other name fails the test, and a named engine that does not launch is a failure, never a skip). CI's extension
+job installs Chromium alone and sets no such variable, so it runs the Chromium leg with nothing skipped; the Firefox and
+WebKit figures are runs on a machine that has those engines, with the variable set. In each engine, after both cards
+rendered and the page's own mask was requested from the kernel (the positive control), each page sets the same documents,
+unsanitized, outside the card, and the driver waits (bounded) for the loads the engine makes of them (CONTROL_LOADS: all
+eleven per page in Firefox, none in Chromium or WebKit, which load no data: paint document, so in them the scene is a DOM
+witness), then drains 1.5 s. Asserted per engine and card: no request reached the sink from the card's documents, every
+document reference is removed from its element, the controls stay as written, the kept raster mask draws (its left half
+red and its right half not, in Chromium and Firefox; WebKit 26.5 applies no data: mask), the hover card was still up, no
+page error, and the feed page reached the sink once afterwards. Red with b4f9139b8's paint-refs.ts and md-sanitize.ts
+(2026-09-24, Playwright 1.62.1): in Firefox 153 the sink received the eleven @imports of each card's documents, 22 in
+all, each Sec-Fetch-Dest style, cross-site, no-cors and with no Referer, and the removal subtests were red in all three
+engines; the controls, the control loads and the drawing were green there, since the rule changes only what is removed.
+
 Skips LOUDLY without the extension deps or a Playwright browser; the CI extension job installs Chromium and runs served
 files with ROMP_SERVED_TESTS_REQUIRE=1, which turns any skip into a failure there. SYNTHETIC fixtures only (session web,
 the notes-api demo world, a placeholder uuid, the host remote.invalid)."""
+import base64
+import errno
 import json
 import os
 import re
@@ -55,6 +83,7 @@ import tempfile
 import threading
 import time
 import unittest
+import urllib.parse
 import urllib.request
 import zlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -76,6 +105,107 @@ REMOTE_HOST = "remote.invalid"   # the logger's name in the viewer scene, mapped
 # the eight paint attributes, by the file name each asks the logger for (the scene's prefix goes in front)
 PAINT = ("fill.svg", "stroke.svg", "clip.svg", "mask.svg", "filter.svg", "ms.svg", "mm.svg", "me.svg")
 VIEWER_AWAITED = ("img.png", "fill.svg", "mask.svg")   # what the viewer scene waits for after the click (bounded)
+DATA_FILE = "docs/paint-data.md"   # the hover scene's markdown file of data: documents
+ENGINES = ("chromium", "firefox", "webkit")
+# What each engine loads from the unsanitized control's data: documents (the five attributes and the six other spellings),
+# measured 2026-09-24 in Playwright 1.62.1: Firefox 153 every one, Chromium 151 and WebKit 26.5 none (they load no data:
+# paint document, sanitized or not, so in them the data: scene is a DOM witness).
+CONTROL_LOADS = {"chromium": False, "firefox": True, "webkit": False}
+# The engines whose kept raster data: mask draws (measured 2026-09-24: Chromium 151 and Firefox 153; WebKit 26.5 applied no
+# data: mask, unsanitized either, so its pixels are not asserted).
+MASK_DRAWS = ("chromium", "firefox")
+PAINT_FRAG = (("fill", "p"), ("stroke", "p"), ("mask", "m"), ("filter", "f"), ("clip-path", "c"))
+
+
+def _engines():
+    """The engines the data: scene drives: Chromium always, then each engine ROMP_BROWSER_ENGINES names (a comma list), in its
+    order. A name outside ENGINES raises, so a misspelling fails the test instead of quietly running Chromium alone."""
+    asked = [e.strip() for e in (os.environ.get("ROMP_BROWSER_ENGINES") or "").split(",") if e.strip()]
+    bad = [e for e in asked if e not in ENGINES]
+    if bad:
+        raise AssertionError("ROMP_BROWSER_ENGINES names %r, outside %s" % (bad, ", ".join(ENGINES)))
+    out = ["chromium"]
+    for e in asked:
+        if e not in out:
+            out.append(e)
+    return out
+
+
+def _uri(s):
+    """encodeURIComponent: every character but the unreserved marks percent-encoded."""
+    return urllib.parse.quote(s, safe="-_.!~*'()")
+
+
+def _doc_svg(import_url):
+    """A data: document's markup: an svg whose <style> imports `import_url`, and one element per paint fragment (#p a
+    pattern, #m a mask, #c a clipPath, #f a filter)."""
+    return ("<svg xmlns='http://www.w3.org/2000/svg'><defs><style>@import url(%s);</style>"
+            "<pattern id='p' width='1' height='1'><rect width='1' height='1' fill='blue'/></pattern>"
+            "<mask id='m'><rect width='1' height='1' fill='white'/></mask><clipPath id='c'><rect width='1' height='1'/></clipPath>"
+            "<filter id='f'><feFlood flood-color='blue'/></filter></defs></svg>" % import_url)
+
+
+# The spellings of a data: document that Firefox 153 loaded as a resource document when a paint attribute named it with a
+# fragment (measured 2026-09-24, on a page with no sanitizer, all five attributes each).
+DOC_SPELLINGS = (
+    ("plain", lambda x: "data:image/svg+xml," + _uri(x)),
+    ("upper", lambda x: "data:IMAGE/SVG+XML," + _uri(x)),
+    ("charset", lambda x: "data:image/svg+xml;charset=utf-8," + _uri(x)),
+    ("base64", lambda x: "data:image/svg+xml;base64," + base64.b64encode(x.encode()).decode()),
+    ("xhtml", lambda x: "data:application/xhtml+xml," + _uri(x)),
+    ("textxml", lambda x: "data:text/xml," + _uri(x)),
+    ("appxml", lambda x: "data:application/xml," + _uri(x)),
+)
+
+
+def _mask_png(w=40, h=40):
+    """A 40 by 40 RGBA PNG, white, its left half opaque and its right half transparent: as a mask it shows the left half."""
+    def chunk(tag, data):
+        return struct.pack(">I", len(data)) + tag + data + struct.pack(">I", zlib.crc32(tag + data) & 0xffffffff)
+    raw = b"".join(b"\x00" + b"".join(bytes((255, 255, 255, 255 if x < w // 2 else 0)) for x in range(w)) for _ in range(h))
+    return base64.b64encode(b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 6, 0, 0, 0))
+                            + chunk(b"IDAT", zlib.compress(raw)) + chunk(b"IEND", b"")).decode()
+
+
+def _doc_ref(spelled, frag):
+    return 'url("%s#%s")' % (spelled, frag)
+
+
+def _doc_shapes(sink, prefix, cls):
+    """The data: document shapes: the five attributes each naming the plain document, then the six other spellings on a
+    fill, each document's @import naming `prefix` + its name on the sink."""
+    shapes = [{"cls": cls + attr, "attr": attr, "file": "/%s%s.css" % (prefix, attr),
+               "value": _doc_ref(DOC_SPELLINGS[0][1](_doc_svg("%s/%s%s.css" % (sink, prefix, attr))), frag)} for attr, frag in PAINT_FRAG]
+    return shapes + [{"cls": cls + name, "attr": "fill", "file": "/%s%s.css" % (prefix, name),
+                      "value": _doc_ref(spell(_doc_svg("%s/%s%s.css" % (sink, prefix, name))), "p")} for name, spell in DOC_SPELLINGS[1:]]
+
+
+def _doc_svg_tag(s):
+    """One shape as the markdown holds it: an svg of the shape's class around one rect carrying the attribute."""
+    size = 40 if s["cls"] == "k-raster" else 12
+    paint = "" if s["attr"] == "fill" else 'fill="none" stroke-width="4" ' if s["attr"] == "stroke" else 'fill="red" '
+    defs = '<defs><linearGradient id="g"><stop offset="0" stop-color="red"/></linearGradient></defs>' if s["cls"] == "k-local" else ""
+    return '<svg class="%s" width="%d" height="%d">%s<rect width="%d" height="%d" %s%s="%s"/></svg>' % (
+        s["cls"], size, size, defs, size, size, paint, s["attr"], s["value"].replace('"', "&quot;"))
+
+
+def _doc_scene(sink, prefix, own):
+    """One scene's data: shapes, controls and markdown. The witness: _doc_shapes under `prefix`, and a data: URL with no
+    type (text/plain, which no engine loads; read in the DOM alone). The controls, which stay as written: a raster data:
+    mask (first, so the card shows it without a scroll), a same-document url(#g), the page's own mask `own` (requested in
+    every engine), and a raster-labelled data: URL whose body is an svg with an @import (kept: its type is a raster; loaded
+    by no engine). The unsanitized control: _doc_shapes again under "C" + `prefix`, for the page to set outside the card."""
+    shapes = _doc_shapes(sink, prefix, "d-") + [{"cls": "d-notype", "attr": "fill", "file": "/%snotype.css" % prefix,
+                                                 "value": _doc_ref("data:," + _uri(_doc_svg("%s/%snotype.css" % (sink, prefix))), "p")}]
+    kept = [{"cls": "k-raster", "attr": "mask", "file": "", "value": 'url("data:image/png;base64,%s")' % _mask_png()},
+            {"cls": "k-local", "attr": "fill", "file": "", "value": "url(#g)"},
+            {"cls": "k-own", "attr": "mask", "file": "", "value": "url(%s#m)" % own},
+            {"cls": "k-pngbody", "attr": "fill", "file": "/%spngbody.css" % prefix,
+             "value": _doc_ref("data:image/png," + _uri(_doc_svg("%s/%spngbody.css" % (sink, prefix))), "p")}]
+    md = "\n\n".join(["A figure sample with data: documents."] + [_doc_svg_tag(s) for s in kept[:1] + shapes + kept[1:]] + ["The end.", ""])
+    control = _doc_shapes(sink, "C" + prefix, "c-")
+    return {"shapes": shapes, "kept": kept, "md": md, "control": "".join(_doc_svg_tag(s) for s in control),
+            "controlFiles": sorted(s["file"] for s in control)}
 
 
 def _png(w=2, h=2, rgb=(200, 60, 60)):
@@ -220,6 +350,133 @@ process.exit(0);
 """
 
 
+DOC_DRIVER = r"""
+import { createRequire } from "node:module";
+import fs from "node:fs";
+const require = createRequire(process.env.EXT_PKG);
+const pw = require("playwright");
+const cfg = JSON.parse(fs.readFileSync(process.env.CFG, "utf8"));
+let browser;
+try { browser = await pw[cfg.engine].launch(); }
+catch (e) { console.error("browser-launch-failed: " + e); process.exit(3); }
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const logNow = async () => (await (await fetch(cfg.logUrl)).json()).requests;   // the sink's own record, read from node
+const out = { engine: browser.browserType().name(), version: browser.version(), errors: [] };
+const context = await browser.newContext({ viewport: { width: 1400, height: 1000 } });
+// each shape's attribute in `scope`, as the page adopted it: the value, null when removed, "(no element)" when the rect went
+const readShapes = (page, scope, shapes) => page.evaluate(([sc, ss]) => ss.map((s) => {
+  const e = document.querySelector(sc + " ." + s.cls + " rect"); return { cls: s.cls, value: e ? e.getAttribute(s.attr) : "(no element)" };
+}), [scope, shapes]);
+// the raster mask's pixels: a screenshot of the masked rect, decoded in the page, read at a quarter and three quarters across,
+// once no animation or transition runs on the rect or an element around it (bounded: a card's entry fade dims what is read)
+const pixels = async (page, sel) => {
+  await page.waitForFunction((s) => { const e = document.querySelector(s); return !!e && document.getAnimations().every((a) => a.playState !== "running"
+    || !(a.effect && a.effect.target && a.effect.target.contains && a.effect.target.contains(e))); }, sel, { timeout: 5000 }).catch(() => {});
+  const box = await page.locator(sel).first().boundingBox().catch(() => null);
+  if (!box) return null;
+  const png = await page.screenshot({ clip: box });
+  return page.evaluate(async (b64) => {
+    const img = new Image(); img.src = "data:image/png;base64," + b64; await img.decode();
+    const c = document.createElement("canvas"); c.width = img.width; c.height = img.height;
+    const x = c.getContext("2d"); x.drawImage(img, 0, 0);
+    const at = (fx) => Array.from(x.getImageData(Math.floor(fx * img.width), Math.floor(img.height / 2), 1, 1).data);
+    return { left: at(0.25), right: at(0.75) };
+  }, png.toString("base64"));
+};
+const requested = (page, needle) => { const hits = []; page.on("request", (r) => { if (r.url().includes(needle)) hits.push(r.url()); }); return hits; };
+const until = async (cond, ms) => { const t0 = Date.now(); while (!cond() && Date.now() - t0 < ms) await sleep(50); return Date.now() - t0; };
+// the notice card on the feed page, opened bare
+const feed = await context.newPage();
+feed.on("pageerror", (e) => out.errors.push("feed: " + String(e).slice(0, 300)));
+const ownNotice = requested(feed, "own=dnotice");
+await feed.goto(cfg.feed);
+const card = '[data-key="a:' + cfg.itemId + '"] .fask-nbody';
+await feed.waitForSelector(card + " .k-raster", { state: "attached", timeout: 60000 }).catch(() => {});
+out.noticeOwnMs = await until(() => ownNotice.length > 0, 15000);
+out.notice = { shapes: await readShapes(feed, card, cfg.notice.shapes), kept: await readShapes(feed, card, cfg.notice.kept),
+               pixels: await pixels(feed, card + " .k-raster rect") };
+// the hover preview on the chat page: the session's reply links the data: file; the card opens after the dwell
+const chat = await context.newPage();
+chat.on("pageerror", (e) => out.errors.push("chat: " + String(e).slice(0, 300)));
+const ownHover = requested(chat, "own=dhover");
+await chat.goto(cfg.chat);
+await chat.waitForSelector("#tabs .tab[data-id]", { timeout: 30000 });
+await chat.click('#tabs .tab[data-id="' + cfg.sid + '"]');
+const link = '#content .file-uri-link[data-path="' + cfg.file + '"]';
+await chat.waitForSelector(link, { timeout: 30000 });
+await chat.mouse.move(1300, 950); await sleep(300);
+await chat.hover(link);
+const pop = "#file-preview-pop .fp-body";
+await chat.waitForSelector(pop + " .k-raster", { state: "attached", timeout: 15000 }).catch(() => {});
+out.hoverOwnMs = await until(() => ownHover.length > 0, 15000);
+out.hover = { shapes: await readShapes(chat, pop, cfg.hover.shapes), kept: await readShapes(chat, pop, cfg.hover.kept),
+              pixels: await pixels(chat, pop + " .k-raster rect") };
+// the unsanitized controls, one per page, outside the card: the same documents set by innerHTML, so the engine's own loads of
+// them reach the sink; then the wait for the ones this engine makes (bounded) and the drain
+for (const [page, html] of [[feed, cfg.notice.control], [chat, cfg.hover.control]]) {
+  await page.evaluate((h) => { const d = document.createElement("div"); d.id = "data-doc-control"; d.innerHTML = h; document.body.appendChild(d); }, html);
+}
+const want = [...cfg.notice.controlFiles, ...cfg.hover.controlFiles];
+let got = [];
+if (cfg.controlLoads) {
+  const t0 = Date.now();
+  while (Date.now() - t0 < 10000) { got = (await logNow()).map((l) => l.path.split("?")[0]); if (want.every((f) => got.includes(f))) break; await sleep(100); }
+}
+await sleep(1500);   // the drain: a request a card's data: document made would have reached the sink by now
+out.ownNotice = ownNotice.slice(); out.ownHover = ownHover.slice();
+out.hoverUp = await chat.evaluate(() => { const p = document.getElementById("file-preview-pop"); return !!p && getComputedStyle(p).display !== "none"; });
+out.log = await logNow();
+// the sink's reach control, after the record: one no-cors fetch from the feed page, which must be its one /reach- line
+out.reach = await feed.evaluate((u) => fetch(u, { mode: "no-cors", cache: "no-store" }).then(() => "ok", (e) => String(e)), cfg.sink + "/reach-" + cfg.engine);
+fs.writeSync(1, "RESULT:" + JSON.stringify(out) + "\n");
+await browser.close();
+process.exit(0);
+"""
+
+
+def _referer_class(ref):
+    if not ref:
+        return "none"
+    u = urllib.parse.urlparse(ref)
+    return "origin" if u.path in ("", "/") and not u.query else "url"
+
+
+class _DocSink(BaseHTTPRequestHandler):
+    """The data: scene's second server: every request's path, Referer class and Sec-Fetch headers logged into `box`, over a
+    listener on 127.0.0.1 and one on ::1 at the same port (so `localhost` reaches it whichever family an engine tries
+    first); a stylesheet answers every .css, and its own record is at /__doclog (not logged: the driver's wait reads it).
+    The requests are the record the rulings ask for; no connection is counted, since the driver's own reads of the record
+    would be counted with the page's."""
+    box = None
+    protocol_version = "HTTP/1.0"
+
+    def do_GET(self):
+        if self.path == "/__doclog":
+            with self.box["lock"]:
+                body = json.dumps({"requests": list(self.box["requests"])}).encode()
+            self.send_response(200); self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body))); self.end_headers(); self.wfile.write(body); return
+        with self.box["lock"]:
+            self.box["requests"].append({"path": self.path, "referer": _referer_class(self.headers.get("Referer")),
+                                         "dest": self.headers.get("Sec-Fetch-Dest"), "site": self.headers.get("Sec-Fetch-Site"),
+                                         "mode": self.headers.get("Sec-Fetch-Mode")})
+        body = b"rect { stroke: none; }" if self.path.split("?")[0].endswith(".css") else b""
+        self.send_response(200); self.send_header("Content-Type", "text/css" if body else "text/plain")
+        self.send_header("Content-Length", str(len(body))); self.end_headers(); self.wfile.write(body)
+
+    def log_message(self, *a):   # quiet: the box above is the record
+        pass
+
+
+class _DocSink4(ThreadingHTTPServer):
+    daemon_threads = True
+    address_family = socket.AF_INET
+
+
+class _DocSink6(_DocSink4):
+    address_family = socket.AF_INET6
+
+
 class _Logger(BaseHTTPRequestHandler):
     """The second server: logs every request's path and the headers that say who asked and what rode along (Referer,
     Sec-Fetch-Dest, Sec-Fetch-Site, Cookie, Host) into the class's list, answers a paint document for any .svg and a PNG
@@ -284,6 +541,32 @@ class PaintRefsOnKernelPages(unittest.TestCase):
         cls.log_url = "http://127.0.0.1:%d/__log" % srv.server_address[1]
         cls.remote = "http://%s:%d" % (REMOTE_HOST, srv.server_address[1])   # the viewer scene's name for the logger
         cls.notice_remote = "http://localhost:%d" % srv.server_address[1]     # the notice scene's: Sec-Fetch headers ride to it
+        # the data: scene's sink, on both loopback families at one port, its stops registered before its starts
+        cls.doc_box = {"lock": threading.Lock(), "requests": []}
+        handler = type("DocSink", (_DocSink,), {"box": cls.doc_box})
+        for _ in range(50):
+            s4 = _DocSink4(("127.0.0.1", 0), handler)
+            doc_servers = [s4]
+            try:
+                doc_servers.append(_DocSink6(("::1", s4.server_address[1]), handler))
+            except OSError as e:
+                if e.errno == errno.EADDRINUSE:
+                    s4.server_close()
+                    continue
+            break
+        else:
+            raise AssertionError("no port was free on both loopback families for the data: scene's sink")
+        for dsrv in doc_servers:
+            dthread = threading.Thread(target=dsrv.serve_forever, daemon=True)
+
+            def end_doc(dsrv=dsrv, dthread=dthread):
+                if dthread.ident is not None:
+                    dsrv.shutdown()
+                dsrv.server_close()
+            cls.addClassCleanup(end_doc)
+            dthread.start()
+        cls.doc_sink = "http://localhost:%d" % s4.server_address[1]
+        cls.doc_v6 = len(doc_servers) == 2
         dist = os.path.join(cls.lab, "dist")
         lab_dist.copy_dist(dist)   # the checkout's ONE build of the bundles, copied under its lock (tests/lab_dist.py)
         state = os.path.join(cls.lab, "xdg", "romp")
@@ -293,6 +576,8 @@ class PaintRefsOnKernelPages(unittest.TestCase):
         os.makedirs(os.path.join(cwd, "docs"), exist_ok=True)
         Path(cwd, "docs", "figs-bare.md").write_text(_figures(cls.remote, "B-"))
         Path(cwd, "docs", "figs-framed.md").write_text(_figures(cls.remote, "F-"))
+        cls.hover_scene = _doc_scene(cls.doc_sink, "DH-", "/media/romp-swirl-glyph.svg?own=dhover")   # relative: the hover strip has the page's base
+        Path(cwd, DATA_FILE).write_text(cls.hover_scene["md"])
         Path(state, "names", SID).write_text("web\t%s\t#9cd2ff\t#0c1a2e\n" % cwd)
         Path(state, "sdk", SID + ".json").write_text(json.dumps(
             {"sid": SID, "name": "web", "cwd": cwd, "mode": "auto", "effort": "high", "lastSid": SID, "alive": True,
@@ -300,7 +585,8 @@ class PaintRefsOnKernelPages(unittest.TestCase):
         claude = os.path.join(cls.lab, "claude")
         proj = os.path.join(claude, "projects", re.sub(r"[^A-Za-z0-9]", "-", os.path.realpath(cwd)))
         os.makedirs(proj, exist_ok=True)
-        reply = "The sweep's figures are in docs/figs-bare.md, and the same set again in docs/figs-framed.md."
+        reply = ("The sweep's figures are in docs/figs-bare.md, and the same set again in docs/figs-framed.md. "
+                 "The encoded figures are in %s." % DATA_FILE)
         Path(proj, SID + ".jsonl").write_text(
             json.dumps({"type": "user", "uuid": U_UUID, "parentUuid": None, "timestamp": "2026-09-05T00:00:00.000Z", "sessionId": SID,
                         "message": {"role": "user", "content": "Where are the figures from the sweep?"}}) + "\n" +
@@ -345,6 +631,88 @@ class PaintRefsOnKernelPages(unittest.TestCase):
 
     def _logged(self, prefix):
         return [l for l in list(self.remote_log) if l["path"].startswith("/" + prefix)]
+
+    def test_a_data_document_in_a_notice_card_or_a_hover_preview_reaches_no_other_host(self):
+        # the data: rule on the kernel's own pages, in every engine that ran (Chromium always, Firefox and WebKit when
+        # ROMP_BROWSER_ENGINES names them): the module docstring's third scene
+        engines = _engines()
+        notice = _doc_scene(self.doc_sink, "DN-", self.origin + "/media/romp-swirl-glyph.svg?own=dnotice")
+        req = urllib.request.Request(self.origin + "/notice", method="POST",
+                                     data=json.dumps({"id": SID, "key": "paint-data", "title": "The encoded figures are ready",
+                                                      "producer": "figure", "body": notice["md"]}).encode(),
+                                     headers={"X-Romp-Token": self.token, "Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            posted = json.loads(resp.read() or b"{}")
+        self.assertTrue(posted.get("ok"), "the kernel accepted the notice: %r" % posted)
+        scenes = {"notice": notice, "hover": self.hover_scene}
+        ran = []
+        for engine in engines:
+            with self.doc_box["lock"]:            # one engine's record at a time
+                self.doc_box["requests"].clear()
+            cfgp = os.path.join(self.lab, "cfg-data-%s.json" % engine)
+            with open(cfgp, "w") as f:
+                json.dump({"engine": engine, "sid": SID, "file": DATA_FILE, "sink": self.doc_sink,
+                           "logUrl": "http://127.0.0.1:%d/__doclog" % int(self.doc_sink.rsplit(":", 1)[1]),
+                           "feed": self.origin + "/feed?token=" + self.token, "chat": self.origin + "/chat?token=" + self.token,
+                           "itemId": "notice:%s:paint-data:%s" % (SID, posted["notice"]["rev"]), "controlLoads": CONTROL_LOADS[engine],
+                           "notice": {k: notice[k] for k in ("shapes", "kept", "control", "controlFiles")},
+                           "hover": {k: self.hover_scene[k] for k in ("shapes", "kept", "control", "controlFiles")}}, f)
+            driver = os.path.join(self.lab, "doc-driver.mjs")
+            with open(driver, "w") as f:
+                f.write(DOC_DRIVER)
+            p = subprocess.run(["node", driver], capture_output=True, text=True, timeout=300,
+                               env=dict(os.environ, EXT_PKG=os.path.join(EXT, "package.json"), CFG=cfgp))
+            if p.returncode == 3 and engine == "chromium":
+                raise unittest.SkipTest("no playwright browser on this box: the served lab needs one; CI's extension job installs Chromium and requires this file to run")
+            if p.returncode == 3:
+                raise AssertionError("ROMP_BROWSER_ENGINES names %s, and it did not launch here (a named engine is a failure, never a skip):\n%s"
+                                     % (engine, p.stderr[-2000:]))
+            self.assertEqual(p.returncode, 0, "the %s driver failed:\n%s%s\nkernel:\n%s" % (engine, p.stdout[-3000:], p.stderr[-3000:], open(self.klog).read()[-1500:]))
+            line = next((ln for ln in p.stdout.splitlines() if ln.startswith("RESULT:")), None)
+            self.assertIsNotNone(line, "the %s driver printed no result:\n%s" % (engine, p.stdout[-3000:]))
+            r = json.loads(line[len("RESULT:"):])
+            ran.append("%s %s" % (r["engine"], r["version"]))
+            time.sleep(0.3)                        # the sink's handler threads finish logging the reach before it is read
+            with self.doc_box["lock"]:
+                log = list(self.doc_box["requests"])
+            paths = [l["path"].split("?")[0] for l in log]
+            print("DATA-DOCS %s: %s" % (engine, json.dumps({"driver": r, "v6": self.doc_v6})), file=sys.stderr)
+            with self.subTest(engine + ": no page error"):
+                self.assertEqual(r["errors"], [], "no page error")
+            with self.subTest(engine + ": the unsanitized controls made the loads this engine makes"):
+                want = sorted(notice["controlFiles"] + self.hover_scene["controlFiles"]) if CONTROL_LOADS[engine] else []
+                self.assertEqual(sorted({q for q in paths if q.startswith("/CD")}), want,
+                                 "the controls' @imports at the sink (%s loads a data: paint document: %s)" % (engine, CONTROL_LOADS[engine]))
+            with self.subTest(engine + ": the page reached the sink, once, after the record"):
+                self.assertEqual(r["reach"], "ok", "the feed page's no-cors fetch to the sink completed")
+                self.assertEqual([q for q in paths if q.startswith("/reach-")], ["/reach-" + engine], "the sink logged the reach once")
+            for name, scene in scenes.items():
+                got = r[name]
+                with self.subTest(engine + ", " + name + ": the page's own mask reference was requested"):
+                    self.assertTrue(r["own" + name.capitalize()], "the same-origin mask was requested from the kernel (%s ms): the card rendered "
+                                    "and this engine fetched a paint reference the pass keeps" % r[name + "OwnMs"])
+                with self.subTest(engine + ", " + name + ": no request reached the sink from a data: document in the card"):
+                    files = [sh["file"] for sh in scene["shapes"] + scene["kept"] if sh["file"]]
+                    self.assertEqual([l for l in log if l["path"].split("?")[0] in files], [],
+                                     "a data: document in the %s made a request to another host (each with its path, Referer class and Sec-Fetch headers)" % name)
+                with self.subTest(engine + ", " + name + ": every data: document reference is removed from its element, which stays"):
+                    self.assertEqual([x for x in got["shapes"] if x["value"] is not None], [], "each data: document reference is removed")
+                with self.subTest(engine + ", " + name + ": the controls stay as written"):
+                    self.assertEqual([x["value"] for x in got["kept"]], [k["value"] for k in scene["kept"]],
+                                     "the raster mask, url(#g), the page's own mask and the raster-labelled svg body stay as written")
+                if engine in MASK_DRAWS:
+                    with self.subTest(engine + ", " + name + ": the kept raster data: mask draws"):
+                        px = got["pixels"] or {}
+                        # read as a contrast between the halves, not as pure red: the notice body is drawn at 0.9 opacity
+                        # over its card, so its red is dimmer than the hover card's
+                        redness = lambda c: c[0] - max(c[1], c[2]) if c else 0
+                        self.assertTrue(redness(px.get("left")) - redness(px.get("right")) >= 30 and redness(px.get("right")) < 15,
+                                        "the masked rect's left half is painted red and its right half is not: %r" % px)
+            with self.subTest(engine + ", hover: the card was still up when the record was read"):
+                self.assertTrue(r["hoverUp"], "the hover card stayed up through the drain")
+        print("DATA-DOCS ENGINES RAN: %s (ROMP_BROWSER_ENGINES=%r; Firefox and WebKit run only when it names them)"
+              % (", ".join(ran), os.environ.get("ROMP_BROWSER_ENGINES", "")), file=sys.stderr)
+        self.assertEqual([x.split(" ")[0] for x in ran], engines, "engines that ran: %s (ROMP_BROWSER_ENGINES=%r)" % (", ".join(ran), os.environ.get("ROMP_BROWSER_ENGINES", "")))
 
     def test_a_notice_card_s_paint_references_reach_no_other_host(self):
         req = urllib.request.Request(self.origin + "/notice", method="POST",

@@ -4,7 +4,7 @@
 // while a server logs what arrives, is its own leg. Synthetic values only: hosts under .invalid, the page on 127.0.0.1.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
-import { URL_ATTRS, URL_PROPERTIES, cssUrls, remoteUrlRef, dropRemoteRefs } from "./paint-refs";
+import { URL_ATTRS, URL_PROPERTIES, DATA_RASTER_TYPES, cssUrls, dataMediaType, dataUrlIsRaster, remoteUrlRef, dropRemoteRefs } from "./paint-refs";
 import { hideEdges } from "../test-dom-shim";   // the fake-DOM rule (ui/test-dom-shim.test.ts): a fake enumerates its primitives alone
 
 const ORIGIN = "http://127.0.0.1:7777", BASE = ORIGIN + "/chat?x=1", KERNEL = "http://127.0.0.1:8888";
@@ -17,8 +17,8 @@ const CASES: Array<[string, boolean, string]> = [
   // STAYS
   ["url(#g)", false, "a same-document reference (the local gradient)"],
   ['url("#g")', false, "quoted, the same"],
-  ["url(data:image/svg+xml,%3Csvg%2F%3E)", false, "a data: URL"],
-  ['url("data:image/png;base64,iVBORw0KGgo=")', false, "a quoted data: URL"],
+  ["url(data:image/gif;base64,R0lGODlhAQABAAAAACw=)", false, "a data: URL of a raster type"],
+  ['url("data:image/png;base64,iVBORw0KGgo=")', false, "a quoted data: URL of a raster type"],
   ["url(" + ORIGIN + "/own.svg#p)", false, "this origin, absolute"],
   ["url(own.svg#p)", false, "relative: resolves against the base to this origin"],
   ["url(/file?path=p.svg#p)", false, "an absolute path on this origin"],
@@ -51,24 +51,105 @@ const CASES: Array<[string, boolean, string]> = [
   ["url(https://remote.invalid/p.svg#p) red", true, "a paint with a fallback colour"],
   ["blur(2px) url(https://remote.invalid/f.svg#f)", true, "a filter list"],
   ["url(blob:https://remote.invalid/0000)", true, "a blob: URL of another origin"],
+  ['url("data:image/svg+xml,%3Csvg%2F%3E#p")', true, "a data: SVG document with its fragment (Firefox loads it as a resource document, which fetches its own @import)"],
+  ["url(data:,x)", true, "a data: URL with no type: text/plain, not a raster"],
+  ["url(#m), url(data:text/xml,x#m)", true, "a local layer beside a data: XML document: the value is judged by its document member"],
 ];
 
-test("remoteUrlRef: every spelling the reader follows, judged by the rule (# and data: and the page's own origins stay; another host, scheme or port, protocol-relative, javascript:, about:, unparsable and any value with one remote member drop)", () => {
+test("remoteUrlRef: every spelling the reader follows, judged by the rule (#, a raster data: URL and the page's own origins stay; another host, scheme or port, protocol-relative, javascript:, about:, a data: URL of any other type, unparsable and any value with one remote member drop)", () => {
   // guards the STAYS/DROPS rule row by row: a row that flips is a reference kept that fetches, or a local paint removed
   for (const [value, remote, why] of CASES) assert.equal(remoteUrlRef(value, OWN, BASE), remote, JSON.stringify(value) + ": " + why);
   // the reader is cssUrls, one tokenizer for the gate and the strip: every DROPS row names at least one URL to it
   for (const [value, remote] of CASES) if (remote) assert.ok(cssUrls(value).length > 0, JSON.stringify(value) + ": cssUrls reads a URL out of it");
 });
 
-test("remoteUrlRef with no page (node: no origins, no base): # and data: stay, every relative and absolute reference drops; an opaque origin in the list never admits javascript: or about:", () => {
+test("remoteUrlRef with no page (node: no origins, no base): # and a raster data: URL stay, a data: SVG document and every relative and absolute reference drop; an opaque origin in the list never admits javascript: or about:", () => {
   // guards the fail-closed side of the rule where the sanitizer runs with nothing to resolve against: dropping a same-origin
   // paint costs a colour, keeping an unresolved one could cost a request
   assert.equal(remoteUrlRef("url(#g)", [], ""), false, "a same-document reference is decided before any parse, so it stays with no base");
-  assert.equal(remoteUrlRef("url(data:image/svg+xml,%3Csvg%2F%3E)", [], ""), false, "a data: URL parses with no base and stays");
+  assert.equal(remoteUrlRef("url(data:image/png;base64,iVBORw0KGgo=)", [], ""), false, "a raster data: URL parses with no base and stays");
+  assert.equal(remoteUrlRef("url(data:image/svg+xml,%3Csvg%2F%3E#p)", [], ""), true, "a data: SVG document parses with no base and drops: its type is not a raster");
   assert.equal(remoteUrlRef("url(own.svg#p)", [], ""), true, "a relative reference with no base is unparsable: it drops");
   assert.equal(remoteUrlRef("url(" + ORIGIN + "/own.svg#p)", [], ""), true, "no origin is own: every absolute reference drops");
   assert.equal(remoteUrlRef("url(javascript:x)", ["null"], ""), true, "the opaque origin `null` is never own, even when a caller lists it");
   assert.equal(remoteUrlRef("url(about:blank)", ["null"], BASE), true);
+});
+
+// ── the data: rule: the media type's essence, read as the Fetch standard's data: URL processor reads it ──────
+
+/** [data: URL, the essence dataMediaType reads (null: the processor fails), why]. */
+const ESSENCES: Array<[string, string | null, string]> = [
+  ["data:image/png,x", "image/png", "the plain spelling"],
+  ["data:IMAGE/PNG,x", "image/png", "case: the essence is lower-cased"],
+  ["data:Image/Svg+Xml,x", "image/svg+xml", "case on a document type too"],
+  ["data:image/png;charset=x,x", "image/png", "a parameter is outside the essence"],
+  ["data:image/png;base64,iVBORw0KGgo=", "image/png", "base64 is outside the essence"],
+  ["data:image/png;BASE64,iVBORw0KGgo=", "image/png", "in any case"],
+  ["data:image/png ; base64,iVBORw0KGgo=", "image/png", "spaces before the parameters are trimmed"],
+  ["data:image/svg+xml;charset=utf-8;base64,PHN2Zy8+", "image/svg+xml", "parameters before base64"],
+  ["data: image/png ,x", "image/png", "ASCII whitespace around the type is stripped (the URL parser keeps the spaces)"],
+  ["data:image/png\t,x", "image/png", "a tab is removed by the URL parser before the processor reads anything"],
+  ['data:image/png;x="a,b",x', "image/png", "the first comma ends the type, whatever quotes surround it"],
+  ["data:,x", "text/plain", "a missing type is text/plain"],
+  ["data:;base64,AAAA", "text/plain", "only base64: text/plain"],
+  ["data:;charset=utf-8,x", "text/plain", "only a parameter: text/plain"],
+  ["data:image%2Fpng,x", "text/plain", "a percent-encoded slash is no slash: the type does not parse, so text/plain"],
+  ["data:image/png x,x", "text/plain", "a space inside the subtype is no token: text/plain"],
+  ["data:image/png?x,y", "text/plain", "the query is read as the processor reads it (the serialized URL): `png?x` is no token"],
+  ["data:image/,x", "text/plain", "an empty subtype: text/plain"],
+  ["data:/png,x", "text/plain", "an empty type: text/plain"],
+  ["data:text;x/y,z", "text/plain", "a `;` before the slash: no type"],
+  ["data:image/svg+xml;image/png,x", "image/svg+xml", "a raster name in a parameter does not make the type a raster"],
+  ["data:text/plain;type=image/png,x", "text/plain", "nor in a parameter's value"],
+  ["data:application/xhtml+xml,x", "application/xhtml+xml", "XHTML"],
+  ["data:text/xml,x", "text/xml", "XML"],
+  ["data:application/xml,x", "application/xml", "XML"],
+  ["data:image/png", null, "no comma: the processor fails and the browser loads nothing"],
+  ["data:image/png#a,b", null, "a comma in the fragment is not the processor's: no comma"],
+  ["data:image/svg+xml,%3Csvg%2F%3E#p", "image/svg+xml", "the fragment is not read"],
+];
+
+test("dataMediaType reads the essence as the Fetch data: URL processor does: case, parameters and base64 outside it, whitespace trimmed, a missing or unparsable type text/plain, the serialized URL with its query and without its fragment, null with no comma", () => {
+  // guards the parse the allowlist is keyed on: a spelling read differently from the browser is a document the rule keeps
+  for (const [url, essence, why] of ESSENCES) assert.equal(dataMediaType(new URL(url)), essence, JSON.stringify(url) + ": " + why);
+});
+
+test("DATA_RASTER_TYPES is the raster allowlist the rulings name, sorted; dataUrlIsRaster keeps a data: URL by its parsed essence alone: every raster type in any case and with parameters, and nothing else (svg, xhtml, xml, text/plain, html, a missing or unparsable type, no comma)", () => {
+  // guards the allowlist by the parsed essence: the list is the data, and the verdict follows the essence, not the spelling
+  assert.deepEqual([...DATA_RASTER_TYPES], ["image/avif", "image/bmp", "image/gif", "image/jpeg", "image/png", "image/vnd.microsoft.icon", "image/webp", "image/x-icon"]);
+  for (const t of DATA_RASTER_TYPES) {
+    for (const spelling of ["data:" + t + ",x", "data:" + t.toUpperCase() + ";base64,AAAA", "data: " + t + " ;charset=x,x"]) {
+      assert.equal(dataUrlIsRaster(new URL(spelling)), true, JSON.stringify(spelling) + ": a raster type, kept whatever the spelling");
+      assert.equal(remoteUrlRef('url("' + spelling + '")', [], ""), false, JSON.stringify(spelling) + ": remoteUrlRef keeps it");
+    }
+  }
+  const DOCUMENTS = ["image/svg+xml", "application/xhtml+xml", "text/xml", "application/xml", "text/html", "text/plain", "application/octet-stream", "image/svg"];
+  for (const t of DOCUMENTS) {
+    for (const spelling of ["data:" + t + ",x#p", "data:" + t.toUpperCase() + ";base64,AAAA#p", "data:" + t + ";charset=utf-8,x#p"]) {
+      assert.equal(dataUrlIsRaster(new URL(spelling)), false, JSON.stringify(spelling) + ": not a raster type, dropped whatever the spelling");
+      assert.equal(remoteUrlRef('url("' + spelling + '")', [], ""), true, JSON.stringify(spelling) + ": remoteUrlRef drops it");
+    }
+  }
+  for (const [url, essence] of ESSENCES) {
+    const kept = essence !== null && DATA_RASTER_TYPES.includes(essence);
+    assert.equal(dataUrlIsRaster(new URL(url)), kept, JSON.stringify(url) + ": the verdict is the essence's (" + String(essence) + ")");
+    const q = url.includes('"') ? "'" : '"';   // a CSS string in the quote the URL does not hold
+    assert.equal(remoteUrlRef("url(" + q + url + q + ")", [], ""), !kept, JSON.stringify(url) + ": remoteUrlRef follows the same verdict");
+  }
+});
+
+test("dropRemoteRefs on data: references: a document-capable one goes from an attribute and from a style declaration, a raster one stays, and a value with both goes whole", () => {
+  // guards the rule on every surface the pass runs (sanitizeMd's default pass and stripRemoteLoads' paint arm both call this):
+  // the attribute and the declaration are the units, as for a reference to another origin
+  const svgDoc = "url(data:image/svg+xml,%3Csvg%2F%3E#p)";
+  const doc = el("rect", { fill: svgDoc, stroke: 'url("data:application/xhtml+xml,x#p")', mask: "url(data:image/png;base64,iVBORw0KGgo=)", width: "4" });
+  const mixed = el("rect", { mask: "url(data:image/png;base64,iVBORw0KGgo=), url(data:text/xml,x#m)", "clip-path": "url(data:,x#c)" });
+  const styled = el("span", { style: "mask-image: url(data:image/svg+xml,%3Csvg%2F%3E); background-image: url(data:image/png;base64,iVBORw0KGgo=); color: red" });
+  const n = dropRemoteRefs(asNode(el("svg", {}, [doc, mixed, styled])), OWN, BASE);
+  assert.deepEqual(doc.attrs, { mask: "url(data:image/png;base64,iVBORw0KGgo=)", width: "4" }, "the svg and xhtml documents go, the raster mask stays");
+  assert.deepEqual(mixed.attrs, {}, "a raster layer beside an xml document goes with it; a missing type (text/plain) goes");
+  assert.deepEqual(styled.attrs, { style: "background-image: url(data:image/png;base64,iVBORw0KGgo=); color: red" }, "the svg mask-image declaration goes, the raster background and the colour stay");
+  assert.equal(n, 5, "the count: two on the first rect, two on the second, one declaration");
 });
 
 // ── dropRemoteRefs over a fake tree ─────────────────────────────────────────────────────────────────────
@@ -94,7 +175,7 @@ test("dropRemoteRefs removes each remote attribute of URL_ATTRS on every element
   // guards the attribute arm: the attribute goes whole (no rewrite to the fallback), the element stays, and the names are read on
   // every element, the root itself included
   const withFallback = el("rect", { fill: R("p.svg#p") + " red", width: "4" });
-  const local = el("rect", { fill: "url(#g)", stroke: "url(data:image/svg+xml,%3Csvg%2F%3E)", "clip-path": "url(/file?path=c.svg#c)", mask: "url(" + ORIGIN + "/m.svg#m)" });
+  const local = el("rect", { fill: "url(#g)", stroke: "url(data:image/png;base64,iVBORw0KGgo=)", "clip-path": "url(/file?path=c.svg#c)", mask: "url(" + ORIGIN + "/m.svg#m)" });
   const markers = el("path", { d: "M0 0L4 4", "marker-start": R("ms.svg#m"), "marker-mid": R("mm.svg#m"), "marker-end": R("me.svg#m") });
   const cursor = el("rect", { cursor: R("c.svg#c") + ", auto" });
   const html = el("span", { fill: R("h.svg#p"), mask: 'image-set("https://remote.invalid/h.png" 1x)', class: "x" });
@@ -102,7 +183,7 @@ test("dropRemoteRefs removes each remote attribute of URL_ATTRS on every element
   const n = dropRemoteRefs(asNode(root), OWN, BASE);
   assert.deepEqual(root.attrs, { width: "12" }, "the root element itself: its remote fill and filter are removed");
   assert.deepEqual(withFallback.attrs, { width: "4" }, "a fallback colour after a remote url() goes with the attribute");
-  assert.deepEqual(local.attrs, { fill: "url(#g)", stroke: "url(data:image/svg+xml,%3Csvg%2F%3E)", "clip-path": "url(/file?path=c.svg#c)", mask: "url(" + ORIGIN + "/m.svg#m)" }, "every local reference stays, untouched");
+  assert.deepEqual(local.attrs, { fill: "url(#g)", stroke: "url(data:image/png;base64,iVBORw0KGgo=)", "clip-path": "url(/file?path=c.svg#c)", mask: "url(" + ORIGIN + "/m.svg#m)" }, "every local reference stays, untouched");
   assert.equal(local.writes, 0, "and nothing was written to it");
   assert.deepEqual(markers.attrs, { d: "M0 0L4 4" }, "the three marker attributes go");
   assert.deepEqual(cursor.attrs, {}, "cursor, the ninth name, is read too (the sanitizer drops it today; the set is what the engines read)");

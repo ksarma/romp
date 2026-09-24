@@ -21,13 +21,19 @@
 // the sanitizer's surviving attributes to these sets).
 //
 // The rule, for every URL cssUrls reads out of a value (a url token or a quoted string, in whatever function):
-//   STAYS: a same-document reference, `#id` (decided before any parse, so it stays with no base too); a `data:` URL; a URL
-//     whose origin is one of the page's own, resolved against the document's base (a relative `url(p.svg#p)` resolves to
-//     the page's origin; a `blob:` URL has its inner URL's origin).
+//   STAYS: a same-document reference, `#id` (decided before any parse, so it stays with no base too); a `data:` URL whose
+//     media type is a raster image (DATA_RASTER_TYPES: png, jpeg, gif, webp, avif, bmp and the two icon types), the type
+//     read as the Fetch standard's data: URL processor reads it (dataMediaType: the essence lower-cased, parameters and
+//     `;base64` outside it, a missing type `text/plain`); a URL whose origin is one of the page's own, resolved against the
+//     document's base (a relative `url(p.svg#p)` resolves to the page's origin; a `blob:` URL has its inner URL's origin).
 //   DROPS: everything else: another host, another scheme or port on the same host, a protocol-relative `//host/x`,
-//     `javascript:` and `about:` (an opaque origin, never the page's), and a value the URL parser refuses. An unparsable
-//     value FAILS CLOSED: removing a reference the browser could not have fetched costs nothing, and keeping one it can
-//     read costs a request.
+//     `javascript:` and `about:` (an opaque origin, never the page's), a `data:` URL of any other media type, and a value
+//     the URL parser refuses. A `data:` SVG document named by a paint attribute with a fragment (`url(data:image/svg+xml,
+//     ...#p)`) loads as a resource document in Firefox, and that document's own `@import` fetches another host with no
+//     click; an XHTML or XML document does the same (measured in Firefox 153 on 2026-09-23 and 2026-09-24, for fill,
+//     stroke, mask, filter and clip-path; Chromium 151 and WebKit 26.5 loaded none). Only a raster cannot be a document.
+//     An unparsable value FAILS CLOSED: removing a reference the browser could not have fetched costs nothing, and keeping
+//     one it can read costs a request.
 // A value with ANY remote member (two mask layers, an image-set with one remote candidate, a paint with a fallback colour)
 // drops whole: a presentation attribute is removed, and in a `style` attribute the declaration is removed and the rest of
 // the attribute kept. Nothing is rewritten, so a paint's fallback colour goes with its url(), and the element stays and
@@ -140,16 +146,58 @@ export function cssUrls(attrValue: string): string[] {
 
 // ── the judgment ─────────────────────────────────────────────────────────────────────────────────────
 
+/** The media types a `data:` reference may have and stay: the raster image types, sorted. A raster cannot load as a
+ *  document, so it fetches nothing, and a raster `data:` mask draws (measured in Chromium 151 and Firefox 153, 2026-09-24).
+ *  Every other type drops (the header's rule). */
+export const DATA_RASTER_TYPES: readonly string[] = [
+  "image/avif", "image/bmp", "image/gif", "image/jpeg", "image/png", "image/vnd.microsoft.icon", "image/webp",
+  "image/x-icon",
+];
+
+/** HTTP's token code points: the alphabet of a MIME type's type and subtype (the MIME Sniffing standard). */
+const HTTP_TOKEN = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
+
+/** The essence (`type/subtype`, lower-cased) of a `data:` URL's media type, read as the Fetch standard's data: URL processor
+ *  reads it: the URL serialized without its fragment and with `data:` removed (so a `?` and what follows it are read, as
+ *  the processor reads them); the text before the first comma, with ASCII whitespace stripped from both ends; then parsed
+ *  as a MIME type, where a type or subtype that is empty or holds anything but token code points is a failure and reads as
+ *  `text/plain`. The processor's removal of a trailing `;base64` and its `text/plain` in front of a leading `;` are left
+ *  out: the essence ends at the first `;`, so neither can change it. So case, parameters and `;base64` do not change the
+ *  essence, a missing type is `text/plain`, and a percent-encoded `/` is no slash. null when there is no comma: the
+ *  processor fails and the browser loads nothing. `u.protocol` must be `data:`. Pure. */
+export function dataMediaType(u: URL): string | null {
+  const href = u.href;
+  const hash = href.indexOf("#");
+  const input = href.slice(u.protocol.length, hash < 0 ? href.length : hash);
+  const comma = input.indexOf(",");
+  if (comma < 0) return null;
+  const mime = input.slice(0, comma).replace(/^[\t\n\f\r ]+|[\t\n\f\r ]+$/g, "");
+  const m = /^([^/;]*)\/([^;]*)/.exec(mime);
+  if (!m) return "text/plain";
+  const type = m[1], subtype = m[2].replace(/[\t\n\r ]+$/, "");
+  if (!HTTP_TOKEN.test(type) || !HTTP_TOKEN.test(subtype)) return "text/plain";
+  return (type + "/" + subtype).toLowerCase();
+}
+
+/** Whether a `data:` URL may stay as a local reference: its media type's essence (dataMediaType) is one of
+ *  DATA_RASTER_TYPES. A URL the processor refuses (no comma) is not, and drops: the browser could not load it, so removing
+ *  it costs nothing. `u.protocol` must be `data:`. The one decision for every reader of a `data:` reference. Pure. */
+export function dataUrlIsRaster(u: URL): boolean {
+  const essence = dataMediaType(u);
+  return essence !== null && DATA_RASTER_TYPES.includes(essence);
+}
+
 /** Whether `value` names any URL off every origin in `origins`, under the rule in the header: each URL cssUrls reads out of
- *  it stays when it is a `#` reference, a `data:` URL, or resolves (against `base`; with no base, parsed as it stands) to
- *  one of `origins`; any other, an unparsable one included, makes the whole value remote. An opaque origin (`null`, the
- *  origin of `javascript:`, `about:` and a sandboxed page alike) is never one of the page's own. Pure. */
+ *  it stays when it is a `#` reference, a `data:` URL of a raster type (dataUrlIsRaster), or resolves (against `base`; with
+ *  no base, parsed as it stands) to one of `origins`; any other, an unparsable one and a `data:` URL of any other type
+ *  included, makes the whole value remote. An opaque origin (`null`, the origin of `javascript:`, `about:` and a sandboxed
+ *  page alike) is never one of the page's own. Pure. */
 export function remoteUrlRef(value: string, origins: readonly string[], base: string): boolean {
   for (const ref of cssUrls(value)) {
     if (ref.startsWith("#")) continue;
     let u: URL;
     try { u = base ? new URL(ref, base) : new URL(ref); } catch { return true; }
-    if (u.protocol === "data:") continue;
+    if (u.protocol === "data:") { if (dataUrlIsRaster(u)) continue; return true; }
     if (u.origin !== "null" && origins.includes(u.origin)) continue;
     return true;
   }

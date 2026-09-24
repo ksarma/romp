@@ -194,7 +194,27 @@ test("stripRemoteLoads's paint arm on the inert tree: a url() to another origin 
 });
 
 
-test("the notice card's strip passes no base (feed.ts noticeBodyNodes), so its paint arm removes a relative and a root-relative same-origin reference and keeps an absolute same-origin one, url(#g) and a data: URL: a disclosed residual that fails closed", () => {
+test("stripRemoteLoads's paint arm on data: references, with the page's base (the hover card) and with none (the notice card): a raster data: URL stays, a data: SVG, XHTML or XML document and a data: URL with no type go", () => {
+  // guards the data: rule on the strip's own road (paint-refs.ts dataUrlIsRaster through remoteUrlRef): Firefox loads a
+  // document-capable data: reference as a resource document, and its @import fetches another host as the card renders
+  for (const base of [BASE, ""]) {
+    const RASTER_MASK = "url(data:image/png;base64,iVBORw0KGgo=)", RASTER_FILL = 'url("data:image/webp;base64,UklGRg==")';
+    const raster = fakeEl("rect", { mask: RASTER_MASK, fill: RASTER_FILL });
+    const svg = fakeEl("rect", { fill: "url(data:image/svg+xml,%3Csvg%2F%3E#p)", stroke: 'url("data:IMAGE/SVG+XML;base64,PHN2Zy8+#p")' });
+    const xml = fakeEl("rect", { filter: "url(data:application/xhtml+xml,x#f)", "clip-path": "url(data:text/xml,x#c)", mask: "url(data:application/xml,x#m)" });
+    const untyped = fakeEl("rect", { fill: "url(data:,x#p)", width: "4" });
+    const root = fakeEl("body", {}, [fakeEl("svg", {}, [raster, svg, xml, untyped])]);
+    assert.equal(stripRemoteLoads(asRoot(root), ORIGIN, base), 6, JSON.stringify(base) + ": six removals, the two svg, the three xml and the untyped");
+    assert.equal(serialize(root),
+      "<svg><rect mask=" + JSON.stringify(RASTER_MASK) + " fill=" + JSON.stringify(RASTER_FILL) + "></rect>"
+      + "<rect></rect><rect></rect>"
+      + '<rect width="4"></rect></svg>',
+      JSON.stringify(base) + ": the raster mask and fill stay as written, every other data: reference goes, the elements stay");
+  }
+});
+
+
+test("the notice card's strip passes no base (feed.ts noticeBodyNodes), so its paint arm removes a relative and a root-relative same-origin reference and keeps an absolute same-origin one, url(#g) and a raster data: URL: a disclosed residual that fails closed", () => {
   // guards the statement of a disclosed residual, so it is stated rather than incidental: the notice card hands
   // stripRemoteLoads an empty base, under which no relative URL resolves, and the paint arm fails closed on what it cannot
   // resolve. sanitizeMd's own pass resolves against document.baseURI and keeps these references; this strip then removes
@@ -205,12 +225,12 @@ test("the notice card's strip passes no base (feed.ts noticeBodyNodes), so its p
   const rootRel = fakeEl("rect", { fill: "url(/plots/own.svg#p)" });
   const abs = fakeEl("rect", { fill: "url(" + ORIGIN + "/plots/own.svg#p)" });
   const frag = fakeEl("rect", { fill: "url(#g)" });
-  const data = fakeEl("rect", { fill: "url(data:image/svg+xml,%3Csvg%2F%3E)" });
+  const data = fakeEl("rect", { fill: "url(data:image/png;base64,iVBORw0KGgo=)" });
   const root = fakeEl("body", {}, [fakeEl("svg", {}, [rel, rootRel, abs, frag, data])]);
   assert.equal(stripRemoteLoads(asRoot(root), ORIGIN, ""), 2, "with no base the relative and the root-relative reference cannot resolve and are removed, failing closed");
   assert.deepEqual([rel, rootRel, abs, frag, data].map((e) => e.getAttribute("fill")),
-    [null, null, "url(" + ORIGIN + "/plots/own.svg#p)", "url(#g)", "url(data:image/svg+xml,%3Csvg%2F%3E)"],
-    "the absolute same-origin reference, the same-document one and the data: URL stay, because none needs a base");
+    [null, null, "url(" + ORIGIN + "/plots/own.svg#p)", "url(#g)", "url(data:image/png;base64,iVBORw0KGgo=)"],
+    "the absolute same-origin reference, the same-document one and the raster data: URL stay, because none needs a base");
   const FEED = require("node:fs").readFileSync(require("node:path").resolve(process.cwd(), "..", "ui", "webview", "feed.ts"), "utf8") as string;
   assert.deepEqual(FEED.match(/^\s*stripRemoteLoads\(.*$/gm), ['    stripRemoteLoads(clean, (typeof window !== "undefined" && window.location ? window.location.origin : ""), "");'],
     "the notice card's one strip call still passes an empty base: the residual this test states is live (red when the follow-up passes the page's URL: retire this test and the ledger entry's line)");
