@@ -4799,10 +4799,13 @@ function targetHost(href: string): string {
  *  `origin` plus the path, which prints "null" for a file: address or for one resolved against a VS Code webview, and the host
  *  twice for a blob: address. An opaque path (`blob:` followed by an address) is shown the same way after its scheme. An
  *  address the parser refuses (an out-of-range port, say) is cut as text: from the scheme's slashes, or a leading //, through
- *  the LAST @, then from the first ? or #. So no userinfo prints even when the password holds a /, ? or #, at the cost that a
- *  refused address with an @ in its path or query prints a wrong host (`http://example.test:99999/a@2x.png?x=1` prints as
- *  `http://2x.png`), never a secret. URL parsing normalises the spelling (the scheme and the host lower-cased, a space
- *  percent-encoded). */
+ *  the LAST @, then from the first ? or #. So no userinfo of a refused address prints even when the password holds a /, ? or #,
+ *  at the cost that a refused address with an @ in its path or query prints a wrong host (`http://example.test:99999/a@2x.png?x=1`
+ *  prints as `http://2x.png`), never a secret. An address that parses is read as the parser reads it, and two spellings of a
+ *  credential parse with no userinfo at all, so they print: a password whose part before a /, ? or # is a number parses as a port,
+ *  the username before it as the host and, after a /, the rest as the path, and an `http:` source written without its slashes on
+ *  an http page resolves as a path of the page's own origin. URL parsing normalises the spelling (the scheme and the host
+ *  lower-cased, a space percent-encoded). */
 export function shownAddress(href: string, base?: string): string {
   const cut = (s: string): string => {
     const lead = (/^(?:[a-z][a-z0-9+.-]*:[/\\]*|[/\\]{2})/i.exec(s) || [""])[0];
