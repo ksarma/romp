@@ -160,9 +160,13 @@ jobs:
         # asyncio.create_subprocess_shell, shlex.split or a shell's -c is red until spelled as an argv, and so is
         # a call through a name it cannot resolve (in a comprehension in a class body that binds the name, or,
         # beside a star import from a module it does not read, one the module binds or no scope binds, or one a
-        # function binds from such a name by a plain or annotated assignment from a name or an attribute); a
-        # string anywhere else, or one held in a variable or built with %, + or .format, is outside the read,
-        # as is an argv assembled one element at a time and any other call, string or in process, reached through a
+        # function binds from such a name by a plain or annotated assignment from a name or an attribute), and so
+        # is an argv it cannot read as a launcher, among them an interpreter option it does not take apart before
+        # pytest (-Bm pytest, -Impytest), -m pytest.__main__, and pytest after a wrapper such as env in an argv
+        # written at the call (its argv rule is _argv_command's docstring); a string anywhere else, or one held
+        # in a variable or built with %, + or .format, is outside the read, as is an argv assembled one element
+        # at a time, an option it does not take apart that no pytest follows, a wrapper-headed argv built away
+        # from the call, and any other call, string or in process, reached through a
         # name the census does not resolve (tuple unpacking, a conditional expression, a parameter default, an
         # import by name from a module that does not define the call, a relative one included, a class or
         # instance attribute, getattr, importlib or runpy, a builtin or a module name such a star import
@@ -245,9 +249,15 @@ jobs:
           # a run block (env -i, an indirect unset, a loop over the environment), in a shell: or defaults
           # key, by a script or action a step calls, or to $GITHUB_ENV. It reads a run block as written,
           # and GitHub substitutes a ${{ }} expression into the block before the shell reads it, so a
-          # pytest step whose run block holds one is red until the value moves to an env: key the block
-          # reads as a shell variable; anything that rewrites a pytest command's arguments after that (a
-          # shell function or alias, a python earlier on PATH, a step's shell:) is outside the check.
+          # step whose run block holds one and spells pytest anywhere in it, in a comment line or a
+          # trailing comment too, is red until the value moves to an env: key the block reads as a shell
+          # variable (the substituted text can end a comment with a newline and run what follows it);
+          # anything that rewrites a pytest command's arguments after that (a shell function or alias, a
+          # python earlier on PATH, a step's shell:) is outside the check, except on this step, where it
+          # refuses those it can see: a function or alias is a second command here, this step's shell: is
+          # refused, and so is a $GITHUB_PATH write spelled in a run block of this job, which could put
+          # another python earlier on PATH; a write to $GITHUB_PATH that does not spell the name stays
+          # outside.
           # The check reads this file's text, in the YAML forms this file uses and no others: every line
           # here is in one of them (block mappings and sequences two columns per level, one-line plain
           # and quoted scalars without escapes, one-line flow sequences of them, a literal block as a
@@ -257,7 +267,16 @@ jobs:
           # spells pytest, outside a comment or a name: key's own line and other than a pip install, is
           # read as a command or is red until it is read (its line census), and so is a job key it does
           # not read; a run line that never spells pytest, a pytest run by a script or action a step
-          # calls, and the other workflow files are outside it.
+          # calls, and the other workflow files are outside it. It also holds this step's failure to the
+          # cell: this step's exit status is pytest's and the cell's is the step's (run_pytest_status in
+          # tests/test_ci_sdk_pin.py; its docstring is the rule). So each of these is red at its line,
+          # among others: an if: or a continue-on-error on this step or its job; the command followed by
+          # ||, a pipe or a trailing &; a second command or command line (an earlier trap 'exit 0' EXIT
+          # among them); an argument outside its option allowlist (--collect-only, --co and --setup-plan
+          # among the refused); a shell: here, or a defaults: on the job or the workflow; a key of this
+          # step's merged env outside its env allowlist (PYTEST_ADDOPTS and BASH_ENV among them); and a
+          # run block of this job that spells GITHUB_ENV, GITHUB_PATH or BASH_ENV. A write to those files
+          # that does not spell their names, such as one by a script or action a step calls, is outside it.
           ROMP_SDK_REQUIRE: "1"
           # The free-threaded cell runs with the GIL off, stated rather than defaulted (a 't'
           # build disables it by default, and an extension that lacks free-threading support

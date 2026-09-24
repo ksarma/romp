@@ -938,11 +938,14 @@ def _require_served_test_ran(item, rep) -> None:
 # census's child may not see it, and the run stays green. The road is a class, and no list closes it: anything that changes what the run collects,
 # among them a collect_ignore or collect_ignore_glob, a collection hook in a conftest or plugin (pytest_ignore_collect,
 # pytest_collection_modifyitems), an ini file's test-file pattern, testpaths or addopts, PYTEST_ADDOPTS, --ignore or
-# --ignore-glob, -k, -m or --deselect, and a module-level __test__ = False. As read on 2026-09-23: none of these is on
-# ci.yml's Run pytest line (no path, no -k, no --ignore) or in its env (no PYTEST_ADDOPTS); no conftest in the tree
-# sets collect_ignore or collect_ignore_glob or defines a collection hook (this file, the only one, implements two
-# reporting hooks, pytest_make_collect_report and pytest_collectreport, which drop nothing); and the repo has no
-# pytest.ini, .pytest.ini, pytest.toml, .pytest.toml, pyproject.toml, setup.cfg or tox.ini. Nothing pins that.
+# --ignore-glob, -k, -m or --deselect, and a module-level __test__ = False. As read on 2026-09-24: none of these is on
+# ci.yml's Run pytest line (no path, no -k, no --ignore) or in its env (no PYTEST_ADDOPTS), and those two are held
+# since round 5's ruling C: tests/test_ci_sdk_pin.py's run_pytest_status refuses a word on that line outside its option
+# allowlist and a key of its merged env outside its env allowlist; no conftest in the tree sets collect_ignore or
+# collect_ignore_glob or defines a collection hook (this file, the only one, implements two reporting hooks,
+# pytest_make_collect_report and pytest_collectreport, which drop nothing); and the repo has no pytest.ini,
+# .pytest.ini, pytest.toml, .pytest.toml, pyproject.toml, setup.cfg or tox.ini. Nothing pins the rest of that read,
+# the conftest and the ini files.
 _NEVER_SKIP_FILES = ("test_ci_sdk_pin.py",)
 
 

@@ -76,9 +76,13 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   forms its launcher census reads, and its docstring names what that census
   leaves unread: a pytest command in a string held in a variable or built with
   `%`, `+` or `.format`, a string anywhere else, an argv assembled one element
-  at a time, and any call, string or in process, reached through a name the
-  census does not resolve, through tuple unpacking, a conditional expression, a
-  parameter default, `getattr`, `importlib` or `runpy` among others). The two
+  at a time, an argv whose interpreter options the census does not take apart
+  and after which nothing spells pytest, a wrapper-headed argv such as
+  `["env", "pytest"]` built away from the call that runs it (`_argv_command`'s
+  docstring states the argv rule), and any call, string or in process, reached
+  through a name the census does not resolve, through tuple unpacking, a
+  conditional expression, a parameter default, `getattr`, `importlib` or
+  `runpy` among others). The two
   plugin sets are not equal: the box's default run loads pytest-xdist's two
   plugins, which no cell installs. To execute the gated
   tests from a plain venv, put romp's SDK venv on the path:
