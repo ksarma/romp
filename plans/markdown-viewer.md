@@ -8769,10 +8769,11 @@ bypassed: no request reaches a host the gate still holds. The build's record her
 the contract said the same; the claim was false, and the follow-on is a privacy surface, landing on the owner's word, given on 2026-09-22
 (open point 11: all three gestures kept, the outbound case made visible before it happens). The verifications: `git diff --stat $(git merge-base origin/main HEAD) HEAD -- kernel/` is empty and
 `git diff --name-only $(git merge-base origin/main HEAD) HEAD` lists files under ui, docs, plans, tools,
-upstream or tests alone (53 files, the ledger entry's where line; run 2026-09-23 at the head that carries the fixes ruled in the
-file review's round 14, where the merge-base is fa3ef54b5, the fork's main the
+upstream or tests alone (53 files, the ledger entry's where line; run 2026-09-24 at the head that carries the fixes ruled in the
+file review's round 15, where the merge-base is fa3ef54b5, the fork's main the
 branch merged after the painted-contrast ask of 2026-09-23, its tip the merge of the fork's batch PR 907, and the listing is the
-branch's whole delta over it; the run at the head that carries the entries two of main's censuses owe this follow-on's modules,
+branch's whole delta over it; the run at the head that carries the fixes ruled in the file review's round 14, from the
+merge-base fa3ef54b5, listed the same 53; the run at the head that carries the entries two of main's censuses owe this follow-on's modules,
 after the merge of the fork's main, from the merge-base fa3ef54b5, listed the same 53; the run at the head that carries that ask and the merge of the fork's main after it, from the
 merge-base fa3ef54b5, listed 51, before ui/webview/compact-seam-exec.test.ts and ui/webview/spacer-measure.test.ts, two censuses
 that batch PR brought, joined the delta in those entries (the class mutators with no constant class gained the figure control's
