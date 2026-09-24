@@ -558,11 +558,10 @@ on the screen), and the button and the picture both show that before the click: 
 tooltip says it opens a new tab at the address's host, its border is dashed and its glyph
 is an arrow leaving a box, and the picture's own tooltip shows the address without its
 sign-in part, query and fragment, on a line after the author's title when there is one; a
-click on a picture in a fold's title line (a `<details>` block's summary, or the title of
-a callout written `[!note]-` or `[!note]+`) opens or closes the fold and opens nothing,
-with or without Cmd, and a picture from the web there shows no address in its tooltip,
-while its button, where it has one, still opens it; a figure waiting behind its host's box gets
-its button once it has loaded, as does
+click on a picture in a fold's title line (a `<details>` block's summary) opens or closes
+the fold and opens nothing, with or without Cmd, and a picture from the web there shows
+no address in its tooltip, while its button, where it has one, still opens it; a figure
+waiting behind its host's box gets its button once it has loaded, as does
 one still on its way (a click on it before then opens nothing), and once the browser has
 answered for a picture, four kinds have none: a picture that failed to load, which opens
 nothing either; a `data:` picture, whose bytes are written into the file itself and which
