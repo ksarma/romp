@@ -1772,14 +1772,18 @@ def _is_test_module(module):
     return base.startswith("test_") and base.endswith(".py")
 
 
-_Derivation = collections.namedtuple("_Derivation", "parsed counts records walks outlived stray")
+_Derivation = collections.namedtuple("_Derivation", "parsed counts records walks outlived stray parts_outlived")
 #   what _census_build returns for a path tuple: PARSED, the modules (relative to tests/) that parsed, in order; COUNTS,
 #   {name: {shape: count}}; RECORDS, {name: (_Record, ...)}; WALKS, {module: walks} (_walk_unit); OUTLIVED, the modules
 #   whose tree was still alive right after the loop dropped its own reference to it, in order, read through a weak
 #   reference taken just before the drop: the trees something else keeps (the census pin holds them equal to the files
 #   its own reader derives, _import_line_named_files); STRAY, for a build that drops a tree, the number of ast nodes
 #   born in the build and alive right after its loop beyond the nodes of the trees the holder took in it (_ast_nodes_alive,
-#   _tree_nodes: the census pin holds it at 0), None for a build that drops none
+#   _tree_nodes: the census pin holds it at 0), None for a build that drops none; PARTS_OUTLIVED, for a build over a
+#   synthetic tree (_census_build's `root` given), the modules some node of whose tree was still alive right after the
+#   loop dropped its own reference to it, in order, read through a weak reference to every leaf of the tree taken just
+#   before the drop (_leaf_refs): the trees of which something keeps any part, the tree itself or one node; None for a
+#   build over tests/ itself
 
 
 _SHARED_NODE_TYPES = (ast.expr_context, ast.boolop, ast.operator, ast.unaryop, ast.cmpop)
@@ -1810,6 +1814,25 @@ def _stray(before, trees, held_before):
     trees taken since; a tree held before is among `before` already. 0 when nothing but those trees keeps a node made
     since `before` was read: the census build's `stray`."""
     return len(_ast_nodes_alive()) - len(before) - _tree_nodes(t for real, t in trees.items() if real not in held_before)
+
+
+def _leaf_refs(tree):
+    """A weak reference to every leaf of `tree`: each of its nodes but the shared ones (_SHARED_NODE_TYPES) that has no
+    child node but shared ones, reached through ast.iter_child_nodes. Every node of the tree reaches a leaf through its
+    own fields, so any node kept alive keeps a leaf alive: after the tree is dropped, a leaf's weak reference alive means
+    something keeps a part of the tree (that leaf, or a node or a list above it), and every one dead means no node of
+    the tree is alive. Read-only: the walk reads each node's fields and writes nothing on a node. What it does not read:
+    a node's attribute dict or a field's value (a string, a number) kept without the node, which is not a node."""
+    out, todo = [], [tree]
+    while todo:     # loop-ok: bounded by the nodes of the tree
+        n = todo.pop()
+        children = [c for c in ast.iter_child_nodes(n) if not isinstance(c, _SHARED_NODE_TYPES)]
+        if children:
+            todo.extend(children)
+        else:
+            out.append(weakref.ref(n))
+        n = children = None
+    return out
 
 
 def _walk_unit(tree, rel, walks):
@@ -1848,6 +1871,22 @@ def _census_build(paths, root=None):
     node inside one), which leaves the tree object to die and the weak reference with nothing to see, is red there (the
     verifier's finding at round 2's thirty-first commit of fork PR #894). A thread that makes ast nodes while the loop
     runs would count in `stray` too; no thread of a test process does. A build that drops no tree counts nothing (None).
+    EACH DROP, BY EVERY LEAF, for a build over a synthetic tree (`root` given): just before the loop drops its reference
+    to a file's tree it takes a weak reference to every leaf of it (_leaf_refs), and just after, a leaf still alive
+    means something keeps a part of that tree (`parts_outlived`), so a road that keeps part of a dropped tree past its
+    drop and lets it go before the loop ends, which neither the weak reference to the tree nor the count after the loop
+    sees, is named at the drop (the verifier's finding at round 2's thirty-second commit of fork PR #894: a loop that
+    kept each dropped tree's statement list in a list of its own until the loop ended left the module green); the drop
+    count's test runs the build so, and the census loop is the same code in every build. WHAT THE DROP'S READS DO NOT
+    SEE: in the build over tests/ itself, a road that keeps a part of a dropped tree, not the tree, past its drop and
+    lets it go before the loop ends, where it does so in that build alone (a road keyed on the population, not on the
+    loop): the read by every leaf would cost that build about 4 s (measured at round 2's thirty-third commit of fork PR
+    #894, three fresh processes each: 8.2 to 8.7 s without it and 12.8 to 13.1 s with it on Python 3.12, 11.3 to 11.4 s
+    and 15.1 to 15.5 s on 3.10; 1.23 million leaves under tests/, a weak reference to each, and the collections their
+    allocation starts), where the build over a synthetic tree runs the same loop in milliseconds; a node the walk
+    makes itself (a fresh parse of an expression's text, _fresh) kept past its file's walk and let go before the loop
+    ends, which is no part of the dropped tree (the count after the loop sees one kept past it); and what _leaf_refs
+    does not read.
     THE SINGLETON CHECK (tests/parse_cache.py's check_singletons, which parse_cache.derived ran around the build before
     the reviewer's ruling of 2026-09-24 took derived() out of this module): before the build (a writer that ran earlier;
     the build neither runs nor counts) and after it, on the returning road and on the raising road (the build itself
@@ -1869,6 +1908,7 @@ def _census_build(paths, root=None):
     drops = any(_under_tests(p, root) and os.path.realpath(p) not in targets for p in key)
     before = _ast_nodes_alive() if drops else None      # held to the count below, so no node alive now dies in between
     held_before = frozenset(trees)
+    parts = None if root is None else []                # each drop read by every leaf: a synthetic tree's build alone
     try:
         for path in key:
             rel = os.path.relpath(path, HERE)
@@ -1882,9 +1922,13 @@ def _census_build(paths, root=None):
                 counts[name][rec.shape] += 1
                 records[name].append(rec)
             ref = weakref.ref(tree)
+            leaves = () if parts is None else _leaf_refs(tree)
             tree = None         # an unheld tree is freed here, before the next file is parsed (_own_tree)
             if ref() is not None:
                 outlived.append(rel)
+            if parts is not None and any(leaf() is not None for leaf in leaves):
+                parts.append(rel)
+            leaves = None
     except BaseException as exc:
         found = PC.singleton_attributes()
         if found:
@@ -1897,7 +1941,7 @@ def _census_build(paths, root=None):
         before = None
     PC.check_singletons("after %s: the build itself wrote them, or a thread beside it" % where)
     return _Derivation(tuple(parsed), {k: dict(v) for k, v in counts.items()}, {k: tuple(v) for k, v in records.items()},
-                       dict(walks), tuple(outlived), stray)
+                       dict(walks), tuple(outlived), stray, None if parts is None else tuple(parts))
 
 
 def _census_derivation(paths=None):
@@ -1964,7 +2008,12 @@ def module_level_env_census(paths=None):
     and a drop only when the next file's tree replaces it), and the ast nodes born in the build and alive after its
     loop are the nodes of the trees the holder took in it (_Derivation's `stray`, 0; red under a road that keeps part of
     a dropped tree, which the weak references do not see; the verifier's finding at the thirty-first commit); the
-    drop's counter has a test of its own, one planted road at a time; the target scan's test runs _resolver_targets and the pin's
+    drop's counter has a test of its own, one planted road at a time, which also runs the build over a synthetic tree
+    and holds the files some leaf of whose tree outlived its drop (_Derivation's `parts_outlived`, a weak reference to
+    every leaf) equal to the file the build keeps (red under a loop that keeps each dropped tree's statement list until
+    the loop ends, and under a walk that keeps a statement list or one leaf until the next file's walk, none of which
+    the whole tree's two reads see; the verifier's finding at the thirty-second commit, and what the build over tests/
+    itself does not read is in _census_build's docstring); the target scan's test runs _resolver_targets and the pin's
     reader whole over a synthetic tree, plant by plant, beside the scan's pure parts; the
     resolver's test, that its record of an imported module is built over the census's own tree of the file; and
     tearDownModule asserts that no file was parsed twice in the module's run, whichever test read it (the same count),
@@ -2712,10 +2761,11 @@ def _unproven_statements(tree, where=None):
       pytest.yield_fixture, pytest.hookimpl or a pytest.mark attribute, called or not) and whose defaults and annotations
       are proven, a class having no base and no keyword too (a base's __init_subclass__ and a metaclass run when the class
       is made), its body read by these rules, a def's in the def's own scope;
-    - an assignment (plain, annotated or augmented), a for, an if, a while, a try, a del, an expression statement, an
-      assert, a raise, a pass, a global, a nonlocal and a `type` statement, and in a def's body a return, whose targets
-      are names or a subscript of os.environ (through a name bound once by `import os` or by `from os import environ`)
-      and every expression of which is proven: a literal, an f-string, a tuple, list, set or dict display, a name, an
+    - an assignment (plain, annotated, or augmented where its target is a subscript of os.environ), a for, an if, a
+      while, a try, a del, an expression statement, an assert, a raise, a pass, a global, a nonlocal and a `type`
+      statement, and in a def's body a return, whose targets are names or a subscript of os.environ (through a name
+      bound once by `import os` or by `from os import environ`) and every expression of which is proven: a literal, an
+      f-string, a tuple, list, set or dict display, a name, an
       attribute chain on a name that no import of the module's own package binds (a value of that package's may be a
       fixture registered under any name, as a plant of `thing = _pkg.thing` shows; any other module's values come only
       through an import already off the list), a lambda whose defaults and body are proven, an operator, a comparison, a
@@ -2726,6 +2776,15 @@ def _unproven_statements(tree, where=None):
       (importlib.import_module, exec, eval, globals, setattr, getattr, a def of the module's own, a method of any other
       object, a plugin registered through request.config), and so are a subscript read, a comprehension, a with, a match
       and an await;
+    - THE IN-PLACE RULE, in one sentence: an augmented assignment to a name is off the list whatever the name holds,
+      since its operator calls the in-place method of the object bound to the name (list.__imul__, dict.__ior__),
+      which changes that object where it stands, and the reader proves no object's type (the verifier's finding at
+      round 2's thirty-second commit of fork PR #894: `names *= 0` on an alias of a test's list of fixtures, in a listed
+      pytest_collectreport and in an autouse fixture that sorts before `_f`, and `|=` on an alias of
+      pytest.fixture.__kwdefaults__ at import, of config.option.__dict__ in a listed pytest_configure, and of a
+      report's __dict__ in a listed pytest_runtest_makereport, each kept pytest from running a pop the reader counted;
+      `n += 1` on a counter is refused with them, a false refusal). An augmented assignment to a subscript of
+      os.environ stays on the list: the value it reads is a string, which has no in-place method.
     - no module-level binding of a double-underscore name but __all__ and __doc__ (_PROVEN_DUNDERS), and no binding, in a
       def's or a class's own scope (a parameter, a target, an import, a def or class name, an except name) or by a walrus
       anywhere, of a name the reader resolves as the module's (bound at import to pytest, to a module of the standard
@@ -2738,8 +2797,13 @@ def _unproven_statements(tree, where=None):
     pytest_plugins, which pytest reads to import plugins.
     What the list takes on trust, all of it outside the module's text: code that runs before the module whatever its text
     says (its package's __init__.py, which Python imports first, a plugin, the interpreter's startup), which may rebind
-    pytest.fixture or an attribute of the standard library before the module's first line; and a directory ahead of the
-    standard library other than those _import_roots names (PYTHONPATH, a .pth file, the directory a run starts in).
+    pytest.fixture or an attribute of the standard library before the module's first line; a directory ahead of the
+    standard library other than those _import_roots names (PYTHONPATH, a .pth file, the directory a run starts in);
+    and the methods the forms on the list call implicitly, other than the in-place ones: a plain operator, a comparison,
+    an f-string's formatting, an attribute read and a for's iteration run the operands' own methods, which on the
+    objects the list reaches (literals and displays, pytest's own objects and the standard library's, and what pytest
+    hands a fixture or a hook) make a new object or read one and change none; an object a plugin's fixture hands a def
+    is that plugin's code, taken on trust with it.
     tests/conftest.py is not read by this road: its text runs code the list cannot prove (a value of the tests package,
     defs of its own and standard-library functions called at import and in its fixtures and hooks,
     tests/credential_patterns.py loaded through importlib), so the reader reads the fixtures and the hooks of the module
@@ -2957,6 +3021,10 @@ def _unproven_statements(tree, where=None):
                 target(s.target, scope)
                 check(s, s.annotation, s.value)
             elif isinstance(s, ast.AugAssign):
+                if isinstance(s.target, ast.Name):
+                    off(s, "an in-place operator on %s, which calls the in-place method of whatever %s holds and may "
+                           "change that object where it stands (a test's list of fixtures, pytest's own defaults, a "
+                           "report's fields), where the reader proves no object's type" % (s.target.id, s.target.id))
                 target(s.target, scope)
                 check(s, s.value)
             elif isinstance(s, (ast.Expr, ast.Return)):
@@ -3245,7 +3313,9 @@ def _conftest_reasserted_names(src=None, where=None):
     name=, the seventeenth; a name= passed through functools.partial or getattr, the eighteenth; a decorator or a name
     imported from another module, the nineteenth; a module named like the standard library's that a sibling file
     shadows, and an imported module whose code rebinds pytest.fixture, the twentieth; a hook of the conftest that keeps
-    pytest from running a fixture it registered, the thirty-first), and the proof by text alone cannot take
+    pytest from running a fixture it registered, the thirty-first; an in-place operator on a name bound to a test's
+    list of fixtures, pytest.fixture's defaults, pytest's options or a report, the thirty-second, which the text road
+    now refuses by _unproven_statements' in-place rule), and the proof by text alone cannot take
     tests/conftest.py, whose import-time code takes values from the tests package, calls defs of its own and the
     standard library, and loads tests/credential_patterns.py through importlib, and whose fixtures and hooks call code of
     their own (a refusal there would fault the eight licences marked `reasserted`), so for tests/conftest.py the reader
@@ -3275,11 +3345,14 @@ def _conftest_reasserted_names(src=None, where=None):
     since the reader reads tests/conftest.py alone. On the module road, what tests/conftest.py's own code does beyond
     what pytest registers from it, which the reader takes on trust since it would refuse the conftest if it read that
     code by the proven list (the text road refuses it on the statements the registration test prints): its import-time
-    code, its fixtures' bodies and the bodies of its hooks on _LISTED_HOOKS may register a plugin, patch pytest's code or
-    edit a test's fixtures (a fixture that registers a plugin whose hook takes `_f` out of each test's fixtures is
-    planted, a pop the reader counts and pytest never runs), and its pytest_runtest_makereport may make a failed
-    setup's report pass, which runs the test's body after a fixture raised before its re-assert (planted too; the
-    conftest's own turns a skip into a failure and redacts text); and an attribute of tests.conftest that code sets or
+    code, its fixtures' bodies and the bodies of its hooks on _LISTED_HOOKS may register a plugin, patch pytest's code,
+    change pytest's options or edit a test's fixtures (a fixture that registers a plugin whose hook takes `_f` out of
+    each test's fixtures is planted, a pop the reader counts and pytest never runs, and so are an in-place operator
+    that empties a test's list of fixtures in a listed pytest_collectreport and in an autouse fixture, and one that
+    turns on pytest's setup plan in a listed pytest_configure), and its pytest_runtest_makereport may make a failed
+    setup's report pass, which runs the test's body after a fixture raised before its re-assert (planted too, by an
+    attribute write and by an in-place operator on the report's __dict__; the conftest's own turns a skip into a
+    failure and redacts text); and an attribute of tests.conftest that code sets or
     deletes after pytest registered the module's fixtures (pytest read them once, at the conftest's import, and the
     reader reads them when it runs; the one test that sets an attribute of it in the test process,
     tests/test_tempdir_hygiene.py's patch of _TMP_ROOT, puts it back). The executed check,
@@ -4559,7 +4632,16 @@ class HermeticKernelPostal(unittest.TestCase):
         and drops the other two, and its `stray` is the nodes of the two dropped files' statement lists. The census pin
         holds `stray` at 0 for the whole tree's build, red under a road of each of those shapes put in the census loop
         (the round's notes record the mutants). Each count reads every object the collector tracks (gc.get_objects), a
-        cost that grows with the process, so the test takes four."""
+        cost that grows with the process, so the test takes twelve: two for the counter, two for each of five builds.
+        EACH DROP, BY EVERY LEAF (the verifier's finding at round 2's thirty-second commit of fork PR #894: a loop that
+        kept each dropped tree's statement list in a list of its own until the loop ended, and let the list go before
+        the count, left both reads above with nothing to see and the module green): _leaf_refs over a small tree leaves some leaf alive whichever one node or statement list of
+        the tree is kept, and none when nothing is; and four builds over synthetic trees of their own, the file an import
+        names sorting last, give (outlived, stray, parts_outlived) as ([kept], 0, [kept]) with nothing kept, and, with a
+        walk that keeps a part of each tree until the next file's walk, ([kept], 0, every file) for its statement list and
+        for one leaf, which only the read by every leaf sees, and (every file, 0, every file) for the tree itself. The
+        census loop is the same code in every build, so a road put in it is red here (the round's notes record the loop's
+        mutant); what the build over tests/ itself does not read is in _census_build's docstring."""
         from unittest import mock
         text = "import os\n\n\ndef f(a, b=2):\n    return [a + b, {'k': a}]\n\n\nclass C:\n    x = f(1)\n"
         roads = (("the tree", lambda t: [t]), ("its statement list", lambda t: t.body), ("one statement", lambda t: [t.body[1]]),
@@ -4597,9 +4679,67 @@ class HermeticKernelPostal(unittest.TestCase):
             build = _census_build(tuple(os.path.join(root, name) for name in sorted(texts)), root)
         lists = None
         dropped = _tree_nodes(s for name in ("dropped.py", "uses_it.py") for s in ast.parse(texts[name]).body)
-        self.assertEqual(([os.path.basename(m) for m in build.outlived], build.stray), (["kept_helper.py"], dropped),
+        self.assertEqual(([os.path.basename(m) for m in build.outlived], build.stray,
+                          [os.path.basename(m) for m in build.parts_outlived]),
+                         (["kept_helper.py"], dropped, ["dropped.py", "kept_helper.py", "uses_it.py"]),
                          "the build keeps the file an import names and drops the other two, and with a walk that keeps each "
-                         "tree's statement list `stray` is the nodes of the two dropped files' lists")
+                         "tree's statement list `stray` is the nodes of the two dropped files' lists, and every file's drop "
+                         "leaves a leaf of its tree alive")
+        # EACH DROP, BY EVERY LEAF (the verifier's finding at round 2's thirty-second commit of fork PR #894: a loop that
+        # kept each dropped tree's statement list until it ended, and let the lists go before the count, left the module
+        # green). The reader first: on a small tree, whichever one node or statement list is kept, some leaf outlives the
+        # tree, and none does when nothing is kept
+        small = "def f(a, b=2):\n    return [a + b, {'k': a}]\n"
+
+        def parts_of(t):
+            return [n for n in ast.walk(t) if not isinstance(n, _SHARED_NODE_TYPES)] + [t.body, t.body[0].body]
+        alive = []
+        for i in range(len(parts_of(ast.parse(small))) + 1):
+            tree = ast.parse(small)
+            leaves = _leaf_refs(tree)
+            kept = parts_of(tree)[i:i + 1]      # the i-th part, and nothing past the last
+            tree = None
+            alive.append(sum(1 for leaf in leaves if leaf() is not None))
+            kept = leaves = None
+        self.assertEqual((alive[-1], [i for i, n in enumerate(alive[:-1]) if n == 0]), (0, []),
+                         "no leaf outlives a tree of which nothing is kept, and some leaf outlives it whichever part is kept: "
+                         "%s" % alive)
+        # THROUGH THE BUILD, one road at a time, each over a synthetic tree of its own (a file parsed twice in the module's
+        # run reds tearDownModule): the file an import names sorts last, so a part kept until the next file's walk is let
+        # go after each dropped file's drop and before the loop ends, and the last file's part is of the tree the build
+        # keeps, which the count after the loop leaves out
+        last, walk = [], _walk_unit
+        order = ("dropped.py", "uses_it.py", "zz_kept.py")
+        bodies = {"dropped.py": texts["dropped.py"], "uses_it.py": "import zz_kept\n\nY = zz_kept.X\n", "zz_kept.py": "X = 1\n"}
+
+        def build_over(walk_):
+            where = os.path.realpath(tempfile.mkdtemp())
+            self.addCleanup(shutil.rmtree, where, True)
+            for name in order:
+                with open(os.path.join(where, name), "w", encoding="utf-8") as f:
+                    f.write(bodies[name])
+            with mock.patch.dict(globals(), {"_walk_unit": walk_}):
+                b = _census_build(tuple(os.path.join(where, name) for name in order), where)
+            last.clear()
+            return ([os.path.basename(m) for m in b.outlived], b.stray, [os.path.basename(m) for m in b.parts_outlived])
+
+        def until_the_next_walk(part):
+            def walk_(tree, rel, walks):
+                last[:] = [part(tree)]      # the previous file's part is let go here, after that file's drop
+                return walk(tree, rel, walks)
+            return walk_
+        roads = (("its statement list", lambda t: t.body),
+                 ("one leaf", lambda t: [n for n in ast.walk(t) if not isinstance(n, _SHARED_NODE_TYPES)][-1]),
+                 ("the tree", lambda t: t))
+        got = dict([("nothing", build_over(walk))] + [(what, build_over(until_the_next_walk(part))) for what, part in roads])
+        kept, every = ["zz_kept.py"], list(order)
+        self.assertEqual(got, {"nothing": (kept, 0, kept), "its statement list": (kept, 0, every), "one leaf": (kept, 0, every),
+                               "the tree": (every, 0, every)},
+                         "EACH DROP, BY EVERY LEAF, as (outlived, stray, parts_outlived): with nothing kept the build names "
+                         "the one file it keeps; a walk that keeps each tree's statement list, or one leaf of it, until the "
+                         "next file's walk leaves the weak reference to the tree and the count after the loop nothing to see, "
+                         "and the read by every leaf names both dropped files; one that keeps the tree itself is seen by the "
+                         "weak reference too")
 
     def test_the_per_name_check_passes_the_floors_client_only_and_faults_every_other_leak_write(self):
         """The census pin's per-name check (_leak_writers) passes one floor write, upstream's client-only line
@@ -5227,7 +5367,8 @@ class HermeticKernelPostal(unittest.TestCase):
         registered from it (the plugin manager's hook callers for the module), over the conftest module found among the
         run's plugins by its file. With a package, the conftest and the test module sit in a package of that name inside
         the case's directory (an __init__.py beside them) and the helpers in the case's directory, the first with no
-        __init__.py, which pytest puts on sys.path. Returns {label: (the value the second test read, "None" when unset;
+        __init__.py, which pytest puts on sys.path; a helper named with a directory (wave/__init__.py) is written inside
+        it. Returns {label: (the value the second test read, "None" when unset;
         the registrations as _pytest_registrations returns them; the conftest's directory; the hooks as
         _pytest_hook_impls returns them; the specs of the hooks pytest registered)}; the child's return code must be 0,
         and every case must report."""
@@ -5256,8 +5397,9 @@ class HermeticKernelPostal(unittest.TestCase):
                       "    print('LIVE[%s]=%%s' %% json.dumps([sorted(h.name for h in pm.get_hookcallers(m) or ()) for m in mods]))\n"
                       % (reader, probe, label, probe, label, label, label))
             for name, text in dict(helpers, **{"conftest.py": conftest_src, "test_case_%02d.py" % i: module}).items():
-                with open(os.path.join(home if name in ("conftest.py", "test_case_%02d.py" % i) else sub, name), "w",
-                          encoding="utf-8") as f:
+                at = os.path.join(home if name in ("conftest.py", "test_case_%02d.py" % i) else sub, name)
+                os.makedirs(os.path.dirname(at), exist_ok=True)     # a helper inside a package of its own (wave/__init__.py)
+                with open(at, "w", encoding="utf-8") as f:
                     f.write(text)
         child = {k: v for k, v in os.environ.items() if k != "PYTEST_CURRENT_TEST" and not k.startswith("ROMP_PROBE_")}
         child["TMPDIR"] = d
@@ -5300,7 +5442,13 @@ class HermeticKernelPostal(unittest.TestCase):
         stayed green, two more cases, each run: a second def of `_f` later in the conftest (pytest registers the later
         def's code, which the first line alone tells from the popper's), and a conftest in a package whose first parent
         with no __init__.py holds a module named like the standard library's (sched.py, taken by `from sched import
-        thing` ahead of the standard library's); `_f`'s pop never ran under either. THE MODULE ROAD: the child's second
+        thing` ahead of the standard library's); `_f`'s pop never ran under either. Since its finding at the
+        thirty-second commit, whose mutants of the match's other two parts and of _shadowed's other two entry forms
+        stayed green, three more, each run: a fixture of another file wrapping a def named `_f` whose first line is the
+        popper's, registered under `_f` after it (the file alone tells the two apart), a def of another name compiled in
+        the conftest's own file at the popper's first line and registered under `_f` after it (the name alone does), and
+        a package directory named like the standard library's (wave/, taken by `from wave import thing`); `_f`'s pop
+        never ran under any of the three. THE MODULE ROAD: the child's second
         test reads its conftest's fixtures with _pytest_registrations' own source and its hooks with _pytest_hook_impls'
         own, which equal the hooks pytest registered from it, and _why_pytest_does_not_run over the fixtures, with
         _why_a_hook_may_stop_it over the hooks, says pytest runs `_f` in exactly the cases the child saw the pop run, so
@@ -5315,13 +5463,15 @@ class HermeticKernelPostal(unittest.TestCase):
         relative import, a `from` import of the module's own package or an import of its submodule, a fixture or a star
         import of pytest's own, a write through an attribute of pytest or a subscript other than os.environ's, a
         subscript read, a comprehension, a with, a match, a binding of __builtins__ or a module-level __getattr__, a
-        decorator not pytest's own, a class keyword, a call in a def's default or a class body, and a name of pytest's
-        own this process never imported) is named, and each it takes (literals, f-strings and displays, an attribute
-        chain of the standard library's, a lambda, operators, a conditional and a walrus, os.environ written and deleted
-        through `os` or a from-imported `environ`, the blocks, __all__, an annotation, a class body, pytest's fixture,
-        mark and hookimpl decorators, and imports of the module's own package, the standard library and pytest's own)
+        decorator not pytest's own, a class keyword, a call in a def's default or a class body, a name of pytest's own
+        this process never imported, and an in-place operator on a name at import, in a class body, on a def's
+        parameter and on a counter, the last a false refusal) is named, and each it takes (literals, f-strings and
+        displays, an attribute chain of the standard library's, a lambda, operators, a conditional and a walrus,
+        os.environ written, deleted and added to in place through `os` or a from-imported `environ`, the blocks,
+        __all__, an annotation, a class body, pytest's fixture, mark and hookimpl decorators, and imports of the module's own package, the standard library and pytest's own)
         passes. THE IMPORT ROOTS, planted directly: _import_roots names a package's directory and each parent up to the
-        first with no __init__.py, and _shadowed finds an entry in the last of them. THE REAL tests/conftest.py is read on
+        first with no __init__.py, and _shadowed finds an entry in the last of them, an entry that is the name itself (a
+        bare directory), and a path it cannot list. THE REAL tests/conftest.py is read on
         the module road, where the conftest pin asserts no refusal; the text road would refuse every one of its fixtures,
         on the statements printed here if this test fails (values of the tests package, and calls of defs of its own and
         of the standard library at import and in its fixtures and hooks), which is why it is not read that way."""
@@ -5366,7 +5516,14 @@ class HermeticKernelPostal(unittest.TestCase):
                  ("second-def-of-the-name-later", "@pytest.fixture(autouse=True)\ndef _f():\n    yield\n", {}, None, False, False,
                   "binds its name _f 2 times"),
                  ("N2b-stdlib-named-in-the-first-parent-with-no-init", "from sched import thing\n", {"sched.py": thing}, None,
-                  False, False, "sched is named like a standard-library module"))
+                  False, False, "sched is named like a standard-library module"),
+                 ("another-files-def-of-the-name-at-the-same-first-line", "from _rc_v import _f as _z\n",
+                  {"_rc_v.py": thing.replace("def thing", "def _f")}, None, False, False, "an import of _rc_v"),
+                 ("a-def-of-another-name-in-the-conftests-file-at-the-same-first-line",
+                  "_ns = {}\nexec(compile('\\n\\n\\n' + 'def _h():\\n    yield\\n', __file__, 'exec'), _ns)\n"
+                  "_z = pytest.fixture(autouse=True, name='_f')(_ns['_h'])\n", {}, None, False, False, "a call of exec"),
+                 ("N2b-stdlib-named-package-directory", "from wave import thing\n", {"wave/__init__.py": thing}, None, False,
+                  False, "wave is named like a standard-library module"))
         packages = {"N2b-stdlib-named-in-the-first-parent-with-no-init": "pkg"}
         #   a case whose conftest sits in a package of its own (the name with the case's number), its helpers in the
         #   case's directory, the parent pytest puts on sys.path
@@ -5421,7 +5578,13 @@ class HermeticKernelPostal(unittest.TestCase):
                     "a decorator that is not pytest's own"),
                    ("a class keyword", "class _M(metaclass=type):\n    pass\n", "a class with a base or a keyword"),
                    ("a call in a def's default", "def _d(x=print()):\n    pass\n", "a call of print"),
-                   ("a call in a class body", "class _C:\n    X = print()\n", "a call of print"))
+                   ("a call in a class body", "class _C:\n    X = print()\n", "a call of print"),
+                   ("an in-place operator on a name at import", "X = []\nX += [1]\n", "an in-place operator on X"),
+                   ("an in-place operator on a name in a class body", "class _C:\n    Y = 1\n    Y -= 1\n",
+                    "an in-place operator on Y"),
+                   ("an in-place operator on a parameter in a def's body", "def _h(xs):\n    xs |= {1}\n",
+                    "an in-place operator on xs"),
+                   ("an in-place operator on a counter, a false refusal", "N = 0\nN += 1\n", "an in-place operator on N"))
         for what, text, word in refused:
             got_ = _unproven_statements(ast.parse("import os, pytest\n" + text))
             self.assertTrue(got_ and any(word in w for _l, w in got_), "%s is off the proven list, named %r: %s" % (what, word, got_))
@@ -5453,6 +5616,15 @@ class HermeticKernelPostal(unittest.TestCase):
                          "the package's directory, then each parent up to and including the first with no __init__.py")
         self.assertEqual((_shadowed("sched", [inner, outer, root]), _shadowed("colorsys", [inner, outer, root])), (root, None),
                          "an entry of the name in the last of the directories shadows the standard library's; none, nothing")
+        # _shadowed's two other entry forms (the verifier's finding at round 2's thirty-second commit of fork PR #894: a
+        # match on `top.` alone, and a directory that cannot be listed read as holding nothing, each left the module
+        # green): an entry that IS the name (a package's or a namespace's directory), and a path os.listdir refuses (a
+        # regular file, a path that does not exist; neither depends on who runs the test, as a directory's mode would)
+        os.mkdir(os.path.join(outer, "heapq"))
+        unlistable = (os.path.join(root, "sched.py"), os.path.join(root, "no-such-directory"))
+        self.assertEqual((_shadowed("heapq", [inner, outer, root]), [_shadowed("colorsys", [u, root]) for u in unlistable]),
+                         (outer, list(unlistable)), "an entry that is the name itself shadows, and a directory that cannot "
+                                                    "be listed is taken as one that may")
         real = ast.parse(open(os.path.join(HERE, "conftest.py"), encoding="utf-8").read())
         unproven = _unproven_statements(real)
         self.assertTrue(any("_TMP_ROOT = _tests.TMP_ROOT" in what for _l, what in unproven)
@@ -5518,9 +5690,17 @@ class HermeticKernelPostal(unittest.TestCase):
         names it; the text road refuses both): a session-scoped fixture of the conftest that registers a plugin whose
         pytest_runtest_setup takes `_f` out of each later test's fixtures, and a listed pytest_runtest_makereport that
         makes a failed setup's report pass, so the second test's body runs after `_f` raised before its pop; the module
-        road counts each, and pytest never runs the pop before the second test. THE CLAUSE, planted by text: each shape
-        off it is named (a hook off the list with a body that proves, pytest_plugins, a hook name bound by an import,
-        twice, in a block or through a global, a listed hook that returns or yields a value, a specname= that is not a
+        road counts each, and pytest never runs the pop before the second test. THE IN-PLACE CASES (the verifier's
+        finding at round 2's thirty-second commit of fork PR #894, another case of the class): an in-place operator on a
+        name bound to a test's list of fixtures (in a listed pytest_collectreport, and in an autouse fixture that sorts
+        before `_f`), to pytest.fixture's keyword defaults at import, to config.option's __dict__ in a listed
+        pytest_configure (pytest's setup plan turned on, run in a child pytest of its own since the option holds for the
+        whole run) and to a report's __dict__ in a listed pytest_runtest_makereport (a failed setup made to pass);
+        `_f`'s pop never ran under any of the five, the text road counted each at that commit and refuses each now by
+        _unproven_statements' in-place rule, naming the operator, and the module road counts each but the defaults case
+        (whose registration of `_g` under `_f` it reads), four more witnesses of its residual. THE CLAUSE, planted by
+        text: each shape off it is named (a hook off the list with a body that proves, pytest_plugins, a hook name bound
+        by an import, twice, in a block or through a global, a listed hook that returns or yields a value, a specname= that is not a
         literal, a hookimpl with a positional argument or carried twice, a listed name implementing another spec, and in
         a def's body a call, an import, an attribute write, a binding of a name the reader resolves as the module's, a
         lambda's call or parameter, an await, a walrus on such a name, and a call of a method of os.environ off
@@ -5544,6 +5724,28 @@ class HermeticKernelPostal(unittest.TestCase):
                     "@pytest.hookimpl(hookwrapper=True)\ndef pytest_runtest_makereport(item, call):\n    outcome = yield\n"
                     "    rep = outcome.get_result()\n    if rep.when == 'setup' and rep.failed:\n        rep.outcome = 'passed'\n"
                     % (probe, probe))
+        # THE IN-PLACE CASES (the verifier's finding at round 2's thirty-second commit of fork PR #894), each spelled as
+        # that finding's run spelled it: an in-place operator on a name bound to a test's list of fixtures (the hook
+        # and the fixture leave the third test's alone, so it can report), to pytest.fixture's keyword defaults, or to a
+        # report's __dict__, where the proven list took the statement as an assignment to a name
+        in_place_collectreport = ("def pytest_collectreport(report):\n    for item in report.result:\n        try:\n"
+                                  "            names = item.fixturenames\n        except AttributeError:\n            continue\n"
+                                  "        if 'test_3' not in item.name:\n            names *= 0\n")
+        in_place_fixture = ("@pytest.fixture(autouse=True)\ndef _a(request):\n    names = request.node.fixturenames\n"
+                            "    if 'test_3' not in request.node.name:\n        names *= 0\n    yield\n")
+        in_place_kwdefaults = ("_d = pytest.fixture.__kwdefaults__\n_d |= {'name': '_f'}\n\n\n"
+                               "@pytest.fixture(autouse=True)\ndef _g():\n    yield\n\n\n_d |= {'name': None}\n")
+
+        def in_place_makereport(probe):
+            once = probe + "_ONCE"
+            return ("import os, pytest\n\n\n@pytest.fixture(autouse=True)\ndef _f():\n"
+                    "    assert (os.environ.get(%r) != '45678' or os.environ.get(%r) is not None\n"
+                    "            or os.environ.setdefault(%r, '1') is None)\n"
+                    "    os.environ.pop(%r, None)\n    yield\n\n\n"
+                    "@pytest.hookimpl(hookwrapper=True)\ndef pytest_runtest_makereport(item, call):\n    outcome = yield\n"
+                    "    d = outcome._result.__dict__\n"
+                    "    if call.when == 'setup' and call.excinfo is not None:\n        d |= {'outcome': 'passed'}\n"
+                    % (probe, once, once, probe))
         # (label, the conftest (a text, or a function of the probe name), pytest runs _f's pop, the module road counts it,
         # the text road counts it, a word the text road's refusal names)
         cases = (("control", popper, True, True, True, None),
@@ -5572,13 +5774,30 @@ class HermeticKernelPostal(unittest.TestCase):
                   "@pytest.fixture(autouse=True, scope='session')\ndef _a(request):\n"
                   "    request.config.pluginmanager.register(_Drop())\n    yield\n", False, True, False,
                   "a call of request.config.pluginmanager.register"),
-                 ("RESIDUAL: a listed makereport that makes a failed setup pass", failing, False, True, False, "a call of _boom"))
-        texts, run = {}, []
-        for i, (label, conftest, _runs, _module, _text, _word) in enumerate(cases):
-            probe = "ROMP_PROBE_HOOK_%02d" % i
-            texts[label] = (conftest(probe), probe)
-            run.append((label, texts[label][0], {}, probe))
-        got = self._registration_cases_run(run)
+                 ("RESIDUAL: a listed makereport that makes a failed setup pass", failing, False, True, False, "a call of _boom"),
+                 ("IN-PLACE: an alias of the fixtures of a test emptied in a listed pytest_collectreport",
+                  lambda p: popper(p) + in_place_collectreport, False, True, False, "an in-place operator on names"),
+                 ("IN-PLACE: an alias of the fixtures of a test emptied in an autouse fixture that sorts before _f",
+                  lambda p: popper(p) + in_place_fixture, False, True, False, "an in-place operator on names"),
+                 ("IN-PLACE: the keyword defaults of pytest.fixture given the name _f at import",
+                  lambda p: popper(p) + in_place_kwdefaults, False, False, False, "an in-place operator on _d"),
+                 ("IN-PLACE: a listed makereport that makes a failed setup pass through the __dict__ of the report",
+                  in_place_makereport, False, True, False, "an in-place operator on d"))
+        # the setup-plan case runs in a child pytest of its own: pytest calls a conftest's pytest_configure when it
+        # registers the conftest, and the option it turns on holds for every test of the run, every other case's included
+        alone = (("IN-PLACE: the setup plan of pytest turned on through the __dict__ of config.option in a listed "
+                  "pytest_configure",
+                  lambda p: popper(p) + "def pytest_configure(config):\n    opts = config.option.__dict__\n"
+                  "    opts |= {'setupplan': True}\n", False, True, False, "an in-place operator on opts"),)
+        texts, got = {}, {}
+        for group in (cases, alone):
+            run = []
+            for label, conftest, _runs, _module, _text, _word in group:
+                probe = "ROMP_PROBE_HOOK_%02d" % len(texts)
+                texts[label] = (conftest(probe), probe)
+                run.append((label, texts[label][0], {}, probe))
+            got.update(self._registration_cases_run(run))
+        cases += alone
         self.assertEqual({label: got[label][0] for label, *_ in cases},
                          {label: "None" if runs else "45678" for label, _c, runs, _m, _t, _w in cases},
                          "THE PREMISE: `_f`'s pop ran in the control and beside the listed hook that does nothing, and never "
