@@ -28,10 +28,12 @@ directory of that tree under the (st_mtime, st_size) of the read's own stat, so 
 leaves the recorded key behind the next signature's re-stat (2026-09-24; red on the fresh root stat the walk noted
 before); (8) a live link or a file at a sibling's or the own subagents path (never listed) is noted under that path's
 own stat key, as the walk noted it before, so a tree replacing it moves the key, and a path that changed between the
-read and that stat is noted under a key its re-stat differs from. Synthetic fixtures only: placeholder ids, the
-notes-api demo world (sessions web and api), a temp directory."""
+read and that stat is noted under a key its re-stat differs from; one path that holds a live link, then a file, then a
+dangling link, each replaced by a tree before the next cycle, rebuilds the tab after every swap. Synthetic fixtures
+only: placeholder ids, the notes-api demo world (sessions web and api), a temp directory."""
 import json
 import os
+import shutil
 import tempfile
 import time
 import unittest
@@ -567,6 +569,66 @@ class WalkNoteForAPathThatHoldsNoTree(_World):
                             "after the replacement (recorded %r, re-stat %r)" % (rec[str(p)], restat))
         self.assertEqual(km._subagent_file(self.tpath, AID_GHOST), swapped[0],
                          "the next lookup answers the landed file")
+
+    def _rebuilds_after_each_swap(self, p):
+        """One path `p` holds a live link, then a file, then a dangling link, and after each shape a real tree holding
+        the agent's file replaces it before the next cycle. Each shape's cycle builds the tab under a chat build's
+        record (the lookup misses and the walk notes `p`); the later cycle evaluates the tab's trailing signature
+        components over that record (_chat_sig_deps, the components _chat_build_sig appends after the static ones),
+        which must differ from the ones the build embedded (the record's at_build), so the tab rebuilds, and the
+        rebuild's lookup answers the landed file. No other recorded path moves across a swap (a premise), so the
+        rebuild is `p`'s key. Each shape is its own subtest, so a red names every shape that left the tab stale."""
+        self.addCleanup(km._SUBAGENT_TREES.pop, str(p), None)
+        for kind in ("link", "file", "dangling"):
+            with self.subTest(shape=kind):
+                if p.is_symlink() or p.is_file():            # the previous shape's leftover, or its tree, off `p`
+                    p.unlink()
+                elif p.is_dir():
+                    shutil.rmtree(str(p))
+                if kind == "dangling" and self.target.exists():
+                    shutil.rmtree(str(self.target))          # the link's target, gone: the new link dangles
+                self._place(p, kind)
+                before = km._chat_stat_key(str(p))
+                km._live_scope.subagent_trees = {}           # this shape's cycle: the build that shows the file missing
+                km._chat_dep_scope.deps = {"task_outs": [], "postal_any": False}
+                try:
+                    got = km._subagent_file(self.tpath, AID_GHOST)
+                    deps = km._chat_build_deps(SID2, {"events": []})
+                finally:
+                    km._chat_dep_scope.deps = None
+                    km._live_scope.subagent_trees = None
+                landed = self._replace_with_tree(p)          # between the cycles: a real tree replaces the shape
+                km._live_scope.subagent_trees = {}           # the later cycle: the tab's signature, then its rebuild
+                try:
+                    later = km._chat_sig_deps(SID2, deps)
+                    again = km._subagent_file(self.tpath, AID_GHOST)
+                finally:
+                    km._live_scope.subagent_trees = None
+                rec, now = dict(deps["task_outs"]), dict(later[0])
+                restat = km._chat_stat_key(str(p))
+                shown = repr(rec[str(p)]) if str(p) in rec else "nothing"
+                self.assertIsNone(got, "the lookup through the %s answers None" % kind)
+                self.assertEqual({k: v for k, v in now.items() if k != str(p)},
+                                 {k: v for k, v in rec.items() if k != str(p)},
+                                 "premise: no recorded path but the %s's moved across the swap" % kind)
+                self.assertNotEqual(later, deps["at_build"], "the tab rebuilds in the cycle after a tree replaced the "
+                                    "%s: its trailing signature components differ from the build's (recorded for the "
+                                    "path %s, its re-stat %r)" % (kind, shown, restat))
+                self.assertIn(str(p), rec, "a key is recorded for the %s at the path" % kind)
+                self.assertEqual(rec[str(p)], before, "the key recorded for the %s is the path's _chat_stat_key before "
+                                 "the swap (recorded %s, stat key %r)" % (kind, shown, before))
+                self.assertEqual(again, landed, "the rebuild's lookup answers the landed file")
+
+    def test_a_sibling_path_that_is_a_link_then_a_file_then_a_dangling_link_rebuilds_the_tab_after_each_swap(self):
+        """The sequence at a sibling fsid's subagents path. Red with the walk's note sent back through
+        _subagent_tree_dep_note (the read-keyed note's first form): it records nothing for the link or the file, so no
+        recorded key moves when the tree replaces either and the tab stays stale. The dangling link is noted None
+        there too, and its swap rebuilds the tab on either form."""
+        self._rebuilds_after_each_swap(Path(self.tpath).parent / SIB / "subagents")
+
+    def test_the_own_path_that_is_a_link_then_a_file_then_a_dangling_link_rebuilds_the_tab_after_each_swap(self):
+        """The same sequence at the transcript's own subagents path, the walk's other road."""
+        self._rebuilds_after_each_swap(km._subagents_dir(self.tpath))
 
 
 if __name__ == "__main__":
