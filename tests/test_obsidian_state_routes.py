@@ -262,11 +262,16 @@ class SocketFlagWhitelist(_Routes):
     read as isolation. Both doors now ask one predicate over the one list (_lane_flag_refusal over
     _LANE_FLAGS). The socket answers an unlisted name on the settingRefused frame (the lane gear's refusal,
     which the timeline page repaints from; a `warn` never reaches it) with the route's own sentence inside,
-    `value` null since no pane paints an unlisted flag, and writes nothing. Driven through the real
-    dispatcher, and end to end over a real socket to the served Handler."""
+    `value` null since no pane paints an unlisted flag, and writes nothing. Every name a frame carries meets the
+    predicate, a falsy one (null, "", 0, 0.0, false, [] and {}) included, since the arm keys on the flag key's
+    presence (the reviewer's ruling on round 1 of fork PR #909, kernel-2). A frame with NO flag key is where the doors
+    still differ, in the answer only: the socket op draws the terminal arm's unknownOp, the kernel's answer for a known
+    op missing a field its arm requires (_note_unknown_op), and POST /flag its 400 ("got null"); neither writes.
+    Driven through the real dispatcher, and end to end over a real socket to the served Handler."""
 
     UNLISTED = ("threadMail", "postalOff", "someFutureFlag", "hideFromFeed ", "HIDEFROMFEED",
-                7, True, ["hideFromFeed"], {"hideFromFeed": True})
+                7, True, ["hideFromFeed"], {"hideFromFeed": True},
+                None, "", 0, 0.0, False, [], {})   # the falsy names: each reaches the predicate, as a truthy one does
 
     def setUp(self):
         super().setUp()
@@ -286,22 +291,29 @@ class SocketFlagWhitelist(_Routes):
         km._flags_cache.clear()
         p = km.jd.STATE / "session-flags.json"
         before = p.read_bytes()
+        answers = []
         for name in self.UNLISTED:
             ws = self._ws({"type": "setSessionFlag", "id": SID, "flag": name, "value": True})
             km._flags_cache.clear()
             self.assertEqual(p.read_bytes(), before, "%r: the socket op wrote the flags store: %s"
                              % (name, p.read_text()))
+            answers.append((name, ws))
+        # every name's answer by its type first, before any other field is read: a name the arm never hands the
+        # predicate draws the terminal arm's unknownOp, which carries no gesture
+        self.assertEqual([(name, ws) for name, ws in answers if [fr.get("type") for fr in ws] != ["settingRefused"]], [],
+                         "names whose answer is not one settingRefused frame on the delivering socket")
+        for name, ws in answers:
             st, r = self._post("/flag", {"id": SID, "flag": name, "value": True})
             self.assertEqual(st, 400, (name, r))
             self.assertEqual(r["error"], "flag must be one of %s, got %s" % (", ".join(km._LANE_FLAGS), json.dumps(name)))
-            self.assertEqual(len(ws), 1, "%r: one answer, on the delivering socket: %r" % (name, ws))
             fr = ws[0]
             self.assertEqual((fr["type"], fr["gesture"], fr["sid"], fr["itemId"]), ("settingRefused", "flag", SID, ""), fr)
             self.assertIsNone(fr["value"], "%r: no pane paints an unlisted flag, so there is no toggle to repaint" % (name,))
             self.assertEqual(fr["text"], self._wrapped(r["error"]), "%r: the route's sentence, wrapped as the socket's refusals are" % (name,))
             self.assertIsInstance(fr["flag"], str)
-            if isinstance(name, str):
-                self.assertEqual(fr["flag"], name, "addressed to the name the client sent")
+            if isinstance(name, str) or not name:
+                self.assertEqual(fr["flag"], name or "", "%r: addressed to the name the client sent, as str() spells it, "
+                                 "the empty string for a falsy one" % (name,))
         st, r = self._post("/flag", {"id": SID, "flag": "threadMail", "value": True})
         self.assertEqual(r["error"], 'flag must be one of hideFromFeed, postalServiceOff, notify, got "threadMail"')
         self.assertEqual(self._ws({"type": "setSessionFlag", "id": SID, "flag": "threadMail", "value": True})[0]["text"],
@@ -309,6 +321,26 @@ class SocketFlagWhitelist(_Routes):
                          'got "threadMail"; try again')
         self.assertEqual(self._flags_file(), {OTHER: {"postalServiceOff": True}})
         self.assertEqual(self.dirty, [], "a refused write marks nothing dirty")
+
+    def test_a_frame_with_no_flag_key_draws_unknown_op_where_the_route_answers_its_400(self):
+        """A witness, green before the arm keyed on the flag key's presence and after, by design: a frame with an id
+        and a value and no flag key falls to the terminal arm, whose answer is exactly unknownOp (_note_unknown_op, the
+        kernel's contract for a known op missing a field its arm requires; tests/test_tag_edit_ack.py pins it for an
+        empty id), while POST /flag answers the same request with its whitelist 400, "got null". The doors differ here
+        in the answer only: neither writes."""
+        km._set_session_flag(OTHER, "postalServiceOff", True)
+        km._flags_cache.clear()
+        p = km.jd.STATE / "session-flags.json"
+        before = p.read_bytes()
+        with contextlib.redirect_stderr(io.StringIO()):     # the terminal arm logs a type once per process
+            ws = self._ws({"type": "setSessionFlag", "id": SID, "value": True})
+        self.assertEqual(ws, [{"type": "unknownOp", "op": "setSessionFlag"}])
+        st, r = self._post("/flag", {"id": SID, "value": True})
+        self.assertEqual((st, r), (400, {"ok": False, "error": "flag must be one of hideFromFeed, postalServiceOff, "
+                                                               "notify, got null"}))
+        km._flags_cache.clear()
+        self.assertEqual(p.read_bytes(), before, "neither door wrote the flags store")
+        self.assertEqual(self.dirty, [], "nothing marked dirty")
 
     def test_a_bad_value_beside_an_unlisted_name_is_refused_for_the_name(self):
         # the route checks the name before the value; so does the socket
@@ -495,23 +527,28 @@ _DOTTED = re.compile(r"[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*")
 
 
 def _mentioned(node):
-    """The names a node mentions as code: a Name's id, an Attribute's attr, and every part of a string constant that is
-    an identifier or a dotted chain of them. A string reaches a function as surely as its name does
-    (`globals()["_set_session_flag"](...)`, `getattr(self, "_dispatch_ws")`, `attrgetter("Handler._dispatch_ws")`). A
-    name inside a longer string (source text handed to eval) or built from pieces is outside, as FlagWriterPopulation's
-    docstring says."""
+    """The names a node mentions as code: a Name's id, an Attribute's attr, every part of a string constant that is
+    an identifier or a dotted chain of them, and every dotted part of an import alias's imported name. A string reaches
+    a function as surely as its name does (`globals()["_set_session_flag"](...)`, `getattr(self, "_dispatch_ws")`,
+    `attrgetter("Handler._dispatch_ws")`), and so does an import (`from M import _set_session_flag as w` mentions
+    _set_session_flag, the name it binds to w; the reviewer's ruling on round 1 of fork PR #909, fresh-2). A star import
+    spells no name, and a name inside a longer string (source text handed to eval) or built from pieces is outside, as
+    FlagWriterPopulation's docstring says. _facts reads the same four spellings."""
     if isinstance(node, ast.Name):
         return {node.id}
     if isinstance(node, ast.Attribute):
         return {node.attr}
     if isinstance(node, ast.Constant) and isinstance(node.value, str) and _DOTTED.fullmatch(node.value):
         return set(node.value.split("."))
+    if isinstance(node, ast.alias) and node.name != "*":
+        return set(node.name.split("."))
     return set()
 
 
 def _mentions(node, names):
     """Every node under `node` that mentions a name in `names` as code (_mentioned): a call by name, and equally a setter
-    bound to a local, put in a table, given as a default, handed on as a callback, or named by a string."""
+    bound to a local, bound by an import alias, put in a table, given as a default, handed on as a callback, or named
+    by a string."""
     return [n for n in ast.walk(node) if _mentioned(n) & names]
 
 
@@ -574,9 +611,9 @@ def _doors_reaching(walk, targets):
 
 def _doors_naming(walk, targets):
     """{door: [line of each mention]} for every node in a function's door walk (_door_walk) that mentions a name in
-    `targets` (_mentioned). The setters are read this way: an arm that binds a setter to a local, picks it from a table,
-    hands it on or names it by a string writes through it as surely as one that calls it by name, so the mention makes
-    the door."""
+    `targets` (_mentioned). The setters are read this way: an arm that binds a setter to a local, imports it under an
+    alias, picks it from a table, hands it on or names it by a string writes through it as surely as one that calls it
+    by name, so the mention makes the door."""
     found = {}
     for door, node in walk:
         if _mentioned(node) & targets:
@@ -637,44 +674,151 @@ def _call_spelling(call, modules):
     return "<%s>" % type(f).__name__
 
 
-def _store_flow(fn, modules):
-    """{call spelling: [line, ...]} for the calls in `fn` handed the flags store's path, or anything computed from it.
-    Seeded at the constants naming the store (_store_seeds). A name bound from an expression that carries it (=, :=, an
-    augmented or annotated assignment, a for, with or comprehension target) carries it on, to a fixpoint, and so does
-    the root of a subscript or attribute assigned such a value (`cache[k] = p` taints `cache`). A call is handed it when
-    an argument, a keyword's value or its receiver carries it. Over-approximate on purpose: a value computed from the
-    path (its stat, a cache entry keyed by it) carries too, so the reads a reader is pinned to list a few calls that only
-    ever see such a value. It judges no WRITE by its spelling: FlagWriterPopulation.READS lists what a reader may hand the
-    path to, and any other call is a write until someone classes it."""
+_PATH_EXIT = "<path exit>"               # _store_flow's key for a return or yield of the store's path itself
+_MODULE_STORE = "<module-level store>"   # _store_flow's key for the path stored where every function can read it
+_PATH_CALLS = frozenset({"os.path.join", "Path", "str", "os.fspath"})   # the calls the path passes through (_path_valued)
+
+
+def _bindings(fn):
+    """[(target, value)] for every binding in `fn`: =, :=, an augmented or annotated assignment, a for, with or
+    comprehension target, and each parameter that has a default, for the def and for every def, async def or lambda
+    under it. A parameter's target is its ast.arg: the positional-only and positional parameters zipped from the tail
+    with the defaults (which cover both kinds), the keyword-only ones with their kw_defaults that are not None."""
+    out = []
+    for n in ast.walk(fn):
+        if isinstance(n, ast.Assign):
+            out.extend((t, n.value) for t in n.targets)
+        elif isinstance(n, (ast.AnnAssign, ast.AugAssign, ast.NamedExpr)):
+            if n.value is not None:
+                out.append((n.target, n.value))
+        elif isinstance(n, (ast.For, ast.AsyncFor, ast.comprehension)):
+            out.append((n.target, n.iter))
+        elif isinstance(n, (ast.With, ast.AsyncWith)):
+            out.extend((i.optional_vars, i.context_expr) for i in n.items if i.optional_vars is not None)
+        elif isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+            a = n.args
+            pos = a.posonlyargs + a.args
+            out.extend(zip(pos[len(pos) - len(a.defaults):], a.defaults))
+            out.extend((k, d) for k, d in zip(a.kwonlyargs, a.kw_defaults) if d is not None)
+    return out
+
+
+def _bound_names(target):
+    """The names a binding's target binds: a parameter's own name, or every Name stored under the target."""
+    if isinstance(target, ast.arg):
+        return {target.arg}
+    return {m.id for m in ast.walk(target) if isinstance(m, ast.Name) and isinstance(m.ctx, ast.Store)}
+
+
+def _path_valued(node, seeds, pathy, modules):
+    """Whether `node` is the store's path itself, not a value computed from it: a seed (_store_flow's: a constant naming
+    the store, or a call of a path helper), or a name bound from a path-valued expression (`pathy`), carried only
+    through an operator (`STATE / "session-flags.json"`), an f-string, an if-else's two values, a tuple or a list, and
+    the calls in _PATH_CALLS, and through no other call. So `return p` and `return str(p)` hand the path back, while
+    `return json.loads(p.read_text())` hands back what was read from it."""
+    stack = [node]
+    while stack:
+        n = stack.pop()
+        if id(n) in seeds:
+            return True
+        t = type(n)
+        if t is ast.Name:
+            if n.id in pathy and isinstance(n.ctx, ast.Load):
+                return True
+        elif t is ast.BinOp:
+            stack += [n.left, n.right]
+        elif t is ast.JoinedStr:
+            stack += n.values
+        elif t is ast.FormattedValue:
+            stack.append(n.value)
+        elif t is ast.IfExp:
+            stack += [n.body, n.orelse]
+        elif t in (ast.Tuple, ast.List):
+            stack += n.elts
+        elif t is ast.Call and _call_spelling(n, modules) in _PATH_CALLS:
+            stack += n.args
+    return False
+
+
+def _store_flow(fn, modules, helpers=frozenset()):
+    """{where the flags store's path goes: [line, ...]} for `fn`: each call handed the path, or anything computed from
+    it, by its spelling (_call_spelling); _PATH_EXIT, a return or yield of the path itself; and _MODULE_STORE, the path
+    stored where every function can read it.
+    Seeded at the constants naming the store (_store_seeds) and at each call of a path helper (`helpers`, their short
+    names, which _derive_namers finds), so the caller of a helper is traced from the call. A name bound from an
+    expression that carries a seed (_bindings: =, :=, an augmented or annotated assignment, a for, with or comprehension
+    target, and a parameter's default, for the def and for every def, async def or lambda under it) carries it on, to a
+    fixpoint, and so does the root of a subscript or attribute assigned such a value (`cache[k] = p` taints `cache`). A
+    call is handed it when an argument, a keyword's value or its receiver carries it. Over-approximate on purpose: a
+    value computed from the path (its stat, a cache entry keyed by it) carries too, so the reads a reader is pinned to
+    list a few calls that only ever see such a value.
+    The exits are keyed on the path itself (_path_valued), not on anything computed from it, since the readers return
+    values read from the file (keyed on carrying, seven of the nine readers would have one). A Return, Yield or
+    YieldFrom whose value is the path, or a lambda whose body is, is a _PATH_EXIT: the function hands the path to its
+    caller, a path helper (NAMERS' "path" role), and _derive_namers makes every function that calls it a namer in turn.
+    The path stored into a name the function declares global, or into a subscript or attribute rooted at a name the
+    function neither binds nor takes as a parameter (so Python reads it from the module), is a _MODULE_STORE, which
+    the role check refuses under every role: tracing it would need every reader of that name (the reviewer's ruling on
+    round 1 of fork PR #909, extra6-1 and fresh-1).
+    It judges no WRITE by its spelling: FlagWriterPopulation.READS lists what a reader may hand the path to, and any
+    other call is a write until someone classes it."""
     seeds = {id(n) for n in _store_seeds(fn)}
-    tainted = set()
+    if helpers:
+        seeds |= {id(n) for n in ast.walk(fn) if isinstance(n, ast.Call) and _callee(n) in helpers}
+    pairs = _bindings(fn)
+    tainted, pathy = set(), set()
     while True:
-        grown = set(tainted)
-        for n in ast.walk(fn):
-            if isinstance(n, ast.Assign):
-                pairs = [(t, n.value) for t in n.targets]
-            elif isinstance(n, (ast.AnnAssign, ast.AugAssign, ast.NamedExpr)):
-                pairs = [(n.target, n.value)] if n.value is not None else []
-            elif isinstance(n, (ast.For, ast.AsyncFor, ast.comprehension)):
-                pairs = [(n.target, n.iter)]
-            elif isinstance(n, (ast.With, ast.AsyncWith)):
-                pairs = [(i.optional_vars, i.context_expr) for i in n.items if i.optional_vars is not None]
-            else:
-                pairs = []
-            for target, value in pairs:
-                if _carries(value, seeds, tainted):
-                    grown |= {m.id for m in ast.walk(target) if isinstance(m, ast.Name) and isinstance(m.ctx, ast.Store)}
+        grown, grown_pathy = set(tainted), set(pathy)
+        for target, value in pairs:
+            if _carries(value, seeds, tainted):
+                grown |= _bound_names(target)
+                if not isinstance(target, ast.arg):
                     grown |= {r for m in ast.walk(target) if isinstance(m, (ast.Subscript, ast.Attribute))
                               and isinstance(m.ctx, ast.Store) for r in [_root_name(m)] if r}
-        if grown == tainted:
+            if _path_valued(value, seeds, pathy, modules):
+                grown_pathy |= _bound_names(target)
+        if grown == tainted and grown_pathy == pathy:
             break
-        tainted = grown
+        tainted, pathy = grown, grown_pathy
     handed = {}
+    declared = set()
+    local = set()
     for n in ast.walk(fn):
         if isinstance(n, ast.Call):
             parts = list(n.args) + [k.value for k in n.keywords] + ([n.func.value] if isinstance(n.func, ast.Attribute) else [])
             if any(_carries(x, seeds, tainted) for x in parts):
                 handed.setdefault(_call_spelling(n, modules), []).append(n.lineno)
+        elif isinstance(n, (ast.Return, ast.Yield, ast.YieldFrom)):
+            if n.value is not None and _path_valued(n.value, seeds, pathy, modules):
+                handed.setdefault(_PATH_EXIT, []).append(n.lineno)
+        elif isinstance(n, ast.Global):
+            declared.update(n.names)
+        elif isinstance(n, ast.Name) and isinstance(n.ctx, (ast.Store, ast.Del)):
+            local.add(n.id)
+        elif isinstance(n, (ast.Import, ast.ImportFrom)):
+            local.update((a.asname or a.name).split(".")[0] for a in n.names)
+        elif isinstance(n, ast.ExceptHandler) and n.name:
+            local.add(n.name)
+        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+            if isinstance(n, ast.Lambda) and _path_valued(n.body, seeds, pathy, modules):
+                handed.setdefault(_PATH_EXIT, []).append(n.lineno)
+            if n is not fn and not isinstance(n, ast.Lambda):
+                local.add(n.name)
+            a = n.args
+            local.update(x.arg for x in a.posonlyargs + a.args + a.kwonlyargs + [a.vararg, a.kwarg] if x is not None)
+        elif isinstance(n, ast.ClassDef):
+            local.add(n.name)
+    local -= declared
+    for target, value in pairs:
+        if isinstance(target, ast.arg) or not _path_valued(value, seeds, pathy, modules):
+            continue
+        for m in ast.walk(target):
+            if not isinstance(getattr(m, "ctx", None), ast.Store):
+                continue
+            if (isinstance(m, ast.Name) and m.id in declared) or (
+                    isinstance(m, (ast.Subscript, ast.Attribute)) and _root_name(m) is not None
+                    and _root_name(m) not in local):
+                handed.setdefault(_MODULE_STORE, []).append(m.lineno)
     return handed
 
 
@@ -696,7 +840,8 @@ _WALKS = None                      # {id(unit): _facts walks} while a build of t
 def _facts(node):
     """Everything the census reads from one unit (a def or a statement, _unit_facts), from ONE walk of it. names:
     {name: the number of nodes under the unit that mention it as code (_mentioned)}, so its keys are every name the unit
-    mentions and a count is how many nodes _mentions(node, {name}) finds. callees: _callee of every call under it.
+    mentions and a count is how many nodes _mentions(node, {name}) finds, an import alias counted by the parts of the
+    name it imports, as _mentioned reads it. callees: _callee of every call under it.
     seeded: whether it names the flags store in code (_store_seeds(node) is not empty). lane: whether a comparison
     under it tests membership in _LANE_FLAGS (one of its operators `in` or `not in`, the name one of its comparators).
     loads: the file names it loads a sibling module by, each ".py" string constant inside a call in _LOADERS
@@ -710,8 +855,9 @@ def _facts(node):
     the build's walk table (_WALKS, keyed by id(node)), which the mechanism pin reads: each unit walked exactly once."""
     if _WALKS is not None:
         _WALKS[id(node)] = _WALKS.get(id(node), 0) + 1
-    Name, Attribute, Constant, Call, Expr, Compare, AST = (ast.Name, ast.Attribute, ast.Constant, ast.Call, ast.Expr,
-                                                           ast.Compare, ast.AST)   # locals: the loop runs once per node
+    Name, Attribute, Constant, Alias, Call, Expr, Compare, AST = (ast.Name, ast.Attribute, ast.Constant, ast.alias,
+                                                                  ast.Call, ast.Expr, ast.Compare, ast.AST)
+    # locals: the loop runs once per node
     names, callees, loads, text, needles, lane = {}, set(), set(), set(), [], False
     count, dotted = names.get, _DOTTED.fullmatch
     stack = [node]
@@ -734,6 +880,11 @@ def _facts(node):
                         names[m] = count(m, 0) + 1
                 if _STORE_NEEDLE in v:
                     needles.append(id(n))
+            continue
+        if t is Alias:                     # name and asname, both strings: no child
+            if n.name != "*":
+                for m in set(n.name.split(".")):
+                    names[m] = count(m, 0) + 1
             continue
         if t is Call:
             c = _callee(n)
@@ -889,22 +1040,42 @@ def tearDownModule():
         raise AssertionError("; ".join(problems))
 
 
+def _derive_namers(fns, of, modules):
+    """(namers, flows, helpers): the functions that name the flags store, where each sends its path (_store_flow), and
+    the path helpers among them by short name. A function names the store when its own code spells it (_facts'
+    seeded) or when it calls a path helper, a namer whose flow has a _PATH_EXIT, by that helper's short name (_facts'
+    callees), grown to a fixpoint, so helpers chain: a function that returns a helper's result is a helper in turn.
+    Each namer's flow is read with every helper's call as a seed, so a caller that hands a helper's result to open()
+    is handed the path there. Without this step a caller of a helper would name no store, and the setter derivations,
+    which read the namers only, would never trace it (the reviewer's ruling on round 1 of fork PR #909, fresh-1)."""
+    namers, helpers = {q for q, f in of.items() if f.seeded}, frozenset()
+    while True:
+        flows = {q: _store_flow(fns[q], modules, helpers) for q in namers}
+        found = frozenset(_short(q) for q, flow in flows.items() if _PATH_EXIT in flow)
+        grown = namers | {q for q, f in of.items() if f.callees & found}
+        if grown == namers and found == helpers:
+            return namers, flows, helpers
+        namers, helpers = grown, found
+
+
 def _derive_flag_census(cls):
     """The census, from the source: every function and statement (_source_functions); the names bound to a module in
     the kernel and in its judge (the other module that names the store), so a call spells as os.replace, not .replace
-    (_call_spelling; an unknown spelling is outside READS, a write); the functions that name the store in code
-    (namers); the setters of session-flags.json, three ways: the functions that name the file and call a store write
-    (the one door _write_state_json, its _atomic_write, a Path write), the functions that call the clean-write hook
-    every landed write of that store runs (_flags_written), and the functions that hand the store's path to anything
-    outside READS (_store_flow), whatever the call is spelled; every setter any of them finds with WRITERS (setters,
-    and shorts, the names code mentions them by); the functions other than a setter that mention one (callers); and
-    the roads (_derive_roads). Every unit of every module (each def and statement) is walked ONCE (_facts), and what
-    the sets above and the tests read of a unit comes from that one walk: facts, keyed by id(unit), and loads, each
-    module's files loaded by name. Each caller's door walk (_door_walk) is walked once here too, as door_walks, for
-    the five tests that key a caller's nodes to its doors. trees holds each module's tree, the build's own parse
-    (_parse_kernel_module), so the mechanism pin enumerates the units of the very trees the build walked and the trees
-    go when the census goes. It returns one _Census; the build leaves no cycle behind, so dropping that object frees
-    everything here by reference count (_flag_census)."""
+    (_call_spelling; an unknown spelling is outside READS, a write); the functions that name the store, in code or by
+    calling a path helper (namers, with each one's flow and the helpers, _derive_namers); the setters of
+    session-flags.json, three ways: the functions that name the file and call a store write (the one door
+    _write_state_json, its _atomic_write, a Path write), the functions that call the clean-write hook every landed
+    write of that store runs (_flags_written), and the functions that hand the store's path to a call outside READS
+    (_store_flow), whatever the call is spelled (a path exit and a module-level store are not calls: a helper's
+    callers are namers, traced in turn, and the role check refuses the store); every setter any of them finds with
+    WRITERS (setters, and shorts, the names code mentions them by); the functions other than a setter that mention one
+    (callers); and the roads (_derive_roads). Every unit of every module (each def and statement) is walked ONCE
+    (_facts), and what the sets above and the tests read of a unit comes from that one walk: facts, keyed by id(unit),
+    and loads, each module's files loaded by name. Each caller's door walk (_door_walk) is walked once here too, as
+    door_walks, for the five tests that key a caller's nodes to its doors. trees holds each module's tree, the build's
+    own parse (_parse_kernel_module), so the mechanism pin enumerates the units of the very trees the build walked and
+    the trees go when the census goes. It returns one _Census; the build leaves no cycle behind, so dropping that
+    object frees everything here by reference count (_flag_census)."""
     trees = {module: _parse_kernel_module(module) for module in _kernel_modules()}
     fns, rest = _source_functions(trees)
     modules = frozenset(n for m in (km, km.jd) for n, v in vars(m).items() if isinstance(v, type(os)))
@@ -913,16 +1084,16 @@ def _derive_flag_census(cls):
         table, loads[module] = _unit_facts(tree)
         facts.update(table)
     of = {q: facts[id(fn)] for q, fn in fns.items()}
-    namers = {q for q, f in of.items() if f.seeded}
+    namers, flows, helpers = _derive_namers(fns, of, modules)
     writes = {"_write_state_json", "_atomic_write", "write_text", "write_bytes"}
     by_write = {q for q in namers if of[q].callees & writes}
     by_hook = {q for q, f in of.items() if "_flags_written" in f.callees}
-    by_flow = {q for q in namers if set(_store_flow(fns[q], modules)) - cls.READS}
+    by_flow = {q for q in namers if set(flows[q]) - cls.READS - {_PATH_EXIT, _MODULE_STORE}}
     setters = cls.WRITERS.union(by_write, by_hook, by_flow)
     shorts = {_short(q) for q in setters}
     callers = {q for q, f in of.items() if q not in setters and f.names.keys() & shorts}
-    return _Census(fns=fns, rest=rest, modules=modules, namers=namers, writers=(by_write, by_hook, by_flow),
-                   setters=setters, shorts=shorts, callers=callers,
+    return _Census(fns=fns, rest=rest, modules=modules, namers=namers, flows=flows, helpers=helpers,
+                   writers=(by_write, by_hook, by_flow), setters=setters, shorts=shorts, callers=callers,
                    roads=_derive_roads({q: f.names for q, f in of.items()}, setters), facts=facts, loads=loads,
                    door_walks={q: _door_walk(fns[q], q) for q in callers}, trees=trees)
 
@@ -960,18 +1131,25 @@ class FlagWriterPopulation(unittest.TestCase):
     expression's root name in between, and calls each setter with exactly its pinned parameters (SIGNATURES). A new
     door (a socket op arm, a route, or a helper that calls a setter of session-flags.json) reds here until it is added
     on purpose. An arm is a door when it MENTIONS a setter (_doors_naming), so an arm that calls it by name, binds it to
-    a local, picks it from a table or names it by a string (`globals()["_set_session_flag"]`) is a door. Every road from a request to a setter is pinned (ROADS), derived upward
-    from the setters by mention, so a new function or arm that hands a door function a client's input (a socket op
-    forwarding to _state_write_route("/flag", ...), a second POST path onto it) reds as well. The setters are found
-    without trusting how a function writes: every function that names the store in code is pinned by role (NAMERS),
-    and one that hands the store's path to anything but a read (READS) is a writer, so a writer spelled with open(),
-    os.replace or a helper of its own reds as surely as one that calls _write_state_json. The census reads every
-    module in the kernel's directory, which holds every module the kernel loads (LOADED), so a writer in the judge or
-    another loaded module counts as one in kernel.py does. It keys on names the source spells: a function that reached
-    the file through a name it did not spell (a file name a client sent), or reached a setter or a door function by a
-    name built from pieces or buried in source text handed to eval, would be outside it, and so is a module loaded by
-    a path that names no ".py" file. The stdlib's handler enters do_GET and do_POST by a name it builds, which is
-    where the roads end. These read WHERE the code lives, so they guard the population and the arms' shape, not the
+    a local, imports it under an alias (`from M import _set_session_flag as w`), picks it from a table or names it by a
+    string (`globals()["_set_session_flag"]`) is a door. Every road from a request to a setter is pinned (ROADS),
+    derived upward from the setters by mention, so a new function or arm that hands a door function a client's input
+    (a socket op forwarding to _state_write_route("/flag", ...), a second POST path onto it) reds as well. The setters
+    are found without trusting how a function writes: every function that names the store in code is pinned by role
+    (NAMERS), and one that hands the store's path to anything but a read (READS) is a writer, so a writer spelled with
+    open(), os.replace or a helper of its own reds as surely as one that calls _write_state_json, the path reaching it
+    through an assignment or a parameter's default alike. A helper that returns the path (a path helper, the kernel's
+    own idiom for other stores, _views_path among them) passes the path on: it holds the "path" role, and every
+    function that calls it names the store in turn and is classed the same way, so a writer through it reds too. The
+    census reads every module in the kernel's directory, which holds every module the kernel loads (LOADED), so a
+    writer in the judge or another loaded module counts as one in kernel.py does. It keys on names the source spells:
+    a function that reached the file through a name it did not spell (a file name a client sent, as the saveFile op
+    writes any text file under the file-editing consent), or reached a setter or a door function by a name built from
+    pieces, buried in source text handed to eval or brought in by a star import, would be outside it, and so is a
+    module loaded by a path that names no ".py" file. A namer that stores the path where every function can read it
+    (a name it declares global, or a subscript or attribute rooted at a module-level name) is refused by the role
+    check, not traced. The stdlib's handler enters do_GET and do_POST by a name it builds, which is where the roads
+    end. These read WHERE the code lives, so they guard the population and the arms' shape, not the
     behaviour; the behaviour is executed in SocketFlagWhitelist (the socket op, in process and over a real socket) and
     in FlagRoute.test_an_unknown_flag_key_or_a_missing_id_is_a_400_naming_it (the route).
 
@@ -992,8 +1170,11 @@ class FlagWriterPopulation(unittest.TestCase):
 
     WRITERS = {"_set_session_flag", "_set_notify_session"}
     DOORS = {("socket op", "setSessionFlag"), ("route", "/flag")}
-    # every function that names the store in code (_store_seeds), by role. _state_quarantine compares a torn file's name
-    # with the store's to word its notice, and hands the path on to nothing
+    # every function that names the store in code (_store_seeds) or calls a path helper (_derive_namers), by role: a
+    # "reader" hands the path only to READS; a "writer" writes it through _write_state_json and runs _flags_written; a
+    # "path" helper returns or yields the path itself (_store_flow's _PATH_EXIT) and hands it to nothing outside READS,
+    # and every function that calls it is a namer, classed here in turn. No function holds the "path" role today.
+    # _state_quarantine compares a torn file's name with the store's to word its notice, and hands the path on to nothing
     NAMERS = {"_set_session_flag": "writer", "_set_notify_session": "writer",
               "_session_flags_proved": "reader", "_session_flags": "reader", "_flags_unknown_cold": "reader",
               "_thread_rows_key": "reader", "_chat_sig_shared": "reader", "_dead_lane_key": "reader",
@@ -1001,11 +1182,12 @@ class FlagWriterPopulation(unittest.TestCase):
     # what a reader hands the store's path, or a value computed from it, to (_store_flow): a stat, the strict reader
     # _read_state_json (which may move torn bytes aside, never write a flag), the judge's read of the text and its
     # parse (_hidden_from_feed), the quarantine bookkeeping (a mark retired, a fault noted or cleared, the refusal's
-    # text), a cache lookup, and plain value handling
+    # text), a cache lookup, plain value handling, and the calls that build a path from it (_PATH_CALLS: a path
+    # helper returns what they build)
     READS = {".get", ".stat", "os.stat", "_read_state_json", ".read_text", "json.loads", "_flags_quarantined",
              "_flags_exit_text", "_StateUnreadable", "_note_state_fault", "_clear_state_fault", "_retire_flags_quarantine",
              "_stat_key", "_chat_ident", "_files_stat_observe_sig", ".append", ".items", "bool", "dict", "isinstance",
-             "str", "sorted", "tuple"}
+             "str", "sorted", "tuple", "os.path.join", "Path", "os.fspath"}
     # the modules the kernel loads by file name, from kernel.py to a fixpoint (_facts' loads): every one lives in the
     # kernel's directory, and the census reads that whole directory
     LOADED = {"kernel.py", "loadsource.py", "event_model.py", "judge.py", "colormap.py", "palette.py",
@@ -1142,25 +1324,45 @@ class FlagWriterPopulation(unittest.TestCase):
             self.assertLessEqual(new, scanned, "a module the kernel loads lives outside kernel/, out of this census's sight")
             loaded |= new
             frontier = new
-        self.assertEqual(loaded, self.LOADED, "the modules the kernel loads by file name, each read by the census")
+        self.assertEqual(loaded, self.LOADED, "the modules the kernel loads by file name, each read by the census. A "
+                         "change that makes the kernel load a new module by file name adds it to LOADED once the "
+                         "assertion above holds, that is, once the module lives in kernel/ and the census reads it")
         self.assertEqual({q.split(":", 1)[0] if ":" in q else "kernel.py" for q in self.fns} | {m for m, _ in self.rest},
                          scanned, "the census holds the functions and statements of every module of the kernel's directory")
 
     def test_the_functions_that_name_the_flags_store_are_pinned_by_role(self):
+        """Each namer's role, read from where it sends the store's path (_store_flow, with every path helper's call as
+        a seed; _derive_namers): a reader, a writer, or a path helper, and the path stored where every function can read
+        it refused under every role. The reach of _store_flow itself is pinned over synthetic source in StoreFlowReach."""
         self.assertEqual(self._namers(), set(self.NAMERS),
-                         "the functions that name session-flags.json in code. A new one reds here whatever it does with "
-                         "the file: class it in NAMERS, a reader handing the path only to READS, or a writer, a setter "
-                         "whose doors must ask _lane_flag_refusal and refuse threadMail by execution (SocketFlagWhitelist)")
-        self.assertEqual(["%s:%d" % (m, getattr(st, "lineno", 0)) for m, st in self.rest if self._facts_of(st).seeded],
-                         [],
-                         "no module-level statement, in any module of the kernel's directory, names the store: a constant "
-                         "there would let a function reach the file without naming it, out of this census's sight")
+                         "the functions that name session-flags.json in code or call a path helper. A new one reds here "
+                         "whatever it does with the file: class it in NAMERS, a reader handing the path only to READS, a "
+                         "path helper returning it, or a writer, a setter whose doors must ask _lane_flag_refusal and "
+                         "refuse threadMail by execution (SocketFlagWhitelist)")
+        helpers = self.census["helpers"]
+        self.assertEqual(["%s:%d" % (m, getattr(st, "lineno", 0)) for m, st in self.rest
+                          if self._facts_of(st).seeded or self._facts_of(st).callees & helpers], [],
+                         "no module-level statement, in any module of the kernel's directory, names the store or calls a "
+                         "path helper: a constant there would let a function reach the file without naming it, out of "
+                         "this census's sight")
         for q, role in sorted(self.NAMERS.items()):
-            outside = {c: ln for c, ln in _store_flow(self.fns[q], self.modules).items() if c not in self.READS}
+            flow = self.census["flows"][q]
+            self.assertNotIn(_MODULE_STORE, flow, "%s stores the store's path where every function can read it (a name "
+                             "it declares global, or a subscript or attribute rooted at a module-level name), line %s, out "
+                             "of this census's sight: tracing it would need every reader of that name. Hand the path back "
+                             "by return instead, a path helper (role \"path\"), whose callers are traced"
+                             % (q, flow.get(_MODULE_STORE)))
+            outside = {c: ln for c, ln in flow.items() if c not in self.READS}
             if role == "reader":
                 self.assertEqual(outside, {}, "%s is pinned a reader but hands the store's path to calls outside READS "
-                                 "(a write, until classed); a new way to write the store is a new setter" % q)
+                                 "(a write, until classed) or returns the path itself (a path helper, role \"path\"); a "
+                                 "new way to write the store is a new setter" % q)
+            elif role == "path":
+                self.assertEqual(set(outside), {_PATH_EXIT}, "%s is pinned a path helper: it returns or yields the "
+                                 "store's path and hands it to nothing outside READS; a call outside READS makes it a "
+                                 "writer" % q)
             else:
+                self.assertEqual(role, "writer", "%s: a role is reader, path or writer" % q)
                 self.assertEqual(set(outside), {"_write_state_json", "_flags_written"},
                                  "%s writes the store through the one write door and runs its clean-write hook" % q)
 
@@ -1426,6 +1628,125 @@ class FlagWriterPopulation(unittest.TestCase):
                  if self._facts_of(fn).lane}
         self.assertEqual(where, {"_lane_flag_refusal"}, "the one predicate both doors ask; the executed proof is "
                          "SocketFlagWhitelist.test_an_unlisted_name_is_refused_on_the_socket_in_the_routes_words_and_writes_nothing")
+
+
+
+class StoreFlowReach(unittest.TestCase):
+    """_store_flow's seeds and exits, and the namers they grow, over synthetic source: a snippet parsed here and its
+    defs handed to the census's functions; no file written, no kernel copy (the reviewer's ruling on round 1 of
+    fork PR #909, extra6-1, fresh-1 and fresh-2). FlagWriterPopulation reads what they make of the kernel's own tree;
+    these pin how far they reach, so a writer spelled a new way reds there. The verdicts are read as the role check
+    reads them, what a function sends the path to outside FlagWriterPopulation.READS."""
+
+    MODULES = frozenset({"os", "json"})
+
+    def _fn(self, src, name):
+        return next(n for n in ast.walk(ast.parse(src)) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+                    and n.name == name)
+
+    def _outside(self, src, name, helpers=None):
+        """What `name`'s flow sends the path to outside READS, as the role check reads it; a reader has none."""
+        fn = self._fn(src, name)
+        flow = _store_flow(fn, self.MODULES) if helpers is None else _store_flow(fn, self.MODULES, helpers)
+        return {c: ln for c, ln in flow.items() if c not in FlagWriterPopulation.READS}
+
+    def test_a_positional_parameters_default_hands_its_parameter_the_path(self):
+        src = 'def f(sid, path=jd.STATE / "session-flags.json"):\n    with open(path, "w") as out:\n        out.write(sid)\n'
+        self.assertEqual(self._outside(src, "f").get("open"), [2], "open() is handed the path a positional parameter's "
+                         "default names, so the function is a writer, not a reader")
+
+    def test_a_positional_only_parameters_default_hands_its_parameter_the_path(self):
+        # the defaults cover the positional-only parameters too: slicing args.args by the defaults' count misses this
+        src = 'def f(path=jd.STATE / "session-flags.json", /):\n    open(path, "w").write("{}")\n'
+        self.assertEqual(self._outside(src, "f").get("open"), [2], "open() is handed the path a positional-only "
+                         "parameter's default names")
+
+    def test_a_keyword_only_parameters_default_hands_its_parameter_the_path(self):
+        src = 'def f(sid, *, path=jd.STATE / "session-flags.json"):\n    open(path, "w").write(sid)\n'
+        self.assertEqual(self._outside(src, "f").get("open"), [2], "open() is handed the path a keyword-only "
+                         "parameter's default names")
+
+    def test_a_nested_lambdas_default_hands_its_parameter_the_path(self):
+        src = 'def f(sid):\n    poke = lambda name="session-flags.json": open(jd.STATE / name, "w")\n    poke().write(sid)\n'
+        self.assertEqual(self._outside(src, "f").get("open"), [2], "open() is handed the path the default of a lambda "
+                         "inside the def names")
+
+    def test_a_helper_that_returns_the_stores_path_is_no_reader(self):
+        """Read through the role check's verdict, so that without the exit rule the red is the helper accepted as a
+        reader: then a writer through it would name no store and pass every setter derivation."""
+        src = 'def _flags_path():\n    return jd.STATE / "session-flags.json"\n'
+        outside = self._outside(src, "_flags_path")
+        self.assertNotEqual(outside, {}, "a helper returning the store's path passes the role check as a reader")
+        self.assertEqual(outside, {_PATH_EXIT: [2]}, "the path leaves by the return and by nothing else: the path role")
+
+    def test_every_path_valued_spelling_of_a_return_or_yield_is_an_exit(self):
+        cases = [
+            ("a name bound from the path, through str()", 'def h():\n    p = jd.STATE / "session-flags.json"\n'
+                                                          '    return str(p)\n', 3),
+            ("os.path.join, yielded", 'def h():\n    yield os.path.join(jd.STATE, "session-flags.json")\n', 2),
+            ("an f-string", 'def h():\n    return f"{jd.STATE}/session-flags.json"\n', 2),
+            ("an if-else", 'def h(ok):\n    return (jd.STATE / "session-flags.json") if ok else None\n', 2),
+            ("a list", 'def h():\n    return [jd.STATE / "session-flags.json"]\n', 2),
+            ("a tuple, yielded from", 'def h():\n    yield from (jd.STATE / "session-flags.json",)\n', 2),
+            ("a parameter's default", 'def h(p=jd.STATE / "session-flags.json"):\n    return p\n', 2),
+            ("Path() and os.fspath()", 'def h():\n    return os.fspath(Path(jd.STATE, "session-flags.json"))\n', 2),
+            ("a lambda's body", 'def h():\n    return sorted([1], key=lambda x: jd.STATE / "session-flags.json")\n', 2),
+        ]
+        got = {what: self._outside(src, "h") for what, src, line in cases}
+        self.assertEqual(got, {what: {_PATH_EXIT: [line]} for what, src, line in cases},
+                         "each hands the path itself back to its caller, and to no call outside READS")
+
+    def test_a_reader_that_returns_what_it_parsed_has_no_path_exit(self):
+        """A control, green with the exit rule and without it, by design: the _session_flags shape returns a value
+        read from the file, which carries the path in _store_flow's over-approximate sense but is not the path. Keyed
+        on carrying, the exit rule would make seven of the nine readers path helpers."""
+        src = ('def _session_flags(sid):\n    p = jd.STATE / "session-flags.json"\n'
+               '    data = json.loads(p.read_text())\n    return data.get(sid, {})\n')
+        self.assertEqual(self._outside(src, "_session_flags"), {}, "a reader of the store: every call it hands the path "
+                         "to is in READS, and it returns what it read, not the path")
+
+    def test_a_path_helpers_call_is_a_seed_in_its_caller(self):
+        helpers = frozenset({"_flags_path"})
+        w = 'def w(sid):\n    open(_flags_path(), "w").write(sid)\n'
+        self.assertEqual(self._outside(w, "w", helpers).get("open"), [2], "open() is handed the helper's result")
+        h = 'def _flags_file():\n    return os.fspath(_flags_path())\n'
+        self.assertEqual(self._outside(h, "_flags_file", helpers), {_PATH_EXIT: [2]},
+                         "returning a helper's result, through a call the path passes through, makes a helper")
+
+    def test_a_caller_of_a_path_helper_names_the_store_and_helpers_chain(self):
+        src = ('def _flags_path():\n    return jd.STATE / "session-flags.json"\n'
+               'def _flags_file():\n    return str(_flags_path())\n'
+               'def w(sid):\n    open(_flags_file(), "w").write(sid)\n'
+               'def r():\n    return json.loads(jd.STATE.joinpath("views.json").read_text())\n')
+        fns = {n.name: n for n in ast.parse(src).body}
+        namers, flows, helpers = _derive_namers(fns, {q: _facts(fn) for q, fn in fns.items()}, self.MODULES)
+        self.assertEqual((namers, helpers), ({"_flags_path", "_flags_file", "w"}, {"_flags_path", "_flags_file"}),
+                         "the helper, the helper that returns its result, and the writer through that one all name "
+                         "the store; the function that names another file does not")
+        self.assertEqual(flows["w"].get("open"), [6], "the writer's open() is handed the path, so it is a setter by flow")
+
+    def test_the_path_stored_where_every_function_reads_it_is_a_module_level_store(self):
+        cases = [
+            ("a name declared global", 'def f():\n    global P\n    P = jd.STATE / "session-flags.json"\n', [3]),
+            ("a subscript of a module-level name", 'def f():\n    PATHS["flags"] = jd.STATE / "session-flags.json"\n', [2]),
+            ("an attribute of a module-level name", 'def f():\n    jd.FLAGS = jd.STATE / "session-flags.json"\n', [2]),
+            ("a local dict (not one)", 'def f():\n    paths = {}\n    paths["flags"] = jd.STATE / "session-flags.json"\n'
+                                       '    return len(paths)\n', None),
+            ("an attribute of a parameter (not one)", 'def f(self):\n    self.p = jd.STATE / "session-flags.json"\n', None),
+        ]
+        got = {what: _store_flow(self._fn(src, "f"), self.MODULES).get(_MODULE_STORE) for what, src, lines in cases}
+        self.assertEqual(got, {what: lines for what, src, lines in cases}, "the stores the role check refuses, by line")
+
+    def test_an_import_alias_mentions_the_name_it_imports(self):
+        tree = ast.parse("def f():\n    from m import _set_session_flag as w\n    import os.path as osp\n"
+                         "    from n import *\n")
+        self.assertEqual([_mentioned(a) for a in ast.walk(tree) if isinstance(a, ast.alias)],
+                         [{"_set_session_flag"}, {"os", "path"}, set()], "_mentioned: the imported name's parts, never "
+                         "the local name it binds, and nothing for a star import")
+        names = _facts(tree.body[0]).names
+        self.assertEqual({k: names.get(k, 0) for k in ("_set_session_flag", "os", "path", "w", "osp", "*")},
+                         {"_set_session_flag": 1, "os": 1, "path": 1, "w": 0, "osp": 0, "*": 0},
+                         "_facts counts the same mentions _mentioned reads")
 
 
 class ViewsRoute(_Routes):
