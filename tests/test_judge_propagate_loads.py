@@ -131,8 +131,9 @@ def _bus_hears_nobody_remote():
     no link state vouches for presence alone, so rule 5 needs the link up; since round 3's eleventh commit it
     needs an ANSWERED listing behind the roster too (`answered`: the host's exchange did not serve the last
     answered rows through a kernel blink), so the row spells it; and since round 4's twenty-ninth commit no
-    reachable row may be unanswered either (the reader's listing-unanswered arm), which this one row, answered,
-    satisfies (SettleUnderTheUnansweredArm drives a mirror in which one is)."""
+    row heard in the bus's current process may be unanswered either, held down or not since the thirtieth (the
+    reader's listing-unanswered arm), which this one row, answered, satisfies (SettleUnderTheUnansweredArm and
+    SettleWhenTheCachedHostIsHeldDown drive mirrors in which one is)."""
     _mirror().write_text(json.dumps({"v": 2, "busStarted": T - 100, "writtenAt": T, "hosts": {
         "TESTHOST": {"kind": "peer", "sids": [], "heard": True, "expired": False, "linkDown": False, "linkUp": True,
                      "answered": True, "reachable": True, "vouchesAbsence": True, "seenAt": T}}}) + "\n")
@@ -737,11 +738,12 @@ def _dials_us(bus, host, answered):
 
 class SettleUnderTheUnansweredArm(World):
     """Round 4 of fork PR #897, the reviewer's ruling on its round-3 refuters' finding (section A), the twenty-ninth commit:
-    the reader answers cannot-determine, listing-unanswered, for a sid nothing names while any REACHABLE row of the mirror
-    is unanswered, whatever another row vouches. The release is that source's next answering exchange, and it reaches the
-    READER's answer, not a settle already decided: the judge reads _presumed_closed only at a courier write, a reply or a
-    user resolve, and a dead sender has no pass of its own. So a dead sender whose recipient completes while a reachable
-    row anywhere is unanswered stays unsettled after the release, until the next completion, reply or resolve for it.
+    the reader answers cannot-determine, listing-unanswered, for a sid nothing names while any row of the mirror HEARD in
+    the bus's current process is unanswered (a reachable one here; held down or not since the thirtieth commit), whatever
+    another row vouches. The release is that source's next answering exchange, and it reaches the READER's answer, not a
+    settle already decided: the judge reads _presumed_closed only at a courier write, a reply or a user resolve, and a
+    dead sender has no pass of its own. So a dead sender whose recipient completes while a heard row anywhere is
+    unanswered stays unsettled after the release, until the next completion, reply or resolve for it.
     That is cost (e) of the arm, ACCEPTED on the restricted side (at the branch's base the judge never reached rule 5, so
     such a sender was unsettled there too; re-running the settle on the release is a follow-up, outside this fix-tier PR).
     This is its named witness, the mirror written by the real handler and writer and read by the real reader, and
@@ -783,6 +785,65 @@ class SettleUnderTheUnansweredArm(World):
                          "or resolve for it (settle-on-release is a follow-up outside this fix-tier PR; this pin turns red "
                          "when it lands, and the disclosure moves with it)")
         self.assertIn(DEAD + ":t1", got.get("confirming") or [])
+
+
+LIVE_ON_CACHED = "a4a4a4a4-0009-4000-8000-000000000009"   # a session started on CACHED during its kernel's blink, live
+
+
+class SettleWhenTheCachedHostIsHeldDown(World):
+    """Round 4 of fork PR #897, the thirtieth commit (the reviewer's verifier at the twenty-ninth, by execution): the
+    twenty-ninth commit's arm read the writer's `reachable`, so it let go of a row whose last exchange here served a cache
+    once the kernel held that row's host down, and run_propagate settled a LIVE sender whose own mail had ridden that
+    exchange: its tracker rolled up by rule 5, status 'completed', and a settle is sticky. The arm now reads heard in
+    this bus process and unanswered, whatever the link, so the sender is cannot-determine at the completion and stays
+    unsettled. The mirror is written by the real handler, notify handler and writer, and read by the real reader."""
+
+    def _plant(self):
+        t1 = _tracker(LIVE_ON_CACHED, 1, RECIP, MID)
+        st = _store(LIVE_ON_CACHED, {t1["id"]: t1})
+        st["lastNode"] = t1["id"]                          # the tracker is the store's focus: only a closed session settles it
+        jd.rollup_status(st, False)
+        jd.save_goals(LIVE_ON_CACHED, st)
+
+    def _complete_and_propagate(self):
+        g5 = _complete(RECIP, 5, origin={"peer": LIVE_ON_CACHED, "goalId": LIVE_ON_CACHED + ":t1", "msgId": MID})
+        self._publish(RECIP, {g5["id"]: g5})              # the local recipient completes the delegated work
+        at_completion = _verdict(LIVE_ON_CACHED, T + 900)
+        self.assertEqual(jd.run_propagate(now=T + 900), 1)
+        got = jd.load_goals(LIVE_ON_CACHED)
+        self.assertTrue(got["nodes"][LIVE_ON_CACHED + ":t1"]["nodeComplete"], "the completion is the event")
+        return at_completion, got
+
+    def _assert_unsettled(self, at_completion, got):
+        self.assertEqual(got["status"][LIVE_ON_CACHED + ":t1"], "working",
+                         "the live sender is not settled (until the thirtieth commit 'completed', a live session's card "
+                         "settled by rule 5 once its host was held down, the reader answering %r)" % (at_completion,))
+        self.assertIn(LIVE_ON_CACHED + ":t1", got.get("confirming") or [])
+        self.assertEqual(at_completion, (None, "listing-unanswered: " + CACHED + " (link down, listing unanswered)"),
+                         "the arm: CACHED is held down, and heard in this process with its last exchange a cache, so the "
+                         "reader cannot determine")
+
+    def test_v5_the_kernel_holds_the_cached_host_down_after_the_exchange_that_carried_the_senders_mail(self):
+        bus = _real_bus(self.td.name)
+        for host, port in ((LISTED, 50002), (CACHED, 50003)):
+            list(bus.peer_update({"host": host, "port": port, "up": True}))   # the kernel's notify: both links up
+        self.assertEqual(_dials_us(bus, LISTED, True), 200)
+        self.assertEqual(_dials_us(bus, CACHED, False), 200)   # the exchange that carried the live sender's mail
+        self._plant()                                          # the courier plants the sender's tracker here
+        self.assertEqual(_verdict(LIVE_ON_CACHED, T + 10), (None, "listing-unanswered: " + CACHED + " (listing unanswered)"))
+        list(bus.peer_update({"host": CACHED, "port": 50003, "up": False}))   # the kernel: no kernel answering on CACHED
+        self._assert_unsettled(*self._complete_and_propagate())
+
+    def test_v1_the_held_down_host_dials_us_over_its_cache_carrying_the_senders_mail(self):
+        bus = _real_bus(self.td.name)
+        for host, port in ((LISTED, 50002), (CACHED, 50003)):
+            list(bus.peer_update({"host": host, "port": port, "up": True}))
+        self.assertEqual(_dials_us(bus, LISTED, True), 200)
+        self.assertEqual(_dials_us(bus, CACHED, True), 200)
+        list(bus.peer_update({"host": CACHED, "port": 50003, "up": False}))   # held down by our kernel
+        self.assertEqual(_dials_us(bus, CACHED, False), 200)  # CACHED's own dial to us, over its cache, with the mail
+        self._plant()
+        self._assert_unsettled(*self._complete_and_propagate())
 
 
 class AbsentStoreMemo(World):

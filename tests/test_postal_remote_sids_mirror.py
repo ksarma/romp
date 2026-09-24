@@ -12,9 +12,9 @@ a hub stamps the FAR host's bit on its gossip, `viaAnswered`; a legacy heartbeat
 `vouchesAbsence` (heard and not expired and answered and linkUp, or a heartbeat within its TTL under the legacy
 singleton scheme alone, ROMP_POSTAL_PEERS=0, peers_on() read at the write: the source vouches for the ABSENCE of a
 sid it does not name, rule 5's precondition), `sids`. The reader presumes a sid
-closed only when a source vouches for absence, none names it, no reachable source's roster is unanswered (the
-reader's listing-unanswered arm, round 4 of fork PR #897, the twenty-ninth commit; this module runs no reader,
-tests/test_dead_session_staleness.py does) and no lost-carry mark stands. Two roads to a false settle closed here, at the
+closed only when a source vouches for absence, none names it, no source heard in this process has an unanswered
+roster, held down or not (the reader's listing-unanswered arm, round 4 of fork PR #897, the twenty-ninth and thirtieth
+commits; this module runs no reader, tests/test_dead_session_staleness.py does) and no lost-carry mark stands. Two roads to a false settle closed here, at the
 writer:
   (1) a bus restarted from empty memory wrote its first mirror from that memory, naming nobody: every key
       the previous file named that this process has not heard is CARRIED FORWARD, its roster kept, heard
