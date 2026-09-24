@@ -19554,7 +19554,11 @@ def _presumed_closed_verdict(sid, now):
          there are local sessions' beats filed as remote presence during a listing blink, so its sids are rule
          4's and a sid it does not name is cannot-determine by it; round 3 of fork PR #897, the reviewer's
          ruling); a far host gossiped through a hub vouches by the
-         hub's link and by its own bit, which the hub stamps on the gossip.
+         hub's link and by its own bit, which the hub stamps on the gossip. The reach through a hub rests on a
+         PREMISE: a hub knows one machine by a name (bus ids are unique by construction, so two machines
+         exchanging with one hub under one host name is a misconfiguration, outside the model; round 4 of fork
+         PR #897, the reviewer's ruling of 11:08Z). What a violation does, and its witness, the writer states
+         (postal_service.py _remote_sids_document, THE PREMISE).
     Cannot determine, False, in six arms: no mirror file (the bus has not written under this root); a
     mirror not in the bus's shape (a document whose `v` is not 2, a row without the seven booleans, bytes that
     are not UTF-8, a lost-carry mark of another shape: _remote_sids_mirror; said once in this process's log;

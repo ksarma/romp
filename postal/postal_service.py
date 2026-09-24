@@ -4365,11 +4365,13 @@ def _via_held(presence, bus, road, *prevs):
     this bus after a NEWER one by the SAME road (a hub that links this bus under two names dials it from two loops, and
     a request the hub gave up on can arrive after the next one) releases a word the newer one named: residual (3d)'s
     face (1) in _remote_sids_document, a false rule 5 left open that this release causes (at the thirty-first commit
-    the word stayed held), and with (3a)'s second face the cost the reviewer's ruling of round 4 weighed to keep the
-    release (stated under (3d) there). A second machine the hub files under the host's name, answering the hub with
-    an empty listing, reads the same as the host's own empty answer and releases the word too: residual (3e) there,
-    which the release causes and the ruling did not weigh (the reviewer's verifier at the forty-fifth commit, by
-    execution)."""
+    the word stayed held). A second machine the hub files under the host's name, answering the hub with an empty
+    listing, reads the same as the host's own empty answer and releases the word too (the reviewer's verifier at the
+    forty-fifth commit, by execution; held at the thirty-first commit). With (3a)'s second face these are the
+    release's three races, its cost under the reviewer's ruling of round 4 to keep it (stated under (3d) there): a
+    race's window ends at the next word about the host, but a completion, reply or resolve for the sender inside it
+    settles the live session's card wrong for good, a rare permanent wrong settle the ruling weighs against the
+    common frozen machine that holding the word leaves."""
     def rows(v):                                      # a roster that is not a list names nothing (the peer's bytes)
         return v if isinstance(v, list) else []
     named, named_bus = set(), set()
@@ -4514,6 +4516,21 @@ def _remote_sids_document(now, previous, owned=frozenset(), lost=None):
     the cached roster among the causes: "listing unanswered", beside "link down" for a held-down source; a
     peer-mode heartbeat row: "no link state"; the last arm's token "listing-unanswered", since the twenty-ninth
     commit, its population heard rather than reachable since the thirtieth).
+    THE PREMISE of rule 5's reach through a hub: A HUB KNOWS ONE MACHINE BY A NAME (round 4 of fork PR #897, the
+    reviewer's ruling of 11:08Z, the forty-seventh commit). A hub files every exchange under the name its sender
+    declares (its PEER_STATE is keyed by name) and gossips each far host by that name, and this bus reads the hub's
+    word about a far host as that one machine's; bus ids are unique by construction (BUS_ID is minted per process),
+    so two machines exchanging with one hub under one host name is a misconfiguration, outside the model. What a
+    violation does, its witness: a second machine naming a session of its own to the hub under a far host's name
+    replaces the host's word there, so every session the host last named, one whose mail rode its cached exchange
+    among them, answers rule 5 while another row vouches (at the thirty-first commit and the round's base as well:
+    the release below does not cause it), and once the host's kernel answers, each exchange by either machine
+    presumes the other's sessions closed, for as long as both exchange with the hub (the reviewer's verifier at the
+    forty-fifth commit, by execution; tests/test_dead_session_staleness.py ReaderFollowsTheWriter
+    test_the_premise_violated_a_second_machine_naming_its_own_session_under_a_far_hosts_name_presumes_the_far_hosts_sessions_closed,
+    which asserts those rule-5 answers and turns red if a hub comes to tell the two machines apart). The same second
+    machine answering with an EMPTY listing is not left to the premise: the release by the same hub process's
+    omission causes that false rule 5, the release's third race (under residual (3d) below).
     The kernel's link state decides both (round 2 of
     fork PR #897, the reviewer's ruling): a session started on a host after its last heard roster is in no
     roster, so a host counted as vouching for absence while its link is down, or while the kernel has never
@@ -4570,7 +4587,7 @@ def _remote_sids_document(now, previous, owned=frozenset(), lost=None):
     its link not held down and an answered listing, the same gate), since its own row then names what runs there and the hub's older
     word would otherwise name a sid for the file's life; and a carried via row is dropped as well when the
     hub's CURRENT gossip about that host folded at this write (`folded`, the via keys the fold consumed): a
-    hub knows one machine by a name, so its word about the host now stands in the direct row and its earlier
+    hub knows one machine by a name (THE PREMISE above), so its word about the host now stands in the direct row and its earlier
     word under the same key, stamped with an id the direct row no longer carries, is superseded (a far bus
     restarted under a new id and heard here before the hub heard it leaves such a row, which the gate alone
     would carry for the file's life once the hub moved to the new id, since the ids never agree again). A via
@@ -4644,14 +4661,17 @@ def _remote_sids_document(now, previous, owned=frozenset(), lost=None):
     thirtieth; until the twenty-ninth such a session was presumed closed whenever another row vouched, disclosed
     as residual (3) under a comparison with round 2's down host that failed on reachability). RESIDUAL (3), what
     the arm leaves open, is two far-host sub-cases that no exchange field in this fix-tier PR closes, one restart
-    sub-case, one of order, (3d), which the source's own order on its rosters would close (its face (1), which
-    the release by the same hub process's omission causes, the carrier fix as well where the hub built the older
-    roster before it heard the host), and one of naming, (3e), a second machine a hub knows by a far host's name,
-    which no follow-up named here closes. Each false rule 5 below is the reader's answer, left open until the event
-    named; a courier pass (run_propagate) that reads it in that window settles the live session's card, and the
-    settle stands after the event, since the pass is forward-only and never reopens a sender's node, and
-    rollup_status keeps a settled card completed until a reopen event (the reviewer's verifier at the forty-fifth
-    commit, by execution, in the release's windows, under (3d) below). (3a) A far host whose cached roster is EMPTY,
+    sub-case, and one of order, (3d), which the source's own order on its rosters would close (its face (1), which
+    the release by the same hub process's omission causes, the carrier fix as well wherever the older roster carries
+    no answered word of the host); the release's third race, a second machine answering a hub under a far host's
+    name with an empty listing, is stated under (3d), and a second machine naming its own sessions there is outside
+    the model (THE PREMISE above). Each false rule 5 below is the reader's answer, and its window ends at the event
+    named, but a settle decided inside the window does not: a completion, reply or resolve for the sender there
+    settles the live session's card wrong for good. The judge reads _presumed_closed for a sid absent from the live
+    registry at a courier write and a reply (run_propagate) and at a user's resolve (the kernel's resolve handler),
+    run_propagate is forward-only and never reopens a sender's node, and rollup_status keeps a settled card completed
+    until a reopen event (the reviewer's verifier at the forty-fifth commit, by execution, a completion in each of the
+    release's windows, and the reviewer's ruling of 11:08Z, under (3d) below). (3a) A far host whose cached roster is EMPTY,
     behind a heard hub: its kernel has not answered and its bus has no twin, or its last answered listing named
     nobody, so its exchange with the hub carries presenceAnswered False and no session row; presence_payload
     stamps a far host's bit only on that host's session rows, so no via row carries it, and the hub's answered
@@ -4662,10 +4682,11 @@ def _remote_sids_document(now, previous, owned=frozenset(), lost=None):
     Its second face: a far host whose cached exchange with the hub named sessions and carried a new session's mail
     here, and whose bus then restarts during its kernel's blink with no twin, so its next exchange with the SAME hub
     process carries no session row; the hub's roster omits the host on the road that named it, which reads as the
-    host's empty answer and releases its held word (_via_held), and the session answers rule 5: a false rule 5 left
-    open until the far host's answering exchange with the hub and the hub's next exchange here. The release by the
-    same hub process's omission below causes this face (the thirty-second commit; until then the word stayed held),
-    one of the two narrow races the reviewer's ruling to keep the release weighed (under (3d) below), and its closure is
+    host's empty answer and releases its held word (_via_held), and the session answers rule 5: a false rule 5 whose
+    window ends at the far host's answering exchange with the hub and the hub's next exchange here, a settle inside
+    it standing. The release by the same hub process's omission below causes this face (the thirty-second commit;
+    until then the word stayed held), one of the release's three races, its cost under the reviewer's ruling to keep
+    it (under (3d) below), and its closure is
     the carrier fix below (the witness, asserting that rule-5 answer: test_residual_3a_a_far_hosts_empty_cache_after_its_bus_restarts_releases_its_held_word_and_its_session_answers_rule_5). (3b) A far
     host whose last exchange with the hub served a cache and that then stops exchanging with the hub, whether or not
     the hub holds it down: presence_payload gossips every PEER_STATE row whatever the hub's link state, and a hub
@@ -4691,9 +4712,12 @@ def _remote_sids_document(now, previous, owned=frozenset(), lost=None):
     host's next exchange, carrying no session row: an answering exchange with an EMPTY listing, the host's sessions
     all ended, or an empty cache, (3a)'s second face above (until the thirty-second commit the word stayed held for
     this bus process's life, every sid on this machine at cannot-determine; the reviewer's verifier at the
-    thirty-first, by execution). The reviewer ruled to keep this release (round 4), weighing two narrow races as its
-    cost, (3a)'s second face above and (3d)'s face (1) below; the ruling is stated under (3d), beside a third case the
-    release causes that the ruling did not weigh, (3e)'s first shape. That reading needs the omitting
+    thirty-first, by execution). The reviewer ruled to keep this release (round 4). Its cost is three races, (3a)'s
+    second face above, (3d)'s face (1) below and a third, a second machine the hub files under the host's name
+    answering it with an empty listing, which reads as the host's own; each is a false rule 5 whose window ends at
+    the next word about the host, and a completion, reply or resolve for the sender inside a window settles it wrong
+    for good: a rare permanent wrong settle, which the ruling weighs against holding the word, a common frozen
+    machine (the ruling, its trade and the third race are stated under (3d)). That reading needs the omitting
     roster taken after the naming one, and this bus
     records one hub process's rosters by two roads, the hub's dial (peer_exchange_handle) and its answer to our dial
     (peer_exchange_apply): each road keeps the hub's order (one dialing loop each way, each exchange finished before
@@ -4713,7 +4737,7 @@ def _remote_sids_document(now, previous, owned=frozenset(), lost=None):
     test_an_older_answer_folded_after_the_hubs_newer_dial_keeps_the_far_hosts_word_held (the verifier's road), and
     tests/test_postal_remote_sids_mirror.py
     test_a_hubs_held_word_is_released_by_the_same_hub_process_omitting_the_host_and_held_by_a_hub_that_cannot_say and
-    test_a_hubs_held_word_is_released_on_the_road_that_named_it_whatever_bus_id_the_far_host_carries. The follow-up for (3a), both faces, (3b), (3d)'s face (1) where the hub built the older roster before it heard the host, and cost (g) below is the carrier fix, each heard far host's answered bit
+    test_a_hubs_held_word_is_released_on_the_road_that_named_it_whatever_bus_id_the_far_host_carries. The follow-up for (3a), both faces, (3b), (3d)'s face (1) wherever the older roster carries no answered word of the host, and cost (g) below is the carrier fix, each heard far host's answered bit
     carried independent of session rows: an exchange-field change outside this fix-tier PR. (3c) A session whose mail landed on a host's cached
     exchange in this bus's PREVIOUS process: after the restart the host's row is carried, heard false, and a
     carried row holds nothing (its bit is its last process's, and a hold on it would hold every sid for the file's
@@ -4729,61 +4753,70 @@ def _remote_sids_document(now, previous, owned=frozenset(), lost=None):
     test_a_second_hubs_older_answered_word_does_not_release_the_first_hubs_held_word_and_our_restart_does.
     (3d) A roster that reaches this bus after a NEWER one from the same source: the latest roster RECORDED stands,
     so a session whose mail rode the newer, cached roster (the arm) answers rule 5 once the older one lands, while
-    another row vouches, until the source's next exchange here. Three faces: (1) by the SAME road, a word the newer
-    roster named is released by the older one's omission (a hub that links this bus under two names dials it from
+    another row vouches, its window ending at the source's next exchange here. Three faces: (1) by the SAME road and
+    hub process, a word the newer roster named is released by the older one's omission (a hub that links this bus under two names dials it from
     two loops, and a request the hub gave up on can arrive after its next one: the road and the hub process match,
-    and nothing here tells the order); (2) across the two roads, an older answer naming the far host's ANSWERED word
-    folded after the hub's dial naming its cached one replaces that word (the reviewer's verifier's control at the
-    thirty-second commit); (3) the same for a peer's own row, an older answered roster folded after its cached dial.
-    All three answer rule 5 at the round's base, where no arm existed (each already at the newer roster). The
-    release by the same hub process's omission above CAUSES face (1) (the thirty-second commit; the reviewer's
-    verifier at the thirty-third, by execution): at the thirty-first commit the word stayed held, and the session
-    answered cannot-determine once the older roster landed, as it does under a writer without that release. A false
-    rule 5 left open. Face (1) has two shapes: a restarted hub's older roster, built before it heard the host, and
-    one hub process's older roster, built after the host answered it with an EMPTY listing, the host then naming a
-    session and blinking (the reviewer's verifier at the forty-fifth commit, by execution; held at the thirty-first
-    commit too). The source's own order on its rosters closes all three faces, face (1) in both shapes. The carrier
-    fix above closes face (1)'s first shape alone: the release then keys on the far host's own answered word, and a
-    roster the hub built before it heard the host says nothing about it; in the second shape the older roster
-    carries the host's answered word, empty, so a release keyed on that word still fires. Both are exchange-field
-    changes outside this fix-tier PR. THE REVIEWER'S RULING ON THE RELEASE (round 4): it stays. Holding the word on
-    that omission instead, as the thirty-first commit did, leaves every sid on this machine at cannot-determine in a
-    common state, a far host whose word is held (its hub last named it over a cache) answering the hub with an empty
-    listing once its sessions all end, until the host has a session to name again or this bus restarts (unless the
-    host's own row speaks here, _direct_row_speaks), and nothing tells the reader it is happening. The ruling
-    weighed two narrow races as the release's cost, each a false rule 5 the reader answers until the next word about
-    the host reaches here: face (1) here until the hub's next roster, which names the host again, and (3a)'s second
-    face above until the far host answers the hub and the hub's next exchange reaches here. The next word corrects
-    the reader's answer, not a settle decided on it: a courier pass (run_propagate) in the window settles the live
-    session's card Completed, and it stays Completed after the next word (the reviewer's verifier at the forty-fifth
-    commit, by execution; at the thirty-first commit the window read cannot-determine and the card stayed
-    unsettled). The release also causes (3e)'s first shape below, which the ruling did not weigh. The carrier fix
-    closes (3a)'s second face and face (1)'s first shape; the source's own order closes face (1) in both shapes. The
+    and nothing here tells the order); (2) by EITHER road, an older roster naming the far host's ANSWERED word
+    recorded after the newer one naming its cached word replaces that word (across the two roads, the reviewer's
+    verifier's control at the thirty-second commit, an older answer folded after the hub's dial; by the same road,
+    the hub's older dial naming the host's answered word, another session, the reviewer's re-verifier at the
+    forty-sixth); (3) the same for a peer's own row, an older answered roster folded after its cached dial. All three
+    answer rule 5 at the round's base, where no arm existed (each already at the newer roster), and face (2) by the
+    same road at the thirty-first commit too. The release by the same hub process's omission above CAUSES face (1)
+    (the thirty-second commit; the reviewer's verifier at the thirty-third, by execution): at the thirty-first commit
+    the word stayed held, and the session answered cannot-determine once the older roster landed, as it does under a
+    writer without that release. A false rule 5 left open. Face (1)'s shape is what the older roster carries about the
+    host, which is what the hub had heard from it when it built that roster: nothing, a restarted hub's roster built
+    before it heard the host (the reviewer's verifier at the thirty-third commit); an EMPTY CACHE, one hub process's
+    roster built after the host's bus restarted during its kernel's blink with no twin (the reviewer's re-verifier at
+    the forty-sixth); or the host's ANSWERED EMPTY listing, one hub process's roster built after the host's sessions
+    all ended (the reviewer's verifier at the forty-fifth), the host in the last two naming a session and blinking
+    before the newer roster; each driven by execution and held at the thirty-first commit. The source's own order on
+    its rosters closes all three faces, face (1) in every shape. The carrier fix above closes face (1) wherever the
+    older roster carries no answered word of the host (the hub had not heard it, or its word there was a cache): the
+    release then keys on the far host's own answered word, and such a roster carries none, its carried bit absent or
+    unanswered, the reason the carrier closes (3a)'s second face. Only where the older roster carries the host's
+    answered EMPTY listing does the source's own order alone close it, since a release keyed on that word still
+    fires. Both are exchange-field changes outside this fix-tier PR. THE RELEASE'S THIRD RACE: a hub files every
+    exchange under the name its sender declares (its PEER_STATE is keyed by name), so a second machine, its own bus,
+    answering the hub under a far host's name with an EMPTY listing replaces the host's word there, and the same hub
+    process's roster omits the host on the road that named it, which this bus cannot tell from the host's own empty
+    answer: after the host's cached word and a new session's mail were relayed here, the release frees the held word
+    and the session live on the host answers rule 5 while another row vouches, a false rule 5 whose window ends at
+    the real host's next exchange with the hub and the hub's next exchange here (the reviewer's verifier at the
+    forty-fifth commit, by execution). The release causes it: at the thirty-first commit the word stayed held. Neither
+    the carrier fix nor the source's own order closes it: the carrier would carry the second machine's answered bit as
+    the host's, and the order does not tell two machines apart. It is not THE PREMISE's violation above, a second
+    machine naming its own sessions, which the release does not cause and which is outside the model. THE REVIEWER'S
+    RULING ON THE RELEASE (round 4, restated at 11:08Z): it stays. Holding the word on that omission instead (HOLD),
+    as the thirty-first commit did, FREEZES THE MACHINE in a COMMON state, a far host whose word is held (its hub last
+    named it over a cache) answering the hub with an empty listing once its sessions all end: every sid on this
+    machine stays at cannot-determine, cleared only by this bus's restart while the host stays empty (the host's next
+    session, or its own row speaking here, _direct_row_speaks, ends it sooner), and nothing tells the reader it is
+    happening. The release's cost is its three races, face (1) here, (3a)'s second face above and the third race
+    above, each a false rule 5 whose window ends at the next word about the host, face (1)'s at the hub's next roster,
+    which names the host again. A settle decided inside a window does not end with it: a completion, reply or
+    resolve for the sender there settles the live session's card wrong for good (the reviewer's verifier at the
+    forty-fifth commit, by execution, a courier pass's completion in each window; at the thirty-first commit the
+    window read cannot-determine and the card stayed unsettled). So the cost is a RARE PERMANENT WRONG SETTLE, weighed
+    against HOLD's COMMON FROZEN MACHINE, and the trade favours the release: a permanent wrong settle needs a narrow
+    race AND a completion, reply or resolve for the sender landing inside its window, while HOLD's freeze is the
+    common empty-peer state, cleared only by a restart. The ruling's first reason, that each race is a wrong answer
+    the next event corrects, is withdrawn: the next word corrects the reader's answer, not a settle decided on it. The
+    carrier fix closes (3a)'s second face and face (1) wherever the older roster carries no answered word of the host;
+    the source's own order closes face (1) in every shape; no follow-up named here closes the third race. The
     witnesses, in tests/test_dead_session_staleness.py ReaderFollowsTheWriter:
     test_residual_3d_an_older_roster_recorded_after_a_newer_one_stands_and_its_session_answers_rule_5 (the three
-    faces' rule-5 answers, face (1)'s cause beside its answer and the hub's next roster ending the reader's false
-    answer) and test_residual_3d_face_1_in_one_hub_process_an_older_dial_carrying_the_far_hosts_empty_answer_answers_rule_5
-    (face (1)'s second shape, with the host's answered word on the older dial pinned), each turning red when the
-    residual closes; and test_a_settle_decided_in_a_window_of_the_releases_false_rule_5_stands_after_the_next_word
-    (a settle in each window of the release, face (1) in both shapes, (3a)'s second face and (3e)'s first shape).
-    (3e) A second machine a hub knows by a far host's name: a hub files every exchange under the name its sender
-    declares (its PEER_STATE is keyed by name), so another machine, its own bus, exchanging with the hub under the
-    far host's name replaces the host's word there, and this bus cannot tell the two apart (the reviewer's verifier
-    at the forty-fifth commit, by execution). Two shapes, each a false rule 5 while another row vouches. (i) The
-    second machine answers with an EMPTY listing after the host's cached word and a new session's mail were relayed
-    here: the same hub process's roster omits the host on the road that named it, which reads as the host's empty
-    answer, so the release above frees the held word and the session live on the host answers rule 5, until the
-    host's next exchange with the hub and the hub's next exchange here. The release causes this shape: at the
-    thirty-first commit the word stayed held. (ii) The second machine names a session of its own: the hub's roster
-    names the host answered, with that session, which replaces the host's word, so every session the host last
-    named answers rule 5, the one whose mail rode its cached exchange among them, at the thirty-first commit and the
-    round's base as well; once the host's kernel answers, each exchange by either machine presumes the other's
-    sessions closed, for as long as both exchange with the hub. No follow-up named here closes it: the carrier fix
-    would carry the second machine's answered bit as the host's, and the source's own order does not tell two
-    machines apart. Whether two machines under one name at one hub are inside the model is the reviewer's to rule
-    (round 4). The witness, which asserts each rule-5 answer and turns red when the residual closes:
-    tests/test_dead_session_staleness.py ReaderFollowsTheWriter
-    test_residual_3e_a_second_machine_the_hub_knows_by_a_far_hosts_name_presumes_the_far_hosts_sessions_closed.
+    faces' rule-5 answers, face (2) by both roads, face (1)'s cause beside its answer and the hub's next roster ending
+    its window), test_residual_3d_face_1_in_one_hub_process_an_older_dial_carrying_the_far_hosts_empty_answer_answers_rule_5
+    (the host's answered empty listing on the older dial pinned) and
+    test_residual_3d_face_1_in_one_hub_process_an_older_dial_over_the_far_hosts_empty_cache_answers_rule_5 (the
+    hub's word about the host a cache, empty, when it built the older dial), each turning red when the residual
+    closes;
+    test_the_releases_third_race_a_second_machine_answering_the_hub_under_a_far_hosts_name_with_an_empty_listing_answers_rule_5,
+    turning red when the race closes; and
+    test_a_settle_decided_in_a_window_of_the_releases_false_rule_5_stands_after_the_next_word (a completion in each
+    window of the release: face (1) in its three shapes, (3a)'s second face and the third race).
     The display and routing
     consumers keep their own fold (_via_duplicate: a direct
     link wins over a relay hop on screen and on the wire); the mirror does not use it, because what the
@@ -4872,12 +4905,13 @@ def _remote_sids_document(now, previous, owned=frozenset(), lost=None):
     never reached rule 5 at all, so every state the arm holds at cannot-determine was unsettled there too, and the
     arm trades a false rule 5, a live session presumed closed, for a card that stays unsettled until the user
     resolves it or the next courier write. The follow-ups, outside this fix-tier PR: the carrier fix (residuals (3a)
-    and (3b) above, (3d)'s face (1) where the hub built the older roster before it heard the host, and cost (g)), the
-    source's own order on its rosters (residual (3d) above, all three faces, face (1) in both shapes, and cost (h)),
-    and
+    and (3b) above, (3d)'s face (1) wherever the older roster carries no answered word of the host, and cost (g)),
+    the source's own order on its rosters (residual (3d) above, all three faces, face (1) in every shape, and cost
+    (h)), and
     settle-on-release, which re-runs the settle of each dead sender a courier write rolled up
-    unsettled under the arm, keyed on the release event, with no timer. None is named for residual (3e), whose
-    question, whether two machines under one name at one hub are inside the model, is the reviewer's.
+    unsettled under the arm, keyed on the release event, with no timer. None of them closes the release's third race
+    (under (3d) above), and a second machine naming its own sessions under a far host's name is outside the model
+    (THE PREMISE above).
     THE ONE RELEASE, and what nothing retires (round 3 of fork PR #897, the reviewer's ruling, the seventeenth
     commit). A heartbeat row whose sid the local kernel's ANSWERED listing owns is dropped, heard or carried
     (`owned`: the sids of the listing as this bus last read it through local_agents_checked, when that read
