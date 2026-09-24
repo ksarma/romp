@@ -3793,10 +3793,10 @@ def _argv_command(elts):
     pinned in OUTSIDE_THE_READ: an option element the census does not take apart, followed by no element that spells
     pytest and not a cluster ending in m right before an element that is not a constant, is passed over as an option
     with no value, so `-BW error -m <name>` gives no row where the name may be pytest.
-    Not a pytest command: a word that is not an option after the head (a script, which takes any later `-m pytest` as its
-    own arguments); another module after -m (`-m unittest`, `-m pip`); a -c, whose string element_command reads where the
-    argv is written at a call; and `-m` under a head that is neither (`git commit -m msg`, with a constant or a variable
-    for git). pytest by name after argv[0] under a head this rule does not read (a wrapper such as env, nice or timeout;
+    Anything else is not a pytest command, among them: a word that is not an option after the head (a script, which
+    takes any later `-m pytest` as its own arguments); another module after -m (`-m unittest`, `-m pip`); a -c, whose
+    string element_command reads where the argv is written at a call; and `-m` under a head that is neither (`git commit
+    -m msg`, with a constant or a variable for git). pytest by name after argv[0] under a head this rule does not read (a wrapper such as env, nice or timeout;
     a pip line) is not a command here either: element_command refuses it where the argv is written at a call the census
     reads, and such a literal built anywhere else gives no row (OUTSIDE_THE_READ holds one held in a variable)."""
     c = [_str(e) for e in elts]
