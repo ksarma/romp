@@ -93,20 +93,21 @@ This module holds five things, and it never skips: a pin that skips reports gree
    can end the comment with a newline and run pytest, so such a step now gives an unparsed row at its first line that
    spells pytest). Outside the flag half's read: anything that rewrites a pytest command's arguments after the run
    text is read, among them a shell function or alias the run text defines, a python earlier on PATH, and a step's
-   shell: or a job's defaults; on the Run pytest step the check below refuses those it can see (a function or alias is
-   a second command there, and its shell:, its job's defaults: and a $GITHUB_PATH write spelled in a run text of its
-   job are refused), and a write to $GITHUB_PATH that does not spell the name stays outside. Nothing here held that
-   pytest's failure reaches the cell until round 5's ruling C (2026-09-24; with an if:, a continue-on-error, `|| true`
-   or --collect-only on the Run pytest step the module read green): run_pytest_status, whose docstring is the rule,
-   holds the Run pytest step's exit status to pytest's and the cell's to the step's, and refuses at its line, among
-   others, an if: or a continue-on-error on the step or its job, the command followed by `||`, a pipe or a trailing
-   `&`, a second command or command line (an earlier `trap 'exit 0' EXIT` among them), an argument word outside
-   RUN_PYTEST_OPTIONS (--collect-only, --co and --setup-plan among the refused), a step's shell: or a job's or the
-   workflow's defaults:, a key of the step's merged env outside RUN_PYTEST_ENV (PYTEST_ADDOPTS and BASH_ENV among
-   them), and a run text of the job that spells GITHUB_ENV, GITHUB_PATH or BASH_ENV; among its residual (its docstring
-   states it in full): a write that does not spell those names, such as one by a script or action a step calls; a
-   command that names its interpreter or pytest by a path, which may be a script; and an earlier step whose run text
-   changes the runner without spelling those names, such as one that replaces or shadows the python on PATH,
+   shell: or a job's defaults; on the Run pytest step the check below refuses those it can see, among them a function or
+   alias, which is a second command there, its shell: and a defaults: on its job or the workflow, the BASH_ENV key in
+   its merged env or spelled in a run text of its job, and a $GITHUB_PATH write spelled in a run text of its job
+   (run_pytest_status's docstring states the rule); a write to $GITHUB_PATH that does not spell the name stays outside.
+   Nothing here held that pytest's failure reaches the cell until round 5's ruling C (2026-09-24; with an if:, a
+   continue-on-error, `|| true` or --collect-only on the Run pytest step the module read green): run_pytest_status,
+   whose docstring is the rule, holds the Run pytest step's exit status to pytest's and the cell's to the step's, and
+   refuses at its line, among others, an if: or a continue-on-error on the step or its job, the command followed by
+   `||`, a pipe or a trailing `&`, a second command or command line (an earlier `trap 'exit 0' EXIT` among them), an
+   argument word outside RUN_PYTEST_OPTIONS (--collect-only, --co and --setup-plan among the refused), a step's shell:
+   or a job's or the workflow's defaults:, a key of the step's merged env outside RUN_PYTEST_ENV (PYTEST_ADDOPTS and
+   BASH_ENV among them), and a run text of the job that spells GITHUB_ENV, GITHUB_PATH or BASH_ENV; among its residual
+   (its docstring states it in full): a write that does not spell those names, such as one by a script or action a step
+   calls; a command that names its interpreter or pytest by a path, which may be a script; and an earlier step whose run
+   text changes the runner without spelling those names, such as one that replaces or shadows the python on PATH,
    reinstalls pytest, or deletes or edits test files. The switch half
    reads what the run text does to the variable only by its spelling (round 4's ruling, 2026-09-23): a step whose run text spells ROMP_SDK_REQUIRE anywhere other than as a VAR=value prefix on
    its pytest command (among them an unset, export, declare, env -u or assignment, on an earlier line or before the
@@ -266,9 +267,9 @@ This module holds five things, and it never skips: a pin that skips reports gree
    assignment from a name or an attribute whose root name is one of those, followed along a chain of such assignments
    (the second verify pass, 2026-09-23, found `run = main` in a function, main from the star import, read as the
    function's own and passed). Outside the read, among others: a string anywhere else, or one held in a variable or
-   built with %, + or .format; an argv assembled one element at a time (append calls); an option element the census
-   does not take apart, other than a cluster ending in m right before an element that is not a constant, that no
-   element spelling pytest follows (`-BW error -m <name>`); a wrapper-headed argv built
+   built with %, + or .format; an argv assembled one element at a time (append calls); an option element the census does
+   not take apart that does not itself spell pytest and that no element spelling pytest follows, other than a cluster
+   ending in m right before an element that is not a constant (`-BW error -m <name>`); a wrapper-headed argv built
    away from the call that runs it; any call reached through a name the census does not resolve (a string call through
    a name bound other than by an import or a plain or annotated assignment: tuple unpacking, a walrus, a conditional
    expression, a parameter default, where an in-process call's value bound that way is refused, above; a name imported
@@ -288,12 +289,14 @@ This module holds five things, and it never skips: a pin that skips reports gree
    case for the modules the prefilter skips, hold cases of these, each with no row. What the flag
    buys, in every pytest process the census and the population check read in which nothing loads the plugin again by its
    entry-point name or its module name (among them `-p anyio` or `-p anyio.pytest_plugin` after the flag on the line,
-   PYTEST_PLUGINS in the environment, plugins= handed to pytest.main; both checks key on the flag's spelling and read
-   none of these): anyio's plugin is absent from that process's plugin set as it is from the box's default run's. The
-   sets are not equal, and nothing here says they are: the box's default run loads pytest-xdist's two plugins, which no
-   cell installs. Verified by execution before this landed: a synthetic broken anyio/pytest_plugin.py in a CI-shaped
-   venv (the SDK pinned, the parent under the flag) red tests in each of the six modules that spawned unflagged
-   children, none of which imports the SDK, and the same six were green with the flag on every launcher (2026-09-20).
+   PYTEST_PLUGINS in the environment, plugins= handed to pytest.main; both checks key on the flag's spelling; only
+   run_pytest_status, on the Run pytest step, refuses the ones spelled on its line or in its merged env, as words
+   outside RUN_PYTEST_OPTIONS or keys outside RUN_PYTEST_ENV, and nothing here reads them elsewhere): anyio's plugin is
+   absent from that process's plugin set as it is from the box's default run's. The sets are not equal, and nothing here
+   says they are: the box's default run loads pytest-xdist's two plugins, which no cell installs. Verified by execution
+   before this landed: a synthetic broken anyio/pytest_plugin.py in a CI-shaped venv (the SDK pinned, the parent under
+   the flag) red tests in each of the six modules that spawned unflagged children, none of which imports the SDK, and
+   the same six were green with the flag on every launcher (2026-09-20).
 
 Hermetic: the run block executes in a scratch directory with its own copy of the constant's line, never at the repo
 root, and its `python` is a shim that records its arguments; no network, no pip.
@@ -3160,10 +3163,12 @@ class PopulationCheckReds(unittest.TestCase):
         self.assertEqual((self._new(quiet), pytest_line_census(quiet)[1]), ([], []))
 
     def test_what_can_discard_pytests_failure_on_the_run_pytest_step_is_refused_at_its_line(self):
-        # round 5's ruling C (2026-09-24): each plant below, spliced into the live file, left the module green at the
-        # ruling's head (the refuter's mutants and the ruling's two more, BASH_ENV on the step and an earlier step's
-        # write of PYTEST_ADDOPTS to $GITHUB_ENV, under which a failing pytest exits 0 or never runs the suite), and each
-        # is refused at its line by run_pytest_status. The population check reads each as before: it holds the flag
+        # round 5's ruling C (2026-09-24): each plant below (the refuter's mutants and the ruling's two more,
+        # BASH_ENV on the step and an earlier step's write of PYTEST_ADDOPTS to $GITHUB_ENV, under which a
+        # failing pytest exits 0 or never runs the suite), spliced into the live file, left the population
+        # check green at the ruling's head, and the module green but for the literal block with a trap first
+        # and the PYTEST_ADDOPTS prefix on the command, under which only other cases' anchors failed; each is
+        # refused at its line by run_pytest_status. The population check reads each as before: it holds the flag
         # and the switch, not the exit status, so the refusal is this check's alone
         run = "        run: python -m pytest -q -p no:anyio --durations=10 --timeout=600 --timeout-method=thread\n"
         name, switch = "      - name: Run pytest\n", '          %s: "1"\n' % SWITCH
@@ -3976,10 +3981,11 @@ def _argv_command(elts):
     Until the ruling every element starting with a dash read as an option with no value, so `-Bm pytest`, `-Impytest`
     and `-BW error -m pytest` gave no row while each ran pytest. The refusal over-reads, on the safe side: a flagged
     `-Bm pytest ... -p no:anyio` is red until it is spelled `-B -m pytest` (as the population check reds `python
-    -Impytest`), and so is a cluster followed by any element that spells pytest, a test path among them. The residual,
-    pinned in OUTSIDE_THE_READ: an option element the census does not take apart, followed by no element that spells
-    pytest and not a cluster ending in m right before an element that is not a constant, is passed over as an option
-    with no value, so `-BW error -m <name>` gives no row where the name may be pytest.
+    -Impytest`), and so is a cluster followed by any element that spells pytest, a test path among them.
+    The residual, pinned in OUTSIDE_THE_READ: an option element the census does not take apart that does
+    not itself spell pytest, followed by no element that spells pytest and not a cluster ending in m
+    right before an element that is not a constant, is passed over as an option with no value, so `-BW
+    error -m <name>` gives no row where the name may be pytest.
     Anything else is not a pytest command, among them: a word that is not an option after the head (a script, which
     takes any later `-m pytest` as its own arguments); another module after -m (`-m unittest`, `-m pip`); a -c, whose
     string element_command reads where the argv is written at a call; and `-m` under a head that is neither (`git commit
@@ -4116,27 +4122,28 @@ def _launchers_in(src, filename):
     one unparsed row. A list or tuple on the right of an `in` test is a set of names, not an argv, and is not read. Not
     read, stated as the residual (test_each_form_outside_the_read_gives_no_row, and for the modules the prefilter skips
     test_the_walk_parses_a_module_holding_a_star_import_and_what_it_skips_gives_no_row, hold cases of it, each with no
-    row): an argv assembled one element at a time (append calls); an option element _argv_command does not take apart,
-    other than a cluster ending in m right before an element that is not a constant, that no element spelling pytest
-    follows (its docstring); an argv whose pytest follows a wrapper, built away from the call that runs it; a command
-    string held in a variable or built with %, + or .format, a `-c` string held in a variable among them; any call
-    reached through a name this resolution does not reach and does not refuse, among them a string call through a name
-    bound other than by an import or a plain or annotated assignment (tuple unpacking, a walrus, a conditional
-    expression, a parameter default; the in-process call's value bound that way is refused, above), one imported by name
-    from a module that does not define the call (a helper that re-exports pytest.main; the census reads the name as no
-    launcher) or by a relative import (which binds nothing the census reads), an attribute of a class or an instance
-    (`T.m`, `self.m`: `m = pytest.main` in a class body, the assignment followed and the attribute not), one reached
-    through getattr, importlib or runpy, beside a star import from a module the census does not read, a builtin name or
-    a module name no scope binds (UNBOUND_MODULES), read as the builtin or the module, which the star import may rebind,
-    a name a function binds from such a star import's name other than by a plain or annotated assignment from a name or
-    an attribute (from a call's result or a subscript, as a parameter or a loop target), read as the function's own, and
-    a call in a class body through a name the class binds, read as the class's binding, where the body reads the name
-    past the class until that binding runs (a class body's call of the module's pytest.main before the class binds the
-    name to something else gives no row; found closing the first verify pass, 2026-09-23); every module the walk never
-    hands here: child_pytest_launchers skips without a parse a module whose text spells neither pytest nor py.test and
-    holds no star import (PYTEST_TEXT_RE, STAR_IMPORT_TEXT_RE; its docstring states the prefilter and why), so nothing
-    in it is read or refused; and a string that spells pytest anywhere else (a script written to a file, an exec; the
-    suite's synthetic tool-call fixtures spell `uv run pytest -q` by the dozen), which is data, not a command."""
+    row): an argv assembled one element at a time (append calls); an option element _argv_command does not take apart
+    that does not itself spell pytest and that no element spelling pytest follows, other than a cluster ending in m
+    right before an element that is not a constant (its docstring); an argv whose pytest follows a wrapper, built away
+    from the call that runs it; a command string held in a variable or built with %, + or .format, a `-c` string held in
+    a variable among them; any call reached through a name this resolution does not reach and does not refuse, among
+    them a string call through a name bound other than by an import or a plain or annotated assignment (tuple unpacking,
+    a walrus, a conditional expression, a parameter default; the in-process call's value bound that way is refused,
+    above), one imported by name from a module that does not define the call (a helper that re-exports pytest.main; the
+    census reads the name as no launcher) or by a relative import (which binds nothing the census reads), an attribute
+    of a class or an instance (`T.m`, `self.m`: `m = pytest.main` in a class body, the assignment followed and the
+    attribute not), one reached through getattr, importlib or runpy, beside a star import from a module the census does
+    not read, a builtin name or a module name no scope binds (UNBOUND_MODULES), read as the builtin or the module, which
+    the star import may rebind, a name a function binds from such a star import's name other than by a plain or
+    annotated assignment from a name or an attribute (from a call's result or a subscript, as a parameter or a loop
+    target), read as the function's own, and a call in a class body through a name the class binds, read as the class's
+    binding, where the body reads the name past the class until that binding runs (a class body's call of the module's
+    pytest.main before the class binds the name to something else gives no row; found closing the first verify pass,
+    2026-09-23); every module the walk never hands here: child_pytest_launchers skips without a parse a module whose
+    text spells neither pytest nor py.test and holds no star import (PYTEST_TEXT_RE, STAR_IMPORT_TEXT_RE; its docstring
+    states the prefilter and why), so nothing in it is read or refused; and a string that spells pytest anywhere else (a
+    script written to a file, an exec; the suite's synthetic tool-call fixtures spell `uv run pytest -q` by the dozen),
+    which is data, not a command."""
     base = os.path.basename(filename)
     try:
         tree = ast.parse(src, filename=filename)
@@ -4790,8 +4797,11 @@ class ChildPytestLaunchers(unittest.TestCase):
         # round 5's ruling B (extra4-1 and extra4-2, 2026-09-24): every element starting with a dash after an interpreter
         # head read as an option with no value, so a cluster ending in m read its module as a script and a cluster or
         # long option taking a value read that value as one; pytest by name was read at argv[0] alone, and -m took
-        # pytest by that name alone. Each form below gave no row while it ran pytest with anyio's plugin loaded (both
-        # refuters, a uv venv with pytest and anyio); each is unparsed now, naming its element
+        # pytest by that name alone. The refuters' forms each gave no row while it ran pytest with anyio's plugin
+        # loaded: the option clusters and the long option (extra4-1's two refuters, a uv venv with pytest and anyio),
+        # and -m pytest.__main__ and pytest after env, nice or timeout (extra4-2's refuter, a venv with pytest and
+        # anyio). Each form below is unparsed now, naming its element, among them forms that run no pytest (a letter
+        # CPython refuses, a pip line), which ruling B's rule refuses as well
         for label, src, reason in (
                 ("-Bm pytest", 'import subprocess, sys\nsubprocess.run([sys.executable, "-Bm", "pytest", "-q"])\n', "'-Bm' after the interpreter"),
                 ("-Im pytest", 'import subprocess, sys\nsubprocess.run([sys.executable, "-Im", "pytest"])\n', "'-Im' after the interpreter"),
@@ -5222,10 +5232,11 @@ class ChildPytestLaunchers(unittest.TestCase):
         ("a launcher's name imported again by name from a module the census does not read (LS2)",
          'from subprocess import run\nfrom helpers_x import run\ndef test_a():\n    run(["-q"])\n'),
         ("a relative import by name (LS3)", 'import pytest\nfrom .helpers_x import main\ndef test_a():\n    main(["-q"])\n'),
-        # round 5's ruling B (2026-09-24): an option element the census does not take apart, followed by no element that
-        # spells pytest and not a cluster ending in m before a name, is passed over as an option with no value, and a -m
-        # whose module is a name after it is never reached (a wider refusal refused live sites); and pytest after a
-        # wrapper is refused only in an argv written at a call the census reads, so one held in a variable gives no row
+        # round 5's ruling B (2026-09-24): an option element the census does not take apart that does not itself spell
+        # pytest, followed by no element that spells pytest and not a cluster ending in m right before an element that
+        # is not a constant, is passed over as an option with no value, and a -m whose module is a name after it is
+        # never reached (a wider refusal refused live sites); and pytest after a wrapper is refused only in an argv
+        # written at a call the census reads, so one held in a variable gives no row
         ("an option the census does not take apart before -m and a name", 'import subprocess, sys\n'
          'subprocess.run([sys.executable, "-BW", "error", "-m", mod])\n'),
         ("a wrapper-headed argv held in a variable", 'import subprocess\ncmd = ["env", "pytest", "-q"]\nsubprocess.run(cmd)\n'),

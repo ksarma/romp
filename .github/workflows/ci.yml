@@ -150,8 +150,10 @@ jobs:
         # which puts that site on the path before pytest starts, passes the same flag), so no pytest process
         # the two checks below read loads a plugin the box's default run does not, unless something loads
         # anyio's plugin again by its entry-point name or its module name (among them -p anyio or
-        # -p anyio.pytest_plugin after the flag, PYTEST_PLUGINS, plugins= on pytest.main), which neither check
-        # reads: the flag is on
+        # -p anyio.pytest_plugin after the flag, PYTEST_PLUGINS, plugins= on pytest.main), which the flag check does not
+        # read; on the Run pytest step run_pytest_status refuses a -p re-load on its line as a word outside its option
+        # allowlist and PYTEST_PLUGINS in its merged env as a key outside its env allowlist, and on the served-page step
+        # and in the launcher census nothing reads them. The flag is on
         # both of this file's pytest lines and on every pytest the suite starts in the cell's interpreter in a
         # form the launcher census reads (tests/test_ci_sdk_pin.py holds both populations, this file's by its population
         # check and the suite's by its launcher census, whose read, refusals and residual _launchers_in's docstring
@@ -168,8 +170,8 @@ jobs:
         # as a value rather than called where it is written (a Thread target, functools.partial, a parameter default, a
         # tuple, a walrus or a conditional expression, among others); and outside its read are a string anywhere else,
         # or one held in a variable or built with %, + or .format, an argv assembled one element at a time, an option it
-        # does not take apart that no pytest follows, other than a cluster ending in m before a name, a wrapper-headed
-        # argv built away from the call, a call reached
+        # does not take apart that spells no pytest and that no pytest follows, other than a cluster ending in m right
+        # before an element that is not a constant, a wrapper-headed argv built away from the call, a call reached
         # through a name the census does not resolve (a string call through tuple unpacking, a conditional expression or
         # a parameter default, an import by name from a module that does not define the call, a relative one included, a
         # class or instance attribute, getattr, importlib or runpy, a builtin or a module name such a star import
@@ -252,11 +254,13 @@ jobs:
           # key's own line, which may set the switch without spelling it, is refused. Any write of the
           # switch that does not spell its name is outside it, among them one in a run block (env -i, an
           # indirect unset, a loop over the environment), in a shell: or defaults key, by a script or action
-          # a step calls, or to $GITHUB_ENV, except on this step, where run_pytest_status refuses those it
-          # can see: a shell: here or a defaults: on the job or the workflow, a second command or anything
-          # before the pytest command (env -i, an unset), and a run block of this job that spells
-          # GITHUB_ENV; a write by a script or action a step calls, or one to $GITHUB_ENV that does not
-          # spell the name, stays outside. It reads a run block as written,
+          # a step calls, or to $GITHUB_ENV, except on this step, where run_pytest_status refuses those it can
+          # see, among them a shell: here or a defaults: on the job or the workflow, a second command or
+          # anything before the pytest command (env -i, an unset), a key of this step's merged env outside its
+          # env allowlist (BASH_ENV among them), and a run block of this job that spells GITHUB_ENV,
+          # GITHUB_PATH or BASH_ENV (run_pytest_status's docstring in tests/test_ci_sdk_pin.py states the rule
+          # and its residual); among what stays outside, a write by a script or action a step calls, or one to
+          # $GITHUB_ENV or $GITHUB_PATH that does not spell the name. It reads a run block as written,
           # and GitHub substitutes a ${{ }} expression into the block before the shell reads it, so a
           # step whose run block holds one and spells pytest anywhere in it, in a comment line or a
           # trailing comment too, is red until the value moves to an env: key the block reads as a shell
@@ -264,10 +268,11 @@ jobs:
           # anything that rewrites a pytest command's arguments after that (among them a shell function or
           # alias, a python earlier on PATH, a step's shell:; pytest_invocations' docstring in
           # tests/test_ci_sdk_pin.py states the read) is outside the check, except on this step, where it
-          # refuses those it can see: a function or alias is a second command here, this step's shell: is
-          # refused, and so is a $GITHUB_PATH write spelled in a run block of this job, which could put
-          # another python earlier on PATH; a write to $GITHUB_PATH that does not spell the name stays
-          # outside.
+          # refuses those it can see, among them a function or alias, which is a second command here, this
+          # step's shell: and a defaults: on its job or the workflow, the BASH_ENV key in its merged env or
+          # spelled in a run block of this job, and a $GITHUB_PATH write spelled in a run block of this job,
+          # which could put another python earlier on PATH (run_pytest_status's docstring states the rule); a
+          # write to $GITHUB_PATH that does not spell the name stays outside.
           # The check reads this file's text, in the YAML forms this file uses and no others: every line
           # here is in one of them (YAML_FORMS_ACCEPTED in tests/test_ci_sdk_pin.py, which
           # test_the_forms_the_allowlist_accepts_are_the_forms_ci_yml_uses holds equal to the forms this
