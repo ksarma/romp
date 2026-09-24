@@ -35712,7 +35712,7 @@ def _subagent_walk_dep_note(d, tree):
         return
     key = _chat_stat_key(d)
     if key is not None and _stat_ident(_lstat_or_none(d)) != _stat_ident(stats[0]):
-        key = None                                        # `d` changed after the read: a key no re-stat of it matches
+        key = None    # `d` changed after the read: None, which no re-stat of a directory, a live link or a file matches
     _chat_dep_note_taskout(d, key)
 
 

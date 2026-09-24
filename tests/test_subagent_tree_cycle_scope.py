@@ -28,9 +28,13 @@ directory of that tree under the (st_mtime, st_size) of the read's own stat, so 
 leaves the recorded key behind the next signature's re-stat (2026-09-24; red on the fresh root stat the walk noted
 before); (8) a live link or a file at a sibling's or the own subagents path (never listed) is noted under that path's
 own stat key, as the walk noted it before, so a tree replacing it moves the key, and a path that changed between the
-read and that stat is noted under a key its re-stat differs from; one path that holds a live link, then a file, then a
-dangling link, each replaced by a tree before the next cycle, rebuilds the tab after every swap. Synthetic fixtures
-only: placeholder ids, the notes-api demo world (sessions web and api), a temp directory."""
+read and that stat is noted None, which no re-stat of a directory, a live link or a file equals, on the own path as on a
+sibling's; one path that holds a live link, then a file, then a dangling link, each replaced by a tree before the next
+cycle, rebuilds the tab after every swap; (9) an absent subagents path whose fsid directory exists is noted None from
+the read, so a tree appearing after the read moves the key, and the identity lstat that detects a change follows the
+stat, so a path that changes after that lstat keeps the key the stat took and a tree placed there after it is never
+recorded under its own key. Synthetic fixtures only: placeholder ids, the notes-api demo world (sessions web and api), a
+temp directory."""
 import json
 import os
 import shutil
@@ -353,7 +357,8 @@ class DependencyKeyFromTheHeldRead(_World):
 
     def test_a_held_sibling_roots_key_is_the_held_stats_pair_not_a_re_stat_after_the_landing_moved_it(self):
         """D2a. The sibling's tree is its root alone. Red before the fix on (2): the walk noted the root under a fresh
-        _chat_stat_key taken after the held listing was served, the post-landing pair, equal to the re-stat."""
+        _chat_stat_key taken after the landing, later than the held sample it then looked the tree up through: the
+        post-landing pair, equal to the re-stat."""
         self.sib.mkdir(parents=True)
         _age(self.root)
         km._live_scope.subagent_trees = {}
@@ -458,19 +463,25 @@ class DependencyKeyFromTheHeldRead(_World):
 
 
 class WalkNoteForAPathThatHoldsNoTree(_World):
-    """The miss walk's note for a subagents path, a sibling fsid's or its own, that holds a live link or a file (never
-    listed, never scoped) is that path's _chat_stat_key, as the walk noted every such path before its note moved to the
-    tree read (2026-09-24): the link target's (st_mtime, st_size), or the file's. So a real tree replacing the link or
-    the file, holding the agent's file under workflows/wf_1/, moves the key against the next signature's re-stat and the
-    tab that showed the file missing is rebuilt. The first form of the read-keyed note recorded nothing for a live link
-    or a file, as _subagent_meta_map records nothing for one, and nothing then moved when the tree replaced it. Under
-    that form the cases that place a live link or a file once, at a sibling's path and at the own path, and the
-    read-then-replace cases, at a sibling's path and at the own path, are red on the key's presence; the sequence cases
-    are red on the rebuild assertion in their link and file subtests, and their dangling subtests pass (that form notes
-    a dangling link None too). Every other case of the class names its own red in its own docstring, except the
-    dangling-link control, which says why it is green under both forms. The world: api's transcript looks up
-    AID_GHOST, whose file is nowhere; the link's target and the file are aged into the past, so the tree that replaces
-    them differs in mtime from what the note recorded."""
+    """The miss walk's note for a subagents path, a sibling fsid's or its own, that holds no tree (2026-09-24). The rule
+    over the paths this class covers: a live link or a file at the path (never listed, never scoped) is noted under the
+    path's _chat_stat_key, as the walk noted every such path before its note moved to the tree read (the link target's
+    (st_mtime, st_size), or the file's), so a real tree replacing the link or the file, holding the agent's file under
+    workflows/wf_1/, moves the key against the next signature's re-stat and the tab that showed the file missing is
+    rebuilt; an absent path (its fsid directory present) or a dangling link is noted None; a path that changed between
+    the read and that stat is noted None; and the identity lstat that detects such a change is taken after the stat. The
+    read-then-replace cases, at a sibling's path and at the own path, pin the None noted for a path changed after the
+    read; the absent-path cases pin the None an absent path is noted from the read; and the cases that place a tree
+    right after the note's identity lstat pin the order of that lstat and the stat.
+
+    The first form of the read-keyed note recorded nothing for a live link or a file, as _subagent_meta_map records
+    nothing for one, and nothing then moved when the tree replaced it. Under that form the cases that place a live link
+    or a file once, at a sibling's path and at the own path, and both read-then-replace cases are red on the key's
+    presence; the sequence cases are red on the rebuild assertion in their link and file subtests, and their dangling
+    subtests pass (that form notes a dangling link None too). Every other case of the class names its own red in its
+    own docstring, except the dangling-link control, which says why it stays green. The world: api's transcript looks
+    up AID_GHOST, whose file is nowhere; the link's target and the file are aged into the past, so the tree that
+    replaces them differs in mtime from what the note recorded."""
 
     def setUp(self):
         super().setUp()
