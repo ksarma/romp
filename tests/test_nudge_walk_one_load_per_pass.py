@@ -104,7 +104,7 @@ planted on the directory, symlink-loop and mode-000 fault roads left every execu
 refusal alone red). Outside both witnesses: a reader below the judge's loaders or beside its module,
 among them the kernel opening and parsing the store file itself, the kernel calling the judge's own file reader (`jd._read_store_json`,
 below the loaders) or a second judge module loaded under another name with a cache and counters of its own (three plants,
-each per session in the pass loop, re-taken at this head (named by role in the round-10 paragraph below), over its 43 cases, one at a time with
+each per session in the pass loop, re-taken at this head (named by role in the round-11 paragraph below), over its 43 cases, one at a time with
 the kernel, the judge and this module hashed before the plant, across the run and after the revert: the first two leave every case
 green with no file changed across a run, so they stay outside every witness here; the third has been refused since the consolidation
 pass by the birth pin, whose called population names `_PJ.load_goals_shared` as a fifth loader spelling; and
@@ -895,8 +895,8 @@ green under it (19 failed, 37 passed, each failed subTest counted as a failure).
 43 passed single-process on 3.10, 3.11, 3.12, 3.13 and 3.14t.
 
 Review round 10 (2026-09-24; the reviewer's rulings on round 9, which the round-10 fixes answer, among them extra5-1, extra5-2 and
-extra6-1, three stated limits narrowed to what their instruments read). The bypass plants and the alias control, re-taken at this
-head, the head of the round-10 fixes, over its 43 cases, each landed on kernel/kernel.py in a copy of this head and reverted, the
+extra6-1, three stated limits narrowed to what their instruments read). The bypass plants and the alias control, re-taken at the
+head of the round-10 fixes, over its 43 cases, each landed on kernel/kernel.py in a copy of that head and reverted, the
 kernel, the judge and this module hashed before the plant, after the run and after the revert (each file unchanged across the run,
 and equal before the plant and after the revert), the module run single-process on 3.12 through the clean runner: the kernel
 opening and parsing the store file itself and the kernel calling jd._read_store_json, per session in the pass loop, each guarded
@@ -906,7 +906,22 @@ another name reds the birth pin alone, naming `_PJ.load_goals_shared` (1 failed,
 bound at kernel import and called per session, reds the shared reconciliation on each harness case and subTest that drives a pass,
 2 against 0 four times, 3 against 2 three times, 3 against 1, 4 against 2 six times, 6 against 4 twice and 7 against 5 twice, and
 the birth pin, the door witness's cases green under it (19 failed, 37 passed, each failed subTest counted as a failure). The clean
-module at this head, the head of the round-10 fixes: 43 passed single-process on 3.10, 3.11, 3.12, 3.13 and 3.14t.
+module at the head of the round-10 fixes: 43 passed single-process on 3.10, 3.11, 3.12, 3.13 and 3.14t.
+
+Review round 11 (2026-09-24; the reviewer's rulings on round 10, which the round-11 fixes answer, among them extra5-1, the counter
+census refusing by name a file whose text as the interpreter decodes it differs from the text the census parses, and tests-1,
+_loader_births' Derives clause naming no one caller of the unparse). The bypass plants and the alias control, re-taken at this head, the head of
+the round-11 fixes, over its 43 cases, each landed on kernel/kernel.py in a copy of this head and reverted, the kernel, the judge
+and this module hashed before the plant, after the run and after the revert (each file unchanged across the run, and equal before
+the plant and after the revert), the module run single-process on 3.12 through the clean runner: the kernel opening and parsing
+the store file itself and the kernel calling jd._read_store_json, per session in the pass loop, each guarded so that its own raise
+on a faulted store cannot end the look, leave every case green with no file changed across a run (43 passed each; unguarded, each
+reds the store-fault case on each of its roads, the look never reached); a second judge module loaded under another name reds the
+birth pin alone, naming `_PJ.load_goals_shared` (1 failed, 42 passed); the alias control, the shared door bound at kernel import
+and called per session, reds the shared reconciliation on each harness case and subTest that drives a pass, 2 against 0 four
+times, 3 against 2 three times, 3 against 1, 4 against 2 six times, 6 against 4 twice and 7 against 5 twice, and the birth pin, the
+door witness's cases green under it (19 failed, 37 passed, each failed subTest counted as a failure). The clean module at this
+head, the head of the round-11 fixes: 43 passed single-process on 3.10, 3.11, 3.12, 3.13 and 3.14t.
 
 Drives the real pass (_auto_nudge_tick) over two alive sessions with real transcript files and real goal stores, on the
 suite's fake clock (the pass takes `now`). SYNTHETIC fixtures only; a PRIVATE synthetic sid pair (the goal-store fixture
