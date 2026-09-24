@@ -120,11 +120,19 @@ store driven through the real forget, walk and pop serves no pair of a removed t
 directories), beside a control with no race. (10) The miss path's roads beside the bound, each a term of the cost home,
 _subagent_tree_memo_report's docstring (round 2 of #882, group D): an absent sibling root costs one failed os.stat per
 lookup of each agent whose file is nowhere, G x K x (1 + M) per cycle, cold or steady, and moves no counter (a boundary
-pin, red under a kernel that holds absence for the cycle); a sibling tree the walk reads is read once per cycle and
+pin, red under a kernel that holds absence for the cycle), and since round 3 of #882 (extra5-2, extra6-2) so does every
+other (place, None) stamp an agent's memo holds, each with its cold lstats: a sibling root and the own root whose stat
+raises under a real EACCES (the own root's count beside the unreadable tree's own stats of it, pinned as their sum and
+by the step per agent) and an absent or dangling-link own root, beside the boundary where the stamp's stat succeeds (an
+EIO on a root's lstat alone, a file or a live link in the own root's place: held once per cycle), and a place with no
+tree costs one lstat per _subagent_tree call and, with a link or a file in it, one os.stat per dependency note, never
+held (all in MissPathRoads); a sibling tree the walk reads is read once per cycle and
 costs a candidate lstat per directory per walk, and on a steady cycle one own stat per directory, shared (both in
 MissPathRoads, with a command row whose owner is read from the agents' transcripts before the tree is read, which
 re-stats the tree's D directories once per cycle); each walk lists the project directory once and stats its E entries,
-G listings and G x E stats over the cycle (_miss_walk_cycle); a walk's calls under the tree are {lstat: D, scandir: D} (Guards' stale-hold case); an
+G listings and G x E stats over the cycle (_miss_walk_cycle); a walk's calls under the tree are {lstat: D, scandir: D} (Guards' stale-hold case),
+and a failed validation's and the walk after it {lstat: 2D, scandir: D + 1} for one directory added, one miss with the
+validation's D - 1 in dirStats (Guards, round 3 of #882, extra6-1); an
 unreadable session directory resolves every agent again on every read, {lstat: CALLS x (3A + 1), stat: CALLS x A x
 (D + 2)} under the tree, with no counter moved but the project directory's one stamp stat (Guards); and the chat
 signature of a tab whose build walked S sibling trees re-stats its D + 1 + S x D + K recorded paths every cycle, and a
@@ -351,14 +359,18 @@ class _PathCalls:
     3.12 and os.scandir from 3.13), so the walk's listing of the project directory is counted on every interpreter. On
     3.10 pathlib stats and lists through the accessor it bound at import (the kernel's counting wrapper, which holds the
     builtin), so the accessor is patched too and Path.iterdir, and any pathlib stat, is counted on every interpreter the
-    suite runs; the walk reads each project-directory entry's type by os.stat itself, counted as such everywhere."""
+    suite runs; the walk reads each project-directory entry's type by os.stat itself, counted as such everywhere.
+    `within`, kernel function names, counts apart too the calls made while one of them is running on the thread, so a
+    count can key on the road that pays it (_dir_stamp's stamp stats, _chat_stat_key's note stats) and not on another
+    reader's call on the same path."""
 
-    def __init__(self):
+    def __init__(self, within=()):
         self.all, self.walk = {}, {}
+        self.inside = {fn: {} for fn in within}
         self._tl = threading.local()
 
     def __enter__(self):
-        pc, real_walk = self, km._subagent_file_walk
+        pc = self
 
         def counted(cls, real, default=None):
             def f(p=default, *a, **k):
@@ -367,22 +379,32 @@ class _PathCalls:
                 if not isinstance(p, int):
                     key = (cls, os.fspath(p))
                     pc.all[key] = pc.all.get(key, 0) + 1
-                    if getattr(pc._tl, "depth", 0):
+                    depth = getattr(pc._tl, "depth", None) or {}
+                    if depth.get("_subagent_file_walk"):
                         pc.walk[key] = pc.walk.get(key, 0) + 1
+                    for fn, src in pc.inside.items():
+                        if depth.get(fn):
+                            src[key] = src.get(key, 0) + 1
                 return real(p, *a, **k)
             return f
 
-        def walk(*a, **k):
-            pc._tl.depth = getattr(pc._tl, "depth", 0) + 1
-            try:
-                return real_walk(*a, **k)
-            finally:
-                pc._tl.depth -= 1
+        def deep(name, real):
+            def f(*a, **k):
+                depth = getattr(pc._tl, "depth", None)
+                if depth is None:
+                    depth = pc._tl.depth = {}
+                depth[name] = depth.get(name, 0) + 1
+                try:
+                    return real(*a, **k)
+                finally:
+                    depth[name] -= 1
+            return f
         self._patches = [mock.patch.object(os, "stat", counted("stat", os.stat)),
                          mock.patch.object(os, "lstat", counted("lstat", os.lstat)),
                          mock.patch.object(os, "listdir", counted("listdir", os.listdir)),
-                         mock.patch.object(os, "scandir", counted("scandir", os.scandir)),
-                         mock.patch.object(km, "_subagent_file_walk", walk)]
+                         mock.patch.object(os, "scandir", counted("scandir", os.scandir))]
+        self._patches += [mock.patch.object(km, fn, deep(fn, getattr(km, fn)))
+                          for fn in dict.fromkeys(("_subagent_file_walk",) + tuple(self.inside))]
         acc = getattr(sys.modules.get("pathlib"), "_NormalAccessor", None)   # 3.10 alone
         if acc is not None:
             self._patches += [mock.patch.object(acc, "stat", staticmethod(counted("stat", acc.stat))),
@@ -398,10 +420,10 @@ class _PathCalls:
             p.stop()
         return False
 
-    def count(self, cls, paths, walk=False):
+    def count(self, cls, paths, walk=False, within=None):
         """Calls of class `cls` ("stat", "lstat", "listdir" or "scandir") on the given paths, inside the walk alone when
-        `walk`."""
-        src = self.walk if walk else self.all
+        `walk`, inside the kernel function `within` alone (one of the names given at construction) when that is given."""
+        src = self.inside[within] if within else self.walk if walk else self.all
         return sum(src.get((cls, str(p)), 0) for p in paths)
 
     def listings(self, d, walk=True):
@@ -896,11 +918,15 @@ class MissPathRoads(_World):
     and pinned through the real _pusher_cycle (round 2 of #882, group D: extra6-1, correctness-2, fresh-2; the home is
     _subagent_tree_memo_report's docstring, and each of its entries names the case that pins it): an absent sibling
     root, a sibling tree the agent-file walk reads, and a command row whose owner is read from the agents' transcripts
-    before the tree is read. G live rows name an agent whose file exists nowhere (the ghosts); each cycle makes CALLS
-    _session_awaiting reads and then looks each ghost up M more times, as the chat build's Agent head (_stamp_agents) and
-    an open viewer (_subagent_frame_cached, build_subagent) look an agent up. A ghost's first cycle is cold (its walk
-    runs, memoizing the miss), the next steady (each lookup a memo hit re-checking the walk's stamps). Every count is
-    derived in the case from D, A, CALLS, G, K, S, M and the interpreter's realpath, which is counted by running it."""
+    before the tree is read; and since round 3 of #882 (extra5-2, extra6-2) every population of a (place, None) stamp an
+    agent's memo holds (a sibling root and the own root whose stat raises, an absent or dangling-link own root) with the
+    boundary where the stamp's stat succeeds (an EIO on a root's lstat alone, a file or a live link in the own root's
+    place), and the read of a place with no tree. G live rows name an agent whose file exists nowhere, or lies at the top
+    of a readable sibling's tree (the ghosts); each cycle makes CALLS _session_awaiting reads and then looks each ghost
+    up M more times, as the chat build's Agent head (_stamp_agents) and an open viewer (_subagent_frame_cached,
+    build_subagent) look an agent up. A ghost's first cycle is cold (its walk runs, memoizing its answer), the next
+    steady (each lookup a memo hit re-checking the walk's stamps). Every count is derived in the case from D, A, CALLS,
+    G, K, S, M and the interpreter's realpath and islink, which are counted by running them."""
 
     M = 2   # a ghost's lookups per cycle beyond the one _awaiting_nest makes (its held launch fold answers the rest)
 
@@ -944,9 +970,11 @@ class MissPathRoads(_World):
             self.addCleanup(km._SUBAGENT_FILE_CACHE.pop, (self.path, gh), None)
         return ghosts
 
-    def _cycle(self, ghosts, what):
-        """One pusher cycle: CALLS _session_awaiting reads, then M lookups of each ghost. Returns (the path calls, the
-        counters' delta)."""
+    def _cycle(self, ghosts, what, count=None, found=None, within=(), inner=None):
+        """One pusher cycle: CALLS _session_awaiting reads, then M lookups of each ghost. `count` is what each read counts
+        (the A agents and the ghosts by default); `found` maps a ghost to where its file lies (nowhere by default);
+        `within` is handed to _PathCalls; `inner`, when given, a context manager entered inside the path counts. Returns
+        (the path calls, the counters' delta)."""
         rec = {}
 
         def job(now, live_map, **kw):
@@ -954,11 +982,73 @@ class MissPathRoads(_World):
             rec["extra"] = [km._subagent_file(self.path, gh) for gh in ghosts for _ in range(self.M)]
         km._turn_notify_tick = job
         b = self._stats()
-        with _PathCalls() as pc:
+        with _PathCalls(within) as pc, (inner() if inner is not None else contextlib.nullcontext()):
             km._pusher_cycle()
-        self.assertEqual(rec.get("counts"), [A + len(ghosts)] * CALLS, "%s: each read saw the A agents and the ghosts: %r" % (what, rec))
-        self.assertEqual(rec.get("extra"), [None] * (len(ghosts) * self.M), "%s: each extra lookup found the ghost's file nowhere" % what)
+        want = A + len(ghosts) if count is None else count
+        self.assertEqual(rec.get("counts"), [want] * CALLS, "%s: each read counted %d rows: %r" % (what, want, rec))
+        answers = [(found or {}).get(gh) for gh in ghosts for _ in range(self.M)]
+        self.assertEqual(rec.get("extra"), answers, "%s: each extra lookup answered where the ghost's file lies (None: nowhere)" % what)
         return pc, self._delta(b)
+
+    def _holder(self):
+        """A readable sibling session's subagents tree, the root alone, sorted after every other session directory this
+        class makes; each ghost's file is written at its top (_files_under). Returns the root."""
+        root = Path(self.path).parent / ("11111111-2222-3333-4444-7c7c7c7c%04x" % 0xc0ff) / "subagents"
+        root.mkdir(parents=True)
+        _age(root)
+        self.addCleanup(km._SUBAGENT_TREES.pop, str(root), None)
+        self.addCleanup(km._SUBAGENT_META_CACHE.pop, str(root), None)
+        return root
+
+    @staticmethod
+    def _files_under(root, ghosts):
+        """Each ghost's file at the top of `root`, the tree aged. Returns {ghost: its file}."""
+        for gh in ghosts:
+            (root / ("agent-%s.jsonl" % gh)).write_text("")
+        _age(root)
+        return {gh: root / ("agent-%s.jsonl" % gh) for gh in ghosts}
+
+    def _stamp_of(self, ghost, place):
+        """The stamp the ghost's memo entry holds for `place`, or "unstamped"."""
+        return dict(km._SUBAGENT_FILE_CACHE[(self.path, ghost)][0]).get(place, "unstamped")
+
+    @contextlib.contextmanager
+    def _eacces_from_parent(self, sess):
+        """`sess` at mode 000 inside the block (a real EACCES on every path under it), restored at exit and by cleanup;
+        skipped as root, whom permission bits do not bind."""
+        if os.geteuid() == 0:
+            self.skipTest("permission bits do not bind root: no EACCES to drive")
+        self.addCleanup(os.chmod, str(sess), 0o755)
+        os.chmod(str(sess), 0o000)
+        try:
+            yield
+        finally:
+            os.chmod(str(sess), 0o755)
+
+    def _no_tree_in_the_own_place(self, shape):
+        """The own root's place holding `shape` ("absent": nothing, the session directory kept; "dangling": a link to a
+        path that does not exist; "file": a regular file; "live": a link to an empty directory elsewhere), whatever it held
+        before; the A agents gone with the tree, so the live row names the ghosts alone, and a command row whose owner is
+        read from the agents' transcripts, so each read's _awaiting_nest consults every ghost's launches (the one lookup
+        the cost home's 1 + M counts; a ghost with no sidecar is otherwise never looked up by the owner lookups)."""
+        own = self.sub
+        if own.is_symlink() or own.is_file():
+            own.unlink()
+        elif own.is_dir():
+            shutil.rmtree(str(own))
+        elsewhere = Path(self.td.name) / "elsewhere"
+        if shape == "dangling":
+            own.symlink_to(Path(self.td.name) / "nowhere")
+        elif shape == "file":
+            own.write_text("")
+        elif shape == "live":
+            elsewhere.mkdir(exist_ok=True)
+            own.symlink_to(elsewhere)
+        self.aids[:] = []
+        cmd = {"tid": "toolu_stamps_cmd5", "desc": "run the api tests", "t": 130, "type": "local_bash"}
+        km._bg_live_norm = lambda sid, path, live=None: [cmd]
+        self._forget_memos()
+        return str(own)
 
     def test_each_absent_sibling_root_costs_one_failed_stat_per_lookup_of_each_agent_whose_file_is_nowhere_and_moves_no_counter(self):
         """The absent-sibling-root term: a directory in the project directory with no subagents/ under it (K of them)
@@ -996,6 +1086,217 @@ class MissPathRoads(_World):
                                      "(dirStats, hit, miss, evict) over %s: %r; keyed on ((D - 1) + 1, 1, 0, 0): the validation and "
                                      "the project directory's one stamp stat, the failed stats counted nowhere"
                                      % (what, (d["dirStats"], d["hit"], d["miss"], d["evict"])))
+
+    def test_a_sibling_root_whose_stat_raises_costs_one_failed_stat_per_lookup_of_each_agent_found_past_it_and_is_never_held(self):
+        """The (place, None) entry's sibling-root population (round 3 of #882, extra5-2): a sibling session directory at
+        mode 000, sorted before the sibling whose tree holds each of G agents' files at its top, so its subagents root
+        cannot be read (EACCES from its parent) and the stamp's stat raises too. Each walk excludes that root and finds
+        the file past it, a lookup made, memoized with (root, None) among its stamps; so every lookup of each such agent,
+        the walk's own and every memo hit's re-check, pays one failing os.stat of the root, G x (1 + M) per cycle, cold
+        and steady, never held (_dir_stamp holds no raise); and each cold walk pays one lstat of it, the tree's root
+        lstat, which raises before realpath: G cold, 0 steady. Red under a kernel that holds the failed stamp for the
+        cycle (1 stat per cycle). Skipped as root."""
+        sess = Path(self.path).parent / ("11111111-2222-3333-4444-7c7c7c7c%04x" % 0xc000)
+        (sess / "subagents").mkdir(parents=True)
+        place = str(sess / "subagents")
+        holder = self._holder()
+        names = sorted(p.name for p in Path(self.path).parent.iterdir())
+        self.assertLess(names.index(sess.name), names.index(holder.parent.name), "premise: the walk lists the unreadable sibling first")
+        with self._eacces_from_parent(sess):
+            for G in (1, 2, 3):
+                with self.subTest(G=G):
+                    ghosts = self._ghosts(G, 0x7d80 + 0x10 * G)
+                    found = self._files_under(holder, ghosts)
+                    with self.assertRaises(PermissionError, msg="premise: the root's stamp stat raises (EACCES from its parent)"):
+                        os.stat(place)
+                    for phase in ("cold", "steady"):
+                        what = "the %s cycle at G = %d, M = %d" % (phase, G, self.M)
+                        pc, d = self._cycle(ghosts, what, found=found)
+                        self.assertEqual([self._stamp_of(gh, place) for gh in ghosts], [None] * G,
+                                         "%s: premise, each agent's memo holds the root's stamp as (root, None)" % what)
+                        got = (pc.count("stat", [place]), pc.count("lstat", [place]))
+                        want = (G * (1 + self.M), G if phase == "cold" else 0)
+                        self.assertEqual(got, want,
+                                         "(os.stat, os.lstat) on the unreadable sibling root over %s: %r; keyed on (G x (1 + M), G "
+                                         "cold and 0 steady) = %r: one failing stamp stat per lookup of each agent found past it, "
+                                         "never held (a kernel that holds the failed stamp for the cycle pays 1), and each cold "
+                                         "walk's tree read, whose root lstat raises before realpath" % (what, got, want))
+
+    def test_the_own_root_whose_stat_raises_costs_one_failed_stat_per_lookup_of_each_agent_found_under_a_sibling_beside_the_unreadable_trees_own(self):
+        """The (place, None) entry's own-root population (round 3 of #882, extra5-2, the refuter's widening): the own
+        session directory at mode 000 (a real EACCES on the own root and everything under it) while each of G agents' files
+        lies at the top of a readable sibling's tree. Each such walk excludes the own tree, finds the file under the
+        sibling and memoizes it with (own root, None) among its stamps, so every lookup of each such agent pays one
+        failing os.stat of the own root: G x (1 + M) per cycle, cold and steady; and its cold walk two lstats of it,
+        islink's and the tree's root lstat (realpath is never reached: the tree read raises first): 2G. The same root is
+        read by the unreadable-tree entry's readers too, whose resolutions stand from setUp's warm read and are made again
+        on every read: per read and per agent, its memo hit's re-check of the root among its stamps and its walk's own-root
+        stamp (2 stats), and _subagent_meta_map's root lstat per read and per agent islink's and the tree's root lstat
+        (1 + 2A lstats; the flat place's lstat is another path). So the pin keys on the sum derived road by road from both
+        entries, and on the step between G values (1 + M stats and, cold, 2 lstats per added agent), never on G x (1 +
+        M) alone, which the other readers' stats of the root would turn red on correct behaviour. Red under a kernel
+        that holds the failed stamp for the cycle. Skipped as root."""
+        own = str(self.sub)
+        holder = self._holder()
+        seen = {}
+        with self._eacces_from_parent(self.sub.parent):
+            for G in (1, 2, 3):
+                with self.subTest(G=G):
+                    ghosts = self._ghosts(G, 0x7d80 + 0x10 * G)
+                    found = self._files_under(holder, ghosts)
+                    with self.assertRaises(PermissionError, msg="premise: the own root's stamp stat raises (EACCES from its parent)"):
+                        os.stat(own)
+                    for phase in ("cold", "steady"):
+                        what = "the %s cycle at G = %d, M = %d" % (phase, G, self.M)
+                        pc, d = self._cycle(ghosts, what, found=found)
+                        self.assertEqual([self._stamp_of(gh, own) for gh in ghosts], [None] * G,
+                                         "%s: premise, each agent's memo holds the own root's stamp as (root, None)" % what)
+                        got = (pc.count("stat", [own]), pc.count("lstat", [own]))
+                        seen[(phase, G)] = got
+                        want = (CALLS * A * 2 + G * (1 + self.M), CALLS * (1 + 2 * A) + (2 * G if phase == "cold" else 0))
+                        self.assertEqual(got, want,
+                                         "(os.stat, os.lstat) on the unreadable own root over %s: %r; keyed on the sum road by road = "
+                                         "%r: the unreadable-tree entry's CALLS x A x 2 stats (each agent's re-check and walk stamp, "
+                                         "per read) plus this entry's G x (1 + M), and CALLS x (1 + 2A) lstats plus, cold, 2G (each "
+                                         "found agent's walk: islink and the tree's root lstat); a kernel that holds the failed stamp "
+                                         "for the cycle pays fewer stats" % (what, got, want))
+        for phase in ("cold", "steady"):
+            steps = [tuple(b - a for a, b in zip(seen[(phase, G)], seen[(phase, G + 1)])) for G in (1, 2)]
+            want = [(1 + self.M, 2 if phase == "cold" else 0)] * 2
+            self.assertEqual(steps, want,
+                             "the step in (os.stat, os.lstat) on the own root per added agent, %s cycles, G = 1 to 3: %r; keyed on (1 + M, "
+                             "%s) per agent = %r, the found agent's own lookups" % (phase, steps, "2" if phase == "cold" else "0", want))
+
+    def test_boundary_an_eio_on_a_sibling_roots_lstat_alone_leaves_its_stamp_held_once_per_cycle(self):
+        """The (place, None) entry's boundary (round 3 of #882, extra5-2): a sibling root whose os.lstat alone raises EIO
+        (by mock), its os.stat succeeding, so its tree cannot be read and is excluded while its stamp is a real one. Each
+        of G agents' files lies past it, under a readable sibling. The stamp is an own stat like any other, taken once and
+        held for the cycle under root None: 1 os.stat per cycle, cold and steady, whatever G and M; each cold walk's tree
+        read pays its raising lstat, G cold and 0 steady. A boundary guard: green at every head this PR carries, and red
+        under a kernel that holds no own stat (G x (1 + M))."""
+        sess = Path(self.path).parent / ("11111111-2222-3333-4444-7c7c7c7c%04x" % 0xc000)
+        (sess / "subagents").mkdir(parents=True)
+        place = str(sess / "subagents")
+        holder = self._holder()
+        real = os.lstat
+
+        def eio(p, *a, **k):
+            if not isinstance(p, int) and os.fspath(p) == place:
+                raise OSError(errno.EIO, "input/output error")
+            return real(p, *a, **k)
+        for G in (1, 2, 3):
+            with self.subTest(G=G):
+                ghosts = self._ghosts(G, 0x7d80 + 0x10 * G)
+                found = self._files_under(holder, ghosts)
+                _age(sess)
+                for phase in ("cold", "steady"):
+                    what = "the %s cycle at G = %d, M = %d" % (phase, G, self.M)
+                    with mock.patch.object(os, "lstat", eio):
+                        pc, d = self._cycle(ghosts, what, found=found)
+                    self.assertNotIn(self._stamp_of(ghosts[0], place), (None, "unstamped"),
+                                     "%s: premise, the memo holds a real stamp of the root (its stat succeeds)" % what)
+                    got = (pc.count("stat", [place]), pc.count("lstat", [place]))
+                    want = (1, G if phase == "cold" else 0)
+                    self.assertEqual(got, want,
+                                     "(os.stat, os.lstat) on the sibling root whose lstat alone raises, over %s: %r; keyed on (1, G cold "
+                                     "and 0 steady) = %r: the stamp's stat succeeds and is held once per cycle, and each cold walk's "
+                                     "tree read pays the raising lstat" % (what, got, want))
+
+    def test_an_absent_or_dangling_own_root_costs_one_failed_stat_per_lookup_of_each_agent_whose_file_is_nowhere(self):
+        """The (place, None) entry's own-place population (round 3 of #882, extra6-2): nothing at the own root's place (the
+        session directory kept), or a dangling link in it, and G agents whose file is nowhere. Each walk stamps the place
+        (place, None), so every lookup of each such agent, the walk's own and every memo hit's re-check, pays one failing
+        os.stat of it by _dir_stamp: G x (1 + M) per cycle, cold and steady; each cold walk pays W + 1 lstats of the place
+        (islink's and realpath's, counted by running them, and the tree read's, never held), G x (W + 1), and 0 steady;
+        dirStats moves by the project directory's one stamp stat alone ((dirStats, hit, miss, served, evict) == (1, 0, 0,
+        0, 0)). Red under a kernel that holds an absent stamp for the cycle (1 stat per cycle)."""
+        for n, shape in enumerate(("absent", "dangling")):
+            own = self._no_tree_in_the_own_place(shape)
+            with _PathCalls() as pc0:
+                os.path.islink(own); os.path.realpath(own)
+            w = pc0.count("lstat", [own])
+            for G in (1, 2, 3):
+                with self.subTest(shape=shape, G=G):
+                    ghosts = self._ghosts(G, 0x7e00 + 0x40 * n + 0x10 * G)
+                    for phase in ("cold", "steady"):
+                        what = "the %s cycle, %s own root, G = %d, M = %d, W = %d" % (phase, shape, G, self.M, w)
+                        pc, d = self._cycle(ghosts, what, count=1 + G, within=("_dir_stamp",))
+                        got = (pc.count("stat", [own], within="_dir_stamp"), pc.count("lstat", [own], walk=True),
+                               tuple(d[k] for k in ("dirStats", "hit", "miss", "served", "evict")))
+                        want = (G * (1 + self.M), G * (w + 1) if phase == "cold" else 0, (1, 0, 0, 0, 0))
+                        self.assertEqual(got, want,
+                                         "(_dir_stamp's os.stat of the own root's place, the walk's os.lstat of it, (dirStats, hit, "
+                                         "miss, served, evict)) over %s: %r; keyed on (G x (1 + M), G x (W + 1) cold and 0 steady, "
+                                         "(1, 0, 0, 0, 0)) = %r: one failing stamp stat per lookup, never held (a kernel that holds "
+                                         "the absent stamp pays 1), the cold walks' islink, realpath and tree lstats, and only the "
+                                         "project directory's stamp in dirStats" % (what, got, want))
+
+    def test_boundary_a_file_or_a_live_link_in_the_own_roots_place_is_stat_once_per_cycle_and_held(self):
+        """The boundary of the own-place population (round 3 of #882, extra6-2, the refuter's narrowing): a file, or a link
+        to a directory, in the own root's place is no tree, but its stamp's stat succeeds, so _dir_stamp holds it for the
+        cycle as an own stat: 1 os.stat of the place by _dir_stamp per cycle, cold and steady, whatever G and M, and
+        dirStats moves by that stat and the project directory's ((dirStats, hit, miss, served, evict) == (2, 0, 0, 0,
+        0)). A boundary guard: green at every head this PR carries, red under a kernel that holds no own stat."""
+        for n, shape in enumerate(("file", "live")):
+            own = self._no_tree_in_the_own_place(shape)
+            for G in (1, 2, 3):
+                with self.subTest(shape=shape, G=G):
+                    ghosts = self._ghosts(G, 0x7f00 + 0x40 * n + 0x10 * G)
+                    for phase in ("cold", "steady"):
+                        what = "the %s cycle, a %s in the own root's place, G = %d" % (phase, "link to a directory" if shape == "live" else shape, G)
+                        pc, d = self._cycle(ghosts, what, count=1 + G, within=("_dir_stamp",))
+                        got = (pc.count("stat", [own], within="_dir_stamp"), tuple(d[k] for k in ("dirStats", "hit", "miss", "served", "evict")))
+                        self.assertEqual(got, (1, (2, 0, 0, 0, 0)),
+                                         "(_dir_stamp's os.stat of the own root's place, (dirStats, hit, miss, served, evict)) over %s: "
+                                         "%r; keyed on (1, (2, 0, 0, 0, 0)): its stat succeeds and is held once per cycle, beside the "
+                                         "project directory's" % (what, got))
+
+    @contextlib.contextmanager
+    def _tree_calls_on(self, place, calls):
+        """Each _subagent_tree call on `place` counted in `calls` by the reader that makes it (the calling function's name),
+        the call itself running on. Entered inside _PathCalls, so it wraps the function _PathCalls installed."""
+        real = km._subagent_tree
+
+        def counting(d, *a, **k):
+            if str(d) == place:
+                reader = sys._getframe(1).f_code.co_name
+                calls[reader] = calls.get(reader, 0) + 1
+            return real(d, *a, **k)
+        with mock.patch.object(km, "_subagent_tree", counting):
+            yield
+
+    def test_a_place_with_no_tree_costs_one_lstat_per_read_and_is_never_held(self):
+        """The no-tree entry (round 3 of #882, extra6-2): _subagent_tree on a place with no tree (nothing there, a dangling
+        link, a file, a link to a directory) answers ((), ()) or ((), (the lstat,)) and holds nothing, so every call pays
+        one lstat of the place. Through the real _pusher_cycle with one agent whose file is nowhere and a command row: the
+        readers that call it on the own root's place are counted by name (each _session_awaiting read's
+        _subagent_meta_map, CALLS per cycle, and the agent's walk, once in the cold cycle), and the lstats of the place
+        taken inside _subagent_tree equal those calls, cold and steady, with hit, miss, served and evict unmoved. With a
+        link or a file in the place each dependency note of it (_subagent_tree_dep_note: _subagent_meta_map's and the
+        walk's) asks _chat_stat_key whether it dangles, one os.stat per note, the same count; with nothing there, none.
+        Red under a kernel that holds the not-a-tree answer for the cycle (one lstat per cycle, served moved)."""
+        for n, shape in enumerate(("absent", "dangling", "file", "live")):
+            own = self._no_tree_in_the_own_place(shape)
+            ghosts = self._ghosts(1, 0x7f80 + 0x10 * n)
+            for phase in ("cold", "steady"):
+                with self.subTest(shape=shape, phase=phase):
+                    calls = {}
+                    what = "the %s cycle, own root's place %s" % (phase, shape)
+                    pc, d = self._cycle(ghosts, what, count=2, within=("_subagent_tree", "_chat_stat_key"),
+                                        inner=lambda: self._tree_calls_on(own, calls))
+                    readers = {"_subagent_meta_map": CALLS}
+                    if phase == "cold":
+                        readers["_subagent_file_walk"] = 1
+                    self.assertEqual(calls, readers, "%s: premise, the readers that call _subagent_tree on the place: %r" % (what, calls))
+                    notes = sum(readers.values()) if shape != "absent" else 0
+                    got = (pc.count("lstat", [own], within="_subagent_tree"), pc.count("stat", [own], within="_chat_stat_key"),
+                           tuple(d[k] for k in ("hit", "miss", "served", "evict")))
+                    want = (sum(calls.values()), notes, (0, 0, 0, 0))
+                    self.assertEqual(got, want,
+                                     "(the lstats of the place inside _subagent_tree, the note's os.stat of it inside _chat_stat_key, "
+                                     "(hit, miss, served, evict)) over %s: %r; keyed on (one per _subagent_tree call, one per note of "
+                                     "a link or a file, (0, 0, 0, 0)) = %r: nothing held (a kernel that holds the not-a-tree answer "
+                                     "for the cycle pays one lstat and moves served)" % (what, got, want))
 
     def test_a_sibling_tree_the_walk_reads_is_read_once_per_cycle_and_costs_a_candidate_lstat_per_directory_per_walk(self):
         """The sibling-tree term: S sibling sessions with subagents trees of DSIB directories each, G agents whose file is
@@ -1330,6 +1631,36 @@ class Guards(_World):
                          "root's lstat and one per child directory, and one listing per directory (an entry's type comes from the "
                          "listing): the cost home's walk term (_subagent_tree_memo_report's docstring)" % (sp.tree_calls(), D))
         self.assertIn(root, sc["trees"], "the walk re-holds the root")
+
+    def test_a_failed_validation_then_the_walk_pays_both_in_one_miss_with_the_validations_lstats_in_dirstats(self):
+        """The walk entry's second population (round 3 of #882, extra6-1): a read that finds an entry whose identities no
+        longer stand pays the failed validation and then the walk, and lands in miss once. One scope, one workflow
+        directory added (aged), one _subagent_tree read under the spy: the validation's lstat of the root and of each of
+        the D known directories below it (D_old = D lstats), then the walk's lstat of each of the D_new - 1 = D directories
+        below the root (the root's one lstat serves both), so {lstat: D_old + D_new - 1 = 2D, scandir: D_new = D + 1}; and
+        (hit, miss, dirStats) moves by (0, 1, D_old - 1): the validation's lstats in dirStats, the walk's in none. Red under
+        a kernel that skips the validation ({lstat: D + 1, scandir: D + 1}, dirStats 0)."""
+        root = str(self.sub)
+        self._open()
+        added = self.wfroot / ("wf_%016x" % 0x7cff)
+        added.mkdir()                                       # workflows/'s identity moves: the entry no longer stands
+        _age(self.sub)
+        self.dirset.add(str(added))
+        self.assertIn(root, km._SUBAGENT_TREES, "premise: an entry stands for the root (setUp's warm read)")
+        d_old = len(km._SUBAGENT_TREES[root][0])
+        self.assertEqual(d_old, D, "premise: the entry holds the D directories")
+        b = self._stats()
+        with self._spy() as sp:
+            dirs, _stats = km._subagent_tree(root)
+        d = self._delta(b)
+        d_new = len(dirs)
+        self.assertEqual(d_new, D + 1, "premise: the walk lists the added directory: %d directories" % d_new)
+        got = (sp.tree_calls(), (d["hit"], d["miss"], d["dirStats"]))
+        want = ({"lstat": d_old + d_new - 1, "scandir": d_new}, (0, 1, d_old - 1))
+        self.assertEqual(got, want,
+                         "(filesystem calls under the tree by class, (hit, miss, dirStats)) over one read after a directory was added: "
+                         "%r; keyed on ({lstat: D_old + D_new - 1, scandir: D_new}, (0, 1, D_old - 1)) = %r at D_old = %d, D_new = %d: "
+                         "the failed validation's lstats (in dirStats), then the walk's (one miss for both)" % (got, want, d_old, d_new))
 
     def test_a_stamp_stat_that_raises_is_answered_and_not_held_while_one_that_succeeds_is_held(self):
         sc = self._open()

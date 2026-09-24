@@ -1026,8 +1026,9 @@ class _PerfStats:
                                    (per key input that moved: rows, names, notes, registry);
                                    subagentTree (the subagents directory tree memo the builds read,
                                    _subagent_tree_memo_report) -> hit / miss (trees vouched for by
-                                   their directories' stats vs walked: the validations and walks
-                                   paid) / served (reads a cycle scope answered from its held pair
+                                   their directories' stats vs walked; what each counts, a failed
+                                   validation included, is stated at _SUBAGENT_TREE_STATS)
+                                   / served (reads a cycle scope answered from its held pair
                                    with no stat: the reads the scope absorbed; a read answered a
                                    tree lands in exactly one of the three, a read answered no tree
                                    in none: the comment at _SUBAGENT_TREE_STATS), evict (roots dropped as
@@ -35393,17 +35394,22 @@ _SUBAGENT_TREE_STATS = {"hit": 0, "miss": 0, "served": 0, "evict": 0, "dirStats"
 #                          is tolerated; the memo's own writes are single dict stores of immutable tuples). WHICH COUNTER A READ
 #                          LANDS IN, stated here once (_subagent_tree_memo_report's docstring, the /perf table's comment and
 #                          docs/reference.md's memos paragraph point here): a _subagent_tree read answered a tree lands in
-#                          exactly one of hit (validated: one lstat per known directory), miss (walked) and served (answered
+#                          exactly one of hit (validated: one lstat per known directory), miss (walked; when an entry stood
+#                          and its validation failed first, that validation lands in miss too, one miss for the validation
+#                          and the walk, its lstats in dirStats and its time in validateMs beside the walk's walkMs: round 3
+#                          of #882, extra6-1) and served (answered
 #                          from the cycle scope's held pair, no stat; the scope's early return alone moves it, not _dir_stamp's
 #                          served stamps, a distinct population left uncounted; 2026-09-21, round 1 of #882's fresh-3, before
 #                          which the scope's reads moved no counter), the held-root lag included (a root removed on disk while
 #                          this thread's scope holds it is answered the held pair, and counted served, until the scope ends);
 #                          a read answered no tree moves none of the three: a missing root, a file or a symlink in its place
 #                          (the two pop paths, which record an eviction when an entry stood) and a root whose lstat fails for
-#                          another reason (the raise, _SubagentTreeUnreadable). So hit + miss is the validations and walks the
-#                          process paid, served is the reads the scope absorbed, and hit + miss + served is the reads answered
-#                          a tree, not every call. Executed in tests/test_subagent_tree_stamps_per_cycle.py Guards: the
-#                          held-root lag case ((hit, miss, served) == (1, 0, 1) over the hold and the read after the removal,
+#                          another reason (the raise, _SubagentTreeUnreadable). So hit + miss is the reads that reached the disk
+#                          and answered a tree (a hit one validation; a miss one walk, with the failed validation before it
+#                          when an entry stood, so it is not the count of validations paid), served is the reads the scope
+#                          absorbed, and hit + miss + served is the reads answered a tree, not every call. Executed in
+#                          tests/test_subagent_tree_stamps_per_cycle.py Guards: the held-root lag case ((hit, miss, served) ==
+#                          (1, 0, 1) over the hold and the read after the removal,
 #                          and the next scope's missing-root pop moving none), the two pop-path cases (the missing-root and
 #                          the replaced-root pop on a thread with no hold, then the holder's drop: served 0 at each, and the
 #                          case's (hit, miss, served) the held reads alone) and the stale-hold case ((hit, miss, served, evict)
@@ -35833,12 +35839,12 @@ def _subagent_trees_forget(alive):
 
 
 def _subagent_tree_memo_report():
-    """/perf memos.subagentTree: hit and miss (trees vouched for by validation against trees walked: how many validations
-    and walks the process paid), served (reads a cycle scope answered from the pair it held, no stat: how many reads the scope
-    absorbed; _subagent_tree's early return alone moves it; a read answered a tree, validated, walked or served, lands in
-    exactly one of the three and a read answered no tree moves none, the rule, its edges and the tests that execute it
-    stated once at _SUBAGENT_TREE_STATS; since 2026-09-21, round 1 of #882's fresh-3, before which those reads moved no
-    counter), evict (roots dropped as
+    """/perf memos.subagentTree: hit and miss (trees vouched for by validation against trees walked), served (reads a cycle
+    scope answered from the pair it held, no stat: how many reads the scope absorbed; _subagent_tree's early return alone
+    moves it; a read answered a tree, validated, walked or served, lands in exactly one of the three and a read answered no
+    tree moves none; what each counts, a failed validation before a walk included, the rule, its edges and the tests that
+    execute it: stated once at _SUBAGENT_TREE_STATS; served since 2026-09-21, round 1 of #882's fresh-3, before which those
+    reads moved no counter), evict (roots dropped as
     unowned), dirStats (the directory stats both validators paid: the tree validation's lstat per known directory below the
     root and the agent-file lookup's os.stat per directory it re-checks, _dir_stamp; the lstat half alone before 2026-09-19), walkMs and
     validateMs (the time in each, every thread), and the gauges roots (entries) and dirs (directories held). A validation
@@ -35865,10 +35871,18 @@ def _subagent_tree_memo_report():
         twin (D lstats, dirStats D - 1, hit 1); SumOverRoots
         test_one_pusher_cycle_over_three_sessions_costs_the_sum_over_their_roots and its jobs-pass twin (sum_r D_r over
         three roots of unequal size);
-      - the walk (no entry, an identity moved, or an entry holding an unvouched directory): D_r lstats and D_r listings,
-        an entry's type coming from the listing; once per root per change, held for the cycle when every listing and
-        child lstat succeeded and paid again at the next read when one failed; miss 1 and walkMs, not dirStats. Guards
-        test_a_stale_hold_dropped_at_the_lookup_lands_in_miss_and_moves_served_by_nothing ({lstat: D, scandir: D});
+      - the walk with no entry, or with an entry holding an unvouched directory (which never validates): D_r lstats and
+        D_r listings, an entry's type coming from the listing; once per root per change, held for the cycle when every
+        listing and child lstat succeeded and paid again at the next read when one failed; miss 1 and walkMs, no
+        dirStats. Guards test_a_stale_hold_dropped_at_the_lookup_lands_in_miss_and_moves_served_by_nothing ({lstat: D,
+        scandir: D});
+      - a failed validation, then the walk (an entry whose identities no longer stand: a directory added, removed or
+        written; D_old the entry's directories, D_new the tree's now): the validation's D_old lstats, then the walk's
+        lstat of each directory below the root (the root's one lstat serves both), D_old + D_new - 1 lstats, and D_new
+        listings; held as the walk is; miss 1, one miss for the validation and the walk (the _SUBAGENT_TREE_STATS
+        comment), dirStats D_old - 1, validateMs and walkMs. Guards
+        test_a_failed_validation_then_the_walk_pays_both_in_one_miss_with_the_validations_lstats_in_dirstats ({lstat:
+        2D, scandir: D + 1} and (hit, miss, dirStats) (0, 1, D - 1) for one workflow directory added, D_old = D);
       - the served read (the held pair, or a held stamp at _dir_stamp): no call; every read of a held root after its
         first on that thread in the cycle; served 1 for a tree (_subagent_tree's early return alone), no counter for a
         stamp. BoundPerCycleAndPerPass
@@ -35880,18 +35894,24 @@ def _subagent_tree_memo_report():
         lookup: a directory of a tree held this cycle is served; any other (the project directory, a sibling tree's
         directories in a cycle that did not read that tree, the own tree's when a command row's owner lookup runs before
         the read that validates it) costs one os.stat per cycle, an own stat the scope holds under root None for every
-        later lookup; dirStats 1 each. BoundPerCycleAndPerPass
+        later lookup; dirStats 1 each; the own root's place when a file or a live link stands in it (no tree there, but
+        its stat succeeds) is one of these, held once per cycle. BoundPerCycleAndPerPass
         test_two_agents_whose_files_are_nowhere_share_the_project_directorys_one_stamp_stat (the project directory, 1 at
         one row and at two); MissPathRoads
         test_a_command_rows_owner_lookup_before_the_tree_is_read_re_stats_its_directories_once_per_cycle (D stats,
-        dirStats (D - 1) + D); the sibling-tree case below (S_d per sibling in the steady cycle);
+        dirStats (D - 1) + D); the sibling-tree case below (S_d per sibling in the steady cycle); MissPathRoads
+        test_boundary_a_file_or_a_live_link_in_the_own_roots_place_is_stat_once_per_cycle_and_held (1 stat per cycle,
+        dirStats 1 beside the project directory's);
       - the miss walk over the own tree (_subagent_file_walk, per agent whose walk runs: no memo entry, or a stamp it
         read moved; once per cycle for that agent, the held fold answering its later lookups): the own root's stamp
-        (_dir_stamp, served when the tree is held), W lstats of the own root, one lstat of the flat place and one per
-        directory of the own tree (the candidates, 1 + D_s; the flat place is the own root's candidate, so its path is
-        read twice), and the tree read once for the lookup and the dependency
-        note both (a validated hit or a served read); then the project directory: its stamp (an own stat, once per
-        cycle, shared), one listing and one os.stat per entry (its type, read by os.stat on every interpreter), E per
+        (_dir_stamp: served when the tree is held; with no tree in the place, an absent root or a dangling link is the
+        (place, None) entry below and a file or a live link the re-check entry's own stat), W lstats of the own root, one
+        lstat of the flat place and one per directory of the own tree (the candidates, 1 + D_s; the flat place is the own
+        root's candidate, so its path is read twice), and the tree read once for the lookup and the dependency
+        note both (a validated hit or a served read; with no tree in the place, one lstat, never held, so a cold walk
+        pays W + 1 lstats of the own root's place: the no-tree entry below); then the project directory: its stamp (an
+        own stat, once per cycle, shared), one listing and one os.stat per entry (its type, read by os.stat on every
+        interpreter), E per
         walk, held nowhere and counted nowhere. _miss_walk_cycle under BoundPerCycleAndPerPass
         test_one_pusher_cycle_with_an_agent_whose_file_is_nowhere_walks_once_and_its_notes_cost_no_stat and the two-row
         case above (D + G x W lstats of the tree's directories, G x (D + 1) candidate lstats, A file stats, G x E entry
@@ -35903,12 +35923,32 @@ def _subagent_tree_memo_report():
         the memo hits re-check the tree's directories as own stats (S_d per cycle, shared, dirStats S_d) and read no
         tree. MissPathRoads
         test_a_sibling_tree_the_walk_reads_is_read_once_per_cycle_and_costs_a_candidate_lstat_per_directory_per_walk;
-      - an absent sibling root (a session directory with no subagents/): one os.stat of its subagents place per lookup
-        of each agent whose file is nowhere or lies past it, the walk's own and every memo hit's re-check (the stamp is
-        (place, None)), G x K x (1 + M) per cycle; the stat raises, so it is never held (_dir_stamp) and no counter
-        counts it; each cold walk adds _subagent_tree's lstat of the place (answered ((), ()), not held) and realpath's,
-        G x K x (1 + W') lstats. MissPathRoads
-        test_each_absent_sibling_root_costs_one_failed_stat_per_lookup_of_each_agent_whose_file_is_nowhere_and_moves_no_counter;
+      - a (place, None) stamp an agent's memo holds, the agent found or missed (_dir_stamp answers (place, None) for a
+        stat that raises): one failing os.stat of the place per lookup of each agent whose stamps hold it, the walk's own
+        and every memo hit's re-check, G x (1 + M) per such place per cycle, cold or steady; never held (_dir_stamp holds
+        no raise), counted by no counter, dirStats unmoved. The populations, each with the lstats of the place its cold
+        walks pay: an absent sibling place (a session directory with no subagents/), G x K x (1 + M) over the K such
+        places, each cold walk adding _subagent_tree's lstat of the place (answered ((), ()), not held) and realpath's, G
+        x K x (1 + W') lstats (MissPathRoads
+        test_each_absent_sibling_root_costs_one_failed_stat_per_lookup_of_each_agent_whose_file_is_nowhere_and_moves_no_counter);
+        a sibling root whose stat raises (EACCES from its parent), held in the stamps of an agent found past it: G lstats,
+        the tree's root lstat, which raises before realpath (MissPathRoads
+        test_a_sibling_root_whose_stat_raises_costs_one_failed_stat_per_lookup_of_each_agent_found_past_it_and_is_never_held);
+        the own root whose stat raises while the agent is found under a sibling: 2G lstats, islink's and the tree's
+        root lstat, beside what the unreadable-tree entry's readers pay for the same root (MissPathRoads
+        test_the_own_root_whose_stat_raises_costs_one_failed_stat_per_lookup_of_each_agent_found_under_a_sibling_beside_the_unreadable_trees_own);
+        and an absent own root, or a dangling link in its place: G x (W + 1) lstats (MissPathRoads
+        test_an_absent_or_dangling_own_root_costs_one_failed_stat_per_lookup_of_each_agent_whose_file_is_nowhere). The
+        boundary: an EIO on the root's lstat alone, the stamp's stat succeeding, is a stamp like any other, an own stat
+        held once per cycle (MissPathRoads
+        test_boundary_an_eio_on_a_sibling_roots_lstat_alone_leaves_its_stamp_held_once_per_cycle);
+      - a read of a place with no tree (_subagent_tree on an absent root, or a dangling or live link or a file in its
+        place): one lstat per call, whichever reader makes it, answered ((), ()) or ((), (the lstat,)); never held, no
+        counter (hit, miss, served and evict unmoved); and with a link or a file in the place, each dependency note of
+        it (_subagent_tree_dep_note: _subagent_meta_map's per read, the walk's per walk) asks _chat_stat_key whether the
+        place dangles, one os.stat per note, never held and counted nowhere. MissPathRoads
+        test_a_place_with_no_tree_costs_one_lstat_per_read_and_is_never_held (the own root's place: each
+        _session_awaiting read's _subagent_meta_map and each walk's own read, per call, cold and steady);
       - an unreadable tree (a root whose lstat fails for a reason other than absence; a fault excludes its own tree from
         the walk and nothing else, as round 2 of #882's group A left it): nothing is held, so every read resolves every
         agent of that session again, all under the tree and every call failing, with the resolutions standing: per read
@@ -35934,7 +35974,9 @@ def _subagent_tree_memo_report():
         memoized and served after the fault cleared). tests/test_subagent_tree_memo.py FaultBelowTheRoot and
         FaultOnTheWalksOwnRead (two lookups, two walks, nothing memoized);
       - a root that left the memo in the cycle (an ownership eviction, a missing or replaced root): one read of that
-        root at its next lookup (a walk, or D_r lstats when a read on another thread re-inserted it since), one fold per
+        root at its next lookup (a walk, or D_r lstats when a read on another thread re-inserted it since; for a root
+        now absent, or a link or a file in its place, one lstat at that read and at every read after it, since nothing
+        is held: the no-tree entry above), one fold per
         awaiting agent of the transcripts whose own root it is, A_r (0 for an unowned sibling root; the fold's root and
         its bound: _subagent_scope's docstring), and one stat per own stat the scope held, which no root vouches for and
         every eviction drops; every other root's pair, stamps and folds untouched. Guards

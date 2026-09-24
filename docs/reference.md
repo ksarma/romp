@@ -3704,8 +3704,9 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   eviction costs is a term of the cost home named under `dirStats` below); a
   thread outside a cycle, a WS or HTTP handler's build or the act-now nudge
   pass, reads per call as before), with `hit` and `miss`
-  (trees vouched for by one stat per known directory against trees walked:
-  how many validations and walks the process paid), `served` (reads a cycle
+  (trees vouched for by one stat per known directory against trees walked;
+  what each counts, a failed validation before a walk included: the comment
+  at `_SUBAGENT_TREE_STATS`), `served` (reads a cycle
   scope answered from the pair it held with no stat: how many reads the
   scope absorbed; a read answered a tree, validated, walked or served,
   lands in exactly one of the three and a read answered no tree (a missing
