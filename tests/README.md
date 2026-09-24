@@ -191,10 +191,14 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   first of the module's tests to be set up (an autouse one always is) runs before
   both snapshots, and neither check reads it; one a later test is the first to
   request by name is named by this check alone. The first test to be set up need
-  not be the module's first: a test a skip or skipif mark skips, or an xfail mark
-  with `run=False` ends, sets up no fixture (pytest ends it before any is set up),
-  while one skipped any other way (`pytest.skip` in its body or a fixture, or a
-  unittest skip decorator) is set up first. One requested at run time
+  not be the module's first. A test counts as set up once its module-scoped
+  fixtures are, and pytest ends one before that point when a skip or skipif mark
+  skips it, when an xfail mark with `run=False` ends it (not under `--runxfail`),
+  or when a session- or package-scoped fixture it requests (by name, through a
+  fixture, by `usefixtures` or as autouse) skips or raises in its setup, since
+  fixtures are set up highest scope first. A test skipped in its body, in a
+  module-, class- or function-scoped fixture, in `setUpClass` or by a unittest
+  skip decorator is set up. A fixture requested at run time
   (`request.getfixturevalue`) is named by both from a test's body or a
   function-scoped fixture, and by this check alone from a module-scoped fixture.
   The tree has no fixture scoped above module, and the hermetic module holds that

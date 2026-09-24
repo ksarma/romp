@@ -1020,19 +1020,25 @@ def restore_env(name, prior):
 # the first of the module's tests to be set up requests it (an autouse one always does), before this snapshot and every
 # per-test snapshot of _shared_state_restored, so neither check reads it; when a later test is the first to, after this
 # snapshot and before that test's, so this check names the module and the per-test check does not. The first test to be
-# set up need not be the module's first: a test a skip or skipif mark skips, or an xfail mark with run=False ends, sets
-# up no fixture, this one included (pytest's skipping plugin ends it in its setup hook before any fixture is set up), so
-# a fixture requested by name by the first test that plugin does not end is read by neither check, however many tests
-# before it the plugin ended; a test skipped any other way (pytest.skip in its body or in a fixture, one of unittest's
-# skip decorators) has had this fixture set up first, and counts as set up. A fixture requested at run time
-# (request.getfixturevalue) is set up where the call runs: in a test's body or in a function-scoped fixture the test
-# requests by name, after that test's per-test snapshot, so both checks read it, the per-test one naming the test; in a
-# module-scoped fixture, after this snapshot and before the test's, so only this check does (the verifier's plants on
-# round 2 of fork PR #894, run by tests/test_hermetic_kernel_postal.py; the tree has no fixture scoped above module,
-# which that module holds at none). Also unread: a write by a plugin's own hook or fixture outside the module's setup;
-# and any name the list in the docstring leaves out. Every watched name is popped at this file's import, before
-# collection (the lines above), so nothing the developer's shell carries reaches the check, and it reads the same run on
-# every box.
+# set up need not be the module's first. A test counts as set up once its module-scoped fixtures are set up, this one
+# before the module's own; a test pytest ends before that point sets up none of them, so a fixture requested by name by
+# the first test that is set up is read by neither check, however many tests before it were ended. Ended before that
+# point: a test a skip or skipif mark skips, or an xfail mark with run=False ends (pytest's skipping plugin ends it in
+# its setup hook before any fixture is set up; under --runxfail an xfail mark ends nothing, and the test is set up), and
+# a test that requests a session- or package-scoped fixture whose setup skips or raises (by name, through a fixture it
+# requests, by a usefixtures mark, or as autouse, which ends every test the fixture reaches), since pytest sets a test's
+# fixtures up highest scope first. Set up: a test skipped in its body, in a module-, class- or function-scoped fixture,
+# in setUpClass, or by one of unittest's skip decorators. Each case of the three sentences before this one is a plant in
+# test_a_write_by_a_fixture_scoped_above_module_is_named_by_each_check_whose_snapshot_its_setup_follows (the verifier's
+# finding on round 2 of fork PR #894, where this text had counted a skip in a session or package fixture as set up). A
+# fixture requested at run time (request.getfixturevalue) is set up where the call runs: in a test's body or in a
+# function-scoped fixture the test requests by name, after that test's per-test snapshot, so both checks read it, the
+# per-test one naming the test; in a module-scoped fixture, after this snapshot and before the test's, so only this
+# check does (the verifier's plants on round 2 of fork PR #894, run by tests/test_hermetic_kernel_postal.py; the tree
+# has no fixture scoped above module, which that module holds at none). Also unread: a write by a plugin's own hook or
+# fixture outside the module's setup; and any name the list in the docstring leaves out. Every watched name is popped at
+# this file's import, before collection (the lines above), so nothing the developer's shell carries reaches the check,
+# and it reads the same run on every box.
 MODULE_WATCHED_ENV_NAMES = _SEAM_ENV_NAMES + ("ROMP_POSTAL_PEERS", "ROMP_POSTAL_CLIENT_ONLY", "ROMP_POSTAL_PORT")
 MODULE_ENV_FLOORS = {"ROMP_POSTAL_PORT": None}
 
