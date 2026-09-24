@@ -392,12 +392,26 @@ class AgentEnd(unittest.TestCase):
 
     def test_events_past_the_queue_bound_are_releases_given_up(self):
         self.be._AGENT_LIVE_MAX = 2                                      # this backend's bound, for the test
+        # the queue holds two, so start(WF_AID) drops start(AID) and stop(WF_AID) drops stop(AID): of the two events dropped,
+        # the stop is a release and the start is not
         self._start(AID); self._stop(AID); self._start(WF_AID); self._stop(WF_AID)
         err = io.StringIO()
         with contextlib.redirect_stderr(err):
             km._begin_checkpoint_cycle()
-        self.assertEqual(self._stat("releaseLost"), 2, "two events dropped past the bound are counted")
+        self.assertEqual(self._stat("releaseLost"), 1, "of the two events dropped past the bound, the one end is counted")
         self.assertIn("recordCache.releaseLost", err.getvalue())
+        km._begin_checkpoint_cycle(); km._begin_checkpoint_cycle()
+        self.assertEqual(self._stat("releaseLost"), 1, "two later cycles add nothing to releaseLost")
+
+    def test_starts_dropped_past_the_queue_bound_are_not_releases_given_up(self):
+        self.be._AGENT_LIVE_MAX = 2
+        # stop(AID) drops start(AID) and stop(WF_AID) drops start(WF_AID): both events dropped are starts
+        self._start(AID); self._start(WF_AID); self._stop(AID); self._stop(WF_AID)
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            km._begin_checkpoint_cycle()
+        self.assertEqual(self._stat("releaseLost"), 0, "the two events dropped past the bound were starts: none is counted")
+        self.assertNotIn("recordCache.releaseLost", err.getvalue())
 
     def test_an_end_that_raises_does_not_lose_the_rest_of_the_batch(self):
         size = self._fold_while_running(AID, self.agent)

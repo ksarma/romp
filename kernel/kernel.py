@@ -15569,8 +15569,8 @@ def _release_ended_agents():
     own add and removal sites, queued in arrival order (SdkBackend.drain_agent_live_events), never from a difference of
     liveness snapshots: three threads take those independently, and a staler one would end an agent a fresher one listed.
     An end followed in the same batch by the agent entering the live set again releases nothing. An agent entering the live
-    set after its end was released is a false end, counted. Events dropped past the queue's bound are releases given up
-    (recordCache.releaseLost). The file is resolved as the folds resolve it (_path_of, _subagent_file), so the release
+    set after its end was released is a false end, counted. End events dropped past the queue's bound are releases given
+    up (recordCache.releaseLost); a dropped start is not counted. The file is resolved as the folds resolve it (_path_of, _subagent_file), so the release
     names the cache key the folds read. Returns the releases taken or owed."""
     be = _sdk_backend
     drain = getattr(be, "drain_agent_live_events", None) if be else None

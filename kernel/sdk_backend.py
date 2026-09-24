@@ -13347,7 +13347,8 @@ class SdkBackend:
         #                                           (False) a session's live set (SdkSession._subagents), for the kernel's record
         #                                           cache, whose pusher drains it at each cycle's start and releases an ended
         #                                           agent's parsed transcript (drain_agent_live_events; 2026-09-24)
-        self._agent_live_dropped = 0              # events dropped past _AGENT_LIVE_MAX (oldest first), reported by the drain
+        self._agent_live_dropped = 0              # end events dropped past _AGENT_LIVE_MAX (oldest first), reported by the drain:
+        #                                           each is a release given up; a dropped start is not counted
         self._agent_live_lock = threading.Lock()
         self._seed_writes: dict = {}              # tok → {sid, value, prior, priorTok}: set_model's optimistic
         #                                             writes to the SHARED sdk-defaults `model`, pending the
@@ -20832,19 +20833,22 @@ class SdkBackend:
         """An agent entered (`live`) or left a session's live set: queued for the kernel's record cache. Called by the session
         at the one site that adds (the SubagentStart hook) and at every site that removes (SubagentStop, the agent's own task
         end, the workflow roster's done/error/re-minted slot or the run's end, the CLI teardown), outside the session's lock.
-        Past _AGENT_LIVE_MAX the oldest event is dropped and counted, so a backend nothing drains stays bounded."""
+        Past _AGENT_LIVE_MAX the oldest event is dropped, so a backend nothing drains stays bounded; a dropped end is counted
+        (a release given up), a dropped start is not."""
         q = getattr(self, "_agent_live_q", None)
         if q is None:
             return                                   # a __new__-built test double: nothing drains it
         with self._agent_live_lock:
             if len(q) >= self._AGENT_LIVE_MAX:
-                q.popleft()
-                self._agent_live_dropped += 1
+                old = q.popleft()
+                if not old[2]:
+                    self._agent_live_dropped += 1    # an end: its release is given up
             q.append((str(sid), str(agent_id), bool(live)))
 
     def drain_agent_live_events(self):
-        """The queued live-set events in arrival order, and how many were dropped past the bound since the last drain; both
-        reset. The kernel's pusher calls it at each cycle's start (kernel._release_ended_agents)."""
+        """The queued live-set events in arrival order, and how many end events were dropped past the bound since the last
+        drain (a dropped start is not counted); both reset. The kernel's pusher calls it at each cycle's start
+        (kernel._release_ended_agents)."""
         q = getattr(self, "_agent_live_q", None)
         if q is None:
             return [], 0
