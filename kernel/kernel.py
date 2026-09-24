@@ -39402,17 +39402,20 @@ def _chat_build_deps(sid, payload):
     reported under two different keys is recorded under _CHAT_DEP_KEYS_DIFFER, which no re-stat equals, so
     the next cycle's signature misses and the tab is rebuilt: two keys mean the payload embeds reads of the
     path in two states, and a record of either key can equal the next re-stat while the payload shows the
-    other state. Keeping the first key was enough while every report came from a read made when it was
-    reported, since the first was then the oldest and any later change left it behind the re-stat; a report
-    replayed from a held read or a memo entry can come after a fresher one, which that order would hide.
-    The rule is pinned at the unit level: tests/test_subagent_tree_stamps_per_cycle.py DependencyKey
+    other state. Keeping the first key hides both: a report replayed from a held read or a memo entry can
+    come after a fresher one, and a place one read recorded under its stat key can be noted unreadable by a
+    later read of the same build, a fault that moves no stat.
+    The rule is pinned at the unit level (tests/test_subagent_tree_stamps_per_cycle.py DependencyKey
     test_a_path_one_build_reported_under_two_keys_is_recorded_under_a_key_no_re_stat_equals_in_either_order,
-    both orders and a path reported twice under one key. Through the readers, the agent-file walk reaches it
-    when it notes a place it could not read under _TREE_UNREADABLE that the tree read noted under its own key
-    (tests/test_subagent_tree_memo.py FaultBelowTheRoot), where a record keeping the first key re-arms the
-    tab as well; the road on which the rule was found (the pass applying round 2 of #882's rulings: a fresh
-    walk after an evicted pair was dropped from the scope, beside a launch fold held from before a landing)
-    went with the eviction table (round 4 of #882, D3)."""
+    both orders and a path reported twice under one key) and on the live road that depends on it: a chat build
+    that reads the sidecar map before its lookup (_stamp_agents, as build_session does) records the tree read's
+    key for a place below the root first, the agent-file walk then notes that place under _TREE_UNREADABLE when
+    it could not read it, and after the fault clears only the disagreement rebuilds the tab, since the tree
+    read's key, which a chmod or a cleared EIO does not move, equals the next re-stat
+    (tests/test_subagent_tree_memo.py FaultBelowTheRoot
+    test_a_chat_build_that_reads_the_sidecar_map_before_its_lookup_rebuilds_its_tab_through_the_disagreement_eio).
+    A lookup with no sidecar read before it reports the walk's _TREE_UNREADABLE before the replayed tree note, so
+    a record keeping the first key re-arms that tab as well (FaultBelowTheRoot's other cases)."""
     sc = getattr(_chat_dep_scope, "deps", None) or {}
     touts = {}
     for of, key in sc.get("task_outs") or ():

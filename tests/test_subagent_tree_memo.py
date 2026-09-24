@@ -1300,9 +1300,12 @@ class FaultBelowTheRoot(_Walk):
     on is_dir by a wrapped os.scandir), each asserting None, the fault, nothing memoized, the (place, _TREE_UNREADABLE)
     note by equality on the workflow directory and the file found once the fault clears; red at the round-2 head for
     the same reason, and under a kernel that drops that shape's report (the EACCES variant on the place's equality,
-    since the candidate's lstat in the unsearchable workflows/ faults too and is noted instead). The chat record's re-arm composes two rules: the tree read noted the place under
-    its own key, which a chmod does not move, and the walk noted it unreadable, and a path reported under two keys is
-    recorded as their disagreement (_chat_build_deps). A standing resolution under the place that faults is answered with
+    since the candidate's lstat in the unsearchable workflows/ faults too and is noted instead). The chat record for the
+    place holds the disagreement of two reports (_chat_build_deps): the walk noted it unreadable, and the tree read noted
+    it under its own key, which a chmod or a cleared EIO does not move. A lookup alone re-arms under a record that keeps
+    the first key as well, since the walk's _TREE_UNREADABLE is reported before the replayed tree note; a chat build that
+    reads the sidecar map before its lookup (_stamp_agents) reports the tree read's key first, and its case re-arms only
+    through the disagreement. A standing resolution under the place that faults is answered with
     the fault and left standing, red before too, when the walk's miss replaced it in the memo. A control, green before the
     change and after it: a file under a readable sibling is found past the fault below the own root, memoized and answered
     with no fault. The EACCES cases skip as root, whom permission bits do not bind."""
@@ -1543,6 +1546,43 @@ class FaultBelowTheRoot(_Walk):
             got, faults, _notes = self._lookup()
         self.assertEqual((got, faults), (holder_file, []), "found past the fault below the own root, with no fault passed on")
         self.assertEqual(km._SUBAGENT_FILE_CACHE[self.fork_key][1], holder_file, "and memoized")
+
+    def test_a_chat_build_that_reads_the_sidecar_map_before_its_lookup_rebuilds_its_tab_through_the_disagreement_eio(self):
+        """The live road of _chat_build_deps' two-key rule. A chat build reads the sidecar map before it looks an agent up
+        (_stamp_agents, as build_session does). Under an EIO by mock on workflows/'s listing, the map's tree read notes
+        workflows/ under the stat key of its read; the lookup's walk excludes that place, notes it under _TREE_UNREADABLE
+        and replays its own tree read's key after that. Premise, from the build's reports for workflows/ in order: the
+        first is a stat key and _TREE_UNREADABLE is among the later ones. Once the fault clears, the key the build
+        recorded for workflows/ differs from the next signature's re-stat, so the tab is rebuilt, and the lookup finds the
+        file. Red under a record that keeps a path's first key: it records the tree read's stat key, which the EIO did not
+        move, and the re-stat equals it."""
+        km._SUBAGENT_TREES.pop(str(self.subdir), None)             # no standing tree entry: the fault is met by a walk
+        ev = {"name": "Agent", "agentId": AID_WF}                   # a foreground launch's Agent head
+        deps = {"task_outs": [], "postal_any": False}
+        with self._below("eio-workflows") as place:
+            km._chat_dep_scope.deps = deps
+            try:
+                km._stamp_agents({TU_WF: ev}, str(self.tpath), None, None)
+            finally:
+                km._chat_dep_scope.deps = None
+        reports = [k for p, k in deps["task_outs"] if p == place]
+        self.assertTrue(reports and isinstance(reports[0], tuple) and km._TREE_UNREADABLE in reports[1:],
+                        "premise: the build's reports for workflows/, in order, are the sidecar map's stat key first and the walk's "
+                        "_TREE_UNREADABLE after it: %r" % (reports,))
+        self.assertNotIn(self.wf_key, km._SUBAGENT_FILE_CACHE, "premise: the lookup under the fault memoized nothing")
+        km._chat_dep_scope.deps = {"task_outs": list(deps["task_outs"]), "postal_any": False}
+        try:
+            rec = km._chat_build_deps(SID, {"events": []})
+        finally:
+            km._chat_dep_scope.deps = None
+        recorded = dict(rec["task_outs"]).get(place, "unrecorded")
+        restat = dict(km._chat_sig_deps(SID, rec)[0]).get(place, "unrecorded")
+        self.assertNotEqual(recorded, restat,
+                            "the fault cleared: the key the build recorded for workflows/, %r, against the next signature's re-stat, "
+                            "%r; keyed on a difference, so the tab is rebuilt (a record that keeps the first key holds the sidecar "
+                            "map's stat key, which the EIO did not move, and equals the re-stat)" % (recorded, restat))
+        got, faults, _notes = self._lookup_wf()
+        self.assertEqual((got, faults), (self.target, []), "the fault cleared: the next lookup finds the file, with no fault")
 
     def test_a_standing_resolution_under_the_place_that_faults_is_answered_with_the_fault_and_left_standing(self):
         self.assertEqual(km._subagent_file(str(self.tpath), AID_WF), self.target, "premise: found and memoized")

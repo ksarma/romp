@@ -107,9 +107,10 @@ the held fold's from the notes stored in its own entry, since the agent-file mem
 by a lookup on a thread that holds no scope, whose walk reads the disk afresh, or cleared (round 3 of #882, tests-2, and
 round 4, D3: one case for each, red under a kernel that replays the memo entry's notes, and the replaced case under one
 that does so only when the memo holds an entry);
-a path one build reported under two keys is recorded under a key no re-stat equals, a rule pinned at the unit level
-alone (round 4 of #882, D3: the road through a held fold's replayed key behind a fresh walk's went with the eviction
-table); and a sibling session directory appearing after a build moves no key it recorded on any of the three roads, the
+a path one build reported under two keys is recorded under a key no re-stat equals, pinned at the unit level here and on
+the live road that depends on it: a chat build that reads the sidecar map before its lookup (_stamp_agents) records the
+tree read's key first, and only the disagreement rebuilds its tab after a fault below the root clears
+(tests/test_subagent_tree_memo.py FaultBelowTheRoot, the sidecar-first case); and a sibling session directory appearing after a build moves no key it recorded on any of the three roads, the
 residual, witnessed. An agent's own place holding what the walk refuses (a symlinked agent file, or a symlinked
 subagents/ whose target holds the file) is in no record, so the tab its walk built is served with no rebuild, a write to
 the link's target included, beside the control of an absent place recorded None (round 3 of #882, group B: every build
@@ -3521,11 +3522,12 @@ class DependencyKey(_World):
         """_chat_build_deps' rule for a path reported more than once: under two different keys, in either order, the
         record's one entry for the path is a key the next signature's re-stat never equals, so the tab is rebuilt; reported
         twice under one key, the entry is that key and equals the re-stat, so a consistent build is not rebuilt for it.
-        Pinned here at the unit level alone (round 4 of #882, D3): the road through the readers this module drove, a held
-        fold's replayed key behind a fresh walk's key for the same directory, went with the eviction table, and under a
-        record that keeps the first key this case is the only red in the memo, stamps, cycle-scope and chat-build-signature
-        modules. RED, in the order current key first and older key second, before the rule, when the record kept the first
-        key; the other order and the one-key control were green then."""
+        The unit level; the live road that depends on the rule, a chat build that reads the sidecar map before its lookup
+        (_stamp_agents) and so records the tree read's key for a place first, rebuilding its tab after a fault below the
+        root clears only through the disagreement, is pinned in tests/test_subagent_tree_memo.py FaultBelowTheRoot
+        test_a_chat_build_that_reads_the_sidecar_map_before_its_lookup_rebuilds_its_tab_through_the_disagreement_eio. RED,
+        in the order current key first and older key second, under a record that keeps the first key; the other order and
+        the one-key control are green there."""
         p = str(self.sub)
         now_key = km._chat_stat_key(p)
         older = (now_key[0] - 1.0, now_key[1])                     # the path's key before a change: an older read's
