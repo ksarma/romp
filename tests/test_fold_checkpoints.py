@@ -1567,8 +1567,9 @@ class KernelFolds(Base):
         self.assertIn("checkpoint_cycle_take(", src); self.assertNotIn("checkpoint_cycle_room(", src)   # the room check and the charge are one step
         for fn in (em._drop_quiescent_entry, em.release_entry):
             src = inspect.getsource(fn)
-            self.assertLess(src.index("_drop_write("), src.index("with _JSONL_CACHE_LOCK:\n        if _JSONL_CACHE.get(key) is ent"),
-                            "%s: the write before the reader's lock that pops" % fn.__name__)
+            self.assertLess(src.index("_drop_write("),
+                            src.index("with _read_stripe(key), _JSONL_CACHE_LOCK:\n        if _JSONL_CACHE.get(key) is ent"),
+                            "%s: the write before the locks that pop" % fn.__name__)
 
     def test_perf_carries_the_checkpoint_counters_and_the_kernel_wires_the_three_events(self):
         snap = km._PERF_STATS.snapshot()

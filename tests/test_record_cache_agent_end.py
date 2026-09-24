@@ -20,6 +20,7 @@ import json
 import os
 import shutil
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 from romp_load import load_source
@@ -352,6 +353,43 @@ class AgentEnd(unittest.TestCase):
         self.assertEqual(self._weight(self.agent), grown, "the newer entry stands")
         self.assertEqual((self._stat("releaseDeferred"), self._stat("releaseLost"), self._stat("released")), (1, 0, {}),
                          "owed, not popped, not lost")
+        km._begin_checkpoint_cycle()                                     # the next cycle pays it
+        self.assertIsNone(self._weight(self.agent), "released at the next cycle")
+        self.assertEqual(self._stat("released"), {"agentEnded": {"count": 1, "bytes": grown}})
+
+    def test_a_read_in_flight_when_the_release_pops_is_owed_not_lost(self):
+        size = self._fold_while_running(AID, self.agent)
+        self._stop(AID)
+        _append(self.agent, _agent_lines(AID, 45, 3))                   # the agent's last lines, not read yet
+        grown = os.path.getsize(self.agent)
+        parked, go, box = threading.Event(), threading.Event(), {}
+        real_scan, real_stripe = em._scan_jsonl_stream, em._read_stripe
+
+        def scan(*a, **k):                                               # the reader waits inside its byte pull, holding the
+            if threading.current_thread() is box.get("reader"):          #  path's stripe, before its insert
+                parked.set()
+                go.wait(10)
+            return real_scan(*a, **k)
+
+        def stripe(path):                                                # the release reaching for that stripe lets the reader
+            if box.get("armed") and threading.current_thread() is not box.get("reader") and str(path) == self.agent:
+                go.set()                                                 #  go on to its insert
+            return real_stripe(path)
+        box["reader"] = threading.Thread(target=em._read_jsonl_incremental, args=(self.agent,))
+        em._scan_jsonl_stream, em._read_stripe = scan, stripe
+        try:
+            box["reader"].start()
+            self.assertTrue(parked.wait(10), "precondition: the reader is inside its read")
+            box["armed"] = True
+            km._begin_checkpoint_cycle()                                 # the pusher releases the ended agent
+            go.set()
+            box["reader"].join(10)
+        finally:
+            em._scan_jsonl_stream, em._read_stripe = real_scan, real_stripe
+        self.assertFalse(box["reader"].is_alive(), "precondition: the reader finished")
+        self.assertGreater(grown, size)
+        self.assertEqual(self._weight(self.agent), grown, "the read's entry stands, whole")
+        self.assertEqual((self._stat("releaseDeferred"), self._stat("released")), (1, {}), "the release is owed, not taken")
         km._begin_checkpoint_cycle()                                     # the next cycle pays it
         self.assertIsNone(self._weight(self.agent), "released at the next cycle")
         self.assertEqual(self._stat("released"), {"agentEnded": {"count": 1, "bytes": grown}})

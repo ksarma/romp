@@ -310,6 +310,49 @@ class DropAfterQuiescentFold(unittest.TestCase):
         self.assertEqual(self._fold(cache, old, drop_after="quiescent")["n"], 30)
         self.assertEqual(len(self.scans), n + 1, "one read for the second fold of a dropped file")
 
+    def test_a_read_in_flight_when_the_drop_pops_keeps_its_entry_and_counts_no_drop(self):
+        # 2026-09-24: a read already pulling the file's bytes when the drop pops puts its entry back after the pop, so a pop
+        # there frees nothing and counts a drop. The pop takes the path's stripe lock first, as the reader does: the read
+        # finishes its insert, and the pop leaves the newer entry alone, as it does for a read that replaced the entry first
+        old = os.path.join(self.dir, "returned-agent.jsonl"); _write_jsonl(old, 30)
+        t = time.time() - em._DROP_AFTER_QUIESCENT_S - 60
+        os.utime(old, (t, t))
+        parked, go, box = threading.Event(), threading.Event(), {}
+        scan, real_write, real_stripe = em._scan_jsonl_stream, em._drop_write, em._read_stripe
+
+        def parking_scan(*a, **k):                                    # the reader waits inside its byte pull, holding the stripe
+            if threading.current_thread() is box.get("reader"):
+                parked.set(); go.wait(10)
+            return scan(*a, **k)
+
+        def drop_write(key, ent, *a, **k):                            # between the fold's read and the drop's pop, the file
+            if key == old and "reader" not in box:                    #  grows and a reader starts pulling it
+                with open(old, "a") as f:
+                    f.write(json.dumps({"uuid": "u30", "type": "user"}) + "\n")
+                box["reader"] = threading.Thread(target=em._read_jsonl_incremental, args=(old,))
+                box["reader"].start()
+                parked.wait(10)
+                box["armed"] = True                                   # the fold's own read took the stripe before this
+            return real_write(key, ent, *a, **k)
+
+        def stripe(path):                                             # the drop reaching for that stripe lets the reader go on
+            if box.get("armed") and threading.current_thread() is not box.get("reader") and str(path) == old:
+                go.set()
+            return real_stripe(path)
+        em._scan_jsonl_stream, em._drop_write, em._read_stripe = parking_scan, drop_write, stripe
+        try:
+            self._fold({}, old, drop_after="quiescent")
+            go.set()
+            box["reader"].join(10)
+        finally:
+            em._scan_jsonl_stream, em._drop_write, em._read_stripe = scan, real_write, real_stripe
+        self.assertTrue(parked.is_set() and not box["reader"].is_alive(), "precondition: the reader parked, then finished")
+        st = em.record_cache_stats()
+        self.assertEqual((st["dropped"], st["droppedBytes"]), (0, 0), "the drop popped nothing")
+        with em._JSONL_CACHE_LOCK:
+            ent = em._JSONL_CACHE.get(old)
+        self.assertTrue(ent is not None and ent[1] == os.path.getsize(old), "the read's entry stands, at the grown size")
+
     def test_the_kernel_drops_only_its_subagent_folds_and_reports_the_cache(self):
         src = open(os.path.join(BIN, "romp-kernel")).read()
         for name in ("agentLaunchIds", "agentGist", "agentLaunches"):

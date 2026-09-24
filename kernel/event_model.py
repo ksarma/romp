@@ -2360,7 +2360,8 @@ def _drop_quiescent_entry(key, ent, pop=True):
     """drop_after="quiescent" (the kernel memory work, 2026-09-11): a file unchanged for _DROP_AFTER_QUIESCENT_S is one
     whose writer has finished (a subagent that returned), and its records are not kept in the shared reader's cache
     once a fold has stepped them: the fold's cursor (and its checkpoint) stands, the file's bytes leave memory. Only the
-    very entry this fold read is dropped (another thread's newer entry is left alone); a file still changing keeps its
+    very entry this fold read is dropped (another thread's newer entry is left alone, including one a read in flight is
+    about to insert: the pop takes the path's stripe lock first); a file still changing keeps its
     records, since its next append would otherwise re-read it whole. Without `pop` (a fold that stepped nothing: a hit or
     a restore at the witness) only the T362 write below runs and the entry stays, as it always has on that path. Returns
     True when the document was written here."""
@@ -2402,7 +2403,9 @@ def _drop_quiescent_entry(key, ent, pop=True):
             _CKPT_STATS["converge"]["dropWrites"] += 1
     if not pop:
         return wrote
-    with _JSONL_CACHE_LOCK:
+    # the path's stripe, then the reader's lock (the reader's own order; this thread holds neither here): a read already
+    # pulling the file's bytes finishes its insert first, and its newer entry is left alone below (2026-09-24)
+    with _read_stripe(key), _JSONL_CACHE_LOCK:
         if _JSONL_CACHE.get(key) is ent:
             w = _cache_pop_locked(key)
             _RECORD_CACHE_STATS["dropped"] += 1
@@ -2463,7 +2466,10 @@ def release_entry(path, reason):
       the release is given up, counted and said once per cause: a release without its document would read the file whole
       at every fold that follows ("lost").
     - The cycle's budget refusing the write defers the release to the next cycle's start ("deferred").
-    - A read that replaced the entry between the write and the pop defers it too, never drops it ("raced").
+    - A read that replaced the entry between the write and the pop defers it too, never drops it ("raced"); so does a read
+      still pulling the file's bytes when the pop comes, since the pop takes the path's stripe lock first, as the reader
+      does, and so waits for that read's insert. The cost is that wait: the pusher waits out a read in flight on a path
+      that shares the stripe.
     Returns "released", "absent", "lost", "deferred" or "raced". Runs on the pusher thread with neither lock held."""
     key = str(path)
     with _JSONL_CACHE_LOCK:
@@ -2482,7 +2488,8 @@ def release_entry(path, reason):
         if res == "failed":
             note_release_lost(1, ("the document check raised %s" % why[0]) if why else "noDocument")
             return "lost"
-    with _JSONL_CACHE_LOCK:
+    # the path's stripe, then the reader's lock, as in the quiescent drop: a read in flight inserts first, and the check fails
+    with _read_stripe(key), _JSONL_CACHE_LOCK:
         if _JSONL_CACHE.get(key) is ent:
             w = _cache_pop_locked(key)
             rel = _stat_table_locked("released").setdefault(reason, {"count": 0, "bytes": 0})
