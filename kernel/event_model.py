@@ -1496,9 +1496,9 @@ def checkpoint_pay_owed_releases():
     since the agent's end is the event; over the budget again they re-defer. The kernel pays them after it has drained the
     cycle's live-set events and cancelled the owed release of every agent whose start is in that batch
     (cancel_owed_release), so an agent whose start is in the drained batch keeps its entry. A start that does not cancel the
-    owed release lets it pop a running agent's entry: one queued after the drain (counted in falseEnds when the next cycle
-    drains it), one dropped past the queue's bound, or one whose end has left the kernel's table of released ends past its
-    bound (neither of those two counted). One release that raises is given up and counted (releaseLost); the rest are still
+    owed release lets it pop a running agent's entry: one queued after the drain (when the release is taken, counted in
+    falseEnds at the cycle that drains the start), one dropped past the queue's bound, or one whose end has left the
+    kernel's table of released ends past its bound (neither of those two counted). One release that raises is given up and counted (releaseLost); the rest are still
     paid. Returns {path: outcome} for every release it paid: release_entry's result, or "raised"."""
     with _CKPT_LOCK:
         owed = list(_RELEASE_OWED.items())

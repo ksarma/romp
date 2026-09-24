@@ -3081,16 +3081,20 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   `countCap`, `inserts`, `evictions`,
   `evictedBytes`, `budgetEvictions`, `dropped` and `droppedBytes` (the
   quiescence drop); the release at an agent's end (the SDK backend queues
-  each agent entering or leaving a session's live set, and the pusher, at
-  each cycle's start, writes an ended agent's checkpoint document when it
-  lacks what the cache holds, then drops its records, so a later fold whose
+  each agent entering or leaving a session's live set, an agent's own end
+  event even on a session object that never saw it start, as after a kernel
+  restart under a session host, and the pusher, at each cycle's start,
+  writes an ended agent's checkpoint document when it lacks what the cache
+  holds, then drops its records, so a later fold whose
   cursor the document records restores a tail from it; a file no fold holds
   a recordable cursor for is dropped without a document and read whole at
   its next fold, and a file that no longer exists is dropped with nothing
   written; an agent whose start the cycle drains before a deferred release
-  is paid keeps its records, while a start queued after the drain is
-  counted in `falseEnds` instead, and a start dropped past the queue's
-  bound, or one whose end the kernel no longer holds, is not counted):
+  is paid keeps its records, while a start the cycle does not drain first
+  (one queued after the drain, one dropped past the queue's bound, or one
+  whose end the kernel no longer holds) does not cancel the release, and
+  when the release is then taken only the first of those counts in
+  `falseEnds`):
   `released` (per reason, today `agentEnded`, with `count` and `bytes`),
   `releaseDeferred` (deferrals of a release to the next cycle, one per
   deferral, so a release refused on N cycles counts N and the figure is not
