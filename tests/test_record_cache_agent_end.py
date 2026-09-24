@@ -10,7 +10,8 @@ its workflow slot's done or error state, a re-minted slot, the run's end, the CL
 kill, a crash; not a detach, where the CLI lives on under its host). Each of those removals
 queues the agent; the pusher drains the queue at its next cycle's start and releases the agent's entry, writing the file's
 checkpoint document first when it lacks what the cache holds, so a later fold whose cursor the document records restores a
-zero-weight tail instead of reading the file whole. A file that no longer exists is released with nothing written.
+zero-weight tail instead of reading the file whole. A file no fold holds a recordable cursor for is released without a
+document and read whole at its next fold; a file that no longer exists is released with nothing written.
 
 Synthetic data only: a notes-api project under a temp root, placeholder ids, a private sid, hostname TESTHOST.
 """
@@ -531,6 +532,133 @@ class AgentEnd(unittest.TestCase):
         self.assertEqual(self._weight(self.agent), size, "the entry is kept")
         self.assertEqual((self._stat("releaseLost"), self._stat("released")), (1, {}))
         self.assertIn("recordCache.releaseLost", err.getvalue())
+
+    def test_a_write_that_fails_on_disk_keeps_the_entry(self):
+        size = self._fold_while_running(AID, self.agent)
+        self._stop(AID)
+        with open(self.ckdir, "w") as f:                                 # the checkpoint directory's path is a file: the
+            f.write("not a directory\n")                                 #  document's write raises OSError
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            km._begin_checkpoint_cycle()
+        self.assertEqual(self._weight(self.agent), size, "the entry is kept")
+        self.assertEqual((self._stat("releaseLost"), self._stat("released")), (1, {}))
+        self.assertIn("the file's checkpoint document could not be written", err.getvalue())
+
+    def test_a_release_whose_entry_is_evicted_before_its_write_is_absent_not_lost(self):
+        self._fold_while_running(AID, self.agent)
+        self._stop(AID)
+        real = em.checkpoint_write
+
+        def evicting_write(path, *a, **k):                               # a concurrent eviction takes the entry after the
+            if str(path) == self.agent:                                  #  release read it and before its write does
+                with em._JSONL_CACHE_LOCK:
+                    em._cache_pop_locked(self.agent)
+            return real(path, *a, **k)
+        em.checkpoint_write = evicting_write
+        err = io.StringIO()
+        try:
+            with contextlib.redirect_stderr(err):
+                km._begin_checkpoint_cycle()
+        finally:
+            em.checkpoint_write = real
+        self.assertIsNone(self._ent(self.agent), "precondition: the eviction took the entry")
+        self.assertEqual((self._stat("releaseLost"), self._stat("releaseDeferred"), self._stat("released")), (0, 0, {}),
+                         "nothing given up, nothing owed, nothing released")
+        self.assertEqual(err.getvalue(), "", "nothing said on stderr")
+        self.assertEqual(km._AGENT_RELEASED, {}, "no release taken or owed for the end")
+
+    def test_a_failed_write_after_a_read_replaced_the_entry_is_owed_not_lost(self):
+        self._fold_while_running(AID, self.agent)
+        self._stop(AID)
+        real = em.checkpoint_write
+
+        def replaced_then_failed(path, *a, **k):                         # a read of the grown file replaces the entry, and the
+            if str(path) == self.agent:                                  #  write fails
+                _append(self.agent, _agent_lines(AID, 45, 2))
+                em._read_jsonl_incremental(self.agent)
+                return False
+            return real(path, *a, **k)
+        em.checkpoint_write = replaced_then_failed
+        err = io.StringIO()
+        try:
+            with contextlib.redirect_stderr(err):
+                km._begin_checkpoint_cycle()
+        finally:
+            em.checkpoint_write = real
+        grown = os.path.getsize(self.agent)
+        self.assertEqual(self._weight(self.agent), grown, "the newer entry stands")
+        self.assertEqual((self._stat("releaseDeferred"), self._stat("releaseLost"), self._stat("released")), (1, 0, {}),
+                         "owed, not lost")
+        self.assertEqual(err.getvalue(), "", "nothing said on stderr")
+        km._begin_checkpoint_cycle()                                     # the next cycle pays it
+        self.assertIsNone(self._weight(self.agent), "released at the next cycle")
+        self.assertEqual(self._stat("released"), {"agentEnded": {"count": 1, "bytes": grown}})
+
+    def _dirty_at_an_older_read(self, budget):
+        """The folds stepped the file (the path is dirty), then an eviction and a whole read (the agent viewer) left an entry of
+        a new generation with no fold's cursor at it; the agent ends and a cycle with `budget` bytes runs."""
+        self._fold_while_running(AID, self.agent)
+        self.assertIn(self.agent, em.checkpoint_dirty(), "precondition: the path is dirty")
+        with em._JSONL_CACHE_LOCK:
+            em._cache_pop_locked(self.agent)
+        em._read_jsonl_incremental(self.agent)
+        size = os.path.getsize(self.agent)
+        self.assertEqual(self._weight(self.agent), size, "precondition: a whole entry")
+        self._stop(AID)
+        km.CKPT_CONVERGE_BYTES = budget
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            km._begin_checkpoint_cycle()
+        self.assertIsNone(self._weight(self.agent), "released")
+        self.assertEqual((self._stat("releaseLost"), self._stat("releaseDeferred"), self._stat("released")),
+                         (0, 0, {"agentEnded": {"count": 1, "bytes": size}}), "released in this cycle, nothing given up or owed")
+        self.assertFalse(em._ckpt_file(self.agent).exists(), "no document: nothing held here was recordable")
+        self.assertEqual(err.getvalue(), "", "nothing said on stderr")
+
+    def test_a_dirty_file_whose_folds_stand_at_an_older_read_is_released_without_a_document(self):
+        self._dirty_at_an_older_read(8 * 1024 * 1024)
+
+    def test_a_dirty_file_whose_folds_stand_at_an_older_read_waits_on_no_budget(self):
+        self._dirty_at_an_older_read(1)                                  # no room for a document, and none is needed
+
+    def test_a_write_that_finds_nothing_to_record_is_released_without_a_document(self):
+        size = self._fold_while_running(AID, self.agent)
+        self._stop(AID)
+        real = em.checkpoint_write
+
+        def nothing(path, force=False, why=None):                        # the write finds no fold's cursor to record (one moved
+            if why is not None:                                          #  after the check, say)
+                why.append("nothingRecordable")
+            return False
+        em.checkpoint_write = nothing
+        err = io.StringIO()
+        try:
+            with contextlib.redirect_stderr(err):
+                km._begin_checkpoint_cycle()
+        finally:
+            em.checkpoint_write = real
+        self.assertIsNone(self._weight(self.agent), "released")
+        self.assertEqual((self._stat("releaseLost"), self._stat("released")), (0, {"agentEnded": {"count": 1, "bytes": size}}))
+        self.assertEqual(err.getvalue(), "", "nothing said on stderr")
+
+    def test_a_write_whose_cut_cannot_be_moved_keeps_the_entry(self):
+        self._fold_while_running(AID, self.agent)                        # every fold's cursor at the entry's last record
+        _append(self.agent, _agent_lines(AID, 45, 2))
+        em._read_jsonl_incremental(self.agent)                           # the whole reader appends: every fold lags the entry
+        size = os.path.getsize(self.agent)
+        with open(self.agent, "r+b") as f:                               # the file's last bytes are rewritten in place, same
+            data = bytearray(f.read())                                   #  size: the entry's own guard no longer matches, so
+            i = data.rindex(b"schema")                                   #  the lagging folds' cut cannot be moved
+            data[i:i + 6] = b"SCHEMA"
+            f.seek(0); f.write(bytes(data))
+        self._stop(AID)
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            km._begin_checkpoint_cycle()
+        self.assertEqual(self._weight(self.agent), size, "the entry is kept")
+        self.assertEqual((self._stat("releaseLost"), self._stat("released")), (1, {}))
+        self.assertIn("the file's checkpoint document could not be written", err.getvalue())
 
     def test_a_document_check_that_raises_keeps_the_entry(self):
         size = self._fold_while_running(AID, self.agent)

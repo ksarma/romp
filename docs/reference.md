@@ -3084,9 +3084,11 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   each agent entering or leaving a session's live set, and the pusher, at
   each cycle's start, writes an ended agent's checkpoint document when it
   lacks what the cache holds, then drops its records, so a later fold whose
-  cursor the document records restores a tail from it; a file that no
-  longer exists is dropped with nothing written; an agent that enters the
-  live set again before a deferred release is paid keeps its records):
+  cursor the document records restores a tail from it; a file no fold holds
+  a recordable cursor for is dropped without a document and read whole at
+  its next fold, and a file that no longer exists is dropped with nothing
+  written; an agent that enters the live set again before a deferred
+  release is paid keeps its records):
   `released` (per reason, today `agentEnded`, with `count` and `bytes`),
   `releaseDeferred` (deferrals of a release to the next cycle, one per
   deferral, so a release refused on N cycles counts N and the figure is not

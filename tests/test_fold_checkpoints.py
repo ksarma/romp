@@ -1200,7 +1200,7 @@ class KernelFolds(Base):
         counts from a write that happened for that path; a failed one is the pass's failure, skipped until the file changes."""
         self._converge_world({"bgJudge": "missing", "agentLaunches": "missing"}, quiescent=True)
         jd._bg_scan(self.leaf); seq = self.doc(self.leaf)["seq"]
-        saved = em.checkpoint_write; em.checkpoint_write = lambda path, force=False: False
+        saved = em.checkpoint_write; em.checkpoint_write = lambda path, force=False, why=None: False
         self.addCleanup(setattr, em, "checkpoint_write", saved)
         km._begin_checkpoint_cycle()
         self.assertEqual(km._converge_checkpoints(TS0 + 600), 0)
@@ -1290,7 +1290,7 @@ class KernelFolds(Base):
         """T361 (b): a failed write must not repeat every cycle."""
         self._converge_world({"bgJudge": "missing"})
         jd._bg_scan(self.leaf)
-        saved = em.checkpoint_write; em.checkpoint_write = lambda path, force=False: False
+        saved = em.checkpoint_write; em.checkpoint_write = lambda path, force=False, why=None: False
         try:
             self.assertEqual(km._converge_checkpoints(TS0 + 600), 0)
         finally:
@@ -1325,14 +1325,14 @@ class KernelFolds(Base):
         drop must call the write outside _JSONL_CACHE_LOCK, no inversion with the reader's own lock on another thread)."""
         real = em.checkpoint_write
         seen = []
-        def wrapped(path, force=False):
+        def wrapped(path, force=False, why=None):
             for name in ("_JSONL_CACHE_LOCK", "_CKPT_LOCK"):
                 lock = getattr(em, name)
                 got = lock.acquire(blocking=False)
                 seen.append((name, got))
                 if got:
                     lock.release()
-            return real(path, force)
+            return real(path, force, why)
         em.checkpoint_write = wrapped
         self.addCleanup(setattr, em, "checkpoint_write", real)
         return seen

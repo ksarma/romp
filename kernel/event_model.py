@@ -715,8 +715,9 @@ _RECORD_CACHE_STATS.update({   # the release at an agent's end (release_entry, 2
     #                             when the pop came (paid by checkpoint_pay_owed_releases)
     "releaseLost": 0,          #  releases given up, the entry left to the cache's own eviction (the count cap or the byte budget,
     #                             or a later quiescent drop): no document could be written (the drop writes off, no checkpoint
-    #                             directory, a write that wrote nothing, or the check whether a write was due raised), an agent
-    #                             end or an owed release was dropped past its queue's bound, or resolving or paying one raised
+    #                             directory, a write that was due and failed, or the check whether a write was due raised), an
+    #                             agent end or an owed release was dropped past its queue's bound, or resolving or paying one
+    #                             raised
     "falseEnds": 0,            #  agents released at their end that entered their session's live set again (a resumed agent, or an
     #                             end reported early): note_false_end, counted by the kernel
     "releasedReread": {"count": 0, "bytes": 0}})   # the first whole read of a path after a release popped it, when no other pop
@@ -1570,17 +1571,26 @@ def _carry_forward_states(key, folds, base, count, size, mtime):
     return out
 
 
-def checkpoint_write(path, force=False):
+def checkpoint_write(path, force=False, why=None):
     """Write `path`'s checkpoint from the reader's entry and every registered fold whose cursor stands at the entry's
-    record count. False when there is nothing to write (no entry, or no fold at the witness and not `force`)."""
+    record count. False when there is nothing to write (no entry, or no fold at the witness and not `force`) or the write
+    could not be made; the cause is appended to the list `why` when one is given: "noDirectory", "noEntry",
+    "nothingRecordable" (no fold's cursor to record), "cutGuard" (the lagging folds' cut could not be moved, the file no
+    longer matching the entry or no record boundary at the cut, and no fold stands at the entry's end) or "writeFailed"
+    (writing the document raised). The last two are a write that was due and failed; _drop_write tells them from the
+    rest."""
+    def no(cause):
+        if why is not None:
+            why.append(cause)
+        return False
     key = str(path)
     cp = _ckpt_file(key)
     if cp is None:
-        return False
+        return no("noDirectory")
     with _JSONL_CACHE_LOCK:
         ent = _JSONL_CACHE.get(key)
     if ent is None:
-        return False
+        return no("noEntry")
     mtime, size, offset, tail, records, base, gen = ent[:7]
     count = base + len(records)
     folds = {}
@@ -1614,7 +1624,7 @@ def checkpoint_write(path, force=False):
             with _CKPT_LOCK:
                 _CKPT_STATS["skippedFolds"] += 1
     if not folds and not force:
-        return False
+        return no("nothingRecordable")
     folds.update(_carry_forward_states(key, folds, base, count, size, mtime))   # the disk document's states for folds this process never ran
     with _CKPT_LOCK:
         retired = set(_RETIRED_FOLDS.get(key, ()))        # taken AFTER the cursor snapshot and the carry: a forget that raced the
@@ -1623,7 +1633,8 @@ def checkpoint_write(path, force=False):
     omitted = retired
     cut = min([f["count"] for f in folds.values()] or [count])   # the document's cut: the LOWEST written cursor (T359), so the
     moved = None                                          #  next process's tail read holds every record a lagging fold has
-    if cut < count and len(ent) >= 8 and ent[7]:          #  yet to step (its append), bounded by the records this entry holds
+    cut_failed = False                                    #  yet to step (its append), bounded by the records this entry holds
+    if cut < count and len(ent) >= 8 and ent[7]:
         off_cut = int(ent[7][(cut - base) * 2])           # the cut record's byte offset; the 64 bytes before it are the guard.
         try:                                              # The entry holds records, not bytes, so the guard is read from the file, in
             with open(key, "rb") as fh:                   #  the same open that first verifies the entry's OWN witness guard (its bytes
@@ -1635,6 +1646,7 @@ def checkpoint_write(path, force=False):
                 raise OSError("no record boundary at the cut")
         except OSError:
             guard_cut = None
+            cut_failed = True
         if guard_cut is not None:
             moved = (off_cut, guard_cut, records[cut - base - 1] if cut > base else None, cut)
     left_out = False
@@ -1645,7 +1657,7 @@ def checkpoint_write(path, force=False):
             folds = {n: f for n, f in folds.items() if f["count"] == count}   #  out, and the path stays DIRTY below so the next
             left_out = True                               #  write (a settle, the exit drain) tries them again (review, low 3)
             if not folds and not force:
-                return False
+                return no("cutGuard" if cut_failed else "nothingRecordable")
         last = records[-1] if records else None
     with _CKPT_LOCK:
         seq = _CKPT_SEQ.get(key, 0) + 1
@@ -1658,7 +1670,7 @@ def checkpoint_write(path, force=False):
         tmp.write_text(json.dumps(doc, separators=(",", ":")))
         os.replace(tmp, cp)
     except OSError:
-        return False
+        return no("writeFailed")
     with _CKPT_LOCK:
         _CKPT_SEQ[key] = seq
         _CKPT_STATS["writes"] += 1
@@ -2429,16 +2441,29 @@ def _drop_quiescent_entry(key, ent, pop=True):
 def _drop_write(key, ent, why=None):
     """A drop's document write (T362), shared by the quiescent drop and the release at an agent's end: when the file's
     document lacks something this process holds (_path_needs_write at the drop), it is written now from the entry in hand,
-    with neither lock held, charged to the pusher cycle's checkpoint budget. Returns "clean" (nothing to write, or the drop
-    writes off), "wrote", "failed" (a write was due and wrote nothing, or the check whether one was due raised: the name of
-    its exception is appended to the list `why` when one is given) or "refused" (the budget had no room for the previous
-    document's read and about as much written, taken in one step: nothing charged, the caller defers). The quiescent drop
-    pops on "failed" as on "clean" (its earlier inline check read a raise as nothing to write); the release keeps its entry
-    on "failed"."""
+    with neither lock held, charged to the pusher cycle's checkpoint budget. Returns:
+    - "clean": nothing to write, the drop writes off, or a dirty path none of whose folds holds a cursor at this entry (every
+      one stands at an older read of the file: a write would record nothing, and nothing held here could improve the
+      document), or the write found nothing to record;
+    - "wrote";
+    - "failed": a write was due and failed (checkpoint_write's "cutGuard" or "writeFailed", no checkpoint directory, or a
+      False that names no cause), or the check whether one was due raised (the name of its exception is appended to the
+      list `why` when one is given);
+    - "absent": the write wrote nothing and the entry is gone after it (a concurrent pop took it: nothing is held);
+    - "raced": the write wrote nothing and a read has replaced the entry since (the caller owes its release);
+    - "refused": the budget had no room for the previous document's read and about as much written, taken in one step:
+      nothing charged, the caller defers.
+    The quiescent drop pops on "failed" as on "clean" (its earlier inline check read a raise as nothing to write), and its
+    pop, which checks the entry is the one it read, pops nothing after "absent" or "raced"; the release keeps its entry on
+    "failed"."""
     try:
         if not checkpoint_drop_writes_on():
             return "clean"
         needs = _path_needs_write(key, ent, at_drop=True)
+        if needs:
+            base, gen = ent[5], ent[6]
+            total = base + len(ent[4])
+            needs = any(_cursor_recordable(c.get(key), gen, base, total) for c in list(_FOLD_REG.values()))
     except Exception as e:
         if why is not None:
             why.append(type(e).__name__)
@@ -2454,8 +2479,15 @@ def _drop_write(key, ent, why=None):
         est = max(4096, int(ent[1]) // 8)                 #  estimate from the file, never a free pass against the budget
     if not checkpoint_cycle_take(2 * est):
         return "refused"
-    if not checkpoint_write(key):
-        return "failed"
+    causes = []
+    if not checkpoint_write(key, why=causes):
+        with _JSONL_CACHE_LOCK:
+            now = _JSONL_CACHE.get(key)
+        if now is None:
+            return "absent"
+        if now is not ent:
+            return "raced"
+        return "clean" if causes[:1] == ["nothingRecordable"] else "failed"
     try:
         written = cp.stat().st_size if cp is not None else 0
     except OSError:
@@ -2473,16 +2505,18 @@ def release_entry(path, reason):
     - An absent entry, or one weighing nothing (a restored tail), is left alone: "absent".
     - The file gone: nothing to write, everything to release.
     - The checkpoint document is written first when it lacks something the cache holds (_drop_write), and the entry popped
-      after, so a later fold restores a tail from the document and reads nothing whole. A file no fold holds a recordable
-      cursor for has nothing to write and is popped without a document. With the drop writes off (a cycle cap of 0, or no
-      checkpoint directory), a write that wrote nothing, or a check whether a write is due that raised, the entry stays and
-      the release is given up, counted and said once per cause: a release without its document would read the file whole
-      at every fold that follows ("lost").
+      after, so a later fold whose cursor the document records restores a tail from it and reads nothing whole. A file no
+      fold holds a recordable cursor for (none, or every one at an older read of the file, even with the path dirty) has
+      nothing to write and is popped without a document; its next fold reads it whole. With the drop writes off (a cycle
+      cap of 0, or no checkpoint directory), a write that was due and failed, or a check whether a write is due that
+      raised, the entry stays and the release is given up, counted and said once per cause: a release without its document
+      would read the file whole at every fold that follows ("lost").
     - The cycle's budget refusing the write defers the release to the next cycle's start ("deferred").
-    - A read that replaced the entry between the write and the pop defers it too, never drops it ("raced"); so does a read
-      still pulling the file's bytes when the pop comes, since the pop takes the path's stripe lock first, as the reader
-      does, and so waits for that read's insert. The cost is that wait: the pusher waits out a read in flight on a path
-      that shares the stripe.
+    - A concurrent pop that took the entry before the write read it leaves nothing to release: "absent", nothing counted.
+    - A read that replaced the entry before the write or the pop defers the release, never drops it ("raced"); so does a
+      read still pulling the file's bytes when the pop comes, since the pop takes the path's stripe lock first, as the
+      reader does, and so waits for that read's insert. The cost is that wait: the pusher waits out a read in flight on a
+      path that shares the stripe.
     Returns "released", "absent", "lost", "deferred" or "raced". Runs on the pusher thread with neither lock held."""
     key = str(path)
     with _JSONL_CACHE_LOCK:
@@ -2498,6 +2532,11 @@ def release_entry(path, reason):
         if res == "refused":
             _owe_release(key, reason)
             return "deferred"
+        if res == "absent":
+            return "absent"
+        if res == "raced":
+            _owe_release(key, reason)
+            return "raced"
         if res == "failed":
             note_release_lost(1, ("the document check raised %s" % why[0]) if why else "noDocument")
             return "lost"
