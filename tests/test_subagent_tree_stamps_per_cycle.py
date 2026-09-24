@@ -4063,6 +4063,66 @@ class DependencyKey(_World):
                          % (after, tab["rebuilt"]))
         self._assert_each_build_equals_its_re_stat(tab, "the own place faulted, then cleared")
 
+    def _assert_a_fault_under_a_symlinked_subagents_directory_notes_nothing(self, how):
+        """The same clause where the own place lies under a symlinked subagents/ (round 3 of #882, group B; the verifier's
+        pass on the round's takes found it read by os.path.lexists, which answers a fault as an absence). Group B's world
+        (_refused_place("subagents")), the own place's read faulting for the walk's build and two cycles after, then
+        clearing, then three more cycles. `how`: "eacces-644" or "eacces-000", the link's target directory at that mode
+        (a real EACCES on the place's lstat), or "eio", _eio_on_both on the place. Keys on the rebuilds over the three
+        cycles after the fault clears: 0, the place noted by no build. Clearing a chmod or an EIO moves no directory's
+        mtime, so the memo's miss stands and every later build replays the walk's notes: a kernel that takes the fault
+        for an absence notes (place, None), which the re-stat answers while the fault lasts and not after, so the tab is
+        rebuilt every cycle once it clears (3). Before round 2 of #882's replay only the walk's build recorded that note,
+        and the tab was rebuilt once after the clear (1), also red here. The walk refuses a symlinked subagents/, so the
+        answer, None, is right under the fault and after it; only the tab's cost is at stake."""
+        if how != "eio" and os.geteuid() == 0:
+            self.skipTest("root reads through any mode")
+        aid, ap, target, tab = self._refused_place("subagents")
+        tdir = target.parent
+        self.addCleanup(os.chmod, str(tdir), 0o755)
+        m0 = os.stat(str(tdir)).st_mtime_ns
+        if how == "eio":
+            cm = self._eio_on_both(ap)
+            off = cm.close
+        else:
+            os.chmod(str(tdir), {"eacces-644": 0o644, "eacces-000": 0o000}[how])
+            off = lambda: os.chmod(str(tdir), 0o755)
+        try:
+            with self.assertRaises(OSError, msg="premise: the own place's lstat raises under the fault (%s)" % how) as c:
+                os.lstat(str(ap))
+            self.assertNotIn(c.exception.errno, (errno.ENOENT, errno.ENOTDIR), "premise: a fault, not an absence (%s)" % how)
+            self.assertFalse(os.path.lexists(str(ap)), "premise: a boolean helper answers the fault as an absence (%s)" % how)
+            self._tab_cycles(tab, 3)                            # the walk's build and two cycles, under the fault
+        finally:
+            off()
+        self.assertEqual(os.stat(str(tdir)).st_mtime_ns, m0, "premise: clearing the fault moved no directory's mtime (%s)" % how)
+        self.assertIsNone(km._SUBAGENT_FILE_CACHE.get((self.path, aid), ((), "unset"))[1],
+                          "premise: the memo keeps the miss, the walk refusing a symlinked subagents/ (%s)" % how)
+        self.assertTrue(os.path.isfile(str(ap)), "premise: the fault cleared, the link's target holds the agent's file (%s)" % how)
+        n = len(tab["rebuilt"])
+        self._tab_cycles(tab, 3)                                # the fault cleared: three cycles
+        after = tab["rebuilt"][n:]
+        self.assertEqual(after.count(True), 0,
+                         "rebuilds of the tab over the three cycles after the fault cleared (%s): %r; keyed on 0, the place having "
+                         "noted nothing; a (place, None) taken from the fault and replayed from the memo is rebuilt every cycle (3): %r"
+                         % (how, after, tab["rebuilt"]))
+        self._assert_each_build_equals_its_re_stat(tab, "a symlinked subagents/ faulted, then cleared (%s)" % how)
+        noted = [i for i, deps in enumerate(tab["builds"]) if str(ap) in dict(deps["task_outs"])]
+        self.assertEqual(noted, [], "builds whose record holds the own place, whose lstat faulted and then read (%s): %r" % (how, noted))
+
+    def test_a_symlinked_subagents_directory_whose_target_cannot_be_searched_notes_nothing_so_the_tab_is_served_after_the_mode_is_restored(self):
+        """_assert_a_fault_under_a_symlinked_subagents_directory_notes_nothing, the link's target at 0o644 (listable, not
+        searchable)."""
+        self._assert_a_fault_under_a_symlinked_subagents_directory_notes_nothing("eacces-644")
+
+    def test_a_symlinked_subagents_directory_whose_target_is_at_mode_000_notes_nothing_so_the_tab_is_served_after_the_mode_is_restored(self):
+        """_assert_a_fault_under_a_symlinked_subagents_directory_notes_nothing, the link's target at 0o000."""
+        self._assert_a_fault_under_a_symlinked_subagents_directory_notes_nothing("eacces-000")
+
+    def test_a_symlinked_subagents_directory_whose_own_place_raises_eio_notes_nothing_so_the_tab_is_served_after_it_clears(self):
+        """_assert_a_fault_under_a_symlinked_subagents_directory_notes_nothing, an EIO on both calls for the own place."""
+        self._assert_a_fault_under_a_symlinked_subagents_directory_notes_nothing("eio")
+
 
 class SumOverRoots(_World):
     """(7) The cost across sessions is the sum over the roots read of each root's own figure, whatever the split (the
