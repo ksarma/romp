@@ -543,11 +543,15 @@ in .md or .markdown: the page opens in the viewer in the file's place as a web d
 rather than a file of the session, and the trail ends there (in the Files pane such a link
 opens a tab, as any web address does, and the trail stands). A
 picture in a rendered file that comes from a file or a web address has an
-**Open the picture** button at its top-right corner (top-left for a picture floated to
-the right), shown while the pointer is over the picture or the button holds the keyboard
-focus, and at all times on a phone or tablet and on a laptop with a touchscreen, that
-opens the picture on its own in the viewer, with Back returning you to the file at that
-place; a plain click on the picture does the same while the Comments panel is
+**Open the picture** button at its top-right corner (the top-left in right-to-left text,
+and on a picture floated to one side, the top corner away from that side), shown while
+the pointer is over the picture or the button, while a focus you reached from the keyboard
+is on the button, under any focus for a picture from the web, and at all times on a phone
+or tablet and on a laptop with a touchscreen, that opens the picture on its own in the
+viewer, with Back returning you to the file at that place (where the button is not shown
+at all times, a Cmd-click on a local picture's button, a Ctrl-click on Windows and Linux,
+or a press dragged off it leaves the button focused but hidden until you press a key, so
+Enter then opens the picture in the viewer with nothing shown first); a plain click on the picture does the same while the Comments panel is
 closed (with the panel open, a click offers a comment as before, and so does a Cmd-click
 on the picture on a mouse or trackpad, and a drag draws a rectangle unless it starts on
 the button, which takes the press), a Cmd-click (Ctrl on Windows and Linux) on the picture

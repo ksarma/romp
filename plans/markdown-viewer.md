@@ -8395,10 +8395,12 @@ src, and a control never re-judged against a `data:` candidate the browser then 
 after `figureAnchor`'s climb (the img, its `<picture>`, the regions layer's wrap, a link holding the figure alone),
 never a wrapper: the panel pairs pictures by img order and `data-fv-src`, the regions layer wraps THE img, the
 reader's place and the anchor map read the flow as the browser laid it, and a wrapper standing in the author's flow
-changed a figure's own layout (the regions layer's 2026-09-06 review). The sheets lay it over the figure's top-right
-corner from that place with no measuring (`.fileview-md .fv-figopen`: the family's inline-flex box aligned to the
-line's top, a zero-width margin box of a 28px negative left margin and a 6px right margin around the 22px glyph, and a
-6px relative offset down), positioned so it paints and is hit above the layer's overlay while the panel is open;
+changed a figure's own layout (the regions layer's 2026-09-06 review). The sheets lay it over the figure's top corner
+on the side where its line ends from that place with no measuring (`.fileview-md .fv-figopen`: the family's inline-flex
+box aligned to the line's top, a zero-width margin box of a 28px negative margin at the line's start and a 6px margin at
+its end around the 22px glyph, logical margins, so it stands over the top-right corner in left-to-right text and the
+top-left in right-to-left text, where the physical margins had put it 6px outside the picture's left edge (the file
+review's round 15, ui-2), and a 6px relative offset down), positioned so it paints and is hit above the layer's overlay while the panel is open;
 transparent at rest, revealed by the pointer over the figure or over itself and by a keyboard focus (the web control by any
 focus), kept visible on a device with no hover and on one where any pointer is a finger (`any-pointer: coarse`: a touchscreen laptop's primary pointer
 hovers, so `(hover: none)` alone dressed nothing there; the file review's round 13, extra7-2), every rule naming its class that
@@ -8418,7 +8420,8 @@ view's own, the shim's notices' cssText); the print block is pinned whole, and t
 lines inside it). A figure the author
 floated with `align` stacks sideways: the control floats with it, a left float's at the top-right corner as before, a
 right float's at the top-LEFT corner (`fv-figopen-left`, `fv-figopen-right`: a later right float sits left of the
-earlier one, and the far edge cannot be reached without the figure's width). The text walks skip it as a control
+earlier one, and the far edge cannot be reached without the figure's width), in either direction of text, each float rule
+carrying physical margins of its own since an author's align is physical. The text walks skip it as a control
 (anchor-map.ts and reader-place.ts CONTROL_CLASSES); the Rendered pairing leaves it out of the top-level nodes beside
 an html-block figure as it leaves the failed figure's label (anchor-map.ts `isFigureCompanion`, the predicate Slice 7
 recorded as `isFigureLabel`); the label goes after
@@ -8455,7 +8458,9 @@ rename of product code for a pin); and the pin is file-wide on purpose, so a lit
 else in the module must be spelled another way, which the author's closing pass after the file review's round 3 recorded,
 records-3, while prose may quote the word, since a comment is no literal); the target is read
 again at the click; the failed figure's label, `failedSource`,
-delegates to it; read from the src alone, the control opened the fallback src a `<picture>` or a srcset figure had
+delegates to it, and when the candidate names nothing and the img has no src, reads the chat page's heal record of the
+address it parked (`data-md-src`, preview.ts parkMdImg), never for the open (the file review's round 15, fresh-1: the heal
+parks a failed img before the viewer's listener runs, and the label had read "the source is empty"); read from the src alone, the control opened the fallback src a `<picture>` or a srcset figure had
 skipped), joined by the model's `figurePath` (file-comments-model.ts, the join rewriteFigureSrcs fetched through, so the
 picture opened is the one shown and its request is the paint's), through the figure's own door,
 `openFigureInViewer` (openFileView itself with the trail tag set to push and cleared in a `finally`, as

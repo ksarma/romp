@@ -4974,10 +4974,13 @@ body.filebrowse-open { overflow: hidden; }
 /* "Open the picture" on every figure of a rendered file (plans/markdown-viewer.md, "Follow-on: Link navigation", L3; file-view.ts
    decideFigureControl): a glyph button of the bar's family (.fileview-btn.fileview-icon, 14px glyph, 3px padding, 1px border:
    22px square), the img's next sibling (after its <picture>, the regions layer's wrap or a link holding the figure alone), laid
-   over the figure's top-right corner with no wrapper and no measuring: an inline-flex box aligned to the line's top, its margin
-   box zero wide (a left margin of -28px and a right margin of 6px around the 22px), so the flow around the figure is as the
-   browser laid it, and the 6px relative offset down is the inset from the top edge (the -28 and the 6 give the inset from the
-   right). Positioned, so it paints and is hit above the regions layer's overlay (position: absolute with no z-index, earlier in
+   over the figure's top corner on the side where its line ends, the top-right in left-to-right text and the top-left in
+   right-to-left text, with no wrapper and no measuring: an inline-flex box aligned to the line's top, its margin box zero wide
+   (a margin of -28px at the line's start and 6px at its end around the 22px, logical margins, so the box follows the text's
+   direction), so the flow around the figure is as the browser laid it, and the 6px relative offset down is the inset from the
+   top edge (the -28 and the 6 give the inset from the side the line ends on; with the physical left and right margins, in a
+   right-to-left block the control stood beside the picture's left edge, 6px outside it, and on the chat and the feed at a width
+   of 360px 6 of its 22px lay outside the viewer's body and were clipped: the file review's round 15, ui-2). Positioned, so it paints and is hit above the regions layer's overlay (position: absolute with no z-index, earlier in
    the tree) while the Comments panel is open; the page's background under the glyph, since it stands on a picture, and the
    family's hover wash over that background. Transparent at rest and revealed by the pointer over the figure (the sibling before
    it: `:hover +`), by the pointer over itself and by a keyboard focus (.code-copy's reveal), the web control by any focus (below); a
@@ -4985,7 +4988,9 @@ body.filebrowse-open { overflow: hidden; }
    section snapshot action's precedents); every reveal is under `screen`, so a print, where hover is none, shows none of it and the
    print block needs no line for it. A figure floated by its align attribute stacks sideways: the control floats with it, a left
    float's at the figure's top-right corner as before, a right float's at its top-LEFT corner (a later right float sits left of
-   the earlier one, and the far edge cannot be reached without the figure's width). A picture from the web (file-view.ts
+   the earlier one, and the far edge cannot be reached without the figure's width), in either direction of text: both float
+   rules carry physical margins of their own, since an author's align is physical, and a left float that took the logical
+   margins stood off its corner in a right-to-left block. A picture from the web (file-view.ts
    dressFigureControl, keyed on the figure's target: `fv-figopen-web` beside the class, the outbound glyph and words naming the host)
    wears the border dashed, the gate's dress for a figure from another host, so the control that leaves the page reads apart from
    the one that opens a file before any gesture; no accent: the accent is highlight chrome, and a kind's mark wears it only where
@@ -5073,9 +5078,9 @@ body.filebrowse-open { overflow: hidden; }
    and not the editor's, reads 1.35:1 under the dark theme on a light editor ground, as every accent hover there does. All of it the
    painted-contrast ask of 2026-09-23, the press rule on the maintainer's ruling within it. Byte-equal in both sheets
    (fileview-parity.test.ts); laid out in file-figure-open-browser.test.ts. */
-.fileview-md .fv-figopen { position: relative; z-index: 1; vertical-align: top; margin: 0 6px 0 -28px; top: 6px; padding: 3px; background: var(--bg); opacity: 0; }
+.fileview-md .fv-figopen { position: relative; z-index: 1; vertical-align: top; margin: 0; margin-inline: -28px 6px; top: 6px; padding: 3px; background: var(--bg); opacity: 0; }
 .fileview-md .fv-figopen:hover { background: var(--bg) linear-gradient(var(--accent-wash), var(--accent-wash)); }
-.fileview-md .fv-figopen-left { float: left; }
+.fileview-md .fv-figopen-left { float: left; margin: 0 6px 0 -28px; }
 .fileview-md .fv-figopen-right { float: right; margin: 0 -28px 0 6px; }
 .fileview-md .fv-figopen-web { border-style: dashed; }
 .fileview-md .fv-figopen-web:not(:hover) { border-color: var(--outbound-line); }

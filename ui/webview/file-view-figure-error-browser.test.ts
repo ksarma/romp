@@ -386,3 +386,81 @@ test("in a browser: a failed figure's label never prints a path, a userinfo, a q
     });
   } finally { await remote.close(); }
 });
+
+// ── the chat modal's heal and the label (the file review's round 15, fresh-1) ───────────────────────────────────────────────
+// On the chat modal the page's heal (preview.ts installMdImgHeal, a capture listener on the document) parks a failed img before
+// the viewer's listener on the body reads it: the resolved src goes into data-md-src and the src leaves. Before the fix the label
+// of every failed web picture whose address was its own src read "the source is empty"; failedSource now reads the heal's record
+// when the candidate names nothing and the img has no src. The cells: a plain web source, a query-bearing one and a standard
+// userinfo one (red before the fix by "the source is empty"; after it the origin for the first two and the withheld address for
+// the third); a same-scheme source written without slashes on the http page and on a page opened at https://notes-api.test
+// (openViewer's origin), which the heal records resolved against that base (red before the fix by the missing withheld wording, as
+// nothing of the address printed there); and, as controls green before the fix and after it, a srcset candidate and a
+// <picture> source from the web, whose label names the candidate's origin once the browser has chosen again after the heal
+// removed the src (each img's error events counted, and the label read after its last one). Every planted value is assembled
+// at run time.
+test("in a browser, the chat modal with the page's heal: a failed web picture whose address is its own src is labelled from the heal's record, its origin alone or the withheld address, never 'the source is empty', a same-scheme source written without slashes withheld on an http and on an https base, and a srcset and a <picture> source from the web still named by the candidate's origin after the browser chooses again (the file review's round 15, fresh-1: the heal parked the img before the viewer read it; a property pin over the label's text)", { timeout: 120000 }, async (t) => {
+  const TOK = "tok" + "en", UI = "u" + "ser" + ":" + "p" + "w" + String(4 * 4) + "@";
+  const V = (k: string): string => k + "TOK" + String(k.length * 37);
+  const W = "address withheld because it appears to carry a sign-in";   // FIGURE_ADDRESS_WITHHELD as a literal, so the expected text never moves with the product
+  /** [cell, the paragraph's figure, the page's origin ("http" or "https"), the label's words, whether the cell is a control] */
+  const cells: Array<[string, string, "http" | "https", string, boolean]> = [
+    ["a plain web source", '<img src="https://example.test/missing.svg" alt="">', "http", "https://example.test", false],
+    ["a query-bearing web source", '<img src="https://example.test/q.svg?' + TOK + "=" + V("HQ") + '" alt="">', "http", "https://example.test", false],
+    ["a standard userinfo", '<img src="http://' + UI + 'example.test/u.svg" alt="">', "http", W, false],
+    ["http: written without slashes on the http page", '<img src="http:' + UI + 'example.test/h.png" alt="">', "http", W, false],
+    ["https: written without slashes on a page at https://notes-api.test", '<img src="https:' + UI + 'example.test/s.png" alt="">', "https", W, false],
+    ["a srcset candidate from the web (a control)", '<img src="figs/fallback.png" srcset="https://example.test/ss.svg 1x" alt="">', "http", "https://example.test", true],
+    ["a <picture> source from the web (a control)", '<picture><source srcset="https://example.test/pic.svg"><img src="figs/fallback2.png" alt=""></picture>', "http", "https://example.test", true],
+  ];
+  const planted = ["user:", "pw16", "?" + TOK, V("HQ")];
+  const served: string[] = [];
+  const remote = await remoteServer(served);
+  try {
+    await inBrowser(t, async (browser) => {
+      for (const scheme of ["http", "https"] as const) {
+        const mine = cells.filter(([, , s]) => s === scheme);
+        const note = "# Report\n\n" + mine.map(([n, h], i) => "Case " + i + " (" + n + "): " + h + " end.").join("\n\n") + "\n";
+        const before = async (pg: any): Promise<void> => {
+          await pg.context().route((u: URL) => u.hostname === "example.test", async (route: any) => {
+            const a = await fromRemote(remote.port, new URL(route.request().url()).pathname);
+            return route.fulfill({ status: a.status, contentType: a.type, body: a.body });
+          });
+          await pg.evaluate(() => {
+            const w = window as any;
+            localStorage.setItem("romp:settings", JSON.stringify({ figureHosts: ["example.test"] }));   // no figure gated: each is fetched at the paint
+            w.__errs = new Map();   // each img's error events, counted on the document before the heal's listener runs
+            document.addEventListener("error", (e) => { const i = e.target as Element | null; if (i && i.nodeType === 1 && i.tagName === "IMG") w.__errs.set(i, (w.__errs.get(i) || 0) + 1); }, true);
+            w.FV.installMdImgHeal();   // render.ts installs it once at load, before any turn paints
+          });
+        };
+        const { page, errors } = await openViewer(browser, "chat", 900, 700, { docs: { [REPORT]: note }, serve, before, origin: scheme + "://notes-api.test" });
+        try {
+          assert.equal(await page.evaluate(() => document.baseURI), scheme + "://notes-api.test/", "the page's base is " + scheme + "://notes-api.test/");
+          // every img has failed and been parked, and a srcset or <picture> img has had its second error, the browser's choice after the heal removed its src
+          const wants = mine.map(([, h]) => (/srcset=/.test(h) ? 2 : 1));
+          await page.waitForFunction((w: number[]) => { const imgs = Array.from(document.querySelectorAll(".fileview-md img")); const m = (window as any).__errs as Map<Element, number>; return imgs.length === w.length && imgs.every((i, k) => (m.get(i) || 0) >= w[k] && i.classList.contains("md-img-failed")); }, wants, { timeout: 15000 });
+          await frames(page, 3);
+          const rows: Array<{ label: string | null; errs: number; parked: boolean; src: boolean; mdSrc: string | null; visible: string }> = await page.evaluate(() => (Array.from(document.querySelectorAll(".fileview-md > p")) as HTMLElement[]).filter((p) => /^Case \d+/.test(p.textContent || "")).map((p) => {
+            const i = p.querySelector("img") as HTMLImageElement;
+            const lab = p.querySelector("[data-fv-figerr]") as HTMLElement | null;
+            return { label: lab ? lab.textContent : null, errs: ((window as any).__errs as Map<Element, number>).get(i) || 0, parked: i.classList.contains("md-img-failed"), src: i.hasAttribute("src"), mdSrc: i.getAttribute("data-md-src"), visible: p.innerText || "" };
+          }));
+          t.diagnostic(scheme + " page: " + JSON.stringify(rows.map((r, k) => ({ cell: mine[k][0], label: r.label, errs: r.errs, parked: r.parked, src: r.src, mdSrcHost: r.mdSrc ? new URL(r.mdSrc).host : null }))));
+          assert.equal(rows.length, mine.length, "one paragraph per cell");
+          // the precondition: the heal parked each failed img (no src, md-img-failed, the resolved address in data-md-src)
+          assert.deepEqual(rows.map((r) => [r.parked, r.src, !!r.mdSrc]), mine.map(() => [true, false, true]), "the heal parked every failed figure before the label was read");
+          // FAILS BEFORE the fix: the five cells that are not controls read FIGURE_FAILED + " the source is empty"
+          assert.deepEqual(rows.map((r, k) => (mine[k][4] ? null : r.label)), mine.map(([, , , w, control]) => (control ? null : FAILED + " " + w)), "each label names the heal's record as any address is named, the origin alone or the withheld address (a property pin over the label's text)");
+          // the controls, green before the fix by design: the label names the candidate the browser chose, from its origin on (the path
+          // after it printed before the origin cut), never the fallback src and never the empty source
+          for (const [k, r] of rows.entries()) if (mine[k][4]) assert.ok((r.label || "").startsWith(FAILED + " " + mine[k][3]) && !/fallback|the source is empty/.test(r.label || ""), mine[k][0] + ": after its " + r.errs + " error events the label names the candidate's origin, not the fallback src or the empty source: " + JSON.stringify(r.label));
+          const leaks: string[] = [];
+          rows.forEach((r, k) => { for (const x of planted) for (const [where, text] of [["label", r.label], ["visible text", r.visible]] as const) if ((text || "").includes(x)) leaks.push(mine[k][0] + ": the " + where + " carries " + JSON.stringify(x)); });
+          assert.deepEqual(leaks, [], "no planted value in a label or a paragraph's visible text (a property pin)");
+          assert.deepEqual(errors, [], "no uncaught page error");
+        } finally { await page.close(); }
+      }
+    });
+  } finally { await remote.close(); }
+});

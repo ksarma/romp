@@ -4950,13 +4950,28 @@ function figureControlAfter(anchor: Element): HTMLElement | null {
 function absUrl(u: string): string {
   try { return new URL(u, document.baseURI).href; } catch { return u; }
 }
+/** preview.ts parkMdImg's record of a parked img's address: the chat page's heal moves a failed img's resolved src here and
+ *  removes the src (failedSource reads it). */
+const HEAL_RECORD = "data-md-src";
 /** The source the browser asked for and could not load, as the author wrote it: the candidate it chose for the figure
  *  (chosenSource). The browser picks ONE candidate for an img (the first `<source>` of an enclosing `<picture>` whose media
  *  and type match, else the img's own srcset by density, else its src), fetches that one and fires the img's `error` when it
  *  fails, with no fall back to another candidate or to the src; so a label naming `src` for a picture or a srcset img named a
- *  file the browser never asked for, one that may well be there (the Slice 7 review's round 1). */
+ *  file the browser never asked for, one that may well be there (the Slice 7 review's round 1). On the chat modal the page's
+ *  heal (preview.ts installMdImgHeal, a capture listener on the document, so it runs before the viewer's on the body) parks a
+ *  failed img first: it records the img's resolved src in HEAL_RECORD and removes the src, so chosenSource named nothing and
+ *  the label of every failed web picture whose address was its own src read "the source is empty" (the file review's round 15,
+ *  fresh-1). When chosenSource names nothing and the img has no src, the heal's record is read. It is a resolved address, so
+ *  the sign-in rule withholds it and any other shows its origin, as shownSource shows every address. It is read here and never
+ *  in chosenSource, which also feeds figureTarget, the reader of the outbound open. A srcset or `<picture>` figure's first label
+ *  on chat is transient: once the heal has removed the src there is no currentSrc to match, so it names the fallback src (its
+ *  workspace path by pictureDest's rule, or the heal's record of a web one); the browser, choosing again with the src gone,
+ *  fails the candidate a second time, and that error rewrites the label from currentSrc to name the candidate
+ *  (file-view-figure-error-browser.test.ts's chat cells read the label after the second error). */
 function failedSource(img: Element): string | null {
-  return chosenSource(img);
+  const chosen = chosenSource(img);
+  if (chosen || img.hasAttribute("src")) return chosen;
+  return img.getAttribute(HEAL_RECORD) || chosen;
 }
 /** The candidate the browser chose for a figure, as the author wrote it: the source the picture shows once it has loaded,
  *  the one that failed when it has not (failedSource), and the file "Open the picture" opens (figureTarget), so the picture
@@ -5141,7 +5156,7 @@ function resolveFigureRefs(root: ParentNode, base: string): void {
 // same and decides it again over the laid-out box (the file review's closing check, file-view-figure-floor-browser.test.ts: at
 // a 381 px re-open the 761 by 76 picture's paint-time control left at its load, the picture laid out 324 by 32; at 900 it
 // stood).
-// The sheets lay it over the figure's top-right corner from that place with no measuring (`.fileview-md .fv-figopen`: a zero-width margin box aligned to the line's top), transparent until the pointer is over the figure or over
+// The sheets lay it over the figure's top corner on the side where its line ends, the top-right in left-to-right text and the top-left in right-to-left text, from that place with no measuring (`.fileview-md .fv-figopen`: a zero-width margin box of logical margins aligned to the line's top), transparent until the pointer is over the figure or over
 // the control, or a keyboard focus reaches it, and the web control under any focus, and kept visible at rest where hover is
 // none or any pointer is coarse (the sheets' at-rest rule, under screen: a local control at 0.8, a web one at 1, never in
 // print); always in the tab order. No mouse press focuses the

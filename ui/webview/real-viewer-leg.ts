@@ -173,7 +173,7 @@ export type Opened = { page: any; errors: string[] };
 export type Served = { status: number; type?: string; body?: string };
 /** A page of the surface at the viewport size, the report open in it (Rendered, or Raw when `raw`: the preference is written
  *  first, as a person's earlier choice would stand), the first paint awaited. `docs` replaces the file table; `openOpts` is
- *  openFileView's third argument (a `line`, say); `url` opens the URL viewer on ORIGIN + url instead, answered from `urls`;
+ *  openFileView's third argument (a `line`, say); `url` opens the URL viewer on the origin + url instead, answered from `urls`;
  *  `theme` is CSS inlined after the sheet as the kernel inlines THEME_CSS (pageHtml). `serve` answers the requests the page's
  *  own fetch stub never sees, the ones the browser makes from the DOM (a figure's `<img src>` at the kernel's /file route,
  *  rewriteFigureSrcs's URL): a Served answer for a URL of the origin is fulfilled as given (a 404 for a missing figure, a
@@ -183,25 +183,29 @@ export type Served = { status: number; type?: string; body?: string };
  *  `utf8` fills `window.__utf8` before the open: the `X-Romp-Text-Utf8` the stub puts on each named path's text answer ("0"
  *  for a file the kernel decoded as Latin-1; every other path keeps "1"). `waitFor` is the selector the first paint is awaited
  *  on in place of the default (`.fileview-md > p`, or a `.fv-cl` row under `raw`), for a scene whose first paint holds neither:
- *  an empty document's `.fileview-body > .fileview-err` line (Slice 7, item 6), or a pane in place of the file. */
+ *  an empty document's `.fileview-body > .fileview-err` line (Slice 7, item 6), or a pane in place of the file. `origin` is the
+ *  origin the page is served from and opened at, ORIGIN unless named: `serve`, the URL viewer's `url` and the page itself all
+ *  answer at it, so a leg can open the page at https://notes-api.test, a secure context whose base is an https address (the
+ *  error leg's cell for a same-scheme source written without slashes on an https base; the file review's round 15, fresh-1). */
 export async function openViewer(browser: any, mode: Mode, width: number, height: number,
   opts: { docs?: Record<string, string>; mtime?: string; raw?: boolean; openOpts?: Record<string, unknown> | null; url?: string; urls?: Record<string, string>; theme?: string;
-    serve?: (u: URL) => Served | null; before?: (page: any) => Promise<void>; utf8?: Record<string, "0" | "1">; waitFor?: string } = {}): Promise<Opened> {
+    serve?: (u: URL) => Served | null; before?: (page: any) => Promise<void>; utf8?: Record<string, "0" | "1">; waitFor?: string; origin?: string } = {}): Promise<Opened> {
   const page = await browser.newPage({ viewport: { width, height } });
   const errors: string[] = [];
   page.on("pageerror", (e: Error) => { errors.push(e.message); });
   const html = pageHtml(mode, opts.docs || { [REPORT]: LONG }, opts.mtime || MT, opts.theme || "");
-  await page.route((u: URL) => u.href.startsWith(ORIGIN), (route: any) => {
+  const origin = opts.origin || ORIGIN;
+  await page.route((u: URL) => u.href.startsWith(origin), (route: any) => {
     const a = opts.serve ? opts.serve(new URL(route.request().url())) : null;
     if (a) return route.fulfill({ status: a.status, contentType: a.type, body: a.body ?? "" });
     return route.fulfill({ status: 200, contentType: "text/html", body: html });
   });
-  await page.goto(ORIGIN + "/");
+  await page.goto(origin + "/");
   if (opts.before) await opts.before(page);
   if (opts.utf8) await page.evaluate((u: Record<string, string>) => { Object.assign((window as any).__utf8, u); }, opts.utf8);
   if (opts.raw) await page.evaluate(() => { localStorage.setItem("romp:fileviewFmt", JSON.stringify({ md: "raw" })); });
   if (opts.url) {
-    await page.evaluate(([urls, u]: [Record<string, string>, string]) => { Object.assign((window as any).__urls, urls); (window as any).FV.openUrlView(u); }, [opts.urls || {}, ORIGIN + opts.url]);
+    await page.evaluate(([urls, u]: [Record<string, string>, string]) => { Object.assign((window as any).__urls, urls); (window as any).FV.openUrlView(u); }, [opts.urls || {}, origin + opts.url]);
   } else {
     await page.evaluate(([p, sid, o]: [string, string, Record<string, unknown> | null]) => { (window as any).FV.openFileView(p, sid, o); }, [REPORT, SID, opts.openOpts || null]);
   }

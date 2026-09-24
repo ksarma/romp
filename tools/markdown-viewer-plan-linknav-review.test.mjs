@@ -182,7 +182,7 @@ test('L3 names the candidate the browser chose by its function, which figureTarg
   const target = between(viewer, 'function figureTarget(img: Element, filePath: string): FigureTarget | null {', '\n}\n');
   inOrder(target, ['const dest = chosenSource(img);', 'if (/^https?:/i.test(dest) || dest.startsWith("//")) return { kind: "web", href: absUrl(dest), src: dest };', 'const p = figurePath(filePath, dest);'], 'figureTarget');
   assert.ok(!target.includes('pictureDest(img)'), 'figureTarget reads the src alone nowhere: chosenSource applies that rule when the browser chose the src or has not picked');
-  assert.ok(viewer.includes('function failedSource(img: Element): string | null {\n  return chosenSource(img);\n}'), 'the failed label delegates');
+  assert.ok(viewer.includes('function failedSource(img: Element): string | null {\n  const chosen = chosenSource(img);\n  if (chosen || img.hasAttribute("src")) return chosen;\n  return img.getAttribute(HEAL_RECORD) || chosen;\n}'), 'the failed label delegates, and reads the chat page\'s heal record only when the candidate names nothing and the img has no src (the file review\'s round 15, fresh-1)');
   assert.ok(L3.includes('else the file named by the candidate the browser chose for the figure, as the author wrote it (`chosenSource`'), 'L3 names chosenSource where the join was the authored source');
   assert.ok(L3.includes('the failed figure\'s label, `failedSource`, delegates to it'), 'and the delegation');
   assert.ok(!L3.includes('the file the authored source names'), 'the review\'s round-2 wording, the authored source, is gone');

@@ -58,7 +58,7 @@ test("chosenSource is the one reader of the browser's answer: currentSrc matched
     "return pictureDest(img);",
   ], "chosenSource");
   assert.doesNotMatch(cs, /fetch\(|new Image\(|\.src = /, "no second request: the answer is read off the element");
-  assert.match(VIEW, /\nfunction failedSource\(img: Element\): string \| null \{\n  return chosenSource\(img\);\n\}\n/, "failedSource delegates: the failed figure's label names the candidate the open would take");
+  assert.match(VIEW, /\nfunction failedSource\(img: Element\): string \| null \{\n  const chosen = chosenSource\(img\);\n  if \(chosen \|\| img\.hasAttribute\("src"\)\) return chosen;\n  return img\.getAttribute\(HEAL_RECORD\) \|\| chosen;\n\}\n/, "failedSource delegates: the failed figure's label names the candidate the open would take, and only when that names nothing and the img has no src, the chat page's heal record of the address it parked (the file review's round 15, fresh-1; a sentence pin on the spelling, and file-view-figure-error.test.ts's parked cells hold the property through the listener)");
   assert.match(VIEW, /const src = failedSource\(img\);\n\s*return FIGURE_FAILED \+ " " \+ \(src \? shownSource\(src\) : FIGURE_NO_SOURCE\)/, "the label's text reads it under that name");
   assert.equal((VIEW.match(/\bchosenSource\(img\)/g) || []).length, 2, "two callers and no third: the target (figureTarget) and the label (through failedSource)");
   assert.equal((VIEW.match(/HTMLImageElement\)\.currentSrc\b/g) || []).length, 1, "the property is read in chosenSource alone (the doc's mention of it is prose)");

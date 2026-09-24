@@ -3,7 +3,8 @@
 // Comments panel, styles.css, a fetch stub for the /file route and a route for the figures' own requests). Read off the DOM
 // and the layout: every openable figure of a synthetic report wears an "Open the picture" control as its anchor's next
 // sibling (a button of the icon family, titled, in the tab order); the pointer over the figure reveals it and lays it over
-// the figure's top-right corner (a right-floated figure's at its top-left); Tab reaches it and Enter opens the picture, the
+// the figure's top-right corner (a right-floated figure's at its top-left, and in right-to-left text at its top-left, its line's
+// end, read in cases of their own at the file's end); Tab reaches it and Enter opens the picture, the
 // bar naming the picture and Back titled with the report's name (L4); a click on the control from deep in the report opens
 // the picture and Back returns to the paragraph at its scrollTop; a plain click on the figure opens it while the Comments
 // panel is closed; a Ctrl-click on the figure or the control opens the /file URL in a tab (window.open stubbed) and moves
@@ -83,13 +84,21 @@
 // remote picture under the floor and on a local picture, a plain click on a remote picture over the floor and on one inside a
 // named anchor, each toggle the fold and open nothing, the remote pictures wearing no address line and no mark, each red over the
 // viewer before the summary predicate by the open beside the toggle and by the line and the mark, while the web control inside the
-// summary opens once with the fold shut and the pictures of a stray summary open as anywhere else, controls green there by design. A
+// summary opens once with the fold shut and the pictures of a stray summary open as anywhere else, controls green there by design;
+// and a remote picture under the floor in a details element's second summary, no fold's title, with the details opened carries
+// its address line and the mark and opens its tab once on a plain click, the details staying open (the file review's round 15,
+// tests-4: green before the round's fixes by design, red with figureFoldOf's loop replaced by `return s;`). A
 // finger's tap on the web control and on the mark is read frame by frame in cases of their own at the file's end (the tap-highlight
 // ruling of 2026-09-24): on a phone, under CDP touch emulation and on the touchscreen laptop, on the chat modal, the feed and the
 // Files pane, in both themes, each frame from the tap until the element settles, the tap's pressed frames while it matches :active
 // among them, paints the line at 3:1 or better, red on the phone over the sheets without their tap rule, where the browser's default tap
 // highlight painted the control's pressed frames down to 2.531:1, and the mark's cells and the other two devices' green there by
-// design. Red over
+// design. The control in right-to-left text is read in cases of their own after those (the file review's round 15, ui-2): a
+// picture from the web in a block an author wrote dir="rtl" and a local one in such a paragraph have their control over the
+// picture's top-left corner, 6px in and inside the viewer's body, on the chat modal, the feed and the Files pane at 900px and
+// 360px, red over the sheets' physical margins, where it stood 6px outside the picture's left edge and at 360px on the chat and
+// the feed was clipped by 6px, while a picture in left-to-right text and a left and a right float in a right-to-left block keep
+// theirs, controls green there by design. Red over
 // the unchanged viewer at the first control assertion (no control exists), the outbound
 // case red at the head before it, where the two controls presented one surface, and the link-shapes case red at the round-12
 // head, where the title and the control read any anchor while the click did not, and the two under-the-floor cases red at that head too, the hover read and the at-rest read, where no rule dressed the picture. Skips LOUDLY without a playwright browser (in CI the Test step runs before the job's Chromium install, so the leg skips there; the launch is real-viewer-leg.ts's inBrowser, the shared helper). Synthetic values only: the notes-api world, a placeholder session id, example.invalid and example.test addresses,
@@ -2394,9 +2403,10 @@ const FOLD_TEXT = "# Report\n\n" + PARA(1) + "\n\n"
   + '<details><summary><img src="' + WEB + '/sbig.svg" alt="sbig"> Remote screenshots</summary>\n\nfolded text three\n\n</details>\n\n' + PARA(4) + "\n\n"
   + '<details><summary><a name="fig-n"><img src="' + WEB + '/snamed.svg" alt="snamed"></a> A named anchor inside</summary>\n\nfolded text four\n\n</details>\n\n' + PARA(5) + "\n\n"
   + '<summary><img src="' + WEB + '/stray.svg" alt="stray"> A stray summary</summary>\n\n' + PARA(6) + "\n\n"
-  + '<summary><img src="figs/plot2.svg" alt="straylocal"> A stray local summary</summary>\n\n' + PARA(7) + "\n";
+  + '<summary><img src="figs/plot2.svg" alt="straylocal"> A stray local summary</summary>\n\n' + PARA(7) + "\n\n"
+  + '<details><summary>Two summaries</summary><summary><img src="' + WEB + '/slater.svg" alt="slater"> A later summary</summary>\n\nfolded text five\n\n</details>\n\n' + PARA(8) + "\n";
 const FOLD_DOCS: Record<string, string> = { [REPORT]: FOLD_TEXT, [PLOT]: svg("#456"), [PLOT2]: svg("#654") };
-const FOLD_ALTS = ["stiny", "slocal", "sbig", "snamed", "stray", "straylocal"];
+const FOLD_ALTS = ["stiny", "slocal", "sbig", "snamed", "stray", "straylocal", "slater"];   // slater: a remote picture under the floor in a details element's SECOND summary (the file review's round 15, tests-4)
 type FoldFig = { alt: string; inSummary: boolean; ownSummary: boolean; w: number; h: number; title: string | null; mark: boolean; control: boolean };
 /** Every picture of the fold report: whether a summary holds it and whether that summary is its details element's own first
  *  summary child, its laid-out box, its title, the outbound mark's attribute and the control standing after its anchor. */
@@ -2410,13 +2420,13 @@ const foldFigs = (page: any): Promise<FoldFig[]> => page.evaluate(() => Array.fr
   return { alt: img.getAttribute("alt") || "", inSummary: !!s, ownSummary: !!s && !!d && d.localName === "details" && d.querySelector(":scope > summary") === s, w: r.width, h: r.height,
     title: img.getAttribute("title"), mark: img.hasAttribute("data-fv-figweb"), control: !!n && n.hasAttribute("data-fv-figopen") };
 }));
-/** Until all six pictures of the fold report are loaded and out of the gate's placeholder, then three frames. */
+/** Until all seven pictures of the fold report are loaded and out of the gate's placeholder, then three frames. */
 const foldLoaded = async (page: any): Promise<void> => {
-  await page.waitForFunction(() => { const imgs = Array.from(document.querySelectorAll(".fileview-md img")); return imgs.length === 6 && imgs.every((i) => !i.closest('[data-act="fv-load"]') && (i as HTMLImageElement).complete && (i as HTMLImageElement).naturalWidth > 0); }, null, { timeout: 10000 });
+  await page.waitForFunction(() => { const imgs = Array.from(document.querySelectorAll(".fileview-md img")); return imgs.length === 7 && imgs.every((i) => !i.closest('[data-act="fv-load"]') && (i as HTMLImageElement).complete && (i as HTMLImageElement).naturalWidth > 0); }, null, { timeout: 10000 });
   await frames(page, 3);
 };
 /** The fold report open in the chat modal at 900 by 700: the remote pictures relayed to the second server (`port`), the local ones
- *  loaded, the gate lifted, then all six loaded; window.open stubbed to a record and a capture listener on the document recording
+ *  loaded, the gate lifted, then all seven loaded; window.open stubbed to a record and a capture listener on the document recording
  *  each click's ctrlKey. */
 async function openFold(browser: any, port: number): Promise<{ page: any; errors: string[] }> {
   const before = async (pg: any): Promise<void> => {
@@ -2461,12 +2471,13 @@ async function foldClick(page: any, alt: string, ctrl: boolean): Promise<FoldCli
   }
   return got;
 }
-/** One fold case on its own browser and second server: the report open and loaded, the six pictures read and checked for the scene
- *  (six, four in a details element's own summary and two in a stray one, stiny under the floor), then `body` run with a `cell`
+/** One fold case on its own browser and second server: the report open and loaded, the seven pictures read and checked for the scene
+ *  (seven, four in a details element's own summary, two in a stray one and one in a details element's second summary, stiny and
+ *  slater under the floor), then `body` run with a `cell`
  *  recorder whose cells are asserted together at the end, every record a diagnostic first. */
 async function foldCase(t: any, body: (page: any, figs: FoldFig[], cell: (what: string, want: unknown, got: unknown) => void, log: (r: unknown) => void) => Promise<void>): Promise<void> {
   const served: string[] = [];
-  const second = await secondServer(served, { "/stiny.svg": [20, 20] });
+  const second = await secondServer(served, { "/stiny.svg": [20, 20], "/slater.svg": [20, 20] });
   const fails: string[] = [];
   const cell = (what: string, want: unknown, got: unknown): void => { const w = JSON.stringify(want), g = JSON.stringify(got); t.diagnostic((w === g ? "ok " : "FAIL ") + what + ": want " + w + ", got " + g); if (w !== g) fails.push(what + ": want " + w + ", got " + g); };
   try {
@@ -2474,8 +2485,8 @@ async function foldCase(t: any, body: (page: any, figs: FoldFig[], cell: (what: 
       const { page, errors } = await openFold(browser, second.port);
       const figs = await foldFigs(page);
       t.diagnostic("figures " + JSON.stringify(figs));
-      assert.deepEqual(figs.map((f) => f.alt), FOLD_ALTS, "the six pictures, loaded (the scene)");
-      assert.deepEqual(figs.map((f) => [f.inSummary, f.ownSummary]), [[true, true], [true, true], [true, true], [true, true], [true, false], [true, false]], "four in a details element's own summary, two in a stray summary (the scene)");
+      assert.deepEqual(figs.map((f) => f.alt), FOLD_ALTS, "the seven pictures, loaded (the scene)");
+      assert.deepEqual(figs.map((f) => [f.inSummary, f.ownSummary]), [[true, true], [true, true], [true, true], [true, true], [true, false], [true, false], [true, false]], "four in a details element's own summary, two in a stray summary and one in a details element's second summary (the scene)");
       assert.ok(figs[0].w < 48 && figs[0].h < 48 && figs[2].w >= 48 && figs[2].h >= 48, "stiny under the floor and sbig over it (the scene): " + JSON.stringify([figs[0].w, figs[0].h, figs[2].w, figs[2].h]));
       await body(page, figs, cell, (r) => t.diagnostic("record " + JSON.stringify(r)));
       assert.deepEqual(errors, [], "no page errors");
@@ -2540,6 +2551,41 @@ test("in a browser (a fine pointer), the fold's two controls: the web control of
     const lc = await foldClick(page, "straylocal", true); log(lc);
     cell("straylocal Ctrl-click: its /file URL in a tab", [FILE_URL(PLOT2)], lc.opened);
     cell("straylocal Ctrl-click: the viewer stays on the report", "report.md", lc.base);
+  });
+});
+
+test("in a browser (a fine pointer), a remote picture under the floor in a details element's SECOND summary is no fold's title line: with the details opened, so the later summary is laid out and the picture decided again over its box, it carries the address line in its title and the outbound mark, and a plain click on it opens its tab once and toggles nothing, the details staying open and the viewer on the report (the file review's round 15, tests-4: figureFoldOf's rule that only a details element's own first summary is a fold's title had been held by a spelling pin alone; green before the round's fixes by design, red with its loop replaced by `return s;`; a property pin read off the page)", { timeout: 120000 }, async (t) => {
+  await foldCase(t, async (page, figs, cell, log) => {
+    assert.equal(figs[6].alt, "slater", "slater, the seventh picture (a precondition)");
+    // a later summary is not rendered while its details is shut: open it, then wait for the decision over the laid-out box (the
+    // ResizeObserver over the figures' boxes re-decides the picture once it has one), read off the mark and the title
+    await page.evaluate(() => { const i = Array.from(document.querySelectorAll(".fileview-md img")).find((x) => x.getAttribute("alt") === "slater")!; (i.closest("details") as HTMLDetailsElement).open = true; });
+    await page.waitForFunction(() => { const i = Array.from(document.querySelectorAll(".fileview-md img")).find((x) => x.getAttribute("alt") === "slater")!; const r = i.getBoundingClientRect(); return r.width > 0 && r.height > 0 && (i.hasAttribute("data-fv-figweb") || i.getAttribute("title") !== null); }, null, { timeout: 5000 }).catch(() => null);
+    await frames(page, 3);
+    const now = (await foldFigs(page))[6];
+    log({ name: "slater opened", ...now });
+    assert.ok(now.w > 0 && now.w < 48 && now.h > 0 && now.h < 48, "slater laid out under the floor once its details is open (a precondition): " + JSON.stringify([now.w, now.h]));
+    assert.equal(now.control, false, "slater wears no control, under the floor (a precondition)");
+    // FAILS under figureFoldOf's loop replaced by `return s;`: the later summary reads as the fold's title, so the picture wears no
+    // address line and no mark, and its click opens nothing
+    // the address line is read by its head, the new tab and the origin: whether the path follows is the origin cut's (the file
+    // review's round 15, extra9-2), held by the outbound cases' equality on WEB_LINE, so this cell stays green before that cut too
+    cell("slater: the address line in its title", true, (now.title || "").startsWith(WEB_LINE(WEB)));
+    cell("slater: the outbound mark", true, now.mark);
+    await page.evaluate(() => { const w = window as any; if (w.__mo) w.__mo.disconnect(); w.__toggled = []; const ds = Array.from(document.querySelectorAll(".fileview-md details")); w.__mo = new MutationObserver((recs) => { for (const r of recs) w.__toggled.push(ds.indexOf(r.target as Element) + ":" + (r.target as HTMLDetailsElement).open); }); for (const d of ds) w.__mo.observe(d, { attributes: true, attributeFilter: ["open"] }); });
+    const b = await page.evaluate(() => { const i = Array.from(document.querySelectorAll(".fileview-md img")).find((x) => x.getAttribute("alt") === "slater")!; i.scrollIntoView({ block: "center" }); const q = i.getBoundingClientRect(); return { x: q.left + q.width * 0.3, y: q.top + q.height * 0.6 }; });
+    await frames(page, 2);
+    const hit = await page.evaluate(([x, y]: [number, number]) => { const e = document.elementFromPoint(x, y); return e ? e.localName + ":" + (e.getAttribute("alt") || "") : null; }, [b.x, b.y]);
+    assert.equal(hit, "img:slater", "the click lands on the picture (a precondition)");
+    await page.mouse.click(b.x, b.y);
+    try { await page.waitForFunction(() => (window as any).__opened.length > 0, null, { timeout: 2000 }); } catch { /* no open within the bound */ }
+    await frames(page, 3);
+    const c = { toggled: await page.evaluate(() => (window as any).__toggled.slice()), opened: await opened(page), base: await base(page), open: await page.evaluate(() => (Array.from(document.querySelectorAll(".fileview-md img")).find((x) => x.getAttribute("alt") === "slater")!.closest("details") as HTMLDetailsElement).open) };
+    log({ name: "slater plain click", ...c });
+    cell("slater plain click: its tab, once", [WEB + "/slater.svg"], c.opened);
+    cell("slater plain click: no fold toggles", [], c.toggled);
+    cell("slater plain click: its details stays open", true, c.open);
+    cell("slater plain click: the viewer stays on the report", "report.md", c.base);
   });
 });
 
@@ -2676,5 +2722,83 @@ for (const device of ["phone", "touch", "laptop"] as TapDevice[]) {
       }, device === "laptop" ? { args: [LAPTOP] } : {});
     } finally { await second.close(); }
     assert.deepEqual(fails, [], "every frame of a finger's tap on the outbound dress paints its line at 3:1 or better against the ground the sheet controls (a property pin read off the paint):\n" + fails.join("\n"));
+  });
+}
+
+// The control in right-to-left text (the file review's round 15, ui-2): the sheets place the control with logical margins, -28px at
+// the line's start and 6px at its end, so in a block an author wrote dir="rtl" (the sanitizer keeps it) the control follows the
+// picture on its left and stands over the picture's top-left corner, its inline-end corner, as it stands over the top-right in
+// left-to-right text; the float twins keep physical margins of their own, since an author's align is physical. With the physical
+// margins the sheets had, the control stood beside the picture's left edge, 6px outside it, and at a width of 360px on the chat and the
+// feed 6 of its 22px lay outside the viewer's body and were clipped. The right-to-left pictures are red there; the left-to-right
+// picture and both floats inside a right-to-left block are controls, green there by design.
+const RTL_WORDS = "\u05e9\u05dc\u05d5\u05dd \u05e2\u05d5\u05dc\u05dd \u05d4\u05de\u05e9\u05da \u05d4\u05d8\u05e7\u05e1\u05d8";   // Hebrew words, strong right-to-left text on both sides of the picture
+const RTL_TEXT = "# Report\n\n" + PARA(1) + "\n\n"
+  + '<div dir="rtl">\n\n<img src="' + WEB + '/rtl-web.svg" alt="rtl-web"> ' + RTL_WORDS + "\n\n</div>\n\n" + PARA(2) + "\n\n"
+  + '<p dir="rtl">' + RTL_WORDS + ' <img src="figs/plot.svg" alt="rtl-local"> ' + RTL_WORDS + "</p>\n\n" + PARA(3) + "\n\n"
+  + '<img src="' + WEB + '/ltr-web.svg" alt="ltr-web"> after text\n\n' + PARA(4) + "\n\n"
+  + '<div dir="rtl">\n\n<img src="' + WEB + '/rtl-left.svg" alt="rtl-left" align="left"> ' + RTL_WORDS + " " + RTL_WORDS + "\n\n</div>\n\n" + PARA(5) + "\n\n" + PARA(6) + "\n\n" + PARA(7) + "\n\n"
+  + '<div dir="rtl">\n\n<img src="' + WEB + '/rtl-right.svg" alt="rtl-right" align="right"> ' + RTL_WORDS + " " + RTL_WORDS + "\n\n</div>\n\n" + PARA(8) + "\n\n" + PARA(9) + "\n\n" + PARA(10) + "\n";
+const RTL_DOCS: Record<string, string> = { [REPORT]: RTL_TEXT, [PLOT]: svg("#456") };
+/** Each picture of the right-to-left report and where its control stands: the corner it must stand over ("left" or "right"), the
+ *  direction the picture's line runs, and whether it is a control (green over the physical margins by design). */
+const RTL_CELLS: Array<[string, "left" | "right", "rtl" | "ltr", string, boolean]> = [
+  ["rtl-web", "left", "rtl", "a picture from the web in a right-to-left block", false],
+  ["rtl-local", "left", "rtl", "a local picture in a right-to-left paragraph", false],
+  ["ltr-web", "right", "ltr", "a picture from the web in left-to-right text (a control)", true],
+  ["rtl-left", "right", "rtl", "a left-floated picture in a right-to-left block (a control)", true],
+  ["rtl-right", "left", "rtl", "a right-floated picture in a right-to-left block (a control)", true],
+];
+type RtlRead = { dir: string; img: Box; ctl: Box | null; classes: string; body: { left: number; right: number }; hit: string | null };
+for (const surface of ["chat", "feed", "pane"] as Surface[]) for (const width of [900, 360]) {
+  test("in a browser (a fine pointer) on " + (surface === "chat" ? "the chat modal" : surface === "feed" ? "the feed" : "the Files pane") + " at " + width + "px, the control in right-to-left text: a picture from the web in a block an author wrote dir=\"rtl\" and a local one in such a paragraph each have their control over the picture's top-left corner, its line's end, 6px in and inside the picture's box and the viewer's body, while a picture in left-to-right text keeps its control at the top-right and a left and a right float in a right-to-left block keep theirs at the corner away from the float's side (the file review's round 15, ui-2: with physical margins the control stood 6px outside the picture's left edge in right-to-left text, and at 360px on the chat and the feed 6 of its 22px were clipped; a property pin read off the layout)", { timeout: 120000 }, async (t) => {
+    const second = await secondServer([]);
+    try {
+      await inBrowser(t, async (browser) => {
+        const before = async (pg: any): Promise<void> => {
+          await pg.context().route((u: URL) => u.href.startsWith(WEB + "/"), async (route: any) => {
+            const a = await fromSecond(second.port, new URL(route.request().url()).pathname);
+            return route.fulfill({ status: a.status, contentType: a.type, body: a.body });
+          });
+        };
+        const { page, errors } = await openViewer(browser, surface, width, 800, { docs: RTL_DOCS, before,
+          serve: (u) => { const p = u.pathname === "/file" ? u.searchParams.get("path") || "" : ""; return RTL_DOCS[p] !== undefined && /\.svg$/.test(p) ? { status: 200, type: "image/svg+xml", body: RTL_DOCS[p] } : null; } });
+        try {
+          await page.click('[data-act="fv-load"]');
+          await page.waitForFunction((n: number) => { const imgs = Array.from(document.querySelectorAll(".fileview-md img")) as HTMLImageElement[]; return imgs.length === n && imgs.every((i) => !i.closest('[data-act="fv-load"]') && i.complete && i.naturalWidth > 0 && !!i.nextElementSibling && i.nextElementSibling.hasAttribute("data-fv-figopen")); }, RTL_CELLS.length, { timeout: 15000 });
+          await frames(page, 3);
+          const fails: string[] = [];
+          for (const [alt, corner, dir, what, control] of RTL_CELLS) {
+            const r: RtlRead = await page.evaluate((alt: string) => {
+              const img = Array.from(document.querySelectorAll(".fileview-md img")).find((i) => i.getAttribute("alt") === alt) as HTMLElement;
+              img.scrollIntoView({ block: "center" });
+              const box = (e: Element) => { const b = e.getBoundingClientRect(); return { left: b.left, top: b.top, right: b.right, bottom: b.bottom, width: b.width, height: b.height }; };
+              const c = img.nextElementSibling && img.nextElementSibling.hasAttribute("data-fv-figopen") ? img.nextElementSibling : null;
+              const body = document.querySelector(".fileview-body") as HTMLElement; const bb = body.getBoundingClientRect();
+              let hit: string | null = null;
+              if (c) { const cb = c.getBoundingClientRect(); const e = document.elementFromPoint(cb.left + 1, cb.top + cb.height / 2); hit = e ? (c.contains(e) ? "the control" : e.localName + (e.className ? "." + String(e.className).split(" ")[0] : "")) : null; }
+              return { dir: getComputedStyle(img).direction, img: box(img), ctl: c ? box(c) : null, classes: c ? c.className : "", body: { left: bb.left + body.clientLeft, right: bb.left + body.clientLeft + body.clientWidth }, hit };
+            }, alt);
+            t.diagnostic(surface + " " + width + " " + alt + ": " + JSON.stringify(r));
+            // preconditions: the picture's line runs the way the cell names, the control stands after it, a float's carries its class
+            assert.equal(r.dir, dir, surface + " " + width + ": " + what + ": its line runs " + dir);
+            assert.ok(r.ctl, surface + " " + width + ": " + what + ": its control stands after it");
+            if (alt === "rtl-left" || alt === "rtl-right") assert.ok(r.classes.includes(alt === "rtl-left" ? "fv-figopen-left" : "fv-figopen-right"), surface + " " + width + ": " + what + ": its control carries the float class: " + r.classes);
+            const c = r.ctl!, i = r.img;
+            const at = corner === "left" ? Math.abs(c.left - (i.left + 6)) <= 1 : Math.abs(c.right - (i.right - 6)) <= 1;
+            const inside = c.left >= i.left - 0.5 && c.right <= i.right + 0.5 && c.top >= i.top - 0.5 && c.bottom <= i.bottom + 0.5;
+            const inBody = c.left >= r.body.left - 0.5 && c.right <= r.body.right + 0.5;
+            const read = surface + " " + width + "px: " + what + ": the control at [" + [c.left, c.top, c.right, c.bottom].map((v) => v.toFixed(1)).join(", ") + "], the picture at [" + [i.left, i.top, i.right, i.bottom].map((v) => v.toFixed(1)).join(", ") + "], the body's box from " + r.body.left.toFixed(1) + " to " + r.body.right.toFixed(1) + ", its left edge hits " + r.hit;
+            // FAILS BEFORE (the physical margins) for the two right-to-left pictures that do not float: the control 6px outside
+            // the picture's left edge, and at 360px on the chat and the feed 6px of it outside the body's box
+            if (!at || Math.abs(c.top - (i.top + 6)) > 1) fails.push(read + ": not over the picture's top-" + corner + " corner, 6px in" + (control ? " (a control)" : ""));
+            if (!inside) fails.push(read + ": not inside the picture's box" + (control ? " (a control)" : ""));
+            if (!inBody || r.hit !== "the control") fails.push(read + ": not inside the viewer's body, where it would be clipped" + (control ? " (a control)" : ""));
+          }
+          assert.deepEqual(fails, [], "each picture's control stands over the corner at its line's end, 6px in, inside the picture's box and the viewer's body, in right-to-left text as in left-to-right, a float's at the corner away from its side (a property pin read off the layout):\n" + fails.join("\n"));
+          assert.deepEqual(errors, [], "no page errors");
+        } finally { await page.close(); }
+      });
+    } finally { await second.close(); }
   });
 }
