@@ -915,7 +915,8 @@ def _env_block(text, env_indent, keys_out=None):
     False for a key whose value runs on past its line or is a block scalar (the switch census, switch_line_census,
     counts only a clean key line as read). Not read at all: an `env:` line that carries anything after the colon but a
     comment (an alias `env: *x`, an anchor, a flow mapping), a line at the key indent this regex does not read as a key
-    (a quoted or spaced key), and a line less indented than the first key. A quoted value that runs on past its line
+    (a quoted or spaced key), a line less indented than the first key, and the deeper lines after either of those,
+    which are that line's value and continue no key read here. A quoted value that runs on past its line
     is not followed, so a key-shaped line inside it reads here as a key; unread_yaml_forms refuses such a value at its
     opening line (the fail-closed design's first verify pass, 2026-09-23)."""
     pad = " " * env_indent
@@ -941,10 +942,18 @@ def _env_block(text, env_indent, keys_out=None):
                 block = plain is not None and ENV_BLOCK_SCALAR_RE.match(plain.strip()) is not None
                 keys.append([off, km.group(1), not block])
                 last = [km.group(1), keys[-1], plain is not None and not block]
-            elif last is not None and indent > key_indent:
-                if last[2]:
-                    out[last[0]] = (out[last[0]] + " " + _comment_cut(body).strip()).strip()
-                last[1][2] = False
+            elif indent > key_indent:
+                if last is not None:
+                    if last[2]:
+                        out[last[0]] = (out[last[0]] + " " + _comment_cut(body).strip()).strip()
+                    last[1][2] = False
+            else:
+                # a line at the key indent that the regex does not read as a key (a quoted or spaced key, a hyphenated
+                # name), or one less indented: the deeper lines after it are its value, not the last key's (the
+                # fail-closed design's third verify pass, 2026-09-24: attributed to the key above, `"OTHER-X": |` and
+                # its text made a clean `ROMP_SDK_REQUIRE: "1"` above it unclean, and the switch census named that line
+                # on valid YAML)
+                last = None
     return out
 
 
@@ -2769,6 +2778,22 @@ class PopulationCheckReds(unittest.TestCase):
                                                   "            # a line of text\n            more text\n          %s: \"1\"\n" % SWITCH + run)
         self.assertEqual([(i["env"].get(SWITCH), verdict(i)) for i in self._new(src)], [("1", "ok")])
         self.assertEqual(switch_line_census(src)[1], [])
+        # a line at the key indent the regex does not read as a key holds the deeper lines after it: they are its value,
+        # so the clean switch above it stays read and the census names nothing (the fail-closed design's third verify
+        # pass, 2026-09-24: E29, E32 and E33, each named at the switch's line on valid YAML until then, the deeper line
+        # counted against the switch). A deeper line that spells the switch is still named, at its own line
+        for label, other in (("a quoted key's block scalar (E29)", '          "OTHER-X": |\n            text\n'),
+                             ("a hyphenated key's block scalar (E32)", "          OTHER-X: |\n            text\n"),
+                             ("a quoted key's plain value continued (E33)", '          "OTHER": a\n            b\n')):
+            with self.subTest(control=label):
+                src, first = self._with_step_in_shell_job("      - name: After an unread key (pytest)\n        env:\n          %s: \"1\"\n"
+                                                          % SWITCH + other + run)
+                self.assertEqual([(i["env"].get(SWITCH), verdict(i)) for i in self._new(src)], [("1", "ok")], label)
+                self.assertEqual(switch_line_census(src)[1], [], label)
+        src, first = self._with_step_in_shell_job("      - name: Switch text under an unread key (pytest)\n        env:\n          %s: \"1\"\n"
+                                                  '          "OTHER-X": |\n            %s: "0"\n' % (SWITCH, SWITCH) + run)
+        self.assertEqual([(i["env"].get(SWITCH), verdict(i)) for i in self._new(src)], [("1", "ok")])
+        self.assertEqual(switch_line_census(src)[1], [(first + 4, '%s: "0"' % SWITCH)])
 
     def test_a_yaml_anchor_alias_or_merge_key_anywhere_is_refused_at_its_line(self):
         # the owner's fail-closed design (2026-09-23): the parser reads no anchor, alias or merge key, and the pre-push
