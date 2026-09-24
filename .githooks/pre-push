@@ -162,9 +162,10 @@
 # 0 is the PERMISSIVE verdict, since a silent tool exits 0: the chosen-address
 # match runs no tool since round 8, and the ancestry of a pushed commit is
 # read since round 8b2 as the commit git merge-base names, which must be the
-# pushed commit itself (under --is-ancestor a git silent on it and on the
-# commit listing published a middle commit's banned line through a real push
-# of a ref update; 2026-09-23).
+# commit the pushed object peels to, read apart and judged a whole name since
+# round 9a (under --is-ancestor a git silent on it and on the commit listing
+# published a middle commit's banned line through a real push of a ref update;
+# 2026-09-23).
 # What stays own=, and why a tool silent there publishes nothing by itself: a
 # read whose empty answer is the object's own, with no sibling fact to hold it
 # against. Each such read's line below says why an empty or cut-short exit-0
@@ -202,18 +203,26 @@
 #       hit, one cut inside the tip's name is an error line refused as an
 #       incomplete scan, and none at all is the short answer above
 #   the SYMLINK listing of the tip
-#       the SIZE of the tip's tree, read apart: an empty listing of a tree
-#       whose size is not 0 is short, refused naming the read and the size.
-#       Its end: the -z listing's whole entries, counted apart, against this
-#       listing's lines (a dropped line counts short), and each line a whole
-#       entry, a mode, a type, an object name, a tab and a path, a line that
-#       is none refused naming it (round 8b3: the last line, a link, cut
-#       inside its mode, published)
+#       the SIZE of the tip's tree, read apart: the recursive listing omits
+#       tree entries, so it answers empty for the empty tree, size 0, and for
+#       a tree holding only empty directories, which git's own index never
+#       writes; an empty listing of a tree whose size is not 0 is refused
+#       naming the read, the size and both causes, a listing cut short or such
+#       a tree (a disclosed residual: a valid tip of empty directories alone
+#       is refused; round 9a). Its end: the -z listing's whole entries,
+#       counted apart, against this listing's lines (a dropped line counts
+#       short), and each line a whole entry, a mode, a type, an object name, a
+#       tab and a path, a line that is none refused naming it (round 8b3: the
+#       last line, a link, cut inside its mode, published)
 #   the SIZE of the tip's tree
-#       a digit run, read beside an empty listing: 0 is the empty tree, the
-#       one tree with no entry, and any other answer refuses. Its end: asked
-#       only beside an empty listing, the empty tree's, whose size 0 has no
-#       proper prefix but the empty answer, a non-count refused
+#       a digit run, read beside an empty listing: 0 is the empty tree, and
+#       any other answer refuses naming both causes, the listing cut short or
+#       a tree holding only empty directories, which the recursive listing
+#       omits as it omits every tree entry (the disclosed residual: such a
+#       tip, which git's own index never writes, is refused; round 9a). Its
+#       end: asked only beside an empty listing: the empty tree's size 0 has
+#       no proper prefix but the empty answer, a non-count refused, and a size
+#       that is not 0 has no prefix that is 0
 #   the TYPE of the object the tip peels to
 #       the three types a peel can reach (blob, tree, commit): an empty answer
 #       or any other is refused naming the read, and peeled stays empty, read
@@ -252,13 +261,24 @@
 #       it gates is refused as short unless the ancestry agrees. Its end: only
 #       its emptiness is read, so a cut answer that is not empty agrees as the
 #       whole one does, and one cut to nothing withholds the agreement
+#   the COMMIT the pushed object peels to
+#       a whole commit name, hex and as long as the pushed object's name, read
+#       beside the ANCESTRY read alone (git rev-parse --verify on the object's
+#       ^{commit}): an empty, non-hex or shorter answer is refused naming the
+#       read before merge-base's answer is compared with it, so an empty peel
+#       never agrees with an empty merge-base answer (round 9a: compared with
+#       the tag object's own name, merge-base's answer refused an annotated
+#       tag moved to an ancestor, re-created on its commit or replacing a
+#       lightweight tag there). Its end: equality of length with the pushed
+#       object's whole name, a hex run cut short refused naming the read
 #   the ANCESTRY of the pushed commit over the remote commit
-#       the commit git merge-base names, which must be the pushed commit
-#       itself (the best common ancestor of a commit and its descendant): an
-#       empty or non-hex answer is refused naming the read, and another commit
-#       leaves the empty listing refused as short. Its end: equality with the
-#       pushed commit's whole name, a hex run shorter than a whole name
-#       refused naming the read
+#       the commit git merge-base names, which must be the commit the pushed
+#       object peels to (the best common ancestor of a commit and its
+#       descendant), read apart as a whole name before this read is asked (the
+#       COMMIT the pushed object peels to): an empty or non-hex answer is
+#       refused naming the read, and another commit leaves the empty listing
+#       refused as short. Its end: equality with the peeled commit's whole
+#       name, a hex run shorter than a whole name refused naming the read
 #   the PARENT COUNT of a commit
 #       the commit named first in the answer: an answer that does not begin
 #       with it is refused naming the read, and the count is left empty. Its
@@ -350,11 +370,6 @@
 #       naming both answers. Its end: a cut count is a prefix of its digits,
 #       which changes the count expected, and the join's rows then differ from
 #       it
-#   the NEWLINE COUNT of a scratch listing
-#       a digit run before the newline test: a non-count refuses naming the
-#       read. Its end: the one answer that passes is 0, whose only proper
-#       prefix is the empty answer, a non-count, and a larger count cut short
-#       is still not 0 or is empty, refused either way
 #   the REWRITE of a scratch listing
 #       the rewrite's byte count against its input's: a rewrite of fewer bytes
 #       refuses naming both numbers. Its end: that byte count itself
@@ -654,10 +669,18 @@
 # "no finding reported", never as "scanned": the hook reads gitleaks' log, and
 # refuses the push as unscanned on any ERR line, and separately when the commit
 # count gitleaks reports is not the hook's own count of the commits with content
-# to scan. Two conditions, because either alone has a hole: a log that came up
+# to scan. Two conditions, because either alone has a hole (a log that came up
 # short writes no ERR line, and a discarded scan can still report the whole
-# count. Found by execution (2026-09-21): a git that wrote one benign line to
-# stderr, and one that handed gitleaks a commit fewer, each let two live
+# count), and together they hold a scan whole at the granularity of commits
+# and no finer: gitleaks counts a commit once one of its files has a hunk, so
+# a stream cut inside a commit, its later files' diffs dropped with nothing on
+# stderr, passes both arms whatever git's exit status, which gitleaks does not
+# read, and a credential in a dropped file goes unread (a git on PATH that cut
+# the stream so, and a real git killed partway, each published one through a
+# real push under gitleaks 8.30.1 and 8.28.0; the round 8 refuters,
+# 2026-09-24); a git that fails and writes its error to stderr is refused by
+# the ERR arm. Found by execution (2026-09-21): a git that wrote one benign
+# line to stderr, and one that handed gitleaks a commit fewer, each let two live
 # credentials through a real push with nothing printed, on a clone with the
 # denylist armed. The hook's count is derived from the OBJECTS (rev-list,
 # diff-tree --raw, cat-file; scannable_commits), never from the patch stream
@@ -774,6 +797,7 @@ blocked_addresses=0     # a subset of blocked_ids, with a remedy of its own
 blocked_messages=0      # likewise a subset of blocked_ids, with a remedy of its own
 blocked_tags=0          # an annotated tag's own tagger or message: one of the two above, with a remedy of its own
 blocked_tag_addresses=0 # a subset of blocked_tags: a tag's own tagger address, whose remedy waits on the chosen-addresses read
+blocked_tag_messages=0  # a subset of blocked_tags: a tag's own message, whose remedy (re-create the tag) needs no chosen address
 blocked_creds=0
 failed_scan=0           # a read or scan that could not complete: refused as unscanned (unscanned, the gitleaks arm)
 failed_creds=0          # a subset of failed_scan: gitleaks itself could not scan, with advice of its own
@@ -1161,34 +1185,40 @@ make_scratch() {
 # is first checked to hold no newline byte, then rewritten with a newline for
 # each NUL. A path with a newline (legal to git, seen nowhere) fails the check,
 # and the caller refuses the push as unscanned rather than judge it by nothing.
-# Each test and each rewrite reads its own status: a tr that failed on one file
-# and ran on the next would otherwise hand a join an empty rewrite with no
-# status to read (the tip judging nothing; a commit passing unjudged), the
-# function's status being its LAST file's alone, and the newline count read a
-# failed pipeline as zero. A tool that failed is status 2, apart from the
-# newline case, the tool and its status named in the refusal printed for the
-# caller's line (the count's pipeline status is the failing stage's, pipefail).
-# Each ANSWER is read as well as each status (the header's second class): a tr
-# that exits 0 and writes nothing, or too little, would hand a join an empty
-# or truncated rewrite under a clean status, so the rewrite's byte count is
-# compared with its input's (wc -c on each; a newline for each NUL keeps the
-# count), and every count, the newline count first, must be a run of digits
-# before any arithmetic reads it, since bash reads an empty operand as zero,
-# the count of a clean file (a wc answering nothing passed the newline test).
+# The newline test is read by the shell alone, as nul_records reads the same
+# files: each NUL-terminated record, and any bytes after the last NUL, is
+# checked for an embedded newline, with no tool between the file and the
+# verdict; a file the shell cannot open is refused naming the test, never
+# read as a file with no newline. Until round 9a the test was a pipeline
+# (tr -cd '\n' piped to wc -c), and a tr silent or cut short with exit 0
+# handed wc a whole smaller count, 0, the one passing answer, for a listing
+# holding a newline path, so later refusals named the wrong causes (the round
+# 8 refuter, 2026-09-24). Each rewrite reads its own status: a tr that failed
+# on one file and ran on the next would otherwise hand a join an empty rewrite
+# with no status to read (the tip judging nothing; a commit passing unjudged),
+# the function's status being its LAST file's alone. A tool that failed is
+# status 2, the tool and its status named in the refusal printed for the
+# caller's line. Each ANSWER is read as well as each status (the header's
+# second class): a tr that exits 0 and writes nothing, or too little, would
+# hand a join an empty or truncated rewrite under a clean status, so the
+# rewrite's byte count is compared with its input's (wc -c on each; a newline
+# for each NUL keeps the count), and every count must be a run of digits
+# before any arithmetic reads it, since bash reads an empty operand as zero.
 # Each read goes through judged_read with the caller's PREFIX (the line's
 # subject: which listings, of the tip or of which commit, could not be
 # rewritten), so a tool that failed is refused here naming the read, and a
 # count that is not a number, or a rewrite whose count differs from its
 # input's, is refused here too, naming the rewrite and both raw answers;
 # status 2 tells the caller a refusal was made.
-as_lines() {   # <prefix: "the LISTINGS of ... could not be rewritten for the BINARY VERDICT check"> <file>...: rewrites each as <file>.nl; status 1 when one holds a newline, 2 when a test, a rewrite or a count failed or answered short (refused here)
-    local prefix="$1" f n a b
+as_lines() {   # <prefix: "the LISTINGS of ... could not be rewritten for the BINARY VERDICT check"> <file>...: rewrites each as <file>.nl; status 1 when one holds a newline, 2 when the file could not be opened for the test, or a rewrite or a count failed or answered short (refused here)
+    local prefix="$1" f rec nl a b
     shift
     for f in "$@"; do
-        judged_read gate="the NEWLINE COUNT of a scratch listing" 0 "$prefix (the newline test's tr or wc exited {rc})" -- newline_count "$f" || return 2
-        n=$read_out
-        case "${n//[[:space:]]/}" in ''|*[!0-9]*) unscanned "$prefix (the newline test's wc answered \"$n\" for ${f##*/}, not a count)"; return 2 ;; esac
-        [ "${n//[[:space:]]/}" -eq 0 ] || return 1
+        nl=0
+        while IFS= read -r -d '' rec || [ -n "$rec" ]; do
+            case "$rec" in *$'\n'*) nl=1; break ;; esac
+        done < "$f" || { unscanned "$prefix (the newline test could not open ${f##*/})"; return 2; }
+        [ "$nl" -eq 0 ] || return 1
         judged_read gate="the REWRITE of a scratch listing" 0 "$prefix (tr exited {rc})" -o "$f.nl" -- tr '\0' '\n' < "$f" || return 2
         judged_read gate="the BYTE COUNT of a scratch listing" 0 "$prefix (the byte count's wc exited {rc} for ${f##*/})" -- wc -c < "$f" || return 2
         a=$read_out
@@ -1198,9 +1228,6 @@ as_lines() {   # <prefix: "the LISTINGS of ... could not be rewritten for the BI
         case "${b//[[:space:]]/}" in ''|*[!0-9]*) unscanned "$prefix (the byte count's wc answered \"$b\" for the rewrite of ${f##*/}, not a count)"; return 2 ;; esac
         [ "${a//[[:space:]]/}" -eq "${b//[[:space:]]/}" ] || { unscanned "$prefix (the rewrite of ${f##*/} wrote ${b//[[:space:]]/} bytes for ${a//[[:space:]]/} read; tr exited 0)"; return 2; }
     done
-}
-newline_count() {   # <file>: the count of newline bytes in it, the newline test's pipeline passed to judged_read whole
-    tr -cd '\n' < "$1" | wc -c
 }
 # The count of NUL-terminated records in a scratch file, read by the shell
 # alone (no tool between the file and the count), for the gates on the two
@@ -1531,8 +1558,9 @@ refuse_hidden_paths() {   # <local_ref> <local_sha> <revs: one "<sha> <parent co
         judged_read gate="the -z listing of the tip" 0 "the TREE of the tip of $local_ref (${local_sha:0:10}) could not be listed for the BINARY VERDICT check (git ls-tree exited {rc})" -o "$scratch/listing" -- git ls-tree -r -z -l "$local_sha" || listing_rc=$read_rc
         if judged_read gate="the READ LIST of the grep of the tip" 0,1 "the FILES the grep of the tip of $local_ref (${local_sha:0:10}) reads could not be listed for the BINARY VERDICT check (git grep exited {rc})" -q -o "$scratch/read" -- git grep --no-color -I -l -z -e '' "$local_sha" --; then
             # The two listings rewritten for the joins: as_lines returns 1 for a
-            # path holding a newline and 2 for a test, a rewrite or a count that
-            # failed or answered short (refused there, naming the read); either
+            # path holding a newline and 2 for a listing the newline test could
+            # not open, or a rewrite or a count that failed or answered short
+            # (refused there, naming the read); either
             # is refused as unscanned rather than judged by an empty rewrite.
             rc=0; as_lines "the LISTINGS of the tip of $local_ref (${local_sha:0:10}) could not be rewritten for the BINARY VERDICT check" "$scratch/listing" "$scratch/read" || rc=$?
             if [ "$rc" -eq 1 ]; then
@@ -2124,7 +2152,7 @@ scan_identifiers() {
     local strings_file line grep_args local_ref local_sha _remote_ref remote_sha lines role email obj tagger chosen chosen_unread
     local rc errs hits listing link blob link_path target size revs rev n msg addrs inner kind tip_listed tip_entries rev_counts
     local peeled peeled_read fell_back agreed paths count linecount tag_read hdr
-    local revs_rc count_range listed cut_name target_bytes read_as whole_what
+    local revs_rc count_range listed cut_name target_bytes read_as whole_what peel_commit peel_whole
     local -a words
     strings_file="$(private_strings_file)"
     identifier_scan_armed || return 0
@@ -2227,9 +2255,13 @@ scan_identifiers() {
         # other status is refused here, and whatever was listed is still read. An
         # empty listing under exit 0 is judged here against the SIZE of the tip's
         # tree (cat-file -s on the tree the pushed object peels to), the header's
-        # second class: the empty tree, size 0, is the one tree with no entry, so
-        # any other size is a listing that answered short, refused naming the
-        # read and the size, and a size that is not a digit run is refused too
+        # second class: the recursive listing omits tree entries, so it answers
+        # empty for the empty tree, size 0, and for a tree holding only empty
+        # directories, which git's own index never writes; any size but 0 is
+        # refused naming the read, the size and both causes, a listing that
+        # answered short or such a tree (the latter a disclosed residual: a
+        # valid tip of empty directories alone is refused, the round 8
+        # refuter, 2026-09-24), and a size that is not a digit run is refused too
         # (a git silent on ls-tree in both its shapes over a tip whose tree held
         # a symlink alone, inherited from a commit the remote holds, passed the
         # tip through a real push: the -z listing of refuse_hidden_paths agreed
@@ -2256,7 +2288,7 @@ scan_identifiers() {
                 if [ -z "$size" ] || [ -n "${size//[0-9]/}" ]; then
                     unscanned "the TREE of the tip of $local_ref (${local_sha:0:10}) was listed as empty while its SIZE reads \"$size\" (git cat-file -s), not a size, so whether the listing is whole is unknown"
                 elif [ "$size" -ne 0 ]; then
-                    unscanned "the TREE of the tip of $local_ref (${local_sha:0:10}) was listed as empty (git ls-tree -r exited 0 and printed no entry) while git cat-file -s gives its tree's size as $size bytes, so the listing answered short"
+                    unscanned "the TREE of the tip of $local_ref (${local_sha:0:10}) was listed as empty (git ls-tree -r exited 0 and printed no entry) while git cat-file -s gives its tree's size as $size bytes, so either the listing answered short or the tree holds only empty directories, which git's own index never writes"
                 fi
             fi
         fi
@@ -2358,14 +2390,21 @@ scan_identifiers() {
         # (for-each-ref --contains: every commit of the range is then one a
         # remote already has) OR, for a ref update, the pushed commit must be an
         # ancestor of the remote's current one (a rewind publishes nothing new),
-        # read as the ANSWER of git merge-base, which must be the pushed commit
-        # itself (the best common ancestor of a commit and a descendant is that
-        # commit), an answer that is no commit refused naming the read: the
-        # status-only --is-ancestor answered "ancestor" by exiting 0, so a git
-        # silent on the listing and on that read published a middle commit's
-        # banned line through a real push of a ref update (round 8b2,
-        # 2026-09-23); the OR, since the ancestry alone would refuse a
-        # fast-forward of commits another remote holds. A listing that answered
+        # read as the ANSWER of git merge-base, which must be the commit the
+        # pushed object peels to (the best common ancestor of a commit and a
+        # descendant is that commit), an answer that is no commit refused naming
+        # the read: the status-only --is-ancestor answered "ancestor" by exiting
+        # 0, so a git silent on the listing and on that read published a middle
+        # commit's banned line through a real push of a ref update (round 8b2,
+        # 2026-09-23). The peel is a read of its own (git rev-parse --verify on
+        # <object>^{commit}), judged a whole commit name before merge-base's
+        # answer is compared with it, an answer that is none refused naming it:
+        # merge-base peels an annotated tag and answers a commit, and compared
+        # with the tag object's own name it refused a tag moved to an ancestor,
+        # re-created on its commit or replacing a lightweight tag there, with a
+        # false "not an ancestor" (the round 8 refuters, 2026-09-24; round 9a).
+        # The OR, since the ancestry alone would refuse a fast-forward of
+        # commits another remote holds. A listing that answered
         # nothing while neither fact holds is refused as unscanned naming the
         # read and the empty answer: a rev-list answering nothing with a clean
         # status published a middle commit's banned line through a real push, on
@@ -2414,15 +2453,33 @@ scan_identifiers() {
                         [ -z "$read_out" ] || agreed=1
                     fi
                     if [ "$agreed" -eq 0 ] && [ "$remote_sha" != "$zero" ] && [ "$fell_back" -eq 0 ]; then
-                        if judged_read gate="the ANCESTRY of the pushed commit over the remote commit" 0,1 "the COMMITS of $local_ref (${local_sha:0:10}) were listed as none, and whether the pushed commit is an ancestor of the remote's ${remote_sha:0:10} could not be read (git merge-base exited {rc})" -q -- git merge-base "$local_sha" "$remote_sha"; then
+                        # The commit the pushed object peels to, the one merge-base's
+                        # answer is compared with: read once here, wherever the
+                        # ancestry is asked, and judged a whole commit name (hex, as
+                        # long as the pushed object's name) before any comparison, an
+                        # answer that is none refused naming the read, so an empty peel
+                        # never agrees with an empty merge-base answer. A commit peels
+                        # to itself, so no type is keyed on.
+                        peel_commit=""; peel_whole=0
+                        if judged_read gate="the COMMIT the pushed object peels to" 0 "the COMMITS of $local_ref (${local_sha:0:10}) were listed as none, and the commit the pushed object peels to, which the ancestry is compared with, could not be read (git rev-parse --verify exited {rc})" -- git rev-parse --verify "$local_sha^{commit}"; then
+                            peel_commit=$read_out
+                            case "$peel_commit" in
+                                ''|*[!0-9a-f]*) ;;
+                                *) [ "${#peel_commit}" -ne "${#local_sha}" ] || peel_whole=1 ;;
+                            esac
+                            [ "$peel_whole" -ne 0 ] || unscanned "the COMMITS of $local_ref (${local_sha:0:10}) were listed as none, and the commit the pushed object peels to, which the ancestry is compared with, could not be read (git rev-parse --verify exited 0 and answered \"$peel_commit\", not a commit)"
+                        fi
+                        if [ "$peel_whole" -ne 0 ] && judged_read gate="the ANCESTRY of the pushed commit over the remote commit" 0,1 "the COMMITS of $local_ref (${local_sha:0:10}) were listed as none, and whether the pushed commit is an ancestor of the remote's ${remote_sha:0:10} could not be read (git merge-base exited {rc})" -q -- git merge-base "$local_sha" "$remote_sha"; then
                             if [ "$read_rc" -eq 0 ]; then
                                 # Another whole commit name is a real "not an
                                 # ancestor", the listing's refusal below; an
                                 # answer that is no whole name (empty, not hex, or
                                 # a hex run shorter than the pushed commit's
                                 # name, one cut short) is refused naming the read.
+                                # merge-base peels an annotated tag and answers a
+                                # commit, so its answer is compared with the peel.
                                 case "$read_out" in
-                                    "$local_sha") agreed=1 ;;
+                                    "$peel_commit") agreed=1 ;;
                                     *[!0-9a-f]*) unscanned "the COMMITS of $local_ref (${local_sha:0:10}) were listed as none, and whether the pushed commit is an ancestor of the remote's ${remote_sha:0:10} could not be read (git merge-base exited 0 and answered \"$read_out\", not a commit)" ;;
                                     *) [ "${#read_out}" -eq "${#local_sha}" ] || unscanned "the COMMITS of $local_ref (${local_sha:0:10}) were listed as none, and whether the pushed commit is an ancestor of the remote's ${remote_sha:0:10} could not be read (git merge-base exited 0 and answered \"$read_out\", not a commit)" ;;
                                 esac
@@ -2725,6 +2782,7 @@ scan_identifiers() {
                 echo "romp pre-push: the MESSAGE of tag $local_ref (${obj:0:10}) carries a personal identifier on line $lines" >&2
                 blocked_ids=1
                 blocked_messages=1
+                blocked_tag_messages=1
                 blocked_tags=1
             fi
             # The OBJECT field names what the tag points at, and the type read said
@@ -2796,7 +2854,15 @@ scan_identifiers() {
         # general rule, and the tag's remedy below waits the same way for a tag
         # refused on its tagger's address (until round 8b the say-so line and
         # the bullets printed beside a failed read, whose repair they could not
-        # replace; the round 7 refuters, 2026-09-23).
+        # replace; the round 7 refuters, 2026-09-23). The tag's remedy is keyed
+        # per cause, not per push: a tag refused on its message is re-created
+        # with a clean message whatever the read says, so that remedy prints
+        # whenever a tag message is refused, without the configured address
+        # while the read failed, and the tag paragraph's first sentence alone
+        # prints only for tags refused on their tagger's address alone beside a
+        # failed read (round 8b's flag set it for the whole push, so a tag
+        # refused on its message lost its remedy once another tag of the push
+        # was refused on its tagger; the round 8 refuter, 2026-09-24).
         if [ "$blocked_addresses" -ne 0 ]; then
             if [ "$chosen_unread" -ne 0 ]; then
                 echo "  The addresses this clone is configured to use could not be read (git config --get-all user.email exited $chosen_unread, refused above), so whether it chose each address named is unknown: run git config --get-all user.email yourself to see git's own error, repair that read and push again; configuring an address changes nothing until then." >&2
@@ -2812,7 +2878,9 @@ scan_identifiers() {
             echo "  A commit MESSAGE is never redacted forward: rewrite the named commit (git commit --amend for the tip, a reword rebase with git rebase -i <base> for an older one) and push again." >&2
         fi
         if [ "$blocked_tags" -ne 0 ]; then
-            if [ "$chosen_unread" -ne 0 ] && [ "$blocked_tag_addresses" -ne 0 ]; then
+            if [ "$blocked_tag_messages" -ne 0 ] && [ "$chosen_unread" -ne 0 ]; then
+                echo "  An annotated TAG's tagger and message are the tag object's own: re-create it with a clean message (git tag -f -a <name> <commit>), and push it again." >&2
+            elif [ "$blocked_tag_messages" -eq 0 ] && [ "$chosen_unread" -ne 0 ] && [ "$blocked_tag_addresses" -ne 0 ]; then
                 echo "  An annotated TAG's tagger and message are the tag object's own." >&2
             else
                 echo "  An annotated TAG's tagger and message are the tag object's own: re-create it under your configured address, with a clean message (git tag -f -a <name> <commit>), and push it again." >&2

@@ -3616,7 +3616,8 @@ empty_diff_tree_raw_c() { git_refusing 'case " $* " in *" --raw "*" -c "*) true 
 }
 
 # The listings are joined in POSIX awk over newline-for-NUL rewrites (as_lines:
-# a tr per file, and a tr piped to wc for the newline test). Before round 3g
+# a tr per file; the newline test was a tr piped to wc until round 9a, which
+# reads its records in the shell alone, H.3). Before round 3g
 # the rewrite carried no status arm and the function returned its LAST file's
 # status, so a tr that failed on an earlier file and ran on the last handed the
 # join an empty rewrite with no status to read: an empty tip listing emptied
@@ -3628,11 +3629,12 @@ empty_diff_tree_raw_c() { git_refusing 'case " $* " in *" --raw "*" -c "*) true 
 # test read a failed pipeline as a count of zero. Each test and each rewrite
 # now reads its own status and the caller names the read. The fault is a tr
 # first on the hook's PATH that refuses the Nth invocation of ONE argument
-# shape (the rewrite; the newline test; since round 6b the joins' own tr,
-# newline to NUL, for the join's fourth arm at the end of this file) and execs
-# the real tr for every other, counting in a file since each invocation is its
-# own process; the cases here refuse the rewrite and the test, and the joins'
-# tr runs through. Once per test, like
+# shape (the rewrite; the newline test's old shape, tr -cd, which no read has
+# run since round 9a; since round 6b the joins' own tr, newline to NUL, for the
+# join's fourth arm at the end of this file) and execs the real tr for every
+# other, counting in a file since each invocation is its own process; the
+# cases here refuse the rewrite, one holds that the test's old shape never
+# runs, and the joins' tr runs through. Once per test, like
 # git_refusing. Since round 5 every commit's scratch files are rewritten, a
 # deletion-only commit's too (its listing is checked against its verdicts), so
 # the count of a rewrite is the tip's two, then eight per one-parent commit
@@ -3721,16 +3723,16 @@ SHIM
     [[ "$output" != *"is text that"* ]]
 }
 
-@test "a newline test that fails (the first test tr exiting 1 under the pipe to wc) is a failed test and not a count of zero: the push is refused as unscanned, naming the tip and the test" {
+@test "a tr that refuses the newline test's old shape (tr -cd, exiting 1) changes nothing since round 9a: the test reads each record in the shell (H.3), so no tr of that shape runs and a clean commit passes with nothing printed (until round 9a this case held a failed test tr refused as a failed test, not a count of zero; the round 9a newline case is the retired tool's twin)" {
     commit_file file.txt "nothing to see" "clean"
-    sha="$(git -C "$REPO" rev-parse HEAD)"
     tr_refusing test 1
+    run _hook_in "$REPO" -c 'printf "a\\nb" | tr -cd "\\n"'
+    [[ "$output" == *"shim: tr refused (test 1)"* ]]              # the shim refuses that shape when it runs
+    echo 0 > "$TEST_DIR/tr-calls"
     run_hook
-    [ "$status" -eq 1 ]
-    [[ "$output" == *"shim: tr refused (test 1)"* ]]
-    [[ "$output" == *"the LISTINGS of the tip of refs/heads/main (${sha:0:10}) could not be rewritten for the BINARY VERDICT check (the newline test's tr or wc exited 1)"* ]]
-    [[ "$output" == *"the scan is incomplete, so the push is refused"* ]]
-    [[ "$output" != *"holds a newline"* ]]
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+    [ "$(cat "$TEST_DIR/tr-calls")" -eq 0 ]                       # the hook ran no tr of the test's shape
 }
 
 # The rewrite answering nothing with a clean status (the second class): as_lines
@@ -3743,7 +3745,7 @@ SHIM
 # each rewrite is now compared with its input's, and every count read as a
 # number first: a wc answering nothing read as a newline count of zero, the
 # count of a clean file, and passed the newline test (the round 4 refuters,
-# 2026-09-22).
+# 2026-09-22), which reads no wc since round 9a (H.3).
 tr_silent_on() {   # <marker>: a tr whose rewrite (the '\0' '\n' shape) of an input holding the marker exits 0 and writes nothing; the real tr for every other input and shape
     local real_tr
     real_tr="$(command -v tr)"
@@ -3821,7 +3823,7 @@ wc_silent() {   # a wc that reads its input and answers nothing, exit 0
     [[ "$output" != *"is text that"* ]]
 }
 
-@test "a wc that answers NOTHING (exit 0, no count) is not a newline count of zero: the push is refused as unscanned, naming the tip, the test and the empty answer, where a clean commit would otherwise pass on a test that read nothing" {
+@test "a wc that answers NOTHING (exit 0, no count) is not a count of zero: the push is refused as unscanned, naming the tip, the byte count and the empty answer, where a clean commit would otherwise pass on a count that read nothing (the newline test's wc was the one named here until round 9a, whose test reads the records in the shell: H.3)" {
     commit_file file.txt "nothing to see" "clean"
     sha="$(git -C "$REPO" rev-parse HEAD)"
     wc_silent
@@ -3830,9 +3832,10 @@ wc_silent() {   # a wc that reads its input and answers nothing, exit 0
     [ -z "$output" ]
     run_hook
     [ "$status" -eq 1 ]
-    [[ "$output" == *"the LISTINGS of the tip of refs/heads/main (${sha:0:10}) could not be rewritten for the BINARY VERDICT check (the newline test's wc answered \"\" for listing, not a count)"* ]]
+    [[ "$output" == *"the LISTINGS of the tip of refs/heads/main (${sha:0:10}) could not be rewritten for the BINARY VERDICT check (the byte count's wc answered \"\" for listing, not a count)"* ]]
     [[ "$output" == *"the scan is incomplete, so the push is refused"* ]]
     [[ "$output" != *"holds a newline"* ]]
+    [[ "$output" != *"newline test"* ]]
     [[ "$output" != *"exited"* ]]
 }
 
@@ -5430,7 +5433,7 @@ SHIM
     [ "$output" = "status 0"$'\n'"status 0" ]                 # both shapes silent
     push_ref_through_hook_with_shim refs/heads/feature
     [ "$status" -ne 0 ]
-    [[ "$output" == *"romp pre-push: the TREE of the tip of refs/heads/feature (${sha:0:10}) was listed as empty (git ls-tree -r exited 0 and printed no entry) while git cat-file -s gives its tree's size as $size bytes, so the listing answered short; the scan is incomplete, so the push is refused"* ]]
+    [[ "$output" == *"romp pre-push: the TREE of the tip of refs/heads/feature (${sha:0:10}) was listed as empty (git ls-tree -r exited 0 and printed no entry) while git cat-file -s gives its tree's size as $size bytes, so either the listing answered short or the tree holds only empty directories, which git's own index never writes; the scan is incomplete, so the push is refused"* ]]
     [[ "$output" != *"SYMLINK TARGET"* ]]                     # no link was listed, so none was read
     [[ "$output" != *"listed short or long"* ]]               # the two listings agreed on zero: the entry count refuses nothing here
     run remote_holds_ref refs/heads/feature
@@ -6044,7 +6047,7 @@ zz_planted=$(git config core.zzsynthPlanted 2>/dev/null || true)' "$HOOK" > "$P/
     [ "$status" -ne 0 ]
     [ "$output" = "the row of the EMPTY TREE name carries the end zzsynth, no known kind" ]
     # round 8c: an outside row whose short column is none with a reason, the pcount row's shape before round 8b5
-    # (a cut applied there all along); a gate= or own= row's none with a reason passes, as eight of the tree's rows show
+    # (a cut applied there all along); a gate= or own= row's none with a reason passes, as seven of the tree's rows show
     awk -F'\t' -v OFS='\t' '$1 == "outside" && $2 == "the parent count re-read from pcount, for the report" { $7 = "none: the count is read for the report alone (planted)" } { print }' "$READS_TSV" > "$P/tsv-outside-none"
     run cmp -s "$READS_TSV" "$P/tsv-outside-none"
     [ "$status" -ne 0 ]                                            # the edit landed
@@ -6218,12 +6221,12 @@ r8b2_credential_in_root_scanner_without_root() {   # the credential scan's count
     push_ref_through_hook_with_shim feature
     fired plain-listing "ls-tree -r $sha"
     [ "$status" -ne 0 ]
-    [[ "$output" == *"romp pre-push: the TREE of the tip of refs/heads/feature (${sha:0:10}) was listed as empty (git ls-tree -r exited 0 and printed no entry) while git cat-file -s gives its tree's size as "*" bytes, so the listing answered short"* ]]
+    [[ "$output" == *"romp pre-push: the TREE of the tip of refs/heads/feature (${sha:0:10}) was listed as empty (git ls-tree -r exited 0 and printed no entry) while git cat-file -s gives its tree's size as "*" bytes, so either the listing answered short or the tree holds only empty directories, which git's own index never writes"* ]]
     run remote_holds_ref refs/heads/feature
     [ "$status" -ne 0 ]
 }
 
-@test "round 8b2 table case: the SIZE of the tip's tree: a git silent on the tree's size read alone, over a tip at the EMPTY tree (the one tree whose listing is empty, so the size is asked), is refused naming the size read's non-count answer through a real push, and the remote never gets the branch" {
+@test "round 8b2 table case: the SIZE of the tip's tree: a git silent on the tree's size read alone, over a tip at the EMPTY tree (whose recursive listing is empty, so the size is asked), is refused naming the size read's non-count answer through a real push, and the remote never gets the branch" {
     add_remote
     commit_file base.txt "notes-api" "base"
     git -C "$REPO" push -q origin main
@@ -6538,14 +6541,16 @@ r8b2_credential_in_root_scanner_without_root() {   # the credential scan's count
     at_base
 }
 
-@test "round 8b2 table case: the NEWLINE COUNT of a scratch listing: a wc silent on wc -c fed by a pipe alone (the newline test's pipeline; the byte counts read a file), through a real push of a clean tip, is refused naming the non-count, and the remote stays at its base" {
+@test "round 8b2 table case, its row retired in round 9a: the newline test of a scratch listing runs no wc: a wc silent on wc -c fed by a pipe alone (the test's pipeline until round 9a; the byte counts read a file), through a real push of a clean tip, never fires, and the push passes, the remote at the tip (H.3 took the tool out of the test and its row out of the table; the round 9a newline case is the retired row's twin)" {
     clean_tip_after_base
     calls_silent_on wc newline-count '[ "${1:-}" = -c ] && [ "$#" -eq 1 ] && [ -p /dev/stdin ]'
+    run _hook_in "$REPO" -c 'printf "a\\n" | wc -c; echo "status $?"'
+    [ "$output" = "status 0" ]                                     # the shim answers nothing for that shape when it runs
+    rm -f "$TEST_DIR/calls.newline-count"
     push_main_through_hook_with_shim
-    fired newline-count "wc -c"
-    [ "$status" -ne 0 ]
-    [[ "$output" == *"romp pre-push: the LISTINGS of the tip of refs/heads/main (${sha:0:10}) could not be rewritten for the BINARY VERDICT check (the newline test's wc answered \"\" for listing, not a count)"* ]]
-    at_base
+    [ ! -e "$TEST_DIR/calls.newline-count" ]                       # the hook ran no wc on a pipe
+    [ "$status" -eq 0 ]
+    [ "$(git -C "$TEST_DIR/remote.git" rev-parse refs/heads/main)" = "$sha" ]
 }
 
 @test "round 8b2 table case: the REWRITE of a scratch listing: a tr silent on the NUL-to-newline rewrite alone, through a real push of a clean tip, is refused naming the rewrite's byte count against its input's, and the remote stays at its base" {
@@ -6559,7 +6564,7 @@ r8b2_credential_in_root_scanner_without_root() {   # the credential scan's count
     at_base
 }
 
-@test "round 8b2 table case: the BYTE COUNT of a scratch listing: a wc silent on wc -c reading a file alone (the byte counts; the newline test's wc reads a pipe), through a real push of a clean tip, is refused naming the non-count, and the remote stays at its base" {
+@test "round 8b2 table case: the BYTE COUNT of a scratch listing: a wc silent on wc -c reading a file alone (the byte counts; the newline test's wc read a pipe until round 9a), through a real push of a clean tip, is refused naming the non-count, and the remote stays at its base" {
     clean_tip_after_base
     calls_silent_on wc byte-count '[ "${1:-}" = -c ] && [ "$#" -eq 1 ] && [ -f /dev/stdin ]'
     push_main_through_hook_with_shim
@@ -8110,5 +8115,254 @@ r8b5_eleven_parent_merge() {   # a base on the remote (BASE); ten sides from it,
     [[ "$output" != *"the previous version of the file"* ]]
     [[ "$output" == *"Where a line names no attribute, a configuration key can be what makes git call the file binary"* ]]
     [[ "$output" != *"Where a line names the previous version's bytes as the cause"* ]]
+    at_base
+}
+
+# ── round 9a (the round 8 rulings' B, D, E and H.3): the peel beside the ancestry, a tree of empty ──
+# directories, the tag remedy per cause, and the newline test without a tool.
+# B: merge-base peels an annotated tag and answers a commit, and round 8b2 compared that answer with the
+# pushed object's own name, so an annotated tag moved back to an ancestor, re-created on its commit or
+# replacing a lightweight tag there was refused with a false "not an ancestor" line whenever no
+# remote-tracking ref contained the commit (the round 8 refuters, 2026-09-24). The answer is compared
+# with the commit the pushed object peels to, a read of its own (rev-parse --verify on <object>^{commit})
+# judged a whole name first, so an empty peel never agrees with an empty merge-base answer: the three
+# tag pushes pass, the new read has its table case and short case, and a git silent on the listing, the
+# peel and merge-base at once is refused naming the peel. D: the recursive listing omits tree entries,
+# so a tip whose tree holds only empty directories lists nothing while its size is not 0; the refusal
+# stays, a disclosed residual, and its line names both causes. E: the tag remedy is keyed per cause,
+# not per push. H.3: the newline test reads its records in the shell, so no tool stands between the
+# listing and the verdict.
+@test "round 9a case: an annotated TAG moved back to an ancestor of its commit and force-pushed, over a remote whose commits no remote-tracking ref of this clone contains, passes through a real push and the remote holds the new tag: merge-base's answer is compared with the commit the tag peels to (cad898dd2 compared it with the tag object's own name and refused with a false not-an-ancestor line)" {
+    add_remote
+    commit_file base.txt "notes-api" "base"
+    c1="$(git -C "$REPO" rev-parse HEAD)"
+    commit_file second.txt "nothing to see" "second"
+    c2="$(git -C "$REPO" rev-parse HEAD)"
+    git -C "$REPO" tag -a v1 -m "release one" "$c2"
+    git -C "$REPO" push -q origin main refs/tags/v1
+    git -C "$REPO" update-ref -d refs/remotes/origin/main                  # no remote-tracking ref contains either commit
+    old="$(git -C "$REPO" rev-parse refs/tags/v1)"
+    git -C "$REPO" tag -f -a v1 -m "release one, moved back" "$c1" > /dev/null
+    new="$(git -C "$REPO" rev-parse refs/tags/v1)"
+    run _hook_in "$REPO" -c 'git rev-list "$1" --not --remotes "$2"' _ "$new" "$old"
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]                                                        # the listing is empty, so the ancestry is asked
+    [ "$(git -C "$REPO" merge-base "$new" "$old")" = "$c1" ]               # merge-base answers the commit, not the tag object
+    mkdir -p "$TEST_DIR/shim"
+    push_ref_through_hook_with_shim +refs/tags/v1
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"romp pre-push:"* ]]
+    [ "$(git -C "$TEST_DIR/remote.git" rev-parse refs/tags/v1)" = "$new" ]
+}
+
+@test "round 9a case: an annotated TAG re-created on its own commit with a corrected message and force-pushed, over a remote whose commit no remote-tracking ref of this clone contains, passes through a real push and the remote holds the new tag (cad898dd2 refused it with a false not-an-ancestor line)" {
+    add_remote
+    commit_file base.txt "notes-api" "base"
+    c="$(git -C "$REPO" rev-parse HEAD)"
+    git -C "$REPO" tag -a v1 -m "release one"
+    git -C "$REPO" push -q origin main refs/tags/v1
+    git -C "$REPO" update-ref -d refs/remotes/origin/main
+    old="$(git -C "$REPO" rev-parse refs/tags/v1)"
+    git -C "$REPO" tag -f -a v1 -m "release one, the message corrected" > /dev/null
+    new="$(git -C "$REPO" rev-parse refs/tags/v1)"
+    [ "$new" != "$old" ]
+    [ "$(git -C "$REPO" rev-parse "$new^{commit}")" = "$c" ]                # the same commit under a new tag object
+    mkdir -p "$TEST_DIR/shim"
+    push_ref_through_hook_with_shim +refs/tags/v1
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"romp pre-push:"* ]]
+    [ "$(git -C "$TEST_DIR/remote.git" rev-parse refs/tags/v1)" = "$new" ]
+}
+
+@test "round 9a case: a lightweight TAG replaced by an annotated tag at the same commit and force-pushed, over a remote whose commit no remote-tracking ref of this clone contains, passes through a real push and the remote holds the annotated tag (cad898dd2 refused it with a false not-an-ancestor line)" {
+    add_remote
+    commit_file base.txt "notes-api" "base"
+    c="$(git -C "$REPO" rev-parse HEAD)"
+    git -C "$REPO" tag v1
+    git -C "$REPO" push -q origin main refs/tags/v1
+    git -C "$REPO" update-ref -d refs/remotes/origin/main
+    [ "$(git -C "$TEST_DIR/remote.git" rev-parse refs/tags/v1)" = "$c" ]   # the remote's tag names the commit itself
+    git -C "$REPO" tag -f -a v1 -m "release one" > /dev/null
+    new="$(git -C "$REPO" rev-parse refs/tags/v1)"
+    [ "$(git -C "$REPO" cat-file -t "$new")" = tag ]
+    mkdir -p "$TEST_DIR/shim"
+    push_ref_through_hook_with_shim +refs/tags/v1
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"romp pre-push:"* ]]
+    [ "$(git -C "$TEST_DIR/remote.git" rev-parse refs/tags/v1)" = "$new" ]
+}
+
+@test "round 9a table case: the COMMIT the pushed object peels to: a git silent on the peel read alone (rev-parse --verify on the pushed object's ^{commit}), over a rewind no remote-tracking ref covers (a push the ancestry is asked for), is refused naming the peel read's empty answer through a real push, and the remote stays where it was" {
+    add_remote
+    commit_file base.txt "notes-api" "base"
+    c1="$(git -C "$REPO" rev-parse HEAD)"
+    commit_file second.txt "nothing to see" "second"
+    git -C "$REPO" push -q origin main
+    c2="$(git -C "$REPO" rev-parse HEAD)"
+    git -C "$REPO" update-ref -d refs/remotes/origin/main                  # no remote-tracking ref contains the rewound commit
+    git -C "$REPO" reset -q --hard "$c1"
+    calls_silent_on git peel '[ "${1:-}" = rev-parse ] && [ "${2:-}" = --verify ]'
+    push_refs_through_hook_with_shim +main
+    fired peel "rev-parse --verify $c1^{commit}"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: the COMMITS of refs/heads/main (${c1:0:10}) were listed as none, and the commit the pushed object peels to, which the ancestry is compared with, could not be read (git rev-parse --verify exited 0 and answered \"\", not a commit)"* ]]
+    [ "$(git -C "$TEST_DIR/remote.git" rev-parse refs/heads/main)" = "$c2" ]
+}
+
+@test "round 9a short case: the COMMIT the pushed object peels to: a git whose peel read answers ten hex digits of the commit (exit 0), over a rewind no remote-tracking ref covers, is refused naming the read's cut answer through a real push: the control rewind passes, and the remote stays where it was" {
+    add_remote
+    commit_file base.txt "notes-api" "base"
+    c1="$(git -C "$REPO" rev-parse HEAD)"
+    commit_file second.txt "nothing to see" "second"
+    git -C "$REPO" push -q origin main
+    c2="$(git -C "$REPO" rev-parse HEAD)"
+    git -C "$REPO" update-ref -d refs/remotes/origin/main
+    git -C "$REPO" reset -q --hard "$c1"
+    mkdir -p "$TEST_DIR/shim"
+    push_refs_through_hook_with_shim +main                                 # the control: the whole peel agrees with merge-base's answer
+    [ "$status" -eq 0 ]
+    [ "$(git -C "$TEST_DIR/remote.git" rev-parse refs/heads/main)" = "$c1" ]
+    git -C "$TEST_DIR/remote.git" update-ref refs/heads/main "$c2"
+    git -C "$REPO" update-ref -d refs/remotes/origin/main                 # the control's push set it again
+    calls_short_on git peel '[ "${1:-}" = rev-parse ] && [ "${2:-}" = --verify ]' bytes:10
+    push_refs_through_hook_with_shim +main
+    fired_short peel "rev-parse --verify $c1^{commit}"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: the COMMITS of refs/heads/main (${c1:0:10}) were listed as none, and the commit the pushed object peels to, which the ancestry is compared with, could not be read (git rev-parse --verify exited 0 and answered \"${c1:0:10}\", not a commit)"* ]]
+    [ "$(git -C "$TEST_DIR/remote.git" rev-parse refs/heads/main)" = "$c2" ]
+}
+
+@test "round 9a closure: the COMMIT the pushed object peels to beside a silent ancestry: a git silent on the range listing, the peel read and merge-base at once, through a real push of a ref update whose middle commit adds a banned line, is refused naming the peel read's empty answer, and the remote stays at its base (an empty peel compared with an empty merge-base answer would agree, and the leak would publish)" {
+    add_remote
+    commit_file base.txt "notes-api" "base"
+    git -C "$REPO" push -q origin main
+    BASE="$(git -C "$REPO" rev-parse HEAD)"
+    commit_file leak.txt "seen on TESTHOST" "leak"
+    remove_file leak.txt "remove it"
+    sha="$(git -C "$REPO" rev-parse HEAD)"
+    calls_silent_on git ancestry '{ [ "${1:-}" = rev-list ] && [ "${3:-}" = --not ]; } || { [ "${1:-}" = rev-parse ] && [ "${2:-}" = --verify ]; } || [ "${1:-}" = merge-base ]'
+    push_main_through_hook_with_shim
+    fired ancestry "rev-list $sha --not --remotes"
+    fired ancestry "rev-parse --verify $sha^{commit}"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: the COMMITS of refs/heads/main (${sha:0:10}) were listed as none, and the commit the pushed object peels to, which the ancestry is compared with, could not be read (git rev-parse --verify exited 0 and answered \"\", not a commit)"* ]]
+    at_base
+}
+
+@test "round 9a case: the SIZE of the tip's tree over a tip whose tree holds one EMPTY directory alone (a tree built with git mktree and git commit-tree, fsck-clean, which git's own index never writes): the recursive listing is empty while the size is not 0, so a real push is refused naming both causes, a listing that answered short or a tree of empty directories alone (the disclosed residual), and the remote stays at its base (cad898dd2's line named the short listing alone)" {
+    add_remote
+    commit_file base.txt "notes-api" "base"
+    git -C "$REPO" push -q origin main
+    BASE="$(git -C "$REPO" rev-parse HEAD)"
+    empty="$(git -C "$REPO" mktree < /dev/null)"
+    tree="$(printf '040000 tree %s\tempty\n' "$empty" | git -C "$REPO" mktree)"
+    sha="$(git -C "$REPO" commit-tree "$tree" -p "$BASE" -m "a tree holding one empty directory")"
+    git -C "$REPO" update-ref refs/heads/main "$sha"
+    run git -C "$REPO" fsck --no-progress --no-dangling
+    [ "$status" -eq 0 ]
+    [ -z "$(git -C "$REPO" ls-tree -r "$sha")" ]                            # the recursive listing omits the tree entry
+    size="$(git -C "$REPO" cat-file -s "$sha^{tree}")"
+    [ "$size" -gt 0 ]
+    mkdir -p "$TEST_DIR/shim"
+    push_main_through_hook_with_shim
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: the TREE of the tip of refs/heads/main (${sha:0:10}) was listed as empty (git ls-tree -r exited 0 and printed no entry) while git cat-file -s gives its tree's size as $size bytes, so either the listing answered short or the tree holds only empty directories, which git's own index never writes; the scan is incomplete, so the push is refused"* ]]
+    at_base
+}
+
+@test "round 9a case: two annotated TAGS beside the failed chosen-addresses read, one refused on its tagger's address and one on its message alone, through a real push: the message tag keeps its remedy, re-create it with a clean message, without the configured address the failed read leaves unknown, and the remote gets neither tag (cad898dd2 keyed the tagger's flag on the whole push and withheld it)" {
+    add_remote
+    commit_file f.txt "plain" "base"
+    GIT_COMMITTER_EMAIL=dev@zzsynthuser.example git -C "$REPO" tag -a v1 -m "a release"   # the tagger is the committer identity
+    git -C "$REPO" tag -a v2 -m "release two" -m "cut on TESTHOST"                        # the hermetic tagger, a banned message
+    fail_config_user_email
+    push_refs_through_hook_with_shim refs/tags/v1 refs/tags/v2
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: tag refs/tags/v1 ("*") is tagged as <dev@zzsynthuser.example>: whether this clone is configured to use that address could not be read"* ]]
+    [[ "$output" == *"romp pre-push: the MESSAGE of tag refs/tags/v2 ("*") carries a personal identifier on line "* ]]
+    [[ "$output" == *"  An annotated TAG's tagger and message are the tag object's own: re-create it with a clean message (git tag -f -a <name> <commit>), and push it again."* ]]
+    [[ "$output" != *"re-create it under your configured address"* ]]
+    run remote_holds_ref refs/tags/v1
+    [ "$status" -ne 0 ]
+    run remote_holds_ref refs/tags/v2
+    [ "$status" -ne 0 ]
+}
+
+@test "round 9a case: an annotated TAG under the hermetic tagger whose message names the host, beside the failed chosen-addresses read, is refused on its message alone through a real push, and its remedy is the re-create line without the configured address, which the failed read leaves unknown: the remote never gets the tag (cad898dd2 printed the configured-address form)" {
+    add_remote
+    commit_file f.txt "plain" "base"
+    git -C "$REPO" tag -a v2 -m "release two" -m "cut on TESTHOST"
+    fail_config_user_email
+    push_ref_through_hook_with_shim refs/tags/v2
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: the ADDRESSES this clone is configured to use could not be read (git config --get-all user.email exited 128)"* ]]
+    [[ "$output" == *"romp pre-push: the MESSAGE of tag refs/tags/v2 ("*") carries a personal identifier on line "* ]]
+    [[ "$output" != *"is tagged as <"* ]]                                  # the tagger's address is not refused
+    [[ "$output" == *"  An annotated TAG's tagger and message are the tag object's own: re-create it with a clean message (git tag -f -a <name> <commit>), and push it again."* ]]
+    [[ "$output" != *"re-create it under your configured address"* ]]
+    run remote_holds_ref refs/tags/v2
+    [ "$status" -ne 0 ]
+}
+
+@test "round 9a case: an annotated TAG refused on both counts, its tagger's address and its message, beside the failed chosen-addresses read, through a real push: the re-create line prints without the configured address, in place of the tag paragraph's first sentence alone, and the remote never gets the tag (cad898dd2 printed the first sentence alone)" {
+    add_remote
+    commit_file f.txt "plain" "base"
+    GIT_COMMITTER_EMAIL=dev@zzsynthuser.example git -C "$REPO" tag -a v1 -m "a release" -m "cut on TESTHOST"
+    fail_config_user_email
+    push_ref_through_hook_with_shim refs/tags/v1
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: tag refs/tags/v1 ("*") is tagged as <dev@zzsynthuser.example>: whether this clone is configured to use that address could not be read"* ]]
+    [[ "$output" == *"romp pre-push: the MESSAGE of tag refs/tags/v1 ("*") carries a personal identifier on line "* ]]
+    [[ "$output" == *"  An annotated TAG's tagger and message are the tag object's own: re-create it with a clean message (git tag -f -a <name> <commit>), and push it again."* ]]
+    [[ "$output" != *"  An annotated TAG's tagger and message are the tag object's own."$'\n'* ]]
+    [[ "$output" != *"re-create it under your configured address"* ]]
+    run remote_holds_ref refs/tags/v1
+    [ "$status" -ne 0 ]
+}
+
+@test "round 9a case: an annotated TAG refused on its tagger's address alone, with the chosen-addresses read whole, keeps the full remedy line, re-create it under your configured address with a clean message, through a real push, and the remote never gets the tag (a remedy that printed the tag paragraph's first sentence alone for it would be red here)" {
+    add_remote
+    commit_file f.txt "plain" "base"
+    GIT_COMMITTER_EMAIL=dev@zzsynthuser.example git -C "$REPO" tag -a v1 -m "a release"
+    mkdir -p "$TEST_DIR/shim"
+    push_ref_through_hook_with_shim refs/tags/v1
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: tag refs/tags/v1 ("*") is tagged as <dev@zzsynthuser.example>, an address this clone is not configured to use, whose domain carries a personal identifier"* ]]
+    [[ "$output" != *"could not be read"* ]]
+    [[ "$output" == *"  An annotated TAG's tagger and message are the tag object's own: re-create it under your configured address, with a clean message (git tag -f -a <name> <commit>), and push it again."* ]]
+    run remote_holds_ref refs/tags/v1
+    [ "$status" -ne 0 ]
+}
+
+@test "round 9a case: the newline test reads its records in the shell: a path holding ONE newline, pushed for real under a tr silent on the old test's shape (tr -cd) and again under a tr cutting that answer by one byte, is refused as holding a newline, that line leading, and the remote stays at its base each time (cad898dd2's tr -cd piped to wc counted 0 under both shims, the one passing answer, and never printed the line)" {
+    local l first
+    add_remote
+    commit_file base.txt "notes-api" "base"
+    git -C "$REPO" push -q origin main
+    BASE="$(git -C "$REPO" rev-parse HEAD)"
+    printf 'x\n' > "$REPO/"$'odd\nname.txt'
+    git -C "$REPO" add -- $'odd\nname.txt'
+    git -C "$REPO" commit -qm "a path holding one newline"
+    sha="$(git -C "$REPO" rev-parse HEAD)"
+    calls_silent_on tr newline-test '[ "${1:-}" = -cd ]'
+    push_main_through_hook_with_shim
+    [ "$status" -ne 0 ]
+    first=""; for l in "${lines[@]}"; do case "$l" in "romp pre-push: "*) first=$l; break ;; esac; done
+    [ "$first" = "romp pre-push: a path at the tip of refs/heads/main (${sha:0:10}) holds a newline, which the BINARY VERDICT check cannot judge; the scan is incomplete, so the push is refused" ]
+    at_base
+    calls_short_on tr newline-test '[ "${1:-}" = -cd ]' less:1
+    push_main_through_hook_with_shim
+    [ "$status" -ne 0 ]
+    first=""; for l in "${lines[@]}"; do case "$l" in "romp pre-push: "*) first=$l; break ;; esac; done
+    [ "$first" = "romp pre-push: a path at the tip of refs/heads/main (${sha:0:10}) holds a newline, which the BINARY VERDICT check cannot judge; the scan is incomplete, so the push is refused" ]
+    at_base
+}
+
+@test "round 9a case: a scratch listing the newline test cannot OPEN (a git whose read list of the tip, grep -l -z, takes the read bit off its output file after writing it) is refused naming the test and the file, through a real push of a clean tip, and the remote stays at its base: a failed open is not a listing with no newline (the old pipeline's tr refused it by its status; without this arm the rewrite's own open fails before its read runs, nothing is printed for the tip, and the push passes)" {
+    clean_tip_after_base
+    git_shim 'if [ "${1:-}" = grep ] && [ "${5:-}" = -z ]; then "$real_git" "$@"; s=$?; chmod 000 /dev/stdout; exit "$s"; fi'   # the read list alone: the content grep carries no -z
+    push_main_through_hook_with_shim
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: the LISTINGS of the tip of refs/heads/main (${sha:0:10}) could not be rewritten for the BINARY VERDICT check (the newline test could not open read); the scan is incomplete, so the push is refused"* ]]
     at_base
 }
