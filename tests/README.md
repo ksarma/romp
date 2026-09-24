@@ -202,11 +202,18 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   `python -m tests.test_hermetic_kernel_postal --census` prints the counts by name
   and shape, a total line per name and the split between `test_*.py` files and
   the others, and the number of files it parsed, which the census pin compares
-  with an `os.walk` of the tree by equality; the census reads each file through
-  `tests/parse_cache.py` (`source_and_tree`, which freezes nothing) and derives
-  once per set of paths per run of the module, which holds the derivation and
-  drops it in its `tearDownModule`. The module changes no collector state: its
-  `tearDownModule` asserts that `gc.get_freeze_count()` is not above what its
+  with an `os.walk` of the tree by equality; the census parses each file itself,
+  once per run of the module, keeps the trees of the files its import resolver
+  may read and drops every other tree after its walk, and derives once per set of
+  paths, and the module holds what it keeps in one object that its
+  `tearDownModule` releases. It does not use `tests/parse_cache.py`'s shared
+  parse: with the trees kept in that cache, every full collection after the module
+  walked them, and the perf-snapshot readers that run after it in the serial order
+  slowed past main's spread; holding every tree until the module's end left them
+  slower than main too (the census's docstring gives the measurement). The module
+  changes no collector state: its `tearDownModule` asserts that no file was parsed
+  twice in its run, that the released object is gone (a weak reference) and that
+  `gc.get_freeze_count()` is not above what its
   `setUpModule` read, since `parse_cache.derived()` freezes the heap and every
   perf-snapshot reader after the module then pays per read. Its docstring says
   which figures are compared and which are not. The per-test half,

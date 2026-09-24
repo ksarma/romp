@@ -82,12 +82,14 @@ every Python process of the run: none dials the fixed port, and no ensure child 
 The census pin passes one floor write of a leak name, upstream's client-only "1" (FLOOR_LEAK_WRITES), and the tunnels
 probe compares client-only with the value the floor modules left. `python -m tests.test_hermetic_kernel_postal
 --census` prints the counts by name and shape (fork PR #871's by-product figures, derived by ast), with the parsed
-module count, a total line per name and the split between test_*.py files and the others; the census reads each file
-through tests/parse_cache.py (source_and_tree, which freezes nothing) and derives once per path tuple per run of this
-module, the derivation held by the module and dropped by its tearDownModule, and the module changes no collector state
-(the reviewer's ruling of 2026-09-24 on round 2 of fork PR #894: parse_cache.derived() freezes the heap, and every
-perf-snapshot reader after this module in CI's serial order then pays per read); module_level_env_census's docstring
-says which of its figures are compared and which are not (the reviewer's ruling of round 1 on fork PR #894). Beside it,
+module count, a total line per name and the split between test_*.py files and the others; the census parses each file
+itself, once per run of this module, keeps the trees of the files its resolver may read and drops each other tree after
+its walk, and derives once per path tuple, what it keeps held by one object the module releases in its tearDownModule,
+and the module changes no collector state (the reviewer's rulings of
+2026-09-24 on round 2 of fork PR #894: parse_cache.derived() freezes the heap, and every perf-snapshot reader after this
+module in CI's serial order then pays per read; the census's own parse rather than parse_cache's shared one, by the
+measurement module_level_env_census's docstring gives); that docstring also says which of its figures are compared and
+which are not (the reviewer's ruling of round 1 on fork PR #894). Beside it,
 tests/conftest.py's run-end process check makes a run red that leaves any process holding its temp root
 (tests/test_run_end_leaked_processes.py). Every kernel a module loads in-process gets a dead BUS_PORT for each test,
 and every postal service loaded in-process a dead client BASE (conftest's _dead_bus_port: with ROMP_POSTAL_PORT popped,
@@ -125,12 +127,13 @@ import sys
 import tempfile
 import textwrap
 import unittest
+import weakref
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 if __package__:                        # under pytest tests/ is a package: THE SAME parse_cache module object every census in
-    from . import parse_cache as PC    # the process shares (one parse per file; its docstring); its derived() is not used here
-else:                                  # `python3 tests/test_hermetic_kernel_postal.py --census`: a script, the module by name
-    if HERE not in sys.path:
+    from . import parse_cache as PC    # the process shares; this module reads its singleton check alone, neither its parse
+else:                                  # nor its derived() (module_level_env_census's docstring says why); as a script
+    if HERE not in sys.path:           # (`python3 tests/test_hermetic_kernel_postal.py --census`) it imports the module by name
         sys.path.insert(0, HERE)
     import parse_cache as PC           # noqa: E402
 sys.path.insert(0, HERE)
@@ -1002,8 +1005,126 @@ _Module = collections.namedtuple("_Module", "where tree names defs classes impor
 #   directory in the tests of the scan itself) and ROLES, {id(node): role} for each bare name or attribute Python calls
 #   where it stands (_call_roles), a side table keyed by id(node) since a parsed tree is read-only for every consumer
 
-_MODULE_CACHE = {}     # (path, root) -> (tree, _Module): the helper modules the resolver reads, each tree parse_cache's own;
-#   dropped with the census's derivations by tearDownModule (_CENSUS_HELD, the one owner's other slot)
+class _Census(dict):
+    """Everything the census holds between its reads in one run of this module, as ONE object that takes a weak reference
+    (a plain dict cannot), so tearDownModule can read that its release freed it: "trees", realpath -> the tree of each
+    file the census parsed itself and holds (_own_tree: every file the resolver reads, and every file the census loop
+    walks that the resolver may read later, _resolver_targets; the loop's other trees are dropped after their walk);
+    "modules", (path, root) -> the _Module the resolver built over one of those trees (_module_at); "derivations", path
+    tuple -> what _census_build returned for it (_census_derivation). _HELD is its one owner. No test keeps a reference
+    of its own: each reads through _held() and keeps what it gets as a local."""
+    __slots__ = ("__weakref__",)
+
+
+_HELD = []
+#   THE ONE OWNER (the reviewer's rulings of 2026-09-24 on round 2 of fork PR #894): [the _Census] from the first census
+#   read in this module's run until tearDownModule empties it, which frees the _Census, its trees, records and derivations
+#   by reference count (none of them holds a cycle; tearDownModule's weak reference pins the _Census itself). A module
+#   slot rather than a class attribute: the class's tests land on several xdist workers, and a build in setUpClass would
+#   make each worker that runs any of its tests derive the whole tree; the first read builds instead.
+_OWN_PARSES = collections.Counter()
+#   realpath -> the number of times _own_tree parsed the file in this module's run, zeroed by setUpModule: the parse-once
+#   pins read it (red under a second parse of a file in the run)
+
+
+def _held():
+    """The _Census _HELD holds, made on the first read of this module's run."""
+    if not _HELD:
+        _HELD.append(_Census(trees={}, modules={}, derivations={}))
+    return _HELD[0]
+
+
+def _own_tree(path, rel=None, hold=True):
+    """The tree of the file at `path`, parsed by the census itself, never through tests/parse_cache.py (the exception to
+    that module's one-cache rule, for the measured reason module_level_env_census's docstring gives): a tree the _Census
+    holds ("trees") is served as it is; otherwise the file is parsed, counted in _OWN_PARSES, and, when `hold`, held in
+    the _Census until tearDownModule's release, so the census loop and the resolver read one tree per file. The census
+    loop passes `hold` False for a file under tests/ that the resolver cannot read later (_resolver_targets), and drops
+    that tree after its walk; it holds a file outside tests/ (a test's synthetic file, small, which the test may census
+    again under another path tuple), and the resolver always holds. A file parsed unheld and then read again would be
+    parsed a second time, which the parse-once pins red naming it. `rel` is the filename the tree carries, else `path`.
+    A file that does not parse, or is not UTF-8, raises as ast.parse or the decode does, and nothing is held. READ-ONLY
+    all the same: no attribute is written on a node (the parser shares its singleton nodes, a Load or an operator, with
+    every tree in the process) and no node is copied; per-node data lives in side tables keyed by id(node) (_Module's
+    ROLES). The holder never re-reads a file: one rewritten after its parse in the same run is served its first tree (no
+    caller rewrites one; each plant is a fresh temporary directory)."""
+    real = os.path.realpath(path)
+    trees = _held()["trees"]
+    tree = trees.get(real)
+    if tree is None:
+        with open(real, encoding="utf-8") as f:
+            text = f.read()
+        _OWN_PARSES[real] += 1
+        tree = ast.parse(text, filename=rel or path)
+        if hold:
+            trees[real] = tree
+    return tree
+
+
+_IMPORT_WORD = re.compile(r"\bimport\b")
+_IMPORT_PAREN = re.compile(r"\bimport\s*\(")
+_IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+
+
+def _import_statement_words(text):
+    """Every identifier on each line of `text` that holds the word `import`, backslash continuations joined, and, where
+    a parenthesis follows the word (`from M import (`), on every line up to the one that closes it (a comment's
+    parentheses not counted): a superset of the module and the names of every import statement in the file, since each
+    has the word, its module before the word on the same logical line and its names after it on that line or in that
+    list. It reads the text, not a tree (the census loop decides from it which trees to keep before it parses any), so a
+    docstring, a comment or a string with the word adds words too, the safe side (a tree kept that nothing reads). It
+    does not see an import spelled without the keyword (importlib.import_module, __import__), which the resolver does
+    not follow either."""
+    lines = text.replace("\\\n", " ").split("\n")       # a text-mode read has already turned \r\n and \r into \n
+    chunks, i = [], 0
+    while i < len(lines):       # loop-ok: bounded by the text's lines
+        line = lines[i]
+        i += 1
+        if "import" not in line or not _IMPORT_WORD.search(line):
+            continue
+        chunks.append(line)
+        paren = _IMPORT_PAREN.search(line)
+        if paren:
+            code = line[paren.end() - 1:].split("#", 1)[0]
+            depth = code.count("(") - code.count(")")
+            while depth > 0 and i < len(lines):       # loop-ok: bounded by the text's lines
+                code = lines[i].split("#", 1)[0]
+                chunks.append(lines[i])
+                i += 1
+                depth += code.count("(") - code.count(")")
+    return set(_IDENTIFIER.findall("\n".join(chunks)))
+
+
+def _under_tests(path):
+    """True for a path under tests/ (this module's directory), read as given, before any symlink is followed."""
+    return os.path.abspath(path).startswith(HERE + os.sep)
+
+
+def _resolver_targets(paths):
+    """The realpaths of the files among `paths` that the resolver may read during a census build over them, whose trees
+    the census loop therefore holds (_own_tree) where it drops every other tree after its walk (the reviewer's third
+    ruling of 2026-09-24 on round 2 of fork PR #894: the test files' trees dropped after their walk, the files the
+    resolver reads held to teardown, and no file parsed twice in the module's run). The census resolves every import
+    against tests/ (_module_level_env_write_records' default root), so the resolver reads only files under tests/, each
+    named by an import statement of a file under tests/ or of a file handed in: a file under tests/ is a target when its
+    name without .py (a package's __init__.py: its directory's name) is among the words of those files' import
+    statements (_import_statement_words, a superset read from the text). A census over no file under tests/ has no
+    target and reads no text. A file the resolver reads that this missed is parsed a second time, which the parse-once
+    pins red naming it."""
+    inside = [p for p in paths if _under_tests(p)]
+    if not inside:
+        return frozenset()
+    words = set()
+    for p in sorted(set(_tests_tree_walk()) | set(paths)):
+        with open(p, encoding="utf-8", errors="replace") as f:
+            words |= _import_statement_words(f.read())
+    out = set()
+    for p in inside:
+        base = os.path.basename(p)
+        stem = os.path.basename(os.path.dirname(os.path.abspath(p))) if base == "__init__.py" else base[:-3]
+        if stem in words:
+            out.add(os.path.realpath(p))
+    return frozenset(out)
 
 
 def _tests_module_path(modname, root, level=0):
@@ -1095,17 +1216,15 @@ def _module_record(tree, where, root):
 
 
 def _module_at(path, root):
-    """The _Module for the file `path`, its tree read through tests/parse_cache.py (source_and_tree: one parse per file per
-    process, shared with the census loop and every other census in the process, re-parsed when the file changes) and the
-    record built once per tree the cache hands back, so a changed file, which the cache parses anew, gets a new record.
-    The tree is read-only here as everywhere (the cache's contract): _module_record keeps its per-node data in side tables
-    keyed by id(node)."""
-    tree = PC.source_and_tree(path)[1]
-    hit = _MODULE_CACHE.get((path, root))
-    if hit is None or hit[0] is not tree:
-        hit = (tree, _module_record(tree, os.path.relpath(path, root), root))
-        _MODULE_CACHE[(path, root)] = hit
-    return hit[1]
+    """The _Module for the file `path`, built once per (path, root) in this module's run over the census's own tree of the
+    file (_own_tree: the tree the census loop reads for the same file, parsed once in the run) and held in the _Census
+    ("modules") until tearDownModule's release. The tree is read-only here as everywhere: _module_record keeps its
+    per-node data in side tables keyed by id(node)."""
+    modules = _held()["modules"]
+    hit = modules.get((path, root))
+    if hit is None:
+        hit = modules[(path, root)] = _module_record(_own_tree(path), os.path.relpath(path, root), root)
+    return hit
 
 
 def _dotted(node):
@@ -1566,16 +1685,6 @@ def _module_level_records(tree, module, root=None):
     return [(w.key, _record(module, w, nested)) for w, nested in _module_level_env_write_records(tree, module, root)]
 
 
-_CENSUS_HELD = {}
-#   THE ONE OWNER of the census's derivations (the reviewer's ruling of 2026-09-24 on round 2 of fork PR #894, which
-#   superseded round 1's parse_cache.derived shape): path tuple -> what _census_build returned for it, filled by the first
-#   read in this module's run (_census_derivation) and dropped by tearDownModule, with _MODULE_CACHE, the resolver's
-#   records of the helper modules the build read, beside it. No test keeps a reference of its own (each reads through
-#   _census_derivation and holds what it gets as a local), and neither slot's contents holds a reference cycle, so the
-#   drop frees them by reference count with no collection (a measurement, not a pin: the reviewer's ruling asks for one
-#   behavioural pin, the freeze count). A module slot rather than a class attribute: the class's tests land on several
-#   xdist workers, and a build in setUpClass would make each worker that runs any of its tests derive the whole tree; the
-#   first read builds instead.
 _CENSUS_BUILDS = collections.Counter()
 #   path tuple -> the number of times _census_build ran for it in this module's run, counted by the build itself and
 #   zeroed by setUpModule (under xdist a worker can set the module up more than once, each run dropping the held
@@ -1601,19 +1710,21 @@ def _walk_unit(tree, rel, walks):
 def _census_build(paths):
     """THE DERIVATION behind module_level_env_census, run once per path tuple per run of this module (_census_derivation
     holds what it returns): (parsed, {name: {shape: count}}, {name: (_Record, ...)}, {module: walks}), `parsed` the
-    modules (relative to tests/) that parsed, in order. Each file is read through tests/parse_cache.py (source_and_tree:
-    one parse per file per process, shared with every census in the process; the tree is read-only here, the cache's
-    contract) and is added to `parsed` inside the loop once it has parsed, so a path the loop skipped shows as a count
-    short of the population (the census pin compares len(parsed) with the os.walk population by equality); a file that
-    does not parse fails the census naming it; each parsed file is walked through _walk_unit, whose count per file the
-    census pin holds at 1. THE SINGLETON CHECK (tests/parse_cache.py's check_singletons, which parse_cache.derived ran
-    around the build before the reviewer's ruling of 2026-09-24 took derived() out of this module): before the build (a
-    writer that ran earlier; the build neither runs nor counts) and after it, on the returning road and on the raising
-    road (the build itself wrote on a node the parser shares with every tree: the build is counted and nothing is held,
-    so the next read builds again; a raising build's exception is the AssertionError's __cause__ when the singletons carry
-    attributes, else it propagates as it was). No collector state is touched: no gc.freeze, gc.disable or gc.collect here
-    or anywhere in the module (the same ruling; the freeze is process-global, and the other two walk every tracked
-    object). What the build returns holds only strings, numbers, tuples, dicts and _Record tuples, no node and no cycle."""
+    modules (relative to tests/) that parsed, in order. Each file is parsed by the census itself (_own_tree: once in
+    this module's run, never through tests/parse_cache.py; the tree is read-only here), its tree held by the one owner
+    until tearDownModule when the resolver may read the file later (_resolver_targets) or the file lies outside tests/,
+    and dropped after its walk otherwise, and it is added to `parsed` inside the loop once it has parsed, so a path the
+    loop skipped shows as a count short of the population (the census pin compares len(parsed) with the os.walk
+    population by equality); a file that does not parse fails the census naming it; each parsed file is walked through
+    _walk_unit, whose count per file the census pin holds at 1. THE SINGLETON CHECK (tests/parse_cache.py's
+    check_singletons, which parse_cache.derived ran around the build before the reviewer's ruling of 2026-09-24 took
+    derived() out of this module): before the build (a writer that ran earlier; the build neither runs nor counts) and
+    after it, on the returning road and on the raising road (the build itself wrote on a node the parser shares with
+    every tree: the build is counted and nothing is held, so the next read builds again; a raising build's exception is
+    the AssertionError's __cause__ when the singletons carry attributes, else it propagates as it was). No collector
+    state is touched: no gc.freeze, gc.disable or gc.collect here or anywhere in the module (the same ruling; the freeze
+    is process-global, and the other two walk every tracked object). What the build returns holds only strings, numbers,
+    tuples, dicts and _Record tuples, no node and no cycle."""
     key = tuple(paths)
     where = "the census build over %s (tests/test_hermetic_kernel_postal.py)" % ("1 path" if len(key) == 1 else "%d paths" % len(key))
     PC.check_singletons("before %s: an earlier writer" % where)
@@ -1621,11 +1732,12 @@ def _census_build(paths):
     counts = collections.defaultdict(lambda: collections.defaultdict(int))
     records = collections.defaultdict(list)
     parsed, walks = [], collections.Counter()
+    targets = _resolver_targets(key)
     try:
         for path in key:
             rel = os.path.relpath(path, HERE)
             try:
-                tree = PC.source_and_tree(path)[1]
+                tree = _own_tree(path, rel, hold=not _under_tests(path) or os.path.realpath(path) in targets)
             except (SyntaxError, ValueError) as e:        # ValueError: a null byte before 3.12, and a file that is not UTF-8
                 raise AssertionError("the census could not parse %s (%s: %s): every file it is handed is read, or it fails "
                                      "naming the file" % (rel, type(e).__name__, e)) from e
@@ -1633,6 +1745,7 @@ def _census_build(paths):
             for name, rec in _walk_unit(tree, rel, walks):
                 counts[name][rec.shape] += 1
                 records[name].append(rec)
+            tree = None         # an unheld tree is freed here, before the next file is parsed (_own_tree)
     except BaseException as exc:
         found = PC.singleton_attributes()
         if found:
@@ -1644,15 +1757,16 @@ def _census_build(paths):
 
 
 def _census_derivation(paths=None):
-    """The census's derivation over `paths` (every .py under tests/ when None) as _census_build returned it: held in
-    _CENSUS_HELD, the one owner, from the first read in this module's run until tearDownModule drops it, so every later
+    """The census's derivation over `paths` (every .py under tests/ when None) as _census_build returned it: held in the
+    _Census ("derivations") from the first read in this module's run until tearDownModule's release, so every later
     read in the run is the same object and builds nothing. A build that raised is not held: the next read builds again.
     The holder never re-reads a file: a path censused and then rewritten in the same run is served the first derivation
     (no caller rewrites one; each plant is a fresh temporary directory)."""
     key = tuple(_tests_tree_paths() if paths is None else paths)
-    held = _CENSUS_HELD.get(key)
+    derivations = _held()["derivations"]
+    held = derivations.get(key)
     if held is None:
-        held = _CENSUS_HELD[key] = _census_build(key)
+        held = derivations[key] = _census_build(key)
     return held
 
 
@@ -1663,22 +1777,49 @@ def module_level_env_census(paths=None):
     derivation; _census_parsed_modules reads the same derivation's list of those files. Run it as
     `python -m tests.test_hermetic_kernel_postal --census` for a table. A write the scan cannot read raises, as the pin
     does: a census that skipped a write would be a floor with silent slack.
-    ONE DERIVATION PER PATH TUPLE PER RUN OF THE MODULE, HELD BY THE MODULE (the reviewer's ruling of 2026-09-24 on round
-    2 of fork PR #894, which superseded round 1's shape, the derivation behind parse_cache.derived: derived() freezes
-    every object tracked after a build, and every later call of the kernel's _PerfStats.snapshot reads
-    gc.get_freeze_count(), which walks the frozen objects, so every snapshot reader that sorts after this module in CI's
-    serial order paid per read). The trees are read through parse_cache.source_and_tree, which freezes nothing, and they
-    stay in its cache, tracked and not frozen, for the rest of the process: tests/test_thread_stop_census.py reads the
-    same files there later in the serial order and would red its own parse-once pin if this module dropped them, and
-    until that census's derivation freezes them every full collection in the process walks them, which the collector
-    also does while the build allocates them (the cost the ruling asked to be measured; the figures are in the PR's
-    body, not here, since they move with the tree). The derivation is held by _CENSUS_HELD (_census_derivation) and
-    dropped by tearDownModule. THE PINS (the ruling's clauses 2 and 3): the census pin and a second test that reads the whole tree
-    each assert the whole tree was built once in the module's run (_CENSUS_BUILDS; red under a build per read or per
-    test), the census pin that each file was walked once in that build (_walk_unit's count; red under a file walked
-    twice) and that each file the census read was parsed once in the process (parse_cache.parses_of; red under a second
-    parse); the one-path census test asserts the same of its own path; and tearDownModule asserts that
+    ONE PARSE PER FILE AND ONE DERIVATION PER PATH TUPLE PER RUN OF THE MODULE, HELD BY THE MODULE AND RELEASED AT ITS END
+    (the reviewer's rulings of 2026-09-24 on round 2 of fork PR #894). WHY NOT tests/parse_cache.py's derived(), round 1's
+    shape: derived() freezes every object tracked after a build, and every later call of the kernel's _PerfStats.snapshot
+    reads gc.get_freeze_count(), which walks the frozen objects, so every snapshot reader that sorts after this module in
+    CI's serial order paid per read; the module changes no collector state at all (no gc.freeze, gc.disable or
+    gc.collect). WHY NOT THE CACHE'S SHARED PARSE EITHER, this census's exception to tests/parse_cache.py's one-cache
+    rule, chosen by the measured rule the reviewer set (the shape whose snapshot readers stay inside main's spread ships):
+    read through source_and_tree, which freezes nothing, the trees stayed in that cache, tracked, for the rest of the
+    process, and every full collection after this module walked them. THE MEASUREMENT, at round 2 of fork PR #894 (this
+    module then the 29 test modules after it in CI's serial order whose tests read gc.get_freeze_count(), the
+    perf-snapshot readers, one serial process per run, each shape paired with main in the same rounds; the figures with
+    their heads are in the PR's body): with the trees kept in that cache the readers ran 50 to 72 s slower than main on
+    Python 3.10 and about 35 s slower on 3.12; with every tree held by this module until its end, 4.3 s slower on 3.12
+    on the mean of seven rounds, slower than main in each; with the shape below, 0.3 s slower on 3.12 on the mean of
+    seven rounds (1.5 s above the top of main's spread in one of them) and 0.1 s faster on 3.10 on the mean of nine,
+    inside main's spread there. THE SHAPE (the reviewer's third ruling of the day): the census parses each file itself
+    (_own_tree), once in the module's run; the census loop drops each tree under tests/ after its walk unless the
+    resolver may read that file later (_resolver_targets: a file some import statement under tests/ names, read from the
+    text, a superset), so it never holds more than those and the one tree it is walking; and the _Census (_held) holds
+    the kept trees, the resolver's records and the derivations until tearDownModule empties its one owner, which frees
+    them by reference count. What the exception costs: the
+    files under tests/ that tests/test_thread_stop_census.py also reads through tests/parse_cache.py (the test modules
+    and the helpers) are parsed again there, in a process that runs both, since the two parses do not share; that module
+    is one of the 29 readers, so the measurement above includes it. THE RULE FOR WHAT IS HELD: no cycle, so the release
+    frees it with no collection; the trees and their nodes, _Module records with side tables keyed by id(node), and
+    derivations of strings, numbers, tuples, dicts and _Record tuples, with no closure or object that refers back to
+    itself. THE PINS (the ruling's clauses 2 and 3, and fork PR #909's pin (2), which the reviewer's second ruling of the
+    day applies here): the census pin and a second test that reads the whole tree each assert the whole tree was built
+    once in the module's run (_CENSUS_BUILDS; red under a build per read or per test), the census pin that each file was
+    walked once in that build (_walk_unit's count; red under a file walked twice) and that each file the census read was
+    parsed once in the module's run (_OWN_PARSES; red under a second parse, and under a loop that keeps no tree, whose
+    dropped files the resolver then parses again); the one-path census test asserts the same of its own path; the
+    resolver's test, that its record of an imported module is built over the census's own tree of the file; and
+    tearDownModule asserts that no file was parsed twice in the module's run, whichever test read it (the same count),
+    that the _Census is gone after the release (a weak reference, read with no collection; red under the release
+    removed, under a module-scope cache that keeps it and under a value that refers back to it), and that
     gc.get_freeze_count() is not above what setUpModule read (red under a build restored behind parse_cache.derived).
+    The weak reference does not see an inner container kept by another name, or a cycle among the inner containers that
+    does not pass through the _Census; that half is a measurement, re-run at each head: with the collector off, a
+    collection right after the build found nothing unreachable, and right after the release neither, the release
+    freeing about 1.1 million tracked objects by reference count on Python 3.10 and 3.12, with the whole tree and one
+    synthetic path censused (round 2's nineteenth commit of fork PR #894, measured, not committed, with a weak reference
+    to a held tree dead after it).
     WHAT IS COMPARED, and with what: the parsed count, with the os.walk population (the census pin, equality); the set of
     names the test modules write, with LICENSED_MODULE_LEVEL_WRITES, and every write's value with its licence
     (_licence_faults); the writer modules of ROMP_SERVE_TOKEN and ROMP_KERNEL_NO_OPEN and of every floor-only name other
@@ -2225,15 +2366,23 @@ _FixtureNames = collections.namedtuple("_FixtureNames", "by_keyword unknown")
 
 
 def _fixture_names_by_keyword(tree):
-    """_FixtureNames(by_keyword, unknown) for every call in `tree` to one of pytest's fixture functions (_FIXTURE_FUNCTIONS,
-    under any spelling _fixture_spellings finds, wherever the call stands: a decorator, a call applied to a function or
-    passed one, a factory held in a name): BY_KEYWORD, Counter {name: calls}, the string literals the calls pass as name=,
-    the name pytest registers such a fixture under whatever attribute holds it; UNKNOWN, True when any call passes a
-    name= that is not a string literal or unpacks keywords (**kw), so the name it registers could be any."""
-    spellings = _fixture_spellings(tree)
+    """_FixtureNames(by_keyword, unknown) over EVERY call in `tree`, whatever it calls and wherever it stands:
+    BY_KEYWORD, Counter {name: calls}, the string literals the calls pass as name=, the name pytest registers a fixture
+    under whatever attribute holds it when the call reaches one of its fixture functions; UNKNOWN, True when any call
+    passes a name= that is not a string literal or unpacks keywords (**kw), so the name it registers could be any. Every
+    call rather than those spelled as a fixture function (_fixture_spellings), since the verifier's finding on round 2 of
+    fork PR #894: a fixture function reached by a road the spellings do not follow registers its name= all the same
+    (`functools.partial(pytest.fixture, autouse=True, name="_f")` used as a decorator, whose name= sits on the partial's
+    call; `getattr(pytest, "fixture")(autouse=True, name="_f")`; one held in a container or returned by a call; pytest's
+    private FixtureManager._register_fixture(name=...)), and a child pytest showed the fixture it shadows never ran. The
+    name is keyword-only in pytest's fixture function, so a call that registers one passes it as name= or inside
+    unpacked keywords, both read here. The safe side: a name= of a call that registers no fixture (a thread's name, say)
+    equal to a fixture's name refuses that fixture, and a name= that is not a literal or unpacked keywords in any call of
+    the module refuse every fixture of it (tests/conftest.py has neither), a visible refusal whose remedy is to spell
+    the call's keywords out."""
     by_keyword, unknown = collections.Counter(), False
     for c in ast.walk(tree):
-        if isinstance(c, ast.Call) and _spelled_fixture(c.func, spellings):
+        if isinstance(c, ast.Call):
             for kw in c.keywords:
                 if kw.arg is None:
                     unknown = True
@@ -2256,10 +2405,12 @@ def _registered_once(fn, bindings, star, names=None):
     side: bound once, not bound last); and, from `names` (_fixture_names_by_keyword over the same tree), the name it
     registers under is registered by no other fixture call's name= (the same verifier's finding at the next commit: a
     fixture of another def given `name="_f"` shadows `_f` whatever its own attribute is called, and the reader read the
-    def's attribute name alone), and when the def passes name= itself, that name is a string literal, no statement of the
-    module binds it (a def or an assignment of that name may register a fixture under it by a spelling the reader does not
-    see; the safe side), and no call in the module passes a name= that is not a literal or unpacks keywords, which could
-    register any name. `names` None reads no name= at all (the callers pass it)."""
+    def's attribute name alone; a name= on ANY call counts since the verifier's finding at the eighteenth commit, a
+    fixture function reached through functools.partial or getattr registering it too), and when the def passes name=
+    itself, that name is a string literal, equal to the def's own name or bound by no statement of the module (a def or
+    an assignment of that name may register a fixture under it by a spelling the reader does not see; the safe side),
+    and no call in the module passes a name= that is not a literal or unpacks keywords, which could register any name.
+    `names` None reads no name= at all (the callers pass it)."""
     if bindings[fn.name] != 1 or star:
         return False
     if names is None:
@@ -2293,9 +2444,11 @@ def _conftest_reasserted_names(src=None):
     import could bind (the same verifier's finding: pytest never registers a def a later binding replaced); and a fixture
     another fixture of the module registers its name over by name= (`@pytest.fixture(name="_f")` on a def of any other
     name), one whose own name= is not a literal or names a name the module binds, and every fixture of a module in which a
-    fixture call passes a name= that is not a literal or unpacks keywords (the verifier's finding at the next commit: of
-    two fixtures registered under one name pytest runs one, and a child pytest showed the shadowed one's pop never ran;
-    _registered_once). Re-asserted
+    call passes a name= that is not a literal or unpacks keywords (the verifier's finding at the next commit: of two
+    fixtures registered under one name pytest runs one, and a child pytest showed the shadowed one's pop never ran;
+    _registered_once), the name= of every call read whatever it calls (the verifier's finding at the eighteenth commit:
+    `functools.partial(pytest.fixture, name="_f")` and `getattr(pytest, "fixture")(name="_f")` register over `_f` by
+    roads no spelling follows; _fixture_names_by_keyword). Re-asserted
     so, a module-level write of the name cannot outlive collection under pytest (the dead-port fixture's rule,
     2026-08-27); the value conftest writes is not read (the licence's property does not depend on it). What it does not
     read, each passing as no re-assert (the safe side, a licence that rests on it faults): a write through a call the
@@ -3222,38 +3375,67 @@ def _collector_touches(tree):
 
 
 _FREEZE_AT_START = []
-#   gc.get_freeze_count() as setUpModule read it, for tearDownModule's second read (THE BEHAVIOURAL PIN)
+#   gc.get_freeze_count() as setUpModule read it, for tearDownModule's second read (THE FREEZE-COUNT PIN)
 
 
 def setUpModule():
-    """The start of this module's run: the built-once count is zeroed (a worker that sets the module up again builds again,
-    after tearDownModule dropped the held derivation), and gc.get_freeze_count() is read for THE BEHAVIOURAL PIN in
-    tearDownModule (the reviewer's ruling of 2026-09-24 on round 2 of fork PR #894, clause 3). Read here and not at import:
-    pytest imports every module at collection, before any test runs, and another module's freeze may run in between."""
+    """The start of this module's run: the built-once and parse-once counts are zeroed (a worker that sets the module up
+    again parses and builds again, after tearDownModule released what the run held), and gc.get_freeze_count() is read
+    for THE FREEZE-COUNT PIN in tearDownModule (the reviewer's ruling of 2026-09-24 on round 2 of fork PR #894, clause 3).
+    Read here and not at import: pytest imports every module at collection, before any test runs, and another module's
+    freeze may run in between."""
     _CENSUS_BUILDS.clear()
+    _OWN_PARSES.clear()
     _FREEZE_AT_START[:] = [gc.get_freeze_count()]
 
 
 def tearDownModule():
-    """The end of this module's run. THE RELEASE: the census's derivations (_CENSUS_HELD) and the resolver's module records
-    (_MODULE_CACHE) are dropped, which frees them by reference count, neither holding a cycle (measured with the collector
-    off at round 2 of fork PR #894, not pinned: the ruling asks for one behavioural pin; no collection runs here). THE
-    BEHAVIOURAL PIN (the same ruling, clause 3): gc.get_freeze_count() is read again after the release and is not above
-    what setUpModule read, so the module froze nothing (a build behind
+    """The end of this module's run, and its three pins on what the module leaves behind (the reviewer's rulings of
+    2026-09-24 on round 2 of fork PR #894: clause 3 of the first, fork PR #909's pin (2), which the second applies, and
+    the third's parse-once rule).
+    THE RELEASE: _HELD, the one owner, is emptied, which frees the _Census, and with it the census's own trees, the
+    resolver's records and the derivations, by reference count, no collection running here. THE RELEASE PIN: a weak
+    reference to the _Census, taken just before the release, is dead just after it. Red under the release removed (the
+    trees would stay tracked for the rest of the process, the cost the shape exists to avoid), under a module-scope
+    cache that keeps the _Census, and under a value inside it that refers back to it, a cycle only a collection frees.
+    It does not see an inner container kept by another name or a cycle among the inner containers that does not pass
+    through the _Census (module_level_env_census's docstring gives that half as a measurement), and it is not read
+    through gc.get_objects(), which does not list frozen objects. A module run that read no census holds nothing and has
+    nothing to release. THE PARSE-ONCE PIN OVER THE RUN: no file was parsed twice by the census in the module's run
+    (_OWN_PARSES), whichever tests read it and in whatever order, the per-test pins reading only the files of their own
+    census at their own moment; red under a census loop that keeps no tree (a file it dropped is parsed again when the
+    resolver reads it), the failure _resolver_targets exists to prevent. THE FREEZE-COUNT PIN: gc.get_freeze_count() is
+    read again after the release and is not above what setUpModule read, so the module froze nothing (a build behind
     parse_cache.derived freezes every object tracked when it returns, and every later perf-snapshot read in the process
     walks them). The count is live and falls when a frozen object dies, so an object frozen before this module can lower
-    it in between, while only a freeze in this module's run raises it; hence not above, rather than equal. Two reads only:
-    each walks the frozen objects. A red here is pytest's error at the teardown of the module's last test."""
-    _CENSUS_HELD.clear()
-    _MODULE_CACHE.clear()
+    it in between, while only a freeze in this module's run raises it; hence not above, rather than equal. Two reads
+    only: each walks the frozen objects. A red here is pytest's error at the teardown of the module's last test, naming
+    each pin that failed."""
+    held = _HELD[0] if _HELD else None
+    ref = weakref.ref(held) if held is not None else None
+    del held
+    _HELD.clear()
+    problems = []
+    if ref is not None and ref() is not None:
+        problems.append("the release pin: the census's _Census is alive after tearDownModule emptied _HELD, its one owner: "
+                        "something else keeps it (a module-scope cache, a test's own reference) or a value inside it refers "
+                        "back to it, a cycle only a collection frees, and this module runs none; its trees stay tracked for "
+                        "the rest of the process")
+    twice = sorted(os.path.relpath(real, HERE) for real, n in _OWN_PARSES.items() if n > 1)
+    if twice:
+        problems.append("the parse-once pin over the module's run: %s parsed more than once by the census (_own_tree): a file "
+                        "the census loop dropped after its walk was read again, by the resolver or another census; "
+                        "_resolver_targets decides which trees the loop keeps" % ", ".join(twice))
     after = gc.get_freeze_count()
     before = _FREEZE_AT_START.pop() if _FREEZE_AT_START else None
     if before is not None and after > before:
-        raise AssertionError("tests/test_hermetic_kernel_postal.py froze objects in its run: gc.get_freeze_count() read %d at "
-                             "setUpModule and %d at tearDownModule, after the census's derivations were dropped. The module "
-                             "changes no collector state (the reviewer's ruling of 2026-09-24 on round 2 of fork PR #894): its "
-                             "census reads trees through parse_cache.source_and_tree and never derives through parse_cache.derived, "
-                             "which calls gc.freeze() after a build" % (before, after))
+        problems.append("the freeze-count pin: tests/test_hermetic_kernel_postal.py froze objects in its run: "
+                        "gc.get_freeze_count() read %d at setUpModule and %d at tearDownModule, after the release. The module "
+                        "changes no collector state (the reviewer's ruling of 2026-09-24 on round 2 of fork PR #894): its "
+                        "census parses its own trees and never derives through parse_cache.derived, which calls gc.freeze() "
+                        "after a build" % (before, after))
+    if problems:
+        raise AssertionError("; ".join(problems))
 
 
 class HermeticKernelPostal(unittest.TestCase):
@@ -3410,8 +3592,9 @@ class HermeticKernelPostal(unittest.TestCase):
         whole tree was built once in this module's run (_CENSUS_BUILDS, the count the build keeps; red under a build per
         read, and, with test_the_whole_tree_census_is_built_once_in_the_modules_run_however_many_tests_read_it reading
         it too, under a build per test), each file was walked once in that build (_walk_unit's count; red under a file
-        walked twice), and every file the census read was parsed once in the process (parse_cache.parses_of; red under
-        a second parse), whatever ran before this test."""
+        walked twice), and every file the census read was parsed once in the module's run (_OWN_PARSES; red under
+        a second parse, and under a census loop that keeps no tree, whose dropped files the resolver then parses again),
+        whatever ran before this test."""
         walked = _tests_tree_walk()
         self.assertGreater(len(walked), 900, "the os.walk finds the tree, recursively, not an empty population: %d files" % len(walked))
         paths = _tests_tree_paths()
@@ -3423,8 +3606,8 @@ class HermeticKernelPostal(unittest.TestCase):
         parsed, walks = _census_parsed_modules(paths), _census_derivation(paths)[3]
         self.assertEqual({m: k for m, k in walks.items() if k != 1}, {}, "each file was walked once in the build (_walk_unit)")
         self.assertEqual(sorted(walks), sorted(parsed), "every file the build parsed was walked, and no other")
-        self.assertEqual([os.path.relpath(p, HERE) for p in paths if PC.parses_of(p) != 1], [],
-                         "every file the census read was parsed once in this process (parse_cache.source_and_tree)")
+        self.assertEqual([os.path.relpath(p, HERE) for p in paths if _OWN_PARSES[os.path.realpath(p)] != 1], [],
+                         "every file the census read was parsed once in this module's run, by the census itself (_own_tree)")
         self.assertEqual(_licence_table_faults(LICENSED_MODULE_LEVEL_WRITES), [], "every licence is checkable and a temporary one is dated")
         self.assertEqual(_licence_faults(records), [])
         faults = _writer_set_faults(records)
@@ -3881,9 +4064,14 @@ class HermeticKernelPostal(unittest.TestCase):
         factory held in a name, one registered by a call that is passed the function, yield_fixture's name= and an
         aliased fixture function's; a name= that is not a literal on another fixture, and keywords unpacked there (either
         could register any name); the fixture's own name= not a literal; its own name= registered again by another
-        fixture; and its own name= naming a name another statement of the module binds.
-        Accepted: the fixture's own name= literal that nothing else registers or binds, and another fixture registered by
-        name= under a different name."""
+        fixture; and its own name= naming a name another statement of the module binds. Since the verifier's finding at
+        round 2's eighteenth commit (a child pytest showed each shadow `_f` as the others do), refused too: a fixture
+        registered over the name through functools.partial(pytest.fixture, name=...) and through getattr(pytest,
+        "fixture")(name=...), read at eighteen commits as a re-assert; and, the safe side of reading every call's name=,
+        a name= equal to the fixture's name, a name= that is not a literal and unpacked keywords on a call of a function
+        that registers no fixture.
+        Accepted: the fixture's own name= literal that nothing else registers or binds, that name= equal to the def's own
+        name (bound once, by the def), and another fixture registered by name= under a different name."""
         probe = "ROMP_PROBE_REASSERT"
         module = ("import os\n\n\ndef test_1_sets_the_name():\n    os.environ[%r] = '45678'\n\n\n"
                   "def test_2_reads_it():\n    print('SEEN=%%s' %% os.environ.get(%r))\n" % (probe, probe))
@@ -3908,12 +4096,20 @@ class HermeticKernelPostal(unittest.TestCase):
                    ("another fixture's keywords unpacked", base + "KW = {'name': '_f'}\n@pytest.fixture(**KW)\ndef _g():\n    yield\n"),
                    ("the fixture's own name= not a literal", "N = '_f'\n" + base.replace("autouse=True)", "autouse=True, name=N)")),
                    ("the fixture's own name= naming a name the module binds", base.replace("autouse=True)", "autouse=True, name='_other')")
-                    + "def _other():\n    pass\n"))
+                    + "def _other():\n    pass\n"),
+                   ("a fixture registered over the name through functools.partial", base + "import functools\n"
+                    "_fx = functools.partial(pytest.fixture, autouse=True, name='_f')\n@_fx\ndef _g():\n    yield\n"),
+                   ("a fixture registered over the name through getattr", base + "@getattr(pytest, 'fixture')(autouse=True, name='_f')\n"
+                    "def _g():\n    yield\n"),
+                   ("a name= equal to the fixture's name on a call of any other function", base + "_T = dict(name='_f')\n"),
+                   ("a name= that is not a literal on a call of any other function", base + "N = '_f'\n_T = dict(name=N)\n"),
+                   ("keywords unpacked in a call of any other function", base + "KW = {'name': '_f'}\n_T = dict(**KW)\n"))
         for what, text in refused:
             src = "import os, pytest\n" + text
             got = _conftest_reasserted_names(src)
             self.assertNotIn("ROMP_MANAGER_PORT", got.writes | got.removals, "%s: pytest may not run the fixture: %s" % (what, src))
         accepted = (("the fixture's own name= literal that nothing else registers", base.replace("autouse=True)", "autouse=True, name='_registered')")),
+                    ("the fixture's own name= equal to its def's name", base.replace("autouse=True)", "autouse=True, name='_f')")),
                     ("another fixture registered by name= under another name", base + "@pytest.fixture(name='_other')\ndef _g():\n    yield\n"))
         for what, text in accepted:
             src = "import os, pytest\n" + text
@@ -3928,7 +4124,11 @@ class HermeticKernelPostal(unittest.TestCase):
         conftest has a fixture, not autouse, that writes a probe name; the first test requests it, and the second, which
         does not, reads the value. The wide read now reads such a fixture (at the seventeenth commit it read neither
         plant): the write of the probe name in it, under the bare decorator and under the called one, is among the wide
-        writes, and the narrow read, which counts function-scoped autouse fixtures alone, still does not count it."""
+        writes, and the narrow read, which counts function-scoped autouse fixtures alone, still does not count it. And a
+        POP of the probe name in such a fixture is among the wide names (_conftest_fixture_env_names, whose removals half
+        reads every fixture, autouse or not; the verifier's finding at the eighteenth commit: no plant reached that half
+        from a fixture that is not autouse, and a reader of autouse fixtures' pops alone stayed green), and not among the
+        writes."""
         probe = "ROMP_PROBE_NOT_AUTOUSE"
         module = ("import os\n\n\ndef test_1_requests_it(_n):\n    pass\n\n\n"
                   "def test_2_does_not():\n    print('SEEN=%%s' %% os.environ.get(%r))\n" % (probe,))
@@ -3940,6 +4140,12 @@ class HermeticKernelPostal(unittest.TestCase):
             self.assertEqual((probe in _conftest_fixture_env_writes(conftest_src), probe in _conftest_fixture_env_names(conftest_src),
                               probe in got.writes | got.removals), (True, True, False),
                              "%s: among the wide writes and names, not a re-assert: %s" % (decorator, conftest_src))
+            popper = "import os, pytest\n\n\n%s\ndef _n():\n    os.environ.pop(%r, None)\n    yield\n" % (decorator, probe)
+            got = _conftest_reasserted_names(popper)
+            self.assertEqual((probe in _conftest_fixture_env_names(popper), probe in _conftest_fixture_env_writes(popper),
+                              probe in got.writes | got.removals), (True, False, False),
+                             "%s: a pop in it is among the wide names, the removals half, and is no write and no re-assert: %s"
+                             % (decorator, popper))
 
     def test_every_licence_carries_a_checkable_condition_and_a_temporary_one_is_dated(self):
         """The licensed set is held to the reviewer's shape by _licence_table_faults (the fixup of 2026-09-22: the table
@@ -4037,7 +4243,7 @@ class HermeticKernelPostal(unittest.TestCase):
         is compared is listed in module_level_env_census's docstring). Since the reviewer's ruling of round 1 on fork PR
         #894: this one-path census is a derivation of its own (the holder's key is the path tuple), read once by the
         census and again by the table (built once in the module's run, the file walked once and parsed once; the ruling of
-        2026-09-24 re-aimed these from parse_cache's builds_of to the module's own counts); a second tree of a test module
+        2026-09-24 re-aimed these from parse_cache's counters to the module's own counts); a second tree of a test module
         and a helper prints each name's total line and the split between test_*.py files and the others, the figures fork
         PR #871's by-product counts are compared with; the parsed count is the files parsed, so a census handed a file
         that does not parse fails naming it."""
@@ -4073,9 +4279,9 @@ class HermeticKernelPostal(unittest.TestCase):
                      row % ("D", "assignment", 1, 1, 0, 1, 1, 1, 0, 0), row % ("A", "augmented", 1, 1, 0, 0, 1, 1, 0, 0),
                      row % ("B", "target", 1, 1, 0, 0, 1, 1, 0, 0)):
             self.assertIn(want, lines)
-        self.assertEqual((_CENSUS_BUILDS[(path,)], _census_derivation([path])[3], PC.parses_of(path)), (1, {rel: 1}, 1),
-                         "the census and the table read one held derivation of this path tuple, the file walked once in it "
-                         "and parsed once in the process")
+        self.assertEqual((_CENSUS_BUILDS[(path,)], _census_derivation([path])[3], _OWN_PARSES[os.path.realpath(path)]),
+                         (1, {rel: 1}, 1), "the census and the table read one held derivation of this path tuple, the file "
+                         "walked once in it and parsed once in the module's run")
         # the split and the total line: a test module and a helper, one name each writes, one only the helper writes
         with open(os.path.join(d, "test_split.py"), "w", encoding="utf-8") as f:
             f.write("import os\nos.environ['S'] = '1'\nos.environ.setdefault('S', '2')\n")
@@ -6230,7 +6436,8 @@ class HermeticKernelPostal(unittest.TestCase):
         message = str(caught.exception)
         self.assertIn("after the census build over 1 path (tests/test_hermetic_kernel_postal.py): the build itself wrote them", message)
         self.assertIn("Load carries _parent (Module)", message)
-        self.assertEqual(((path,) in _CENSUS_HELD, _CENSUS_BUILDS[(path,)]), (False, 1), "the refused build was counted and not held")
+        self.assertEqual(((path,) in _held()["derivations"], _CENSUS_BUILDS[(path,)]), (False, 1),
+                         "the refused build was counted and not held")
         n, counts, records = module_level_env_census([path])
         self.assertEqual((n, counts), (1, {"ROMP_KERNEL_NO_OPEN": {"assignment": 1}}))
         self.assertEqual(_CENSUS_BUILDS[(path,)], 2, "nothing was held: the next read built again")
@@ -6238,13 +6445,15 @@ class HermeticKernelPostal(unittest.TestCase):
         self.assertEqual(after, before, "the unplanted walk writes no attribute on a node: per-node data belongs in a side "
                                         "table keyed by id(node)")
 
-    def test_the_resolver_reads_an_imported_module_through_the_parse_cache(self):
-        """_module_at, the resolver's reader of a module a call at import leads into, reads it through tests/parse_cache.py
-        like the census loop (the reviewer's ruling of round 1 on fork PR #894): a synthetic module that calls
-        test_asm_checkpoint.kernel_module() at import is censused, the write is read through the call, the record the
-        resolver holds for test_asm_checkpoint.py is built over THE tree parse_cache holds for the file (the same
-        object), and the file was parsed once in the process. A _module_at that parsed the file itself would hold a
-        tree of its own, which the parse counter does not see; the identity does."""
+    def test_the_resolver_reads_an_imported_module_through_the_census_own_parse(self):
+        """_module_at, the resolver's reader of a module a call at import leads into, reads it through the census's own
+        parse like the census loop (_own_tree; round 1 of fork PR #894 ruled one parse per file for the two, and the
+        reviewer's second ruling of 2026-09-24 moved that parse out of tests/parse_cache.py by measurement): a synthetic
+        module that calls test_asm_checkpoint.kernel_module() at import is censused, the write is read through the call,
+        the record the resolver holds for test_asm_checkpoint.py is built over THE tree the census holds for the file (the
+        same object), and the file was parsed once in the module's run. A _module_at that parsed the file itself, or read
+        it through parse_cache, would hold a tree of its own, which the census's parse counter does not see; the identity
+        does."""
         d = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, d, True)
         path = os.path.join(d, "test_reads_through.py")
@@ -6254,9 +6463,9 @@ class HermeticKernelPostal(unittest.TestCase):
         self.assertEqual(counts, {"ROMP_KERNEL_NO_OPEN": {"setdefault": 1}})
         self.assertIn("kernel_module() at", records["ROMP_KERNEL_NO_OPEN"][0].via)
         asm = os.path.realpath(os.path.join(HERE, "test_asm_checkpoint.py"))
-        self.assertIs(_MODULE_CACHE[(asm, HERE)][0], PC.source_and_tree(asm)[1],
-                      "the resolver's record of the imported module is built over parse_cache's tree for it")
-        self.assertEqual(PC.parses_of(asm), 1, "the imported module was parsed once in this process")
+        self.assertIs(_held()["modules"][(asm, HERE)].tree, _held()["trees"][asm],
+                      "the resolver's record of the imported module is built over the census's own tree of it")
+        self.assertEqual(_OWN_PARSES[asm], 1, "the imported module was parsed once in this module's run")
 
     def test_the_module_imports_no_copy_and_deep_copies_no_node(self):
         """The contract's no-deepcopy clause, held on this module's own tree rather than its text (a comment naming the
