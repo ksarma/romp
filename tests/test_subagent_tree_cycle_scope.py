@@ -28,9 +28,13 @@ directory of that tree under the (st_mtime, st_size) of the read's own stat, so 
 leaves the recorded key behind the next signature's re-stat (2026-09-24; red on the fresh root stat the walk noted
 before); (8) a live link or a file at a sibling's or the own subagents path (never listed) is noted under that path's
 own stat key, as the walk noted it before, so a tree replacing it moves the key, and a path that changed between the
-read and that stat is noted under a key its re-stat differs from; one path that holds a live link, then a file, then a
-dangling link, each replaced by a tree before the next cycle, rebuilds the tab after every swap. Synthetic fixtures
-only: placeholder ids, the notes-api demo world (sessions web and api), a temp directory."""
+read and that stat is noted None, which no re-stat of a directory, a live link or a file equals, on the own path as on a
+sibling's; one path that holds a live link, then a file, then a dangling link, each replaced by a tree before the next
+cycle, rebuilds the tab after every swap; (9) an absent subagents path whose fsid directory exists is noted None from
+the read, so a tree appearing after the read moves the key, and the identity lstat that detects a change follows the
+stat, so a path that changes after that lstat keeps the key the stat took and a tree placed there after it is never
+recorded under its own key. Synthetic fixtures only: placeholder ids, the notes-api demo world (sessions web and api), a
+temp directory."""
 import json
 import os
 import shutil
@@ -278,12 +282,12 @@ class OneSampleOfEachRootPerCycle(_World):
         self.assertIsNone(getattr(km._live_scope, "chat_push_owned", None), "the owned slot list was consumed by the close")
 
     def test_an_empty_answer_is_never_scoped_so_a_tree_appearing_under_an_open_scope_is_found(self):
-        """The refuter's amendment: _subagent_file_walk stamps the root itself with a fresh _dir_stamp and reads its
-        listing through _find_agent_file; served an older EMPTY sample it would memoize a nested agent's miss under a
-        stamp newer than the listing it read, a stale miss that outlives the cycle because _subagent_file's hit path
-        re-stats and never re-walks. So a zero-directory answer (no root, or not a directory) is never stored in the
-        scope, and every caller re-lstats such a root as today. On the spec's storage rule as written this returned None
-        twice."""
+        """The refuter's amendment: _subagent_file_walk stamps the root itself with a fresh _dir_stamp and hands
+        _find_agent_file the tree it read with _subagent_tree; served an older EMPTY sample it would memoize a nested
+        agent's miss under a stamp newer than the listing it read, a stale miss that outlives the cycle because
+        _subagent_file's hit path re-stats and never re-walks. So a zero-directory answer (no root, or not a directory)
+        is never stored in the scope, and every caller re-lstats such a root as today. On the spec's storage rule as
+        written this returned None twice."""
         tpath = self.paths[SID2]                               # api: no subagents directory yet
         own = km._subagents_dir(tpath)
         self.assertFalse(own.exists())
@@ -353,7 +357,8 @@ class DependencyKeyFromTheHeldRead(_World):
 
     def test_a_held_sibling_roots_key_is_the_held_stats_pair_not_a_re_stat_after_the_landing_moved_it(self):
         """D2a. The sibling's tree is its root alone. Red before the fix on (2): the walk noted the root under a fresh
-        _chat_stat_key taken after the held listing was served, the post-landing pair, equal to the re-stat."""
+        _chat_stat_key taken after the landing, later than the held sample it then looked the tree up through: the
+        post-landing pair, equal to the re-stat."""
         self.sib.mkdir(parents=True)
         _age(self.root)
         km._live_scope.subagent_trees = {}
@@ -458,15 +463,25 @@ class DependencyKeyFromTheHeldRead(_World):
 
 
 class WalkNoteForAPathThatHoldsNoTree(_World):
-    """The miss walk's note for a subagents path, a sibling fsid's or its own, that holds a live link or a file (never
-    listed, never scoped) is that path's _chat_stat_key, as the walk noted every such path before its note moved to the
-    tree read (2026-09-24): the link target's (st_mtime, st_size), or the file's. So a real tree replacing the link or
-    the file, holding the agent's file under workflows/wf_1/, moves the key against the next signature's re-stat and the
-    tab that showed the file missing is rebuilt. The first form of the read-keyed note recorded nothing for such a path,
-    as _subagent_meta_map records nothing for it, and nothing then moved when the tree replaced it: every case but the
-    dangling-link control is red there on the key's presence. The world: api's transcript looks up AID_GHOST, whose file
-    is nowhere; the link's target and the file are aged into the past, so the tree that replaces them differs in
-    mtime from what the note recorded."""
+    """The miss walk's note for a subagents path, a sibling fsid's or its own, that holds no tree (2026-09-24). The rule
+    over the paths this class covers: a live link or a file at the path (never listed, never scoped) is noted under the
+    path's _chat_stat_key, as the walk noted every such path before its note moved to the tree read (the link target's
+    (st_mtime, st_size), or the file's), so a real tree replacing the link or the file, holding the agent's file under
+    workflows/wf_1/, moves the key against the next signature's re-stat and the tab that showed the file missing is
+    rebuilt; an absent path (its fsid directory present) or a dangling link is noted None; a path that changed between
+    the read and that stat is noted None; and the identity lstat that detects such a change is taken after the stat. The
+    read-then-replace cases, at a sibling's path and at the own path, pin the None noted for a path changed after the
+    read; the absent-path cases pin the None an absent path is noted from the read; and the cases that place a tree
+    right after the note's identity lstat pin the order of that lstat and the stat.
+
+    The first form of the read-keyed note recorded nothing for a live link or a file, as _subagent_meta_map records
+    nothing for one, and nothing then moved when the tree replaced it. Under that form the cases that place a live link
+    or a file once and leave it at the path through the lookup, at a sibling's path and at the own path, and both
+    read-then-replace cases, are red on the key's presence; the sequence cases are red on the rebuild assertion in their
+    link and file subtests, and their dangling subtests pass (that form notes a dangling link None too). Every other
+    case of the class names its own red in its own docstring, except the dangling-link control, which says why it stays
+    green. The world: api's transcript looks up AID_GHOST, whose file is nowhere; the link's target and the file are
+    aged into the past, so the tree that replaces them differs in mtime from what the note recorded."""
 
     def setUp(self):
         super().setUp()
@@ -544,12 +559,11 @@ class WalkNoteForAPathThatHoldsNoTree(_World):
         self.assertIn(str(p), rec, "a key is recorded for the dangling link (recorded paths %r)" % sorted(rec))
         self.assertIsNone(rec[str(p)], "the key recorded for the dangling link is None (recorded %r)" % (rec[str(p)],))
 
-    def test_a_link_replaced_by_a_tree_between_the_read_and_the_note_leaves_a_key_the_re_stat_differs_from(self):
-        """The note's stat is taken after the read. When a tree replaces the link in between (injected right after the
-        read of the sibling's path returns), the recorded key must still differ from the path's re-stat, so the tab
-        that showed the file missing is rebuilt; a bare stat after the read would record the replacing tree's own key,
-        equal to every later re-stat."""
-        p = Path(self.tpath).parent / SIB / "subagents"
+    def _replaced_between_the_read_and_the_note(self, p, where):
+        """A live link at `p`, replaced by a tree holding the agent's file under workflows/wf_1/. The premise is one
+        replacement, right after the walk's first read of `p` returns; the lookup answers None, a key is recorded for
+        `p`, that key differs from the path's re-stat after the replacement, and the next lookup answers the landed
+        file."""
         self._place(p, "link")
         real = km._subagent_tree
         swapped = []
@@ -561,14 +575,151 @@ class WalkNoteForAPathThatHoldsNoTree(_World):
             return out
         with mock.patch.object(km, "_subagent_tree", read_then_swap):
             got, rec = self._lookup_recorded()
-        self.assertEqual(len(swapped), 1, "premise: the sibling's path was read once and then replaced")
+        self.assertEqual(len(swapped), 1, "premise: a tree replaced the link once, right after the walk's first read "
+                         "of the %s returned" % where)
         self.assertIsNone(got, "the lookup answers None: the read saw the link")
-        self.assertIn(str(p), rec, "a key is recorded for the sibling's path (recorded paths %r)" % sorted(rec))
+        self.assertIn(str(p), rec, "a key is recorded for the %s (recorded paths %r)" % (where, sorted(rec)))
         restat = km._chat_stat_key(str(p))
-        self.assertNotEqual(rec[str(p)], restat, "the key recorded for the sibling's path differs from its re-stat "
-                            "after the replacement (recorded %r, re-stat %r)" % (rec[str(p)], restat))
+        self.assertNotEqual(rec[str(p)], restat, "the key recorded for the %s differs from its re-stat after the "
+                            "replacement (recorded %r, re-stat %r)" % (where, rec[str(p)], restat))
         self.assertEqual(km._subagent_file(self.tpath, AID_GHOST), swapped[0],
                          "the next lookup answers the landed file")
+
+    def test_a_link_replaced_by_a_tree_between_the_read_and_the_note_leaves_a_key_the_re_stat_differs_from(self):
+        """The note's stat is taken after the read. When a tree replaces the link in between (injected right after the
+        read of the sibling's path returns), the recorded key must still differ from the path's re-stat, so the tab
+        that showed the file missing is rebuilt; a bare stat after the read would record the replacing tree's own key,
+        equal to every later re-stat."""
+        self._replaced_between_the_read_and_the_note(Path(self.tpath).parent / SIB / "subagents", "sibling's path")
+
+    def test_the_own_path_link_replaced_by_a_tree_between_the_read_and_the_note_leaves_a_key_the_re_stat_differs_from(self):
+        """The own-path twin of the case above: the live link is at the transcript's own subagents path, and the tree
+        replaces it right after the read of that path returns. Red with the identity check removed, on the recorded key
+        equal to the re-stat: the stat taken after the read answers the replacing tree's own key. Among its other reds
+        are the fork's merge of romp-on/romp PR #1822, whose own-path stat came after the read, and the own path's note
+        taken from a second read of the path in place of the one that answered the lookup; the red log that fork PR
+        #910's build record names has the rest."""
+        self._replaced_between_the_read_and_the_note(km._subagents_dir(self.tpath), "own path")
+
+    def _placed_after_the_notes_identity_lstat(self, p):
+        """A live link at `p`. While the walk's note runs for `p`, and only then, a tree holding the agent's file under
+        workflows/wf_1/ replaces the link right after the note's identity lstat of `p` returns. The premises are one
+        identity lstat of `p` inside the note and one swap; the lookup answers None, a key is recorded for `p`, that key
+        differs from the path's re-stat after the swap, and the next lookup answers the landed file. With the identity
+        lstat taken before the stat key the tree placed between the two passes the identity check, the stat answers the
+        tree's own key and the walk records it, equal to the re-stat. These cases cannot run at the fork's merge of
+        romp-on/romp PR #1822 or under the read-keyed note's first form, which have no _subagent_walk_dep_note (an
+        AttributeError, not a red); with the identity check removed they fail on the premise of one identity lstat,
+        which is not their red either."""
+        self._place(p, "link")
+        real_lstat, real_note = km._lstat_or_none, km._subagent_walk_dep_note
+        inside, swapped, calls = [], [], []
+
+        def note(d, tree, *args, **kwargs):               # the walk passes its `notes` list by keyword
+            inside.append(str(d))
+            try:
+                return real_note(d, tree, *args, **kwargs)
+            finally:
+                inside.pop()
+
+        def lstat(q):
+            out = real_lstat(q)
+            if inside and inside[-1] == str(p) and str(q) == str(p):
+                calls.append(str(q))
+                if not swapped:
+                    swapped.append(self._replace_with_tree(p))
+            return out
+        with mock.patch.object(km, "_subagent_walk_dep_note", note), mock.patch.object(km, "_lstat_or_none", lstat):
+            got, rec = self._lookup_recorded()
+        self.assertEqual(len(calls), 1, "premise: the note took one identity lstat of the path")
+        self.assertEqual(len(swapped), 1, "premise: a tree replaced the link right after that lstat")
+        self.assertIsNone(got, "the lookup answers None: the read saw the link")
+        self.assertIn(str(p), rec, "a key is recorded for the path (recorded paths %r)" % sorted(rec))
+        restat = km._chat_stat_key(str(p))
+        self.assertNotEqual(rec[str(p)], restat, "the key recorded for the path differs from its re-stat after a tree "
+                            "replaced the link right after the note's identity lstat (recorded %r, re-stat %r)"
+                            % (rec[str(p)], restat))
+        self.assertEqual(km._subagent_file(self.tpath, AID_GHOST), swapped[0], "the next lookup answers the landed file")
+
+    def test_a_tree_placed_at_a_sibling_path_after_the_notes_identity_lstat_leaves_a_key_the_re_stat_differs_from(self):
+        """At a sibling fsid's subagents path. Red with the note's identity lstat taken before its stat key, on the
+        recorded key equal to the re-stat (the helper says where the case cannot run)."""
+        self._placed_after_the_notes_identity_lstat(Path(self.tpath).parent / SIB / "subagents")
+
+    def test_a_tree_placed_at_the_own_path_after_the_notes_identity_lstat_leaves_a_key_the_re_stat_differs_from(self):
+        """At the transcript's own subagents path. Red with the note's identity lstat taken before its stat key, on the
+        recorded key equal to the re-stat (the helper says where the case cannot run)."""
+        self._placed_after_the_notes_identity_lstat(km._subagents_dir(self.tpath))
+
+    def _tree_appears_after_the_read_of_an_absent_path(self, p):
+        """Nothing at `p`, its fsid directory present; a tree holding the agent's file under workflows/wf_1/ is created
+        there. The build runs in an open cycle scope under a chat build's record, and the later cycle evaluates the
+        tab's trailing signature components over that record (_chat_sig_deps) and looks the agent up again. The
+        premises are one creation, right after the walk's first read of `p` returns, and that first read answered
+        ((), ()). Then, in this order: the lookup answers None; no recorded path but `p` moved (a premise); the tab
+        rebuilds (the later components differ from the record's at_build); `p`'s recorded key is present and None, the
+        read's answer; the rebuild's lookup answers the landed file. With `p` noted under a _chat_stat_key taken after
+        the read, which answers the tree's own key, the later components equal at_build and the rebuild assertion is
+        red."""
+        p.parent.mkdir(parents=True, exist_ok=True)
+        self.assertFalse(os.path.lexists(str(p)), "premise: nothing at the path")
+        self.addCleanup(km._SUBAGENT_TREES.pop, str(p), None)
+        real = km._subagent_tree
+        made, reads = [], []
+
+        def read_then_create(d, *args, **kwargs):         # the walk passes the tree read's `faults` list by keyword
+            out = real(d, *args, **kwargs)
+            if str(d) == str(p) and not made:
+                reads.append(out)
+                landed = p / "workflows" / "wf_1" / ("agent-%s.jsonl" % AID_GHOST)
+                landed.parent.mkdir(parents=True)
+                landed.write_text("")
+                made.append(landed)
+            return out
+        km._live_scope.subagent_trees = {}               # the cycle whose build shows the file missing
+        km._chat_dep_scope.deps = {"task_outs": [], "postal_any": False}
+        try:
+            with mock.patch.object(km, "_subagent_tree", read_then_create):
+                got = km._subagent_file(self.tpath, AID_GHOST)
+            deps = km._chat_build_deps(SID2, {"events": []})
+        finally:
+            km._chat_dep_scope.deps = None
+            km._live_scope.subagent_trees = None
+        km._live_scope.subagent_trees = {}               # the later cycle: the tab's signature, then its rebuild
+        try:
+            later = km._chat_sig_deps(SID2, deps)
+            again = km._subagent_file(self.tpath, AID_GHOST)
+        finally:
+            km._live_scope.subagent_trees = None
+        rec, now = dict(deps["task_outs"]), dict(later[0])
+        restat = km._chat_stat_key(str(p))
+        shown = repr(rec[str(p)]) if str(p) in rec else "nothing"
+        self.assertEqual(len(made), 1, "premise: a tree appeared once, right after the walk's first read of the path "
+                         "returned")
+        self.assertEqual(reads, [((), ())], "premise: the walk's first read of the path found nothing")
+        self.assertIsNone(got, "the lookup answers None: the read found nothing")
+        self.assertEqual({k: v for k, v in now.items() if k != str(p)}, {k: v for k, v in rec.items() if k != str(p)},
+                         "premise: no recorded path but the subagents path moved")
+        self.assertNotEqual(later, deps["at_build"], "the tab rebuilds in the cycle after the tree appeared: its "
+                            "trailing signature components differ from the build's (recorded for the path %s, its "
+                            "re-stat %r)" % (shown, restat))
+        self.assertIn(str(p), rec, "a key is recorded for the absent path")
+        self.assertIsNone(rec[str(p)], "the absent path is noted None, the read's answer (recorded %s)" % shown)
+        self.assertEqual(again, made[0], "the rebuild's lookup answers the landed file")
+
+    def test_an_absent_sibling_path_is_noted_none_from_the_read_so_a_tree_appearing_after_it_rebuilds_the_tab(self):
+        """At a sibling fsid's subagents path. Red with an absent path noted under a stat taken after the read, on the
+        rebuild assertion (the later components equal at_build). Green at the fork's merge of romp-on/romp PR #1822,
+        where the sibling's stat came before its read, so this case guards a regression that merge did not have."""
+        self._tree_appears_after_the_read_of_an_absent_path(Path(self.tpath).parent / SIB / "subagents")
+
+    def test_an_absent_own_path_is_noted_none_from_the_read_so_a_tree_appearing_after_it_rebuilds_the_tab(self):
+        """At the transcript's own subagents path. Red with an absent path noted under a stat taken after the read, on
+        the rebuild assertion (the later components equal at_build). Red at the fork's merge of romp-on/romp PR #1822
+        too, but only in a build with no earlier _subagent_meta_map read of the path, as here: in a chat build
+        _stamp_agents reads the map on the same path first, which notes the path None, and the build keeps the first
+        key it records per path."""
+        self._tree_appears_after_the_read_of_an_absent_path(km._subagents_dir(self.tpath))
 
     def _rebuilds_after_each_swap(self, p):
         """One path `p` holds a live link, then a file, then a dangling link, and after each shape a real tree holding
