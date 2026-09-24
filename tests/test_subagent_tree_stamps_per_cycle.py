@@ -121,7 +121,8 @@ over the sessions of A_s), so the total directories decide the cycle's cost and 
 cost sentence's pin in the tree; a lab lifted from this world measured the same at more sizes outside the repo). (8) The
 census's own roads (round 2 of #882, extra6-2), executed on the tree under the spy: each road the spy closes (a
 non-normalized or relative spelling of the root, a call given a dir_fd, io.FileIO, and since round 3 of #882 (extra8-2)
-Path.glob and rglob through 3.13's glob._StringGlobber, whose control is red on 3.13 without the spy's patch) is
+Path.glob and rglob through 3.13's glob._StringGlobber, whose control's two calls are each red on 3.13 without one half
+of the spy's patch: rglob('*') without the scandir half, a glob over a literal part without the lstat half) is
 counted, and each road it leaves open (a DirEntry from a listing of the root's parent, a path outside the tree, an os
 class outside CLASSES, a bare descriptor, a symlinked spelling, pathlib on 3.10; 3.11's pathlib is counted) has an
 executed witness whose census is {}. (9) The eviction table's
@@ -180,8 +181,9 @@ command, interpreter and head):
   case;
 - a derived slot's line removed from any one of its ten open and clear sites: SlotSites, on the {function: count}
   equality (a tree slot's line removed reds its premise);
-- the spy's patch of glob._StringGlobber's held functions removed, a mutant of this module: SpyRoads'
-  test_closed_road_path_rglob on 3.13.
+- each half of the spy's patch of glob._StringGlobber's held functions removed alone, mutants of this module: SpyRoads'
+  test_closed_road_path_rglob on 3.13, on its rglob('*') call without the builtin test (the held scandir) and on its
+  glob('workflows') call without the _romp_sig_counting test (the held lstat, the kernel's wrapper).
 The eviction table's mutants (no eviction record from the forget or from either pop, a stamp or a launch fold served
 without its root's vouch, a table clear that records no generation) have nothing to mutate at this head, which carries no
 eviction table.
@@ -301,12 +303,16 @@ class _Spy:
     open, a file's lstat, fails closed by the class's name (the owner's pass before round 2 of #882: the spy saw os.stat
     and os.lstat alone, and a guarded os.scandir on the served tree path left the module green). The patch is the os
     module's attribute (io's for io.open and io.FileIO), which is what the kernel, os.path and the pathlib of 3.11, 3.12,
-    3.13 and 3.14 look up at call time; the kernel runs on 3.12. Where glob._StringGlobber's __dict__ holds os.scandir
-    or os.lstat as a staticmethod bound at import, the builtin itself or the kernel's counting wrapper around it (3.13
-    holds both: Path.glob and Path.rglob list and stat through them), each is patched too, as a staticmethod wrapping
-    the held object, keyed on that mechanism and not on a version (round 3 of #882, extra8-2: rglob's census was {} on
-    3.13); 3.14's globber holds a scandir of its own that calls os.scandir at call time, counted already and left as
-    it is.
+    3.13 and 3.14 look up at call time. Where glob._StringGlobber's __dict__ holds os.scandir or os.lstat as a
+    staticmethod bound at import, the builtin itself or the kernel's counting wrapper around it, each is patched too, as
+    a staticmethod wrapping the held object, keyed on that mechanism and not on a version (round 3 of #882, extra8-2:
+    rglob's census was {} on 3.13). 3.13's globber holds both, and Path.glob and Path.rglob list and stat through
+    them: the builtin as scandir and, once the kernel has loaded, the kernel's wrapper as lstat. So the patch has two
+    halves, the builtin test and the _romp_sig_counting test, and each has its red control on 3.13 in one call of SpyRoads'
+    test_closed_road_path_rglob: Path(root).rglob('*'), which lists through scandir and calls no lstat, reds the scandir
+    half; Path(root).glob('workflows'), a glob over a literal part, read through lstat alone, reds the lstat half (round
+    4 of #882, extra6-2). 3.14's globber holds a scandir of its own that calls os.scandir at call time, counted already
+    and left as it is.
 
     Which spellings the census places (round 2 of #882, extra6-2: a reviewer's reads planted on the served paths through a
     `//` or `/./` spelling of the root, a dir_fd, io.FileIO and a DirEntry of the root's parent each left both modules
@@ -316,7 +322,8 @@ class _Spy:
     given a dir_fd is its own census entry, `<class>(dir_fd)`, wherever its path points, since a path relative to a
     descriptor cannot be placed without reading the descriptor: such a call is counted on the safe side. Each of those
     roads, io.FileIO and the globber's, has a red control in SpyRoads asserting that the census counts it
-    (test_closed_road_..., the globber's test_closed_road_path_rglob, red on 3.13 without its patch), and a
+    (test_closed_road_..., and for the globber's two halves test_closed_road_path_rglob, each of its calls red on 3.13
+    without its half), and a
     read through one of them on a served path fails that path's {} pin by its entry's name (the served-paths case in
     BoundPerCycleAndPerPass, and _assert_bound's equality over a cycle).
 
@@ -4485,23 +4492,50 @@ class SpyRoads(_World):
         as staticmethods bound at import, so a patch of the os module's attributes never sees them; the spy patches the
         globber's held functions where its __dict__ holds them so (keyed on that mechanism, not on a version: 3.14's
         globber calls os.scandir at call time, the other interpreters have none), so the road is closed (round 3 of
-        #882, extra8-2: the census counted nothing for rglob on 3.13). Path(root).rglob('*') under the spy lists every
-        directory of the tree at least once wherever the census counts pathlib: a census whose scandir count is at least
-        D, each directory listed (the counts differ by interpreter, each pathlib listing the tree its own way). 3.10's pathlib, which lists through the accessor it bound at import, is the road left
-        open (test_open_road_pathlib_on_3_10), so there the census is {}. Red on 3.13 with the globber's patch removed."""
+        #882, extra8-2: the census counted nothing for rglob on 3.13). The spy's patch has two halves, and each of the two
+        calls here is red on 3.13 without one of them. Path(root).rglob('*') lists through the globber's scandir, which
+        holds the builtin, and calls no lstat: it reds the scandir half, the spy's builtin test. Path(root).glob('workflows'),
+        a glob over a literal part, reads that part through the globber's lstat alone, which holds the kernel's counting
+        wrapper once the kernel has loaded (this module loads it at import): it reds the lstat half, the spy's
+        _romp_sig_counting test (round 4 of #882, extra6-2: with that test removed and rglob the only call, the suite stayed
+        green on 3.10 to 3.14).
+        rglob('*') under the spy lists every directory of the tree at least once wherever the census counts pathlib: a
+        census whose scandir count is at least D, each directory listed. The literal glob, where the globber's __dict__
+        holds lstat as a staticmethod, counts at least one lstat; on any other interpreter whose pathlib is counted, its
+        census is not empty. Neither is keyed on a per-version count, since each pathlib reads the tree its own way. 3.10's
+        pathlib, which lists and stats through the accessor it bound at import, is the road left open
+        (test_open_road_pathlib_on_3_10), so there both censuses are {}."""
         root = Path(str(self.sub))
+        ver = sys.version.split()[0]
+        accessor = getattr(sys.modules.get("pathlib"), "_NormalAccessor", None) is not None
         with self._spy() as sp:
             found = list(root.rglob("*"))
         got = sorted(str(p) for p in found if p.is_dir())     # the premise's own stats outside the window, so the census is rglob's
         self.assertEqual(got, sorted(self.dirs[1:]), "premise: rglob found every directory below the root")
         c = sp.tree_calls()
-        if getattr(sys.modules.get("pathlib"), "_NormalAccessor", None) is not None:
+        if accessor:
             self.assertEqual(c, {}, "Path.rglob on %s, whose pathlib lists through the accessor it bound at import: %r; %s"
-                             % (sys.version.split()[0], c, self.OPEN))
+                             % (ver, c, self.OPEN))
         else:
             self.assertGreaterEqual(c.get("scandir", 0), D,
                                     "filesystem calls under the tree over Path(root).rglob('*') on %s, by class: %r; keyed on a scandir "
-                                    "count of at least D = %d, each directory listed: %s" % (sys.version.split()[0], c, D, self.CLOSED))
+                                    "count of at least D = %d, each directory listed: %s" % (ver, c, D, self.CLOSED))
+        with self._spy() as sp:
+            lit = [str(p) for p in root.glob("workflows")]
+        self.assertEqual(lit, [str(self.wfroot)], "premise: the glob over the literal part found workflows/ alone")
+        c = sp.tree_calls()
+        globber = getattr(sys.modules.get("glob"), "_StringGlobber", None)
+        if isinstance(globber.__dict__.get("lstat") if globber is not None else None, staticmethod):
+            self.assertGreaterEqual(c.get("lstat", 0), 1,
+                                    "filesystem calls under the tree over Path(root).glob('workflows') on %s, whose glob._StringGlobber "
+                                    "holds lstat as a staticmethod bound at import, by class: %r; keyed on at least one lstat, the "
+                                    "literal part read through the globber's lstat: %s" % (ver, c, self.CLOSED))
+        elif accessor:
+            self.assertEqual(c, {}, "Path.glob over a literal part on %s, whose pathlib reads through the accessor it bound at import: "
+                             "%r; %s" % (ver, c, self.OPEN))
+        else:
+            self.assertTrue(c, "filesystem calls under the tree over Path(root).glob('workflows') on %s, by class: %r; keyed on a "
+                               "census that is not empty, this interpreter's pathlib counted: %s" % (ver, c, self.CLOSED))
 
     def test_open_road_pathlib_on_3_10(self):
         root = Path(str(self.sub))
