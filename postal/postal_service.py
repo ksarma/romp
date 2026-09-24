@@ -4590,16 +4590,32 @@ def _remote_sids_document(now, previous, owned=frozenset(), lost=None):
     (the same process's silence is then the far host's next exchange with it, carrying no session row, which
     releases the word, and the via row is then carried as an answered one is: the thirty-second commit, the road
     since the thirty-third), and a row _drop_peer_name_dupes forgets as the same bus under another name hands its
-    held words to the row that stays, so the rename drop above never takes one. What no identity in the file reaches: a hub restarted under a new
-    bus id AND heard under another name leaves its old row and that row's via rows carried for the file's
-    life, a departed host's rows, the class the ruling leaves disclosed rather than closed by a timer; and a
-    hub that stamps no viaBus (from before the field) renaming a far host leaves its old-name row the same
-    way, there being no bus id to match the two names by. The
+    held words to the row that stays, so the rename drop above never takes one. RESIDUAL (2), what no identity in
+    the file reaches, the class the ruling leaves disclosed rather than closed by a timer. (2a) A hub restarted under
+    a new bus id AND heard under another name (its dial landing here under the hostname it declares, before this
+    bus's own dial folds it) leaves its old row and that row's via rows carried, so a session that ended on the far
+    host since is named by an unreachable host, cannot-determine where rule 5 is due, until the hub is heard under the
+    old name again (this bus's own dial to the name the kernel dials, whose fold files the hub's current word there and
+    drops the declared name's rows), and for the file's life when it never is, a departed host's rows (residual (4));
+    its named witness: tests/test_postal_remote_sids_mirror.py
+    test_residual_2a_a_hub_restarted_under_a_new_bus_id_and_heard_under_another_name_leaves_its_old_rows_carried.
+    (2b) A hub that stamps no viaBus (from before the field) renaming a far host leaves its old-name row carried the
+    same way, there being no bus id to match the two names by, until the hub names the host under the old name again,
+    and for the file's life when it never does; a restarted hub's silence is no word for such a hub either, so its
+    answered word about a far host it has not heard since its restart stays carried (an unanswered one is held, as for
+    any hub); its named witness:
+    test_residual_2b_a_hub_stamping_no_viabus_that_renames_a_far_host_leaves_the_old_names_row_carried_and_its_restarts_silence_is_no_word.
+    Each witness asserts the carried rows beside a host that vouches, every heard row answered, and turns red when its
+    residual closes (a carry dropping the old via row once a heard via row from a hub with no link here names the same
+    far bus; one dropping a carried via row with no viaBus while its hub gossips any via row, which also takes the
+    restarted hub's word about the second far host, a live session presumed closed). The
     gossip is never added to the direct row as a naming source: that would credit the host with a word it
-    did not give. The residual, disclosed as a bound and not closed by a timer: a direct row heard, not
+    did not give. RESIDUAL (1), disclosed as a bound and not closed by a timer: a direct row heard, not
     held down and ANSWERED whose roster is OLDER than the hub's gossip folds it, so a session started on that
     host since its last exchange is in no row until its next exchange names it, a window of one exchange
-    interval of that host, closed by that exchange (the event). The population of that residual is every
+    interval of that host, closed by that exchange (the event; the named witness, whose THE RESIDUAL assertion
+    holds that window and turns red when the residual closes: tests/test_postal_remote_sids_mirror.py
+    test_a_hubs_word_about_a_directly_held_host_folds_only_while_that_host_is_heard_and_not_held_down). The population of that residual is every
     heard row the kernel does not hold down whose last exchange carried an answered listing, the rows with no
     link state included: a far bus filed under the hostname it declares before this bus's own dial has folded
     it under the alias the kernel notifies (no PEERS row, so no link to hold down) folds the hub's gossip like
@@ -4817,10 +4833,15 @@ def _remote_sids_document(now, previous, owned=frozenset(), lost=None):
     at the writer and in the composition since the eighteenth commit; and a session on a far host that a heard hub
     names beside a local session, the road the verifier drove at the eighteenth commit with the in-memory via row
     dropped, pinned at the writer and in the composition since the nineteenth).
-    Every other row nothing retires. A heartbeat row of a session that stopped beating (under the legacy scheme
-    a remote session that ended, or whose tunnel never came back) stays, expired, for the life of the state root;
-    so do the peer row and the via rows of a host the kernel no longer dials (a departed host), carried heard
-    false. The release event for those would be the kernel's word that the host is gone, which no notify carries
+    RESIDUAL (4), every other row nothing retires. A heartbeat row of a session that stopped beating (under the
+    legacy scheme a remote session that ended, or whose tunnel never came back) stays, expired, for the life of the
+    state root; so do the peer row and the via rows of a host the kernel no longer dials (a departed host), carried
+    heard false. The named witnesses, each red when the residual closes (an age-based prune; a carry dropping a host
+    the kernel holds no link to): tests/test_postal_bus_lifetime.py MonitorTick
+    test_an_expired_heartbeat_is_marked_unreachable_by_the_polls_write_and_stays for the expired beat, kept and
+    marked by the poll's write, and tests/test_postal_remote_sids_mirror.py
+    test_a_restart_carries_every_host_it_has_not_heard_as_unreachable_and_releases_each_on_its_event for a host's
+    rows, carried heard false until that host's own exchange, which a departed host never brings. The release event for a departed host's rows would be the kernel's word that the host is gone, which no notify carries
     yet: the follow-up, for the kernel's owner, is a forget notify on /peer naming the host, on which this writer
     drops the host's own row and its via rows (recorded in fork PR #897's ledger entry; outside this fix-tier
     change). The cost, stated plainly: the mirror grows by one row per legacy beat that expired or host that
@@ -4845,8 +4866,9 @@ def _remote_sids_document(now, previous, owned=frozenset(), lost=None):
     the key; a hand edit of the file writes the same bytes). The consequence, in one sentence: a client that sets
     threadMail on a comment thread lets that thread's mail relay while every roster still omits its sid, so a far
     host's mirror can presume the live thread closed, a false rule 5 that a user reaches only by hand-crafting a
-    WebSocket message (or by editing the file). The fix is a separate fix-tier PR that makes the WebSocket arm
-    apply the same whitelist as POST /flag. tests/test_postal_isolation.py ThreadOwnSendRefused pins the current
+    WebSocket message (or by editing the file). The fix is a separate fix-tier PR, fork PR #909, that makes the
+    WebSocket arm apply the same whitelist as POST /flag; a hand edit of the file stays open after it.
+    tests/test_postal_isolation.py ThreadOwnSendRefused pins the current
     truth as a set: the kernel's routes that write a session flag, derived from kernel/kernel.py, are exactly POST
     /flag and the WebSocket arm; and through the real handlers the roster omits the thread, its send is refused
     before the relay, POST /flag refuses the key and the send is still refused, and the key written through the

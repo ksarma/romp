@@ -1257,6 +1257,116 @@ class Mirror(unittest.TestCase):
                          "folded by name into the far host's own row, and the old name's via row dropped by the pair (the gate "
                          "reaches no row by the old name, and the folded key is the new name's)")
 
+    def test_residual_2a_a_hub_restarted_under_a_new_bus_id_and_heard_under_another_name_leaves_its_old_rows_carried(self):
+        """The named witness of residual (2a) of the writer's docstring, what no identity in the file reaches (round 4 of fork
+        PR #897, the reviewer's ruling on its round-3 refuters' findings, the thirty-sixth commit): a hub restarted under a
+        new bus id AND heard under another name. The hub, its bus id on its row, names two sessions on a far host nobody
+        holds directly, beside a host X; this bus restarts (the links notified again, every row carried); X is heard with
+        its link up and vouches for absence; the hub, its own bus restarted under a new id, dials in under the hostname it
+        declares, before this bus's own dial has folded it, naming one of the two (the other ended). Nothing in the file
+        ties the two names: the carried row's bus id is the old process's, and the hub's current word pairs the far bus
+        with the new name. So the hub's old row and its via row stay carried, heard false, across the hub's exchanges under
+        the new name, and the via row still names the ended session: the reader answers cannot-determine for it, named by
+        an unreachable host, where rule 5 would otherwise fire (this module runs no reader; these rows fix that verdict).
+        The event that ends it is the hub heard under the old name again, this bus's own dial to the name the kernel
+        dials, whose fold files the hub's current word there and drops the declared name's rows; a hub never heard under
+        the old name again leaves them for the file's life. A carry that drops a carried via row when a heard via row from
+        a hub with no link here names the same far bus closes the residual and turns this red (the refuter's M3, which
+        passed every module at the round-3 head), and the docstring's residual moves with it. Through the real handler,
+        the real builder and fold, and this writer."""
+        X = "TESTHOST-x"
+        self._forget_presence_cache()
+        self._local_listing_answered_empty()
+        gossip = lambda *sids: [{"id": A, "name": "web"}] + [{"id": s, "name": "api", "via": FAR, "viaBus": "far-bus", "viaAnswered": True} for s in sids]
+        via_decl = VIA + HUB_DECL + "/" + FAR
+        self._notify(HUB, up=True)
+        self._notify(X, up=True)
+        self._far_dials_us(HUB, gossip(C, D), "hub-bus-1")
+        self._far_dials_us(X, [{"id": E, "name": "tests"}], "x-bus")
+        self.assertEqual(self._reach(), {HUB: (True, False, False, True, [A]), X: (True, False, False, True, [E]),
+                                         VIA_FAR: (True, False, False, True, [C, D])},
+                         "the hub's word about the far host, under the hub's name, beside X")
+        self._restart()
+        pm.PEERS.clear()
+        self._notify(HUB, up=True)                         # the kernel's seeds: both links up, nothing heard yet (each writes)
+        self._notify(X, up=True)
+        self._far_dials_us(X, [{"id": E, "name": "tests"}], "x-bus")   # X heard with its link up: it vouches for absence
+        for _ in range(2):                                 # the hub, restarted under a new bus id, under its declared name; D ended
+            self._far_dials_us(HUB_DECL, gossip(C), "hub-bus-2")
+            self.assertEqual(self._reach(), {HUB: (False, False, False, False, [A]), X: (True, False, False, True, [E]),
+                                             VIA_FAR: (False, False, False, False, [C, D]),
+                                             HUB_DECL: (True, False, False, True, [A]), via_decl: (True, False, False, True, [C])},
+                             "RESIDUAL (2a): the hub's old row and its via row stay carried, heard false, and the via row still "
+                             "names D, which ended: nothing in the file ties the old name to the new (its bus id is the old "
+                             "process's, and the current word pairs the far bus with the new name), so D is named by an "
+                             "unreachable host, cannot-determine, where rule 5 would otherwise fire (a carry that drops the old "
+                             "via row on a heard via row naming the same far bus from a hub with no link here closes this, and D "
+                             "reads rule 5)")
+            self.assertEqual((self._vouch()[X], self._answered()[HUB_DECL], self._answered()[via_decl]), ((True, True, True), True, True),
+                             "X vouches for absence, and every heard row is answered: the carried via row alone keeps D from rule 5")
+        self._hub_answers_our_dial(HUB, gossip(C), "hub-bus-2")   # this bus's own dial reaches the hub under the old name
+        self.assertEqual(self._reach(), {HUB: (True, False, False, True, [A]), X: (True, False, False, True, [E]),
+                                         VIA_FAR: (True, False, False, True, [C])},
+                         "the event: the fold files the hub's current word under the old name and drops the declared name's rows, "
+                         "so D is in no row while the hub and X vouch, rule 5")
+
+    def test_residual_2b_a_hub_stamping_no_viabus_that_renames_a_far_host_leaves_the_old_names_row_carried_and_its_restarts_silence_is_no_word(self):
+        """The named witness of residual (2b) of the writer's docstring, what no identity in the file reaches (round 4 of fork
+        PR #897, the reviewer's ruling on its round-3 refuters' findings, the thirty-sixth commit): a hub that stamps no
+        viaBus renaming a far host. One hub process gossips two sessions on a far host under the hostname the far bus
+        declared to it, and one session on a second far host, beside a host X that vouches; its own dial then folds the far
+        bus under the alias it dials, and its word names one of the two sessions under the new name (the other ended).
+        With no bus id on either word there is nothing to match the two names by: the old name's via row stays carried,
+        heard false, naming the ended session, so the reader answers cannot-determine for it where rule 5 would otherwise
+        fire. A carry that drops a carried via row with no viaBus when its hub currently gossips any via row closes the
+        residual and turns this red (the refuter's M2). The same plant pins the rule the carry keeps for such a hub: a
+        restarted hub's silence is not a word. The hub restarts and names the far host again but not yet the second far
+        host, whose via row stays carried and names its live session (a carry that drops a no-viaBus hub's carried rows
+        once its current gossip carries any no-viaBus word, the refuter's M2b, drops it, the live session is in no row
+        while X vouches, and rule 5 presumes it closed; nothing turned red under it at the round-3 head). Every word here
+        is answered (viaAnswered True), a pairing no released build sends with an empty viaBus: a far bus from before
+        busId predates presenceAnswered too, and a hub from before viaBus stamps neither, so a real old hub's words read
+        unanswered and are held, not carried, across its restart
+        (test_a_hub_from_before_viabus_renaming_a_far_host_releases_the_old_names_word_within_one_process_and_holds_it_across_its_restart),
+        while the listing-unanswered arm holds every sid (cost (a)). The fixture takes the answered bit so that the carried
+        rows alone decide each verdict. Through the real handler and this writer."""
+        X, FAR2 = "TESTHOST-x", "TESTHOST-far2"
+        self._forget_presence_cache()
+        self._local_listing_answered_empty()
+        web = {"id": A, "name": "web"}
+        word = lambda far, *sids: [{"id": s, "name": "api", "via": far, "viaAnswered": True} for s in sids]   # no viaBus
+        via_decl, via2 = VIA + HUB + "/" + FAR_DECL, VIA + HUB + "/" + FAR2
+        self._notify(HUB, up=True)
+        self._notify(X, up=True)
+        self._far_dials_us(X, [{"id": E, "name": "tests"}], "x-bus")
+        self._far_dials_us(HUB, [web] + word(FAR_DECL, C, D) + word(FAR2, B), "hub-bus")
+        self.assertEqual(self._reach(), {HUB: (True, False, False, True, [A]), X: (True, False, False, True, [E]),
+                                         via_decl: (True, False, False, True, [C, D]), via2: (True, False, False, True, [B])},
+                         "the hub's word about the far host under the name the far bus declared to it, and about the second far host")
+        self.assertEqual({k: r.get("viaBus") for k, r in self._doc()["hosts"].items() if k.startswith(VIA)}, {via_decl: "", via2: ""},
+                         "no bus id on either word")
+        self._far_dials_us(HUB, [web] + word(FAR, C) + word(FAR2, B), "hub-bus")   # the same process renames the far host; D ended
+        self.assertEqual(self._reach(), {HUB: (True, False, False, True, [A]), X: (True, False, False, True, [E]),
+                                         via_decl: (False, False, False, False, [C, D]), VIA_FAR: (True, False, False, True, [C]),
+                                         via2: (True, False, False, True, [B])},
+                         "RESIDUAL (2b): the old name's via row stays carried, heard false, naming D, which ended: with no bus id "
+                         "on either word nothing matches the two names, so D is named by an unreachable host, cannot-determine, "
+                         "where rule 5 would otherwise fire (a carry that drops a carried via row with no viaBus while its hub "
+                         "gossips any via row closes this, and D reads rule 5)")
+        self.assertEqual((self._vouch()[X], self._answered()[HUB], self._answered()[VIA_FAR], self._answered()[via2]),
+                         ((True, True, True), True, True, True),
+                         "X vouches for absence, and every heard row is answered: the carried via row alone keeps D from rule 5")
+        self._far_dials_us(HUB, [web] + word(FAR, C), "hub-bus-2")   # the hub restarted: it has heard the far host, not FAR2 yet
+        self.assertEqual(self._reach().get(via2), (False, False, False, False, [B]),
+                         "A RESTARTED HUB'S SILENCE IS NOT A WORD, for a hub that stamps no viaBus too: its word about the second "
+                         "far host is carried, heard false, and still names B, live there, so B is cannot-determine (a carry that "
+                         "drops it once the hub's current gossip carries any no-viaBus word leaves B in no row while X vouches, "
+                         "and rule 5 presumes a live session closed)")
+        self.assertEqual(self._reach(), {HUB: (True, False, False, True, [A]), X: (True, False, False, True, [E]),
+                                         via_decl: (False, False, False, False, [C, D]), VIA_FAR: (True, False, False, True, [C]),
+                                         via2: (False, False, False, False, [B])},
+                         "...beside the old name's row, still carried, and the hub's current word about the far host")
+
     def test_a_peer_state_row_no_exchange_produced_is_not_a_source(self):
         pm.PEER_STATE[HOST] = {"drift": "proto"}       # the setdefault shape a refusal or drift note leaves
         pm._write_remote_sids()
