@@ -8,7 +8,7 @@
 // restore has no row to put back (no row was capturable, the saved place inside a spacer; the captured row gone, because the attempt's
 // window build around the anchor's unit replaced the rows before its re-query missed) the take is UNDONE (untakeMeasure: the figures
 // parked again, the spacers back) and the raw land-saved write of the saved scrollTop lands in the layout it was saved in, as on the
-// nothing-armed road, where nothing was taken. A miss with a FETCH ARMED puts nothing back, because the reply is still coming: a pre-jump's
+// nothing-armed road, where nothing was taken. A miss with a FETCH ARMED puts nothing back, because the landing is still under way: a pre-jump's
 // placement stands over the take it was measured in, and with no pre-jump the saved scrollTop is written raw with the take undone (the road on
 // the second behaviour PR 861 changed here, below). Until the author's pass 3 the missed land took and wrote raw (the reader moved by the
 // spacer's delta: the maintainer's round 1 ruling's HIGH 2 shape one road over, while the comment in the source said the road could not
@@ -383,8 +383,9 @@ test("the raw land-saved write on a missed land with no row at the saved place, 
 // page does not hold asks for a window, and the pre-jump (preJumpIntoGap) moves the reader into the gap where the target will be, the loading
 // glyph in the empty space; the land then misses, because the target comes with the reply. Before PR 861 the fallback wrote the saved place the
 // pre-jump had just synced, which moved nothing. PR 861's fallback put back the row captured before the attempt, which returned the reader to
-// where they started in the same pass, and the reply's landing then moved them forward again. With a fetch armed the miss is not final (the
-// reply lands the anchor, or its dead end puts back the origin the pre-jump recorded, chatWindow), so nothing is put back; the pre-jump read
+// where they started in the same task, before a frame painted the pre-jump, so the reader saw no move until the reply's landing made the whole
+// jump. With a fetch armed the miss does not end the landing (the reply lands the anchor; a fault or a missing reply puts back the origin the
+// pre-jump recorded, chatWindow; a connection that drops first ends it with no write, onWireDown), so nothing is put back; the pre-jump read
 // the gap after the take, so the take stands under it. The restore still serves a miss with no fetch armed (the roads above). The worlds: a
 // reader scrolled up at 2350 (r3 50 px above the viewport top), not following the tail, a figure parked (the take grows the head spacer,
 // which stands for the head gap, by D), on the view already on screen

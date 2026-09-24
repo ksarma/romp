@@ -15530,9 +15530,10 @@ function landActive(content: HTMLElement | null, v: View, scrollerHolds: boolean
   let scrolled = pendingAnchor ? scrollToAnchor(pendingAnchor) : false;
   // A FETCH ARMED by this attempt: scrollToAnchor clears both flags on entry, arms the fetch on its four fetch roads (the same landing's window
   // still on the wire, an older fetch in flight re-pointed at the anchor, a window asked, the index wire's older fetch), and its window ask's
-  // pre-jump marks the jump. A miss is then not final: the reply lands the anchor, or its dead end puts back the origin a pre-jump recorded
-  // (chatWindow), so the fallback below puts nothing back. Read from this attempt alone: a pass with no attempt by id (a moment) finds both
-  // flags as an earlier attempt left them, its fetch perhaps still on the wire
+  // pre-jump marks the jump. The miss does not end the landing, so the fallback below puts nothing back: the reply lands the anchor, or its
+  // dead end (a fault, a missing reply) puts back the origin a pre-jump recorded (chatWindow); a connection that drops first ends the landing
+  // with a toast and no write (onWireDown), which leaves a pre-jumped reader in the gap, as before PR 861. Read from this attempt alone: a pass
+  // with no attempt by id (a moment) finds both flags as an earlier attempt left them, its fetch perhaps still on the wire
   const fetchArmed = !!att.anchor && anchorPendingOlder, preJumped = fetchArmed && anchorPreJumped;
   // TIME-ONLY navigation (the user 2026-08-25, the fifth can't-locate shape): some producers — the
   // timeline's lane clicks, deep links, cards minted from segments with no anchorable atom — send
