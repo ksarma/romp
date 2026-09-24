@@ -243,26 +243,63 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   `_dead_bus_port` gives every loaded kernel module a dead `BUS_PORT` for each test,
   and every loaded postal module a dead `BASE` (the unknown above). A red in one of these
   under `-n` is still judged by the module alone: `python3 -m pytest tests/<module>.py -q`.
-- **No process of a run outlives the run** (2026-09-22). At the controller's session
-  end `tests/conftest.py` reads `/proc` for every live process whose environment
-  carries one of the run's temp roots (the controller's and its recorded children's,
-  an xdist worker's or a nested pytest's) or a path under one, a `:`-joined value
-  counted per component, or whose cwd is under one; it waits for the one event it can
-  observe, each holder's exit, up to `LEAK_EXIT_BOUND_S` (5 s: a signalled child exits
-  well inside it, a clean run pays nothing because the wait starts only when a holder
-  is seen), and if any still hold a root the run is RED and each is named: pid,
-  parent, command line, the names it holds the root through, and the test phase
-  current at its spawn (`PYTEST_CURRENT_TEST` in the environment it inherited; a
-  child a background thread spawns may carry a later phase or none, so the pid and
-  the command line are the witness and the phase is a pointer when there is one).
-  Keyed on that
+- **The run-end check names a process whose environment, cwd, open files or argv
+  hold a path under the run's roots** (2026-09-22; its reads widened and its unread
+  classes named 2026-09-24, round 2 of fork PR #894's review). At the controller's
+  session end `tests/conftest.py` first joins its live non-daemon threads (within
+  the bound below; a daemon thread is never waited for), then reads `/proc` for
+  every live process whose environment carries one of the run's temp roots or a
+  path under one (a `:`-joined value counted per component), whose cwd is under
+  one, one of whose open file descriptors points under one, or one of whose
+  arguments is under one (whole, after an option's `=`, or as a `:`-joined
+  component), each root compared by its spelling and by its realpath. The roots
+  are the controller's and every root listed in its `romp-tests-children`: a
+  nested process (an xdist worker, a nested pytest, any child of the run that
+  imports the tests package with a root as its TMPDIR) lists itself at mint time
+  in the root of every process above it, the run's first included (the lineage
+  its parent's owner marker records, `tests/__init__.py`), so the controller reads
+  every nested root at any depth after the processes between have removed their
+  own. It waits for the one event it can observe, each holder's exit, up to
+  `LEAK_EXIT_BOUND_S` (5 s: a signalled child exits well inside it, a clean run
+  pays nothing because the wait starts only when a holder is seen), and if any
+  still hold a root the run is RED and each is named: pid, parent, command line,
+  what it holds the root through (the environment names, `cwd`, `fd`, `argv`),
+  and the test phase current at its spawn (`PYTEST_CURRENT_TEST` in the
+  environment it inherited). A holder without that name is reported as that: the
+  phase at its spawn is unknown, because it was spawned while no phase was set or
+  was given an environment built without it. The pid and the command line are
+  the witness and the phase is a pointer when there is one. Keyed on that
   property, never on a binary's name: a postal bus, a kernel, a session host and a
   mock ssh's orphaned `sleep` are the same leak (the tunnels module's mocks `exec`
-  their trailing sleep since the check found the orphans). The check never kills; it
-  names the pid. Another user's process has an unreadable environ and is counted, not
-  judged; a platform without procfs says so once and runs no check.
-  `tests/test_run_end_leaked_processes.py` pins the scan, the wait, the roots and the
-  red run end by execution, in a child pytest process.
+  their trailing sleep since the check found the orphans). The check never kills;
+  it names the pid. What it does not read, each for the reason in the comment
+  above `LEAK_EXIT_BOUND_S`:
+  - a process whose environment, cwd, open files and argv carry no path under a
+    root, as one handed a built environment with its cwd elsewhere and no file
+    open in the root (the residual probe in the module below is its witness);
+  - a path spelled through a symlink outside the root, in an environment value or
+    an argument (compared as spelled; a cwd and a descriptor are resolved);
+  - a path inside a longer string (code text in an argument, an option inside an
+    environment value), a Unix socket bound under a root (its descriptor reads
+    `socket:[inode]`), a file mapped with no descriptor open, an environment
+    changed after the process started;
+  - a process that is not nested and whose root lies outside every run root;
+  - a process whose environment cannot be read. One of this user's that made
+    itself non-dumpable (ssh-agent, gpg-agent and op do; a setuid program is the
+    same) and started after the controller, in its cgroup, is listed by pid and
+    command line as not judged, whether or not a holder was found, and leaves the
+    exit status alone; other users' processes, and this user's started before the
+    run or in another cgroup, are a count of unreadable processes printed with
+    any report;
+  - a process started after the scan: by a non-daemon thread still running when
+    the join's bound ran out, or by a daemon thread. Such threads are reported by
+    count and name, with the statement that a process they start after the scan
+    is not seen.
+  The added reads cost a clean run's single scan about 28 to 32 ms on the box
+  (the comment has the measurement). A platform without procfs says so once, runs
+  no check and leaves the exit status alone.
+  `tests/test_run_end_leaked_processes.py` pins the scan, the wait, the join, the
+  roots and the red run end by execution, in child pytest processes.
 - **`*.bats`** — the shell surfaces: `bin/romp`, the launch chain, hooks,
   postal CLI. Keep them GNU/BSD-portable (CI runs bats on ubuntu).
   Run: `bats tests/*.bats`.
@@ -389,8 +426,10 @@ at 17 bytes under `-n`; at 18 that lab's test, ServedRestart, overflowed under
 xdist while it passed alone, and the TMPDIR + 72 shapes — HostProcess, EndToEnd,
 AttachStandDown, a bare mkdtemp root — overflowed from a 36-byte TMPDIR under
 `-n`). A nested process lists its pid and root in
-`<parent root>/romp-tests-children`; the parent removes a dead child's root at
-run end, so a worker killed mid-run leaks nothing. `tests/test_tempdir_hygiene.py`
+`<parent root>/romp-tests-children`, and in the same file in every root above
+its parent up to the run's first (the lineage, which the run-end process check
+reads); the parent removes a dead child's root at run end, so a worker killed
+mid-run leaks nothing. `tests/test_tempdir_hygiene.py`
 `HarnessSocketBudget` derives the bound from the roots the harness makes and
 the tests' own lab shapes, and from the same scan holds the longest directory
 path and the longest single component the harness can produce under xdist

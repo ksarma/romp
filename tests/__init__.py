@@ -104,7 +104,8 @@ def remove_made_dirs():
 # one level under the handed dir whatever the worker count, and the bound is TMPDIR + 70 <= 107 (a
 # 37-byte TMPDIR; tests/test_tempdir_hygiene.py HarnessSocketBudget derives it from the roots the
 # harness makes and the tests' own lab shapes). A nested process appends its pid and root to
-# `<parent root>/romp-tests-children`, and the parent's removal (remove_tmp_root below, conftest's
+# `<parent root>/romp-tests-children`, and to the same file in every root above its parent up to the
+# run's first (the lineage, below), and the parent's removal (remove_tmp_root below, conftest's
 # _remove_run_dirs) takes the root of any listed child whose owner is DEAD before its own, so a worker
 # that died without its hooks (SIGKILL, an OOM kill, a crashed node) is cleaned by its parent as the
 # nesting cleaned it before; a live child keeps its root and removes it itself. The name stays the
@@ -162,18 +163,54 @@ os.environ["TMPDIR"] = TMP_ROOT
 TEST_ROOT_OWNER_MARKER = "romp-tests-owner.json"     # the kernel's sdk_backend.TEST_ROOT_OWNER_MARKER agrees
 
 
-def write_owner_marker(d):
+def write_owner_marker(d, lineage=()):
     if not d:
         return
     try:
         with open(os.path.join(d, TEST_ROOT_OWNER_MARKER), "w", encoding="utf-8") as fh:
             fh.write(json.dumps({"pid": os.getpid(), "started": time.time(),
-                                 "argv": [os.path.basename(a) for a in sys.argv[:3]]}))
+                                 "argv": [os.path.basename(a) for a in sys.argv[:3]], "lineage": list(lineage)}))
     except OSError:
         pass                                 # a root we cannot write into is one we cannot leak into either
 
 
-write_owner_marker(TMP_ROOT)
+# The lineage (2026-09-24, round 2 of fork PR #894's review, the reviewer's ruling on correctness-1): every root a
+# nested process sits under, the run's first root first, which the process records itself in (record_child_root,
+# below) at mint time. Until then a nested process listed itself only in its PARENT's root, and a parent that exited
+# normally took that list with it: an xdist worker removes its root at its unconfigure, before the controller's
+# run-end check (conftest.py, the comment above LEAK_EXIT_BOUND_S) reads the lists, and a nested pytest inside a
+# nested pytest is gone before the outermost run's test returns, so a process leaked two levels down held a root
+# no surviving list named and the run ended green. Recorded in the run's first root, which stands until the
+# controller's unconfigure, after its check: every nested root of the run, at any depth, is in the one list the
+# check reads first, whatever became of the processes between. Carried in the owner marker, not in the environment:
+# nesting is decided by placement (the TMPDIR a process was handed is its parent's root, parent_root above), so the
+# parent's marker is there for exactly the processes that nest, whatever environment they were handed, and no name
+# is added to every test process's environment (the ruling offered a setdefault variable instead; the marker also
+# reaches a nested process whose environment was built with TMPDIR alone). What neither reaches is a process that is
+# not nested: one handed a TMPDIR that is no root mints inside that dir, and its root is a path under a run root
+# only when that dir is (conftest.py names the class). A marker that cannot be read or carries no lineage makes the
+# parent the lineage's only root: the list the parent's own removal takes with it, the recording before this change.
+def root_lineage(parent):
+    """The roots above a process handed `parent` as its temp dir, the run's first root first: the lineage `parent`'s
+    owner marker records, then `parent` itself; [] for a run's first process (no parent)."""
+    if not parent:
+        return []
+    try:
+        with open(os.path.join(parent, TEST_ROOT_OWNER_MARKER), encoding="utf-8") as fh:
+            above = json.load(fh).get("lineage")
+    except (OSError, ValueError, AttributeError):
+        above = None
+    if not isinstance(above, list) or not all(isinstance(r, str) and r for r in above):
+        above = []
+    out = []
+    for r in above + [parent]:
+        if r not in out:
+            out.append(r)
+    return out
+
+
+LINEAGE = root_lineage(PARENT_ROOT)
+write_owner_marker(TMP_ROOT, LINEAGE)
 
 
 def _pid_alive(pid):
@@ -220,7 +257,8 @@ def record_child_root(parent, root):
 
 def remove_dead_children(root, system=None, depth=3):
     """Remove every root listed in `<root>/romp-tests-children` whose owner is DEAD, each after its own dead children;
-    return the paths of the dead ones still standing afterwards. A listed root whose owner is alive is left to that
+    return the paths of the dead ones still standing afterwards, each once (a root is listed in every root above it,
+    so one that resists removal is met more than once). A listed root whose owner is alive is left to that
     owner (it removes its own at exit); a line not ours by shape — no `romp-tests-*` basename, a symlink, not directly
     under the recorded system dir — is left alone too. Never raises."""
     system = os.path.realpath(system or SYSTEM_TMPDIR)
@@ -246,10 +284,11 @@ def remove_dead_children(root, system=None, depth=3):
                 survivors.append(child)
         except (OSError, ValueError, TypeError, KeyError):
             continue
-    return survivors
+    return list(dict.fromkeys(survivors))
 
 
-record_child_root(PARENT_ROOT, TMP_ROOT)
+for _above in LINEAGE:                   # the parent's list and every list above it, the run's first root's first
+    record_child_root(_above, TMP_ROOT)
 
 
 def remove_tmp_root():
