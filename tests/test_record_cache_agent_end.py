@@ -6,7 +6,8 @@ command through it, the agent head steps it), so the quiescent drop, which pops 
 file unchanged for 120 s, never fires for it; after the agent ends every fold is a hit, which never pops, and the whole
 entry stayed until the count cap evicted it. On a long-lived kernel those entries were most of the cache's non-leaf held
 bytes. The SDK backend knows the end exactly: the agent leaves its session's live set on SubagentStop, its own task's end,
-its workflow slot's done or error state, a re-minted slot, the run's end, or the CLI's teardown. Each of those removals
+its workflow slot's done or error state, a re-minted slot, the run's end, the CLI's reconnect teardown, or the CLI's end (a
+kill, a crash; not a detach, where the CLI lives on under its host). Each of those removals
 queues the agent; the pusher drains the queue at its next cycle's start and releases the agent's entry after writing the
 file's checkpoint document, so a later fold restores a zero-weight tail instead of reading the file whole.
 
@@ -196,6 +197,28 @@ class AgentEnd(unittest.TestCase):
 
     def test_an_agent_is_released_when_its_cli_is_torn_down(self):
         self._released_at_the_end(AID, self.agent, lambda: self.s._drop_live_work("reconnect"))
+
+    def _session_gone(self, **flags):
+        for k, v in flags.items():
+            setattr(self.s, k, v)
+        with contextlib.redirect_stderr(io.StringIO()):
+            self.be._on_session_gone(self.s)
+
+    def test_an_agent_is_released_when_its_session_is_killed(self):
+        self._released_at_the_end(AID, self.agent, lambda: self._session_gone(ended=True))   # a kill or a shutdown ends it
+
+    def test_an_agent_is_released_when_its_cli_dies_while_idle(self):
+        self._released_at_the_end(AID, self.agent, lambda: self._session_gone())   # neither ended nor detached: a crash
+
+    def test_a_detached_session_ends_no_agent(self):
+        size = self._fold_while_running(AID, self.agent)
+        km._begin_checkpoint_cycle()                                     # drains the agent's start
+        self._session_gone(detached=True)                                # the CLI lives on under its host
+        self.assertIn(AID, self.s._subagents, "the agent stays in the live set")
+        self.assertEqual(self.be.drain_agent_live_events(), ([], 0), "no end was queued")
+        km._begin_checkpoint_cycle()
+        self.assertEqual(self._weight(self.agent), size, "the agent keeps its records")
+        self.assertEqual(self._stat("released"), {})
 
     # ---- after the release ----
 

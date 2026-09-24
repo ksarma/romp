@@ -20832,7 +20832,8 @@ class SdkBackend:
     def note_agent_live(self, sid, agent_id, live):
         """An agent entered (`live`) or left a session's live set: queued for the kernel's record cache. Called by the session
         at the one site that adds (the SubagentStart hook) and at every site that removes (SubagentStop, the agent's own task
-        end, the workflow roster's done/error/re-minted slot or the run's end, the CLI teardown), outside the session's lock.
+        end, the workflow roster's done/error/re-minted slot or the run's end, the reconnect teardown (_drop_live_work), and
+        the CLI's end (_on_session_gone when the session is not detached)), outside the session's lock.
         Past _AGENT_LIVE_MAX the oldest event is dropped, so a backend nothing drains stays bounded; a dropped end is counted
         (a release given up), a dropped start is not."""
         q = getattr(self, "_agent_live_q", None)
@@ -21673,6 +21674,17 @@ class SdkBackend:
             if not sess.ended and not sess.detached:
                 # process exited on its own while idle (crash / EOF): settle state; next send resumes
                 append_state(self.state_dir, sess.sid, "waiting")
+        if not sess.detached:
+            # the CLI ended (a kill, a shutdown, an idle crash, a cut that the heal resumes in a new object) and its agents
+            # ended with it, but nothing removed them from _subagents: this object is dropped with the dict full. Each is
+            # queued as ended for the kernel's record cache (_note_live_agents), which releases its parsed transcript. A
+            # detached session's CLI lives on under its host, so its agents have not ended. Not covered: after a detach
+            # and a reattach the new object never saw the agents the old one held, so a SubagentStop for one of them pops
+            # nothing and queues no end.
+            with sess._sub_lock:
+                gone_agents = list(sess._subagents)
+                sess._subagents.clear()
+            sess._note_live_agents(gone_agents, False)
         # this session's THREAD has ended (a death, or merely a detach where a live host keeps the CLI); its stream
         # is over FOR THIS KERNEL OBJECT either way (round 4 of the reviewer's review, 2026-09-19; its kernel-3,
         # correcting a comment that claimed a detach ends the CLI's background work too, which contradicts the PR's
