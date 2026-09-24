@@ -7,8 +7,9 @@ file unchanged for 120 s, never fires for it; after the agent ends every fold is
 entry stayed until the count cap evicted it. On a long-lived kernel those entries were most of the cache's non-leaf held
 bytes. The SDK backend knows the end exactly: the agent leaves its session's live set on SubagentStop, its own task's end,
 its workflow slot's done or error state, a re-minted slot, the run's end, the CLI's reconnect teardown, or the CLI's end (a
-kill, a crash; not a detach, where the CLI lives on under its host). Each of those removals
-queues the agent; the pusher drains the queue at its next cycle's start and releases the agent's entry, writing the file's
+kill, a crash; not a detach, where the CLI lives on under its host). Each of those ends queues the agent, the agent's own
+end events even on a session object that never saw it start (the object that reattaches after a kernel restart under a
+session host); the pusher drains the queue at its next cycle's start and releases the agent's entry, writing the file's
 checkpoint document first when it lacks what the cache holds, so a later fold whose cursor the document records restores a
 zero-weight tail instead of reading the file whole. A file no fold holds a recordable cursor for is released without a
 document and read whole at its next fold; a file that no longer exists is released with nothing written.
@@ -274,7 +275,14 @@ class AgentEnd(unittest.TestCase):
         for _ in range(2):                                               # the run re-sends its whole list on every change
             again._on_task_event("task_progress", {"task_id": WF_TID, "workflow_progress": [_wf(1, WF_AID, "done")]})
         again._on_task_event("task_notification", {"task_id": WF_TID, "status": "completed"})   # and the run ends
+        self.assertNotIn(WF_TID, again._wf_ended, "the run's record of the ends it queued goes with the run")
         self._queued_then_released(WF_AID, self.wf_agent, size)
+
+    def test_the_teardown_forgets_the_ends_a_run_queued(self):
+        self.s._on_task_event("task_progress", {"task_id": WF_TID, "workflow_progress": [_wf(1, WF_AID, "done")]})
+        self.assertEqual(self.s._wf_ended, {WF_TID: {WF_AID}}, "precondition: the run's end queued is recorded")
+        self.s._drop_live_work("reconnect")
+        self.assertEqual(self.s._wf_ended, {}, "the teardown forgets it with the run's roster")
 
     # ---- after the release ----
 
