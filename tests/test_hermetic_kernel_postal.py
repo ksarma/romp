@@ -1500,19 +1500,23 @@ def _still_held():
 def _parse_count_faults(read=None, reads=None):
     """(file, parses, expected) for every text the module's counter (_PARSES) holds other than expected in this module
     run, over the texts as they were parsed: each file's text key as `read` recorded it at its parse (_read_root's
-    `keys`; by default the module run's read of the tree, _TREE_READ, none when no read was made) and the tunnels
-    module's key as the placement test parsed it (_PLACEMENT_PARSES). Expected: one parse for each file of the read that
-    holds the text, for each of the `reads` reads of it (by default _READS, the reads of the tree the run made), and the
-    placement test's parses of that text besides. A file of the read parsed again through _parse_text moves its key past
-    the expected count and is named; a file edited after the read is held to the text the read parsed, not to the text
-    on disk now (PR #850's tenth review round: a check that re-read the files at check time named a file edited during
-    the run as parsed 0 times against 1). No file is read and no tree built here. The parse pin reads it in its test and
-    tearDownModule at the module's end."""
+    `keys`; by default the module run's read of the tree, _TREE_READ) and the tunnels module's key as the placement test
+    parsed it (_PLACEMENT_PARSES). When no read was made in this process (no `read` handed and none in _TREE_READ, as on
+    an xdist worker that ran none of the module's tests that read the tree), the files under tests/ (_tree_module_paths)
+    are read here at their current text, no tree built, and each text is expected at the placement test's parses alone
+    (_READS is 0 then), so a file of the tree parsed outside a read is still named. Expected otherwise: one parse for
+    each file of the read that holds the text, for each of the `reads` reads of it (by default _READS, the reads of the
+    tree the run made), and the placement test's parses of that text besides. A file of the read parsed again through
+    _parse_text moves its key past the expected count and is named; a file edited after the read is held to the text the
+    read parsed, not to the text on disk now (PR #850's tenth review round: a check that re-read the files at check time
+    named a file edited during the run as parsed 0 times against 1). No tree is built here. The parse pin reads it in
+    its test and tearDownModule at the module's end."""
     read = _TREE_READ.get("tree") if read is None else read
     reads = _READS[0] if reads is None else reads
-    keys = dict(read.keys) if read is not None else {}
+    keys = dict(read.keys) if read is not None else {p: _text_key(_source(p)) for p in _tree_module_paths()}
+    root = read.root if read is not None else HERE
     holders = collections.Counter(keys.values())
-    counts = [(os.path.relpath(path, read.root), _PARSES[key], holders[key] * reads + _PLACEMENT_PARSES[key])
+    counts = [(os.path.relpath(path, root), _PARSES[key], holders[key] * reads + _PLACEMENT_PARSES[key])
               for path, key in sorted(keys.items())]
     counts += [("test_kernel_tunnels.py, as the placement test parsed it", _PARSES[key], _PLACEMENT_PARSES[key])
                for key in _PLACEMENT_PARSES if key not in holders]
@@ -1539,7 +1543,8 @@ def _module_end_faults():
                       "the module's end than at its start, after a gc.collect() (a net count over the process)" % grown)
     parses = _parse_count_faults()
     if parses:
-        faults.append("texts of the tree's read, as it parsed them, parsed other than expected in this module run, by the "
+        faults.append("texts of the tree's read, as it parsed them (or, when this process made no read of the tree, of "
+                      "the files under tests/ as they stand), parsed other than expected in this module run, by the "
                       "module's counter (_PARSES): (file, parses, expected: one per file that holds the text for each read "
                       "of the tree, and the placement test's parses of that text besides) %r" % parses)
     return faults
