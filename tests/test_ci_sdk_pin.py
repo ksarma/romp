@@ -53,8 +53,9 @@ This module holds five things, and it never skips: a pin that skips reports gree
    past its line, an escape in a quoted scalar, a folded block, a chomping or indentation indicator, a literal block
    anywhere but a step's run, a header or a value on the line after its key, a plain scalar continued past its line, a
    directive, a document marker, a quoted, spaced or otherwise spelled key, a key twice in one mapping, a list at its
-   key's indent, another indentation, a tab or other control character, and a character outside ASCII outside a
-   comment line. A form the scan does not accept is refused by name; reword the step in an accepted form. Until the
+   key's indent, another indentation, a tab or other control character, a character outside ASCII outside a comment
+   line, and a last line with no newline after it. A form the scan does not accept is refused by name; reword the step
+   in an accepted form. Until the
    allowlist the scan refused named forms one at a time, and each of three verify passes found forms the line reading
    half-modelled; the parser and the censuses read the accepted forms and nothing else. Every line of ci.yml that
    spells pytest (the word in any case ending at a word boundary, py.test, or a `$PYTEST` expansion), outside a comment
@@ -877,8 +878,9 @@ def _env_block(text, env_indent, keys_out=None):
     scan), and a mapping nested under a key is that key's value, not keys of this block. `keys_out`, when a list is
     given, receives (offset of the key's line in `text`, name) for every key line read (the switch census,
     switch_line_census, counts those lines as read). Not read: an `env:` line that carries anything after the colon but
-    a comment (an alias, an anchor, a flow mapping: forms the scan refuses), and a line at the key indent this regex
-    does not read as a key (a quoted or spaced key, refused by the scan; a hyphenated name, which is not the switch)."""
+    a comment (an alias, an anchor, a flow mapping: forms the scan refuses), a line at the key indent this regex does
+    not read as a key (a quoted or spaced key, refused by the scan; a hyphenated name, which is not the switch), and a
+    key on a last line with no newline after it, which the pattern needs (refused by the scan)."""
     pad = " " * env_indent
     # the block's lines: those indented past `env:`, blank lines, and comment lines at any indent, which YAML skips
     # wherever they sit (until the allowlist build, 2026-09-24, a comment line indented no further than `env:` ended the
@@ -1534,7 +1536,8 @@ def yaml_line_forms(src):
     literal block anywhere but a step's run, a header or a value on the line after its key, a plain scalar continued
     past its line, a directive, a document marker, a quoted, spaced or otherwise spelled key, a key twice in one
     mapping, a sequence at its parent key's indent (YAML's compact style), an indentation other than two columns past
-    the parent, a tab or any other control character, and a character outside ASCII outside a comment line. After a
+    the parent, a tab or any other control character, a character outside ASCII outside a comment line, and a last line
+    with no newline after it (the real file ends in one, and _env_block's and JOB_RE's patterns need one). After a
     refused line, the lines that belong to what it opened are not scanned, so a construct is named once, at its first
     line: the lines indented past it (past its key, for a refused value; past its parent key, for the first line of a
     nested value), or, for a quoted scalar or flow collection that YAML carries on, every line from its key's column in;
@@ -1684,6 +1687,10 @@ def yaml_line_forms(src):
             skip = col - 1 if what in YAML_CARRIED else col
             continue
         use(line_forms + value_forms, n)
+    if src and not src.endswith("\n"):
+        # the allowlist's first verify pass: an env key on a last line with no newline after it was unread by
+        # _env_block, whose pattern needs one, and the file was red for the wrong reason
+        refused.append((len(lines), lines[-1].strip(), "a last line with no newline after it"))
     return forms, refused
 
 
@@ -2316,6 +2323,11 @@ YAML_REFUSED_ROWS = (
     ("a CR after the flag at the end of a literal run block's line (YAML reads the CR and the newline as one line break)",
      "first+env", "      - name: CR in block (pytest)\n        run: |\n          python -m pytest tests/test_a.py -q -p no:anyio\r\n",
      ((3, "a tab or other control character ('\\r')"),), True),
+    # the file's end (the allowlist's first verify pass, X10: a step env's switch key on a last line with no newline
+    # after it was unread, and the file, which PyYAML and actionlint accept, was red for another reason than a refusal)
+    ("a last line with no newline after it, a step env's switch key on it (X10)", "end",
+     "  extra2:\n    runs-on: ubuntu-latest\n    steps:\n      - name: Extra tests 2 (pytest)\n" + RUN_OK + '        env:\n          %s: "1"' % SWITCH,
+     ((7, "a last line with no newline after it"),), False),
 )
 # accepted: each shape a form the real file uses, spliced as the first step of the shell job; the scan refuses none
 YAML_ACCEPTED_ROWS = (
