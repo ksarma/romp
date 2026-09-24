@@ -709,7 +709,8 @@ _RECORD_CACHE_STATS.update({   # the release at an agent's end (release_entry, 2
     "releaseDeferred": 0,      #  releases owed to the next pusher cycle: its checkpoint budget refused the document write, or a
     #                             read replaced the entry between the write and the pop (paid by checkpoint_pay_owed_drops)
     "releaseLost": 0,          #  releases given up, the entry left to the count cap: no document could be written (the drop writes
-    #                             off, no checkpoint directory, a write that wrote nothing), or a bounded queue of them overflowed
+    #                             off, no checkpoint directory, a write that wrote nothing), a bounded queue of them overflowed, or
+    #                             resolving one raised
     "falseEnds": 0,            #  agents released at their end that entered their session's live set again (a resumed agent, or an
     #                             end reported early): note_false_end, counted by the kernel
     "releasedReread": {"count": 0, "bytes": 0}})   # whole reads of a path whose last removal was a release: what releasing cost

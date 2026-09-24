@@ -15591,11 +15591,14 @@ def _release_ended_agents():
             continue
         if last[pair] != i:
             continue                                   # the agent entered the live set again later in this batch
-        path = _path_of(sid)
-        ap = _subagent_file(path, aid) if path else None
-        if ap is None:
-            continue                                   # no transcript for the session, or no file for the agent: nothing read
-        if em.release_entry(str(ap), "agentEnded") in ("released", "deferred", "raced"):
+        try:
+            path = _path_of(sid)
+            ap = _subagent_file(path, aid) if path else None
+            got = em.release_entry(str(ap), "agentEnded") if ap is not None else None
+        except Exception as e:                         # one event that raises must not lose the rest of the drained batch
+            em.note_release_lost(1, "a release raised %s" % type(e).__name__)
+            continue
+        if got in ("released", "deferred", "raced"):   # None: no transcript for the session or no file for the agent
             _AGENT_RELEASED.pop(pair, None)
             _AGENT_RELEASED[pair] = True
             while len(_AGENT_RELEASED) > _AGENT_RELEASED_MAX:

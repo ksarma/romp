@@ -3083,8 +3083,8 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   `releaseDeferred` (releases owed to the next cycle: its checkpoint budget
   refused the write, or a read replaced the entry before the drop),
   `releaseLost` (releases given up, the entry left to the count cap: no
-  document could be written, as with `ROMP_CKPT_CONVERGE_MS=0`, or a bounded
-  queue overflowed; said once on stderr per cause), `falseEnds` (agents
+  document could be written, as with `ROMP_CKPT_CONVERGE_MS=0`, a bounded
+  queue overflowed, or resolving one raised; said once on stderr per cause), `falseEnds` (agents
   released at their end that entered the live set again) and
   `releasedReread` (`count` and `bytes` of whole reads of a path whose last
   removal was a release: what releasing cost); and `wholeReads`: every read that pulled a file whole,

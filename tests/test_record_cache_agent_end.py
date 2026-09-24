@@ -35,6 +35,7 @@ jd.STATE.mkdir(parents=True, exist_ok=True)
 (jd.STATE / "session-hosts").write_text("off\n")   # this module mints its own state root: no per-session host
 
 SID = "11111111-2222-3333-4444-a9e7e1d0c0de"          # a private synthetic sid
+OTHER_SID = "11111111-2222-3333-4444-a9e7e1d0c0df"    # a second one, for an event whose resolution raises
 AID = "a0123456789abcdef"                              # an agent id in the hook's shape (a + 16 hex)
 WF_AID = "afedcba9876543210"                           # a workflow agent
 WF_AID2 = "a2222222222222222"                          # the slot's retried attempt
@@ -395,6 +396,29 @@ class AgentEnd(unittest.TestCase):
             km._begin_checkpoint_cycle()
         self.assertEqual(self._stat("releaseLost"), 2, "the two oldest events were dropped and counted")
         self.assertIn("recordCache.releaseLost", err.getvalue())
+
+    def test_an_end_that_raises_does_not_lose_the_rest_of_the_batch(self):
+        size = self._fold_while_running(AID, self.agent)
+        self._stop(AID)
+        self.be.note_agent_live(OTHER_SID, AID, False)                  # another session's end, queued after
+        path_of = km._path_of
+
+        def raising(sid, now=None):
+            if sid != SID:
+                raise RuntimeError("synthetic")
+            return path_of(sid, now)
+        km._path_of = raising
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            km._begin_checkpoint_cycle()
+        self.assertIsNone(self._weight(self.agent), "the good event was released")
+        self.assertEqual((self._stat("releaseLost"), self._stat("released")), (1, {"agentEnded": {"count": 1, "bytes": size}}))
+        self.assertIn("a release raised RuntimeError", err.getvalue())
+        self.be.note_agent_live(OTHER_SID, AID, False)
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            km._begin_checkpoint_cycle()
+        self.assertEqual((err.getvalue(), self._stat("releaseLost")), ("", 2), "counted again, said once")
 
     def test_a_cycle_over_a_backend_without_the_queue_does_nothing(self):
         for be in (None, False, object()):                               # not built, unavailable, a double without the queue
