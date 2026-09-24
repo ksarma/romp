@@ -1363,8 +1363,10 @@ YAML_KEY_RE = re.compile(r"([A-Za-z_][A-Za-z0-9_-]*):(?= |$)")    # a key as ci.
 YAML_REFUSED_CHAR_RE = re.compile("[\x00-\x09\x0b-\x1f\x7f\x85\u2028\u2029\ufeff]")
 # a character outside ASCII: ci.yml holds one only in comment lines, and a line of any other form holding one is
 # refused, since Python's str.strip and `\s` read a no-break space or another Unicode space as whitespace where YAML and
-# the shell read a word's character (`-p no:anyio` then a no-break space read as the flag; pytest takes the plugin name
-# with that character on it and blocks nothing)
+# the shell read a word's character (the switch's value `1` then a no-break space read as 1, where the step's
+# environment holds the character and the runtime readers compare with == "1"; at the end of a pytest command,
+# `-p no:anyio` then a no-break space reads as the flag, and pytest 9.1.1 strips its -p argument the same way, probed
+# 2026-09-24, so there the two agree)
 YAML_NON_ASCII_RE = re.compile("[^\x00-\x7f]")
 LITERAL_HEADER_RE = re.compile(r"\|((?: +#.*)?) *$")              # `|` with nothing after it but a spaced comment
 _INDICATOR_WHAT = "a block scalar header with a chomping or indentation indicator, or text after it"
@@ -2209,7 +2211,7 @@ YAML_REFUSED_ROWS = (
     ("a flow sequence where a key goes", "first", "      - [python -m pytest tests/test_a.py -q]\n",
      ((1, "a flow sequence where a key goes"),), False),
     # inside a flow sequence, each a refusal whose deletion left every test green (the allowlist's first verify pass,
-    # M22, M24 and M25; no reader reads a flow sequence for a run, an env or a name, so none of them reached one)
+    # M22, M24 and M25)
     ("an anchor inside a flow sequence (M22)", "first", "      - uses: ./a\n        with:\n          list: [&a main]\n",
      ((3, "an anchor (&a)"),), True),
     ("a tag inside a flow sequence (M22)", "first", "      - uses: ./a\n        with:\n          list: [!!str main]\n",
@@ -2291,9 +2293,9 @@ YAML_REFUSED_ROWS = (
     ("`-   name:`, the key three columns past the dash (A04)", "first",
      "      -   name: Wide dash (pytest)\n          run: python -m pytest tests/test_a.py -q\n", ((1, _ENTRY),), False),
     ("a sequence entry whose node is on the next line", "first", "      -\n        name: Next line\n        run: echo hi\n", ((1, _ENTRY),), True),
-    # the allowlist's first verify pass's M31 scans a carried construct's lines at its own column: that adds a second
-    # refusal after the first one stands and changes nothing else, so it affects naming only; this row pins the naming
-    # (a construct is named once, at its first line)
+    # the allowlist's first verify pass's M31 scans a carried construct's lines at its own column, which changes only
+    # what the scan reports after a refusal that already stands, so it affects naming only; this row pins the naming (a
+    # construct is named once, at its first line)
     ("a sequence entry that is a quoted scalar continued at its dash's column (M31)", "first",
      '      - "a step written\n      as a quoted string"\n', ((1, "a quoted scalar continued past its line"),), True),
     ("a key or a scalar where a sequence entry goes", "first", "      - uses: ./a\n      name: stray\n",
@@ -2315,9 +2317,11 @@ YAML_REFUSED_ROWS = (
      "      - name: Nbsp value (pytest)\n        env:\n          %s: 1\xa0\n" % SWITCH + RUN_OK,
      ((3, "a character outside ASCII outside a comment line ('\\xa0')"),), True),
     # inside a literal block (the allowlist's first verify pass, M02: with the block's character refusal deleted every
-    # test stayed green, and a no-break space after the flag read as the flag, where bash hands pytest no:anyio with the
-    # character on it and no plugin is blocked)
-    ("a no-break space after the flag at the end of a literal run block's line, which str.strip drops and bash keeps",
+    # test stayed green). A no-break space after the flag at the end of the line reads as the flag, str.strip dropping
+    # it; bash hands pytest the character, and pytest 9.1.1 strips its -p argument and blocks the plugin (probed
+    # 2026-09-24). A CR before the newline is part of YAML's line break. Neither is a form ci.yml uses, and each is
+    # refused by name
+    ("a no-break space after the flag at the end of a literal run block's line",
      "first+env", "      - name: Nbsp in block (pytest)\n        run: |\n          python -m pytest tests/test_a.py -q -p no:anyio\xa0\n",
      ((3, "a character outside ASCII outside a comment line ('\\xa0')"),), True),
     ("a CR after the flag at the end of a literal run block's line (YAML reads the CR and the newline as one line break)",
