@@ -51,7 +51,7 @@ helper's body or into Sessions.backend_for's is a new kernel call site, so the b
 (the judge side of that pin reads the set of called spellings and no count, so in a judge helper's body the census alone sees
 a door call), while a loader that would reach a body under
 another name, or through a string, is refused, when that name is born in kernel/kernel.py or kernel/judge.py, by a pin over those
-two files, each read whole (every loader by attribute the callee of a call; no alias, bare name, parameter or keyword spells one, no
+two files, each read whole (among them: every loader by attribute the callee of a call; no alias, parameter or keyword spells one, no
 string constant spells a door whole wherever it appears and whatever receives it (an ASCII bytes literal decoded, surrounding
 whitespace stripped and str.lower applied read as the name: the three transforms _door_text undoes, one member of each family and
 not the family), and none containing the name reaches a dynamic lookup, a dict read or a subscript key; in kernel/kernel.py, no
@@ -60,8 +60,9 @@ bound through a longer constant (a statement handed to exec or compile, a key sl
 any other file are outside that rule; a name completed at run time from constants that spell no
 door whole and either carry the name in one piece to none of those receivers or reach one in a text those three transforms do not
 restore (a bytes literal in another codec, a strip of other characters, another case fold) is outside every static pin here, a limit the
-enumeration holds on its side, and so is jd completed at run time from constants none of which reads as jd (`'j' + 'd'`, a join); the
-consolidation pass, and the whole-spelling rule since the round-4 fixes), and the census's own forms,
+enumeration holds on its side, and so is jd completed at run time from constants none of which reads as jd (`'j' + 'd'`, a join); each
+rule stated in full in _loader_births' docstring and the birth case; the consolidation pass, and the whole-spelling rule since the
+round-4 fixes), and the census's own forms,
 counted and missed, are enumerated in
 TheCensusOverEveryForm; setUp checks that it rebinds
 exactly the listed names, so the census reads the fixture's list and not a hand-kept copy of it, and the check spans the
