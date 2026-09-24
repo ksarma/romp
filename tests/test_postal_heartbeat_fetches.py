@@ -366,7 +366,12 @@ class Counting(unittest.TestCase):
         with the row (postal_service.py _write_remote_sids). That entry is also the presence resolve_recipient
         reads, so a send to the session in a later blink, within the beat's TTL, gets the same standing 503: the
         release completes this design rather than costing it. With the pop deleted (the base's behaviour) the
-        send resolves to the stale presence row and is delivered into the mailbox with no wake. This test is the
+        send resolves to the stale presence row and is delivered into the mailbox with no wake. The same entry is
+        the presence recall's by-name lookup (_recip_id_for) reads, the fourth reader, which the thirty-fourth
+        commit's disclosure left out (the thirty-fifth commit, round 4 of fork PR #897, the reviewer's verifier): a
+        comment thread's blink beat released the same way, a recall by the thread's name in the next blink removes
+        nothing, since a thread has no names entry for recall's durable fallback, and a recall by its id removes
+        the mail; with the pop deleted the name finds the stale presence row and removes it. This test is the
         named witness the writer's docstring cites for that reach."""
         pm.HEARTBEATS.clear()
         self.addCleanup(pm.HEARTBEATS.clear)
@@ -395,16 +400,47 @@ class Counting(unittest.TestCase):
         # THE PRE-LATCH CASE: the kernel answers again, and the session's next beat meets the answered listing, so the
         # mirror's writer releases the blink beat's row and forgets its entry; then the kernel blinks again, within the
         # beat's TTL
-        pm._kernel_sessions_checked = answering
-        self.assertTrue(pm._record_heartbeat(WEB, "web"), "the listing answers: local")
-        pm._kernel_sessions_checked = blinking
-        r = pm.resolve_recipient("web", frm_id=API)
-        self.assertEqual((r["kind"], r.get("status")), ("error", 503),
-                         "THE PRE-LATCH CASE: the released beat's presence is gone with its entry, so a send in the next blink "
-                         "gets the standing refusal (with the pop deleted, the base's behaviour, the send resolves to the stale "
-                         "presence row and is delivered into the mailbox with no wake): %r" % (r,))
-        self.assertIn("Retry shortly", r["error"])
-        self.assertNotIn(WEB, pm.HEARTBEATS, "the entry is forgotten with the row")
+        with self.subTest(reader="resolve_recipient, the send"):     # a subtest each, so each reader's red is its own
+            pm._kernel_sessions_checked = answering
+            self.assertTrue(pm._record_heartbeat(WEB, "web"), "the listing answers: local")
+            pm._kernel_sessions_checked = blinking
+            r = pm.resolve_recipient("web", frm_id=API)
+            self.assertEqual((r["kind"], r.get("status")), ("error", 503),
+                             "THE PRE-LATCH CASE: the released beat's presence is gone with its entry, so a send in the next "
+                             "blink gets the standing refusal (with the pop deleted, the base's behaviour, the send resolves to "
+                             "the stale presence row and is delivered into the mailbox with no wake): %r" % (r,))
+            self.assertIn("Retry shortly", r["error"])
+            self.assertNotIn(WEB, pm.HEARTBEATS, "the entry is forgotten with the row")
+        # THE RECALL BY NAME (the thirty-fifth commit, round 4 of fork PR #897, the reviewer's verifier at the thirty-fourth):
+        # recall's by-name lookup, _recip_id_for, reads the same presence. A comment thread has no names entry for recall's
+        # durable fallback: its beat filed during the blink, mail from api parked in its box, its next beat released by an
+        # answered listing, then a blink again, within the beat's TTL
+        with self.subTest(reader="_recip_id_for, the recall by name"):
+            pm._kernel_sessions_checked = blinking
+            self.assertFalse(pm._record_heartbeat(THREAD, "web-t1"), "unanswered listing: the thread's beat is filed")
+            self.assertIn(THREAD, pm.HEARTBEATS)
+            self.assertFalse((pm.NAMES_DIR / THREAD).exists(), "the premise: no names entry for the thread")
+            self.assertEqual(pm._recip_id_for("web-t1", rows=[]), THREAD,
+                             "the blink beat's presence row: the thread's name resolves through it (the empty rows, the blink)")
+            box = pm.MAILROOT / THREAD / "new"
+            had_box = (pm.MAILROOT / THREAD).exists()
+            box.mkdir(parents=True, exist_ok=True)
+            self.addCleanup(lambda: (box / "m9").unlink(missing_ok=True) if had_box
+                            else __import__("shutil").rmtree(pm.MAILROOT / THREAD, ignore_errors=True))
+            (box / "m9").write_text("From: api\nFrom-Id: %s\n\nsynthetic parked body" % API)
+            pm._kernel_sessions_checked = answering
+            self.assertTrue(pm._record_heartbeat(THREAD, "web-t1"), "the listing answers: local, released")
+            pm._kernel_sessions_checked = blinking
+            removed = pm._recall(API, "web-t1", None)
+            self.assertEqual([r["id"] for r in removed], [],
+                             "THE RECALL BY NAME: the released beat's presence is gone with its entry, and the thread has no "
+                             "names entry, so a recall by its name in the next blink removes nothing, as after the latch (with "
+                             "the pop deleted, the base's behaviour, the name resolves to the stale presence row and the mail is "
+                             "removed)")
+            self.assertEqual(sorted(f.name for f in box.iterdir()), ["m9"], "the mail stays parked")
+            self.assertEqual([r["id"] for r in pm._recall(API, THREAD, None)], ["m9"],
+                             "a recall by the thread's id reads its mailbox, not presence, and removes the mail")
+            self.assertNotIn(THREAD, pm.HEARTBEATS, "the thread's entry is forgotten with its row")
 
     # ── `romp mail remote` after the latch ────────────────────────────────────────────────────
 

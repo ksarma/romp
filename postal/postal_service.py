@@ -4050,19 +4050,26 @@ def _remote_sids_lost(path, now, cause):
     road, which the reviewer refused, with this mark).
     The line's clearing clause is built from the scheme at this write (peers_on, read here; round 4 of fork PR #897,
     the reviewer's ruling on its refuter's narrowing, the thirty-fourth commit), and states the rule of
-    _remote_sids_lost_cleared, never a case: under the legacy singleton scheme (ROMP_POSTAL_PEERS=0) the mark stands
-    for the life of the state root, because that scheme holds no list of links; in peer mode it stands until a bus
-    process that read the kernel's list of links at its start has heard every linked host since the mark. A line
-    naming a failed seed could not be true when written, since this write can run before the seed's outcome is known
-    (the seed's own writes stamp the mark). Until that commit the line said the mark stood until every host the kernel
-    holds a link to is heard, under both schemes, which never holds under the legacy one. The line is said by the bus
-    process that stamps the mark; server.log is opened in append mode, so it outlives that process."""
+    _remote_sids_lost_cleared, never a case: in peer mode the mark stands until a bus process that read the kernel's
+    list of links at its start has heard every linked host since the mark; under the legacy singleton scheme
+    (ROMP_POSTAL_PEERS=0) the line states the same rule for a bus in peer mode and adds that no bus on the legacy scheme
+    clears the mark, since that scheme holds no list of links and its buses never read the kernel's. So the mark
+    stands while buses on the legacy scheme write the file, and a bus in peer mode over the same state root clears it
+    by the rule (the thirty-fifth commit, round 4 of fork PR #897: the thirty-fourth commit's legacy line said the mark
+    stood for the life of the state root, and the reviewer's verifier showed that false by execution, a mark stamped
+    under ROMP_POSTAL_PEERS=0 cleared by a peer-mode bus that seeded over the same root and heard its linked host). A
+    line naming a failed seed could not be true when written, since this write can run before the seed's outcome is
+    known (the seed's own writes stamp the mark). Until the thirty-fourth commit the line said the mark stood until
+    every host the kernel holds a link to is heard, under both schemes, which never holds under the legacy one. The
+    line is said by the bus process that stamps the mark; server.log is opened in append mode, so it outlives that
+    process."""
     if peers_on():
         until = ("until a bus process that read the kernel's list of links at its start has heard every linked host since "
                  "the mark")
     else:
-        until = ("for the life of the state root, because the legacy singleton scheme (ROMP_POSTAL_PEERS=0) holds no list "
-                 "of links")
+        until = ("until a bus process in peer mode that read the kernel's list of links at its start has heard every linked "
+                 "host since the mark: this bus runs the legacy singleton scheme (ROMP_POSTAL_PEERS=0), which holds no list "
+                 "of links, so no bus on that scheme clears it")
     _remote_sids_say("the previous remote-sids mirror %s is unreadable (%s): this write carries none of its rows and marks the "
                      "mirror, so the judge answers cannot-determine where its rule 5 would presume a session closed, %s"
                      % (path, cause, until))
@@ -4095,8 +4102,11 @@ def _remote_sids_lost_cleared(lost):
     THE BOUND. The mark stands while any dialable PEERS host has not been heard since it: a host the kernel holds DOWN
     keeps it for as long as it stays down, and a departed host whose row the kernel still holds keeps it for the life of
     this process; a sid nothing names answers cannot-determine meanwhile, never rule 5. Under the legacy singleton scheme
-    the seed does not run and the bus holds no list of links, so the mark stands for the life of the state root and rule
-    5 answers cannot-determine there, as it did before 2026-09-22.
+    the seed does not run and the bus holds no list of links, so no bus on that scheme clears the mark: it stands, and
+    rule 5 answers cannot-determine, while buses on the legacy scheme write the file, as it did before 2026-09-22, and a
+    bus in peer mode over the same state root clears it by this rule (the thirty-fifth commit, round 4 of fork PR #897:
+    until then this sentence said the mark stood for the life of the state root, which the reviewer's verifier showed
+    false by execution).
     AFTER THE CLEAR, AS ON A FIRST START (round 3 of fork PR #897, the reviewer's ruling of 15:45Z, the twenty-fourth
     commit, which settled the bound the twenty-third commit left to the reviewer; the twenty-second commit stated as fact
     that a hub re-gossips its via rows on its next exchange, which is false for a hub that has restarted). Once the mark
@@ -4109,11 +4119,15 @@ def _remote_sids_lost_cleared(lost):
     the kernel no longer holds a link to (a departed host, directly held or a hub, heard by an earlier process), its via
     rows included; and (c) the whitespace list of a bus from before 2026-09-22, for its sids on a host of (a) or (b). A
     session one of them named is named again by any linked host that hears its host now (another hub's via row, rule 4),
-    and is outside every source only when none does. A lost heartbeat row is not among them: in peer mode it names a
-    local session, which rules 1 and 2 of the judge's ladder answer from its local transcript before the mirror is read
-    (the premise the mirror's one release rests on: _remote_sids_document), and under the legacy scheme the mark never
-    clears. While a host vouches for absence and no host heard in this process has an unanswered roster (the reader's
-    listing-unanswered arm, the twenty-ninth and thirtieth commits: _remote_sids_document) the judge presumes a session outside
+    and is outside every source only when none does. A lost heartbeat row written in peer mode is not among them: it
+    names a local session, which rules 1 and 2 of the judge's ladder answer from its local transcript before the mirror
+    is read (the premise the mirror's one release rests on: _remote_sids_document). A lost heartbeat row written under
+    the legacy scheme, a remote session's, stays behind the mark while buses on that scheme write the file, since none
+    of them clears it, and joins (a) to (c) once a bus in peer mode over the same root clears the mark: its session is
+    named again by any linked host that hears it now, and is outside every source only when none does (the thirty-fifth
+    commit; until then this sentence said the mark never clears under the legacy scheme, true of a bus on that scheme
+    and silent on the peer-mode bus that follows one). While a host vouches for absence and no host heard in this
+    process has an unanswered roster (the reader's listing-unanswered arm, the twenty-ninth and thirtieth commits: _remote_sids_document) the judge presumes a session outside
     every source closed by rule 5 (True, 5, no-reachable-host-names-it), as it does on a first start, where the
     intact file's carried row would answer named-by-unreachable-host until an event about that far host (the carry keeps a via row whose hub gossips nothing
     about its far host: _remote_sids_document). No event this bus receives names a far host whose row was lost, and a
@@ -4513,8 +4527,8 @@ def _remote_sids_document(now, previous, owned=frozenset(), lost=None):
           reachable on the event that closes the road, its heartbeat or exchange arriving in this process (one
           bad byte in the previous file costs one sid, never the document; a previous file this process cannot
           read whole carries no row and marks the document, so the judge answers cannot-determine where rule 5
-          would fire until the mark clears, never under the legacy scheme: _remote_sids_previous, the reviewer's ruling
-          of 14:57Z, the twenty-second commit of round 3 of fork PR #897; after that clearing a session on a host
+          would fire until the mark clears, which no bus on the legacy scheme does: _remote_sids_previous, the
+          reviewer's ruling of 14:57Z, the twenty-second commit of round 3 of fork PR #897; after that clearing a session on a host
           that no linked host hears now is outside every source, as on a first start: _remote_sids_lost_cleared,
           the reviewer's ruling of 15:45Z);
       (2) an expired legacy heartbeat was pruned from the file, so a tunnel drop or a stalled peer longer
@@ -4956,7 +4970,7 @@ def _write_remote_sids(released=()):
     alone no longer means the bus has spoken: a bus restarted from
     empty memory writes a first mirror whose hosts are all unreachable (carried from the previous file; one bad
     byte there costs one sid, and a previous file it cannot read whole carries no row and marks the document, said
-    once in the bus log, until the mark clears, never under the legacy scheme: _remote_sids_previous) until their
+    once in the bus log, until the mark clears, which no bus on the legacy scheme does: _remote_sids_previous) until their
     heartbeats and exchanges arrive; a host whose link the kernel reports
     down is unreachable from that notify until its next heartbeat or exchange arrives with the link up, and vouches for absence
     from that exchange (the up notify plus the host heard since). This
@@ -5001,16 +5015,24 @@ def _write_remote_sids(released=()):
     test_the_recorders_release_is_keyed_on_its_own_read_whatever_read_lands_before_its_write, the window held
     open by this lock and an event).
     FORGETTING THE ENTRY REACHES PAST THE MIRROR, and that is the design (round 4 of fork PR #897, the reviewer's
-    ruling, which kept the pop): a HEARTBEATS entry is also the remote presence _with_remote_presence hands to
-    resolve_recipient, the /agents listing and present_count_checked, so forgetting it removes the session's
-    presence from all three. A send to that session during a later listing blink then gets the standing blink
-    refusal (503, retry shortly, never a death ruling) instead of resolving to the beat's presence row. This
-    completes the 2026-09-08 design: after the latch, the standing blink refusal covers every local peer alike,
-    and a local session's blink beat filed as remote presence, which delivered into a mailbox with no wake, is the
-    defect that design names. It is not a cost. The named witness: tests/test_postal_heartbeat_fetches.py
-    test_after_the_latch_a_local_peer_is_unreachable_by_name_during_a_blink (its pre-latch case: a beat filed
-    during a blink, an answered listing that releases it, then a blink, and the send gets the standing 503; with
-    the pop deleted, the base's behaviour, the send resolves to the stale presence row and is delivered).
+    ruling, which kept the pop): a HEARTBEATS entry is also the remote presence _with_remote_presence adds for every
+    reader of it, directly or through all_agents: resolve_recipient, the /agents listing, present_count_checked and
+    _recip_id_for, recall's by-name lookup, so forgetting it removes the session's presence from all four (the
+    thirty-fifth commit, round 4 of fork PR #897: the thirty-fourth commit's list named three, and the reviewer's
+    verifier found the fourth by execution; tests/test_postal_remote_sids_mirror.py
+    test_the_writers_disclosure_names_every_reader_of_the_forgotten_entry derives the readers from the source). A send
+    to that session during a later listing blink then gets the standing blink refusal (503, retry shortly, never a
+    death ruling) instead of resolving to the beat's presence row, and a recall by its name in that blink falls to the
+    durable names registry, which holds no entry for a comment thread, so mail parked for a thread is recalled by the
+    thread's id alone until the listing answers. This completes the 2026-09-08 design: after the latch, where no beat
+    files such a row, the standing blink refusal covers every local peer alike and a recall by name in a blink finds
+    what the listing and the names registry hold, and a local session's blink beat filed as remote presence, which
+    delivered into a mailbox with no wake, is the defect that design names. It is not a cost. The named witness:
+    tests/test_postal_heartbeat_fetches.py test_after_the_latch_a_local_peer_is_unreachable_by_name_during_a_blink
+    (its pre-latch case: a beat filed during a blink, an answered listing that releases it, then a blink, and the send
+    gets the standing 503; with the pop deleted, the base's behaviour, the send resolves to the stale presence row and
+    is delivered; and a comment thread's blink beat released the same way, after which a recall by the thread's name in
+    the next blink removes nothing and one by its id removes the mail, where with the pop deleted the name removes it).
     Every other row stands for the life of the state root (the cost and the follow-up: _remote_sids_document).
     Under _REMOTE_SIDS_LOCK:
     the write reads the file it replaces, and the heartbeat, exchange, monitor and notify threads all

@@ -977,8 +977,8 @@ class ReaderFollowsTheWriter(unittest.TestCase):
                     the mirror is marked and a sid nothing names is carry-lost while B vouches. One stray byte inside the sid B names in the writer's own document: unparsable,
                     never repaired into another sid (a replacing decode reads B as naming another sid, and B's vouch answers
                     rule 5 for the sid B named; the reader stays strict, the writer's parse alone replacing). A document
-                    nested past the JSON parser's depth: unparsable, and B's next exchange replaces it, marked (on this box the parse raises RecursionError, which is not a ValueError, the class derived since the twenty-fifth commit: until the commit the reader raised it out of
-                    the ladder and the writer's previous-read failed every write; found by the commit's builder, the class
+                    nested past the JSON parser's depth: unparsable, and B's next exchange replaces it, marked (on this box the parse raises RecursionError, which is not a ValueError, and the phase derives the class from the parse since the twenty-fifth commit; until the twentieth commit the reader raised a RecursionError out of
+                    the ladder and the writer's previous-read failed every write, found by the twentieth commit's builder, the class
                     of the bytes). A hand-written document whose rows carry a non-bool flag, an unhashable busId
                     and an unhashable sid beside a live session's: the reader refuses it, and B's next exchange writes the
                     three rows carried and coerced, the unhashable sid's text dropped as no session id since the

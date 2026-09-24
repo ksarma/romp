@@ -175,6 +175,12 @@ VIA = "via:"                                   # the key of a hub's word about a
 VIA_FAR = VIA + HUB + "/" + FAR
 HB = "heartbeat:"                              # the key of a legacy heartbeat's row (pm.REMOTE_SIDS_HEARTBEAT)
 LEGACY = "legacy:list"                         # the key a whitespace-list mirror is carried under (pm.REMOTE_SIDS_LEGACY)
+# Values a peer's JSON can carry for an answered bit (presenceAnswered, viaAnswered) that are truthy and are not JSON true,
+# each read as answered by one wrong reading of the bit: the string by bool(), the numbers 1 and 1.0 by == True (both
+# equal True in Python). Only `is True` reads all three unanswered (round 4 of fork PR #897: the string pinned at every
+# reader since the thirty-fourth commit, the numbers since the thirty-fifth, found by the reviewer's verifier, whose
+# == True at all four readers passed every pin).
+TRUTHY_NOT_TRUE = ("true", 1, 1.0)
 
 
 def _listing_record():
@@ -707,6 +713,53 @@ class Mirror(unittest.TestCase):
                          "THE RULED RELEASE: the write releases the sid the read that triggered it owns, whatever read landed "
                          "last, the row gone from the file and the entry from memory (a write reading the last read alone "
                          "keeps both here: (True, True))")
+
+    def test_the_writers_disclosure_names_every_reader_of_the_forgotten_entry(self):
+        """Round 4 of fork PR #897, the thirty-fifth commit (the reviewer's verifier at the thirty-fourth, by execution): the
+        _write_remote_sids docstring discloses that forgetting a released HEARTBEATS entry removes the session's presence
+        from every reader of it past the mirror, and the thirty-fourth commit's list named three of four (recall's by-name
+        lookup, _recip_id_for, was missing). The population is DERIVED here from the source, never listed from memory: the
+        functions that read HEARTBEATS, of which _with_remote_presence alone serves the entry to other code, and every
+        function that refers to _with_remote_presence directly or through all_agents, whose body is that call. Each reader
+        is matched by the name the docstring uses for it; the /agents route's reader is its handler's branch on that path,
+        so it is matched by the route. A new reader of either kind fails an equality below until this set and the disclosure are both extended,
+        and a reader the disclosure does not name fails the last assertions; the witness of the reach by execution is
+        tests/test_postal_heartbeat_fetches.py test_after_the_latch_a_local_peer_is_unreachable_by_name_during_a_blink
+        (the send and the recall by name)."""
+        import ast
+        tree = ast.parse(Path(os.path.realpath(os.path.join(BIN, "romp-postal-service"))).read_text())
+        refs = []                                             # (the enclosing function's dotted name, the name, its if-tests)
+
+        def walk(node, scope, branches):
+            for child in ast.iter_child_nodes(node):
+                if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                    walk(child, scope + [child.name], [])
+                    continue
+                if isinstance(child, ast.Name) and child.id in ("HEARTBEATS", "_with_remote_presence", "all_agents"):
+                    refs.append((".".join(scope), child.id, branches))
+                walk(child, scope, branches + [ast.unparse(child.test)] if isinstance(child, ast.If) else branches)
+        walk(tree, [], [])
+        readers = lambda name: {s for s, n, _ in refs if n == name and s}
+        self.assertEqual(readers("HEARTBEATS"),
+                         {"_with_remote_presence", "_record_heartbeat", "_remote_sids_document", "_write_remote_sids"},
+                         "the functions that touch the table: the presence reader, the recorder and the mirror's two (a new "
+                         "reader of HEARTBEATS is a reader the disclosure must weigh)")
+        self.assertEqual(readers("_with_remote_presence"), {"all_agents", "present_count_checked", "_recip_id_for"})
+        self.assertEqual(readers("all_agents"), {"_recip_id_for", "resolve_recipient", "Handler.do_GET"})
+        route = [b for s, n, b in refs if s == "Handler.do_GET"]
+        self.assertEqual(len(route), 1, "one reference in the request handler: %r" % route)
+        self.assertIn("u.path == '/agents'", route[0], "the handler's reference sits under the /agents route: %r" % route)
+        by_name = {"resolve_recipient": "resolve_recipient", "Handler.do_GET": "the /agents listing",
+                   "present_count_checked": "present_count_checked", "_recip_id_for": "_recip_id_for"}
+        served = (readers("all_agents") | readers("_with_remote_presence")) - {"all_agents"}
+        self.assertEqual(set(by_name), served, "every reader of the served presence has the name the disclosure uses for it")
+        doc = " ".join(pm._write_remote_sids.__doc__.split())
+        disclosure = doc[doc.index("FORGETTING THE ENTRY REACHES PAST THE MIRROR"):].split(". A send")[0]
+        missing = [name for name in by_name.values() if name not in disclosure]
+        self.assertEqual(missing, [], "THE DISCLOSURE names every reader of the forgotten entry (the thirty-fourth commit's "
+                         "named three, _recip_id_for missing): %r" % disclosure)
+        self.assertIn("from all %s" % ("one", "two", "three", "four", "five", "six")[len(by_name) - 1], disclosure,
+                      "...and counts them: %r" % disclosure)
 
     def test_a_peers_own_rows_under_its_name_and_its_gossip_as_a_via_row_under_the_hub_and_the_far_host(self):
         self._peer(HUB, [{"id": A, "name": "web"}, {"id": B, "name": "api", "via": FAR, "viaBus": "far-bus"}], bus_id="hub-bus")
@@ -1577,18 +1630,24 @@ class Mirror(unittest.TestCase):
                          "a later write carries no mark")
 
     def test_the_marks_line_states_the_clearing_rule_of_the_scheme_at_the_write(self):
-        """Round 4 of fork PR #897, the reviewer's ruling on its refuter's narrowing (the thirty-fourth commit): the bus-log line
-        that says a previous file is unreadable and the mirror marked states the mark's clearing rule as the scheme at the
-        write holds it (_remote_sids_lost reads peers_on). In peer mode the mark stands until a bus process that read the
-        kernel's list of links at its start has heard every linked host since it. Under the legacy singleton scheme,
-        ROMP_POSTAL_PEERS=0, it stands for the life of the state root, because that scheme holds no list of links (the seed
-        does not run there, so _remote_sids_lost_cleared never clears). Until the commit the line said "until every host the
-        kernel holds a link to is heard" under both schemes, which never holds under the legacy one. Through the real
-        writer, one unreadable file per scheme, peer mode first (the legacy switch holds for the rest of the test)."""
+        """Round 4 of fork PR #897, the reviewer's ruling on its refuter's narrowing (the thirty-fourth commit), and the
+        thirty-fifth commit's correction of its legacy line: the bus-log line that says a previous file is unreadable and
+        the mirror marked states the mark's clearing rule as the scheme at the write holds it (_remote_sids_lost reads
+        peers_on). In peer mode the mark stands until a bus process that read the kernel's list of links at its start has
+        heard every linked host since it. Under the legacy singleton scheme, ROMP_POSTAL_PEERS=0, the line states that rule
+        for a bus in peer mode and adds that no bus on the legacy scheme clears the mark: the seed does not run there, so a
+        legacy process never meets _remote_sids_lost_cleared's first condition. The thirty-fourth commit's legacy line said
+        the mark stood for the life of the state root, and the reviewer's verifier showed that false by execution: a bus in
+        peer mode over the same root clears it. So this test also drives the rule the legacy line states, through the real
+        writer and the real seed: the legacy mark stands across legacy writes and a legacy restart, and a restart into peer
+        mode that reads the kernel's list and hears the linked host clears it. Until the thirty-fourth commit the line said
+        "until every host the kernel holds a link to is heard" under both schemes, which never holds under the legacy one.
+        One unreadable file per scheme, peer mode first (the legacy switch holds until the restart into peer mode)."""
         peer_clause = ("until a bus process that read the kernel's list of links at its start has heard every linked host "
                        "since the mark")
-        legacy_clause = ("for the life of the state root, because the legacy singleton scheme (ROMP_POSTAL_PEERS=0) holds no "
-                         "list of links")
+        legacy_clause = ("until a bus process in peer mode that read the kernel's list of links at its start has heard every "
+                         "linked host since the mark: this bus runs the legacy singleton scheme (ROMP_POSTAL_PEERS=0), which "
+                         "holds no list of links, so no bus on that scheme clears it")
         said = {}
         for scheme in ("peer mode", "the legacy scheme"):
             with self.subTest(scheme=scheme):
@@ -1604,11 +1663,37 @@ class Mirror(unittest.TestCase):
                 self.assertIsNotNone(self._mark(), "the document is marked")
                 said[scheme] = lines[0]
         self.assertTrue(said.get("the legacy scheme", "").endswith(", " + legacy_clause),
-                        "THE LEGACY LINE: the mark stands for the life of the state root, the scheme holding no list of links "
-                        "(until the thirty-fourth commit the line said it stood until every host the kernel holds a link to "
+                        "THE LEGACY LINE: the peer-mode rule, and no bus on the legacy scheme clears the mark (the thirty-fourth "
+                        "commit's line said the mark stood for the life of the state root, false once a bus in peer mode runs "
+                        "over the root; until that commit it said the mark stood until every host the kernel holds a link to "
                         "is heard): %r" % said.get("the legacy scheme"))
         self.assertTrue(said.get("peer mode", "").endswith(", " + peer_clause),
                         "the peer-mode line states the clearing rule of _remote_sids_lost_cleared: %r" % said.get("peer mode"))
+        # THE RULE THE LEGACY LINE STATES, by execution: the legacy mark (the last write above) stands while buses on the
+        # legacy scheme write, a restarted one included, and clears once a bus in peer mode over the same root has read the
+        # kernel's list of links at its start and heard every linked host since the mark
+        mark = self._mark()
+        self.assertFalse(pm.peers_on(), "still the legacy scheme")
+        pm.HEARTBEATS[A] = ("web", pm.time.time())
+        pm._write_remote_sids()
+        self.assertEqual(self._mark(), mark, "a legacy write, a beat heard: the mark stands")
+        self._restart()
+        pm.HEARTBEATS[B] = ("api", pm.time.time())
+        pm._write_remote_sids()
+        self.assertEqual(self._mark(), mark, "a restarted legacy bus, a beat heard: the mark stands, carried")
+        self._restart()                                       # the root's next bus runs in peer mode
+        os.environ.pop("ROMP_POSTAL_PEERS", None)             # (put back as found by _legacy_scheme's cleanup)
+        self.assertTrue(pm.peers_on(), "peer mode, the default")
+        self.assertTrue(self._seed([(HOST, "up")]), "the peer-mode bus read the kernel's list of links at its start")
+        self.assertEqual(self._mark(), mark, "the linked host not heard since the mark: it stands")
+        self._peer(HOST, [{"id": B, "name": "api"}])
+        pm.PEER_STATE[HOST]["seenAt"] = int(pm.time.time())   # the exchange's own stamp, at or after the mark's second
+        cleared = [ln for ln in self._write_saying() if "lost-carry mark" in ln]
+        self.assertIsNone(self._mark(), "THE LEGACY MARK IS CLEARED by a bus in peer mode that read the list and heard every "
+                          "linked host since it, as the legacy line says (the thirty-fourth commit's 'for the life of the state "
+                          "root' is false here, the reviewer's verifier's road)")
+        self.assertEqual(len(cleared), 1, "the clear said once: %r" % cleared)
+        self.assertIn("cleared", cleared[0])
 
     def test_a_linked_host_that_stays_down_keeps_the_mark(self):
         """Round 3 of fork PR #897, the reviewer's ruling of 14:57Z (the twenty-second commit): a host the kernel holds DOWN is
@@ -2075,9 +2160,11 @@ class Mirror(unittest.TestCase):
         `presence`, in the request builder and the response builder alike), both recorders keep it on the PEER_STATE row,
         and the writer gives every row `answered`: a row whose last exchange served a cache is reachable (the sids it names
         were live at the last answered listing, rule 4) and does not vouch for absence, released by the next exchange that
-        carries an answered listing, the event. A payload lacking the field, an older peer's, or carrying a non-boolean,
-        reads unanswered at both recorders (the dialer's fold pinned for the non-boolean since the thirty-fourth commit,
-        round 4 of fork PR #897): the restricted side, so no older peer reopens the road. One module plays both buses here: the
+        carries an answered listing, the event. A payload lacking the field, an older peer's, or carrying any value but JSON
+        true (TRUTHY_NOT_TRUE: a string, which bool() reads True, and the numbers 1 and 1.0, which == True reads True),
+        reads unanswered at both recorders (the dialer's fold pinned for a string since the thirty-fourth commit, and both
+        recorders for the numbers since the thirty-fifth, round 4 of fork PR #897): the restricted side, so no older peer
+        reopens the road. One module plays both buses here: the
         far host's request is built by the real builder under THIS process's listing state and handed to the real handler
         as the far host's, and the real handler's response is folded by the real dialer's fold the same way, so the sender's
         bit, both builders, both recorders and the writer are the product's. The composition with the reader's verdicts is
@@ -2139,25 +2226,38 @@ class Mirror(unittest.TestCase):
         self.assertEqual(resp.get("presenceAnswered"), True)
         pm.peer_exchange_apply(X, {}, resp)
         self.assertEqual((self._vouch()[X], self._answered()[X]), ((True, True, True), True), "the answering response releases it")
-        # the default for a payload without the field (a peer from before it), and for one that spells it as a string
+        # the default for a payload without the field (a peer from before it), and for one that spells it as anything but
+        # JSON true
         self._far_dials_us(X, [{"id": B, "name": "api"}], "x-bus", answered=None)
         self.assertIs(pm.PEER_STATE[X].get("presenceAnswered"), False, "no field: recorded as unanswered")
         self.assertEqual((self._vouch()[X], self._answered()[X]), ((True, True, False), False),
                          "THE DEFAULT: a payload lacking the field reads unanswered, the restricted side, so an older peer's "
                          "roster vouches for presence alone (a recorder defaulting to answered lets an older peer reopen the road)")
-        self._far_dials_us(X, [{"id": B, "name": "api"}], "x-bus", answered="true")
-        self.assertEqual((self._vouch()[X], self._answered()[X]), ((True, True, False), False),
-                         "a string is not the boolean: JSON true alone counts (bool of a non-empty string is True)")
+        for junk in TRUTHY_NOT_TRUE:                          # each after an answered exchange, so the pin reads a transition
+            with self.subTest(reader="the handler's recorder", presenceAnswered=junk):
+                self._far_dials_us(X, [{"id": B, "name": "api"}], "x-bus", answered=True)
+                self.assertEqual(self._answered()[X], True)
+                self._far_dials_us(X, [{"id": B, "name": "api"}], "x-bus", answered=junk)
+                self.assertEqual((self._vouch()[X], self._answered()[X]), ((True, True, False), False),
+                                 "JSON true alone counts: %r is not it (bool() reads the string True, == True reads 1 and 1.0 "
+                                 "True; the numbers since the thirty-fifth commit, round 4 of fork PR #897)" % (junk,))
+                self.assertIs(pm.PEER_STATE[X].get("presenceAnswered"), False, "the handler records %r as unanswered" % (junk,))
         pm.peer_exchange_apply(X, {}, {"presence": [{"id": B, "name": "api"}], "epoch": 1, "holds": [], "busId": "x-bus"})
         self.assertEqual((self._vouch()[X], self._answered()[X]), ((True, True, False), False),
                          "the same default in the dialer's fold: a response lacking the field is unanswered")
-        pm.peer_exchange_apply(X, {}, {"presence": [{"id": B, "name": "api"}], "epoch": 1, "holds": [], "busId": "x-bus",
-                                       "presenceAnswered": "true"})
-        self.assertEqual((self._vouch()[X], self._answered()[X]), ((True, True, False), False),
-                         "a string is not the boolean in the dialer's fold either: JSON true alone counts (round 4 of "
-                         "fork PR #897, the thirty-fourth commit: a fold reading bool() of the field, True for a non-empty "
-                         "string, passed every pin until it)")
-        self.assertIs(pm.PEER_STATE[X].get("presenceAnswered"), False, "the dialer's fold records a string as unanswered")
+        for junk in TRUTHY_NOT_TRUE:
+            with self.subTest(reader="the dialer's fold", presenceAnswered=junk):
+                pm.peer_exchange_apply(X, {}, {"presence": [{"id": B, "name": "api"}], "epoch": 1, "holds": [],
+                                               "busId": "x-bus", "presenceAnswered": True})
+                self.assertEqual(self._answered()[X], True)
+                pm.peer_exchange_apply(X, {}, {"presence": [{"id": B, "name": "api"}], "epoch": 1, "holds": [],
+                                               "busId": "x-bus", "presenceAnswered": junk})
+                self.assertEqual((self._vouch()[X], self._answered()[X]), ((True, True, False), False),
+                                 "JSON true alone counts in the dialer's fold too: %r is not it (round 4 of fork PR #897: a fold "
+                                 "reading bool() of the field passed every pin until the thirty-fourth commit, one reading == "
+                                 "True every pin until the thirty-fifth)" % (junk,))
+                self.assertIs(pm.PEER_STATE[X].get("presenceAnswered"), False,
+                              "the dialer's fold records %r as unanswered" % (junk,))
         self._far_dials_us(X, [{"id": B, "name": "api"}], "x-bus", answered=True)
         self.assertEqual((self._vouch()[X], self._answered()[X]), ((True, True, True), True))
 
@@ -2167,8 +2267,9 @@ class Mirror(unittest.TestCase):
         presence_payload stamps every gossiped row with the far host's `presenceAnswered` as its exchange recorded it
         (`viaAnswered`), and the writer's via row takes that bit. A hub whose own listing did not answer still relays a
         far host's answered roster whole, and a hub that answered relays a far host's cache as a cache. An element
-        without the field, a hub from before it, reads unanswered, and so does one whose field is not JSON true (the
-        thirty-fourth commit, round 4 of fork PR #897) and a row one of whose elements lacks it. This
+        without the field, a hub from before it, reads unanswered, and so does one whose field is not JSON true
+        (TRUTHY_NOT_TRUE: a string since the thirty-fourth commit, the numbers 1 and 1.0 since the thirty-fifth, round 4 of
+        fork PR #897) and a row one of whose elements lacks it. This
         bus plays the hub first (the far host dials us, our gossip is built by the real builder), then the spoke (the
         hub's gossip lands here and the writer files it)."""
         self._forget_presence_cache()
@@ -2214,13 +2315,20 @@ class Mirror(unittest.TestCase):
         self.assertEqual((self._vouch()[VIA_FAR], self._answered()[VIA_FAR]), ((True, True, False), False),
                          "no field on the gossiped row: unanswered (a writer defaulting a missing viaAnswered to True lets an "
                          "older hub's relay reopen the road)")
-        self._peer(HUB, [{"id": A, "name": "web"}, {"id": C, "name": "tests", "via": FAR, "viaBus": "far-bus",
-                                                   "viaAnswered": "true"}], via_answered=None)
-        pm._write_remote_sids()
-        self.assertEqual((self._vouch()[VIA_FAR], self._answered()[VIA_FAR]), ((True, True, False), False),
-                         "a string on the gossiped row is not the boolean: JSON true alone counts at the writer's read of "
-                         "viaAnswered (round 4 of fork PR #897, the thirty-fourth commit: a writer reading bool() of it, True "
-                         "for a non-empty string, passed every pin until it)")
+        for junk in TRUTHY_NOT_TRUE:                          # each after an answered relay, so the pin reads a transition
+            with self.subTest(reader="the writer's read of viaAnswered", viaAnswered=junk):
+                self._peer(HUB, [{"id": A, "name": "web"}, {"id": C, "name": "tests", "via": FAR, "viaBus": "far-bus",
+                                                           "viaAnswered": True}], via_answered=None)
+                pm._write_remote_sids()
+                self.assertEqual(self._answered()[VIA_FAR], True)
+                self._peer(HUB, [{"id": A, "name": "web"}, {"id": C, "name": "tests", "via": FAR, "viaBus": "far-bus",
+                                                           "viaAnswered": junk}], via_answered=None)
+                pm._write_remote_sids()
+                self.assertEqual((self._vouch()[VIA_FAR], self._answered()[VIA_FAR]), ((True, True, False), False),
+                                 "JSON true alone counts at the writer's read of viaAnswered: %r on the gossiped row is not it "
+                                 "(round 4 of fork PR #897: a writer reading bool() of it passed every pin until the thirty-fourth "
+                                 "commit, one reading == True, which reads 1 and 1.0 True, every pin until the thirty-fifth)"
+                                 % (junk,))
         self._peer(HUB, [{"id": A, "name": "web"}, {"id": C, "name": "tests", "via": FAR, "viaBus": "far-bus", "viaAnswered": True},
                          {"id": D, "name": "api", "via": FAR, "viaBus": "far-bus"}], via_answered=None)
         pm._write_remote_sids()
@@ -2282,14 +2390,24 @@ class Mirror(unittest.TestCase):
         self._far_dials_us(HUB, [{"id": A, "name": "web"}, dict(no_bus, viaAnswered=True)], "hub-bus-restarted-thrice")
         self.assertEqual((pm.PEER_STATE[HUB]["viaHeld"], self._answered()[VIA_FAR]), ([], True),
                          "with no bus id on either word the hub's name for the host is the only match, and it releases")
-        self._far_dials_us(HUB, [{"id": A, "name": "web"}, dict(far_cached, viaAnswered="true")], "hub-bus-restarted-thrice")
-        self._far_dials_us(HUB, [{"id": A, "name": "web"}], "hub-bus-restarted-four-times")
-        self.assertEqual([(pa["id"], pa["via"]) for pa in pm.PEER_STATE[HUB]["viaHeld"]], [(B, FAR)],
-                         "a word whose viaAnswered is a string is not an answered word: held when a restarted hub omits the "
-                         "host (round 4 of fork PR #897, the thirty-fourth commit: the recorder reading bool() of it, True for "
-                         "a non-empty string, carried the word heard false, out of the arm, and passed every pin until it)")
-        self.assertEqual((self._rows()[VIA_FAR], self._answered()[VIA_FAR]), ((True, False, [B]), False),
-                         "...and written heard, unanswered")
+        for n, junk in enumerate(TRUTHY_NOT_TRUE):            # each from a released, answered word, so the pin reads a transition
+            with self.subTest(reader="the held-word read", viaAnswered=junk):
+                hub_bus = "hub-bus-junk-%d" % n
+                self._far_dials_us(HUB, [{"id": A, "name": "web"}, dict(far_cached, viaAnswered=True)], hub_bus)
+                self.assertEqual((pm.PEER_STATE[HUB]["viaHeld"], self._answered()[VIA_FAR]), ([], True),
+                                 "a new hub process names the host, answered: nothing held (whatever an earlier subtest left)")
+                self._far_dials_us(HUB, [{"id": A, "name": "web"}, dict(far_cached, viaAnswered=junk)], hub_bus)
+                self._far_dials_us(HUB, [{"id": A, "name": "web"}], hub_bus + "-restarted")
+                self.assertEqual([(pa["id"], pa["via"]) for pa in pm.PEER_STATE[HUB]["viaHeld"]], [(B, FAR)],
+                                 "a word whose viaAnswered is %r is not an answered word: held when a restarted hub omits the "
+                                 "host (round 4 of fork PR #897: the recorder reading bool() of it carried a string's word heard "
+                                 "false, out of the arm, and passed every pin until the thirty-fourth commit; one reading == True, "
+                                 "which reads 1 and 1.0 True, every pin until the thirty-fifth)" % (junk,))
+                self.assertEqual((self._rows()[VIA_FAR], self._answered()[VIA_FAR]), ((True, False, [B]), False),
+                                 "...and written heard, unanswered")
+                self._far_dials_us(HUB, [{"id": A, "name": "web"}, dict(far_cached, viaAnswered=True)], hub_bus + "-restarted")
+                self.assertEqual((pm.PEER_STATE[HUB]["viaHeld"], self._answered()[VIA_FAR]), ([], True),
+                                 "the restarted hub names the host again, answered: released")
 
     def test_a_hubs_held_word_is_released_by_the_same_hub_process_omitting_the_host_and_held_by_a_hub_that_cannot_say(self):
         """Round 4 of fork PR #897, the thirty-second commit (the reviewer's verifier at the thirty-first, by execution): a
