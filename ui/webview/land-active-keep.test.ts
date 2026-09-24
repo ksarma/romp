@@ -424,6 +424,16 @@ test("a deep link with a time whose pre-jump moves a reader who is not following
   m.land(m.content, m.v, true);
   assert.equal(m.rows[3].getBoundingClientRect().top, R3_OFFSET, "the moment's miss keeps the reader where they were (read as this pass's, the earlier pre-jump's mark would skip the take's give-back under the raw write, 300 px off): " + JSON.stringify(m.writes));
   assert.deepEqual(m.writes, [{ writer: "anchor-restore", top: 2350 + D, stick: false, from: undefined }], "the ordinary miss: the row put back over the take");
+  // a reader FOLLOWING THE TAIL (stick, at the bottom): no row is held (the capture serves a scrolled-up reader) and the pre-jump ends follow
+  // mode, so the land reaches the fallback with nothing to restore; the placement stands there too, and so does the take under it, because the
+  // give-back is keyed on the pre-jump and not on a held row (before this change the fallback gave the take back whenever no row was held,
+  // which re-sized the gap under the reader the pre-jump had just placed)
+  const f = world({ saved: 2400, stick: true }, { anchor: DEEP, t: 1700000000, seek: DEEP_SEEK, land: false, fetch: true, preJump: 1000 });
+  f.land(f.content, f.v, true);
+  assert.deepEqual(f.writes.map((x) => [x.writer, x.top]), [["land-guess", 1000], ["land-saved", 1000]], "a reader following the tail: the pre-jump, then the raw write of the place it synced, with no bottom land and nothing restored");
+  assert.equal(f.content.scrollTop, 1000);
+  assert.equal(f.spacer.h, 2000 + D, "the take stands under the placement for a reader who was following the tail too: " + JSON.stringify(f.calls.filter((c) => typeof c === "string")));
+  assert.equal(f.parked(), false);
 });
 
 test("render.ts: the two marks the fallback reads describe this attempt: scrollToAnchor clears both before anything else, the pre-jump (reached only through scrollToAnchor's window ask) marks the jump right after its write and the record's sync, and landActive reads them straight after its attempt by id, never on a pass that made none. A source pin on where the marks are set and read, which the harness above stubs; the road above executes what landActive does with them, and the landing lab's roads 10 and 16 run the pre-jump in the browser", () => {
