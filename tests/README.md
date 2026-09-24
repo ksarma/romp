@@ -161,12 +161,14 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   after the module's teardown (the port against its floor, unset, since conftest pops
   it before every test); every other name is outside it. conftest pops every watched
   name at import, so the developer's shell does not change what the check reads. A
-  write by a session- or package-scoped fixture is never read by the per-test check,
-  and is read by this one only when a later test of a module is the first to use the
-  fixture: one first set up for a module's first test (an autouse one always is) runs
-  before this check's snapshot, so both snapshots already carry its write. The tree
-  has no fixture scoped above module, and the hermetic module holds that list at
-  empty.
+  write by a session- or package-scoped fixture is read by a check only when the
+  fixture's setup runs after that check's snapshot. One the module's first test
+  requests by name (an autouse one always is) runs before both snapshots, and
+  neither check reads it; one a later test is the first to request by name is named
+  by this check alone; one requested at run time (`request.getfixturevalue`) is
+  named by both from a test's body or a function-scoped fixture, and by this check
+  alone from a module-scoped fixture. The tree has no fixture scoped above module,
+  and the hermetic module holds that list at empty.
   `python -m tests.test_hermetic_kernel_postal --census` prints the counts by name
   and shape. The per-test half, set in setUp and put back by a cleanup registered
   right after the write (`restore_env` from `tests/conftest.py`, or a method of the
