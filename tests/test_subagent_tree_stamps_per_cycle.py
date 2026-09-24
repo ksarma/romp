@@ -1459,7 +1459,7 @@ class MissPathRoads(_World):
         """The (place, None) entry's boundary (round 3 of #882, extra5-2): a sibling root whose os.lstat alone raises EIO
         (by mock), its os.stat succeeding, so its tree cannot be read and is excluded while its stamp is a real one. Each
         of G agents' files lies past it, under a readable sibling. The stamp is an own stat like any other, taken once and
-        held for the cycle under root None: 1 os.stat per cycle, cold and steady, whatever G and M; each cold walk's tree
+        held for the cycle in the stamp index: 1 os.stat per cycle, cold and steady, whatever G and M; each cold walk's tree
         read pays its raising lstat, G cold and 0 steady. A boundary guard, red under a kernel that holds no own stat (G x
         (1 + M)). It is green only where a file past an excluded sibling is answered, as round 2 of #882's group A made
         it: under a kernel before that, which answered such a file None, every ghost lookup here answers None and the case
@@ -1596,7 +1596,7 @@ class MissPathRoads(_World):
         per sibling tree, one lstat of the root by _find_agent_file's realpath (W_sib, counted by running it) and one os.lstat
         per candidate place, one per directory: G x S x DSIB candidate lstats and S x DSIB + G x S x W_sib lstats on the
         sibling directories. The steady cycle (the ghosts' memo hits): no sibling tree is read, and each lookup's re-check
-        of the walk's stamps pays one own stat per sibling directory, taken by the first lookup and held under root None,
+        of the walk's stamps pays one own stat per sibling directory, taken by the first lookup and held in the stamp index,
         so S x DSIB stats per cycle whatever G and M, all in dirStats. Red in the cold cycle under a kernel that reads a
         sibling's tree again for every walk (miss G x S) and under one that holds no own stat (each lookup's re-check paying
         its own stats, dirStats past (D - 1) + 1 + S)."""
@@ -1633,7 +1633,7 @@ class MissPathRoads(_World):
     def test_a_command_rows_owner_lookup_before_the_tree_is_read_re_stats_its_directories_once_per_cycle(self):
         """The own stats a command row adds: a background command whose owner is read from the agents' transcripts (no
         launch-ledger owner) makes _awaiting_nest consult every agent's launches before the tree is read in the read that
-        makes it, so the first agent's memo hit re-checks the tree's D directories as own stats (held under root None,
+        makes it, so the first agent's memo hit re-checks the tree's D directories as own stats (held in the stamp index,
         every later re-check served), and the validation after it re-indexes them: D os.stat on the tree's directories and
         dirStats (D - 1) + D per cycle, where a cycle with no command row pays 0 and D - 1 (the bound's cases)."""
         cmd = {"tid": "toolu_stamps_cmd4", "desc": "run the api tests", "t": 130, "type": "local_bash"}
