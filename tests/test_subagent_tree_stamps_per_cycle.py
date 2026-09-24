@@ -1191,8 +1191,10 @@ class MissPathRoads(_World):
         (by mock), its os.stat succeeding, so its tree cannot be read and is excluded while its stamp is a real one. Each
         of G agents' files lies past it, under a readable sibling. The stamp is an own stat like any other, taken once and
         held for the cycle under root None: 1 os.stat per cycle, cold and steady, whatever G and M; each cold walk's tree
-        read pays its raising lstat, G cold and 0 steady. A boundary guard: green at every head this PR carries, and red
-        under a kernel that holds no own stat (G x (1 + M))."""
+        read pays its raising lstat, G cold and 0 steady. A boundary guard, red under a kernel that holds no own stat (G x
+        (1 + M)). It is green only where a file past an excluded sibling is answered, as round 2 of #882's group A made
+        it: under a kernel before that, which answered such a file None, every ghost lookup here answers None and the case
+        fails."""
         sess = Path(self.path).parent / ("11111111-2222-3333-4444-7c7c7c7c%04x" % 0xc000)
         (sess / "subagents").mkdir(parents=True)
         place = str(sess / "subagents")
@@ -1255,7 +1257,7 @@ class MissPathRoads(_World):
         to a directory, in the own root's place is no tree, but its stamp's stat succeeds, so _dir_stamp holds it for the
         cycle as an own stat: 1 os.stat of the place by _dir_stamp per cycle, cold and steady, whatever G and M, and
         dirStats moves by that stat and the project directory's ((dirStats, hit, miss, served, evict) == (2, 0, 0, 0,
-        0)). A boundary guard: green at every head this PR carries, red under a kernel that holds no own stat."""
+        0)). A boundary guard, red under a kernel that holds no own stat."""
         for n, shape in enumerate(("file", "live")):
             own = self._no_tree_in_the_own_place(shape)
             for G in (1, 2, 3):
