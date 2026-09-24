@@ -161,7 +161,7 @@ class Host {
   querySelector(sel: string): Node | null { return this.querySelectorAll(sel)[0] ?? null; }
 }
 
-type Arm = { anchor?: string; t?: number; keepY?: number; seek?: { sid: string; uuid: string; kind: string }; reload?: unknown; land?: boolean; landT?: boolean; rebuild?: (host: Host) => void; preJump?: number };
+type Arm = { anchor?: string; t?: number; keepY?: number; seek?: { sid: string; uuid: string; kind: string }; reload?: unknown; land?: boolean; landT?: boolean; rebuild?: (host: Host) => void; preJump?: number; fetch?: boolean; landAt?: number; stale?: boolean };
 type Opts = { spacerH?: number; n?: number; rowH?: number; clientHeight?: number; saved: number; scrollTop?: number; shown?: boolean; stick?: boolean; parked?: boolean; bottomSpacerH?: number; gap?: boolean };
 type World = { content: Content; host: Host; v: any; spacer: Node; rows: Node[]; writes: Write[]; calls: any[]; rows_: any[]; toasts: string[]; trace: string[]; geometryAt: Record<string, string[]>; land: (content: Content | null, v: any, scrollerHolds?: boolean) => void; parked: () => boolean };
 const D = 300;   // the take's delta: the head spacer re-sized by the re-measured figure over the head gap's turns
@@ -173,7 +173,11 @@ const D = 300;   // the take's delta: the head spacer re-sized by the re-measure
  *  land finds armed and how the stubbed landings answer (`land`: scrollToAnchor's answer, `landT`: landNearestMoment's; `rebuild` runs
  *  over the host before scrollToAnchor answers: the window rebuilt around the anchor's unit, rows leaving; `preJump`, the place the attempt's
  *  pre-jump writes (land-guess) before scrollToAnchor answers, the record synced to the scroller after it and follow mode ended, as
- *  preJumpIntoGap does for a deep link with a time whose window is asked for). `gap`: a 40 px gap row
+ *  preJumpIntoGap does for a deep link with a time whose window is asked for, which marks the pre-jump for the attempt, anchorPreJumped;
+ *  production reaches the pre-jump only through the window ask, which arms the fetch, so the world refuses a `preJump` without `fetch`;
+ *  `fetch`, the attempt's miss leaves a fetch armed for the anchor, anchorPendingOlder, as scrollToAnchor's four fetch roads do, both marks
+ *  cleared on entry as scrollToAnchor clears them; `landAt`, the place a landing that hits writes, land-on, as landOn does; `stale`, both
+ *  marks left set by an earlier attempt whose fetch is still on the wire). `gap`: a 40 px gap row
  *  (`tx-gap`, with the unit range production's redraw reads) between r4 and r5, and `bottomSpacerH` a bottom spacer, so a view holds every
  *  kind of child production's spacer code draws on: a gap redraw or a bottom-spacer resize planted in the ordering window matched nothing in a
  *  view without them and moved no geometry (the author's fixer pass over the pass after the maintainer's round 4 ruling, VE-3). */
@@ -206,7 +210,12 @@ function world(o: Opts, arm: Arm = {}): World {
   });
   const H: any = { content, v, spacer, writes: [] as Write[], calls: [] as any[], rows: [] as any[], toasts: [] as string[], deferred: [] as any[], trace, geometryAt: {} as Record<string, string[]>,
                    delta: D, arm,
-                   land: (uuid: string) => { if (arm.rebuild) arm.rebuild(host); if (arm.preJump != null) { v.stick = false; H.writeScroll(content, arm.preJump, "land-guess"); v.scrollTop = content.scrollTop; } return !!arm.land; }, landT: (t: number) => !!arm.landT };
+                   land: (uuid: string) => {
+                     if (arm.rebuild) arm.rebuild(host);
+                     if (arm.preJump != null) { assert.ok(arm.fetch, "a pre-jump runs only inside the window ask (requestAround), which arms the fetch: the world models no pre-jump without one"); v.stick = false; H.writeScroll(content, arm.preJump, "land-guess"); v.scrollTop = content.scrollTop; }
+                     if (arm.land && arm.landAt != null) H.writeScroll(content, arm.landAt, "land-on");
+                     return !!arm.land;
+                   }, landT: (t: number) => !!arm.landT };
   // the take state, the persisted top and the geometry, traced in order with the writes (the ordering test below). The take state: the parked
   // flag, which the stubs hold in place of production's parked figures, and the view's own three fields (`measured`, `avgTurnH`, `pxPerTurn`:
   // the fields the take writes, the untake restores and the parked figures are read from, derived from render.ts's tree and stated once in
@@ -245,7 +254,7 @@ function world(o: Opts, arm: Arm = {}): World {
     const H = HOOKS;
     let pendingAnchor = H.arm.anchor ?? null, pendingAnchorT = H.arm.t ?? null, pendingAnchorIntent = null, pendingAnchorKind = null;
     let pendingAnchorKeepY = H.arm.keepY ?? null, pendingAnchorClick = false, pendingReloadScroll = H.arm.reload ?? null;
-    let seek = H.arm.seek ?? null, landTrail = [], landSettling = null, anchorPendingOlder = false;
+    let seek = H.arm.seek ?? null, landTrail = [], landSettling = null, anchorPendingOlder = !!H.arm.stale, anchorPreJumped = !!H.arm.stale;
     const activeId = "A"; const views = new Map([["A", H.v]]); const sessions = new Map([["A", { name: "web" }]]);
     const document = H.document;
     const vscodeApi = { postMessage: (row) => { H.rows.push(row); } };
@@ -256,7 +265,7 @@ function world(o: Opts, arm: Arm = {}): World {
     const untakeMeasure = (v, fig) => { H.calls.push("untakeMeasure"); H.trace.push("untake"); if (!fig.parked || H.parked) return false; H.parked = true; H.spacer.h -= H.delta; return true; };   // the take undone: the figures parked again, the spacer back
     const redrawGapUnits = () => { H.calls.push("redrawGapUnits"); H.trace.push("redrawGapUnits"); };
     const sizeSpacers = () => { H.calls.push("sizeSpacers"); H.trace.push("sizeSpacers"); };
-    const scrollToAnchor = (uuid) => { H.calls.push(["scrollToAnchor", uuid]); return H.land(uuid); };
+    const scrollToAnchor = (uuid) => { H.calls.push(["scrollToAnchor", uuid]); anchorPendingOlder = false; anchorPreJumped = false; const hit = H.land(uuid); if (H.arm.preJump != null) anchorPreJumped = true; if (!hit && H.arm.fetch) anchorPendingOlder = true; return hit; };
     const landNearestMoment = (t) => { H.calls.push(["landNearestMoment", t]); return H.landT(t); };
     const revealProgressTick = () => {}; const clearSeek = () => { H.calls.push("clearSeek"); }; const showSeekNote = () => { H.calls.push("showSeekNote"); };
     const settleSample = () => {}; const landToast = (m) => { H.toasts.push(m); }; const notifyShell = () => {};
@@ -316,35 +325,41 @@ test("the same miss on a tab SWITCH: the scroller still holds the leaving tab's 
 // anchor restore wrote the reader to where they stood a frame earlier (the lab's record: the scroller 8, the record 0, the restore 8 -> 0).
 // When the view was already on screen and no deferred build came between (showActive's `scrollerHolds`), the scroller holds the reader
 // and landActive reads the saved place from it; a switch keeps the record, because the scroller still holds the leaving tab (the switch
-// road above, and the contrast at the end of the second road below). The worlds: a 2000 px head spacer standing for the head gap (no child
-// there carries a uuid, so the row captured is the first below it, as in the lab), the scroller at 8 where the re-window wrote it, the
-// record still at 0, nothing parked (the lab's missed land took nothing: its restore wrote the row's own y back)
+// road above, and the contrast at the end of the second road below). A miss with a fetch armed now puts nothing back (the roads after these:
+// the pre-jump stands, and with no pre-jump the saved place is written raw), so the scroller's read reaches the fetch-armed miss through the
+// raw write's value and a miss with no fetch armed through the row the restore puts back; the second road runs both. The worlds: a 2000 px
+// head spacer standing for the head gap (no child there carries a uuid, so the row captured is the first below it, as in the lab), the
+// scroller at 8 where the re-window wrote it, the record still at 0, nothing parked (the lab's missed land took nothing: its restore wrote
+// the row's own y back)
 const STALE: Opts = { saved: 0, scrollTop: 8, parked: false };
 const LINK = "11111111-2222-4333-8444-000000000021";
 const LINK_SEEK = { sid: "A", uuid: LINK, kind: "user" };   // setActive arms the durable seek for the link it lands (armSeek): a miss keeps searching, no toast
 
-test("a deep link WITH a time on the view already on screen, run inside the frame between a page write and its scroll event: the pre-jump writes where the scroller already stands and syncs the record, the fetch-armed land misses, and the reader stays where the scroller held them; no anchor restore writes them back to the record's stale place", () => {
-  const w = world(STALE, { anchor: LINK, t: 1700000000, seek: LINK_SEEK, land: false, preJump: 8 });
+test("a deep link WITH a time on the view already on screen, run inside the frame between a page write and its scroll event: the pre-jump writes where the scroller already stands and syncs the record, the land misses with its window's fetch armed, and the reader stays where the scroller held them; no anchor restore writes them back to the record's stale place", () => {
+  const w = world(STALE, { anchor: LINK, t: 1700000000, seek: LINK_SEEK, land: false, preJump: 8, fetch: true });
   const r0Before = w.rows[0].getBoundingClientRect().top;   // 1992: the first row under the head gap, as the reader sees it
   w.land(w.content, w.v, true);
   assert.equal(w.content.scrollTop, 8, "the reader is where the scroller held them (at the base the anchor restore put them at the record's 0, the row captured there written back to its y there): " + JSON.stringify(w.writes));
-  assert.deepEqual(w.writes.filter((x) => x.top !== 8), [], "no write moves the reader off the scroller's place: the pre-jump writes 8 and the saved place's row goes back at 8: " + JSON.stringify(w.writes));
+  assert.deepEqual(w.writes.filter((x) => x.top !== 8), [], "no write moves the reader off the scroller's place: the pre-jump writes 8, and what follows it writes 8 too: " + JSON.stringify(w.writes));
   assert.equal(w.rows[0].getBoundingClientRect().top, r0Before, "the row under the head gap sits where the reader saw it");
   assert.deepEqual(w.toasts, [], "the seek keeps searching; the miss raises no toast"); assert.ok(w.calls.includes("showSeekNote"));
 });
 
-test("a deep link WITHOUT a time on the view already on screen, inside the same frame: no pre-jump, the fetch-armed land misses, and the reader stays where the scroller held them; no anchor restore writes them back to the record's stale place", () => {
-  const w = world(STALE, { anchor: LINK, seek: LINK_SEEK, land: false });
-  const r0Before = w.rows[0].getBoundingClientRect().top;
-  w.land(w.content, w.v, true);
-  assert.equal(w.content.scrollTop, 8, "the reader is where the scroller held them (at the base the anchor restore wrote 0): " + JSON.stringify(w.writes));
-  assert.deepEqual(w.writes.filter((x) => x.top !== 8), [], "no write moves the reader off the scroller's place: " + JSON.stringify(w.writes));
-  assert.equal(w.rows[0].getBoundingClientRect().top, r0Before, "the row under the head gap sits where the reader saw it");
-  // the contrast: the same world on a SWITCH (the scroller does not hold this view's reader, so the flag is false) captures at the record,
-  // the saved place, and puts the row it held back at its offset
-  const sw = world(STALE, { anchor: LINK, seek: LINK_SEEK, land: false });
-  sw.land(sw.content, sw.v, false);
-  assert.deepEqual(sw.writes.map((x) => [x.writer, x.top]), [["anchor-restore", 0]], "on a switch the record is the saved place");
+test("a deep link WITHOUT a time on the view already on screen, inside the same frame: no pre-jump; its land misses with no fetch armed (the row captured at the saved place is put back) or with one (the saved place is written raw), and either way the reader stays where the scroller held them; nothing writes them back to the record's stale place", () => {
+  for (const fetch of [false, true]) {
+    const road = fetch ? "a fetch armed" : "no fetch armed";
+    const w = world(STALE, { anchor: LINK, seek: LINK_SEEK, land: false, fetch });
+    const r0Before = w.rows[0].getBoundingClientRect().top;
+    w.land(w.content, w.v, true);
+    assert.equal(w.content.scrollTop, 8, road + ": the reader is where the scroller held them (at the base the anchor restore wrote 0): " + JSON.stringify(w.writes));
+    assert.deepEqual(w.writes.filter((x) => x.top !== 8), [], road + ": no write moves the reader off the scroller's place: " + JSON.stringify(w.writes));
+    assert.equal(w.rows[0].getBoundingClientRect().top, r0Before, road + ": the row under the head gap sits where the reader saw it");
+    // the contrast: the same world on a SWITCH (the scroller does not hold this view's reader, so the flag is false) reads the record, the
+    // saved place: the row it held is put back at its offset, or, with a fetch armed, the saved place is written raw
+    const sw = world(STALE, { anchor: LINK, seek: LINK_SEEK, land: false, fetch });
+    sw.land(sw.content, sw.v, false);
+    assert.deepEqual(sw.writes.map((x) => [x.writer, x.top]), [[fetch ? "land-saved" : "anchor-restore", 0]], road + ": on a switch the record is the saved place");
+  }
 });
 
 test("the raw land-saved write on a missed land with no row at the saved place, on the view already on screen inside the same frame: the saved scrollTop written is the scroller's, not the lagging record's (this read predates PR 861); a pre-jump in the same pass still stands, because the write reads the record after the attempt synced it", () => {
@@ -356,10 +371,55 @@ test("the raw land-saved write on a missed land with no row at the saved place, 
   assert.deepEqual(w.writes, [{ writer: "land-saved", top: 3008, stick: false, from: undefined }], "no row to put back: the raw write, of the scroller's place");
   // a pre-jump in the same pass (a link with a time) placed the reader, and the record was synced to it: the raw write keeps it (a write
   // of the place read before the attempt would reverse the pre-jump on this road, where it stands today and stood before PR 861)
-  const j = world(o, { anchor: LINK, t: 1700000000, seek: LINK_SEEK, land: false, preJump: 4000 });
+  const j = world(o, { anchor: LINK, t: 1700000000, seek: LINK_SEEK, land: false, preJump: 4000, fetch: true });
   j.land(j.content, j.v, true);
   assert.deepEqual(j.writes.map((x) => [x.writer, x.top]), [["land-guess", 4000], ["land-saved", 4000]], "the pre-jump stands on the raw road");
   assert.equal(j.content.scrollTop, 4000);
+});
+
+// A DEEP PRE-JUMP STANDS THROUGH ITS ARMED FETCH (the second behaviour PR 861 changed on these lines). A deep link with a time into history the
+// page does not hold asks for a window, and the pre-jump (preJumpIntoGap) moves the reader into the gap where the target will be, the loading
+// glyph in the empty space; the land then misses, because the target comes with the reply. Before PR 861 the fallback wrote the saved place the
+// pre-jump had just synced, which moved nothing. PR 861's fallback put back the row captured before the attempt, which returned the reader to
+// where they started in the same pass, and the reply's landing then moved them forward again. With a fetch armed the miss is not final (the
+// reply lands the anchor, or its dead end puts back the origin the pre-jump recorded, chatWindow), so nothing is put back; the pre-jump read
+// the gap after the take, so the take stands under it. The restore still serves a miss with no fetch armed (the roads above). The worlds: a
+// reader scrolled up at 2350 (r3 50 px above the viewport top), not following the tail, a figure parked (the take grows the head spacer,
+// which stands for the head gap, by D), on the view already on screen
+const DEEP = "11111111-2222-4333-8444-000000000031";
+const DEEP_SEEK = { sid: "A", uuid: DEEP, kind: "user" };
+
+test("a deep link with a time whose pre-jump moves a reader who is not following the tail deep into the gap: the land misses with its fetch armed and the pre-jump stands, with no anchor restore writing the reader back to the row captured before the attempt and the take kept under the placement measured over it; when the fetch lands the land completes at the target, and the reader never went back in between", () => {
+  const arm: Arm = { anchor: DEEP, t: 1700000000, seek: DEEP_SEEK, land: false, fetch: true, preJump: 1000 };
+  const w = world({ saved: 2350 }, arm);
+  w.land(w.content, w.v, true);
+  assert.equal(w.content.scrollTop, 1000, "the reader is where the pre-jump put them, in the gap (at the base the anchor restore wrote them back to r3 at its offset, 2650 over the take): " + JSON.stringify(w.writes));
+  assert.deepEqual(w.writes.filter((x) => x.writer === "anchor-restore"), [], "with the fetch armed nothing is put back: " + JSON.stringify(w.writes));
+  assert.deepEqual(w.writes.slice(1).filter((x) => x.top !== 1000), [], "nothing after the pre-jump writes anywhere else: " + JSON.stringify(w.writes));
+  assert.equal(takes(w), 1, "the armed land took before its attempt");
+  assert.equal(w.spacer.h, 2000 + D, "the take stands under the placement: the pre-jump read the gap after it, and giving it back would re-size the gap under the reader just placed");
+  assert.equal(w.parked(), false);
+  assert.deepEqual(w.toasts, [], "the seek keeps searching; the miss raises no toast");
+  // the reply: the window arrives and the landing re-arms on its anchor (chatWindow, then showActive; here the durable seek re-arms it) and lands
+  arm.land = true; arm.landAt = 1200; delete arm.preJump; arm.fetch = false;
+  w.land(w.content, w.v, true);
+  assert.equal(w.content.scrollTop, 1200, "the land completes at the target: " + JSON.stringify(w.writes));
+  const visited = w.writes.map((x) => x.top).filter((top, i, a) => i === 0 || top !== a[i - 1]);
+  assert.deepEqual(visited, [1000, 1200], "the reader went from the pre-jump's place to the target, never back to where they started and forward again: " + JSON.stringify(w.writes));
+  // the same link with NO time: no pre-jump placed the reader, and the restore applies only to a miss with no fetch armed, so the saved place
+  // is written raw, in the layout it was saved in (the take given back), and the reader stays where they were
+  const n = world({ saved: 2350 }, { anchor: DEEP, seek: DEEP_SEEK, land: false, fetch: true });
+  n.land(n.content, n.v, true);
+  assert.equal(n.rows[3].getBoundingClientRect().top, R3_OFFSET, "no pre-jump: the reader stays where they were, r3 50 px above the viewport top");
+  assert.deepEqual(n.writes, [{ writer: "land-saved", top: 2350, stick: false, from: undefined }], "no anchor restore with a fetch armed: the raw write of the saved place");
+  assert.equal(n.spacer.h, 2000, "…in the layout it was measured in, the take given back (with the take standing, the raw write would leave the reader 300 px above their place)");
+  assert.equal(n.parked(), true);
+  // a pass that makes no attempt by id (a moment that misses) finds the two flags as an earlier attempt left them, its fetch still on the wire:
+  // they are not this pass's, so its miss is the ordinary one, the row the saved place held put back over the take
+  const m = world({ saved: 2350 }, { t: 1700000000, landT: false, stale: true });
+  m.land(m.content, m.v, true);
+  assert.equal(m.rows[3].getBoundingClientRect().top, R3_OFFSET, "the moment's miss keeps the reader where they were (read as this pass's, the earlier pre-jump's mark would skip the take's give-back under the raw write, 300 px off): " + JSON.stringify(m.writes));
+  assert.deepEqual(m.writes, [{ writer: "anchor-restore", top: 2350 + D, stick: false, from: undefined }], "the ordinary miss: the row put back over the take");
 });
 
 test("render.ts: showActive decides whether the scroller holds the view's reader BEFORE the display flip (a switch's entering view is still display:none then) and hands the decision to the synchronous land alone; the deferred build's land and the hidden pane's retry pass nothing. A source pin, keyed on where the decision is read and what each land is handed. Executed: the landing lab's road 16 (tests/test_landing_notice_browser.py) runs the hand-off, a deep link on the displayed tab reaching landActive through showActive with every conjunct true, and the roads above run what the flag changes inside landActive. No executed road reaches five parts, which this pin alone guards: the display conjunct (a switch; the decision read after the flip drops it), the pane-height conjunct, the pending-build conjunct, the deferred land passing nothing and the hidden pane's retry passing nothing", () => {
