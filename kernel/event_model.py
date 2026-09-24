@@ -779,7 +779,8 @@ def _cache_insert_locked(path, ent):
 def record_cache_stats() -> dict:
     """The record cache for /perf: entries, held bytes, the life maximum of held bytes (bytesMax, a gauge like bytes: the
     judge child lists it in _SERVE_GAUGES so it rides current, never differenced), the budget, and the counters (inserts,
-    evictions by count and by budget, evicted bytes, drop-after-fold drops)."""
+    evictions by count and by budget, evicted bytes, drop-after-fold drops, whole reads, and the release at an agent's end:
+    released, releaseDeferred, releaseLost, falseEnds, releasedReread)."""
     with _JSONL_CACHE_LOCK:
         out = {"entries": len(_JSONL_CACHE), "bytes": _JSONL_CACHE_BYTES[0], "bytesMax": _JSONL_CACHE_BYTES_MAX[0],
                "budgetBytes": _JSONL_CACHE_BUDGET_BYTES, "countCap": _JSONL_CACHE_MAX, **_RECORD_CACHE_STATS}

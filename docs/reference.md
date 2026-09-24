@@ -3084,11 +3084,11 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   refused the write, or a read replaced the entry before the drop),
   `releaseLost` (releases given up, the entry left to the count cap: no
   document could be written, as with `ROMP_CKPT_CONVERGE_MS=0`, a bounded
-  queue overflowed, or resolving one raised; said once on stderr per cause), `falseEnds` (agents
-  released at their end that entered the live set again) and
-  `releasedReread` (`count` and `bytes` of whole reads of a path whose last
-  removal was a release: what releasing cost); and `wholeReads`: every read that pulled a file whole,
-  keyed `kind<-caller` (the reader's kind, one of `zero`, `rewrite`, `guard`,
+  queue overflowed, or resolving one raised; said once on stderr per
+  cause), `falseEnds` (agents released at their end that entered the live
+  set again) and `releasedReread` (`count` and `bytes` of whole reads of a
+  path whose last removal was a release: what releasing cost); and
+  `wholeReads`: every read that pulled a file whole, keyed `kind<-caller` (the reader's kind, one of `zero`, `rewrite`, `guard`,
   `shrunk` and `upgrade`, and the first calling function outside the event
   model and the parse family), with `count` and `bytes`; a tail read, an
   append and a restore's tail read are not whole reads and are not counted;
