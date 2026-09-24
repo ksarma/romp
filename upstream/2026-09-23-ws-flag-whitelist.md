@@ -3,7 +3,7 @@ title: The setSessionFlag socket op refuses a flag name outside the lane toggles
 status: candidate
 where: fork branch `quickfix-ws-flag-whitelist`: `kernel/kernel.py` (`_lane_flag_refusal` beside `_LANE_FLAGS`, the `/flag` arm of `_state_write_route`, the `setSessionFlag` arm of `Handler._dispatch_ws`), `tests/test_obsidian_state_routes.py` (`SocketFlagWhitelist`, `FlagWriterPopulation` and its source walkers, the socket frame helpers), upstream/2026-09-23-ws-flag-whitelist.md (this entry)
 added: 2026-09-23
-pr:
+pr: 909
 tier: fix
 offered:
 closed:
