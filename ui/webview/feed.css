@@ -1983,8 +1983,13 @@ a.fileview-gh-note { border-style: dashed; }
    line's outer side kept the tint). A box-shadow takes no layout and paints with the picture in tree order, so a bare ring covered its
    width of whatever stood before the picture on its line; a margin of the ring's width, at rest under `screen` on every pointer (a
    margin keyed on hover moved the picture from under a pointer at its edge, and the hover toggled frame by frame), keeps the ring off
-   its neighbours, and a line holding such a picture stands up to 6px taller (the file review's round 14, correctness-2 with extra5-1 and
-   extra5-2). Both at-rest rules key on `(hover: none)` OR `(any-pointer: coarse)`,
+   every pixel whose centre lies in a neighbour's own box, and a line holding such a picture stands up to 6px taller
+   (the file review's round 14, correctness-2 with extra5-1 and extra5-2). The margin leaves no pixel of slack past that box, so two
+   things stay outside it, each recorded as it stands by the open leg's bound case: a glyph whose ink reaches past its own box toward
+   the picture (an italic run's last letter, an f, a slash) loses that ink to the ring, where without the margin the picture itself
+   stood, and text painted after the picture, the line a callout wraps beside a floated one, can put its edge in the ring's outer
+   pixel, where the dash's outer side reads that edge, under 3:1 on a left float in a note callout on the Files pane. Both at-rest
+   rules key on `(hover: none)` OR `(any-pointer: coarse)`,
    `screen` written on both queries (css-rules' underScreen reads a list member by member): `hover` describes the PRIMARY pointer, and a
    touchscreen laptop's is a hovering trackpad, so neither dress stood there at rest while a finger's tap opened the tab (the section
    snapshot action's precedent; the file review's round 13, extra7-2). The web control rests at FULL opacity where a local one keeps
@@ -2034,7 +2039,7 @@ a.fileview-gh-note { border-style: dashed; }
 @media screen and (hover: none), screen and (any-pointer: coarse) { .fileview-md .fv-figopen-web { opacity: 1; } }   /* the web control at rest at full, where a local one keeps 0.8: at 0.8 the picture under it showed through its dashed line (the comment above); never print */
 @media screen { .fileview-md .fv-figopen-web:focus-visible { outline-offset: 2px; } }   /* the focus ring 2px off the web control's border, so its dashed line shows under a keyboard focus (the comment above) */
 @media screen { .fileview-md .fv-figopen-web:active { transform: none; } }   /* the press cue off on the web control alone: the release that opens the tab comes while it is held, so the pressed paint is held to 3:1 too (the comment above) */
-@media screen { .fileview-md img[data-fv-figweb] { margin: 3px; } }   /* the ring's width, at rest on every pointer, so the ring below covers no neighbouring ink (the comment above); never keyed on hover, never print */
+@media screen { .fileview-md img[data-fv-figweb] { margin: 3px; } }   /* the ring's width, at rest on every pointer, so the ring below covers no pixel of a neighbour's own box (the comment above, with its two bounds); never keyed on hover, never print */
 @media screen { .fileview-md img[data-fv-figweb]:hover { outline: 1px dashed var(--outbound-line); outline-offset: 1px; box-shadow: 0 0 0 3px var(--bg); } }
 @media screen and (hover: none), screen and (any-pointer: coarse) { .fileview-md img[data-fv-figweb] { outline: 1px dashed var(--outbound-line); outline-offset: 1px; box-shadow: 0 0 0 3px var(--bg); } }   /* touch, and a coarse pointer beside a hovering one: a picture under the floor has no control and its tooltip never shows to a finger, so the mark stands at rest; never print */
 @media screen { .fileview-md a.fv-dead:has(.fv-figopen-web), .fileview-md a.fv-dead:has(img[data-fv-figweb]) { opacity: 1; color: color-mix(in srgb, currentColor 70%, transparent); } }   /* a dead link holding the outbound dress dims by colour, not by opacity, which dimmed the dress inside it (the comment above); print keeps the opacity */

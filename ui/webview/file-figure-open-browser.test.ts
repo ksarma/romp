@@ -57,7 +57,10 @@
 // highlight, whose outer side keeps the tint. The ring's neighbour pin (ringCoversNoNeighbour) reads a glyph glued to a picture under the floor before
 // and after it in a paragraph, a highlight and a table cell, and two glued badges, against the same page with the ring taken off,
 // at rest under touch and on hover on the fine pointer, in both themes: green over the sheets before the ring by design, with no ring
-// to cover anything, and red over a bare 3px ring with no margin beside it (the file review's round 14, correctness-2). The web
+// to cover anything, and red over a bare 3px ring with no margin beside it (the file review's round 14, correctness-2). A case of its
+// own on the Files pane under touch emulation records the ring's two stated bounds as they stand, the ink an italic letter glued
+// before a picture paints past its box covered by the ring while no pixel inside the box changes, and the edge of the text a note
+// callout wraps beside a left-floated picture in the ring's outer pixel, the dash's outer side under 3:1 there. The web
 // control's focus is read in cases of their own at the file's end (the file review's round 14, ui-1 with extra9-1): no mouse press,
 // a click, a press dragged off or a right or a middle press, leaves the keyboard on it, any focus it holds paints its line at 3:1 in
 // both themes, and Enter or Space opens it only while it is in view, the body and a table that scrolls on its own each read, on a
@@ -932,7 +935,9 @@ async function paintedLegible(page: any, where: string, fails: string[], note: (
 }
 /** The neighbour pin's scenes (the tiny report's last pictures): the alt of the picture whose ring is read, and the scene. */
 const NEIGHBOURS: Array<[string, string]> = [["ngp", "a paragraph"], ["ngh", "a highlight"], ["ngt", "a table cell"], ["nb2", "two glued badges"]];
-/** The ring covers no neighbouring ink (the file review's round 14, correctness-2 with extra5-1 and extra5-2): a box-shadow takes no
+/** The ring covers no neighbouring ink inside the neighbour's own box (the file review's round 14, correctness-2 with extra5-1 and
+ *  extra5-2; the ink a glyph paints past its box and the edge of text painted after the picture are the ring's two stated bounds,
+ *  which the bound case after the laptop's records by ringOverGlyph and by a float's paintedRatio): a box-shadow takes no
  *  layout and paints with the picture in tree order, so a bare ring covers its width of whatever stands before the picture on its line.
  *  For each scene of NEIGHBOURS, the picture's neighbours (the glyph glued before it and the one glued after it, or the badge glued
  *  before the second badge) are read off a screenshot of the page as it is and of the same clip with every mark's box-shadow
@@ -1413,6 +1418,118 @@ test("in Chromium launched as a trackpad-plus-touchscreen laptop (hover: hover, 
       assert.deepEqual(errors, [], "no page errors");
       await page.close();
     }, { args: [LAPTOP] });
+  } finally { await second.close(); }
+});
+
+// ── the ring's two stated bounds ──────────────────────────────────────────────────────────────────────────────────────────────
+// (the file review's round 14, correctness-2 with extra5-1 and extra5-2) The margin is the ring's width, so it keeps the ring off
+// every pixel whose centre lies in a neighbour's own box and leaves no pixel of slack past that box. Two things stay outside it, the
+// bounds the sheets' comment on the mark states, each recorded here as it stands, so a change that closes or widens either turns
+// this case red and the sentence moves with it: a glyph whose ink reaches past its own box toward the picture (here an italic run's
+// last letter) loses that ink to the ring, where without the margin the picture itself stood; and text painted after the picture can
+// put its edge in the ring's outer pixel (here the line a note callout wraps beside a left-floated picture, on the Files pane, where
+// the dash's outer side reads that edge under 3:1). The neighbour pin's scenes are glyphs whose ink stays inside their box.
+const BOUND_WORDS = "Tall words wrap around the floated picture here and deep gjpqy words ";
+const BOUND_TEXT = "# Report\n\n" + PARA(1) + "\n\nItalic *ffff*![ngi](" + WEB + "/ngi.svg) glued\n\n"
+  + "> [!note]\n> " + '<img src="' + WEB + '/cfloat.svg" alt="cfloat" align="left">' + "jTW " + BOUND_WORDS.repeat(5) + "\n\n" + PARA(2) + "\n";
+type Edges = { left: number; top: number; right: number; bottom: number };
+/** The ring over the glyph glued before the picture `alt` (the last letter of the text before it, inside an element or not), read off
+ *  three screenshots of one clip: as painted (A), with every mark's box-shadow overridden to none (B, the page without the ring), and
+ *  with the ring off and the text of the picture's own block transparent (C, the page without that text's ink). A pixel holds the
+ *  text's ink where B and C differ, and the ring covers it where A and B differ there. Returns the covered pixels, how many of them
+ *  have their centre inside the glyph's own box (the last letter's range rect), the pixels the ring changed at all, and the first few
+ *  covered pixels for the message. Guards: the glyph is found, the picture wears the mark's dashed outline at rest, and the overrides
+ *  take the ring off (the computed box-shadow none) and move nothing. */
+async function ringOverGlyph(page: any, alt: string): Promise<{ covered: number; inBox: number; changed: number; glyph: Edges; seen: string[] }> {
+  await page.mouse.move(5, 5);
+  const layout = (scroll: boolean): Promise<{ img: Edges; glyph: Edges | null; outline: string; shadow: string }> => page.evaluate(([alt, scroll]: [string, boolean]) => {
+    const img = Array.from(document.querySelectorAll(".fileview-md img")).find((x) => x.getAttribute("alt") === alt) as HTMLElement;
+    if (scroll) img.scrollIntoView({ block: "center" });
+    const box = (r: DOMRect) => ({ left: r.left, top: r.top, right: r.right, bottom: r.bottom });
+    let n: Node | null = img.previousSibling;
+    while (n && n.nodeType === 1) n = n.lastChild;
+    let glyph = null;
+    if (n && n.nodeType === 3 && (n as Text).length) { const r = document.createRange(); r.setStart(n, (n as Text).length - 1); r.setEnd(n, (n as Text).length); glyph = box(r.getBoundingClientRect()); }
+    const cs = getComputedStyle(img);
+    return { img: box(img.getBoundingClientRect()), glyph, outline: cs.outlineStyle, shadow: cs.boxShadow };
+  }, [alt, scroll]);
+  await layout(true);
+  await frames(page, 2);
+  const lay = await layout(false);
+  assert.ok(lay.glyph, alt + ": the glyph glued before the picture is found");
+  assert.equal(lay.outline, "dashed", alt + ": the picture wears the mark's outline at rest");
+  const g = lay.glyph as Edges;
+  const cx = Math.max(0, Math.floor(Math.min(g.left, lay.img.left) - 12)), cy = Math.max(0, Math.floor(Math.min(g.top, lay.img.top) - 12));
+  const cw = Math.ceil(lay.img.right + 12) - cx, ch = Math.ceil(Math.max(g.bottom, lay.img.bottom) + 12) - cy;
+  const shot = async () => decodePng(await page.screenshot({ clip: { x: cx, y: cy, width: cw, height: ch } }));
+  const A = await shot();
+  await page.evaluate((alt: string) => {
+    const img = Array.from(document.querySelectorAll(".fileview-md img")).find((x) => x.getAttribute("alt") === alt) as HTMLElement;
+    img.parentElement!.setAttribute("data-bound-line", "");
+    const st = document.createElement("style"); st.id = "bound-noring"; st.textContent = ".fileview-md img[data-fv-figweb] { box-shadow: none !important; }"; document.head.appendChild(st);
+  }, alt);
+  await frames(page, 3);
+  const B = await shot();
+  const noRing = await layout(false);
+  await page.evaluate(() => { const st = document.createElement("style"); st.id = "bound-noink"; st.textContent = "[data-bound-line], [data-bound-line] * { color: transparent !important; -webkit-text-fill-color: transparent !important; text-decoration-color: transparent !important; }"; document.head.appendChild(st); });
+  await frames(page, 3);
+  const C = await shot();
+  const noInk = await layout(false);
+  await page.evaluate(() => { document.getElementById("bound-noink")!.remove(); document.getElementById("bound-noring")!.remove(); document.querySelector("[data-bound-line]")!.removeAttribute("data-bound-line"); });
+  await frames(page, 2);
+  assert.deepEqual([noRing.img, noRing.shadow, noInk.img], [lay.img, "none", lay.img], alt + ": the overrides take the ring off (the picture's computed box-shadow none under them) and move nothing");
+  const px = (png: { width: number; bpp: number; data: Buffer }, x: number, y: number) => { const k = ((y - cy) * png.width + (x - cx)) * png.bpp; return [png.data[k], png.data[k + 1], png.data[k + 2]]; };
+  const same = (a: number[], b: number[]) => a[0] === b[0] && a[1] === b[1] && a[2] === b[2];
+  let covered = 0, inBox = 0, changed = 0;
+  const seen: string[] = [];
+  for (let y = cy; y < cy + ch; y++) for (let x = cx; x < cx + cw; x++) {
+    const a = px(A, x, y), b = px(B, x, y), c = px(C, x, y);
+    if (same(a, b)) continue;
+    changed++;
+    if (same(b, c)) continue;
+    covered++;
+    if (x + 0.5 > g.left && x + 0.5 < g.right && y + 0.5 > g.top && y + 0.5 < g.bottom) inBox++;
+    if (seen.length < 4) seen.push((x - Math.floor(lay.img.left)) + "," + (y - Math.floor(lay.img.top)) + " rgb(" + b.join(", ") + ") to rgb(" + a.join(", ") + ")");
+  }
+  return { covered, inBox, changed, glyph: g, seen };
+}
+test("in a browser, under CDP touch emulation on the Files pane, the ring's two stated bounds, each a bound-recording read off the page (a red means a bound moved, closed or widened, and the sheets' sentence on it moves with it): the ink an italic run's last letter glued before a remote picture under the floor paints past its own box is covered by the ring while no pixel whose centre lies inside that box changes, and the edge of the text a note callout wraps beside a left-floated one paints in the ring's outer pixel, where the dash's outer side reads under 3:1 in both themes (the file review's round 14, correctness-2 with extra5-1 and extra5-2: the margin is the ring's width, so it keeps the ring off a neighbour's box and leaves no pixel of slack past it)", { timeout: 240000 }, async (t) => {
+  const second = await secondServer([], { "/ngi.svg": [20, 20], "/cfloat.svg": [20, 20] });
+  try {
+    await inBrowser(t, async (browser) => {
+      const before = async (pg: any): Promise<void> => {
+        await pg.context().route((u: URL) => u.href.startsWith(WEB + "/"), async (route: any) => {
+          const a = await fromSecond(second.port, new URL(route.request().url()).pathname);
+          return route.fulfill({ status: a.status, contentType: a.type, body: a.body });
+        });
+      };
+      const { page, errors } = await openViewer(browser, "pane", 900, 600, { docs: { [REPORT]: BOUND_TEXT }, before });
+      await page.click('[data-act="fv-load"]');
+      await page.waitForFunction(() => { const imgs = Array.from(document.querySelectorAll(".fileview-md img")) as HTMLImageElement[]; return imgs.length === 2 && imgs.every((i) => i.complete && i.naturalWidth > 0 && i.hasAttribute("data-fv-figweb")); }, null, { timeout: 10000 });
+      const cdp = await page.context().newCDPSession(page);
+      await cdp.send("Emulation.setTouchEmulationEnabled", { enabled: true, maxTouchPoints: 1 });
+      await frames(page, 3);
+      const float = await page.evaluate(() => getComputedStyle(Array.from(document.querySelectorAll(".fileview-md img")).find((x) => x.getAttribute("alt") === "cfloat")!).float);
+      assert.equal(float, "left", "the callout's picture is floated left (the scene)");
+      const fails: string[] = [];
+      for (const theme of ["dark", "light"] as const) {
+        await page.evaluate((light: boolean) => document.body.classList.toggle("theme-light", light), theme === "light");
+        await frames(page, 3);
+        const o = await ringOverGlyph(page, "ngi");
+        const read = theme + " theme: the italic letter before the picture (its box " + [o.glyph.left, o.glyph.top, o.glyph.right, o.glyph.bottom].map((v) => v.toFixed(2)).join(", ") + "): " + o.covered + " ink pixels covered by the ring, " + o.inBox + " of them with the centre inside the box, " + o.changed + " pixels of the clip changed by it (" + o.seen.join("; ") + ")";
+        t.diagnostic("bound, " + read);
+        if (o.inBox > 0) fails.push(read + ": the ring covers a pixel inside the glyph's own box, which the margin keeps it off");
+        if (o.covered === 0) fails.push(read + ": the ring covers none of the ink past the box, so the first bound moved and the sheets' sentence on it moves with it");
+        const f = await paintedRatio(page, "cfloat", "mark");
+        const fr = theme + " theme: the left-floated picture in the note callout paints " + f.dash + " over " + f.ground + ", " + f.ratio.toFixed(3) + ":1 (the worst read: " + f.at + ")";
+        t.diagnostic("bound, " + fr);
+        if (!(f.ratio < 3 && /^right outer/.test(f.at || ""))) fails.push(fr + ": the dash's outer side toward the wrapped text reads 3:1 or better, or the worst read stands elsewhere, so the second bound moved and the sheets' sentence on it moves with it");
+      }
+      await page.evaluate(() => document.body.classList.remove("theme-light"));
+      assert.deepEqual(fails, [], "the ring's two bounds stand as the sheets' comment states them (a bound-recording read off the page):\n" + fails.join("\n"));
+      assert.deepEqual(errors, [], "no page errors");
+      await page.close();
+    });
   } finally { await second.close(); }
 });
 

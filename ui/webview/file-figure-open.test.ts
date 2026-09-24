@@ -223,7 +223,7 @@ test("the sheets: the control rests transparent over the figure's corner with a 
     // with no hover ever over the picture, a case of its own so the leg's red over the undressed picture reaches the at-rest read).
     // Since the file review's round 14 (correctness-2 with extra5-1 and extra5-2) both outline rules carry the ring of var(--bg)
     // under the outline, 3px, and a margin of the ring's width stands at rest under screen on every pointer, the set's first member,
-    // so the ring covers no neighbouring ink; the executed reads are the leg's worst dash-to-ring read (paintedRatio's mark branch)
+    // so the ring covers no pixel of a neighbour's own box; the executed reads are the leg's worst dash-to-ring read (paintedRatio's mark branch)
     // and its neighbour pin (ringCoversNoNeighbour)
     const mark = cssRules(css).filter((r) => /data-fv-figweb/.test(r.selector));
     assert.deepEqual(mark.filter((r) => !underScreen(r.chain)).map(renderRule), [], name + ": no rule naming the mark outside a screen-only at-rule: a print, where hover is none, would show the at-rest dress (a property pin over the derived population)");
