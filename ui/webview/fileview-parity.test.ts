@@ -114,6 +114,7 @@ const RULES = [
   // dimming by colour (the painted-contrast ask of 2026-09-23): four more one-line screen blocks held byte for byte
   "@media screen and (hover: none), screen and (any-pointer: coarse) { .fileview-md .fv-figopen-web {", "@media screen { .fileview-md .fv-figopen-web:focus-visible {",
   "@media screen { .fileview-md .fv-figopen-web:active {",
+  "@media screen { .fileview-md .fv-figopen-web, .fileview-md img[data-fv-figweb] {",   // the browser's tap highlight off on the web control and the mark, a one-line screen block held byte for byte (the tap-highlight ruling of 2026-09-24)
   "@media screen { .fileview-md a.fv-dead:has(.fv-figopen-web), .fileview-md a.fv-dead:has(img[data-fv-figweb]) {",
   ".fileview-cm {", ".fileview-cm .cm-editor {", ".fileview-editor {",
   ".fileview-dir-link {", ".fileview-dir-link:hover {",

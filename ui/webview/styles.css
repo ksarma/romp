@@ -5047,7 +5047,14 @@ body.filebrowse-open { overflow: hidden; }
    the release that opens the tab comes while the button is held, so the pressed state is one a gesture opens the tab from, and under
    the cue the 1px line spread over two pixel rows, its modal colour at 1.59:1 dark and 1.39:1 light against the control's own ground;
    held, the control paints as it does unheld: the family's accent border under the pointer, and the token's line under a Space press
-   from a keyboard focus. A dead link (a.fv-dead) holding the dress, the web control after a captioned picture or the mark on a picture
+   from a keyboard focus. The browser's tap highlight is off on the web control and on the mark (the tap rule below): a finger's tap
+   that opens the tab paints pressed frames of its own, the control matching :active for up to about 170 ms after it, and in them the
+   browser painted its default highlight over the control, on a phone a translucent blue (rgba(51, 181, 229, 0.4)) that took the line
+   to 2.578:1 dark and 2.531:1 light against the control's own ground, a pressed state a gesture opens the tab from; with the highlight
+   off those frames are the sheets' own transition from the rest dress to the hover dress, at 5.35:1 dark and 3.79:1 light at their
+   lowest. The browser highlights only an element that shows a hand cursor, and nothing from the mark up to the root shows one, so the
+   mark paints no highlight with the rule or without it and wears it so that a pointer cursor given it later brings none (the
+   tap-highlight ruling of 2026-09-24). A dead link (a.fv-dead) holding the dress, the web control after a captioned picture or the mark on a picture
    under the floor, dims by colour and not by opacity, under `screen`, so a print keeps the opacity: the anchor's opacity 0.7 dimmed
    everything inside it, the dress included (by pixels over the leg's picture, 2.47:1 dark and 2.40:1 light for the control at rest, at
    its own 0.8 times the anchor's 0.7, and 2.82:1 light at the anchor's 0.7 alone for the mark and for the control the pointer reveals),
@@ -5056,7 +5063,7 @@ body.filebrowse-open { overflow: hidden; }
    it. Its picture stands at full ink with the dress, the words that take the link's colour are dimmed by it, and a child the sheet
    colours itself, bold words or inline code, keeps its own ink; its dotted underline, help cursor and title still say it is dead, and a
    dead link with no dress keeps the opacity, pixel for pixel. So every state from which a gesture opens the tab, inside a dead link
-   too and the press held, paints the dress at 3:1 or better in both themes: the token's line at the token's own ratio (4.83:1 dark,
+   too, the press held and each frame of a finger's tap, paints the dress at 3:1 or better in both themes: the token's line at the token's own ratio (4.83:1 dark,
    4.90:1 light), the mark's outline in each of its states and the web control's border at rest, revealed by the pointer over its
    picture, under any focus and under a Space press from it, and the family's accent border at 7.87:1 dark and 3.79:1 light against its
    hover wash, the web control's under the pointer and in a pointer press, read by pixels in file-figure-open-browser.test.ts
@@ -5077,6 +5084,7 @@ body.filebrowse-open { overflow: hidden; }
 @media screen and (hover: none), screen and (any-pointer: coarse) { .fileview-md .fv-figopen-web { opacity: 1; } }   /* the web control at rest at full, where a local one keeps 0.8: at 0.8 the picture under it showed through its dashed line (the comment above); never print */
 @media screen { .fileview-md .fv-figopen-web:focus-visible { outline-offset: 2px; } }   /* the focus ring 2px off the web control's border, so its dashed line shows under a keyboard focus (the comment above) */
 @media screen { .fileview-md .fv-figopen-web:active { transform: none; } }   /* the press cue off on the web control alone: the release that opens the tab comes while it is held, so the pressed paint is held to 3:1 too (the comment above) */
+@media screen { .fileview-md .fv-figopen-web, .fileview-md img[data-fv-figweb] { -webkit-tap-highlight-color: transparent; } }   /* no browser tap highlight on the web control or the mark: a phone's painted over the control in the tap's pressed frames and took its line under 3:1 (the comment above) */
 @media screen { .fileview-md img[data-fv-figweb] { margin: 3px calc(3px + 0.3em); } }   /* 3px up and down, the ring's width, and 3px plus 0.3em across the line, 7.485px at the default text size, each axis the least that keeps the ring below off neighbouring ink at the picture's own text size (the comment above, which states the bound where the picture is in smaller text than an italic or bold italic f glued before it); at rest on every pointer, never keyed on hover, never print */
 @media screen { .fileview-md img[data-fv-figweb]:hover { outline: 1px dashed var(--outbound-line); outline-offset: 1px; box-shadow: 0 0 0 3px var(--bg); } }
 @media screen and (hover: none), screen and (any-pointer: coarse) { .fileview-md img[data-fv-figweb] { outline: 1px dashed var(--outbound-line); outline-offset: 1px; box-shadow: 0 0 0 3px var(--bg); } }   /* touch, and a coarse pointer beside a hovering one: a picture under the floor has no control and its tooltip never shows to a finger, so the mark stands at rest; never print */

@@ -81,7 +81,13 @@
 // remote picture under the floor and on a local picture, a plain click on a remote picture over the floor and on one inside a
 // named anchor, each toggle the fold and open nothing, the remote pictures wearing no address line and no mark, each red over the
 // viewer before the summary predicate by the open beside the toggle and by the line and the mark, while the web control inside the
-// summary opens once with the fold shut and the pictures of a stray summary open as anywhere else, controls green there by design. Red over
+// summary opens once with the fold shut and the pictures of a stray summary open as anywhere else, controls green there by design. A
+// finger's tap on the web control and on the mark is read frame by frame in cases of their own at the file's end (the tap-highlight
+// ruling of 2026-09-24): on a phone, under CDP touch emulation and on the touchscreen laptop, on the chat modal, the feed and the
+// Files pane, in both themes, each frame from the tap until the element settles, the tap's pressed frames while it matches :active
+// among them, paints the line at 3:1 or better, red on the phone over the sheets without their tap rule, where the browser's default tap
+// highlight painted the control's pressed frames down to 2.531:1, and the mark's cells and the other two devices' green there by
+// design. Red over
 // the unchanged viewer at the first control assertion (no control exists), the outbound
 // case red at the head before it, where the two controls presented one surface, and the link-shapes case red at the round-12
 // head, where the title and the control read any anchor while the click did not, and the two under-the-floor cases red at that head too, the hover read and the at-rest read, where no rule dressed the picture. Skips LOUDLY without a playwright browser (in CI the Test step runs before the job's Chromium install, so the leg skips there; the launch is real-viewer-leg.ts's inBrowser, the shared helper). Synthetic values only: the notes-api world, a placeholder session id, example.invalid and example.test addresses,
@@ -1186,18 +1192,19 @@ async function pressedLegible(page: any, alt: string, where: string, fails: stri
   await page.evaluate((y: number) => { (document.querySelector(".fileview-body") as HTMLElement).scrollTop = y; }, top);
   await frames(page, 2);
 }
-/** The tiny report open in the chat modal at 900 by 600: the report's remote pictures relayed to the second server (`second`), the
- *  first local figure loaded, the fv-load click lifting the host, then every figure loaded and out of its placeholder; no control is
- *  waited for, since the badge gets none. Shared by the two under-the-floor cases, each on a page of its own: Chromium's
- *  (hover: none) follows touch emulation and does not revert, and the at-rest read must never follow a hover. */
-async function openTiny(browser: any, second: { port: number }): Promise<{ page: any; errors: string[] }> {
+/** The tiny report open on `surface` (the chat modal unless named) at 900 by 600: the report's remote pictures relayed to the second
+ *  server (`second`), the first local figure loaded, the fv-load click lifting the host, then every figure loaded and out of its
+ *  placeholder; no control is waited for, since the badge gets none. Shared by the two under-the-floor cases, each on a page of its
+ *  own: Chromium's (hover: none) follows touch emulation and does not revert, and the at-rest read must never follow a hover; the
+ *  tap cases at the file's end open it on the feed and the Files pane too. */
+async function openTiny(browser: any, second: { port: number }, surface: Surface = "chat"): Promise<{ page: any; errors: string[] }> {
   const before = async (pg: any): Promise<void> => {
     await pg.context().route((u: URL) => u.href.startsWith(WEB + "/"), async (route: any) => {
       const a = await fromSecond(second.port, new URL(route.request().url()).pathname);
       return route.fulfill({ status: a.status, contentType: a.type, body: a.body });
     });
   };
-  const o = await openViewer(browser, "chat", 900, 600, {
+  const o = await openViewer(browser, surface, 900, 600, {
     docs: TINY_DOCS, before,
     serve: (u) => { const p = u.pathname === "/file" ? u.searchParams.get("path") || "" : ""; return TINY_DOCS[p] !== undefined && /\.svg$/.test(p) ? { status: 200, type: "image/svg+xml", body: TINY_DOCS[p] } : null; },
   });
@@ -2344,3 +2351,139 @@ test("in a browser (a fine pointer), the fold's two controls: the web control of
     cell("straylocal Ctrl-click: the viewer stays on the report", "report.md", lc.base);
   });
 });
+
+// ── A finger's tap, frame by frame (the tap-highlight ruling of 2026-09-24) ──────────────────────────────────────────────────────
+// The tap that opens the tab paints frames of its own: from the tap until about 170 ms after it the element tapped matches :active,
+// and the browser paints its tap highlight over the element a tap reaches that shows a hand cursor, the web control among them, in
+// the computed -webkit-tap-highlight-color: rgba(51, 181, 229, 0.4) on a phone, rgba(0, 0, 0, 0.18) under CDP touch emulation and on
+// the touchscreen laptop. On the phone that highlight painted the control's line down to 2.578:1 dark and 2.531:1 light against its
+// own ground, a pressed state a gesture opens the tab from, under the 3:1 floor. The sheets take the highlight off the web control and
+// the mark (their tap rule), so the frames of the tap are the sheets' own, the transition from the rest dress to the hover dress, at
+// 5.351:1 dark and 3.791:1 light at their lowest on each device and surface. The mark shows no highlight with the rule or without it,
+// since nothing from it up to the root shows a hand cursor, so its reads here are keep cells, green without the rule by design; so
+// are the control's under CDP touch and on the laptop, where the 0.18 black darkens the line and its ground alike and the tap's
+// lowest read stays above 3:1 (4.211:1 dark, 3.416:1 light). Only the phone's highlight takes the line under 3:1, so the phone's
+// cells are the ones red without the rule.
+/** A browser whose pages are a phone's: hasTouch and isMobile at a device scale of 1 (hover none, a coarse pointer, touch events),
+ *  the served page carrying the kernel pages' own viewport meta (`width=device-width, initial-scale=1`, which kernel.py writes on
+ *  every dashboard page), so the layout viewport is the 900 px window at scale 1 and a screenshot pixel is a CSS pixel, as
+ *  paintedRatio asserts. The meta goes in after the page's `<meta charset=utf-8>`, and a page without that tag throws rather than
+ *  open at the mobile default of a 980 px viewport scaled down. */
+function phonePages(browser: any): any {
+  const META = '<meta name="viewport" content="width=device-width, initial-scale=1">';
+  return {
+    newPage: async (o: any) => {
+      const pg = await browser.newPage({ ...o, hasTouch: true, isMobile: true, deviceScaleFactor: 1 });
+      const route = pg.route.bind(pg);
+      pg.route = (match: any, handler: any) => route(match, (r: any, req: any) => handler({
+        request: () => r.request(),
+        fulfill: (f: any) => {
+          if (!(f && f.contentType === "text/html" && typeof f.body === "string")) return r.fulfill(f);
+          assert.ok(f.body.includes("<meta charset=utf-8>"), "the served page carries <meta charset=utf-8>, after which the phone's viewport meta goes");
+          return r.fulfill({ ...f, body: f.body.replace("<meta charset=utf-8>", "<meta charset=utf-8>" + META) });
+        },
+        continue: (...a: any[]) => r.continue(...a), fallback: (...a: any[]) => r.fallback(...a), abort: (...a: any[]) => r.abort(...a),
+      }, req));
+      return pg;
+    },
+  };
+}
+type TapDevice = "phone" | "touch" | "laptop";
+const TAP_ON: Record<TapDevice, string> = { phone: "a phone (hasTouch and isMobile at a device scale of 1)", touch: "CDP touch emulation", laptop: "the touchscreen laptop" };
+/** The web control after `alt` (kind "control") or the picture `alt` wearing the mark (kind "mark"): its centre, its :active and
+ *  :hover, whether a transition runs on it, and its computed tap highlight colour. */
+const tapTarget = (page: any, alt: string, kind: "control" | "mark"): Promise<{ x: number; y: number; active: boolean; hover: boolean; running: boolean; highlight: string }> => page.evaluate(([alt, kind]: [string, string]) => {
+  const img = Array.from(document.querySelectorAll(".fileview-md img")).find((i) => i.getAttribute("alt") === alt) as HTMLElement;
+  const n = img.nextElementSibling;
+  const el = kind === "mark" ? img : n && n.hasAttribute("data-fv-figopen") ? n as HTMLElement : null;
+  if (!el) throw new Error(alt + ": no control after the picture");
+  const r = el.getBoundingClientRect();
+  return { x: r.left + r.width / 2, y: r.top + r.height / 2, active: el.matches(":active"), hover: el.matches(":hover"), running: el.getAnimations().some((a) => a.playState === "running"), highlight: (getComputedStyle(el) as any).webkitTapHighlightColor };
+}, [alt, kind]);
+/** A finger's tap on the dress (the web control after `alt`, or the mark on the picture `alt`), then its frames read as painted, one
+ *  after another (paintedRatio's mode that neither scrolls nor asserts the pointer away, each read one screenshot, about 33 ms
+ *  apart), from the tap until the first frame read after the pressed frames with no transition running, the settled state (bounded
+ *  at 3 s): the tap's pressed frames while the element matches :active, the transition after them and the settled state. First the picture is centred and a tap on the plain text below it moves the hover off, awaited until no transition
+ *  runs on the element and nothing in the document matches :active: a tap while the earlier tap's :active still holds leaves its
+ *  target without :active, so its pressed frames would not be the ones read. Every frame under 3:1, or one paintedRatio refuses, is
+ *  pushed onto `fails`; `note` carries every frame. The tap must open the tab once (window.open, stubbed by the caller), and at least
+ *  one frame must be read while the element matches :active (a guard: reads that start after the pressed frames pass over the
+ *  highlight). */
+async function tapFrames(page: any, cdp: any, alt: string, kind: "control" | "mark", where: string, fails: string[], note: (m: string) => void): Promise<void> {
+  await page.evaluate((alt: string) => { (Array.from(document.querySelectorAll(".fileview-md img")).find((i) => i.getAttribute("alt") === alt) as HTMLElement).scrollIntoView({ block: "center" }); }, alt);
+  await settleScroll(page);
+  const off = await page.evaluate((alt: string) => {
+    const ib = (Array.from(document.querySelectorAll(".fileview-md img")).find((i) => i.getAttribute("alt") === alt) as HTMLElement).getBoundingClientRect(), bb = (document.querySelector(".fileview-body") as HTMLElement).getBoundingClientRect();
+    const para = Array.from(document.querySelectorAll(".fileview-md > p")).map((e) => e.getBoundingClientRect()).find((r) => r.top > ib.bottom + 4 && r.top + 6 < bb.bottom);
+    return para ? { x: para.left + 20, y: para.top + 5 } : null;
+  }, alt);
+  assert.ok(off, where + ": " + alt + ": a paragraph of plain text below the picture, inside the body, to tap first");
+  await tapAt(cdp, off!.x, off!.y);
+  await page.waitForFunction(([alt, kind]: [string, string]) => {
+    const img = Array.from(document.querySelectorAll(".fileview-md img")).find((i) => i.getAttribute("alt") === alt) as HTMLElement;
+    const el = (kind === "mark" ? img : img.nextElementSibling) as HTMLElement;
+    return !el.matches(":active") && !el.matches(":hover") && el.getAnimations().every((a) => a.playState !== "running") && document.querySelector(":active") === null;
+  }, [alt, kind], { timeout: 3000 });
+  await frames(page, 2);
+  const before = await tapTarget(page, alt, kind);
+  const opens = (await page.evaluate(() => (window as any).__opened.length)) as number;
+  await tapAt(cdp, before.x, before.y);
+  const t0 = Date.now();
+  const reads: Array<{ ms: number; active: boolean; hover: boolean; ratio: number | null; dash: string; ground: string; refused: string | null }> = [];
+  let settled = false;
+  while (!settled && Date.now() - t0 < 3000) {
+    const s = await tapTarget(page, alt, kind);
+    const p: Painted | Error = await paintedRatio(page, alt, kind, "hover").catch((e: Error) => e);
+    const after = await tapTarget(page, alt, kind);
+    const ms = Date.now() - t0;
+    if (p instanceof Error) reads.push({ ms, active: s.active, hover: s.hover, ratio: null, dash: "", ground: "", refused: p.message.split("\n")[0] });
+    else reads.push({ ms, active: s.active, hover: s.hover, ratio: +p.ratio.toFixed(3), dash: p.dash, ground: p.ground, refused: null });
+    settled = reads.some((r) => r.active) && !s.active && !s.running && !after.active && !after.running;   // the read stood wholly after the pressed frames, with no transition running either side of it
+  }
+  const what = kind === "control" ? "the web control after " + alt : "the mark on " + alt;
+  note("tap, " + where + ": " + what + " (tap highlight " + before.highlight + "): " + reads.map((r) => r.ms + " ms" + (r.active ? " :active" : "") + (r.hover ? " :hover" : "") + " " + (r.ratio === null ? "refused" : r.ratio.toFixed(3) + ":1 " + r.dash + " over " + r.ground)).join("; "));
+  assert.ok(settled, where + ": the frames of the tap on " + what + " settle within 3 s, the pressed frames over and no transition running (" + reads.length + " read)");
+  assert.equal((await page.evaluate(() => (window as any).__opened.length)) - opens, 1, where + ": the tap on " + what + " opens the tab once");
+  assert.ok(reads.some((r) => r.active), where + ": a frame of " + what + " is read while it matches :active, so the tap's pressed frames are read (the first read at " + reads[0].ms + " ms)");
+  for (const r of reads) {
+    // FAILS BEFORE the sheets' tap rule, on the phone alone: the control's pressed frames at 2.578:1 dark and 2.531:1 light, the default highlight over the line
+    if (r.ratio === null) fails.push(where + ": " + what + " " + r.ms + " ms after the tap" + (r.active ? ", :active" : "") + ": its line as painted is refused, " + r.refused);
+    else if (r.ratio < 3) fails.push(where + ": " + what + " " + r.ms + " ms after the tap" + (r.active ? ", :active" : "") + " paints " + r.dash + " over " + r.ground + ", " + r.ratio.toFixed(3) + ":1, under the 3:1 floor (tap highlight " + before.highlight + ")");
+  }
+}
+for (const device of ["phone", "touch", "laptop"] as TapDevice[]) {
+  test("in a browser on " + TAP_ON[device] + ", a finger's tap on the web control and on the mark, on the chat modal, the feed and the Files pane in both themes: every frame from the tap until it settles, the tap's pressed frames while the element matches :active among them, paints the line at 3:1 or better, and the tap opens the tab once (the tap-highlight ruling of 2026-09-24: on the phone the browser's default tap highlight painted the control's pressed frames down to 2.578:1 dark and 2.531:1 light; the mark takes no highlight, and under CDP touch and on the laptop the default highlight stays above 3:1, keep cells green without the sheets' tap rule by design; a property pin read off the paint)", { timeout: 240000 }, async (t) => {
+    const fails: string[] = [];
+    const note = (m: string) => t.diagnostic(m);
+    const second = await secondServer([], TINY_SIZES);
+    try {
+      await inBrowser(t, async (browser) => {
+        for (const surface of ["chat", "feed", "pane"] as Surface[]) {
+          const { page, errors } = await openTiny(device === "phone" ? phonePages(browser) : browser, second, surface);
+          try {
+            await page.evaluate(() => { const w = window as any; w.__opened = []; window.open = ((u: unknown) => { w.__opened.push(String(u)); return { opener: null }; }) as unknown as typeof window.open; });
+            const cdp = await page.context().newCDPSession(page);
+            if (device === "touch") { await cdp.send("Emulation.setTouchEmulationEnabled", { enabled: true, maxTouchPoints: 1 }); await frames(page, 2); }
+            const env = await page.evaluate(() => ({ hoverNone: matchMedia("(hover: none)").matches, coarse: matchMedia("(pointer: coarse)").matches, anyCoarse: matchMedia("(any-pointer: coarse)").matches, dpr: devicePixelRatio, scale: window.visualViewport ? window.visualViewport.scale : null, width: window.innerWidth, meta: !!document.querySelector('meta[name="viewport"]') }));
+            note("device " + JSON.stringify({ device, surface, env }));
+            assert.equal(env.dpr, 1, surface + ": one device pixel per CSS pixel");
+            assert.equal(env.scale, 1, surface + ": the visual viewport at scale 1");
+            assert.equal(env.width, 900, surface + ": the layout viewport is the 900 px window");
+            if (device === "laptop") assert.ok(!env.hoverNone && !env.coarse && env.anyCoarse, surface + ": the laptop's media, hover and a fine primary pointer beside a coarse one: " + JSON.stringify(env));
+            else assert.ok(env.hoverNone && env.coarse, surface + ": no hover, a coarse pointer: " + JSON.stringify(env));
+            if (device === "phone") assert.equal(env.meta, true, surface + ": the phone's page carries the viewport meta");
+            const where = TAP_ON[device] + ", " + (surface === "chat" ? "the chat modal" : surface === "feed" ? "the feed" : "the Files pane");
+            for (const theme of ["dark", "light"] as const) {
+              await page.evaluate((light: boolean) => new Promise<void>((done) => { const c = document.querySelectorAll(".fileview-md img")[2].nextElementSibling as HTMLElement; c.addEventListener("transitionend", () => done(), { once: true }); setTimeout(done, 1500); document.body.classList.toggle("theme-light", light); }), theme === "light");
+              await frames(page, 2);
+              await tapFrames(page, cdp, "big", "control", where + ", " + theme + " theme", fails, note);
+              await tapFrames(page, cdp, "build", "mark", where + ", " + theme + " theme", fails, note);
+            }
+            assert.deepEqual(errors, [], surface + ": no page errors");
+          } finally { await page.close(); }
+        }
+      }, device === "laptop" ? { args: [LAPTOP] } : {});
+    } finally { await second.close(); }
+    assert.deepEqual(fails, [], "every frame of a finger's tap on the outbound dress paints its line at 3:1 or better against the ground the sheet controls (a property pin read off the paint):\n" + fails.join("\n"));
+  });
+}

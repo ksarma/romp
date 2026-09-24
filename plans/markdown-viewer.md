@@ -8542,9 +8542,11 @@ read per key; out of view a Space presses nothing and scrolls nothing), since a 
 unpainted on a fine pointer once the pointer left and a later Enter or Space opened the tab again with nothing shown
 (the file review's round 14, ui-1 with extra9-1), its focus ring stands 2px off its border so the dashed line shows under a keyboard
 focus, the button family's press cue is off on it since the release that opens the tab comes while it is held (under the cue the line spread over two
-pixel rows, a modal 1.59:1 dark and 1.39:1 light), and a dead link holding either dress dims by colour and not by opacity, its words
+pixel rows, a modal 1.59:1 dark and 1.39:1 light), the browser's tap highlight is off on it and on the mark, since in the pressed frames of
+a finger's tap, while the control matches :active, a phone's default highlight took the line to 2.578:1 dark and 2.531:1 light (the
+mark takes none, nothing from it up to the root showing a hand cursor; the tap-highlight ruling of 2026-09-24), and a dead link holding either dress dims by colour and not by opacity, its words
 that take the link's colour dimmed and a child the sheet colours itself keeping its own ink, since an href-less dead link owns no click
-and a tap, a click or Enter opens the tab from inside it, so every state a gesture opens the tab from, the press held included, paints
+and a tap, a click or Enter opens the tab from inside it, so every state a gesture opens the tab from, the press held and each frame of a finger's tap included, paints
 the dress at 3:1 or better in both themes, the token's line at the token's own ratio (4.83:1 dark, 4.90:1 light), the mark's outline in
 each of its states and the web control's border at rest, revealed by the pointer over its picture, under any focus and under a Space
 press from it, and the family's accent border at 7.87:1 dark and 3.79:1 light against its hover wash, the web control's under the
