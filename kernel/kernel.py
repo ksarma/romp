@@ -35541,7 +35541,8 @@ def _subagent_tree(d, faults=None):
     (_stamp_agents, _awaiting_live_rows, _awaiting_nest, through _subagent_meta_map), the feed key's
     _subagent_dirs_ident, the derivation's _session_awaiting, and a viewer frame's agent-file re-walk on a cache miss
     (its first open, or after a file landed in a directory the walk read), which samples the root through
-    _find_agent_file (the frame's hit-path re-stats through _dir_stamps are a separate route, a follow-up); 63k
+    _find_agent_file (the frame's hit-path re-stats through _dir_stamps were a separate route, the follow-up #1822 named:
+    the stamp index below serves them); 63k
     validations and 5.2M lstats over 3.9k cycles live, of which the ~39,500 outside the feed key are the candidates,
     an estimated 30-50% of all validations being re-samples of a root another reader had taken in the same cycle, the
     `scoped` tally measuring the realized share. A
@@ -35562,7 +35563,21 @@ def _subagent_tree(d, faults=None):
     test_a_walk_with_a_failed_listing_is_not_held_while_a_clean_walk_is). The
     `stats` list is shared by every reader of the cycle and read-only by contract, as _sessions' rows are (the readers
     zip, iterate or copy it). Outside a scope every call samples afresh, as _live_map, _sessions, _path_of and
-    _auth_avail_status behave (a WS viewer handler, GET /feed.json read fresh)."""
+    _auth_avail_status behave (a WS viewer handler, GET /feed.json read fresh).
+
+    THE STAMP INDEX (since 2026-09-19). `_live_scope.subagent_stamps`, {directory: (directory, mtime_ns)}, the shape
+    _dir_stamp answers, opens and clears with `subagent_trees` at every site that opens and clears it, and is filled here
+    from each pair when the pair is stored: every directory the held tree lists, under the st_mtime_ns of the stat the
+    pair carries for it (the tree holds real directories only, the root by lstat and each child by
+    is_dir(follow_symlinks=False), so the stat _dir_stamp would take and the lstat held agree). _dir_stamp answers such a
+    directory from the index with no stat, so the agent-file memo's re-check (_subagent_file's hit, _dir_stamps over the
+    directories its walk read) and the walk's own stamp of a held root cost nothing after the cycle's first read of the
+    tree; without the index each lookup stats every directory its walk read (for a nested or missing agent's file the
+    whole tree, per awaiting agent per _session_awaiting call). A directory no held pair lists (the project directory on
+    a miss walk, a tree's directories re-checked before any read of that tree in the cycle) is stat'd by _dir_stamp once,
+    and that stamp is held in the index for the rest of the scope: a change after it is seen by the next scope's first
+    stamp, the one-cycle lag the samples accept. A stat that raises is answered (directory, None) and never held. The index holds
+    nothing a stored pair did not give it apart from those own stamps, so it lives exactly as long as the samples do."""
     d = str(d)
     scope = getattr(_live_scope, "subagent_trees", None)
     if scope is not None:
@@ -35580,6 +35595,10 @@ def _subagent_tree(d, faults=None):
         # fresh stamp for good (its hit path re-stats and never re-walks). And only a sample that reported no fault below
         # its root: a held pair tells a later reader of no fault (the docstring)
         scope[d] = out
+        stamps = getattr(_live_scope, "subagent_stamps", None)
+        if stamps is not None:                            # the stamp index, from the stored pair alone (THE STAMP INDEX)
+            for sd, sst in zip(out[0], out[1]):
+                stamps[sd] = (sd, sst.st_mtime_ns)
     return out
 
 
@@ -35940,15 +35959,29 @@ def _subagent_meta_map(path):
 
 
 def _dir_stamp(sd):
-    """(dir, mtime_ns) for one directory, a stat (None when missing). Each os.stat that succeeds counts under
-    memos.subagentTree dirStats beside _subagent_tree's validation lstats (a stat that raises is answered (sd, None) and
-    not counted)."""
+    """(dir, mtime_ns) for one directory, a stat (None when missing). On a thread that holds the stamp index
+    (`_live_scope.subagent_stamps`, opened with the tree slot: a pusher cycle, a jobs pass, a connect push's chat loop;
+    _subagent_tree's docstring, THE STAMP INDEX) a directory the index holds is answered from it with no stat: one a held
+    tree lists, from that pair's stat, or one this function stat'd earlier in the scope. Any other directory is stat'd,
+    and a stat that succeeds is held there for the rest of the scope, so a second lookup that re-checks the same
+    directory (the project directory, on every miss walk) is served it; a stat that raises is answered (sd, None) and
+    never held, so the next call stats again. Each os.stat that succeeds counts under memos.subagentTree dirStats beside
+    _subagent_tree's validation lstats; a stamp served from the index and a stat that raises are not counted. What the
+    re-check costs: _subagent_tree_memo_report's docstring."""
+    stamps = getattr(_live_scope, "subagent_stamps", None)
+    if stamps is not None:
+        got = stamps.get(sd)
+        if got is not None:
+            return got
     try:
         out = (sd, os.stat(sd).st_mtime_ns)
     except OSError:
-        return (sd, None)
+        return (sd, None)                                 # never held: the next call stats again
     _SUBAGENT_TREE_STATS["dirStats"] += 1
+    if stamps is not None:
+        stamps[sd] = out                                  # an own stamp: no held pair lists this directory
     return out
+
 
 def _dir_stamps(dirs):
     """(dir, mtime_ns) for each directory, once each, stats only: the resolver's memo key as a hit re-takes it. A file
@@ -39252,9 +39285,10 @@ def _chat_push_scopes_open():
     without the slot, and a viewer frame's agent-file re-walk on a cache miss (its first open, or after
     a file landed in a directory the walk read) samples the root once more; a handler thread's push
     shares one sample per root across its chat loop and those re-walks, exactly as a pusher cycle does.
-    The frame's hit-path re-stats through _dir_stamps are a separate route, a follow-up), opened with
-    the launch folds derived from them (`subagent_launches`, _awaiting_nest: one fold per agent per push),
-    which live exactly where the samples do. A pusher cycle
+    The frame's hit-path re-stats through _dir_stamps were a separate route, the follow-up #1822 named),
+    opened with the two slots derived from them, the stamp index (`subagent_stamps`, which serves those
+    re-stats: _subagent_tree's docstring) and the launch folds (`subagent_launches`, _awaiting_nest: one
+    fold per agent per push), which live exactly where the samples do. A pusher cycle
     already holds the last three, so only the absent ones are opened, and the record says which;
     _chat_push_scopes_close clears exactly what was opened here, so a cycle's own scopes are never
     touched. The ownership record is written BEFORE the shared components are read (2026-09-18, the
@@ -39276,8 +39310,10 @@ def _chat_push_scopes_open():
     if getattr(_live_scope, "subagent_trees", None) is None:
         _live_scope.subagent_trees = {}                   # one sample per subagents root across this push's chat loop and its
         owned.append("subagent_trees")                    #  viewer frames' agent-file re-walks (_push_subagents runs before the close), 2026-09-18
-        _live_scope.subagent_launches = {}                # the launch folds derived from those samples, opened and owned with them
-        owned.append("subagent_launches")                 #  so they live exactly where the trees do (_awaiting_nest)
+        _live_scope.subagent_stamps = {}                  # the stamp index and the launch folds derived from those samples,
+        owned.append("subagent_stamps")                   #  opened and owned with them so they live exactly where the trees
+        _live_scope.subagent_launches = {}                #  do (_dir_stamp, _awaiting_nest)
+        owned.append("subagent_launches")
     _live_scope.chat_push_owned = owned                   # recorded before the read below can raise (2026-09-18): the close must
     _live_scope.chat_shared = _chat_sig_shared()          #  find every slot this open set, on the except path too
 
@@ -66097,6 +66133,9 @@ def _pusher_cycle():
         #                                       cycles live, an estimated 30-50% of them re-samples, the `scoped` tally
         #                                       measures the realized share; an absent root stays one lstat per caller,
         #                                       never a validation)
+        _live_scope.subagent_stamps = {}        # …and the cycle's stamp index (_dir_stamp), derived from the held trees
+        #                                       and living exactly where they do: an agent-file lookup's re-check of a
+        #                                       held tree's directories costs no stat (without it, one stat each)
         _live_scope.subagent_launches = {}      # …and the cycle's launch folds (_awaiting_nest), derived from the held
         #                                       trees and living exactly where they do: one resolution and fold per
         #                                       awaiting agent per cycle, where each _session_awaiting call folded again
@@ -66116,6 +66155,7 @@ def _pusher_cycle():
         _live_scope.paths = None
         _live_scope.sessions = None
         _live_scope.subagent_trees = None
+        _live_scope.subagent_stamps = None
         _live_scope.subagent_launches = None
         _live_scope.msgsum = None
         _live_scope.auth = None
@@ -66395,7 +66435,8 @@ def _jobs_cycle():
         _live_scope.auth = {}
         _live_scope.subagent_trees = {}         # the pass's subagents-tree samples (2026-09-18): the reminder walk's
         #                                       _session_awaiting readers and _mark_nudge_failed read the same roots per pass
-        _live_scope.subagent_launches = {}      # the pass's launch folds (_awaiting_nest), beside the trees they come from
+        _live_scope.subagent_stamps = {}        # the pass's stamp index (_dir_stamp) and launch folds (_awaiting_nest),
+        _live_scope.subagent_launches = {}      #  beside the trees they come from
         _live_scope.msgsum = [_MSGSUM_UNSET]
         _live_scope.names = _names_snapshot()
         _PERF_STATS.stage("jobs.prelude", time.monotonic() - _t)
@@ -66408,6 +66449,7 @@ def _jobs_cycle():
         _live_scope.sessions = None
         _live_scope.auth = None
         _live_scope.subagent_trees = None
+        _live_scope.subagent_stamps = None
         _live_scope.subagent_launches = None
         _live_scope.msgsum = None
         _live_scope.files_stat = None

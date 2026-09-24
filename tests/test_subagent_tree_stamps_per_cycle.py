@@ -875,24 +875,28 @@ class BoundPerCycleAndPerPass(_World):
         every agent whose file is nowhere or under a sibling's tree, not once per such agent (the owner's pass before round
         2 of #882: the term's homes read per agent, G such rows paying G project-directory stats where the code pays 1; the
         home is _subagent_tree_memo_report's docstring). Two such rows: each walks once and pays its own candidate lstats and symlink
-        checks (G x, _miss_walk_cycle), but the project directory's stamp stat is an own stat _dir_stamp holds in the scope
-        keyed by directory under root None, so the first walk pays it and the second walk, and every re-check of either row
-        in the cycle, is served it: dirStats moves by (D - 1) + 1, not (D - 1) + G, and the scope's stamps map holds the
-        directory once, under root None. Own stats keyed per (agent, directory) leave the one-row case green and turn this
-        one red (dirStats D + 1), which is why the bound has a two-row case."""
+        checks (G x, _miss_walk_cycle), but the project directory's stamp stat is an own stamp _dir_stamp holds in the
+        stamp index (_live_scope.subagent_stamps) keyed by directory, so the first walk pays it and the second walk, and
+        every re-check of either row in the cycle, is served it: dirStats moves by (D - 1) + 1, not (D - 1) + G, and the
+        index holds the directory once, under the stamp its stat took, while no held pair lists it. Own stats keyed per
+        (agent, directory) leave the one-row case green and turn this one red (dirStats D + 1), which is why the bound has a
+        two-row case."""
         G = 2
         t, d, rec, ghosts = self._miss_walk_cycle(G)
         self.assertEqual(d["dirStats"], D,
-                         "dirStats %d; expected (D - 1) + 1 = %d, not (D - 1) + G = %d: the project directory's one stamp stat, an own stat "
-                         "keyed by directory under root None, paid by the first of the %d walks and served to the other and to every "
+                         "dirStats %d; expected (D - 1) + 1 = %d, not (D - 1) + G = %d: the project directory's one stamp stat, an own stamp "
+                         "keyed by directory in the stamp index, paid by the first of the %d walks and served to the other and to every "
                          "re-check in the cycle (once per cycle, shared, whatever the number of agents whose file is nowhere)"
                          % (d["dirStats"], D, (D - 1) + G, G))
         stamps = (rec.get("scope") or {}).get("stamps") or {}
+        trees = (rec.get("scope") or {}).get("trees") or {}
         proj = str(Path(self.path).parent)
         held = stamps.get(proj)
-        self.assertIsNotNone(held, "the scope's stamps map holds the project directory under its path (the served entry both walks and "
+        self.assertIsNotNone(held, "the stamp index holds the project directory under its path (the served entry both walks and "
                                    "every re-check keyed on): %r" % (sorted(str(k) for k in stamps),))
-        self.assertIsNone(held[1], "the project directory's stamp is an own stat, vouched by no root (root None): %r" % (held,))
+        self.assertEqual(held, (proj, os.stat(proj).st_mtime_ns), "held as the stamp _dir_stamp answers, (directory, mtime_ns): %r" % (held,))
+        self.assertEqual([r for r, pair in trees.items() if proj in pair[0]], [],
+                         "the project directory's stamp is an own stamp: no pair held in subagent_trees lists it (%r)" % (sorted(trees),))
         self.assertEqual([k for k in stamps if str(k).startswith(proj) and k not in self.dirset and not str(k).startswith(str(self.sub))], [proj],
                          "the project directory is held once, keyed by directory alone and not per agent: %r" % (sorted(str(k) for k in stamps),))
 
@@ -915,7 +919,7 @@ class BoundPerCycleAndPerPass(_World):
         b = self._stats()
         with self._spy() as sp:
             pair = km._subagent_tree(root)
-        self.assertIs(pair, sc["trees"][root][0], "premise: the tree read was answered the held pair")
+        self.assertIs(pair, sc["trees"][root], "premise: the tree read was answered the held pair")
         self.assertEqual(self._delta(b)["scoped"], 1, "premise: the read moved scoped")
         self.assertEqual(sp.tree_calls(), {},
                          "filesystem calls under the tree on the served tree read, by class: %r; keyed on {} (no call the census counts: "
@@ -923,7 +927,7 @@ class BoundPerCycleAndPerPass(_World):
                          % (sp.tree_calls(), classes))
         with self._spy() as sp:
             st = km._dir_stamp(sd)
-        self.assertEqual(st, sc["stamps"][sd][0], "premise: the stamp was answered the held one")
+        self.assertIs(st, sc["stamps"][sd], "premise: the stamp was answered the held one, keyed on identity")
         self.assertEqual(sp.tree_calls(), {},
                          "filesystem calls under the tree on the served stamp, by class: %r; keyed on {} (%s); a listing of the directory or "
                          "its parent on this path shows here by name" % (sp.tree_calls(), classes))
@@ -1491,19 +1495,19 @@ class PerCycleNotSticky(_World):
         map carried across cycles on this thread, the trees and launches released as today, reddened one case in the module,
         at a dependency-key outcome whose message named neither the stamps memo nor the cycle's end). Cycle one is the
         miss-path bound case, one row whose file is nowhere (_miss_walk_cycle asserts its costs): its walk stats the project
-        directory once, an own stat _dir_stamp holds under root None. Cycle two over the same world, unchanged: the tree's one
+        directory once, an own stamp _dir_stamp holds in the stamp index. Cycle two over the same world, unchanged: the tree's one
         validation (D - 1 lstats into dirStats) and the row's memoized miss re-checked, whose project-directory stamp the new
         scope does not hold, so it is re-taken (+1). Three pins, each keyed on what it names (the owner's pass before round 2
         of #882, its fixes-by-execution lens: the count alone reds identically under a carried LAUNCHES map, whose served fold
         makes no lookup in cycle two, so no project-directory stat is owed, and the count's message blamed the stamps map):
-        the lookup was made in cycle two, keyed on cycle two's scope holding the project directory's stamp under root None (a
+        the lookup was made in cycle two, keyed on cycle two's stamp index holding the project directory's own stamp (a
         carried launches map reds here); the stamps map was released, keyed on cycle two's stamps map and its entry being
         objects other than cycle one's (a carried stamps map reds here, by identity); and then the count, cycle two's dirStats
         == (D - 1) + 1 = D, keyed on the count alone. Keyed on dirStats, the memo's own counter, and not on a raw count of
         os.stat on the project directory, which the cycle stats once more for reasons of its own (_discover_fingerprint)."""
         proj = str(Path(self.path).parent)
         t1, d1, rec1, ghosts = self._miss_walk_cycle(1)
-        self.assertIsNone(getattr(km._live_scope, "subtrees", None), "premise: cycle one's scope is closed (its finally ran)")
+        self.assertTrue(_scope_closed(), "premise: cycle one's scope is closed (its finally ran)")
         stamps1 = (rec1.get("scope") or {}).get("stamps")
         self.assertIsNotNone(stamps1, "premise: cycle one's job recorded its scope")
         self.assertIn(proj, stamps1, "premise: cycle one's walk held the project directory's own stat (the entry a carried map would serve on): %r"
@@ -1522,9 +1526,10 @@ class PerCycleNotSticky(_World):
                              "cycle two's scope holds the project directory's stamp: the lookup was made in cycle two (the row's memoized miss "
                              "re-checked, _dir_stamp's own stat of the project directory taken and held); a launches map carried across cycles "
                              "serves the row's fold, makes no lookup and lands no entry here: %r" % (sorted(str(k) for k in stamps2),))
-        self.assertIsNone(held[1], "the project directory's stamp is an own stat, vouched by no root (root None): %r" % (held,))
+        self.assertEqual([r for r, pair in ((rec.get("scope") or {}).get("trees") or {}).items() if proj in pair[0]], [],
+                         "the project directory's stamp is an own stamp: no pair held in cycle two's subagent_trees lists it")
         self.assertIsNot(stamps2, stamps1,
-                         "cycle two's stamps map is not cycle one's object: the map is released at the cycle's end (_subagent_scope_close) "
+                         "cycle two's stamps map is not cycle one's object: the map is released at the cycle's end (its finally) "
                          "and the next cycle's scope mints its own; a stamps map carried across cycles is the same object")
         self.assertIsNot(held, stamps1[proj],
                          "and the project directory's entry is cycle two's own, re-taken, not cycle one's held tuple served on")
@@ -1534,7 +1539,7 @@ class PerCycleNotSticky(_World):
                          "that the stat was re-taken rather than served from a carried map is the identity pin above)" % (d["dirStats"], D))
         self.assertEqual((d["hit"], d["miss"], d["evict"]), (1, 0, 0), "cycle two's one validated hit, no walk, nothing evicted: %r" % (d,))
         self.assertEqual(sp.total()["dir_stat"], 0, "no os.stat on the tree's directories in cycle two either: the tree is read before the re-checks")
-        self.assertIsNone(getattr(km._live_scope, "subtrees", None), "cycle two's scope is closed too")
+        self.assertTrue(_scope_closed(), "cycle two's scope is closed too")
 
     def test_a_directory_created_after_a_cycles_validation_is_listed_by_the_next_cycle_not_this_one(self):
         """The contract the fix accepts, stated as a pin: within one cycle the first reader's validation stands, so a
@@ -1736,13 +1741,13 @@ class Guards(_World):
             return real_stat(p, *a, **k)
         with mock.patch.object(os, "stat", counting):
             r3 = km._dir_stamp(target); r4 = km._dir_stamp(target)
-        self.assertEqual(n[0], 1, "accepted: one stat, the second call served from the scope's stamps")
+        self.assertEqual(n[0], 1, "accepted: one stat, the second call served from the stamp index")
         self.assertEqual(r3, r4)
         self.assertIsNotNone(r3[1])
         held = sc["stamps"].get(target)
         self.assertIsNotNone(held, "the stamp that stat'd is held")
-        self.assertEqual(held[0], r3, "held as the stamp _dir_stamp answers (the entry is (stamp, the root it depends on, the generation held under))")
-        self.assertIsNone(held[1], "an own stat: no root the scope can name, so vouched by no root")
+        self.assertEqual(held, r3, "held as the stamp _dir_stamp answers, (directory, mtime_ns)")
+        self.assertEqual(sc["trees"], {}, "an own stamp: no tree was read in this scope, so no pair lists the directory")
 
     def test_a_walk_with_a_failed_listing_is_not_held_while_a_clean_walk_is(self):
         """The one rule in which this branch's store differs from upstream's (#1822 holds any answer with a directory): a
@@ -1823,7 +1828,7 @@ class Guards(_World):
             self.assertIs(dirs2, dirs1, "the second read is answered the first read's listing")
             self.assertEqual(stamp2, (touched, stats1[at].st_mtime_ns), "the stamp served is the one the walk took")
             self.assertIn(root, sc["trees"], "held: the racy walk's pair stands in the scope")
-            km._subagent_scope_close()                     # the cycle ends
+            _scope_close()                                # the cycle ends
             self._open()                                   # the next cycle
             with self._spy() as sp:
                 dirs3, _stats3 = km._subagent_tree(root)
@@ -3456,7 +3461,7 @@ class DependencyKey(_World):
                 rec["aw0"] = km._session_awaiting(SID, self.path, True)   # a reader with no record open: the fold held
             rec["walks0"] = walks
             held = _scope()["launches"].get((self.path, aid))
-            rec["held_notes"] = held[3] if held is not None else None
+            rec["held_notes"] = held[1] if held is not None else None   # the fold entry: (launch ids, the walk's noted pairs)
             dirs, stats = km._subagent_tree(root)                  # the pair the walk was answered, held: its keys
             rec["dirs"] = list(dirs)
             rec["served"] = {sd: (st.st_mtime, st.st_size) for sd, st in zip(dirs, stats)}
@@ -3467,14 +3472,13 @@ class DependencyKey(_World):
             rec["fresh"] = km._chat_stat_key(root)
             if change == "replaced":
                 km._subagent_trees_forget([{"path": self.path}])    # the sibling's root, owned by no alive session, evicted
-                rec["evicted"] = root in km._SUBAGENT_ROOT_EVICTED
+                rec["evicted"] = root not in km._SUBAGENT_TREES
                 rec["relookup"] = km._subagent_file(self.path, aid)  # walks again, with no record open: the memo entry replaced
                 rec["memo_notes"] = km._SUBAGENT_FILE_CACHE.get((self.path, aid), (None, None, "absent"))[2]
             else:
                 km._SUBAGENT_FILE_CACHE.clear()
                 rec["memo_notes"] = km._SUBAGENT_FILE_CACHE.get((self.path, aid), (None, None, "absent"))[2]
-            held = _scope()["launches"].get((self.path, aid))
-            rec["vouched"] = held is not None and km._subagent_vouched(held[1], held[2])
+            rec["held"] = (self.path, aid) in _scope()["launches"]
             asked = []
             with self._counting("_subagent_file", aid, asked):
                 rec["aw"], rec["deps"] = self._chat_build()
@@ -3487,8 +3491,7 @@ class DependencyKey(_World):
         self.assertEqual(rec["dirs"], [root], "premise: the held listing is the sibling's root alone")
         self.assertIn((root, rec["served"][root]), rec["held_notes"] or (),
                       "premise: the fold is held with its walk's notes, the root under the served read's key: %r" % (rec["held_notes"],))
-        self.assertTrue(rec["vouched"], "premise: the fold is still held and vouched when the chat build is made (keyed on the own "
-                                        "root, which no eviction here moved)")
+        self.assertTrue(rec["held"], "premise: the fold is still held in the launch-fold slot when the chat build is made")
         self.assertNotEqual(rec["fresh"], rec["served"][root], "premise: the landing moved the root's (mtime, size)")
         if change == "replaced":
             self.assertEqual((rec["evicted"], rec["relookup"]), (True, rec["file"]),
@@ -3530,7 +3533,7 @@ class DependencyKey(_World):
     def test_a_held_fold_replays_its_own_walks_notes_after_the_agent_file_memo_was_cleared(self):
         """The second reason (the comment at _awaiting_nest's fold map): the agent-file memo is cleared whole past 1024
         entries by any thread's lookup, so when the fold is served the memo's entry can be gone. The fold held, a landing,
-        the memo cleared (premises asserted: the fold held and vouched, no memo entry for the agent, the chat build made
+        the memo cleared (premises asserted: the fold held in the launch-fold slot, no memo entry for the agent, the chat build made
         no lookup); then the key the chat build recorded for the sibling's root equals the served read's, the fold's
         walk's, and differs from the next signature's re-stat. Red under a kernel that replays the memo entry's notes at
         serve time (it finds none and records nothing)."""
