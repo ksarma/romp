@@ -7744,8 +7744,8 @@ const RESIDUAL_TABLE = [
 // 255 with the copy never made, so RT-perf-stat's writer measurement read false where the row says bash writes. That is the class of
 // a program the box lacks, not a row that stopped writing: NOT RUN with the refusal as the reason, counted and printed like the
 // lacking-program rows. The refusal is the PROGRAM's, established apart from the row's write by a PROBE: the row's command with its
-// copy (WRITE_SPELLING, the copy every wrapper and reader row carries) replaced by `touch WITNESS`, an absolute path of safe
-// characters under the world's own scratch (spelled bare, since the copy may sit inside the row's own quotes), run in each present
+// copy (WRITE_SPELLING, the copy every wrapper and reader row carries) replaced by `touch WITNESS WITNESS` (probeOf), an absolute path of
+// safe characters under the world's own scratch (spelled bare, since the copy may sit inside the row's own quotes), run in each present
 // shell the row names as a writer (the row's own grammar: a `<(..)` or a descriptor form sh cannot parse), from the row's cwd with the
 // world's env. Until the thirtieth commit any nonzero exit that said something on stderr was a refusal, so a row broken by a shell
 // syntax error or a bad option, or a program that ran the command and then failed with a message, read as NOT RUN and passed (both
@@ -7756,13 +7756,30 @@ const RESIDUAL_TABLE = [
 //       shape never refuses, and a failure its shapes do not describe is none;
 //   (iii) the WITNESS is ABSENT after the run: unlinked before each shell's parse and run, and again when the call ends, so neither an
 //       earlier shell nor the loop's call for the same row (the rows-not-run derivation below calls again) leaves one for a later read.
+//       The run ends when every process holding one of its pipes has exited, and it carries a FOURTH pipe beside the standard three
+//       (round 7's thirty-first commit, the round's verifiers, MEDIUM): a program that starts the command detached, delayed or in a new
+//       session, with its standard streams on /dev/null, still holds that descriptor, so the run ends after the command has run and its
+//       witness is read; until then the run ended when the shell exited, before such a command ran, and the program was filed as
+//       refusing. That end is an event, the pipe's close, not a wait of any length; a run that outlasts its timeout (the program's
+//       descendant still holding the pipe) is no refusal either, since whether the command ran is then unknown. The witness is spelled
+//       twice, and every entry of its directory named with its name as a prefix is unlinked with it: the row's own text after the copy
+//       follows the replacement, so a suffix glued onto the copy's target (`report.md.bak`, a quoted, escaped, braced, expanded or
+//       globbed suffix, `report.md/x`: G1 to G9 in the thirty-first commit's test) glues onto the second operand, the first is the
+//       witness as spelled whatever follows, and what the second made does not outlive the call (the same verifiers, informational:
+//       with one operand a glued suffix made the probe touch another path, whose absent witness read as a refusal and whose file stayed
+//       in scratch).
 // Anything else is no refusal, and the row reds as before. The first shell's first stderr line is the reason (a bare label ending in a
 // colon, perf's `Error:`, takes the line after it). A row is NOT RUN only when every writer leg left the subset unchanged AND its
 // program refuses; a row of a refusing program that still wrote reds (a contradiction to see), and a row that missed under a program
 // that ran the probe reds as before (a defect, not a refusal). What the witness cannot see: a sandboxed program that runs the command
 // but drops every write (a private mount over the world, say) leaves no witness either, so a program of that kind whose stderr matches
-// a recorded shape stays NOT RUN; the witness tells a program that ran the command where the world can see it from one that did not
-// run it, and no further. The rows a box cannot run are derived from its programs alone and the rows not run are held equal to them,
+// a recorded shape stays NOT RUN. Nor can it see a command the program leaves to run after the probe has ended: one it detaches AND
+// strips of every descriptor it inherited (the probe's fourth pipe among them), or hands to a process outside its tree (a daemon, a
+// scheduler), holds no pipe of the run, so the run may end, and the witness be read, before it runs; a program of that kind whose
+// stderr matches a recorded shape stays NOT RUN too. The thirty-first commit's plant B1 is that residual's witness: it detaches the
+// command with its descriptors closed and releases it only after the call has returned, and the call files it a refusal. The witness
+// tells a program that ran the command, where the world can see it and while the probe's run lasts, from one that did not run it, and
+// no further. The rows a box cannot run are derived from its programs alone and the rows not run are held equal to them,
 // so a NOT RUN never stands in for a miss the box could have measured, and on a box whose every program runs the table is a full
 // measurement.
 const WRITE_SPELLING = /cp (?:\S*\/)?base\/report\.md (?:\S*\/)?report\.md/;
@@ -7792,25 +7809,38 @@ const refusalReason = (stderr) => {
 const shellArgv = (shell, cmd) => (shell === 'bash' ? ['--norc', '--noprofile', '-c', cmd] : shell === 'zsh' ? ['-f', '-c', cmd] : ['-c', cmd]);   // as the world runs a row
 const parseArgv = (shell, cmd) => (shell === 'bash' ? ['--norc', '--noprofile', '-n', '-c', cmd] : shell === 'zsh' ? ['-f', '-n', '-c', cmd] : ['-n', '-c', cmd]);   // read, not run: condition (i)
 const SAFE_WITNESS = /^\/[\w./-]+$/;
+// the probe of `cmd` for the witness at `witness`: the copy replaced by the witness's touch, the witness spelled twice so a suffix the row
+// glues onto the copy's target glues onto the second operand and the first is the witness as spelled (THE REFUSING PROGRAM, (iii))
+const probeOf = (cmd, witness) => cmd.replace(WRITE_SPELLING, () => `touch ${witness} ${witness}`);
+// the witness and every entry of its directory named with the witness's name as a prefix (a glued second operand), unlinked
+const clearWitness = (witness) => {
+  const dir = path.dirname(witness);
+  const base = path.basename(witness);
+  let names = [];
+  try { names = fs.readdirSync(dir); } catch { return; }
+  for (const n of names) if (n.startsWith(base)) fs.rmSync(path.join(dir, n), { recursive: true, force: true });
+};
 // the refusal's reason when `program` refuses to run the probe of `cmd` in every shell of `shells` under `env` from `cwd`, the probe's
-// witness at `witness` (THE REFUSING PROGRAM's three conditions); null when a shell does not parse the probe, a run exits 0, 126 or 127
-// or is killed, a stderr matches no shape recorded for `program` (a program with none, or a nonzero exit that says nothing), the witness
-// is there after a run, no shell is given, or cmd carries no copy to replace; a witness path that cannot be spelled bare throws
-const refusalOf = (cmd, cwd, env, shells, { program = null, witness = null } = {}) => {
+// witness at `witness` (THE REFUSING PROGRAM's three conditions); null when a shell does not parse the probe, a run exits 0, 126 or 127,
+// is killed or outlasts `timeout` (ms), a stderr matches no shape recorded for `program` (a program with none, or a nonzero exit that
+// says nothing), the witness is there after a run, no shell is given, or cmd carries no copy to replace; a witness path that cannot be
+// spelled bare throws. The run carries a fourth pipe, so it ends only when every process holding one of its pipes has exited.
+const refusalOf = (cmd, cwd, env, shells, { program = null, witness = null, timeout = 20000 } = {}) => {
   if (!WRITE_SPELLING.test(cmd) || !shells.length) return null;
   const shapes = program !== null && Object.hasOwn(REFUSAL_SHAPES, program) ? REFUSAL_SHAPES[program] : null;
   if (!shapes) return null;
   if (typeof witness !== 'string' || !SAFE_WITNESS.test(witness)) throw new Error(`THE REFUSING PROGRAM's witness is an absolute path of safe characters, spelled bare into the probe: ${JSON.stringify(witness)}`);
-  const probe = cmd.replace(WRITE_SPELLING, () => `touch ${witness}`);
-  const clear = () => fs.rmSync(witness, { force: true });
+  const probe = probeOf(cmd, witness);
+  const clear = () => clearWitness(witness);
   fs.mkdirSync(path.dirname(witness), { recursive: true });
   let reason = null;
   try {
     for (const shell of shells) {
       clear();
       if (spawnSync(shell, parseArgv(shell, probe), { cwd, input: '', encoding: 'utf8', env, timeout: 20000 }).status !== 0) return null;   // (i) the probe does not parse: the row's own command is broken
-      const r = spawnSync(shell, shellArgv(shell, probe), { cwd, input: '', encoding: 'utf8', env, timeout: 20000 });
+      const r = spawnSync(shell, shellArgv(shell, probe), { cwd, input: '', encoding: 'utf8', env, timeout, stdio: ['pipe', 'pipe', 'pipe', 'pipe'] });   // (iii) the fourth pipe: the run ends when its last holder exits
       if (fs.existsSync(witness)) return null;   // (iii) the program ran the command
+      if (r.error) return null;   // (iii) the run did not end on its own (it outlasted its timeout, a descendant still holding a pipe), so whether the command ran is unknown
       if (r.status === 0 || r.status === null || r.status === 126 || r.status === 127) return null;   // (i) ran, killed, or the shell's own not-executable or not-found
       const err = String(r.stderr || '');
       if (!shapes.some((shape) => shape.test(err))) return null;   // (ii) a failure that is no recorded refusal of this program
@@ -10155,10 +10185,10 @@ test("round 7 of fork PR #780 review, thirtieth commit, THE RECORDED REFUSAL SHA
     for (const [p, cmd, env] of PROVOKED) {
       if (!hasProgram(p)) { console.error(`NOT RUN: real ${p} is not on this runner, so its evidence leg did not run: THE RECORDED REFUSAL SHAPES, ${p}'s refusal`); continue; }
       const witness = path.join(r.dir, 'scratch', `ran-${p}`);
-      const probe = cmd.replace(WRITE_SPELLING, () => `touch ${witness}`);
-      const direct = spawnSync(shells[0], shellArgv(shells[0], probe), { cwd: r.cwd, input: '', encoding: 'utf8', env, timeout: 20000 });
+      const probe = probeOf(cmd, witness);
+      const direct = spawnSync(shells[0], shellArgv(shells[0], probe), { cwd: r.cwd, input: '', encoding: 'utf8', env, timeout: 20000, stdio: ['pipe', 'pipe', 'pipe', 'pipe'] });
       const ran = fs.existsSync(witness);
-      fs.rmSync(witness, { force: true });
+      clearWitness(witness);
       if (ran) { console.error(`NOT RUN: real ${p} runs its provoked probe on this runner (a privilege it has here), so its evidence leg did not run: THE RECORDED REFUSAL SHAPES, ${p}'s refusal`); continue; }
       const took = REFUSAL_SHAPES[p].some((shape) => shape.test(String(direct.stderr || '')));
       if (p === 'setpriv') {
@@ -10228,6 +10258,154 @@ test("round 7 of fork PR #780 review, thirtieth commit, THE LABELS by execution:
     assert.ok(expected.some((l) => l.startsWith('INFO: live dash is 0.5.99 and ')), 'dash drifts under the stub');
     assert.deepEqual(out.split('\n').map((l) => (l.match(/INFO: live .*$/) || [null])[0]).filter(Boolean), expected, 'the child prints exactly the drift lines');
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+// ── round 7 of fork PR #780 review, thirty-first commit (2026-09-24): the round's verifiers on the thirtieth commit ──────────────────
+//
+// THE REFUSING PROGRAM's condition (iii) read the witness when the probe's shell exited, which is before a command the program had
+// detached ran, so a perf that ran the copy detached and then printed its refusal was filed as refusing, and RT-perf-stat under it was
+// NOT RUN while its program ran the copy. The probe's run now carries a fourth pipe and ends when the last process holding one of its
+// pipes exits, and a run that outlasts its timeout is no refusal. Plants: V1, V3 and V5 (each a refusal at the thirtieth commit in every
+// shell; V3's command is not delayed, so there its read raced the command), V2 (a background job holding the standard streams, which the
+// three pipes already waited for), T1 (a descendant holding the fourth pipe past the timeout), and B1 (the residual the comment at
+// refusalOf discloses). The conditions hold in EVERY shell the probe runs in: Q1 is a probe bash parses and dash does not, Q2 a program
+// that runs the command under bash and refuses under dash, each over both shells in both orders, so a reading in the first shell alone
+// and a reading in the last shell alone each red. A suffix glued onto the copy's target leaves the witness spelled (G1 to G9). The
+// recorder labels only the shells it was given, pinned on a box that has every shell.
+const releaseFifo = (fifo, flags) => { try { fs.closeSync(fs.openSync(fifo, flags | fs.constants.O_NONBLOCK)); } catch { /* no process waits on it */ } };
+
+test("round 7 of fork PR #780 review, thirty-first commit, THE REFUSING PROGRAM's condition (iii) over a command the program detaches: the probe's run carries a fourth pipe and ends when its last holder exits, so a perf that starts the copy detached with its standard streams on /dev/null (V1 in a delayed subshell, V3 under setsid, V5 under a delayed nohup) and then prints the runner's refusal and exits 255 is no refusal, its witness found and nothing left when the call ends, in every present shell, as a background job holding the standard streams (V2) already was; a run that outlasts its timeout while a descendant holds the pipe (T1) is none either; and a command detached with every descriptor closed and released only after the call has returned (B1) is filed a refusal, the residual the comment at refusalOf discloses, its witness made once it is released", () => {
+  const r = refusalWorld();
+  const fifos = [];
+  try {
+    const shells = shellsFor(['bash', 'zsh', 'dash'], "THE REFUSING PROGRAM's condition (iii) over a detached command");
+    const scratch = path.dirname(r.witness);
+    // each case and shell its own witness, so a command that ran after its call cannot stand in another case's read; `left` is what of
+    // that witness (and its glued second operand) is in scratch when the call has returned
+    const witnessOf = (tag, sh) => path.join(scratch, `ran-${tag}-${sh}`);
+    const left = (w) => fs.readdirSync(scratch).filter((n) => n.startsWith(path.basename(w)));
+    const refuse = `${RUNNER_TEXT_SH}\nexit 255`;
+    const cases = [
+      ['control', 'the refusing perf (the control)', refusingPerf(r.dir), RUNNER_REASON],
+      ['V1', 'V1: the copy in a delayed subshell, its standard streams on /dev/null', plantedPerf(r.dir, 'v1', `( sleep 1; "$@" ) </dev/null >/dev/null 2>&1 &\n${refuse}`), null],
+      ['V2', 'V2: the copy as a background job holding the standard streams', plantedPerf(r.dir, 'v2', `"$@" &\n${refuse}`), null],
+    ];
+    if (hasProgram('setsid')) cases.push(['V3', 'V3: the copy under setsid, its standard streams on /dev/null', plantedPerf(r.dir, 'v3', `setsid "$@" </dev/null >/dev/null 2>&1 &\n${refuse}`), null]);
+    else console.error("NOT RUN: real setsid is not on this runner, so its evidence leg did not run: THE REFUSING PROGRAM's condition (iii), V3");
+    cases.push(['V5', 'V5: the copy under a delayed nohup, its standard streams on /dev/null', plantedPerf(r.dir, 'v5', `nohup sh -c 'sleep 1; exec "$@"' sh "$@" </dev/null >/dev/null 2>&1 &\n${refuse}`), null]);
+    const got = [];
+    const want = [];
+    for (const [tag, what, bin, expected] of cases) for (const sh of shells) {
+      const w = witnessOf(tag, sh);
+      got.push([what, sh, refusalOf(PERF_CMD, r.cwd, r.env(bin), [sh], { program: 'perf', witness: w }), left(w)]);
+      want.push([what, sh, expected, []]);
+    }
+    // T1: the program exits 255 with the refusal while a descendant holds the fourth pipe past the run's timeout (a second here, the
+    // descendant three): the run ends by its timeout, not by its last holder's exit, so whether the command ran is unknown
+    const t1 = plantedPerf(r.dir, 't1', `( sleep 3 ) </dev/null >/dev/null 2>&1 &\n${refuse}`);
+    for (const sh of shells) {
+      const w = witnessOf('T1', sh);
+      got.push(['T1: a descendant holds the fourth pipe past the timeout', sh, refusalOf(PERF_CMD, r.cwd, r.env(t1), [sh], { program: 'perf', witness: w, timeout: 1000 }), left(w)]);
+      want.push(['T1: a descendant holds the fourth pipe past the timeout', sh, null, []]);
+    }
+    // B1, the disclosed residual's witness: the copy detached with every descriptor it inherited closed (the fourth pipe among them),
+    // held on a FIFO until the call has returned, then released; the call files the refusal, and the witness is made once released
+    if (hasProgram('timeout') && hasProgram('mkfifo')) {
+      for (const sh of shells) {
+        const [ready, go, done] = ['ready', 'go', 'done'].map((n) => path.join(r.dir, `b1-${sh}-${n}`));
+        assert.equal(_spawnSync('mkfifo', [ready, go, done]).status, 0, 'the FIFOs are made');
+        fifos.push([go, done]);
+        const b1 = plantedPerf(r.dir, `b1-${sh}`, `( exec 3>&- </dev/null >/dev/null 2>/dev/null; echo > '${ready}'; timeout 30 cat '${go}' >/dev/null; "$@"; timeout 30 sh -c ': > "$0"' '${done}' ) &\nread _ < '${ready}'\n${refuse}`);
+        const w = witnessOf('B1', sh);
+        const reason = refusalOf(PERF_CMD, r.cwd, r.env(b1), [sh], { program: 'perf', witness: w });
+        const atReturn = left(w);
+        let madeOnceReleased = null;
+        if (reason !== null) {   // the plant printed its refusal only after its detached command had started, so that command waits on the FIFO
+          fs.writeFileSync(go, 'go\n');
+          fs.readFileSync(done);   // the command's end
+          madeOnceReleased = fs.existsSync(w);
+          clearWitness(w);
+        }
+        got.push(['B1: the copy detached with every descriptor closed, released after the call', sh, reason, atReturn, madeOnceReleased]);
+        want.push(['B1: the copy detached with every descriptor closed, released after the call', sh, RUNNER_REASON, [], true]);
+      }
+    } else console.error("NOT RUN: real timeout or mkfifo is not on this runner, so its evidence leg did not run: THE REFUSING PROGRAM's disclosed residual, B1");
+    assert.deepEqual(got, want, `condition (iii) over a detached command in ${shells.join(', ')}`);
+    assert.deepEqual(fs.readdirSync(scratch), [], 'no witness appears after its call has returned but B1\'s, released and cleared above (T1\'s descendant, which outlives its call, runs no command)');
+  } finally {
+    for (const [go, done] of fifos) { releaseFifo(go, fs.constants.O_WRONLY); releaseFifo(done, fs.constants.O_RDONLY); }   // a B1 command a failed leg left waiting ends (each wait is bounded by timeout too)
+    r.rm();
+  }
+});
+
+test("round 7 of fork PR #780 review, thirty-first commit, THE REFUSING PROGRAM's conditions in EVERY shell the probe runs in: a probe bash parses and dash does not (Q1: RT-perf-stat's command, then a line holding a bash function definition, which dash reaches as a syntax error after running the first line) is no refusal over bash and dash in either order, though bash alone files it one; a perf that runs the command under bash, which exports SHLVL, and refuses under dash, which exports none (Q2), is no refusal over both in either order, though dash alone files it one; so condition (i) read in one shell and condition (iii) read after one shell each red", () => {
+  const r = refusalWorld();
+  try {
+    const BD = shellsFor(['bash', 'dash'], "THE REFUSING PROGRAM's conditions in every shell, over bash and dash");
+    if (BD.length < 2) return;   // the NOT RUN line above names the shell this box lacks
+    const perf = { program: 'perf', witness: r.witness };
+    const refusing = r.env(refusingPerf(r.dir));
+    const bashRuns = r.env(plantedPerf(r.dir, 'q2', `[ -n "$SHLVL" ] && "$@"\n${RUNNER_TEXT_SH}\nexit 255`));
+    const Q1 = `${PERF_CMD}\nfunction f { :; }; false`;
+    const cases = [
+      ['Q1', Q1, refusing, ['bash', 'dash'], null],
+      ['Q1', Q1, refusing, ['dash', 'bash'], null],
+      ['Q1', Q1, refusing, ['bash'], RUNNER_REASON],
+      ['Q1', Q1, refusing, ['dash'], null],
+      ['Q2', PERF_CMD, bashRuns, ['bash', 'dash'], null],
+      ['Q2', PERF_CMD, bashRuns, ['dash', 'bash'], null],
+      ['Q2', PERF_CMD, bashRuns, ['bash'], null],
+      ['Q2', PERF_CMD, bashRuns, ['dash'], RUNNER_REASON],
+    ];
+    assert.deepEqual(cases.map(([id, cmd, env, shells]) => [id, shells.join(' then '), refusalOf(cmd, r.cwd, env, shells, perf)]), cases.map(([id, , , shells, want]) => [id, shells.join(' then '), want]), 'each condition in every shell, whichever shell runs first');
+    assert.deepEqual(fs.readdirSync(path.dirname(r.witness)), [], 'no witness is left behind');
+  } finally { r.rm(); }
+});
+
+test("round 7 of fork PR #780 review, thirty-first commit, THE REFUSING PROGRAM's witness under a suffix glued onto the copy's target: the probe spells the witness twice, so the suffix glues onto the second operand and the first is the witness as spelled; a perf that runs the command and then prints the runner's refusal is no refusal whatever the suffix (G1 `.bak`, the verifiers' V9; G2 a single-quoted suffix; G3 an escaped one; G4 `/x`, which the second operand cannot make; G5 a brace list; G6 a double-quoted suffix; G7 a parameter's default; G8 a command substitution; G9 a glob), a perf that refuses is filed a refusal under each but G9 in zsh, whose unmatched glob stops the command before the program runs, and nothing the probe made outlives the call, in every present shell", () => {
+  const r = refusalWorld();
+  try {
+    const shells = shellsFor(['bash', 'zsh', 'dash'], "THE REFUSING PROGRAM's witness under a glued suffix");
+    const scratch = path.dirname(r.witness);
+    const left = (w) => fs.readdirSync(scratch).filter((n) => n.startsWith(path.basename(w)));   // that call's witness and what its second operand made
+    const refusing = r.env(refusingPerf(r.dir));
+    const ranThenRefused = r.env(plantedPerf(r.dir, 'ran-then-refused', `"$@"\n${RUNNER_TEXT_SH}\nexit 255`));
+    const SUFFIXES = [['G1', '.bak'], ['G2', "'.bak'"], ['G3', '\\.bak'], ['G4', '/x'], ['G5', '{,.bak}'], ['G6', '".bak"'], ['G7', '${x:-.bak}'], ['G8', '$(printf .bak)'], ['G9', '*']];
+    const got = [];
+    const want = [];
+    for (const [id, suffix] of SUFFIXES) {
+      const cmd = `${PERF_CMD}${suffix}`;
+      // zsh reports an unmatched glob and runs nothing, so under G9 the refusing perf never runs there and prints no refusal: no refusal
+      for (const sh of shells) for (const [mode, env, expected] of [['ran', ranThenRefused, null], ['refused', refusing, id === 'G9' && sh === 'zsh' ? null : RUNNER_REASON]]) {
+        const w = path.join(scratch, `ran-${id}-${sh}-${mode}`);   // each call its own witness, so what one call left cannot stand in another's read
+        got.push([id, sh, mode, refusalOf(cmd, r.cwd, env, [sh], { program: 'perf', witness: w }), left(w)]);
+        want.push([id, sh, mode, expected, []]);
+      }
+    }
+    assert.deepEqual(got, want, `the witness under each glued suffix in ${shells.join(', ')}`);
+    assert.deepEqual(fs.readdirSync(scratch), [], 'nothing any probe made is left in scratch');
+    assert.ok(!fs.existsSync(path.join(r.cwd, 'report.md')), 'the probe wrote nothing where the row writes');
+  } finally { r.rm(); }
+});
+
+test("round 7 of fork PR #780 review, thirty-first commit, THE LABELS over a strict subset: recordEscapeOutputs given one present shell labels that shell by its own report and every other shell as the record holds it, on a box that has every shell as on one that lacks some, and emits that shell's outputs alone", () => {
+  const present = shellsFor(['bash', 'zsh', 'dash'], 'THE LABELS over a strict subset');
+  if (!present.length) return;
+  const one = present[0];
+  const saved = { ...ESCAPE_OUTPUTS_RECORDED.shells };
+  const planted = Object.fromEntries(Object.keys(saved).map((sh) => [sh, `planted-${sh}`]));
+  let text;
+  try {
+    Object.assign(ESCAPE_OUTPUTS_RECORDED.shells, planted);   // a label the recorder must keep for every shell it was not given, present or not
+    text = recordEscapeOutputs([one]);
+  } finally { Object.assign(ESCAPE_OUTPUTS_RECORDED.shells, saved); }
+  const lines = text.split('\n');
+  const m = lines[0].match(/^ {2}shells: (\{.*\}),$/);
+  assert.ok(m, `the recorder's first line is the record's shells line: ${lines[0].slice(0, 120)}`);
+  const others = Object.keys(saved).filter((sh) => sh !== one);
+  assert.deepEqual(JSON.parse(m[1]), Object.fromEntries(Object.keys(saved).map((sh) => [sh, sh === one ? liveShellLabel(one) : planted[sh]])), `${one} labelled by its own report, and ${others.join(' and ')} (${others.filter((sh) => present.includes(sh)).join(', ') || 'none'} present here) as the record holds them`);
+  const keys = Object.entries(RECORDED_COMMANDS).filter(([, [sh]]) => sh === one).map(([k]) => k);
+  assert.deepEqual(lines.slice(1), keys.map((k) => `    ${JSON.stringify(k)}: ${JSON.stringify(ESCAPE_OUTPUTS_RECORDED.outputs[k])},`), `the outputs lines are ${one}'s entries alone`);
 });
 
 // ── round 7 of fork PR #780 review, seventeenth commit (2026-09-23): the reviewer's correctness-1, correctness-2 and extra6-2 ─────────
