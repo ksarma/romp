@@ -20,7 +20,7 @@ one, and what a call is handed is held to that declaration, never to the text.
                                                      # method's and each module subclass's (road "instance"); other
                                                      # dotted targets one list, by their spelling (road "spelled")
     bindings.declarations("KERNEL")                  # the module scope's
-    bindings.release()                               # break the index's cycles once read (a build under parse_cache)
+    bindings.release()                               # break the index's cycles once read: reference counting frees it
 
 A Declaration has the name, the kind (assign, augassign, unpack, def, class, import, parameter, loop, with,
 except, match, del), the statement (`node`), the bound expression (`value`: the right side, the matching element
@@ -199,10 +199,11 @@ class Bindings:
 
     def release(self):
         """Break the index's reference cycles, so reference counting frees it once the caller drops it: a scope holds
-        these bindings and its declarations, and each declaration holds its scope. For a caller that builds under
-        tests/parse_cache.py's derived(), whose collector is off for the build and whose freeze afterwards keeps any
-        cycle the build dropped (the rule for a build in that module's docstring). No scope or declaration is usable
-        after this. The tree is not touched."""
+        these bindings and its declarations, and each declaration holds its scope. Unbroken, the cycles keep the index
+        and the tree it holds (`tree`, and the nodes the declarations read) alive until a collection reaches them; a
+        caller that reads module after module (the kernel-spawn census's read of the tree, which holds one module's tree
+        at a time) releases each index before it reads the next. No scope or declaration is usable after this. The tree
+        is not touched."""
         scopes = {id(s): s for s in list(self.owner.values()) + list(self.scopes.values()) + [self.module] if s is not None}
         for scope in scopes.values():
             scope.names, scope.attrs, scope.parent, scope.bindings = {}, {}, None, None
