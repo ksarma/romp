@@ -526,20 +526,31 @@ def _callee(call):
 _DOTTED = re.compile(r"[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*")
 
 
+def _text_of(value):
+    """A str or bytes constant's value as text (bytes read as latin-1, which maps every byte to one character, so an
+    ASCII name reads the same either way); None for any other constant. The census reads a name spelled whole in either
+    kind of literal alike: `b"session-flags.json".decode()` names the store as surely as the str does."""
+    if type(value) is bytes:
+        return value.decode("latin-1")
+    return value if type(value) is str else None
+
+
 def _mentioned(node):
-    """The names a node mentions as code: a Name's id, an Attribute's attr, every part of a string constant that is
-    an identifier or a dotted chain of them, and every dotted part of an import alias's imported name. A string reaches
-    a function as surely as its name does (`globals()["_set_session_flag"](...)`, `getattr(self, "_dispatch_ws")`,
-    `attrgetter("Handler._dispatch_ws")`), and so does an import (`from M import _set_session_flag as w` mentions
-    _set_session_flag, the name it binds to w; the reviewer's ruling on round 1 of fork PR #909, fresh-2). A star import
-    spells no name, and a name inside a longer string (source text handed to eval) or built from pieces is outside, as
-    FlagWriterPopulation's docstring says. _facts reads the same four spellings."""
+    """The names a node mentions as code: a Name's id, an Attribute's attr, every part of a string or bytes constant
+    that is an identifier or a dotted chain of them (_text_of), and every dotted part of an import alias's imported
+    name. A string reaches a function as surely as its name does (`globals()["_set_session_flag"](...)`,
+    `getattr(self, "_dispatch_ws")`, `attrgetter("Handler._dispatch_ws")`, the same with a bytes literal decoded), and
+    so does an import (`from M import _set_session_flag as w` mentions _set_session_flag, the name it binds to w; the
+    reviewer's ruling on round 1 of fork PR #909, fresh-2). A star import spells no name, and a name inside a longer
+    string (source text handed to eval) or built from pieces is outside, as FlagWriterPopulation's docstring says.
+    _facts reads the same four spellings."""
     if isinstance(node, ast.Name):
         return {node.id}
     if isinstance(node, ast.Attribute):
         return {node.attr}
-    if isinstance(node, ast.Constant) and isinstance(node.value, str) and _DOTTED.fullmatch(node.value):
-        return set(node.value.split("."))
+    if isinstance(node, ast.Constant):
+        text = _text_of(node.value)
+        return set(text.split(".")) if text is not None and _DOTTED.fullmatch(text) else set()
     if isinstance(node, ast.alias) and node.name != "*":
         return set(node.name.split("."))
     return set()
@@ -625,22 +636,40 @@ _STORE_NEEDLE = "session-flags"   # how the kernel's source names the flags stor
 
 
 def _store_seeds(node):
-    """The string constants under `node` that name the flags store in CODE: any constant containing "session-flags" (a
-    whole file name, a piece of an f-string, an implicitly joined literal). A docstring, or any string standing as a
-    statement of its own, is text about the code and is left out."""
+    """The str or bytes constants under `node` that name the flags store in CODE: any constant whose text (_text_of)
+    contains "session-flags" (a whole file name, a piece of an f-string, an implicitly joined literal, a bytes literal
+    decoded). A docstring, or any constant standing as a statement of its own, is text about the code and is left
+    out."""
     text = {id(n.value) for n in ast.walk(node)
-            if isinstance(n, ast.Expr) and isinstance(n.value, ast.Constant) and isinstance(n.value.value, str)}
-    return [n for n in ast.walk(node)
-            if isinstance(n, ast.Constant) and isinstance(n.value, str) and _STORE_NEEDLE in n.value and id(n) not in text]
+            if isinstance(n, ast.Expr) and isinstance(n.value, ast.Constant) and _text_of(n.value.value) is not None}
+    return [n for n in ast.walk(node) if isinstance(n, ast.Constant) and _STORE_NEEDLE in (_text_of(n.value) or "")
+            and id(n) not in text]
+
+
+_NESTED = frozenset({ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef})   # the scopes a def holds
+
+
+def _holds(node, seeds, names):
+    """Whether a def, lambda or class holds what it mentions: a seed, or a name in `names` loaded, anywhere in it (its
+    body, a parameter's default, a decorator, a class attribute), whatever it does there, a comparison included. Its
+    object keeps the value in a closure cell, a default or its namespace, or builds it again when called, so the object
+    itself carries it and goes wherever a value goes: returned, kept, or handed to a call."""
+    return any(id(m) in seeds or (type(m) is ast.Name and m.id in names and isinstance(m.ctx, ast.Load))
+               for m in ast.walk(node))
 
 
 def _carries(node, seeds, tainted):
     """Whether `node` can hand on the store's path: a seed or a tainted name under it. A comparison is skipped, since its
-    value is a bool: `p.name == "session-flags.json"` hands nothing on."""
+    value is a bool: `p.name == "session-flags.json"` hands nothing on. A def, lambda or class under it carries what it
+    holds (_holds), a comparison inside it included, since its closure keeps the name whatever its body computes."""
     stack = [node]
     while stack:
         n = stack.pop()
         if isinstance(n, ast.Compare):
+            continue
+        if type(n) in _NESTED:
+            if _holds(n, seeds, tainted):
+                return True
             continue
         if id(n) in seeds or (isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load) and n.id in tainted):
             return True
@@ -659,8 +688,14 @@ def _call_spelling(call, modules):
     """A call's name in the census below: the name for a bare call (`open`, `_read_state_json`); the dotted chain when the
     receiver is rooted at a module the kernel imports (`os.replace`, `os.path.join`); `.attr` for a method of any other
     value (`.stat`, `.write_text`), so os.replace and a value's .replace stay apart; `<Subscript>` and the like for a
-    callee this cannot name, which no expected set holds."""
-    f = call.func
+    callee this cannot name, which no expected set holds (a call's result called, `<Call>`)."""
+    return _callee_spelling(call.func, modules)
+
+
+def _callee_spelling(f, modules):
+    """_call_spelling's name for the callee expression `f` itself, which is also how a decorator, a class's base and a
+    metaclass are spelled: each is called with the def or class it applies to (_store_flow). A decorator that is a
+    call (`@register("k")`) applies the call's result, so it spells `<Call>`, a name no set holds."""
     if isinstance(f, ast.Name):
         return f.id
     if isinstance(f, ast.Attribute):
@@ -675,13 +710,16 @@ def _call_spelling(call, modules):
 
 
 _PATH_EXIT = "<path exit>"       # _store_flow's key for a return or yield of the store's path itself
-_PATH_STORED = "<path stored>"   # _store_flow's key for the path kept where another function can read it
+_PATH_STORED = "<path stored>"   # _store_flow's key for the path, or an object that holds it, kept where another
+                                 # function can read it
 _PATH_KEYED = "<path as a key of> "   # _store_flow's key prefix for the path stored as a subscript's index, then its root
-# the calls whose value is never the path they are handed but what they read from the file or a fact about it: a stat,
-# the parsed content, an identity key built from a stat. These are the ONLY calls the path stops at (_path_valued); any
-# other call is taken to hand back its receiver and its arguments, so a call missing here makes a false path exit, a red
-# that asks for it to be classed, never a missed one. Each was read in the kernel: _read_state_json returns the parsed
-# file or None, _stat_key and _chat_ident a tuple of stat fields or None.
+# the calls whose value is never the path they read (the receiver, or the first argument) but what they read from the
+# file or a fact about it: a stat, the parsed content, an identity key built from a stat. These are the ONLY calls the
+# path stops at (_path_valued), and only at what they read: a path-valued second argument or keyword (a callback such
+# as json.loads' object_hook, whose return becomes the call's value) is handed back. Any other call is taken to hand
+# back its receiver and its arguments, so a call missing here makes a false path exit, a red that asks for it to be
+# classed, never a missed one. Each was read in the kernel: _read_state_json returns the parsed file or None, _stat_key
+# and _chat_ident a tuple of stat fields or None.
 _PATH_STOPS = frozenset({".stat", "os.stat", "_read_state_json", "json.loads", "_stat_key", "_chat_ident"})
 
 
@@ -699,11 +737,13 @@ def _split(target, value):
 def _bindings(fn):
     """[(target, value)] for every binding in `fn`: =, :=, an augmented or annotated assignment, a for, with or
     comprehension target, a match statement's captures, an import (its alias is both the target and the value, so an
-    alias of a path helper is bound from the helper's name), and each parameter that has a default, for the def and for
-    every def, async def or lambda under it. A parameter's target is its ast.arg: the positional-only and positional
-    parameters zipped from the tail with the defaults (which cover both kinds), the keyword-only ones with their
-    kw_defaults that are not None. An assignment's tuple target is matched to a tuple display element by element
-    (_split), and so is a for target to each element of a displayed iterable (`for p, k in ((path, "name"), ...)`)."""
+    alias of a path helper is bound from the helper's name), each def, async def or class nested in it (the node is
+    both the target and the value: its name is bound from what it holds, _holds), and each parameter that has a
+    default, for the def and for every def, async def or lambda under it. A parameter's target is its ast.arg: the
+    positional-only and positional parameters zipped from the tail with the defaults (which cover both kinds), the
+    keyword-only ones with their kw_defaults that are not None. An assignment's tuple target is matched to a tuple
+    display element by element (_split), and so is a for target to each element of a displayed iterable
+    (`for p, k in ((path, "name"), ...)`)."""
     out = []
     for n in ast.walk(fn):
         if isinstance(n, ast.Assign):
@@ -727,14 +767,21 @@ def _bindings(fn):
             pos = a.posonlyargs + a.args
             out.extend(zip(pos[len(pos) - len(a.defaults):], a.defaults))
             out.extend((k, d) for k, d in zip(a.kwonlyargs, a.kw_defaults) if d is not None)
+            if n is not fn and not isinstance(n, ast.Lambda):
+                out.append((n, n))
+        elif isinstance(n, ast.ClassDef):
+            out.append((n, n))
     return out
 
 
 def _bound_names(target):
     """The names a binding's target binds: a parameter's own name, the name an import binds (`fp` for `import h as fp`,
-    `os` for `import os.path`), the captures of a match pattern, or every Name stored under the target."""
+    `os` for `import os.path`), a nested def's or class's own name, the captures of a match pattern, or every Name
+    stored under the target."""
     if isinstance(target, ast.arg):
         return {target.arg}
+    if isinstance(target, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+        return {target.name}
     if isinstance(target, ast.alias):
         return {(target.asname or target.name).split(".")[0]}
     out = set()
@@ -751,15 +798,20 @@ def _bound_names(target):
 def _path_valued(node, seeds, pathy, modules):
     """Whether `node` can be the store's path itself rather than a value read from the file: it reaches a seed
     (_store_flow's: a constant naming the store, or a mention of a path helper) or a name bound from a path-valued
-    expression (`pathy`) through any expression but these, where the path STOPS: a comparison (a bool), a lambda (its
-    body is judged as its own exit), an if-else's test (never its value), a subscript's index and a .get's first
-    argument (a key looked up, not a value handed back), and a call in _PATH_STOPS (what was read from the file, or a
-    fact about it). So `return p`, `return str(p)`, `return alt or p`, `return (q := p)`, `return [p][0]`,
-    `return {"p": p}`, `return f"{p}"` and `return cache.get(k, p)` hand the path back, while
-    `return json.loads(p.read_text())` and `return cache.get(str(p))` hand back what was read or looked up. The rule
-    lists where the path stops, not the ways it goes through: a list of the ways through missed the next spelling (an
-    `or`, a walrus, a subscript of a display, a dict and a .get's default each got past one), where a stop missing
-    here makes a false exit, which the role check reds."""
+    expression (`pathy`) through any expression but these, where the path STOPS: a comparison (a bool), an if-else's
+    test (never its value), a subscript's index and a .get's first argument (a key looked up, not a value handed back),
+    and what a call in _PATH_STOPS reads, its receiver and its first argument (what was read from the file, or a fact
+    about it; its other arguments and keywords are not read, so a callback there hands back what it returns). So
+    `return p`, `return str(p)`, `return alt or p`, `return (q := p)`, `return [p][0]`, `return {"p": p}`,
+    `return f"{p}"`, `return cache.get(k, p)` and `return json.loads(s, object_hook=lambda d: p)` hand the path back,
+    while `return json.loads(p.read_text())` and `return cache.get(str(p))` hand back what was read or looked up. A
+    def, lambda or class is path-valued when it holds the path (_holds: it mentions a seed or a path-valued name
+    anywhere in it, a comparison included), since its object keeps the path in a closure, a default or a class
+    attribute, or builds it when called; so `return lambda: p`, `REG.append(g)` for a nested `def g(): return p`, and a
+    returned class whose body binds the path each hand it on. The rule lists where the path stops, not the ways it goes
+    through: a list of the ways through missed the next spelling (an `or`, a walrus, a subscript of a display, a dict
+    and a .get's default each got past one, and then a nested def, a class body, a closure kept in a list), where a
+    stop missing here makes a false exit, which the role check reds."""
     stack = [node]
     while stack:
         n = stack.pop()
@@ -769,14 +821,17 @@ def _path_valued(node, seeds, pathy, modules):
         if t is ast.Name:
             if n.id in pathy and isinstance(n.ctx, ast.Load):
                 return True
-        elif t is ast.Compare or t is ast.Lambda:
+        elif t is ast.Compare:
             pass
+        elif t in _NESTED:
+            if _holds(n, seeds, pathy):
+                return True
         elif t is ast.IfExp:
             stack += [n.body, n.orelse]
         elif t is ast.Subscript:
             stack.append(n.value)
         elif t is ast.Call and _call_spelling(n, modules) in _PATH_STOPS:
-            pass
+            stack += n.args[1:] + [k.value for k in n.keywords]
         elif t is ast.Call and _call_spelling(n, modules) == ".get":
             stack += [n.func.value] + n.args[1:] + [k.value for k in n.keywords]
         else:
@@ -796,22 +851,34 @@ def _store_flow(fn, modules, helpers=frozenset()):
     a keyword's value or its receiver carries it. Over-approximate on purpose: a value computed from the path (its
     stat, a cache entry keyed by it) carries too, so the reads a reader is pinned to list a few calls that only ever see
     such a value.
+    A def, async def, lambda or class nested in `fn` is a value like any other: it holds what it mentions (_holds), so
+    a nested def or class binds its name from itself (_bindings), a lambda is path-valued where it stands, and each goes
+    wherever a value goes. So `open(fp(), "w")` for a nested `def fp(): return <the path>` is a call handed the path,
+    and a closure over the path appended to a list, or a class holding it returned, is kept or handed back. Its own
+    calls, open() inside a lambda among them, are read as `fn`'s. Over-approximate here too: a nested def that only
+    reads the path still holds it, so what a call of it returns counts as the path, and a reader whose nested def
+    reads the file reds as returning the path until the read moves into its own body.
     The exits are keyed on the path itself (_path_valued), not on anything computed from it, since the readers return
     values read from the file (keyed on carrying, seven of the nine readers would have one). A Return, Yield or
-    YieldFrom whose value is the path, or a lambda whose body is, is a _PATH_EXIT: the function hands the path to its
-    caller, a path helper (NAMERS' "path" role), and _derive_namers makes every function that mentions it a namer in
-    turn.
-    The path kept anywhere but a plain local name is a _PATH_STORED, which the role check refuses under every role: a
-    subscript or attribute assigned it, whatever its root (a module-level table, `self`, a parameter, or a local, which
-    may alias either), a name the function declares global, and a call of a method of a value (not of a module the
-    kernel imports) handed it as an argument, `.append(p)` among them, since the receiver may keep it; .get is the one
-    method left out, its arguments a key it looks up and a default it hands back. An augmented assignment of it to a
-    name (`out += [p]`) is one too: a list, dict or set takes it in place, and the object a parameter or an alias names
-    keeps it. Tracing a kept path would need every reader of what keeps it (the reviewer's ruling on round 1 of
-    fork PR #909, extra6-1 and fresh-1, refused the module-level store; a store on `self` and an append got past a
-    refusal keyed on a module-level root). The path stored as a subscript's index (`cache[str(p)] = v`) keeps it as a
-    key, which whoever iterates the container reads: keyed _PATH_KEYED plus the subscript's root, and refused by the
-    role check but at a site FlagWriterPopulation.KEYED classes by reading it.
+    YieldFrom of `fn`'s own body whose value is the path is a _PATH_EXIT: the function hands the path to its caller, a
+    path helper (NAMERS' "path" role), and _derive_namers makes every function that mentions it a namer in turn. A
+    return inside a nested def or lambda is that scope's, not `fn`'s: the scope's object carries the path instead.
+    The path, or an object that holds it, kept anywhere but a plain local name is a _PATH_STORED, which the role check
+    refuses under every role: a subscript or attribute assigned it, whatever its root (a module-level table, `self`, a
+    parameter, or a local, which may alias either), a name the function declares global, and a call of a method of a
+    value (not of a module the kernel imports) handed it as an argument, `.append(p)` among them, since the receiver
+    may keep it; .get is the one method left out, its arguments a key it looks up and a default it hands back. An
+    augmented assignment of it to a name (`out += [p]`) is one too: a list, dict or set takes it in place, and the
+    object a parameter or an alias names keeps it. Tracing a kept path would need every reader of what keeps it (the
+    reviewer's ruling on round 1 of fork PR #909, extra6-1 and fresh-1, refused the module-level store; a store on
+    `self` and an append got past a refusal keyed on a module-level root). The path stored as a subscript's index
+    (`cache[str(p)] = v`) keeps it as a key, which whoever iterates the container reads: keyed _PATH_KEYED plus the
+    subscript's root, and refused by the role check but at a site FlagWriterPopulation.KEYED classes by reading it.
+    The implicit calls count as calls: a decorator is called with the def or class it decorates, and a class's bases
+    and metaclass with the class (a base's __init_subclass__). So each decorator of a nested def or class that
+    carries the path, each base and metaclass of such a class, and each decorator of `fn` itself when `fn` is a path
+    helper, is handed it by its spelling (_callee_spelling), and one that is a method of a value (`@REG.append`) keeps
+    it.
     It judges no WRITE by its spelling: FlagWriterPopulation.READS lists what a reader may hand the path to, and any
     other call is a write until someone classes it."""
     seeds = {id(n) for n in _store_seeds(fn)}
@@ -834,6 +901,9 @@ def _store_flow(fn, modules, helpers=frozenset()):
         tainted, pathy = grown, grown_pathy
     handed = {}
     declared = {name for n in ast.walk(fn) if isinstance(n, ast.Global) for name in n.names}
+    scopes = [n for n in ast.walk(fn) if n is not fn and type(n) in _NESTED]
+    inner = {id(m) for s in scopes if not isinstance(s, ast.ClassDef)
+             for part in (s.body if isinstance(s.body, list) else [s.body]) for m in ast.walk(part)}
     for n in ast.walk(fn):
         if isinstance(n, ast.Call):
             spelled = _call_spelling(n, modules)
@@ -844,14 +914,29 @@ def _store_flow(fn, modules, helpers=frozenset()):
             if spelled.startswith(".") and spelled != ".get" and any(
                     _path_valued(x, seeds, pathy, modules) for x in given):
                 handed.setdefault(_PATH_STORED, []).append(n.lineno)
-        elif isinstance(n, (ast.Return, ast.Yield, ast.YieldFrom)):
+        elif isinstance(n, (ast.Return, ast.Yield, ast.YieldFrom)) and id(n) not in inner:
             if n.value is not None and _path_valued(n.value, seeds, pathy, modules):
                 handed.setdefault(_PATH_EXIT, []).append(n.lineno)
-        elif isinstance(n, ast.Lambda) and _path_valued(n.body, seeds, pathy, modules):
-            handed.setdefault(_PATH_EXIT, []).append(n.lineno)
         elif (isinstance(n, ast.AugAssign) and isinstance(n.target, ast.Name) and n.target.id not in declared
               and _path_valued(n.value, seeds, pathy, modules)):
             handed.setdefault(_PATH_STORED, []).append(n.lineno)
+    # the implicit calls: each decorator is called with the def or class it decorates, and a class's bases and
+    # metaclass with the class; the def itself when it is a path helper, a nested one when it holds the path
+    for s in [fn] + [s for s in scopes if not isinstance(s, ast.Lambda)]:
+        if s is fn:
+            carried = kept = _PATH_EXIT in handed
+        else:
+            carried, kept = s.name in tainted, s.name in pathy
+        if not carried:
+            continue
+        called = list(s.decorator_list)
+        if isinstance(s, ast.ClassDef):
+            called += list(s.bases) + [k.value for k in s.keywords]
+        for c in called:
+            spelled = _callee_spelling(c, modules)
+            handed.setdefault(spelled, []).append(c.lineno)
+            if kept and spelled.startswith(".") and spelled != ".get":
+                handed.setdefault(_PATH_STORED, []).append(c.lineno)
     for target, value in pairs:
         if not isinstance(target, ast.expr):
             continue
@@ -919,6 +1004,8 @@ def _facts(node):
             continue
         if t is Constant:                  # value and kind: no child
             v = n.value
+            if type(v) is bytes:           # a bytes literal read as text, as _text_of reads it
+                v = v.decode("latin-1")
             if isinstance(v, str):
                 if dotted(v):
                     for m in set(v.split(".")):
@@ -938,8 +1025,8 @@ def _facts(node):
                 loads.update(x.value for x in ast.walk(n)
                              if isinstance(x, Constant) and isinstance(x.value, str) and x.value.endswith(".py"))
         elif t is Expr:
-            if isinstance(n.value, Constant) and isinstance(n.value.value, str):
-                text.add(id(n.value))      # a string standing as a statement is text about the code (_store_seeds)
+            if isinstance(n.value, Constant) and isinstance(n.value.value, (str, bytes)):
+                text.add(id(n.value))      # a constant standing as a statement is text about the code (_store_seeds)
         elif t is Compare:
             lane = lane or (any(isinstance(op, (ast.In, ast.NotIn)) for op in n.ops)
                             and any(isinstance(c, Name) and c.id == "_LANE_FLAGS" for c in n.comparators))
@@ -1191,26 +1278,33 @@ class FlagWriterPopulation(unittest.TestCase):
     string (`globals()["_set_session_flag"]`) is a door. Every road from a request to a setter is pinned (ROADS),
     derived upward from the setters by mention, so a new function or arm that hands a door function a client's input
     (a socket op forwarding to _state_write_route("/flag", ...), a second POST path onto it) reds as well. The setters
-    are found without trusting how a function writes: every function that names the store in code is pinned by role
-    (NAMERS), and one that hands the store's path to anything but a read (READS) is a writer, so a writer spelled with
-    open(), os.replace or a helper of its own reds as surely as one that calls _write_state_json, the path reaching it
-    through an assignment or a parameter's default alike. A helper that returns the path (a path helper, the kernel's
-    own idiom for other stores, _views_path among them) passes the path on: it holds the "path" role, and every function
-    that mentions it (a call, a reference bound to a local, an import of it) names the store in turn and is classed the
-    same way, so a writer through it reds too. What a function hands back counts as the path unless it passes through a
-    read of the file or a fact about it (_path_valued lists where the path stops, not the ways it goes through, so an
-    `or`, a walrus, a subscript, a dict or a .get's default carries it), and a namer that keeps the path anywhere but a
-    plain local name (a subscript or attribute, whatever its root, `self` included; a name it declares global; a method
-    call such as .append handed it; a subscript's index, but at a site KEYED classes) is refused by the role check, not
-    traced. The census reads every module in the kernel's directory, which holds every module the kernel loads (LOADED),
-    so a writer in the judge or another loaded module counts as one in kernel.py does. It keys on names the source
-    spells: a function that reached the file through a name it did not spell (a file name a client sent, as the saveFile
-    op writes any text file under the file-editing consent; a path read back out of _flags_cache's keys, the one site
-    KEYED allows, whose every use is a lookup; or what a call in READS keeps, each of those calls classed by reading
-    it), or reached a setter or a door function by a name built from pieces, buried in source text handed to eval or
-    brought in by a star import, would be outside it, and so is a module loaded by a path that names no ".py" file. The
-    stdlib's handler enters do_GET and do_POST by a name it builds, which is where the roads end. These read WHERE the
-    code lives, so they guard the population and the arms' shape, not the behaviour; the behaviour is executed in
+    are found without trusting how a function writes: every function that names the store in code (in a str or bytes
+    literal) is pinned by role (NAMERS), and one that hands the store's path to anything but a read (READS) is a
+    writer, so a writer spelled with open(), os.replace or a helper of its own reds as surely as one that calls
+    _write_state_json, the path reaching it through an assignment or a parameter's default alike. A helper that returns
+    the path (a path helper, the kernel's own idiom for other stores, _views_path among them) passes the path on: it
+    holds the "path" role, and every function that mentions it (a call, a reference bound to a local, an import of it)
+    names the store in turn and is classed the same way, so a writer through it reds too. A def, lambda or class
+    nested in a function is a value that holds whatever it mentions, in a closure, a default or a class attribute: a
+    nested def that builds the path is followed to every call of it, and a closure or a class holding the path goes
+    wherever a value goes, handed back, kept or handed to a call, its decorators, bases and metaclass included, since
+    each is called with it. What a function hands back counts as the path unless it passes through a read of the file
+    or a fact about it (_path_valued lists where the path stops, not the ways it goes through, so an `or`, a walrus, a
+    subscript, a dict, a .get's default or a closure carries it), and a namer that keeps the path, or an object that
+    holds it, anywhere but a plain local name (a subscript or attribute, whatever its root, `self` included; a name it
+    declares global; a method call such as .append handed it, or a decorator that is one; a subscript's index, but at a
+    site KEYED classes) is refused by the role check, not traced. The census reads every module in the kernel's
+    directory, which holds every module the kernel loads (LOADED), so a writer in the judge or another loaded module
+    counts as one in kernel.py does. It keys on names the source spells in code, which a docstring is not: a function
+    that reached the file through a name it did not spell (a file name a client sent, as the saveFile op writes any
+    text file under the file-editing consent; a path read back out of _flags_cache's keys, the one site KEYED allows,
+    whose every use is a lookup; or what a call in READS keeps, each of those calls classed by reading it), a function
+    that read a name or the path back by reflection (a frame's locals through locals(), vars() or a frame object, a
+    top-level function's __defaults__ or __code__, a __doc__, the collector's referents), or one that reached a setter
+    or a door function by reflection, by a name built from pieces, buried in source text handed to eval or brought in
+    by a star import, would be outside it, and so is a module loaded by a path that names no ".py" file. The stdlib's
+    handler enters do_GET and do_POST by a name it builds, which is where the roads end. These read WHERE the code
+    lives, so they guard the population and the arms' shape, not the behaviour; the behaviour is executed in
     SocketFlagWhitelist (the socket op, in process and over a real socket) and in
     FlagRoute.test_an_unknown_flag_key_or_a_missing_id_is_a_400_naming_it (the route).
 
@@ -1233,9 +1327,10 @@ class FlagWriterPopulation(unittest.TestCase):
     DOORS = {("socket op", "setSessionFlag"), ("route", "/flag")}
     # every function that names the store in code (_store_seeds) or mentions a path helper (_derive_namers), by role: a
     # "reader" hands the path only to READS; a "writer" writes it through _write_state_json and runs _flags_written; a
-    # "path" helper returns or yields the path itself (_store_flow's _PATH_EXIT) and hands it to nothing outside READS,
-    # and every function that mentions it is a namer, classed here in turn. No role may keep the path (_PATH_STORED).
-    # No function holds the "path" role today.
+    # "path" helper returns or yields the path itself from its own body, or a def, lambda or class that holds it
+    # (_store_flow's _PATH_EXIT), and hands it to nothing outside READS, its own decorators included, and every
+    # function that mentions it is a namer, classed here in turn. No role may keep the path or an object that holds it
+    # (_PATH_STORED). No function holds the "path" role today.
     # _state_quarantine compares a torn file's name with the store's to word its notice, and hands the path on to nothing
     NAMERS = {"_set_session_flag": "writer", "_set_notify_session": "writer",
               "_session_flags_proved": "reader", "_session_flags": "reader", "_flags_unknown_cold": "reader",
@@ -1398,9 +1493,9 @@ class FlagWriterPopulation(unittest.TestCase):
 
     def test_the_functions_that_name_the_flags_store_are_pinned_by_role(self):
         """Each namer's role, read from where it sends the store's path (_store_flow, with every mention of a path
-        helper as a seed; _derive_namers): a reader, a writer, or a path helper, and the path kept where another
-        function can read it refused under every role, as a key of a container too, but at the sites KEYED classes.
-        The reach of _store_flow itself is pinned over synthetic source in StoreFlowReach."""
+        helper as a seed; _derive_namers): a reader, a writer, or a path helper, and the path, or an object that holds
+        it, kept where another function can read it refused under every role, as a key of a container too, but at the
+        sites KEYED classes. The reach of _store_flow itself is pinned over synthetic source in StoreFlowReach."""
         self.assertEqual(self._namers(), set(self.NAMERS),
                          "the functions that name session-flags.json in code or mention a path helper. A new one reds here "
                          "whatever it does with the file: class it in NAMERS, a reader handing the path only to READS, a "
@@ -1414,20 +1509,23 @@ class FlagWriterPopulation(unittest.TestCase):
                          "this census's sight")
         for q, role in sorted(self.NAMERS.items()):
             flow = self.census["flows"][q]
-            self.assertNotIn(_PATH_STORED, flow, "%s keeps the store's path where another function can read it (a "
-                             "subscript or attribute assigned it, whatever its root, a name it declares global, or a method "
-                             "call handed it, such as .append), line %s, out of this census's sight: tracing it would need "
-                             "every reader of what keeps it. Hand the path back by return instead, a path helper (role "
-                             "\"path\"), whose callers are traced" % (q, flow.get(_PATH_STORED)))
+            self.assertNotIn(_PATH_STORED, flow, "%s keeps the store's path, or a def, lambda or class that holds it, "
+                             "where another function can read it (a subscript or attribute assigned it, whatever its root, "
+                             "a name it declares global, or a method call handed it, such as .append, a decorator among "
+                             "them), line %s, out of this census's sight: tracing it would need every reader of what keeps "
+                             "it. Hand the path back by return instead, a path helper (role \"path\"), whose callers are "
+                             "traced" % (q, flow.get(_PATH_STORED)))
             outside = {c: ln for c, ln in flow.items() if c not in self.READS and not c.startswith(_PATH_KEYED)}
             if role == "reader":
                 self.assertEqual(outside, {}, "%s is pinned a reader but hands the store's path to calls outside READS "
-                                 "(a write, until classed) or returns the path itself (a path helper, role \"path\"); a "
-                                 "new way to write the store is a new setter" % q)
+                                 "(a write, until classed; a nested def, lambda or class that holds the path is handed "
+                                 "wherever it goes, a decorator or a base included) or returns the path itself, or an "
+                                 "object that holds it (a path helper, role \"path\"); a new way to write the store is a "
+                                 "new setter" % q)
             elif role == "path":
                 self.assertEqual(set(outside), {_PATH_EXIT}, "%s is pinned a path helper: it returns or yields the "
-                                 "store's path and hands it to nothing outside READS; a call outside READS makes it a "
-                                 "writer" % q)
+                                 "store's path, or an object that holds it, and hands it to nothing outside READS, its "
+                                 "decorators included; a call outside READS makes it a writer" % q)
             else:
                 self.assertEqual(role, "writer", "%s: a role is reader, path or writer" % q)
                 self.assertEqual(set(outside), {"_write_state_json", "_flags_written"},
@@ -1943,6 +2041,95 @@ class StoreFlowReach(unittest.TestCase):
         self.assertEqual({k: names.get(k, 0) for k in ("_set_session_flag", "os", "path", "w", "osp", "*")},
                          {"_set_session_flag": 1, "os": 1, "path": 1, "w": 0, "osp": 0, "*": 0},
                          "_facts counts the same mentions _mentioned reads")
+
+    def test_a_def_lambda_or_class_nested_in_a_function_carries_what_it_holds(self):
+        """A nested def, lambda or class holds whatever it mentions (_holds), so its object goes where a value goes:
+        a nested def that builds the path is handed to open() through every call of it, and a closure or a class
+        holding the path is kept, handed back, or handed to a call, its decorators, bases and metaclass included (each
+        is called with it); a return inside the nested scope is its own, and a callback a stop call hands back is not
+        read by the stop. One case pins the stated over-approximation (a nested def that only reads the path still
+        holds it, so its call counts as the path). The controls hold nothing, or hand the nested def's result to the
+        strict reader. Each case reads one key of what the function sends outside READS; a control (key None) reads all
+        of it."""
+        p = '    p = jd.STATE / "session-flags.json"\n'
+        fp = '    def fp():\n        return jd.STATE / "session-flags.json"\n'
+        cases = [
+            ("a nested def that builds the path, called and opened", 'def f(sid):\n' + fp + '    open(fp(), "w").write(sid)\n',
+             "open", [4]),
+            ("that nested def's return is its own, not the function's exit",
+             'def f(sid):\n' + fp + '    open(fp(), "w").write(sid)\n', _PATH_EXIT, None),
+            ("a closure over the path appended to a list", 'def f():\n' + p + '    def g():\n        return p\n'
+                                                            '    REG.append(g)\n', _PATH_STORED, [5]),
+            ("a lambda over the path appended to a list", 'def f():\n' + p + '    REG.append(lambda: p)\n', _PATH_STORED, [3]),
+            ("a nested class whose body binds the path, returned",
+             'def f():\n    class K:\n        P = jd.STATE / "session-flags.json"\n    return K\n', _PATH_EXIT, [4]),
+            ("a closure over the path, returned", 'def f():\n' + p + '    def g():\n        return p\n    return g\n',
+             _PATH_EXIT, [5]),
+            ("a closure that only compares the path, handed to a call", 'def f():\n' + p + '    register(lambda q: q == p)\n',
+             "register", [3]),
+            ("a nested def holding the path in a default, appended",
+             'def f():\n    def g(q=jd.STATE / "session-flags.json"):\n        return 1\n    REG.append(g)\n', _PATH_STORED, [4]),
+            ("a method of a value decorating a closure over the path",
+             'def f():\n' + p + '    @REG.append\n    def g():\n        return p\n', _PATH_STORED, [3]),
+            ("a call decorating a closure over the path", 'def f():\n' + p + '    @register("k")\n    def g():\n        return p\n',
+             "<Call>", [3]),
+            ("the base of a class holding the path", 'def f():\n' + p + '    class K(Base):\n        def get(self):\n'
+                                                     '            return p\n', "Base", [3]),
+            ("the metaclass of a class holding the path", 'def f():\n' + p + '    class K(metaclass=Meta):\n'
+                                                          '        def get(self):\n            return p\n', "Meta", [3]),
+            ("a callback returning the path, handed back by a stop call",
+             'def f(s):\n' + p + '    return json.loads(s, object_hook=lambda d: p)\n', _PATH_EXIT, [3]),
+            ("a nested def that only reads the path: its call still counts as the path (over-approximate)",
+             'def f():\n' + p + '    def rd():\n        return json.loads(p.read_text())\n    return rd().get("k")\n',
+             _PATH_EXIT, [5]),
+            ("a nested def whose path the strict reader reads (not one)", 'def f():\n' + fp + '    return _read_state_json(fp())\n',
+             None, None),
+            ("a nested def that holds nothing, appended (not one)", 'def f():\n' + p + '    def g():\n        return 1\n'
+                                                                    '    REG.append(g)\n    return p.stat().st_size\n',
+             None, None),
+            ("a decorated nested def that holds nothing (not one)", 'def f():\n' + p + '    @REG.append\n    def g():\n'
+                                                                    '        return 1\n    return p.stat().st_size\n',
+             None, None),
+        ]
+        got = {}
+        for what, src, key, lines in cases:
+            outside = self._outside(src, "f")
+            got[what] = outside if key is None else outside.get(key)
+        self.assertEqual(got, {what: ({} if key is None else lines) for what, src, key, lines in cases},
+                         "each nested scope's object carries what it holds, by line")
+
+    def test_a_path_helpers_own_decorators_are_handed_the_helper(self):
+        """A decorator is called with the def it decorates, so a path helper's decorators are handed the path: a method
+        of a value keeps it (`@REG.append` stores the helper where a caller reaches it by no name), and any other is a
+        call outside READS, a writer until classed. A reader's decorator is handed nothing: its object returns what it
+        read, not the path."""
+        helper = 'def _flags_path():\n    return jd.STATE / "session-flags.json"\n'
+        cases = [
+            ("a method of a value", "@REG.append\n" + helper, {_PATH_EXIT: [3], _PATH_STORED: [1]}),
+            ("a function", "@register\n" + helper, {_PATH_EXIT: [3], "register": [1]}),
+            ("no decorator (the helper alone)", helper, {_PATH_EXIT: [2]}),
+        ]
+        got = {what: self._outside(src, "_flags_path") for what, src, want in cases}
+        self.assertEqual(got, {what: want for what, src, want in cases}, "a path helper's decorators, by line")
+        reader = '@register\ndef r():\n    return json.loads((jd.STATE / "session-flags.json").read_text())\n'
+        self.assertEqual(self._outside(reader, "r"), {}, "a reader's decorator is handed nothing")
+
+    def test_a_bytes_literal_names_the_store_and_a_function(self):
+        """The census reads a name spelled whole in a bytes literal as it reads the str (_text_of): the store's name
+        seeds the flow and makes a namer, at module level too, and a function's name is a mention. A bytes constant
+        standing as a statement of its own is text about the code, as a docstring is."""
+        w = 'def f(sid):\n    open(jd.STATE / b"session-flags.json".decode(), "w").write(sid)\n'
+        stmt = self._fn('def f():\n    b"session-flags.json"\n    return 1\n', "f")
+        self.assertEqual(self._outside(w, "f").get("open"), [2], "open() is handed the path a bytes literal names")
+        self.assertEqual((_facts(self._fn(w, "f")).seeded, _facts(stmt).seeded, len(_store_seeds(stmt)),
+                          _unit_names_the_store(_facts(ast.parse('P = b"session-flags.json"\n').body[0]), frozenset())),
+                         (True, False, 0, True), "a bytes literal naming the store seeds a def and a module-level "
+                         "statement; one standing as a statement does not, in _facts or in _store_seeds")
+        call = ast.parse('globals()[b"_set_session_flag".decode()](sid, flag, True)\n')
+        self.assertEqual(([_mentioned(n) for n in ast.walk(call) if isinstance(n, ast.Constant) and type(n.value) is bytes],
+                          _facts(call.body[0]).names.get("_set_session_flag", 0)),
+                         ([{"_set_session_flag"}], 1),
+                         "_mentioned and _facts read a function's name in a bytes literal as a mention")
 
 
 class ViewsRoute(_Routes):
