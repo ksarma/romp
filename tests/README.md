@@ -114,22 +114,26 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   (module-level `if`, `try`, `for` and `with` bodies and their header expressions,
   class bodies, the decorators and default argument values of a def, the decorators
   and bases of a class, and the writes reached through a call at import the scan can
-  resolve to a def or class under `tests/`: a module-local helper, a name imported
-  from a tests-local module, by its dotted name or by a star import, a bare
-  decorator, an instantiation), in every shape a write takes (a subscript assignment,
-  `setdefault`, `update` of a dict literal, of keywords or of a module-level name
-  bound to a dict literal, `|=`, `os.putenv`, the dunder spellings `__setitem__` and
-  `__ior__` on the mapping or unbound with the mapping as the first argument, through
-  `os.environ` or `os.environb` or any name bound to either, a subscript whose key a
-  `for` over string literals binds), EQUALS the licensed set
-  `LICENSED_MODULE_LEVEL_WRITES` there, an equality and never a floor, and every write
-  meets its licence's condition. Outside the scan, named in the module above
-  `_Module`: a callee it cannot resolve (product code loaded by path, the standard
-  library, a method on an instance, a lambda, a name bound to a call's result,
-  `exec`), and a write that reaches the mapping other than by a method called on it
-  (`operator.setitem`, a bound method held in a name or fetched by `getattr`, a
-  `functools.partial`, `posix.putenv`, an unbound `update` on the mapping's class,
-  which the scan cannot tell from `saved.update(os.environ)`, a read). The licences
+  resolve to a def or class under `tests/`: a def in any import-time block or class
+  body, every binding of the name, a name imported from a tests-local module, by
+  its dotted name, by a star import or through a helper that re-exports it, a bare
+  decorator, a `metaclass=` value, a base's `__init_subclass__`, an instantiation, a
+  chain of calls up to 40 deep, a longer one failing the test naming the chain), in
+  each shape the scan reads (a subscript assignment, an augmented assignment to a key,
+  a key bound as a `for`, comprehension or `with` target, `setdefault`, `update` of a
+  dict literal, of keywords or of a module-level name bound once to a dict literal
+  and read only by an update, a spread, an iteration or a membership test, `|=`,
+  `os.putenv`, the dunder spellings `__setitem__` and `__ior__` on the mapping or
+  unbound with the mapping as the first argument, through `os.environ` or
+  `os.environb` under any name `os` is imported as, `from os import environ`, a name
+  a single assignment binds to either, or a parameter a call at import passes it to
+  or that defaults to it, a subscript whose key a `for` over string literals binds),
+  EQUALS the licensed set `LICENSED_MODULE_LEVEL_WRITES` there, an equality and never
+  a floor, and every write meets its licence's condition. A name is read through its
+  first binding alone: bound again by anything, it is unreadable, and a write
+  through it fails the test naming the file and line. What stays outside the scan
+  is listed in one place, the comment above `_Module` in that module, each shape
+  with a plant the scan is held to recording nothing for. The licences
   are per name and checkable, each with a condition on
   the written value (read through a module-level name bound once, so
   `_ROOT = tempfile.mkdtemp()` is read as the mkdtemp): the state preamble
