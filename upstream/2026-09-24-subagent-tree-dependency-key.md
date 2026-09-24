@@ -3,7 +3,7 @@ title: The agent-file walk records each subagents tree it looks through under th
 status: candidate
 where: kernel/kernel.py (the fix: _subagent_tree_dep_note (new), _subagent_walk_dep_note (new), _subagent_meta_map, _find_agent_file, _subagent_file (docstring), _subagent_file_walk; merged from romp-on/romp PR #1822, which upstream already has: _PerfStats.snapshot (a comment), _SUBAGENT_TREE_STATS, _subagent_tree, _subagent_tree_sample (new), _subagent_tree_memo_report, _subagent_meta_map, _chat_push_scopes_open, _subagent_dirs_ident, _feed_session_key, _push, _pusher_cycle, _jobs_cycle), tests/test_subagent_tree_cycle_scope.py (the fix's pins: DependencyKeyFromTheHeldRead, WalkNoteForAPathThatHoldsNoTree, the module docstring's cases 7 and 8; the rest from romp-on/romp PR #1822), tests/test_chat_build_sig_inputs.py (from romp-on/romp PR #1822: Pusher), tests/test_subagent_tree_memo.py (from romp-on/romp PR #1822: Reported), docs/reference.md (from romp-on/romp PR #1822), tools/perf-bench.py (fork-only: _bench's mirror of the subagent_trees slot, the three lines fork PR #875 adds), upstream/2026-09-24-subagent-tree-dependency-key.md (this entry)
 added: 2026-09-24
-pr:
+pr: 910
 tier: fix
 offered:
 closed:
