@@ -96,8 +96,8 @@ counters that the recorders do not wrap, or through a reference to a real door t
 on a pass a case drives, even though it cannot be named, but only when it moves a call key (the shared door) or a goal_io
 load (the writer door, bumped at load_goals' first line even when it then raises): a shared-door call whose open or read
 raises moves neither, and no execution witness notices it. A reference taken before a recorder stood is refused statically
-by the birth pin only in the forms the pin reads (among them a binding, an attribute store or a constant, each stated
-in full in _loader_births' docstring) in kernel/kernel.py or kernel/judge.py; a reference built at run time, or held through what
+by the birth pin only in the forms the pin reads (among them a binding, an attribute store or a constant;
+_loader_births' docstring states them in full) in kernel/kernel.py or kernel/judge.py; a reference built at run time, or held through what
 the pin does not read (among them a door, a reference or a file), is refused by no static pin, and its loads are noticed only as
 above (review round 9, correctness-1: a shared-door load
 planted on the directory, symlink-loop and mode-000 fault roads left every execution case green, the birth pin's static
@@ -3861,7 +3861,7 @@ class TheCountersOneSite(unittest.TestCase):
         or a goal_io load (the writer door, bumped at load_goals' first line even when it then raises), and not named, so a
         shared-door call whose open or read raises, moving neither, is noticed by no execution witness, and such a reference is
         refused statically by the birth pin only in the forms the pin reads (among them a binding, an attribute store or a
-        constant, each stated in full in _loader_births' docstring) in kernel/kernel.py or kernel/judge.py, one built at run time or
+        constant; _loader_births' docstring states them in full) in kernel/kernel.py or kernel/judge.py, one built at run time or
         held through what the pin does not read (among them a door, a reference or a file) being refused by no static pin, its loads
         noticed only as above (the module docstring, _pass); a load written on a
         boundary wrapper's hand-off line, named for the kernel caller and counted under that
