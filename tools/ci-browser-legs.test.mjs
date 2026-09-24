@@ -2,11 +2,11 @@
 // gating vscode-extension job runs npm test before it installs a browser, so every browser leg skips at launch there; the
 // step "Browser legs (node --test over ci-browser-legs.txt)" runs the legs named in vscode-extension/ci-browser-legs.txt
 // after the job's Chromium install with ROMP_BROWSER_LEGS_REQUIRE=1: the one shared launcher, inBrowser in
-// ui/webview/real-viewer-leg.ts, reads the switch (any non-empty value arms it) and under it a leg that cannot launch fails
-// naming the switch and the reason instead of skipping.
-// WHAT THIS MODULE DOES NOT HOLD. The roster rule (a rostered leg launches through inBrowser alone, with no playwright load,
-// launch, skip or todo of its own, in Chromium) is the PR reviewer's to check: nothing in the tree reads a leg's source for
-// it, so the step reads a rostered leg green in the four cases the rule's homes name (the test of those homes below). Nor
+// ui/webview/real-viewer-leg.ts, reads the switch (any non-empty value arms it), and under the switch, inBrowser fails a
+// launch it cannot make, naming the switch and the reason, instead of skipping.
+// WHAT THIS MODULE DOES NOT HOLD. The roster rule (under the switch, a rostered leg passes only when inBrowser has launched
+// Chromium; its homes, read by the homes pin below, state the rest) is the reviewer's to check: nothing in the tree reads a
+// leg's source for it, so the step can read green a rostered leg that breaks it, as the examples its homes name show. Nor
 // does anything here check that every browser leg in the tree is rostered. A green here is:
 //   - the step exists once in that job, directly after the Chromium install step (by step NAMES), with the switch and
 //     the run line, in the job's default working directory, and no step before the Test step installs or caches
@@ -17,12 +17,14 @@
 //     { timeout } a rostered leg passes and under the step's bound, so a hung leg fails by name before the step is cut;
 //   - the roster is well formed: every line is a bundle path (out-tests/<dir>/<name>.test.js), no line is duplicated, and
 //     every line names a source that exists in the tree;
-//   - each home of the roster rule (the roster header, the step's comment, the script's header and CONTRIBUTING.md) states
-//     it as the PR reviewer's, names the four cases the step reads green and their witness here, and says that nothing
-//     checks that every browser leg in the tree is rostered (a text pin: it holds what the homes say); the witness is
-//     executed: the script with the real node and the real reporter reads green one synthetic rostered leg of each case
-//     (an own launch whose failure is swallowed, a module that launches nothing, a child process whose failure is
-//     tolerated, a todo that passes beside a real pass), each failure marked as it happens;
+//   - each home of the roster rule, read in its named section (the roster's # lines, the Browser legs step's own comments,
+//     the script's header, CONTRIBUTING.md whole), states it in the same words: the rule, who checks it, that nothing reads a
+//     leg's source for it, its examples as examples (the list after "examples, not the whole set:" holds exactly the
+//     phrases of EXAMPLES, the witness table), that a leg built to pass without a browser is outside what the step can
+//     detect, the witness, and that nothing checks that every browser leg in the tree is rostered (a text pin: it holds
+//     what the homes say); the witness is executed: the script with the real node and the real reporter reads green one
+//     synthetic rostered leg of each example in EXAMPLES, each failure marked as it happens, and a control that awaits the
+//     catch example's stand-in for inBrowser with no try reads red with the lost-browser remedy;
 //   - vscode-extension/.vscodeignore names the CI-only files (the roster, the script and its reporter);
 //   - the script the step calls (vscode-extension/scripts/ci-browser-legs.sh) exists, is executable and runs node --test
 //     over the roster array (no xargs, so node's status is the step's on every platform) with the reporter
@@ -230,7 +232,7 @@ function parseRoster(text) {
 /** A line's place, for every red that names one: "<file> line <n> (<bundle>)". */
 const where = (file, e) => file + ' line ' + e.n + ' (' + e.bundle + ')';
 
-test('the roster is well formed: each line is a bundle path naming a source in the tree, once (whether a line\'s source launches through inBrowser alone is the PR reviewer\'s to check: nothing in the tree reads it)', () => {
+test('the roster is well formed: each line is a bundle path naming a source in the tree, once (the roster rule, under the switch, a rostered leg passes only when inBrowser has launched Chromium, with the rest in its homes, is the reviewer\'s to check: nothing in the tree reads a leg\'s source for it)', () => {
   const roster = parseRoster(read(path.join(EXT, ROSTER)));
   assert.ok(roster.length > 0, ROSTER + ' holds at least one line (the switch test is rostered, below): an empty roster would pass the loop below over nothing');
   const seen = new Map();
@@ -243,27 +245,77 @@ test('the roster is well formed: each line is a bundle path naming a source in t
   }
 });
 
-/** The roster rule's four homes, and what each says: the rule is the PR reviewer's to check, the four cases the step reads
- *  green because nothing in the tree reads a leg's source for the rule, the witness of those four below, and that nothing
- *  checks that every browser leg in the tree is rostered. Each home is read with its line breaks and comment markers folded to one space and compared without
- *  case, so a rewrap or a capitalised lead-in is not a reword. */
-const RULE_HOMES = [path.join(EXT, ROSTER), CI, SCRIPT, path.join(REPO, 'CONTRIBUTING.md')];
+/** The script's header: the # lines after the shebang and before the first line that is not a comment (the header test
+ *  below and the homes pin read this one slice). */
+const scriptHeaderLines = (src) => {
+  const lines = src.split('\n').slice(1);
+  const end = lines.findIndex((l) => !l.startsWith('#'));
+  return lines.slice(0, end < 0 ? lines.length : end);
+};
+/** The roster rule's homes, each read in its named section: the roster's # lines, the Browser legs step's own comments in
+ *  ci.yml (the one step of that name, asserted), the script's header (scriptHeaderLines) and CONTRIBUTING.md whole. The homes
+ *  pin folds each section's line breaks and comment markers to one space, drops backticks and compares without case, so a
+ *  rewrap or a capitalised lead-in is not a reword, while the same words moved out of the section are. */
+const RULE_HOMES = [
+  { file: path.join(EXT, ROSTER), section: 'its # lines', read: (text) => text.split('\n').filter((l) => /^\s*#/.test(l)).join('\n') },
+  { file: CI, section: 'the Browser legs step\'s own comments', read: () => {
+    const hits = steps(extensionJob()).filter((s) => s.name === STEP);
+    assert.equal(hits.length, 1, 'ci.yml\'s ' + JOB + ' job has one step named ' + JSON.stringify(STEP) + ', whose own comments are the home of the roster rule read here');
+    return hits[0].comments.join('\n');
+  } },
+  { file: SCRIPT, section: 'its header, the # lines before its first code line', read: (text) => scriptHeaderLines(text).join('\n') },
+  { file: path.join(REPO, 'CONTRIBUTING.md'), section: 'the whole file', read: (text) => text },
+];
+/** A stand-in for inBrowser, spelled as its cannot() is: under the switch it fails with the phrase the script reads a lost
+ *  browser by and a reason, and without the switch it skips. The catch example awaits it inside a try, and the witness
+ *  test's control awaits it with no try. */
+const standIn = (phrase) => 'const assert = require("node:assert");\nconst inBrowser = async (t, body) => { const why = "no playwright browser on this box (a synthetic stand-in)"; if (process.env.' + SWITCH + ') assert.fail(' + JSON.stringify(phrase + ': ') + ' + why); t.skip(why); };\n';
+/** The roster rule's examples, each with its synthetic witness leg, in one table: RULE_WORDS takes each example's phrase from
+ *  here, the homes pin holds each home's list after "examples, not the whole set:" to exactly these phrases, and the witness
+ *  test below rosters each leg, a plain CommonJS bundle (the Shell job has no node_modules and runs no esbuild). So an example
+ *  named with no witness, or a witness removed while its example is still named, is red in the homes pin. `leg(phrase)` is
+ *  the bundle's test code, handed the phrase the script reads a lost browser by; `marked` says what the mark a leg writes
+ *  beside its bundle proves (null for the leg with no failure to mark), and `markBegins` asks that the mark begin with the phrase. */
+const EXAMPLES = [
+  { phrase: 'a rostered leg that launches its own browser and swallows a failed launch without skipping', name: 'own-launch', marked: 'the own launch threw',
+    leg: () => 'test("opens a page", async () => { let browser = null; try { browser = await (async () => { throw new Error("browserType.launch: a synthetic launch that fails"); })(); } catch (e) { fs.writeFileSync(__filename + ".mark", String(e.message)); } if (!browser) return; });\n' },
+  { phrase: 'a rostered module that launches nothing', name: 'launches-nothing', marked: null,
+    leg: () => 'test("a source pin", () => { if ("a".length !== 1) throw new Error("unreachable"); });\n' },
+  { phrase: 'a leg that drives a browser from a child process and tolerates the child\'s failure', name: 'child-tolerated', marked: 'the child exited 3',
+    leg: () => 'test("drives a page from a child", () => { const r = spawnSync(process.execPath, ["-e", "process.exit(3)"]); if (r.status !== 0) fs.writeFileSync(__filename + ".mark", String(r.status)); });\n' },
+  { phrase: 'a todo test that passes beside a real pass', name: 'todo-beside', marked: 'the todo body ran',
+    leg: () => 'test("a real pass", () => {});\ntest("the browser part", { todo: "a synthetic todo" }, () => { fs.writeFileSync(__filename + ".mark", "ran"); });\n' },
+  { phrase: 'a leg that catches inBrowser\'s rejection and passes (a try and catch around the awaited call, .catch(), .then\'s second argument or Promise\'s allSettled)', name: 'catches-rejection',
+    marked: 'the stand-in for inBrowser rejected under the switch and the catch took the rejection', markBegins: true,
+    leg: (phrase) => standIn(phrase) + 'test("opens a page through the shared launch", async (t) => { try { await inBrowser(t, async () => {}); } catch (e) { fs.writeFileSync(__filename + ".mark", String(e.message)); } });\n' },
+];
+/** The words every home of the roster rule carries, each sentence whole: the rule, who checks it, that nothing reads a leg's
+ *  source for it, the examples' lead-in and each example's phrase (from EXAMPLES), the sentence on a leg built to pass without
+ *  a browser, the witness and that nothing checks that every browser leg in the tree is rostered. */
+const RULE_LEAD = 'Examples, not the whole set:';
+const RULE_BUILT = 'A leg built to pass without a browser is outside what the step can detect.';
 const RULE_WORDS = [
-  'the roster rule is checked by the pr\'s reviewer',
-  'a rostered leg that launches its own browser and swallows a failed launch without skipping',
-  'a rostered module that launches nothing',
-  'a leg that drives a browser from a child process and tolerates the child\'s failure',
-  'a todo test that passes beside a real pass',
-  'nothing checks that every browser leg in the tree is rostered, and main has no such check',
-  'tools/ci-browser-legs.test.mjs runs a synthetic leg of each case and reads it green',
+  'The roster rule: under the switch, a rostered leg passes only when inBrowser has launched Chromium, and the leg does nothing that lets it pass otherwise (for example: it launches no browser of its own; nothing catches or settles inBrowser\'s rejection, so the rejection fails its test; it does not change ROMP_BROWSER_LEGS_REQUIRE, and hands inBrowser no test context but the one node gave it; it does not end its own process, from a test, a hook or a timer; no condition the runner can leave unmet stands between a browser test and its inBrowser call; it skips and marks todo nothing).',
+  'The reviewer of any PR that adds a roster line or changes a rostered leg\'s source or inBrowser checks the rule; the step does not.',
+  'Nothing in the tree reads a leg\'s source for the rule, so the step can read green a rostered leg that breaks it.',
+  RULE_LEAD,
+  ...EXAMPLES.map((e) => e.phrase),
+  RULE_BUILT,
+  'tools/ci-browser-legs.test.mjs runs a synthetic leg of each example and reads it green.',
+  'Nothing checks that every browser leg in the tree is rostered, and main has no such check.',
 ];
 
-test('each home of the roster rule (the roster header, the step\'s comment, the script\'s header and CONTRIBUTING.md) states the rule as the PR reviewer\'s, names the four cases the step reads green, and says that nothing checks that every browser leg in the tree is rostered', () => {
+test('each home of the roster rule, read in its named section (the roster\'s # lines, the Browser legs step\'s own comments in ci.yml, the script\'s header, CONTRIBUTING.md whole), states it in the same words: the rule, who checks it, that nothing reads a leg\'s source for it, its examples as examples (the list after "examples, not the whole set:" is exactly the phrases of EXAMPLES, the witness table), the sentence on a leg built to pass without a browser, the witness, and that nothing checks that every browser leg in the tree is rostered', () => {
   const flat = (text) => text.split('\n').map((l) => l.replace(/^\s*(?:#|\/\/)\s?/, '').trim()).join(' ').replace(/`/g, '').replace(/\s+/g, ' ').toLowerCase();
-  for (const f of RULE_HOMES) {
-    const text = flat(read(f));
-    const missing = RULE_WORDS.filter((w) => !text.includes(w));
-    assert.deepEqual(missing, [], path.relative(REPO, f) + ' is a home of the roster rule and does not say ' + JSON.stringify(missing) + ': each home states the rule as the PR reviewer\'s, names the four cases the step reads green (nothing in the tree reads a leg\'s source for the rule) and says that nothing checks that every browser leg in the tree is rostered, so a reader of any one of them does not take the rule for a machine check. A text pin: it holds that each home says these words, whatever the wrap; that the four cases read green is executed by the test "the four cases the roster rule\'s homes name read green, executed" below, not by this one');
+  const lead = flat(RULE_LEAD), built = flat(RULE_BUILT), phrases = EXAMPLES.map((e) => flat(e.phrase));
+  for (const home of RULE_HOMES) {
+    const name = path.relative(REPO, home.file) + ', read in ' + home.section + ',';
+    const text = flat(home.read(read(home.file)));
+    const missing = RULE_WORDS.filter((w) => !text.includes(flat(w)));
+    assert.deepEqual(missing, [], name + ' is a home of the roster rule and does not say ' + JSON.stringify(missing) + ': each home states the rule in the same words, who checks it, its examples as examples, the sentence on a leg built to pass without a browser, the witness and that nothing checks that every browser leg in the tree is rostered, so a reader of any one of them does not take the rule for a machine check. A text pin: it holds that each home says these words in its section, whatever the wrap; that each example reads green is executed by the test "each example the roster rule\'s homes name reads green, executed" below, not by this one');
+    const at = text.indexOf(lead) + lead.length;
+    const listed = text.slice(at, text.indexOf(built, at)).trim().replace(/\.$/, '').split(';').map((e) => e.trim());
+    assert.deepEqual(listed, phrases, name + ' lists after ' + JSON.stringify(RULE_LEAD) + ' ' + JSON.stringify(listed) + ', and the list holds exactly the phrases of EXAMPLES, the witness table, each with its synthetic leg: an example named with no witness, or a witness removed while its example is still named, is red here (add the example and its leg to EXAMPLES, or take the example out of every home)');
   }
 });
 
@@ -325,9 +377,7 @@ test('the script exists, is executable, runs node --test over the roster array (
   // header says what the record proves and no more, so a reader does not take the property for a launch record; the derivation
   // itself is executed in the post-run test below over records with no pass, and the boundary's other home, the parenthetical
   // in the unrun red, is read from the script's stderr there.
-  const headLines = src.split('\n').slice(1);
-  const headEnd = headLines.findIndex((l) => !l.startsWith('#'));
-  const scriptHeader = headLines.slice(0, headEnd < 0 ? headLines.length : headEnd).map((l) => l.replace(/^# ?/, '')).join(' ');
+  const scriptHeader = scriptHeaderLines(src).map((l) => l.replace(/^# ?/, '')).join(' ');
   assert.ok(scriptHeader.includes('derives, per rostered leg, that A TEST OF ITS BUNDLE PASSED') && scriptHeader.includes('That is the whole of what the record can prove: node\'s events carry no launch'), 'the script header states the post-run property as A TEST OF ITS BUNDLE PASSED and its boundary, "That is the whole of what the record can prove: node\'s events carry no launch" (a text pin on the header\'s prose: it guards that the header states what the record proves and its boundary, so the property is not read as a launch record; the derivation is executed below. Holds the sentence: a reword of the header\'s two phrases moves this pin too)');
 });
 
@@ -463,8 +513,9 @@ test('after node --test the script derives per rostered leg that at least one at
   assert.deepEqual(none.node, ['--test', A], 'the leg ran (the empty run is read from the record, not refused before it)');
   assert.ok(none.err.includes(UNRUN + '0 skipped, 0 todo, 0 suite and 1 file-level results for it), so the step claims coverage it did not run') && none.err.includes('so take its line out of ' + ROSTER + ' until one runs'), 'a file that registered nothing is red as unrun with what the record held (1 file-level result) and the remedy that takes the line out of the roster:\n' + none.err);
   // the unrun red carries the boundary of what the record proves beside its remedy (read from the run's stderr): a pass is the
-  // most the record proves, and the browser part's own run is read only by the skip and lost-browser lines when its launch is reached
-  assert.ok(none.err.includes('a rostered leg holds a test that runs and passes here (a pass is the most the record proves: a pass from a test needing no browser satisfies this check, and the browser part\'s own run is read only by the skip and lost-browser lines when its launch is reached)'), 'the unrun red says, beside its remedy, that a pass is the most the record proves, so a reader of the red does not take the property for a launch record (holds the sentence as the script emits it: a reword of the parenthetical in the script moves this pin too):\n' + none.err);
+  // most the record proves, and, for a leg that follows the roster rule, the browser part's own run is read only by the skip
+  // and lost-browser lines when its launch is reached
+  assert.ok(none.err.includes('a rostered leg holds a test that runs and passes here (a pass is the most the record proves: a pass from a test needing no browser satisfies this check, and, for a leg that follows the roster rule, the browser part\'s own run is read only by the skip and lost-browser lines when its launch is reached)'), 'the unrun red says, beside its remedy, that a pass is the most the record proves, so a reader of the red does not take the property for a launch record (holds the sentence as the script emits it: a reword of the parenthetical in the script moves this pin too):\n' + none.err);
   const suite = run(A + '\n', { report: rec(A, 'pass', 'suite', '-', 'test', 'a suite that registers none', '', '-') });
   assert.equal(suite.status, 1, 'a describe() that registers no test is red; stderr: ' + suite.err);
   assert.ok(suite.err.includes(UNRUN + '0 skipped, 0 todo, 1 suite and 0 file-level results for it)'), 'a describe() that registers none is red as unrun with what the record held (1 suite result):\n' + suite.err);
@@ -588,25 +639,39 @@ test('the composition, executed: the script with the real node and the real repo
   assert.equal(clean.err, '', 'nothing on stderr');
 });
 
-test('the four cases the roster rule\'s homes name read green, executed: the script with the real node and the real reporter over one synthetic rostered leg of each (an own launch whose failure is swallowed, a module that launches nothing, a child process whose failure is tolerated, a todo that passes beside a real pass) exits 0 with nothing on stderr', (t) => {
-  // witnesses of what the step cannot see, named at each home of the roster rule: a mechanism that closes one of the four turns
-  // this red, and the homes' sentence moves with it. Each leg that stands for a failure writes a mark beside its bundle when the
-  // failure happens, so the green below is read over a run in which the launch threw, the child failed and the todo ran
+test('each example the roster rule\'s homes name reads green, executed: the script with the real node and the real reporter over one synthetic rostered leg of each example in EXAMPLES exits 0 with nothing on stderr, each failure marked as it happens; a control that awaits the catch example\'s stand-in for inBrowser with no try reads red with the lost-browser remedy, so that green is the catch\'s doing', (t) => {
+  // witnesses of what the step cannot see, the examples each home of the roster rule names: a mechanism that closes one of
+  // them turns this red, and the homes' list and EXAMPLES move with it. Each leg that stands for a failure writes a mark beside
+  // its bundle when the failure happens, so the green below is read over a run in which each of those failures happened
   const { run, root, ext } = syntheticTree(t);
+  const phrase = scriptPhrase();
   const head = 'const { test } = require("node:test"); const fs = require("node:fs"); const { spawnSync } = require("node:child_process");\n';
   const w = (name, body) => { fs.writeFileSync(path.join(root, 'vscode-extension', 'out-tests', 'ui', 'webview', name + '-browser.test.js'), head + body); fs.writeFileSync(path.join(root, 'ui', 'webview', name + '-browser.test.ts'), '// the synthetic source of a witness leg: its presence is what the script reads\n'); return 'out-tests/ui/webview/' + name + '-browser.test.js'; };
-  const W = {
-    ownLaunch: w('own-launch', 'test("opens a page", async () => { let browser = null; try { browser = await (async () => { throw new Error("browserType.launch: a synthetic launch that fails"); })(); } catch (e) { fs.writeFileSync(__filename + ".mark", String(e.message)); } if (!browser) return; });\n'),
-    launchesNothing: w('launches-nothing', 'test("a source pin", () => { if ("a".length !== 1) throw new Error("unreachable"); });\n'),
-    childTolerated: w('child-tolerated', 'test("drives a page from a child", () => { const r = spawnSync(process.execPath, ["-e", "process.exit(3)"]); if (r.status !== 0) fs.writeFileSync(__filename + ".mark", String(r.status)); });\n'),
-    todoBeside: w('todo-beside', 'test("a real pass", () => {});\ntest("the browser part", { todo: "a synthetic todo" }, () => { fs.writeFileSync(__filename + ".mark", "ran"); });\n'),
-  };
-  const r = run(Object.values(W).join('\n') + '\n', { real: true });
-  assert.equal(r.status, 0, 'the four cases read green (exit 0): a change that makes the step see one of them turns this red, and the four homes of the roster rule drop that case in the same change; stderr:\n' + r.err);
-  assert.equal(r.err, '', 'nothing on stderr for the four cases (no red and no remedy line)');
-  assert.deepEqual(r.node, ['--test', ...Object.values(W)], 'node --test ran the four witness legs');
-  for (const [what, b] of [['the own launch threw', W.ownLaunch], ['the child exited 3', W.childTolerated], ['the todo body ran', W.todoBeside]]) assert.ok(fs.existsSync(path.join(ext, b + '.mark')), what + ' in this run (the mark beside ' + b + '), so the green above is read over the case, not over a leg that skipped it');
+  const legs = EXAMPLES.map((e) => ({ ...e, bundle: w(e.name, e.leg(phrase)) }));
+  const r = run(legs.map((l) => l.bundle).join('\n') + '\n', { real: true });
+  assert.equal(r.status, 0, 'each example reads green (exit 0): a change that makes the step see one of them turns this red, and the four homes of the roster rule drop that example, and EXAMPLES its entry, in the same change; stderr:\n' + r.err);
+  assert.equal(r.err, '', 'nothing on stderr for the examples (no red and no remedy line)');
+  assert.deepEqual(r.node, ['--test', ...legs.map((l) => l.bundle)], 'node --test ran every witness leg');
+  for (const l of legs.filter((e) => e.marked)) {
+    const mark = path.join(ext, l.bundle + '.mark');
+    assert.ok(fs.existsSync(mark), l.marked + ' in this run (the mark beside ' + l.bundle + '), so the green above is read over the example, not over a leg that skipped it');
+    if (l.markBegins) assert.ok(fs.readFileSync(mark, 'utf8').startsWith(phrase + ': '), 'the mark beside ' + l.bundle + ' begins with the phrase the script reads a lost browser by (' + JSON.stringify(phrase) + '), so the rejection the catch took is the one the lost-browser read names: ' + JSON.stringify(fs.readFileSync(mark, 'utf8')));
+  }
+  // the control: the same stand-in awaited with no try, so its rejection fails the test and reaches node's record, and the step
+  // reads it red with the lost-browser remedy beside the leg: the catch example's green above is the catch's doing
+  const control = w('catch-control', standIn(phrase) + 'test("opens a page through the shared launch", async (t) => { await inBrowser(t, async () => {}); });\n');
+  const c = run(control + '\n', { real: true });
+  assert.equal(c.status, 1, 'the control, the catch example\'s stand-in awaited with no try, is red (exit 1); stderr:\n' + c.err);
+  assert.ok(c.err.includes('ci-browser-legs: ' + control + ': \'opens a page through the shared launch\' failed under ' + SWITCH + '=1 because inBrowser could not launch (' + phrase + ': no playwright browser on this box (a synthetic stand-in)): the runner lost its browser: check the Chromium install step'), 'the control reads red with the lost-browser remedy beside the leg:\n' + c.err);
 });
+
+/** The phrase the script reads a lost browser by: the literal it hands awk (awk -v msg="..."), with $SWITCH spelled out. The
+ *  phrase pin below and the catch example's witness read it here. */
+function scriptPhrase() {
+  const m = /awk -v msg="([^"]+)"/.exec(read(SCRIPT));
+  assert.ok(m, 'the script hands awk the phrase it reads a failure block by (awk -v msg="...")');
+  return m[1].replace(/\$SWITCH\b/g, SWITCH);
+}
 
 /** The executed test of the switch's behaviour, which the phrase pin below names and does not replace. */
 const SWITCH_TEST = path.join(REPO, 'ui', 'webview', 'real-viewer-leg-switch.test.ts');
@@ -614,9 +679,7 @@ const SWITCH_TEST = path.join(REPO, 'ui', 'webview', 'real-viewer-leg-switch.tes
 test('the phrase the script reads a lost browser by is a literal in inBrowser\'s source, the shared phrase between ui/webview/real-viewer-leg.ts and the script, so a reword on either side is red here rather than a remedy dropped in silence; the behaviour is executed by ui/webview/real-viewer-leg-switch.test.ts, which exists and drives inBrowser', () => {
   const script = read(SCRIPT);
   assert.match(script, /^SWITCH=ROMP_BROWSER_LEGS_REQUIRE$/m, 'the script names the switch once, as SWITCH');
-  const m = /awk -v msg="([^"]+)"/.exec(script);
-  assert.ok(m, 'the script hands awk the phrase it reads a failure block by (awk -v msg="...")');
-  const phrase = m[1].replace(/\$SWITCH\b/g, SWITCH);
+  const phrase = scriptPhrase();
   assert.ok(phrase.startsWith(SWITCH + ' is set'), 'the phrase names the switch: ' + phrase);
   const helper = read(path.join(REPO, 'ui', 'webview', 'real-viewer-leg.ts'));
   assert.ok(helper.includes('"' + phrase + ': "'), 'the shared phrase: ui/webview/real-viewer-leg.ts holds the literal ' + JSON.stringify(phrase + ': ') + ' that vscode-extension/scripts/ci-browser-legs.sh hands awk (awk -v msg=), so a reword in one file is red here and the lost-browser remedy is never dropped in silence. This reads source text and guards the phrase alone, not the behaviour: that inBrowser FAILS with it under ' + SWITCH + ' and skips without is executed by ' + path.relative(REPO, SWITCH_TEST) + ' (a child node --test with PLAYWRIGHT_BROWSERS_PATH emptied), which the vscode-extension job runs; a green here with that test red is a helper that carries the words and not the behaviour');

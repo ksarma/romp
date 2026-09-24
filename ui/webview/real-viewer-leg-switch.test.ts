@@ -1,6 +1,7 @@
-// The shared launcher's switch, executed: inBrowser in ./real-viewer-leg reads ROMP_BROWSER_LEGS_REQUIRE, and under it a leg
-// that cannot launch FAILS naming the switch and the reason, where without it the leg skips naming the reason (CI's
-// browser-legs step sets the switch after the job's Chromium install; the Test step, before any install, does not). The
+// The shared launcher's switch, executed: inBrowser in ./real-viewer-leg reads ROMP_BROWSER_LEGS_REQUIRE, and under the
+// switch, inBrowser FAILS a launch it cannot make, naming the switch and the reason, instead of skipping, where without it
+// the leg skips naming the reason (CI's browser-legs step sets the switch after the job's Chromium install; the Test step,
+// before any install, does not). The
 // test below began as fork PR 860's test of this behaviour, copied with its mechanism unchanged (two lines differed: the
 // comment's name for the leg it drives, and the --test-name-pattern that picks it); this branch adds a third arm, the switch
 // set to a non-"1" non-empty value ("yes"), which executes the arming rule every header states (any non-empty value arms

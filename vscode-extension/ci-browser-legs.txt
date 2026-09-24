@@ -1,10 +1,10 @@
 # The browser legs the gating CI job runs with a browser. The step "Browser legs (node --test over
 # ci-browser-legs.txt)" in .github/workflows/ci.yml reads this file into node --test (scripts/ci-browser-legs.sh)
 # after the job's Chromium install, with ROMP_BROWSER_LEGS_REQUIRE=1: the one shared launcher, inBrowser in
-# ui/webview/real-viewer-leg.ts, reads the switch (any non-empty value arms it) and under it a leg that cannot launch
-# fails naming the switch and the reason instead of skipping. The Test step's npm test runs every leg too, before
-# any browser is installed, so each leg skips there at launch; this step is the job's only run of a rostered leg
-# with a browser.
+# ui/webview/real-viewer-leg.ts, reads the switch (any non-empty value arms it), and under the switch, inBrowser fails
+# a launch it cannot make, naming the switch and the reason, instead of skipping. The Test step's npm test runs every
+# leg too, before any browser is installed, so each leg skips there at launch; this step is the job's only run of a
+# rostered leg with a browser.
 #
 # Format: one compiled bundle path per line, relative to vscode-extension/, as the Test step's npm test builds it
 # (ui/webview/<name>-browser.test.ts builds to out-tests/ui/webview/<name>-browser.test.js), for example
@@ -14,18 +14,24 @@
 # moved or was deleted, and a line whose bundle is not built; tools/ci-browser-legs.test.mjs (the Shell job) holds
 # the same shape.
 #
-# The roster rule is checked by the PR's reviewer, not by the step: a leg listed here launches its browser through
-# inBrowser alone (an alias is a call), with no playwright load, launch, skip or todo of its own, in Chromium, the one
-# engine the job installs. Only inBrowser reads the switch, so a launch or a skip of the leg's own stands outside it:
-# a private skip stays a skip, and a private launch that fails is never the failure naming the switch. Nothing in the
-# tree reads a leg's source for the rule, so the step reads these four cases green: a rostered leg that launches its
-# own browser and swallows a failed launch without skipping; a rostered module that launches nothing; a leg that
-# drives a browser from a child process and tolerates the child's failure; a todo test that passes beside a real pass.
-# tools/ci-browser-legs.test.mjs runs a synthetic leg of each case and reads it green.
-# Nothing checks that every browser leg in the tree is rostered, and main has no such check. After the run, a skipped
-# test, a failure inside a todo, a file that failed as a whole, or a leg that ran no passing test is red: each is
-# coverage the step would claim and not have. A leg's Firefox and WebKit runs live elsewhere (a served pytest step,
-# a local run).
+# The roster rule: under the switch, a rostered leg passes only when inBrowser has launched Chromium, and the leg does
+# nothing that lets it pass otherwise (for example: it launches no browser of its own; nothing catches or settles
+# inBrowser's rejection, so the rejection fails its test; it does not change ROMP_BROWSER_LEGS_REQUIRE, and hands
+# inBrowser no test context but the one node gave it; it does not end its own process, from a test, a hook or a timer;
+# no condition the runner can leave unmet stands between a browser test and its inBrowser call; it skips and marks
+# todo nothing). The reviewer of any PR that adds a roster line or changes a rostered leg's source or inBrowser checks
+# the rule; the step does not. Nothing in the tree reads a leg's source for the rule, so the step can read green a
+# rostered leg that breaks it. Examples, not the whole set: a rostered leg that launches its own browser and swallows
+# a failed launch without skipping; a rostered module that launches nothing; a leg that drives a browser from a child
+# process and tolerates the child's failure; a todo test that passes beside a real pass; a leg that catches
+# inBrowser's rejection and passes (a try and catch around the awaited call, .catch(), .then's second argument or
+# Promise's allSettled). A leg built to pass without a browser is outside what the step can detect.
+# tools/ci-browser-legs.test.mjs runs a synthetic leg of each example and reads it green. Nothing checks that every
+# browser leg in the tree is rostered, and main has no such check. Only inBrowser reads the switch, so a launch or a
+# skip of the leg's own stands outside it: a private skip stays a skip, and a private launch that fails is never the
+# failure naming the switch. Chromium is the one engine the job installs; a leg's Firefox and WebKit runs live
+# elsewhere (a served pytest step, a local run). After the run, a skipped test, a failure inside a todo, a file that
+# failed as a whole, or a leg that ran no passing test is red: each is coverage the step would claim and not have.
 #
 # The switch test below spawns three child node --test runs of its own first test (the switch set to "1", to another
 # non-empty value, and unset) with PLAYWRIGHT_BROWSERS_PATH pointed at an empty directory, and asserts that the two

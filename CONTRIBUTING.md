@@ -48,29 +48,39 @@ module that launches a Playwright browser; `tests/ui-bench.test.mjs` under `ROMP
 served pytest files under `ROMP_SERVED_TESTS_REQUIRE` carry their own switch) skips at launch there. The
 legs named in `vscode-extension/ci-browser-legs.txt`, one compiled bundle path per line, run again after
 the job's Chromium install with `ROMP_BROWSER_LEGS_REQUIRE=1`. The one shared launcher, `inBrowser` in
-`ui/webview/real-viewer-leg.ts`, reads the switch (any non-empty value arms it): under it a leg that
-cannot launch fails naming the switch and the reason instead of skipping. A PR that wants its legs run
-adds their bundle paths to the roster and puts the step's measured seconds in its body.
+`ui/webview/real-viewer-leg.ts`, reads the switch (any non-empty value arms it), and under the switch,
+`inBrowser` fails a launch it cannot make, naming the switch and the reason, instead of skipping. A PR
+that wants its legs run adds their bundle paths to the roster and puts the step's measured seconds in its
+body.
 
-The roster rule is checked by the PR's reviewer, not by CI: a rostered leg launches through `inBrowser`
-alone, with no playwright load, launch, skip or todo of its own, in Chromium, the one engine the job
-installs (a leg's Firefox and WebKit runs live elsewhere, a served pytest step or a local run). Only
-`inBrowser` reads the switch, so a leg's own skip stays a skip and its own failed launch is never the
-failure naming the switch. Nothing in the tree reads a leg's source for the rule, so the step reads these
-four cases green: a rostered leg that launches its own browser and swallows a failed launch without
-skipping; a rostered module that launches nothing; a leg that drives a browser from a child process and
-tolerates the child's failure; a todo test that passes beside a real pass
-(`tools/ci-browser-legs.test.mjs` runs a synthetic leg of each case and reads it green). Nothing checks
-that every browser leg in the tree is rostered, and main has no such check: a leg with no line runs only
-under the Test step, before the job installs a browser.
+The roster rule: under the switch, a rostered leg passes only when `inBrowser` has launched Chromium, and
+the leg does nothing that lets it pass otherwise (for example: it launches no browser of its own; nothing
+catches or settles `inBrowser`'s rejection, so the rejection fails its test; it does not change
+`ROMP_BROWSER_LEGS_REQUIRE`, and hands `inBrowser` no test context but the one node gave it; it does not
+end its own process, from a test, a hook or a timer; no condition the runner can leave unmet stands
+between a browser test and its `inBrowser` call; it skips and marks todo nothing). The reviewer of any PR
+that adds a roster line or changes a rostered leg's source or `inBrowser` checks the rule; the step does
+not. Nothing in the tree reads a leg's source for the rule, so the step can read green a rostered leg that
+breaks it. Examples, not the whole set: a rostered leg that launches its own browser and swallows a failed
+launch without skipping; a rostered module that launches nothing; a leg that drives a browser from a child
+process and tolerates the child's failure; a todo test that passes beside a real pass; a leg that catches
+`inBrowser`'s rejection and passes (a try and catch around the awaited call, `.catch()`, .then's second
+argument or Promise's allSettled). A leg built to pass without a browser is outside what the step can
+detect. `tools/ci-browser-legs.test.mjs` runs a synthetic leg of each example and reads it green. Nothing
+checks that every browser leg in the tree is rostered, and main has no such check. A leg with no line runs
+only under the Test step, before the job installs a browser. Only `inBrowser` reads the switch, so a leg's
+own skip stays a skip and its own failed launch is never the failure naming the switch. Chromium is the one
+engine the job installs (a leg's Firefox and WebKit runs live elsewhere, a served pytest step or a local
+run).
 
 The step's script, `vscode-extension/scripts/ci-browser-legs.sh`, refuses before `node --test` a roster
 line that is malformed, duplicated or names a source that moved or was deleted, and a rostered bundle
 that is not built. After `node --test` it reads its own reporter's record, and a rostered leg with no
 passing test, a skipped test, a failure inside a todo, or a file that failed as a whole is red, naming
-the leg or the test; a leg whose launch failed under the switch is named with the remedy to check the
-Chromium install step. Before you push, `node --test tools/ci-browser-legs.test.mjs` from the repo root
-runs the tree checks CI's shell job runs (no `npm ci` needed). From `vscode-extension/`,
+the leg or the test; a leg that follows the roster rule and whose launch failed under the switch is
+named with the remedy to check the Chromium install step. Before you push,
+`node --test tools/ci-browser-legs.test.mjs` from the repo root runs the tree checks CI's shell job runs
+(no `npm ci` needed). From `vscode-extension/`,
 `bash scripts/ci-browser-legs.sh --check` runs the step's pre-run checks except the bundle check,
 without starting a browser, and the step itself is `bash scripts/ci-browser-legs.sh` with
 `ROMP_BROWSER_LEGS_REQUIRE=1`, after `node esbuild.js --tests`.
