@@ -52,11 +52,12 @@ the flat place, and a project-directory entry whose os.stat fails outside _REG_M
 alone, answer None with the fault, memoize nothing, walk again at each lookup and note the place unreadable, and once
 the fault clears the lookup finds the file; a standing resolution beside a faulted candidate is not answered; a file
 found past such a fault is answered as before, and absent candidates, links at a candidate and links as an entry read
-as absence or not a directory, with no fault; and a fault on the lstat of a symlinked subagents/ itself (by mock)
-excludes the own root, so the file behind the link is not taken, and after the fault clears the lookup is a miss,
-memoized, as a symlinked subagents/ always is. Red-first on (1), the jobs-pass half of (6), (9), (10), (11), (14), (15)
-and (16) (its entry pin on 3.14t alone); (12) is red under a mutant per road; (13) is green before its change by design and red
-under the follow-up that has the viewer state the fault.
+as absence or not a directory, with no fault; a candidate faulted in a sibling's tree is excluded as one in the own
+tree is, and the search goes on through a tree's other candidates past a faulted one; and a fault on the lstat of a
+symlinked subagents/ itself (by mock) excludes the own root, so the file behind the link is not taken, and after the
+fault clears the lookup is a miss, memoized, as a symlinked subagents/ always is. Red-first on (1), the jobs-pass half
+of (6), (9), (10), (11), (14), (15) and (16) (its entry pin on 3.14t alone); (12) is red under a mutant per road; (13)
+is green before its change by design and red under the follow-up that has the viewer state the fault.
 Synthetic fixtures only: placeholder ids, invented text, a temp directory."""
 import contextlib
 import errno
@@ -1598,13 +1599,21 @@ class FaultOnTheWalksOwnRead(_Walk):
     3.14t alone; on 3.10 its EIO variant fails there too, but only because 3.10's pathlib stats through the os.stat it
     bound at import and never sees the mock, which is not the defect; elsewhere it is green at both heads, the control
     that the new partition keeps what pathlib did before 3.14. Case (5)'s pin and its control state their own red and
-    green. The controls and boundaries at the end are green at both heads by design, each saying so. The EACCES cases
-    skip as root, whom permission bits do not bind.
+    green. Case (6) drives the candidate's fault at the sibling tree's call of _find_agent_file, as (1) and (2) drive it
+    at the own tree's, through the same assertions, red at the round-3 head's kernel.py (os.path.isfile, the miss
+    memoized). The controls and boundaries at the end are green at both heads by design, each saying so; the two (7)
+    controls find the file in a later directory of the same tree past a faulted candidate. The EACCES cases skip as
+    root, whom permission bits do not bind.
 
     Named mutants, each applied alone to kernel/kernel.py and red on the case named (each run recorded outside the repo
     with its command, interpreter and head):
     - M1, the own subagents directory's type read by os.path.islink(own) again, which answers False on a fault: case
-      (5)'s pin, on the file taken through the link."""
+      (5)'s pin, on the file taken through the link;
+    - M2, a no-op exclude (`lambda w, e: None`) at the sibling tree's call of _find_agent_file: case (6), both
+      variants, on the miss memoized under the fault and served after it cleared (omitting the keyword-only `exclude`
+      there raises TypeError, which the existing sibling cases catch, so a no-op or wrong handler is the mutant);
+    - M3, `return None` in place of the `continue` after a faulted candidate's exclusion in _find_agent_file: both (7)
+      controls, on the file answered None with the fault."""
 
     ERR = {"eacces": "PermissionError", "eio": "OSError"}   # the type name the walk passes to the caller's faults
 
@@ -1808,6 +1817,55 @@ class FaultOnTheWalksOwnRead(_Walk):
         self.assertEqual(excluded[:1], [(own, None)], "the walk's first exclusion is the own root: %r" % (excluded,))
         self._after_the_fault("the mode is restored and the fault")
 
+    # ── (6) a candidate in a sibling's tree ─────────────────────────────────────────────────────────────────────────
+    @contextlib.contextmanager
+    def _sibling_listable_unsearchable(self, hold, cand):
+        """The holder sibling's subagents root `hold` at mode 0o644 inside the block (read without search: a real fault),
+        its three premises asserted against that root: the listing succeeds and names the agent's file, the sibling tree's
+        read reports no fault (its memo entry dropped after, so the lookup reads it), and the candidate's lstat raises
+        PermissionError. The root must hold only files: a child directory (its workflows/) would fault on the tree read's
+        lstat of it and be excluded through the walk's loop over the tree's own faults, another road."""
+        if os.geteuid() == 0:
+            self.skipTest("permission bits do not bind root: no EACCES to drive")
+        os.chmod(hold, 0o644)
+        try:
+            self.assertIn(os.path.basename(cand), os.listdir(hold), "premise: the sibling root's listing succeeds and names the file")
+            below = []
+            km._subagent_tree(hold, faults=below)
+            km._SUBAGENT_TREES.pop(hold, None)
+            self.assertEqual(below, [], "premise: the sibling tree's read reports no fault, so it excludes nothing")
+            with self.assertRaises(PermissionError, msg="premise: the candidate's lstat raises"):
+                os.lstat(cand)
+            yield
+        finally:
+            os.chmod(hold, 0o755)
+
+    def _sibling_candidate(self, how):
+        """AID_FORK's file at the top of the holder sibling's tree, and that candidate faulted: under the EIO by mock on
+        both its stats, or (EACCES) with the sibling's workflows/ removed and its subagents/ at mode 0o644."""
+        hold, holder_file = self._sibling(SID_HOLD, holder=True)
+        cand = str(holder_file)
+        if how == "eacces":
+            shutil.rmtree(os.path.join(hold, "workflows"))
+            _age(str(self.proj / SID_HOLD))
+            fault = self._sibling_listable_unsearchable(hold, cand)
+        else:
+            fault = self._eio_on(cand)
+        self._unmade_then_found(AID_FORK, fault, cand, self.ERR[how], holder_file)
+
+    def test_a_candidate_in_a_siblings_tree_whose_every_stat_raises_eio_is_a_fault_with_nothing_memoized(self):
+        """The candidate-fault exclusion at the sibling tree's call of _find_agent_file (round 4 of #882, tests-1), which
+        cases (1) and (2) drive only at the own tree's call. Red under M2, and at the round-3 head's kernel.py, whose
+        _find_agent_file read the candidate with os.path.isfile: the miss memoized under the fault and served after it
+        cleared. Omitting the keyword-only `exclude` at that call raises TypeError, which the existing sibling cases
+        catch, so the mutant is a no-op or wrong handler there."""
+        self._sibling_candidate("eio")
+
+    def test_a_candidate_in_a_siblings_tree_that_can_be_listed_but_not_searched_is_a_fault_with_nothing_memoized_eacces(self):
+        """The real shape of the case above: the holder sibling's subagents/ at mode 0o644 holding only the file. Red
+        under M2 and at the round-3 head's kernel.py, as above."""
+        self._sibling_candidate("eacces")
+
     # ── controls and boundaries, green at both heads by design ──────────────────────────────────────────────────────
     def _found_past(self, fault):
         _hold, holder_file = self._sibling(SID_HOLD, holder=True)
@@ -1836,6 +1894,49 @@ class FaultOnTheWalksOwnRead(_Walk):
                 km._SUBAGENT_FILE_CACHE.pop(self.fork_key, None)
                 shutil.rmtree(str(self.proj / SID_HOLD), ignore_errors=True)
                 self._found_past(self._eio_on(cand))
+
+    def _found_past_in_the_same_tree(self, fault):
+        """AID_WF's lookup under `fault`, its file left in the own workflow directory, a later directory of the own tree
+        than the faulted candidate: found, memoized, no fault passed on and nothing noted unreadable."""
+        target = self.wf / ("agent-%s.jsonl" % AID_WF)
+        with fault:
+            got, faults, notes = self._looked_up(AID_WF)
+        memo = km._SUBAGENT_FILE_CACHE.get(self.wf_key)
+        rel = lambda p: p and os.path.relpath(str(p), self.td)
+        seen = (rel(got), faults, memo and ("a memo entry answering", rel(memo[1])), [p for p, k in notes if k == km._TREE_UNREADABLE])
+        self.assertEqual(seen, (rel(target), [], ("a memo entry answering", rel(target)), []),
+                         "(the answer, faults, the memo entry, the places noted unreadable) = %r; keyed on the file found, no fault, "
+                         "the file memoized and nothing noted: the search goes on through the tree's other candidates past a faulted "
+                         "one (a search that stops at the faulted candidate answers None with the fault)" % (seen,))
+
+    def test_control_found_in_a_later_directory_of_the_same_tree_past_the_flat_place_whose_every_stat_raises_eio(self):
+        """(7) The search goes on through the same tree's other candidates after a faulted one (round 4 of #882,
+        tests-2): case (4)'s fixture without the move, the EIO by mock on both stats of the flat place
+        subagents/agent-<AID_WF>.jsonl and the file left in the own workflow directory. The own root is the first of the
+        tree's directories, so the faulted candidate comes first with no ordering premise. Green at the round-3 head's
+        kernel.py (os.path.isfile swallowed the fault and the loop went on) and here by design; red under M3."""
+        self._found_past_in_the_same_tree(self._eio_on(str(self.subdir / ("agent-%s.jsonl" % AID_WF))))
+
+    def test_control_found_in_a_later_directory_of_the_same_tree_past_a_workflow_directory_that_cannot_be_searched_eacces(self):
+        """(7), the real shape: a workflow directory at mode 0o644 holding only files, sorted before the one holding the
+        file, its ordering premise asserted (the faulted directory before the holder in _subagent_tree's directories).
+        Green at the round-3 head's kernel.py and here by design; red under M3."""
+        early = self.subdir / "workflows" / "wf_0000000000000001"
+        early.mkdir()
+        (early / "agent-a4444444444444444.jsonl").write_text("")          # another agent's file: the directory holds only files
+        _age(str(self.subdir))
+        cand = str(early / ("agent-%s.jsonl" % AID_WF))
+
+        @contextlib.contextmanager
+        def fault():
+            with self._listable_unsearchable(str(early), cand, False):
+                dirs, _stats = km._subagent_tree(str(self.subdir))
+                km._SUBAGENT_TREES.pop(str(self.subdir), None)
+                self.assertLess(list(dirs).index(str(early)), list(dirs).index(str(self.wf)),
+                                "premise: the faulted directory comes before the holder in the tree's directories: %r"
+                                % ([os.path.relpath(d, self.td) for d in dirs],))
+                yield
+        self._found_past_in_the_same_tree(fault())
 
     def _plain_miss(self, what):
         got, faults, notes = self._looked_up(AID_FORK)
