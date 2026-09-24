@@ -5682,6 +5682,8 @@ class Docs(unittest.TestCase):
                       "the first two reached from the look's wake legs and from the wake sweep", "from the look's dormant-owner branch",
                       "only with the toggle on", "`_relay_store`",
                       "at most one per queued sid per pass, none while that sid's quiet key stands unchanged and no hold of its has ended",
+                      "`_relay_ended_since`",
+                      "one per pending relay of a standing wait whose far-host status came back bounced or withdrawn",
                       "`_awaiting_wake_outcomes`", "runs after the walk in the same pass, not on it"):
             self.assertIn(words, jobs, "the jobs paragraph states condition 7 per mechanism, scoped to the two loaders it bounds, names "
                                        "the store's other readers on the pass as a class with its members, their bounds and each writer's "

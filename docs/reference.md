@@ -2749,13 +2749,20 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   with the toggle on), the relay's read of each store it has queued entries for
   (`_relay_store`, reached through `_relay_tick`, a `load_goals` under
   `goals.loads`, called outside the toggle guard after the walk in the same
-  pass: at most one per queued sid per pass, none while that sid's quiet key
-  stands unchanged and no hold of its has ended (a quiet key is held only after
-  a pass over that sid left nothing to do until the key moves or a hold ends,
-  and is the store file, the postal log and the queue entries by mtime and
-  size, and whether the sid is alive); a dead worker's queued sid is read too,
-  since `_relay_store` loads before `_relay_entry`'s alive check) and the wake
-  sweep after the per-session loop (`_awaiting_wake_outcomes`, called outside
+  pass: `_relay_store`'s own read is at most one per queued sid per pass, none
+  while that sid's quiet key stands unchanged and no hold of its has ended (a
+  quiet key is held only after a pass over that sid left nothing to do until
+  the key moves or a hold ends, and is the store file, the postal log and the
+  queue entries by mtime and size, and whether the sid is alive); a dead
+  worker's queued sid is read too, since `_relay_store` loads before
+  `_relay_entry`'s alive check), the relay's fresh re-read of a pending
+  relay's node on disk (`_relay_ended_since`, reached from `_relay_entry`
+  inside `_relay_store`, a `load_goals` under `goals.loads`, one per pending
+  relay of a standing wait whose far-host status came back bounced or
+  withdrawn, none while that sid's quiet key stands unchanged and no hold of
+  its has ended), so on a pass the relay reads a queued sid's store at most
+  1 + N times, N the pending relays of standing waits whose status came back
+  bounced or withdrawn, and the wake sweep after the per-session loop (`_awaiting_wake_outcomes`, called outside
   the toggle guard, one shared load per wake record it owns that
   `memos.nudgeWalk.loads` does not count), which runs after the walk in the
   same pass, not on it.
