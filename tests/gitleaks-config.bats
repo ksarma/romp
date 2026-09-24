@@ -26,7 +26,7 @@ setup() {
     if [ -z "$GL" ] || [ ! -x "$GL" ]; then
         # ROMP_GITLEAKS_REQUIRE=1 makes the absence a failure naming the reason, not a skip:
         # CI's Linux Shell job installs the pinned gitleaks in the step before it runs bats
-        # and sets the switch, so a skip there would report a broken install as ten green
+        # and sets the switch, so a skip there would report a broken install as fourteen green
         # skips (the stance ROMP_SERVED_TESTS_REQUIRE takes in tests/conftest.py). Without
         # the switch the file skips, and a clone that never wanted the scanner stays green.
         # The reason names the property the test above keyed on: [ ! -x ] is true for a path
@@ -66,7 +66,7 @@ probe_token() { printf 'gh%s_%s%s' p "$(printf '0123456789%.0s' 1 2 3)" abcdef; 
 }
 
 @test "every commit in this branch's history is clean" {
-    # Each merge by its first-parent diff, as the hook and CI scan it.
+    # Each merge by its first-parent diff, as CI scans it.
     run "$GL" git "$ROMP_DIR" --no-banner --redact --exit-code 2 --config "$CFG" \
         --log-opts="HEAD --diff-merges=first-parent"
     [ "$status" -eq 0 ]
@@ -81,7 +81,7 @@ probe_token() { printf 'gh%s_%s%s' p "$(printf '0123456789%.0s' 1 2 3)" abcdef; 
 @test "a secret introduced only in a merge commit is caught by the history scan" {
     # `gitleaks git` runs `git log -p`, which shows NO diff for a merge commit by default, so a
     # credential added during a conflict resolution (present in neither parent, only the merge
-    # tree) is scanned by nothing. The hook and CI pass --diff-merges=first-parent to close that;
+    # tree) is scanned by nothing. CI passes --diff-merges=first-parent to close that;
     # this proves the flag actually surfaces the secret, against the real scanner.
     R="$TEST_DIR/repo"; mkdir -p "$R"
     git -C "$R" init -q
@@ -101,7 +101,7 @@ probe_token() { printf 'gh%s_%s%s' p "$(printf '0123456789%.0s' 1 2 3)" abcdef; 
     run "$GL" git "$R" --no-banner --redact --exit-code 2 --config "$CFG" --log-opts=--all
     [ "$status" -ne 1 ]
     [ "$status" -eq 0 ] || skip "this gitleaks reads merge diffs by default; the flag is redundant here"
-    # With the flag the hook and CI pass, the first-parent diff surfaces it and the scan refuses.
+    # With the flag CI passes, the first-parent diff surfaces it and the scan refuses.
     run "$GL" git "$R" --no-banner --redact --exit-code 2 --config "$CFG" \
         --log-opts="--all --diff-merges=first-parent"
     [ "$status" -eq 2 ]
@@ -203,19 +203,21 @@ hook_repo() {
     hook_repo
     printf 'token = "%s"\n' "$(probe_token)" > "$WORK/probe.py"
     git -C "$WORK" add -A && git -C "$WORK" commit -qm probe
+    sha="$(git -C "$WORK" rev-parse HEAD)"
     run git -C "$WORK" push origin HEAD:main
     [ "$status" -ne 0 ]
     [[ "$output" == *"gitleaks found a credential"* ]]
-    [[ "$output" == *"probe.py"* ]]              # -v: the file to fix
-    [[ "$output" == *"github-pat"* ]]            # and the rule that matched
+    # The file to fix and the rule that matched, on the hook's own line: gitleaks scans numbered
+    # pieces, so -v's File names a piece, and the hook names the commit and file from its index.
+    [[ "$output" == *"romp pre-push: commit ${sha:0:10} ADDS a credential (github-pat) in: probe.py"* ]]
     [[ "$output" != *"$(probe_token)"* ]]        # --redact: the value stays out of the terminal
     [ "$(git -C "$TEST_DIR/remote.git" rev-parse main)" != "$(git -C "$WORK" rev-parse HEAD)" ]
 }
 
 @test "through the hook: a force-push over a remote tip this clone never fetched is refused" {
     # Another clone moves the branch; this one force-pushes a secret without
-    # fetching. gitleaks handed a range with a sha it cannot resolve scans no
-    # commits and exits 0, so the hook has to fall back to a range it can.
+    # fetching. The hook's listing of a range with a sha this clone cannot
+    # resolve fails, so the hook has to fall back to a range it can.
     hook_repo
     git clone -q -b main "$TEST_DIR/remote.git" "$TEST_DIR/other"
     echo other > "$TEST_DIR/other/other.txt"
@@ -227,4 +229,135 @@ hook_repo() {
     [ "$status" -ne 0 ]
     [[ "$output" == *"gitleaks found a credential"* ]]
     [ "$(git -C "$TEST_DIR/remote.git" rev-parse main)" = "$(git -C "$TEST_DIR/other" rev-parse HEAD)" ]
+}
+
+# ── round 9d: the scanner in the hook's directory mode ─────────────────────
+# Since round 9 the hook reads the lines a push adds itself, writes them into numbered files
+# (pieces) of at most 98,304 bytes, each beginning with a line holding ~, and runs `gitleaks dir .`
+# from inside their directory, so gitleaks runs no git. Each case below pins one premise of that
+# design against the installed scanner; tests/pre-push-hook.bats drives the hook itself.
+
+scan_pieces() {   # <piece directory> [gitleaks options...]: scanned from inside it, as the hook runs it
+    local d=$1
+    shift
+    (cd "$d" && "$GL" dir . --no-banner --no-color --redact --exit-code 2 "$@")
+}
+
+# n distinct github-pat shaped lines from a fixed seed, assembled at run time like every probe here.
+dense_tokens() {
+    awk -v n="$1" 'BEGIN { srand(7); a = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+        for (i = 0; i < n; i++) { s = ""; for (j = 0; j < 36; j++) s = s substr(a, int(rand() * 62) + 1, 1); print "gh" "p_" s } }'
+}
+
+# The five default rules that key on a file's path (the same five in gitleaks 8.28.0 and 8.30.1),
+# each with the file name it needs and a probe it reports.
+PATH_RULES="pkcs12-file nuget-config-password kubernetes-secret-yaml hashicorp-tf-password freemius-secret-key"
+
+path_rule_name() {
+    case $1 in
+        pkcs12-file) echo cert.p12 ;;
+        nuget-config-password) echo nuget.config ;;
+        kubernetes-secret-yaml) echo secret.yaml ;;
+        hashicorp-tf-password) echo main.tf ;;
+        freemius-secret-key) echo fs.php ;;
+    esac
+}
+
+path_rule_probe() {
+    case $1 in
+        pkcs12-file) printf 'not a keystore: this rule reads the name alone\n' ;;
+        nuget-config-password)
+            printf '<configuration>\n  <packageSourceCredentials>\n    <feed>\n      <add key="Username" value="builder" />\n      <add key="Clear%sPassword" value="%s" />\n    </feed>\n  </packageSourceCredentials>\n</configuration>\n' \
+                Text "Qz7$(printf 'w%.0s' 1 2)Kp9Lm2Xv" ;;
+        kubernetes-secret-yaml)
+            printf 'apiVersion: v1\nkind: %s\nmetadata:\n  name: probe\ndata:\n  password: %s%s\n' Secret "cHJvYmVw" "YXNzd29yZDEy" ;;
+        hashicorp-tf-password) printf 'resource "x" "y" {\n  pass%s = "%s%s"\n}\n' word "Zq8wKp" "2Lm9Xv" ;;
+        freemius-secret-key) printf "<?php\n\$fs = array(\n  'secret_%s' => 'sk_%s%s',\n);\n" key "Qz7wKp9Lm2Xv" "Rb4Nc8Wd1Yt6Hs3Jf" ;;
+    esac
+}
+
+@test "round 9d, G1: the value excuse holds in directory mode over a piece named by number, as the hook scans it" {
+    # A piece carries no real path, so .gitleaks.toml's excuse has only the value to key on, and it
+    # must hold there: RFC 6455's nonce behind the ~ line gives no finding under the config and one
+    # under the default rules (so the config is what excuses it), and a secret that contains the
+    # nonce gives one finding under the config.
+    mkdir "$TEST_DIR/p"
+    printf '~\nheaders = {"Sec-WebSocket-Key": "dGhlIHNhbXBsZSBub25jZQ=="}\n' > "$TEST_DIR/p/1"
+    run scan_pieces "$TEST_DIR/p" --config "$CFG"
+    [ "$status" -eq 0 ] || { echo "the nonce was not excused in directory mode (exit $status):"; echo "$output"; false; }
+    unset GITLEAKS_CONFIG GITLEAKS_CONFIG_TOML   # no --config below: the default rules, whatever the environment names
+    run scan_pieces "$TEST_DIR/p"
+    [ "$status" -eq 2 ] || { echo "the default rules did not report the nonce, so the case proves nothing (exit $status):"; echo "$output"; false; }
+    printf '~\napi_key = "%s%s%s"\n' "dGhlIHNhbXBsZSBub25jZQ==" "Zk8vQ2xhdWRl" "U2VjcmV0OTk5" > "$TEST_DIR/p/1"
+    run scan_pieces "$TEST_DIR/p" --config "$CFG"
+    [ "$status" -eq 2 ] || { echo "a secret containing the nonce was excused (exit $status):"; echo "$output"; false; }
+    [[ "$output" =~ leaks\ found:\ ([0-9]+) ]] && [ "${BASH_REMATCH[1]}" -eq 1 ] || {
+        echo "expected one finding for the secret containing the nonce:"; echo "$output"; false; }
+}
+
+@test "round 9d, G2: a piece of the hook's cap, 98,304 bytes, is read whole: each of its dense distinct tokens is found" {
+    # The hook caps a piece at 98,304 bytes because gitleaks reads a file of up to 100,000 bytes in
+    # one chunk and a larger one in chunks, missing a match that crosses a cut (in a 200,000-byte
+    # file of these lines 8.28.0 and 8.30.1 miss 3 of 4,878). A piece of exactly the cap, packed with
+    # distinct github-pat shaped lines behind the ~ line, must be read whole: every token found, and
+    # the byte figure the piece's size. A later gitleaks that reads files in smaller chunks turns
+    # this red, and the hook's cap moves with it.
+    mkdir "$TEST_DIR/p"
+    n=$(( (98304 - 2) / 41 ))                     # 41 bytes a line, after the 2-byte ~ line
+    pad=$(( 98304 - 2 - n * 41 ))
+    { printf '~\n'; dense_tokens "$n"; printf '%*s\n' $(( pad - 1 )) '' | tr ' ' x; } > "$TEST_DIR/p/1"
+    [ "$(( $(wc -c < "$TEST_DIR/p/1") ))" -eq 98304 ]
+    [ "$(( $(grep -c '^gh' "$TEST_DIR/p/1") ))" -eq "$n" ]
+    [ "$(( $(grep '^gh' "$TEST_DIR/p/1" | sort -u | wc -l) ))" -eq "$n" ]   # distinct
+    run scan_pieces "$TEST_DIR/p" --config "$CFG"
+    [ "$status" -eq 2 ] || { echo "no finding in the dense piece (exit $status):"; echo "$output"; false; }
+    [[ "$output" == *"scanned ~98304 bytes"* ]] || { echo "the byte figure is not the piece's 98304 bytes:"; echo "$output"; false; }
+    [[ "$output" =~ leaks\ found:\ ([0-9]+) ]] && [ "${BASH_REMATCH[1]}" -eq "$n" ] || {
+        echo "expected all $n tokens found in a piece of the cap:"; echo "$output"; false; }
+}
+
+@test "round 9d, G3: a piece that begins with an archive or document signature is read only behind the hook's ~ line" {
+    # gitleaks skips a file whose first bytes carry a zip, gzip or PDF signature: it counts 0 bytes
+    # and finds nothing below the signature. A pushed file's added lines can begin that way, so each
+    # piece the hook writes begins with a line holding ~, which moves the signature off byte 0. Both
+    # halves, per signature: without the ~ line, 0 bytes and no finding; with it, the piece's size
+    # and the token found.
+    mkdir "$TEST_DIR/p"
+    for sig in zip gzip pdf; do
+        case $sig in
+            zip) head_bytes='PK\003\004\n' ;;
+            gzip) head_bytes='\037\213\010\000\n' ;;
+            pdf) head_bytes='%%PDF-1.4\n' ;;
+        esac
+        { printf "$head_bytes"; printf 'token = "%s"\n' "$(probe_token)"; } > "$TEST_DIR/p/1"
+        run scan_pieces "$TEST_DIR/p" --config "$CFG"
+        [ "$status" -eq 0 ] && [[ "$output" == *"scanned ~0 bytes"* ]] || {
+            echo "$sig: gitleaks read a piece that begins with the signature (exit $status), so this premise of the ~ line moved:"; echo "$output"; false; }
+        { printf '~\n'; printf "$head_bytes"; printf 'token = "%s"\n' "$(probe_token)"; } > "$TEST_DIR/p/1"
+        size=$(( $(wc -c < "$TEST_DIR/p/1") ))
+        run scan_pieces "$TEST_DIR/p" --config "$CFG"
+        [ "$status" -eq 2 ] && [[ "$output" == *"scanned ~$size bytes"* ]] || {
+            echo "$sig: behind the ~ line the piece was not read whole with its token found (exit $status, $size bytes):"; echo "$output"; false; }
+    done
+}
+
+@test "round 9d, G4: each path-scoped rule fires only under its file's own name, which a piece named by number lacks" {
+    # Five default rules key on the file's path. A piece named by number carries no such name, so
+    # the hook's main run cannot fire them (until round 9 the hook ran gitleaks over git, where the
+    # path is real, and they fired), and the hook scans the pushed files whose paths match those
+    # rules a second time, each under its basename, with --enable-rule naming the five. Both halves
+    # per rule, in that second run's shape: the probe under its own name, in a directory named by
+    # number, is reported under the rule; the same bytes named by number give no finding.
+    five=${PATH_RULES// /,}
+    for r in $PATH_RULES; do
+        rm -rf "$TEST_DIR/p"; mkdir -p "$TEST_DIR/p/1"
+        path_rule_probe "$r" > "$TEST_DIR/p/1/$(path_rule_name "$r")"
+        run scan_pieces "$TEST_DIR/p" --config "$CFG" --enable-rule "$five" --report-format json --report-path "$TEST_DIR/r.json"
+        [ "$status" -eq 2 ] && grep -q "\"RuleID\": \"$r\"" "$TEST_DIR/r.json" || {
+            echo "$r: not reported for $(path_rule_name "$r") under its own name (exit $status):"; echo "$output"; false; }
+        rm -rf "$TEST_DIR/p"; mkdir "$TEST_DIR/p"
+        path_rule_probe "$r" > "$TEST_DIR/p/1"
+        run scan_pieces "$TEST_DIR/p" --config "$CFG" --enable-rule "$five"
+        [ "$status" -eq 0 ] || { echo "$r: reported for the same bytes named by number (exit $status):"; echo "$output"; false; }
+    done
 }

@@ -611,42 +611,57 @@ setup_hook_repo() {
 # A denylist can only catch strings you can enumerate, and nobody can enumerate
 # a token before it leaks, so the hook also runs gitleaks over the pushed
 # commits. These tests stub the scanner via ROMP_GITLEAKS: what is under test is
-# the hook's wiring (which commits it hands over, what it does with the verdict),
+# the hook's wiring (which commits' lines it hands over, what it does with the verdict),
 # not gitleaks' own rules, and a stub keeps the suite deterministic on a machine
 # that has never installed it. The rules and .gitleaks.toml are exercised for
 # real in tests/gitleaks-config.bats and by CI's secret-scan job.
 
-setup_gitleaks_stub() {   # <exit-code>: records its args, reports the range's commit count the way gitleaks does, then exits that code
+setup_gitleaks_stub() {   # <exit-code>: records its args and the bytes it is handed, reports their count the way gitleaks does, then exits that code
     # 0 is a clean scan; 2 is a finding (the hook asks gitleaks to report one so,
     # apart from its own failures); 1 is gitleaks failing.
-    # The count line: the hook reads gitleaks' own log for the commits it scanned
-    # and refuses a scan that reports none (exit 0 says no finding was reported,
-    # not that a scan happened), so the stub reports the range's count in
-    # gitleaks' line shape, `<time> INF <n> commits scanned.` (8.30.1 prints
-    # `3:27AM INF 2 commits scanned.`; the hook reads the fields, so the time
-    # carries no space). The range is the --log-opts value up to the options the
-    # hook appends, counted in the source root the stub is handed, as gitleaks'
-    # own `git -C <root> log` would. `git rev-list --count` is the right count
-    # HERE because every fixture below adds one text file per commit; gitleaks
-    # counts a commit only once it has scanned a hunk of a file that is not a
-    # deletion (a binary add is diffed as text under the hook's --text, and
-    # counted), so a fixture with an empty commit, a deletion-only commit, a
-    # mode-only change or an empty new file (or, under --no-renames, a pure
-    # rename counting as a deletion and an addition) would need the hook's rule
-    # (scannable_commits in .githooks/pre-push) instead.
+    # The byte line: the hook reads the lines the pushed commits add itself,
+    # writes them into numbered files (pieces) in a scratch directory, runs the
+    # scanner from inside it (`gitleaks dir .`, no git), and refuses a scan whose
+    # one byte-count line is missing or is not the count of bytes it wrote (exit
+    # 0 says no finding was reported, not that every byte was read). So the stub
+    # reads every file under the directory it runs in, as `dir .` does, appends
+    # their bytes to gitleaks.feed (what the cases below read to see which lines
+    # the hook handed over), and reports their count in gitleaks' line shape,
+    # `<time> INF scanned ~<n> bytes (<size>) in <duration>` (8.30.1 prints
+    # `12:27PM INF scanned ~3737418 bytes (3.74 MB) in 13.2ms`; the hook reads
+    # the fields, so the time carries no space). On a finding it also logs
+    # gitleaks' count line and writes one record naming piece 1 to the report
+    # path after -r, in the shape of the hook's report template (the piece, a
+    # tab, the rule, a tab, a closing dot), so the hook's line naming the
+    # commit and file can be asserted.
     unset ROMP_NO_GITLEAKS
     GL_ARGS="$TEST_DIR/gitleaks.args"
+    GL_FEED="$TEST_DIR/gitleaks.feed"
     export ROMP_GITLEAKS="$TEST_DIR/gitleaks-stub"
     cat > "$ROMP_GITLEAKS" <<EOF
 #!/usr/bin/env bash
 echo "\$@" >> "$GL_ARGS"
 echo "stub scanner ran" >&2
-# the range's commit count in gitleaks' own line shape (why: setup_gitleaks_stub)
-opts=; for a in "\$@"; do case "\$a" in --log-opts=*) opts="\${a#--log-opts=}";; esac; done
-echo "12:00AM INF \$(git -C "\$2" rev-list --count \${opts%% --diff-merges=first-parent*}) commits scanned." >&2
+# every file under the directory it runs in, fed and counted (why: setup_gitleaks_stub)
+n=0
+while IFS= read -r f; do
+    cat "\$f" >> "$GL_FEED"
+    n=\$(( n + \$(wc -c < "\$f") ))
+done < <(find . -type f | LC_ALL=C sort)
+echo "12:00AM INF scanned ~\$n bytes (\$n bytes) in 1ms" >&2
+if [ $1 -eq 2 ]; then
+    echo "12:00AM WRN leaks found: 1" >&2
+    rep=; prev=; for a in "\$@"; do [ "\$prev" = -r ] && rep=\$a; prev=\$a; done
+    printf '1\tstub-rule\t.\n' > "\$rep"
+fi
 exit $1
 EOF
     chmod +x "$ROMP_GITLEAKS"
+}
+
+feed_lines() {   # <line>: how many lines of what the stub was handed equal it exactly
+    [ -f "$GL_FEED" ] || { echo "the stub was handed nothing: $GL_FEED does not exist" >&2; return 1; }
+    grep -cxF -- "$1" "$GL_FEED" || true
 }
 
 @test "pre-push hook: a credential found in a pushed commit blocks the push" {
@@ -654,12 +669,16 @@ EOF
     setup_gitleaks_stub 2
     echo "whatever" > "$WORK/f.txt"
     git -C "$WORK" add -A && git -C "$WORK" commit -qm work
+    sha="$(git -C "$WORK" rev-parse HEAD)"
     run git -C "$WORK" push origin HEAD:main
     [ "$status" -ne 0 ]
     [[ "$output" == *"BLOCKED"* ]]
     # The advice has to say rotate: a secret in a commit is already compromised,
     # and deleting it in a later commit does not un-publish it.
     [[ "$output" == *"ROTATE"* ]]
+    # The finding named with its commit and file: the stub's record names piece
+    # 1, and the hook's index of the pieces it wrote says whose lines those are.
+    [[ "$output" == *"romp pre-push: commit ${sha:0:10} ADDS a credential (stub-rule) in: f.txt"* ]]
 }
 
 @test "pre-push hook: a scanner that fails refuses the push and says so, not that it found something" {
@@ -714,9 +733,11 @@ EOF
     run git -C "$WORK" push origin HEAD:main
     [ "$status" -eq 0 ]
     [ -f "$GL_ARGS" ]      # it really did run
-    # --redact keeps the value out of the terminal, -v names the file, line and
-    # rule (without it gitleaks prints a count). tests/gitleaks-config.bats
-    # checks both against the real scanner; this pins the wiring.
+    # --redact keeps the value out of the terminal, -v names each finding's rule
+    # and its place (without it gitleaks prints a count); its File and Line
+    # name the piece, and the hook names the commit and file itself.
+    # tests/gitleaks-config.bats checks both against the real scanner; this
+    # pins the wiring.
     [[ "$(cat "$GL_ARGS")" == *"--redact -v"* ]]
     [[ "$(cat "$GL_ARGS")" != *"--config"* ]]   # no .gitleaks.toml in this repo: default rules
 }
@@ -750,24 +771,41 @@ EOF
 
     run git -C "$WORK" push origin HEAD:main
     [ "$status" -eq 0 ]
-    # The hook hands gitleaks the range the identifier scan walks: the pushed
-    # tip, minus every ref any fetched remote already has and the remote's old
-    # tip (see rev_range in the hook).
-    [[ "$(cat "$GL_ARGS")" == *"--log-opts=$new_sha --not --remotes $old_sha"* ]]
+    # The hook reads the commits the identifier scan walks, through the same
+    # listing: the pushed tip, minus every ref any fetched remote already has
+    # and the remote's old tip (see rev_range in the hook). So the new commit's
+    # line is in what the scanner reads, and the published commit's is not.
+    [ "$(feed_lines new)" -eq 1 ]
+    [ "$(feed_lines old)" -eq 0 ]
 }
 
-@test "pre-push hook: the scan asks git to show merge-commit diffs" {
-    # `gitleaks git` runs `git log -p`, which shows NO diff for a merge commit by default, so a
-    # secret introduced only in a conflict resolution would be handed to the scanner as empty. The
-    # hook must pass --diff-merges=first-parent so merge content is actually scanned. Wiring only;
-    # the real "the secret is caught" proof is in gitleaks-config.bats against real gitleaks.
+@test "pre-push hook: a line typed into a merge's resolution is in what the scanner reads" {
+    # A merge is read by its combined diff, the lines in none of its parents:
+    # a line typed into a conflict resolution is in no parent, so it is handed
+    # to the scanner, while a line the merge brings in from a parent is not
+    # handed over a second time. Wiring only; the scanner finding a real
+    # credential in a merge is pinned against real gitleaks in
+    # tests/pre-push-hook.bats.
     setup_hook_repo
     setup_gitleaks_stub 0
-    echo "whatever" > "$WORK/f.txt"
-    git -C "$WORK" add -A && git -C "$WORK" commit -qm work
+    echo "base" > "$WORK/base.txt"
+    git -C "$WORK" add -A && git -C "$WORK" commit -qm base
+    git -C "$WORK" push --no-verify -q origin HEAD:main
+    git -C "$WORK" checkout -q -b side
+    echo "side line" > "$WORK/s.txt"
+    git -C "$WORK" add -A && git -C "$WORK" commit -qm side
+    git -C "$WORK" checkout -q -
+    echo "main line" > "$WORK/m.txt"
+    git -C "$WORK" add -A && git -C "$WORK" commit -qm main
+    git -C "$WORK" merge -q --no-commit side
+    echo "typed in the resolution" > "$WORK/r.txt"
+    git -C "$WORK" add -A && git -C "$WORK" commit -qm merge
     run git -C "$WORK" push origin HEAD:main
     [ "$status" -eq 0 ]
-    [[ "$(cat "$GL_ARGS")" == *"--diff-merges=first-parent"* ]]
+    [ "$(feed_lines "typed in the resolution")" -eq 1 ]
+    # From the side commit alone: a first-parent read of the merge would hand it over twice.
+    [ "$(feed_lines "side line")" -eq 1 ]
+    [ "$(feed_lines "main line")" -eq 1 ]
 }
 
 @test "pre-push hook: a brand-new branch is scanned from its first commit" {
@@ -775,19 +813,18 @@ EOF
     setup_gitleaks_stub 0
     echo "first" > "$WORK/f.txt"
     git -C "$WORK" add -A && git -C "$WORK" commit -qm first
-    sha="$(git -C "$WORK" rev-parse HEAD)"
     run git -C "$WORK" push origin HEAD:main
     [ "$status" -eq 0 ]
-    [[ "$(cat "$GL_ARGS")" == *"--log-opts=$sha --not --remotes"* ]]
+    [ "$(feed_lines first)" -eq 1 ]   # the root commit's whole tree
 }
 
 @test "pre-push hook: a force-push over a remote tip this clone never fetched still scans" {
     # Another clone moves the branch; this one force-pushes without fetching,
-    # so the remote's tip is a sha git cannot find here. gitleaks handed that
-    # range logs git's error, scans no commits and exits 0, and a secret in the
-    # push would go out unscanned. The hook falls back the way the identifier
-    # scan does, to everything the pushed tip reaches: the unknown sha is not
-    # in what the scanner is given.
+    # so the remote's tip is a sha git cannot find here, and the listing of the
+    # range that names it fails. The hook falls back, through the listing the
+    # identifier scan uses, to everything the pushed tip reaches: base, which
+    # the remote already has, is read again, and the other clone's commit,
+    # which this clone never had, is not in what the scanner reads.
     setup_hook_repo
     setup_gitleaks_stub 0
     echo "base" > "$WORK/base.txt"
@@ -797,19 +834,19 @@ EOF
     echo "other" > "$TEST_DIR/other/other.txt"
     git -C "$TEST_DIR/other" add -A && git -C "$TEST_DIR/other" commit -qm other
     git -C "$TEST_DIR/other" push -q origin HEAD:main
-    other_sha="$(git -C "$TEST_DIR/other" rev-parse HEAD)"
     echo "mine" > "$WORK/mine.txt"
     git -C "$WORK" add -A && git -C "$WORK" commit -qm mine
-    sha="$(git -C "$WORK" rev-parse HEAD)"
     run git -C "$WORK" push --force origin HEAD:main
     [ "$status" -eq 0 ]
-    [[ "$(cat "$GL_ARGS")" == *"--log-opts=$sha --diff-merges=first-parent"* ]]
-    [[ "$(cat "$GL_ARGS")" != *"$other_sha"* ]]
+    [ "$(feed_lines mine)" -eq 1 ]
+    [ "$(feed_lines base)" -eq 1 ]    # the fallback: a range the clone could resolve leaves it out
+    [ "$(feed_lines other)" -eq 0 ]
+    [ "$(git -C "$TEST_DIR/remote.git" rev-parse main)" = "$(git -C "$WORK" rev-parse HEAD)" ]
 }
 
 @test "pre-push hook: deleting a remote branch consults no scanner" {
-    # A deletion pushes nothing (the local sha is all zeros); handing that to
-    # gitleaks would only make it log a git error and scan nothing.
+    # A deletion pushes nothing (the local sha is all zeros): there are no
+    # lines to read and nothing to hand the scanner.
     setup_hook_repo
     setup_gitleaks_stub 0
     echo "whatever" > "$WORK/f.txt"
