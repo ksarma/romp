@@ -7,7 +7,7 @@ request logger on 127.0.0.1:Q records each request's path, Referer, Sec-Fetch-De
 browser reaches it under two names, each another origin and another site to the pages (served from 127.0.0.1):
 http://localhost:Q, a name Chromium counts as trustworthy and so sends its Sec-Fetch headers to, and
 http://remote.invalid:Q (Chromium's --host-resolver-rules maps the name to 127.0.0.1), a host the file viewer's figure
-gate does not list (the gear's figureHosts default names github.com's hosts, localhost and 127.0.0.1). Three scenes:
+gate does not list (the gear's figureHosts default names github.com's hosts, localhost and 127.0.0.1). Four scenes:
 
 test_a_notice_card_s_paint_references_reach_no_other_host: a notice card's body on the feed page (feed.ts
 noticeBodyNodes: a session writes it through POST /notice, and the feed runs it through sanitizeMd and then
@@ -66,6 +66,26 @@ page error, and the feed page reached the sink once afterwards. Red with b4f9139
 all, each Sec-Fetch-Dest style, cross-site, no-cors and with no Referer, and the removal subtests were red in all three
 engines; the controls, the control loads and the drawing were green there, since the rule changes only what is removed.
 
+test_a_data_document_in_a_viewed_file_is_dropped_and_reaches_no_other_host: the data: rule in the file viewer. The viewer
+keeps references to another origin for its gate and drops a data: document as the other surfaces do, never gating it
+(paint-refs.ts dropDataDocuments, which sanitizeMd runs under the viewer's remoteRefs: "keep"): a placeholder could name
+only data:, and its click would load a document that fetches hosts the label never names. The reply's link to
+docs/paint-data-viewer.md on /chat?token= opens the viewer through a click event dispatched at the link, with the pointer
+parked in a corner, so no hover card renders the same file (asserted). The file carries the third scene's shapes and
+controls under DV- (the page's own mask relative, which the gate never holds), and after them a rider: a rect whose fill
+names unlisted.invalid, a host the gear does not list, so the gate holds it behind a placeholder, and whose stroke names a
+data: SVG document with an @import of its own. The driver reads the viewer at the open and drains 1.5 s, clicks the
+placeholder, waits (bounded) for the fill to come back and drains 1.5 s, then sets the unsanitized control on the page.
+Asserted per engine, on the same engine rule as the third scene: no request reached the sink from a document in the file,
+at the open or after the click; every document reference is gone from its element and no attribute under the viewer holds
+a data: reference aside; the rider's stroke is neither on the rect nor held aside at the open, and the click brings back
+its fill alone; the one placeholder names unlisted.invalid; the controls stay as written, the raster mask draws (Chromium
+and Firefox), the page's own mask was requested, the control loads, the reach and no page error. Red with b4f9139b8's
+paint-refs.ts, md-sanitize.ts, figure-gate.ts and file-view.ts, and again with 3ceb237ee's (2026-09-24, Playwright 1.62.1):
+in Firefox 153 the sink received the eleven @imports of the file's documents as it opened and the rider's after the click,
+each Sec-Fetch-Dest style, cross-site, no-cors and with no Referer; in all three engines the document references stood in
+the viewer, and the gate held the rider's stroke aside with its fill and the click restored it.
+
 Skips LOUDLY without the extension deps or a Playwright browser; the CI extension job installs Chromium and runs served
 files with ROMP_SERVED_TESTS_REQUIRE=1, which turns any skip into a failure there. SYNTHETIC fixtures only (session web,
 the notes-api demo world, a placeholder uuid, the host remote.invalid)."""
@@ -106,6 +126,8 @@ REMOTE_HOST = "remote.invalid"   # the logger's name in the viewer scene, mapped
 PAINT = ("fill.svg", "stroke.svg", "clip.svg", "mask.svg", "filter.svg", "ms.svg", "mm.svg", "me.svg")
 VIEWER_AWAITED = ("img.png", "fill.svg", "mask.svg")   # what the viewer scene waits for after the click (bounded)
 DATA_FILE = "docs/paint-data.md"   # the hover scene's markdown file of data: documents
+VIEWER_FILE = "docs/paint-data-viewer.md"   # the viewer scene's markdown file of data: documents
+UNLISTED = "unlisted.invalid"   # a host the gear's figureHosts does not list and no name resolves: the rider's gated fill names it
 ENGINES = ("chromium", "firefox", "webkit")
 # What each engine loads from the unsanitized control's data: documents (the five attributes and the six other spellings),
 # measured 2026-09-24 in Playwright 1.62.1: Firefox 153 every one, Chromium 151 and WebKit 26.5 none (they load no data:
@@ -189,8 +211,8 @@ def _doc_svg_tag(s):
         s["cls"], size, size, defs, size, size, paint, s["attr"], s["value"].replace('"', "&quot;"))
 
 
-def _doc_scene(sink, prefix, own):
-    """One scene's data: shapes, controls and markdown. The witness: _doc_shapes under `prefix`, and a data: URL with no
+def _doc_scene(sink, prefix, own, extra=()):
+    """One scene's data: shapes, controls and markdown (`extra`: more markdown blocks, before the last line). The witness: _doc_shapes under `prefix`, and a data: URL with no
     type (text/plain, which no engine loads; read in the DOM alone). The controls, which stay as written: a raster data:
     mask (first, so the card shows it without a scroll), a same-document url(#g), the page's own mask `own` (requested in
     every engine), and a raster-labelled data: URL whose body is an svg with an @import (kept: its type is a raster; loaded
@@ -202,10 +224,24 @@ def _doc_scene(sink, prefix, own):
             {"cls": "k-own", "attr": "mask", "file": "", "value": "url(%s#m)" % own},
             {"cls": "k-pngbody", "attr": "fill", "file": "/%spngbody.css" % prefix,
              "value": _doc_ref("data:image/png," + _uri(_doc_svg("%s/%spngbody.css" % (sink, prefix))), "p")}]
-    md = "\n\n".join(["A figure sample with data: documents."] + [_doc_svg_tag(s) for s in kept[:1] + shapes + kept[1:]] + ["The end.", ""])
+    md = "\n\n".join(["A figure sample with data: documents."] + [_doc_svg_tag(s) for s in kept[:1] + shapes + kept[1:]] + list(extra) + ["The end.", ""])
     control = _doc_shapes(sink, "C" + prefix, "c-")
     return {"shapes": shapes, "kept": kept, "md": md, "control": "".join(_doc_svg_tag(s) for s in control),
             "controlFiles": sorted(s["file"] for s in control)}
+
+
+def _viewer_doc_scene(sink):
+    """The viewer scene's markdown: _doc_scene under "DV-" with the page's own mask relative (the viewer resolves it against
+    the page, and its gate never holds this origin's own), and a rider after the controls: an svg whose rect's fill names
+    UNLISTED, which the gate holds behind a placeholder, and whose stroke names a data: SVG document with an @import of its
+    own (/DV-rider.css), which the viewer must drop, not hold aside for the click on that placeholder to bring back."""
+    rider_doc = _doc_ref(DOC_SPELLINGS[0][1](_doc_svg("%s/DV-rider.css" % sink)), "p")
+    rider = {"fill": "url(http://%s/rider.svg#p)" % UNLISTED, "stroke": rider_doc, "file": "/DV-rider.css"}
+    tag = '<svg class="r-rider" width="12" height="12"><rect width="12" height="12" stroke-width="4" fill="%s" stroke="%s"/></svg>' % (
+        rider["fill"], rider["stroke"].replace('"', "&quot;"))
+    scene = _doc_scene(sink, "DV-", "/media/romp-swirl-glyph.svg?own=dviewer", extra=(tag,))
+    scene["rider"] = rider
+    return scene
 
 
 def _png(w=2, h=2, rgb=(200, 60, 60)):
@@ -385,6 +421,60 @@ const pixels = async (page, sel) => {
 };
 const requested = (page, needle) => { const hits = []; page.on("request", (r) => { if (r.url().includes(needle)) hits.push(r.url()); }); return hits; };
 const until = async (cond, ms) => { const t0 = Date.now(); while (!cond() && Date.now() - t0 < ms) await sleep(50); return Date.now() - t0; };
+if (cfg.scene === "viewer") {
+  // the file viewer on the chat page: the session's reply links the viewer's data: file, and a click opens it
+  const chat = await context.newPage();
+  chat.on("pageerror", (e) => out.errors.push("chat: " + String(e).slice(0, 300)));
+  const own = requested(chat, "own=dviewer");
+  await chat.goto(cfg.chat);
+  await chat.waitForSelector("#tabs .tab[data-id]", { timeout: 30000 });
+  await chat.click('#tabs .tab[data-id="' + cfg.sid + '"]');
+  const link = '#content .file-uri-link[data-path="' + cfg.file + '"]';
+  await chat.waitForSelector(link, { timeout: 30000 });
+  // the click is an event dispatched at the link with the pointer parked in a corner, so no hover card renders the same file
+  // on the preview's road (another surface, with a strip of its own): what reaches the sink is the viewer's
+  await chat.mouse.move(1300, 950);
+  await chat.dispatchEvent(link, "click");
+  const fv = "#romp-fileview";
+  await chat.waitForSelector(fv + " .k-raster rect", { state: "attached", timeout: 30000 }).catch(() => {});
+  out.ownMs = await until(() => own.length > 0, 15000);
+  await sleep(1500);   // the drain for the open: a data: document the viewer rendered has fetched its @import by now
+  out.openLog = await logNow();
+  // the viewer's state: every attribute under the viewer held aside by the gate whose value names data:, the placeholders' hosts,
+  // and the rider (a rect whose fill names an unlisted host and whose stroke names a data: document)
+  const viewerState = () => chat.evaluate(([s]) => {
+    const heldData = Array.from(document.querySelectorAll(s + " *")).flatMap((e) => Array.from(e.attributes)
+      .filter((a) => a.name.startsWith("data-fv-gated-") && /data:/i.test(a.value)).map((a) => e.tagName.toLowerCase() + "[" + a.name + "]"));
+    const hosts = Array.from(document.querySelectorAll(s + ' [data-act="fv-load"]')).map((g) => g.getAttribute("data-fv-hosts"));
+    const r = document.querySelector(s + " .r-rider rect");
+    const p = document.getElementById("file-preview-pop");
+    return { heldData, hosts, rider: r ? { fill: r.getAttribute("fill"), stroke: r.getAttribute("stroke"), heldStroke: r.getAttribute("data-fv-gated-stroke") } : null,
+             hoverUp: !!p && getComputedStyle(p).display !== "none" };
+  }, [fv]);
+  out.open = Object.assign(await viewerState(), { shapes: await readShapes(chat, fv, cfg.viewer.shapes), kept: await readShapes(chat, fv, cfg.viewer.kept),
+                                                   pixels: await pixels(chat, fv + " .k-raster rect") });
+  // one click on the rider's placeholder loads every figure of its host, and what the gate held with it
+  const ph = fv + ' [data-act="fv-load"][data-fv-hosts="' + cfg.unlisted + '"]';
+  out.placeholders = await chat.locator(ph).count();
+  if (out.placeholders) await chat.click(ph);
+  await chat.waitForFunction((s) => { const r = document.querySelector(s + " .r-rider rect"); return !!r && r.hasAttribute("fill"); }, fv, { timeout: 10000 }).catch(() => {});
+  await sleep(1500);   // the drain for the click
+  out.after = Object.assign(await viewerState(), { shapes: await readShapes(chat, fv, cfg.viewer.shapes) });
+  // the unsanitized control, outside the viewer: the same documents set by innerHTML, so the engine's own loads of them reach the
+  // sink; then the wait for the ones this engine makes (bounded) and the drain
+  await chat.evaluate((h) => { const d = document.createElement("div"); d.id = "data-doc-control"; d.innerHTML = h; document.body.appendChild(d); }, cfg.viewer.control);
+  if (cfg.controlLoads) {
+    const t0 = Date.now();
+    while (Date.now() - t0 < 10000) { const got = (await logNow()).map((l) => l.path.split("?")[0]); if (cfg.viewer.controlFiles.every((f) => got.includes(f))) break; await sleep(100); }
+  }
+  await sleep(1500);
+  out.own = own.slice();
+  out.log = await logNow();
+  out.reach = await chat.evaluate((u) => fetch(u, { mode: "no-cors", cache: "no-store" }).then(() => "ok", (e) => String(e)), cfg.sink + "/reach-" + cfg.engine);
+  fs.writeSync(1, "RESULT:" + JSON.stringify(out) + "\n");
+  await browser.close();
+  process.exit(0);
+}
 // the notice card on the feed page, opened bare
 const feed = await context.newPage();
 feed.on("pageerror", (e) => out.errors.push("feed: " + String(e).slice(0, 300)));
@@ -578,6 +668,8 @@ class PaintRefsOnKernelPages(unittest.TestCase):
         Path(cwd, "docs", "figs-framed.md").write_text(_figures(cls.remote, "F-"))
         cls.hover_scene = _doc_scene(cls.doc_sink, "DH-", "/media/romp-swirl-glyph.svg?own=dhover")   # relative: the hover strip has the page's base
         Path(cwd, DATA_FILE).write_text(cls.hover_scene["md"])
+        cls.viewer_scene = _viewer_doc_scene(cls.doc_sink)
+        Path(cwd, VIEWER_FILE).write_text(cls.viewer_scene["md"])
         Path(state, "names", SID).write_text("web\t%s\t#9cd2ff\t#0c1a2e\n" % cwd)
         Path(state, "sdk", SID + ".json").write_text(json.dumps(
             {"sid": SID, "name": "web", "cwd": cwd, "mode": "auto", "effort": "high", "lastSid": SID, "alive": True,
@@ -586,7 +678,7 @@ class PaintRefsOnKernelPages(unittest.TestCase):
         proj = os.path.join(claude, "projects", re.sub(r"[^A-Za-z0-9]", "-", os.path.realpath(cwd)))
         os.makedirs(proj, exist_ok=True)
         reply = ("The sweep's figures are in docs/figs-bare.md, and the same set again in docs/figs-framed.md. "
-                 "The encoded figures are in %s." % DATA_FILE)
+                 "The encoded figures are in %s, and a copy to open is in %s." % (DATA_FILE, VIEWER_FILE))
         Path(proj, SID + ".jsonl").write_text(
             json.dumps({"type": "user", "uuid": U_UUID, "parentUuid": None, "timestamp": "2026-09-05T00:00:00.000Z", "sessionId": SID,
                         "message": {"role": "user", "content": "Where are the figures from the sweep?"}}) + "\n" +
@@ -711,6 +803,86 @@ class PaintRefsOnKernelPages(unittest.TestCase):
             with self.subTest(engine + ", hover: the card was still up when the record was read"):
                 self.assertTrue(r["hoverUp"], "the hover card stayed up through the drain")
         print("DATA-DOCS ENGINES RAN: %s (ROMP_BROWSER_ENGINES=%r; Firefox and WebKit run only when it names them)"
+              % (", ".join(ran), os.environ.get("ROMP_BROWSER_ENGINES", "")), file=sys.stderr)
+        self.assertEqual([x.split(" ")[0] for x in ran], engines, "engines that ran: %s (ROMP_BROWSER_ENGINES=%r)" % (", ".join(ran), os.environ.get("ROMP_BROWSER_ENGINES", "")))
+
+    def test_a_data_document_in_a_viewed_file_is_dropped_and_reaches_no_other_host(self):
+        # the data: rule in the file viewer (the module docstring's fourth scene): dropped as on the other surfaces, never gated,
+        # in every engine that ran (Chromium always, Firefox and WebKit when ROMP_BROWSER_ENGINES names them)
+        engines = _engines()
+        scene = self.viewer_scene
+        ran = []
+        for engine in engines:
+            with self.doc_box["lock"]:            # one engine's record at a time
+                self.doc_box["requests"].clear()
+            cfgp = os.path.join(self.lab, "cfg-viewer-data-%s.json" % engine)
+            with open(cfgp, "w") as f:
+                json.dump({"scene": "viewer", "engine": engine, "sid": SID, "file": VIEWER_FILE, "sink": self.doc_sink, "unlisted": UNLISTED,
+                           "logUrl": "http://127.0.0.1:%d/__doclog" % int(self.doc_sink.rsplit(":", 1)[1]),
+                           "chat": self.origin + "/chat?token=" + self.token, "controlLoads": CONTROL_LOADS[engine],
+                           "viewer": {k: scene[k] for k in ("shapes", "kept", "control", "controlFiles")}}, f)
+            driver = os.path.join(self.lab, "doc-driver.mjs")
+            with open(driver, "w") as f:
+                f.write(DOC_DRIVER)
+            p = subprocess.run(["node", driver], capture_output=True, text=True, timeout=300,
+                               env=dict(os.environ, EXT_PKG=os.path.join(EXT, "package.json"), CFG=cfgp))
+            if p.returncode == 3 and engine == "chromium":
+                raise unittest.SkipTest("no playwright browser on this box: the served lab needs one; CI's extension job installs Chromium and requires this file to run")
+            if p.returncode == 3:
+                raise AssertionError("ROMP_BROWSER_ENGINES names %s, and it did not launch here (a named engine is a failure, never a skip):\n%s"
+                                     % (engine, p.stderr[-2000:]))
+            self.assertEqual(p.returncode, 0, "the %s driver failed:\n%s%s\nkernel:\n%s" % (engine, p.stdout[-3000:], p.stderr[-3000:], open(self.klog).read()[-1500:]))
+            line = next((ln for ln in p.stdout.splitlines() if ln.startswith("RESULT:")), None)
+            self.assertIsNotNone(line, "the %s driver printed no result:\n%s" % (engine, p.stdout[-3000:]))
+            r = json.loads(line[len("RESULT:"):])
+            ran.append("%s %s" % (r["engine"], r["version"]))
+            time.sleep(0.3)                        # the sink's handler threads finish logging the reach before it is read
+            with self.doc_box["lock"]:
+                log = list(self.doc_box["requests"])
+            paths = [l["path"].split("?")[0] for l in log]
+            files = [sh["file"] for sh in scene["shapes"] + scene["kept"] if sh["file"]] + [scene["rider"]["file"]]
+            print("VIEWER-DATA-DOCS %s: %s" % (engine, json.dumps({"driver": r, "v6": self.doc_v6})), file=sys.stderr)
+            with self.subTest(engine + ": no page error"):
+                self.assertEqual(r["errors"], [], "no page error")
+            with self.subTest(engine + ": no hover card rendered the file, so the sink's record is the viewer's"):
+                self.assertEqual([r["open"]["hoverUp"], r["after"]["hoverUp"]], [False, False], "the hover card was down at the open and after the click")
+            with self.subTest(engine + ": the unsanitized control made the loads this engine makes"):
+                want = sorted(scene["controlFiles"]) if CONTROL_LOADS[engine] else []
+                self.assertEqual(sorted({q for q in paths if q.startswith("/CDV-")}), want,
+                                 "the control's @imports at the sink (%s loads a data: paint document: %s)" % (engine, CONTROL_LOADS[engine]))
+            with self.subTest(engine + ": the page reached the sink, once, after the record"):
+                self.assertEqual(r["reach"], "ok", "the chat page's no-cors fetch to the sink completed")
+                self.assertEqual([q for q in paths if q.startswith("/reach-")], ["/reach-" + engine], "the sink logged the reach once")
+            with self.subTest(engine + ": the page's own mask reference was requested"):
+                self.assertTrue(r["own"], "the same-origin mask was requested from the kernel (%s ms): the file rendered in the viewer "
+                                "and this engine fetched a paint reference the viewer keeps" % r["ownMs"])
+            with self.subTest(engine + ": no request reached the sink from a data: document in the viewed file, at the open or after the click"):
+                self.assertEqual([l for l in r["openLog"] if l["path"].split("?")[0] in files], [],
+                                 "a data: document in the viewed file made a request to another host as the file opened (each with its path, Referer class and Sec-Fetch headers)")
+                self.assertEqual([l for l in log if l["path"].split("?")[0] in files], [],
+                                 "a data: document in the viewed file made a request to another host by the end of the record, the click on the rider's placeholder included")
+            with self.subTest(engine + ": every data: document reference is removed from its element and held aside nowhere"):
+                self.assertEqual([x for x in r["open"]["shapes"] if x["value"] is not None], [], "each data: document reference is removed at the open")
+                self.assertEqual([x for x in r["after"]["shapes"] if x["value"] is not None], [], "and is still gone after the click")
+                self.assertEqual([r["open"]["heldData"], r["after"]["heldData"]], [[], []], "no attribute under the viewer holds a data: reference aside for a click to restore")
+            with self.subTest(engine + ": the rider's data: document is dropped, not held with its gated fill, and the click brings back the fill alone"):
+                self.assertEqual(r["open"]["rider"], {"fill": None, "stroke": None, "heldStroke": None},
+                                 "at the open the rider's fill is held behind its placeholder and its data: stroke is neither on the rect nor held aside")
+                self.assertEqual(r["placeholders"], 1, "one placeholder names %s, and the driver clicked it" % UNLISTED)
+                self.assertEqual(r["after"]["rider"], {"fill": scene["rider"]["fill"], "stroke": None, "heldStroke": None},
+                                 "after the click the fill is back and the data: stroke is not")
+            with self.subTest(engine + ": the viewer gates no data: reference (every placeholder names the rider's host)"):
+                self.assertEqual(r["open"]["hosts"], [UNLISTED], "the placeholders at the open, by the hosts each names")
+            with self.subTest(engine + ": the controls stay as written"):
+                self.assertEqual([x["value"] for x in r["open"]["kept"]], [k["value"] for k in scene["kept"]],
+                                 "the raster mask, url(#g), the page's own mask and the raster-labelled svg body stay as written")
+            if engine in MASK_DRAWS:
+                with self.subTest(engine + ": the kept raster data: mask draws"):
+                    px = r["open"]["pixels"] or {}
+                    redness = lambda c: c[0] - max(c[1], c[2]) if c else 0
+                    self.assertTrue(redness(px.get("left")) - redness(px.get("right")) >= 30 and redness(px.get("right")) < 15,
+                                    "the masked rect's left half is painted red and its right half is not: %r" % px)
+        print("VIEWER-DATA-DOCS ENGINES RAN: %s (ROMP_BROWSER_ENGINES=%r; Firefox and WebKit run only when it names them)"
               % (", ".join(ran), os.environ.get("ROMP_BROWSER_ENGINES", "")), file=sys.stderr)
         self.assertEqual([x.split(" ")[0] for x in ran], engines, "engines that ran: %s (ROMP_BROWSER_ENGINES=%r)" % (", ".join(ran), os.environ.get("ROMP_BROWSER_ENGINES", "")))
 

@@ -4,8 +4,11 @@
 // no click. The sanitizer keeps all eight (DOMPurify's svg attribute list) and its URI test passes `url(`, so this module is
 // the step after it: the sanitizer runs dropRemoteRefs on every body it hands back (md-sanitize.ts sanitizeMd, unless the
 // caller opts out) and the file preview card's strip runs it beside its element walk (file-preview.ts stripRemoteLoads).
-// The file viewer does not strip: it gates the same references behind a click (figure-gate.ts) and reads them through
-// cssUrls, which lives here so the two readers are one.
+// The file viewer does not strip a reference to another origin: it gates it behind a click (figure-gate.ts) and reads it
+// through cssUrls, which lives here so the two readers are one. A `data:` reference of a type that is not a raster the
+// viewer does not gate: the sanitizer removes it for the viewer too (dropDataDocuments, the data: half of the rule below,
+// which sanitizeMd runs when its caller keeps references to another origin), because a placeholder could name only
+// `data:` while its click loaded a document that fetches hosts the label never names.
 //
 // The two sets of names were DERIVED by execution, not listed from memory: on 2026-09-23, in headless Chromium 151,
 // Firefox 153 and WebKit 26.5 driven through Playwright. URL_PROPERTIES: `CSS.supports(property, value)` over every
@@ -281,17 +284,48 @@ function declaration(text: string): { name: string; value: string } | null {
   return { name: name.toLowerCase(), value: text.slice(i + 1) };
 }
 
+/** Whether `value` names a `data:` URL that could load as a document: any URL cssUrls reads out of it that parses (against
+ *  `base`; with no base, as it stands) as a `data:` URL whose media type is not a raster (dataUrlIsRaster; one with no
+ *  comma is held too, as remoteUrlRef holds it: the browser loads nothing from it, so removing it costs nothing). It is
+ *  the data: half of remoteUrlRef, which drops every such value too, for the one caller that keeps references to another
+ *  origin (the file viewer, whose gate judges those, figure-gate.ts). Every other URL is left alone here: a `#` reference,
+ *  a raster `data:` URL, every URL that is not `data:` (one on another origin is the gate's to judge), and one the parser
+ *  refuses, which names nothing the browser can load. Pure. */
+export function dataDocumentRef(value: string, base: string): boolean {
+  for (const ref of cssUrls(value)) {
+    if (ref.startsWith("#")) continue;
+    let u: URL;
+    try { u = base ? new URL(ref, base) : new URL(ref); } catch { continue; }
+    if (u.protocol === "data:" && !dataUrlIsRaster(u)) return true;
+  }
+  return false;
+}
+
 /** Remove every url() reference to another origin from `root` and every element under it, the root itself included when it
- *  is an element: each attribute in URL_ATTRS whose value is remoteUrlRef goes; in a `style` attribute each declaration of a
- *  property in URL_PROPERTIES whose value is remoteUrlRef goes, the rest of the attribute is kept as written, and the
- *  attribute goes when nothing is left. A remote reference in any other declaration (a property outside URL_PROPERTIES,
- *  which the browser ignores or, for a custom property, hands to another through var(); or text that opens with no name and
- *  colon) removes the whole attribute, failing closed. `origins` are the page's own; `base` resolves a relative URL ("":
- *  none, so every relative URL is remote). The names are read on EVERY element, HTML ones included: a paint attribute on
- *  an HTML element fetches nothing measured and paints nothing, so removing it costs nothing and the rule stays "these
- *  names", never "these names on these elements". Returns how many removals it made: one per attribute in URL_ATTRS, one
- *  per style declaration, and one for a style attribute removed whole. */
+ *  is an element: dropRefs (below) with remoteUrlRef as its judge. `origins` are the page's own; `base` resolves a relative
+ *  URL ("": none, so every relative URL is remote). Returns how many removals it made (dropRefs's count). */
 export function dropRemoteRefs(root: ParentNode, origins: readonly string[], base: string): number {
+  return dropRefs(root, (v) => remoteUrlRef(v, origins, base));
+}
+
+/** Remove every `data:` reference that could load as a document from `root` and every element under it, the root itself
+ *  included when it is an element: dropRefs (below) with dataDocumentRef as its judge, so a `data:` document goes exactly as
+ *  dropRemoteRefs removes it, and a reference to another origin, a raster `data:` URL and a `#` reference stay. For the
+ *  caller that keeps references to another origin (md-sanitize.ts sanitizeMd with `remoteRefs: "keep"`, the file viewer's
+ *  mdBlock). `base` resolves a relative URL. Returns how many removals it made (dropRefs's count). */
+export function dropDataDocuments(root: ParentNode, base: string): number {
+  return dropRefs(root, (v) => dataDocumentRef(v, base));
+}
+
+/** The walk both drops run: each attribute in URL_ATTRS whose value `judge` holds goes; in a `style` attribute each
+ *  declaration of a property in URL_PROPERTIES whose value `judge` holds goes, the rest of the attribute is kept as
+ *  written, and the attribute goes when nothing is left. A judged reference in any other declaration (a property outside
+ *  URL_PROPERTIES, which the browser ignores or, for a custom property, hands to another through var(); or text that opens
+ *  with no name and colon) removes the whole attribute, failing closed. The names are read on EVERY element, HTML ones
+ *  included: a paint attribute on an HTML element fetches nothing measured and paints nothing, so removing it costs nothing
+ *  and the rule stays "these names", never "these names on these elements". Returns how many removals it made: one per
+ *  attribute in URL_ATTRS, one per style declaration, and one for a style attribute removed whole. */
+function dropRefs(root: ParentNode, judge: (value: string) => boolean): number {
   let removed = 0;
   const rootEl = root as Element;
   const els: Element[] = typeof rootEl.getAttribute === "function" ? [rootEl] : [];
@@ -299,7 +333,7 @@ export function dropRemoteRefs(root: ParentNode, origins: readonly string[], bas
   for (const el of els) {
     for (const attr of URL_ATTRS) {
       const v = el.getAttribute(attr);
-      if (v != null && remoteUrlRef(v, origins, base)) { el.removeAttribute(attr); removed++; }
+      if (v != null && judge(v)) { el.removeAttribute(attr); removed++; }
     }
     const style = el.getAttribute("style");
     if (style == null) continue;
@@ -307,7 +341,7 @@ export function dropRemoteRefs(root: ParentNode, origins: readonly string[], bas
     let dropped = 0, whole = false;
     for (const text of styleDeclarations(style)) {
       const d = declaration(text);
-      if (!remoteUrlRef(d ? d.value : text, origins, base)) { if (text.trim()) kept.push(text.trim()); continue; }
+      if (!judge(d ? d.value : text)) { if (text.trim()) kept.push(text.trim()); continue; }
       if (d && URL_PROPERTIES.includes(d.name)) { dropped++; continue; }
       whole = true;
     }

@@ -62,8 +62,11 @@
 //     resource document in Firefox and fetches its own `@import` from another host), and so does an unparsable
 //     reference. An `<img>`'s `data:` source is not a paint reference and is untouched. The pass runs by DEFAULT, so a
 //     new caller is covered with nothing to remember; one caller opts out, the file viewer's mdBlock (`remoteRefs:
-//     "keep"`), because the viewer gates the same references on this body before adopting it (figure-gate.ts: moved aside
-//     behind a click that restores them), and a strip here would delete what that click restores.
+//     "keep"`), because the viewer gates the references to another origin on this body before adopting it
+//     (figure-gate.ts: moved aside behind a click that restores them), and a strip here would delete what that click
+//     restores. The opt-out covers those references alone: a `data:` reference whose type is not a raster image is
+//     removed for the viewer too (paint-refs.ts dropDataDocuments), since a placeholder could name only `data:` while its
+//     click loaded a document that fetches hosts the label never names (the fork PR review's round-1 ruling, 2026-09-23).
 //   • html + svg profiles (KaTeX's stretchy glyphs used to come through here as inline <svg>; a note's own
 //     inline SVG still does), data: URIs on <img> (the CSP allows them; inline transcript images rely on them).
 //
@@ -77,7 +80,7 @@
 // nor the library). A renderer romp itself runs never goes through the sanitizer; only what an author wrote does.
 import DOMPurify from "dompurify";
 import type { Config, DOMPurify as DOMPurifyInstance, UponSanitizeAttributeHookEvent, UponSanitizeElementHookEvent } from "dompurify";
-import { dropRemoteRefs } from "./paint-refs";
+import { dropDataDocuments, dropRemoteRefs } from "./paint-refs";
 
 /** Tags a note may not keep: the style sheet, the dialog, every form-associated element, and the image map. */
 export const MD_FORBID_TAGS: readonly string[] = [
@@ -315,17 +318,22 @@ export function ownOrigins(): string[] {
  *  only call into DOMPurify's sanitize in the dashboard's source, through purifier() (the seam above).
  *  Before `own` and the registered passes, and after the input post-pass, the paint pass removes every url() reference
  *  to another origin, and every `data:` one whose type is not a raster image, that survived DOMPurify (paint-refs.ts
- *  dropRemoteRefs, the header's paint bullet), judged against ownOrigins() and resolved against the document's base URI
- *  (none under node, where every relative reference counts as remote). It runs before the registered passes, so it never
- *  reads the math fill's inline styles. `opts.remoteRefs` defaults to "drop", so a new caller is covered without asking
- *  for it; "keep" is for the file viewer's mdBlock alone, which gates the same references on this body before adoption
- *  (figure-gate.ts) and would lose the click that restores them to a strip here (file-view-seam.test.ts pins the one
- *  caller, the paint pass's ONE opt-out). */
+ *  dropRemoteRefs, the header's paint bullet; dropDataDocuments, the data: half alone, under "keep"), judged against
+ *  ownOrigins() and resolved against the document's base URI (none under node, where every relative reference counts as
+ *  remote). It runs before the registered passes, so it never reads the math fill's inline styles. `opts.remoteRefs`
+ *  defaults to "drop", so a new caller is covered without asking
+ *  for it; "keep" is for the file viewer's mdBlock alone, which gates the references to another origin on this body before
+ *  adoption (figure-gate.ts) and would lose the click that restores them to a strip here (file-view-seam.test.ts pins the
+ *  one caller, the paint pass's ONE opt-out). "keep" keeps those alone: the data: half of the pass runs for that caller
+ *  too (paint-refs.ts dropDataDocuments), so a `data:` reference whose type is not a raster image is removed from the
+ *  viewer's body as from every other, never handed to the gate. */
 export function sanitizeMd(dirty: string, own?: (body: HTMLElement) => void, opts?: { remoteRefs?: "drop" | "keep" }): HTMLElement {
   installMdSanitizeHooks();
   const clean = purifier().sanitize(dirty, { ...MD_PURIFY, RETURN_DOM: true }) as HTMLElement;   // the sanitized <body>
   keepOnlyInertCheckboxes(clean);
-  if (opts?.remoteRefs !== "keep") dropRemoteRefs(clean, ownOrigins(), typeof document !== "undefined" ? document.baseURI || "" : "");
+  const base = typeof document !== "undefined" ? document.baseURI || "" : "";
+  if (opts?.remoteRefs === "keep") dropDataDocuments(clean, base);
+  else dropRemoteRefs(clean, ownOrigins(), base);
   if (own) own(clean);
   for (const pass of postPasses) pass(clean);
   return clean;

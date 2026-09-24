@@ -26,7 +26,18 @@
 // (DOMPurify's `svg` attribute list) and its URI check passes `url(`, and the colour-only style hook reads the `style`
 // attribute alone. Outside the viewer the sanitizer then removes a reference to another origin itself (paint-refs.ts
 // dropRemoteRefs, run by sanitizeMd); the viewer's mdBlock opts out of that pass, because this gate holds the same
-// references behind a click that restores them, and a strip would delete what the click restores. So the gate reads them
+// references behind a click that restores them, and a strip would delete what the click restores. A `data:` paint
+// reference whose media type is not a raster image (paint-refs.ts dataUrlIsRaster) is the exception, and the viewer
+// DROPS it as the chat, the preview and a notice card do, never gates it: in Firefox 153 a paint attribute naming a
+// `data:` SVG, XHTML or XML document with a fragment loads that document, whose own `@import` fetches another host as
+// the file renders, and this gate read `data:` as nobody's host, so a viewed file fetched it with no placeholder
+// (measured 2026-09-24 in Playwright's Firefox 153 on the kernel's /chat page, the viewer scene of
+// tests/test_paint_refs_kernel_pages_browser.py: at b4f9139b8 eleven @imports as the file opened, and one more when a
+// click on a placeholder restored a document the gate had held with its svg's other reference). Gating it instead would
+// be wrong: a placeholder could name only `data:`, and its click would load a document that fetches hosts the label
+// never names (the fork PR review's round-1 ruling, 2026-09-23). So the opt-out keeps references to another origin
+// alone, and sanitizeMd removes the `data:` documents from the viewer's body before this gate reads it (paint-refs.ts
+// dropDataDocuments); a raster `data:` reference stays, local and drawn. So the gate reads the references it holds
 // as fetching attributes of the svg (paintRefs), with cssUrls (paint-refs.ts, the one reader the strip shares),
 // a tokenizer that follows CSS Syntax's: the value preprocessed first (a CRLF pair is one newline, so an escape's one
 // consumed whitespace eats the pair as the browser's does; read raw, `\75&#13;&#10;rl(` in an HTML block fetched on open,
@@ -198,8 +209,9 @@ export function refUrls(ref: FigureRef): string[] {
 }
 
 // ── which host a source fetches from ──────────────────────────────────────────────────────────────
-/** The host a source would fetch from when it is not this page's own, else null: `data:` and `blob:` leave the page
- *  for nothing; a relative or same-origin URL (the kernel's /file route and its /remote relay) is the page's own; the
+/** The host a source would fetch from when it is not this page's own, else null: `data:` and `blob:` name no host (a
+ *  `data:` paint reference that could load a document never reaches here: the viewer's sanitize removes it first, see
+ *  the header); a relative or same-origin URL (the kernel's /file route and its /remote relay) is the page's own; the
  *  kernel's base when the page is a webview that reaches it by an absolute URL (`window.__rompKernelBase`) is the
  *  kernel's own. Only http and https count as another host: no other scheme the sanitizer keeps fetches a figure. A
  *  URL the parser refuses is nobody's host, and left alone. */

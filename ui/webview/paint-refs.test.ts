@@ -4,7 +4,7 @@
 // while a server logs what arrives, is its own leg. Synthetic values only: hosts under .invalid, the page on 127.0.0.1.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
-import { URL_ATTRS, URL_PROPERTIES, DATA_RASTER_TYPES, cssUrls, dataMediaType, dataUrlIsRaster, remoteUrlRef, dropRemoteRefs } from "./paint-refs";
+import { URL_ATTRS, URL_PROPERTIES, DATA_RASTER_TYPES, cssUrls, dataMediaType, dataUrlIsRaster, dataDocumentRef, remoteUrlRef, dropDataDocuments, dropRemoteRefs } from "./paint-refs";
 import { hideEdges } from "../test-dom-shim";   // the fake-DOM rule (ui/test-dom-shim.test.ts): a fake enumerates its primitives alone
 
 const ORIGIN = "http://127.0.0.1:7777", BASE = ORIGIN + "/chat?x=1", KERNEL = "http://127.0.0.1:8888";
@@ -150,6 +150,70 @@ test("dropRemoteRefs on data: references: a document-capable one goes from an at
   assert.deepEqual(mixed.attrs, {}, "a raster layer beside an xml document goes with it; a missing type (text/plain) goes");
   assert.deepEqual(styled.attrs, { style: "background-image: url(data:image/png;base64,iVBORw0KGgo=); color: red" }, "the svg mask-image declaration goes, the raster background and the colour stay");
   assert.equal(n, 5, "the count: two on the first rect, two on the second, one declaration");
+});
+
+// ── the data: half alone, for the file viewer (dataDocumentRef, dropDataDocuments) ──────────────────────────
+
+test("dataDocumentRef holds a value naming a data: URL that is not a raster, by the parsed essence, and nothing else: the CASES rows remoteUrlRef drops for a data: document and no other row, every ESSENCES spelling by its essence with a base and without, and a reference to another origin, a relative one, a raster data: URL, # and an unparsable URL left alone", () => {
+  // guards the viewer's half of the rule: the file viewer keeps references to another origin for its gate, so this judge must
+  // hold a data: document and nothing else, by the same parse as remoteUrlRef's
+  const DOC_ROWS = ['url("data:image/svg+xml,%3Csvg%2F%3E#p")', "url(data:,x)", "url(#m), url(data:text/xml,x#m)"];
+  assert.deepEqual(CASES.filter(([v]) => DOC_ROWS.includes(v)).map(([v]) => v), DOC_ROWS, "the three data: document rows are CASES rows");
+  for (const [value, remote] of CASES) {
+    assert.equal(dataDocumentRef(value, BASE), DOC_ROWS.includes(value), JSON.stringify(value) + ": held only for a data: document row; every other row, a raster data: URL and every reference to another origin among them, is left alone");
+    if (DOC_ROWS.includes(value)) assert.equal(remote, true, JSON.stringify(value) + ": a value the data: half holds is one remoteUrlRef drops too");
+  }
+  for (const [url, essence] of ESSENCES) {
+    const q = url.includes('"') ? "'" : '"';
+    const value = "url(" + q + url + q + ")";
+    const isDoc = !(essence !== null && DATA_RASTER_TYPES.includes(essence));   // no comma (null) is held too: the browser loads nothing, so dropping it costs nothing, as remoteUrlRef drops it
+    assert.equal(dataDocumentRef(value, BASE), isDoc, JSON.stringify(url) + ": held exactly when the parsed essence is not a raster (" + String(essence) + ")");
+    assert.equal(dataDocumentRef(value, ""), isDoc, JSON.stringify(url) + ": the same with no base, since a data: URL is absolute");
+  }
+  const LEFT: Array<[string, string]> = [
+    [R("p.svg#p"), "a reference to another origin: the viewer's gate judges it"],
+    ["url(//remote.invalid/p.svg#p)", "protocol-relative: another origin, the gate's"],
+    ["url(own.svg#p)", "relative: this origin"],
+    ["url(#g)", "a same-document reference"],
+    ["url(data:image/png;base64,iVBORw0KGgo=)", "a raster data: URL"],
+    ["url(DATA:IMAGE/GIF;charset=x,x)", "a raster data: URL in any case, with a parameter"],
+    ["url(http://[::1/x)", "unparsable: names nothing the browser can load"],
+    ["url(javascript:x)", "another scheme"],
+    ["red", "no URL"],
+  ];
+  for (const [value, why] of LEFT) assert.equal(dataDocumentRef(value, BASE), false, JSON.stringify(value) + ": " + why);
+  for (const [value, why] of [
+    ["url(data:image/svg+xml,%3Csvg%2F%3E#p)", "a data: SVG document with its fragment"],
+    ["url(data:application/xhtml+xml,x#p)", "XHTML"],
+    ["url(data:text/xml,x#p)", "XML"],
+    ["url(data:,x#p)", "a missing type: text/plain, not a raster"],
+    ["url(data:image/png;base64,AAAA), url(data:image/svg+xml,x#m)", "a raster layer beside a document: the value holds one"],
+    [R("m.png") + ", url(data:application/xml,x#m)", "another origin's layer beside a document: the document decides"],
+  ] as Array<[string, string]>) assert.equal(dataDocumentRef(value, BASE), true, JSON.stringify(value) + ": " + why);
+});
+
+test("dropDataDocuments removes a data: document from an attribute and from a style declaration as dropRemoteRefs does, and leaves every reference to another origin, every same-origin one, # and a raster data: URL untouched for the viewer's gate", () => {
+  // guards the viewer's drop (md-sanitize.ts sanitizeMd under remoteRefs: "keep"): the data: documents go, and what the gate is
+  // for, a reference to another origin, is left in place for it to move aside behind a click
+  const svgDoc = "url(data:image/svg+xml,%3Csvg%2F%3E#p)";
+  const doc = el("rect", { fill: svgDoc, stroke: 'url("data:application/xhtml+xml,x#p")', mask: "url(data:image/png;base64,iVBORw0KGgo=)", width: "4" });
+  const remote = el("rect", { fill: R("p.svg#p"), "clip-path": "url(own.svg#c)", filter: "url(#f)", mask: 'image-set("https://remote.invalid/m.png" 1x)' });
+  const mixed = el("rect", { mask: R("m.png") + ", url(data:text/xml,x#m)", "marker-end": "url(data:,x#e)" });
+  const styled = el("span", { style: "mask-image: url(data:image/svg+xml,%3Csvg%2F%3E); background-image: " + R("b.png") + "; color: red" });
+  const root = el("svg", { fill: "url(data:application/xml,x#p)", width: "12" }, [doc, remote, mixed, styled]);
+  const n = dropDataDocuments(asNode(root), BASE);
+  assert.deepEqual(root.attrs, { width: "12" }, "the root element itself: its data: document goes");
+  assert.deepEqual(doc.attrs, { mask: "url(data:image/png;base64,iVBORw0KGgo=)", width: "4" }, "the svg and xhtml documents go, the raster mask stays");
+  assert.deepEqual(remote.attrs, { fill: R("p.svg#p"), "clip-path": "url(own.svg#c)", filter: "url(#f)", mask: 'image-set("https://remote.invalid/m.png" 1x)' }, "a reference to another origin, a same-origin one and # stay, for the gate");
+  assert.equal(remote.writes, 0, "and nothing was written to that element");
+  assert.deepEqual(mixed.attrs, {}, "a value holding a document goes whole, another origin's layer with it; a missing type (text/plain) goes");
+  assert.deepEqual(styled.attrs, { style: "background-image: " + R("b.png") + "; color: red" }, "the svg mask-image declaration goes; another origin's background and the colour stay");
+  assert.equal(n, 6, "the count: the root's fill, two on the first rect, two on the third, one declaration");
+  assert.equal(dropDataDocuments(asNode(root), BASE), 0, "a second pass finds nothing");
+  // the same tree through dropRemoteRefs: every data: document it removes, dropDataDocuments removed too
+  const again = el("svg", {}, [el("rect", { fill: svgDoc, stroke: R("s.svg#s") })]);
+  dropRemoteRefs(asNode(again), OWN, BASE);
+  assert.deepEqual(again.children[0].attrs, {}, "dropRemoteRefs removes both: the data: half is a part of its rule");
 });
 
 // ── dropRemoteRefs over a fake tree ─────────────────────────────────────────────────────────────────────

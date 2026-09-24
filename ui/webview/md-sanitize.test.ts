@@ -316,7 +316,7 @@ function paintBody(): { body: PaintEl; rects: PaintEl[]; local: PaintEl; doc: Pa
   return { body: paintEl("body", {}, [paintEl("p", {}, [paintEl("svg", {}, [...rects, local, doc])])]), rects, local, doc };
 }
 
-test("the paint pass runs inside sanitizeMd BY DEFAULT: a chat body whose svg carries each of the eight paint attributes with a url() to another origin comes back without any of them, the rects kept and their other attributes untouched, a same-document url(#g) and a raster data: URL kept, a data: SVG document removed; it runs before the caller's own pass; `remoteRefs: \"keep\"` hands the eight and the document back as DOMPurify left them", () => {
+test("the paint pass runs inside sanitizeMd BY DEFAULT: a chat body whose svg carries each of the eight paint attributes with a url() to another origin comes back without any of them, the rects kept and their other attributes untouched, a same-document url(#g) and a raster data: URL kept, a data: SVG document removed; it runs before the caller's own pass; `remoteRefs: \"keep\"` hands the eight back as DOMPurify left them and still removes the data: SVG document (the viewer drops it, never gates it)", () => {
   // guards the fix's default: every sanitizeMd caller but the viewer's mdBlock is covered without asking (the chat's md() and
   // userMd(), the preview card, the feed's notices); a removed call, or a default flipped to keep, fetches on render again
   const seen: string[] = [];
@@ -345,7 +345,8 @@ test("the paint pass runs inside sanitizeMd BY DEFAULT: a chat body whose svg ca
     answer = viewer.body;
     sanitizeMd("<svg></svg>", undefined, { remoteRefs: "keep" });
     for (const [i, a] of PAINT_EIGHT.entries()) assert.equal(viewer.rects[i].getAttribute(a), remoteRef(a), a + ": kept under remoteRefs: \"keep\", the viewer's opt-out (its gate moves the reference behind a click instead)");
-    assert.equal(viewer.doc.getAttribute("fill"), DATA_DOC, "the data: SVG document is kept under remoteRefs: \"keep\" too: the pass does not run");
+    assert.deepEqual(viewer.doc.attrs, { width: "4" }, "the data: SVG document is removed under remoteRefs: \"keep\" too: the opt-out keeps references to another origin alone, and the viewer drops a data: document as every other surface does (a placeholder could name only data:, and its click would load a document that fetches other hosts)");
+    assert.deepEqual(viewer.local.attrs, { fill: "url(#g)", stroke: "url(data:image/png;base64,iVBORw0KGgo=)" }, "under keep a same-document reference and a raster data: URL stay as well");
     assert.equal(seen.length, 4, "one sanitize per call");
   } finally { setMdSanitizer(null); }
 });
@@ -427,8 +428,8 @@ test("md-sanitize.ts holds the dashboard's ONLY call into DOMPurify's sanitize, 
   assert.deepEqual(seamCallers, ["md-sanitize.ts"], "setMdSanitizer is named by no production module: the seam is the node suites' alone");
   assert.match(SAN, /\nlet installedSanitizer: MdSanitizer \| null = null;\n/, "the installed instance is module-private: setMdSanitizer is the seam's one door, and the sweep above covers it");
   assert.match(SAN, /export function installMdSanitizeHooks\(purify: Pick<DOMPurifyInstance, "addHook"> = purifier\(\)\): void \{/, "the hooks install reads the same instance");
-  assert.match(SAN, /keepOnlyInertCheckboxes\(clean\);\n\s*if \(opts\?\.remoteRefs !== "keep"\) dropRemoteRefs\(clean, ownOrigins\(\), typeof document !== "undefined" \? document\.baseURI \|\| "" : ""\);\n\s*if \(own\) own\(clean\);\n\s*for \(const pass of postPasses\) pass\(clean\);\n\s*return clean;/,
-    "the input post-pass, then the paint pass unless the caller opts out (a url() to another origin removed; before the registered passes, so it never reads the math fill's styles), then the caller's own pass (the viewer's heading ids, read from the text as written), then every registered post-pass (the math fill), on the sanitized DOM before it is handed back");
+  assert.match(SAN, /keepOnlyInertCheckboxes\(clean\);\n\s*const base = typeof document !== "undefined" \? document\.baseURI \|\| "" : "";\n\s*if \(opts\?\.remoteRefs === "keep"\) dropDataDocuments\(clean, base\);\n\s*else dropRemoteRefs\(clean, ownOrigins\(\), base\);\n\s*if \(own\) own\(clean\);\n\s*for \(const pass of postPasses\) pass\(clean\);\n\s*return clean;/,
+    "the input post-pass, then the paint pass (a url() to another origin and a data: document removed; under the viewer's opt-out the data: documents alone; before the registered passes, so it never reads the math fill's styles), then the caller's own pass (the viewer's heading ids, read from the text as written), then every registered post-pass (the math fill), on the sanitized DOM before it is handed back");
   assert.match(SAN, /export function registerMdPostPass\(pass: \(root: ParentNode\) => void\): void \{\n\s*if \(!postPasses\.includes\(pass\)\) postPasses\.push\(pass\);\n\}/, "the registry: idempotent, a pass registered twice runs once (md-sanitize-katex-browser.test.ts executes it)");
   assert.match(SAN, /const postPasses: Array<\(root: ParentNode\) => void> = \[\];/, "the registry is a module array of passes over the sanitized body, empty until a grammar module registers one");
   const importers = sources.filter((f) => /from "dompurify"/.test(read(f)));

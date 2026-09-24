@@ -1091,7 +1091,7 @@ test("source: the Slice 3 seam members exist with their doc comments; the media 
   // code only (codeOnly, below): the order is read off the statements, so a comment quoting the pinned lines above an adopt-first
   // body cannot satisfy it (the fork PR review's pre-answer record built that reversion and every raw-text pin passed on the comment)
   const mdFn = codeOnly(VIEW.split("function mdBlock(text: string, doc?: MdDocLoc): HTMLElement {")[1].split("\n}\n")[0]);
-  const sanitizeAt = mdFn.indexOf('const clean = sanitizeMd(dirty, mintHeadingIds, { remoteRefs: "keep" });');   // the shared sanitizer, md-sanitize.ts, with the heading ids as its caller pass (before the fill) and its paint pass off (the gate below judges the same references)
+  const sanitizeAt = mdFn.indexOf('const clean = sanitizeMd(dirty, mintHeadingIds, { remoteRefs: "keep" });');   // the shared sanitizer, md-sanitize.ts, with the heading ids as its caller pass (before the fill) and its paint pass's other-origin half off (the gate below judges those references; a data: document is removed inside the call)
   const rewriteAt = mdFn.indexOf('rewriteFigureSrcs(clean, doc.path.slice(0, doc.path.lastIndexOf("/") + 1), doc.sid);');
   const gateAt = mdFn.indexOf("gateRemoteFigures(clean, document.baseURI);");
   const adoptAt = mdFn.indexOf("box.replaceChildren(...Array.from(clean.childNodes));");
@@ -1198,7 +1198,7 @@ test("codeOnly reads the compiler's comment ranges: an affected module keeps the
 /** The profile's keys, in the literal's order: the whole of what sanitizeMd spreads RETURN_DOM onto. */
 const PROFILE_KEYS = ["USE_PROFILES", "ADD_DATA_URI_TAGS", "ALLOW_DATA_ATTR", "FORBID_TAGS", "FORBID_ATTR", "SANITIZE_NAMED_PROPS"];
 
-test("the inertness premise, held where CI runs: MD_PURIFY is its six-key literal at the source and at run time and reaches the sanitize with RETURN_DOM alone added; sanitizeMd's body is its six statements; md-sanitize.ts's code opens no door to the live document and no config verb, and no other dashboard module names the profile or those verbs; the installed DOMPurify parses into a template's document, returns that body itself, and clones into the live document only under a shadowroot attribute no profile here allows, and its whole dist holds importNode at four sites and adoptNode at none; the passes that run over the body inside sanitizeMd before the chain, mintHeadingIds and every registered post-pass (derived from the code), open no door to the live document; in mdBlock `clean` reaches the four chain calls and the fence pass's one read (`clean.querySelectorAll`) and nothing else before the adoption, and nothing after it", () => {
+test("the inertness premise, held where CI runs: MD_PURIFY is its six-key literal at the source and at run time and reaches the sanitize with RETURN_DOM alone added; sanitizeMd's body is its eight statements; md-sanitize.ts's code opens no door to the live document and no config verb, and no other dashboard module names the profile or those verbs; the installed DOMPurify parses into a template's document, returns that body itself, and clones into the live document only under a shadowroot attribute no profile here allows, and its whole dist holds importNode at four sites and adoptNode at none; the passes that run over the body inside sanitizeMd before the chain, mintHeadingIds and every registered post-pass (derived from the code), open no door to the live document; in mdBlock `clean` reaches the four chain calls and the fence pass's one read (`clean.querySelectorAll`) and nothing else before the adoption, and nothing after it", () => {
   const SAN = web("md-sanitize.ts");
   const SAN_CODE = codeOnly(SAN);
   // the reader's self-check, over an AFFECTED module too (the round-1 refuter's condition): settings.ts keeps the line the hand
@@ -1235,12 +1235,14 @@ test("the inertness premise, held where CI runs: MD_PURIFY is its six-key litera
     "  installMdSanitizeHooks();",
     "  const clean = purifier().sanitize(dirty, { ...MD_PURIFY, RETURN_DOM: true }) as HTMLElement;",
     "  keepOnlyInertCheckboxes(clean);",
-    '  if (opts?.remoteRefs !== "keep") dropRemoteRefs(clean, ownOrigins(), typeof document !== "undefined" ? document.baseURI || "" : "");',
+    '  const base = typeof document !== "undefined" ? document.baseURI || "" : "";',
+    '  if (opts?.remoteRefs === "keep") dropDataDocuments(clean, base);',
+    "  else dropRemoteRefs(clean, ownOrigins(), base);",
     "  if (own) own(clean);",
     "  for (const pass of postPasses) pass(clean);",
     "  return clean;",
     "}",
-  ], "the body DOMPurify returns is the body handed back: no statement between the sanitize and the return moves it or its nodes anywhere (the paint pass, dropRemoteRefs, removes attributes in place and is held to the doors below with the other passes; mdBlock turns it off)");
+  ], "the body DOMPurify returns is the body handed back: no statement between the sanitize and the return moves it or its nodes anywhere (the paint pass, dropRemoteRefs, and its data: half, dropDataDocuments, which mdBlock's opt-out still runs, remove attributes in place and are held to the doors below with the other passes)");
   assert.equal((SAN_CODE.match(/\bRETURN_DOM\b/g) || []).length, 1, "RETURN_DOM is spelled at the one sanitize");
   // ── no door to the live document, no config verb, in md-sanitize.ts's code ──
   for (const door of [/\b(?:window|globalThis|self)\.document\b/, /adoptNode/, /importNode/, /RETURN_DOM_FRAGMENT/, /\bIN_PLACE\b/, /WHOLE_DOCUMENT/,
@@ -1262,7 +1264,7 @@ test("the inertness premise, held where CI runs: MD_PURIFY is its six-key litera
   assert.deepEqual(namers, [], "the profile, DOMPurify's config verbs, its hook registry and RETURN_DOM are md-sanitize.ts's alone (md-sanitize.test.ts sweeps the sanitize call and the seam the same way), and no dashboard module adopts or imports a node between documents (a guarded document.adoptNode inside the gate's own helper left every CI-run module green in the fork PR review's pre-answer mutation table, 2026-09-20)");
   // ── the passes that run over the body INSIDE sanitizeMd, before mdBlock's chain: the caller's own pass (mdBlock hands
   // mintHeadingIds; the sanitize-line pin above) and every registered post-pass (md-sanitize.ts postPasses, run in sanitizeMd's
-  // fifth statement, above). Neither is in the chain block, so the mdBlock pins below never read them, and a live-document
+  // seventh statement, above). Neither is in the chain block, so the mdBlock pins below never read them, and a live-document
   // adoption in either puts the body in the page before the chain with every pin below green (the round-1 ruling of the fork
   // PR's review, defect D, 2026-09-20). The registrant list is DERIVED here from the code and held to a written census: every
   // `registerMdPostPass(<name>)` in a dashboard module's comment-stripped code, the name resolved to its defining module
@@ -1315,16 +1317,19 @@ test("the inertness premise, held where CI runs: MD_PURIFY is its six-key litera
     "the census's red names its remedy: the constant it says to add the line to is declared in this module as an array literal, and the file it names is the one this module reads itself from (the message names " + JSON.stringify(remedyNames && remedyNames.slice(1)) + ")");
   assert.deepEqual(registrants.map((r) => r.site + ": registerMdPostPass(" + r.name + ") -> " + r.module), REGISTERED_POST_PASSES,
     "the registered post-passes, derived from the code, are the census REGISTERED_POST_PASSES (one, the math fill, registered by md-config.ts and defined in math.ts); " + CENSUS_REMEDY);
-  // the paint pass (paint-refs.ts dropRemoteRefs, sanitizeMd's fourth statement) runs over every other caller's body and not over
-  // mdBlock's, which opts out (remoteRefs: "keep", the bind pinned below); it is held to the same doors, so the premise survives
-  // the opt-out going. The doors read paint-refs.ts's WHOLE code, not dropRemoteRefs's body alone: the pass calls the module's
-  // other functions (remoteUrlRef, styleDeclarations, declaration, skipBlank and the tokenizer) and the sweep does not follow
-  // callees, so a live-document road planted in remoteUrlRef left a read of the body alone green (the paint-reference fix's
-  // closing pass, mutation N9, 2026-09-23). The module imports nothing, so its own code is everything the pass can reach.
+  // the paint pass (paint-refs.ts dropRemoteRefs, sanitizeMd's fourth and fifth statements) runs over every other caller's body;
+  // over mdBlock's, which opts out (remoteRefs: "keep", the bind pinned below), its data: half runs (dropDataDocuments: a data:
+  // paint reference whose type is not a raster is removed from the viewer's body as from every other, the fork PR review's
+  // round-1 ruling, 2026-09-23), so paint-refs.ts runs over mdBlock's body BEFORE the chain and is held to the same doors. The
+  // doors read paint-refs.ts's WHOLE code, not one function's body: both drops share the module's walk (dropRefs) and call its
+  // other functions (remoteUrlRef, dataDocumentRef, styleDeclarations, declaration, skipBlank and the tokenizer) and the sweep
+  // does not follow callees, so a live-document road planted in remoteUrlRef left a read of the body alone green (the
+  // paint-reference fix's closing pass, mutation N9, 2026-09-23). The module imports nothing, so its own code is everything the
+  // pass can reach.
   const PAINT_CODE = codeOnly(web("paint-refs.ts"));
   assert.doesNotMatch(PAINT_CODE, /\bimport\b|\brequire\s*\(/, "paint-refs.ts imports nothing, so its own code is all the paint pass reaches and the doors below read all of it (an import is red here until this read covers the imported module too)");
   const preChain = [{ label: "mintHeadingIds (file-view.ts, the pass mdBlock hands sanitizeMd)", body: fnBody(codeOnly(VIEW), "mintHeadingIds", "file-view.ts") },
-    { label: "paint-refs.ts, its whole code (dropRemoteRefs, sanitizeMd's paint pass, off for mdBlock, and every function it calls)", body: PAINT_CODE },
+    { label: "paint-refs.ts, its whole code (dropRemoteRefs, sanitizeMd's paint pass, and dropDataDocuments, its data: half, which runs over mdBlock's body, and every function they call)", body: PAINT_CODE },
     ...registrants.map((r) => ({ label: r.name + " (" + r.module + ", registered by " + r.site + ")", body: r.body }))];
   // no door to the live document in any of them: no `document`, `window`, `globalThis` or `self` (the live document and its
   // window), no cross-document verb, no element creation (a node created outside the body's document is a road out of it when

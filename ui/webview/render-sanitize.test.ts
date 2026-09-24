@@ -45,7 +45,7 @@ test("the file viewer's mdBlock adopts the same sanitizer's output, and spells n
   assert.match(VIEW, /export function viewerHtml\([^\n]*\{\n\s*const opts = \{ \.\.\.marked\.defaults \};\n\s*const tokens = marked\.lexer\(text, opts\);\n\s*literalizeUnclosedTags\(tokens\);\n[\s\S]*?return marked\.parser\(tokens, opts\);/, "marked's lexer and parser, the literal-tags rule between them (md-literal-tags.ts): the parse's own steps, no other renderer");
   // the sanitized <body>'s children are adopted as they are (no re-parse of a serialized string); these two are presence pins, and
   // where the figure chain sits relative to the adoption is file-view-seam.test.ts's to check, on comment-stripped code
-  assert.match(mdBlock, /const clean = sanitizeMd\(dirty, mintHeadingIds, \{ remoteRefs: "keep" \}\);/);   // the second argument is the viewer's own pass (the heading ids), run inside the call; the third turns the paint pass off (the viewer gates those references)
+  assert.match(mdBlock, /const clean = sanitizeMd\(dirty, mintHeadingIds, \{ remoteRefs: "keep" \}\);/);   // the second argument is the viewer's own pass (the heading ids), run inside the call; the third turns the paint pass's other-origin half off (the viewer gates those references; a data: document is still removed)
   assert.match(mdBlock, /box\.replaceChildren\(\.\.\.Array\.from\(clean\.childNodes\)\);/);
   assert.doesNotMatch(mdBlock, /box\.innerHTML = /, "nothing reaches the viewer's innerHTML unsanitized");
 });

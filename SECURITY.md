@@ -120,14 +120,17 @@ UID can read.
   loads that document, and the document fetches its own `@import` from another
   host. Chromium and WebKit load no such document. The browser checks run in
   Firefox only where it is installed and `ROMP_BROWSER_ENGINES` names it, since
-  CI installs Chromium alone. The file viewer gates the same references behind a
-  click instead (`ui/webview/paint-refs.ts`, checked against the code by
+  CI installs Chromium alone. The file viewer gates a reference to another
+  origin behind a click instead. It removes a `data:` reference whose type is not
+  a raster image, as the other surfaces do, because a click labeled `data:` would
+  load a document that fetches hosts the label never names
+  (`ui/webview/paint-refs.ts`, checked against the code by
   `ui/webview/paint-refs-census.test.ts` and, in the browser, by
   `ui/webview/chat-paint-refs-browser.test.ts`,
   `tests/test_file_preview_browser.py` and
   `tests/test_paint_refs_kernel_pages_browser.py`). Once the reader clicks, or
-  when the host is on the gear's list, those references load, and such a request
-  can send the page's origin: the exception to the `Referer` rule in the trust
+  when the host is on the gear's list, a gated reference loads, and such a
+  request can send the page's origin: the exception to the `Referer` rule in the trust
   model above. An `.svg` opened in its own tab (on the web dashboard, a Cmd,
   Ctrl or middle click on a path link to it in a viewed file) does not become
   a document. The kernel's `/file` route and its `/remote/<host>/file` relay

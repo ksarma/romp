@@ -363,7 +363,7 @@ test("every heading gets id=md-<slug> after sanitisation and BEFORE the math fil
   // the math fill among them, so a heading with a formula is slugged from its TeX as written and never from KaTeX's
   // glyphs (the Slice 4 review: `# Ratio $\frac{a}{b}$` minted md-ratio-ba and the note's own link to md-ratio-fracab was
   // dead; md-config-fragment-landing-browser.test.ts executes both over the real bundle)
-  assert.match(MD_CODE, /const clean = sanitizeMd\(dirty, mintHeadingIds, \{ remoteRefs: "keep" \}\);/, "mdBlock's one sanitize call hands the minting in as the caller's pass (code only), with the paint pass off (the viewer gates those references)");
+  assert.match(MD_CODE, /const clean = sanitizeMd\(dirty, mintHeadingIds, \{ remoteRefs: "keep" \}\);/, "mdBlock's one sanitize call hands the minting in as the caller's pass (code only), with the paint pass's other-origin half off (the viewer gates those references; a data: document is still removed inside the call)");
   const MINT = (VIEW.split("function mintHeadingIds(root: ParentNode): void {")[1] || "").split("\n}\n")[0];
   assert.match(MINT, /const heads = Array\.from\(root\.querySelectorAll\("h1, h2, h3, h4, h5, h6"\)\) as HTMLElement\[\];\s*\n\s*const slugs = uniqueSlugs\(heads\.map\(\(h\) => headingSlug\(h\.textContent \|\| ""\)\)\);\s*\n\s*heads\.forEach\(\(h, i\) => \{ h\.id = "md-" \+ slugs\[i\]; \}\);/);
   const SAN = web("md-sanitize.ts");
@@ -454,7 +454,7 @@ test("rendered markdown never carries data-* attributes into the page, in the vi
   // both go through sanitizeMd (md-sanitize.ts), whose one profile forbids data-*
   const sanitizes = (MD_FN.match(/sanitizeMd\([^)]*\)/g) || []);
   assert.equal(sanitizes.length, 1);
-  assert.match(sanitizes[0], /sanitizeMd\(dirty, mintHeadingIds, \{ remoteRefs: "keep" \}\)/);   // the second argument is the viewer's own pass (the heading ids), run inside the call (Slice 4 of plans/markdown-viewer.md); the third turns the paint pass off, since the viewer gates those references
+  assert.match(sanitizes[0], /sanitizeMd\(dirty, mintHeadingIds, \{ remoteRefs: "keep" \}\)/);   // the second argument is the viewer's own pass (the heading ids), run inside the call (Slice 4 of plans/markdown-viewer.md); the third turns the paint pass's other-origin half off, since the viewer gates those references (its data: half still runs: a data: document is removed, never gated)
   assert.doesNotMatch(MD_FN, /DOMPurify\.sanitize|ALLOW_DATA_ATTR|USE_PROFILES/, "no per-call profile in the viewer");
   const chatMd = (RENDER.split("function md(src: string, repo: string | null = prRepoFor()): string {")[1] || "").split("\nfunction ")[0];   // the signature carries the PR-link repo (pr-links.ts)
   assert.match(chatMd, /const clean = sanitizeMd\(dirty\);/);
