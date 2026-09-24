@@ -573,9 +573,11 @@ class CollectionEvent(Synthetic):
         try:
             del la
             gc.collect()
+            freed = own() is None                                  # read before the name is restored
         finally:
             em._MAT_COLLECTED = q
             sys.unraisablehook = hook
+        self.assertTrue(freed, "the list was freed while the module's queue name was None")
         self.assertEqual(raised, [], "the callback raised nothing with the module's queue name set to None")
         self.assertTrue(any(r is own for r in q.copy()), "...and queued the list's reference on the queue it was bound to")
 
@@ -731,7 +733,8 @@ class CollectionEvent(Synthetic):
         in-place list method _ListRef names is refused (append, extend, insert, pop, remove, clear, reverse, sort, item
         assignment and deletion, += and *=)."""
         ix, la = _mint(3, "t")
-        a0 = la[0]
+        a0 = la[0]                                                 # sort(key=id) below: an allowed plain sort would still raise
+        #                                                            TypeError here, comparing the built atom with the placeholder
         for bad in (lambda: la.append({}), lambda: la.extend([{}]), lambda: la.insert(0, {}), lambda: la.pop(),
                     lambda: la.remove(a0), la.clear, la.reverse, lambda: la.sort(key=id), lambda: la.__setitem__(0, {}),
                     lambda: la.__delitem__(0), lambda: operator.iadd(la, [{}]), lambda: operator.imul(la, 2)):
