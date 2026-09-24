@@ -476,12 +476,12 @@ class WalkNoteForAPathThatHoldsNoTree(_World):
 
     The first form of the read-keyed note recorded nothing for a live link or a file, as _subagent_meta_map records
     nothing for one, and nothing then moved when the tree replaced it. Under that form the cases that place a live link
-    or a file once, at a sibling's path and at the own path, and both read-then-replace cases are red on the key's
-    presence; the sequence cases are red on the rebuild assertion in their link and file subtests, and their dangling
-    subtests pass (that form notes a dangling link None too). Every other case of the class names its own red in its
-    own docstring, except the dangling-link control, which says why it stays green. The world: api's transcript looks
-    up AID_GHOST, whose file is nowhere; the link's target and the file are aged into the past, so the tree that
-    replaces them differs in mtime from what the note recorded."""
+    or a file once and leave it at the path through the lookup, at a sibling's path and at the own path, and both
+    read-then-replace cases, are red on the key's presence; the sequence cases are red on the rebuild assertion in their
+    link and file subtests, and their dangling subtests pass (that form notes a dangling link None too). Every other
+    case of the class names its own red in its own docstring, except the dangling-link control, which says why it stays
+    green. The world: api's transcript looks up AID_GHOST, whose file is nowhere; the link's target and the file are
+    aged into the past, so the tree that replaces them differs in mtime from what the note recorded."""
 
     def setUp(self):
         super().setUp()
