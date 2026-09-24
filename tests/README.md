@@ -204,8 +204,10 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   the others, and the number of files it parsed, which the census pin compares
   with an `os.walk` of the tree by equality; the census parses each file itself,
   once per run of the module, keeps the trees of the files its import resolver
-  may read and drops every other tree after its walk, and derives once per set of
-  paths, and the module holds what it keeps in one object that its
+  may read and drops every other tree after its walk (the census pin holds the
+  trees that outlive their walk, read through weak references, to that list),
+  and derives once per set of paths, and the module holds what it keeps in one
+  object that its
   `tearDownModule` releases. It does not use `tests/parse_cache.py`'s shared
   parse: with the trees kept in that cache, every full collection after the module
   walked them, and the perf-snapshot readers that run after it in the serial order
