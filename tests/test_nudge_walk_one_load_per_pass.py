@@ -37,7 +37,7 @@ loads as `writerLoads`, against the hand-offs each pass expects (review round 2:
 not fail); a call
 through `load_goals_or_fault` is named for its kernel caller, never for the judge's `_or_fault`, and a load written inside
 `_or_fault` or either outer wrapper, off its hand-off line, is named for that wrapper (on the hand-off line it is named
-for the kernel caller of that call and counted under that caller's mechanism). The claim has three limits. The door: a third loader that reaches the store through the judge's loaders during the pass is caught and named;
+for the kernel caller of that call and counted under that caller's mechanism). The claim's limits are the door, the road and the window. The door: a third loader that reaches the store through the judge's loaders during the pass is caught and named;
 a reader below those loaders (the judge's own file reader and parser) is outside the recorders and outside the claim. The
 road: the execution witness covers every caller the fixture actually executes, and a caller on a road no case drives is
 outside it: a load on such a road is seen by the site census or the gate scan when it sits in the look's own source or in
@@ -1022,10 +1022,10 @@ CASE_KM = ("_session_working", "_mark_nudge_failed", "_file_wake_answer")
 CASE_JD = ("_freeze_store",)
 # TICK_REBOUND_KM / TICK_REBOUND_JD: a kernel or judge global the tick itself rebinds (a `global` statement run by the pass), which
 # _restore's check against setUp's first snapshot would name at every harness case's cleanup: name -> the reason the rebinding is
-# the tick's and not a case's leak. Empty: over the whole module on 3.12 and 3.14t no harness case ends with a global of either
-# module rebound outside the saved lists (the kernel's _PREV_ALIVE, which the tick rebinds, is in REPLACED_KM and goes back with
-# them). A row here must name a global the snapshot holds (a row for a name that is gone reds as stale); whether the tick still
-# rebinds it is not checked, so a row that outlives its rebinding is unseen here.
+# the tick's and not a case's leak. Empty when read on 2026-09-24: over the whole module on 3.12 and 3.14t no harness case ends
+# with a global of either module rebound outside the saved lists (the kernel's _PREV_ALIVE, which the tick rebinds, is in
+# REPLACED_KM and goes back with them). A row here must name a global the snapshot holds (a row for a name that is gone reds as
+# stale); whether the tick still rebinds it is not checked, so a row that outlives its rebinding is unseen here.
 TICK_REBOUND_KM = {}
 TICK_REBOUND_JD = {}
 # _INTERPRETER_GLOBALS: the names the interpreter itself writes into a module's globals, which are no case's rebinding and which
@@ -2436,9 +2436,10 @@ class _WalkHarness(unittest.TestCase):
         module's attribute is outside it); the
         names the restoring rebind moves, subtracted, so a stub a case leaves on one of the judge's directory or path names is
         overwritten by the rebind and not named (setUp's check has the same edge); TICK_REBOUND_KM and TICK_REBOUND_JD, the
-        allowance for a global the tick itself rebinds, empty today and checked, after both restores, only to name a live global; and
-        _INTERPRETER_GLOBALS, the warnings registry the interpreter writes into a module's globals on the first warning raised from it,
-        set aside by name (a kernel warning inside a harness case is no stub; before this, it red the case's cleanup naming the registry)."""
+        allowance for a global the tick itself rebinds, empty when read on 2026-09-24 and checked, after both restores, only to name a
+        live global; and _INTERPRETER_GLOBALS, the warnings registry the interpreter writes into a module's globals on the first
+        warning raised from it, set aside by name (a kernel warning inside a harness case is no stub; before this, it red the case's
+        cleanup naming the registry)."""
         journals = [jd._overrides_dir() / (sid + ".jsonl") for sid in SIDS + (SID_C,)]   # under this test's root, resolved before the rebind back
         for k, v in self.saved.items():
             setattr(km, k, v)
@@ -3193,8 +3194,8 @@ class TheDoorBumpsAtMostOneSecondKeyPerCall(_WalkHarness):
     Derives: the door's bump sites as (key, ordinal) from the real door's source through _door_regions (_sites); the sites each call
     executed, by a trace of the door's code object and every code object nested in it, the set derived from co_consts (_line_trace
     over _nested_codes), the set checked by the coverage case, the defs and classes nested in the door's statement lists each among
-    the set's names, and, since the door holds no nested code object today, by execution over a stand-in with a def two levels down,
-    a lambda and a generator expression; the coverage, the door's sites against the rows' sites plus
+    the set's names, and, since the door held no nested code object when read on 2026-09-24, by execution over a stand-in with a
+    def two levels down, a lambda and a generator expression; the coverage, the door's sites against the rows' sites plus
     UNDRIVEN_SITES both ways and none in both; the keys ROADS expects against both rosters both ways; the rows against the class's
     method names both ways; per site, whether the statement list holding it hands the read to load_goals (_door_hands_off, the roster
     pin's predicate), each row's hand-off column against the count over its sites, and the no-hand-off sites of hand-off keys, the
@@ -3390,9 +3391,9 @@ class TheDoorBumpsAtMostOneSecondKeyPerCall(_WalkHarness):
         # tree-side twin, and a list of node classes on the tree's side is a list of syntax (until the round-7 close the check ran both
         # ways over the two def classes, so a class defined in the door red it naming the opposite cause: review round 7, extra4-2 and
         # extra7-4). The bracketed names, <lambda>, <genexpr> and the comprehensions of 3.10 and 3.11, are no statement either and are
-        # left out of the names the message prints. The door holds no nested code object today, so both sides are empty there and the
-        # check would pass with a derivation answering the door alone; the mechanism is therefore held by execution over a stand-in,
-        # each of its code objects traced alone first
+        # left out of the names the message prints. While the door holds no nested code object, as it did on 3.10 through 3.14t when
+        # read on 2026-09-24, both sides are empty there and the check would pass with a derivation answering the door alone; the
+        # mechanism is therefore held by execution over a stand-in, each of its code objects traced alone first
         door = self.saved_jd["load_goals_shared"]
         codes = _nested_codes(door.__code__)
         self.assertIs(codes[0], door.__code__, "the derived set is headed by the real door's code object: %r" % [c.co_name for c in codes])
@@ -3814,18 +3815,19 @@ class TheCountersOneSite(unittest.TestCase):
         whose contract cases probe the regions the check once missed (setUp, _restore, TheAgreementCheckSpansSetUp); the contracts over
         stand-ins, each holding its mechanism over a hand-written stand-in and not over the real one: _caller's step-over, over a
         stand-in wrapper, the composition of the real boundary set being setUp's guard's, and the trace's reach into code objects nested
-        in the door, over a stand-in alone while the door holds none, the stand-in's shape a contract over the mechanism
-        (TheRecorderNamesTheAsker, the door witness and its coverage case); a stub in a container the cleanup does not read (a member of
-        a module-level dict, list or set, an instance attribute, an imported module's attribute, a class the module owns and binds in no
-        global) or on a class the module imports or builds under another module's name, which the ownership test does not read, outside
-        the cleanup's check (_restore, _class_attributes); the names the cleanup's check sets aside: a row of the tick allowance,
-        TICK_REBOUND_KM or TICK_REBOUND_JD, empty today, whose rebinding by the tick is not checked, so a row that outlives its
-        rebinding is unseen, and the warnings registry, _INTERPRETER_GLOBALS, set aside by name (_restore, the comments above
-        TICK_REBOUND_KM and _INTERPRETER_GLOBALS); a retry of the whole look, by the gate, by the pass loop or by the look calling
-        itself, which leaves the load a statement of the look's own body and so satisfies the site census, that fires only on a raise or
-        a fault no case drives (a TypeError, a KeyError, an EMFILE or EIO fault), caught by nothing in the module (the raise and fault
-        cases); the fault case's mode-000 road, skipped under root, and goals.loads_shared, asserted nowhere in the raise case (the
-        fault and raise cases); the counter's name completed at run time, by a transform _door_text does not undo, from constants none
+        in the door, over a stand-in alone while the door holds none, as it did when read on 2026-09-24, the stand-in's shape a
+        contract over the mechanism (TheRecorderNamesTheAsker, the door witness and its coverage case); a stub in a container the
+        cleanup does not read (a member of a module-level dict, list or set, an instance attribute, an imported module's attribute, a
+        class the module owns and binds in no global) or on a class the module imports or builds under another module's name, which the
+        ownership test does not read, outside the cleanup's check (_restore, _class_attributes); the names the cleanup's check sets
+        aside: a row of the tick allowance, TICK_REBOUND_KM or TICK_REBOUND_JD, empty when read on 2026-09-24, whose rebinding by the
+        tick is not checked, so a row that outlives its rebinding is unseen, and the warnings registry, _INTERPRETER_GLOBALS, set
+        aside by name (_restore, the comments above TICK_REBOUND_KM and _INTERPRETER_GLOBALS); a retry of the whole look, by the gate,
+        by the pass loop or by the look calling itself, which leaves the load a statement of the look's own body and so satisfies the
+        site census, that fires only on a raise or a fault no case drives (a TypeError, a KeyError, an EMFILE or EIO fault), caught by
+        nothing in the module (the raise and fault cases); the fault case's mode-000 road, skipped under root, and goals.loads_shared,
+        asserted nowhere in the raise case (the fault and raise cases); the counter's name completed at run time, by a transform
+        _door_text does not undo, from constants none
         of which reads as it whole or carries it whole into a subscript key, a listed lookup or a dict read, a constant carrying the
         name whole to a callee the contained-name clause does not list (exec bound to another name, a partial of exec), and a spelling
         in escape sequences alone, in a module whose text holds the name in no letter case, each outside the counter census, and a write
@@ -4708,16 +4710,19 @@ class TheCensusOverEveryForm(unittest.TestCase):
     helper's body was no site, and no sample said so). The loader
     forms of the string and the assembled classes are also run through the kernel-wide pin, _loader_births, over the form's own
     file: a birth from every string form and none from any assembled form, so the pin is held against the input it refuses and
-    the input it lets pass over the forms the rows list; the two limit texts are messages no assertion reads, so an overstatement in
-    them beyond the listed forms is not caught here (a verifier of the consolidation pass found the module's text saying the pin
-    closed the string limit while vars(jd)[...] and jd.__dict__[...] passed it; review round 5 found the recaps naming families where
-    _door_text undoes one member; a verifier of the round-5 fixes rewrote the assembled limit text to a false universal with every
-    case green, which is why this sentence no longer says the texts cannot overstate). Derives: each row's answer by execution of
-    the census on the running interpreter, the gated rows' SyntaxError below their version, and the kernel-wide pin's verdict over
-    every string and assembled row's file. Bounds: the rows of _LOADER_FORMS, _BUMP_FORMS and _HANDOFF_FORMS, the lens's
-    enumeration, a sample of Python's forms and not a population (no module can enumerate the language's forms, so a form nobody
-    listed is held by nothing here); the classes of _LIMITS and each row's class, a classification by hand; and the counts
-    pinned, each table's rows and the missed forms by class, tripwires that make an edit to a table carry a reason."""
+    the input it lets pass over the forms the rows list; every limit text of _LIMITS, the string and the assembled texts among them,
+    is a message no assertion reads, so an overstatement in any of them beyond the listed forms is not caught here (a verifier of the
+    consolidation pass found the module's text saying the pin closed the string limit while vars(jd)[...] and jd.__dict__[...]
+    passed it; review round 5 found the recaps naming families where _door_text undoes one member; a verifier of the round-5 fixes
+    rewrote the assembled limit text to a false universal with every case green, which is why this sentence no longer says the texts
+    cannot overstate; the staging census before round 9 found it naming the string and the assembled texts alone, and each text of
+    _LIMITS rewritten false, one at a time and all at once, left the module green while a key renamed red the enumeration).
+    Derives: each row's answer by execution of the census on the running interpreter, the gated rows' SyntaxError below their
+    version, and the kernel-wide pin's verdict over every string and assembled row's file. Bounds: the rows of _LOADER_FORMS,
+    _BUMP_FORMS and _HANDOFF_FORMS, the lens's enumeration, a sample of Python's forms and not a population (no module can
+    enumerate the language's forms, so a form nobody listed is held by nothing here); the classes of _LIMITS and each row's class,
+    a classification by hand; and the counts pinned, each table's rows and the missed forms by class, tripwires that make an edit
+    to a table carry a reason."""
 
     def setUp(self):
         self.td = tempfile.TemporaryDirectory()
