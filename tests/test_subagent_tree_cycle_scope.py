@@ -278,12 +278,12 @@ class OneSampleOfEachRootPerCycle(_World):
         self.assertIsNone(getattr(km._live_scope, "chat_push_owned", None), "the owned slot list was consumed by the close")
 
     def test_an_empty_answer_is_never_scoped_so_a_tree_appearing_under_an_open_scope_is_found(self):
-        """The refuter's amendment: _subagent_file_walk stamps the root itself with a fresh _dir_stamp and reads its
-        listing through _find_agent_file; served an older EMPTY sample it would memoize a nested agent's miss under a
-        stamp newer than the listing it read, a stale miss that outlives the cycle because _subagent_file's hit path
-        re-stats and never re-walks. So a zero-directory answer (no root, or not a directory) is never stored in the
-        scope, and every caller re-lstats such a root as today. On the spec's storage rule as written this returned None
-        twice."""
+        """The refuter's amendment: _subagent_file_walk stamps the root itself with a fresh _dir_stamp and hands
+        _find_agent_file the tree it read with _subagent_tree; served an older EMPTY sample it would memoize a nested
+        agent's miss under a stamp newer than the listing it read, a stale miss that outlives the cycle because
+        _subagent_file's hit path re-stats and never re-walks. So a zero-directory answer (no root, or not a directory)
+        is never stored in the scope, and every caller re-lstats such a root as today. On the spec's storage rule as
+        written this returned None twice."""
         tpath = self.paths[SID2]                               # api: no subagents directory yet
         own = km._subagents_dir(tpath)
         self.assertFalse(own.exists())
