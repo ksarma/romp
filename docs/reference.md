@@ -3160,20 +3160,23 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   happened: 6.15 million entries against a cap of 7.73 million after 73
   hours, most of them for freed lists. On that machine, with nine sessions,
   the live entries are at most about 1.0 million, so the cap sits about 7.7
-  times above them: the cap is a backstop, and `evictions` counts what it
-  takes), `evictions` (a live entry past the cap: its slot's memo dropped,
-  never a field in place), `collected` (entries the collection event
+  times above them: the cap is a backstop, and `evictions` counts the live
+  entries it takes), `evictions` (a live entry past the cap: its slot's memo
+  dropped, never a field in place), `collected` (entries the collection event
   removed: a list's weak reference queues itself when the list is freed,
   and the next build, re-registration or release removes that list's
   entries), `expired` (an entry whose list has been collected, dropped in
   one of three ways, no slot touched in any case: by that removal, so every
   `collected` entry counts here too; by the cap; or when a live list
-  registers a slot under the id the dead one held. `expired` minus
-  `collected` counts the last two, and it means something only while
-  `evictions` is flat: once the cap binds, it also removes entries whose
-  list was freed on another thread just before that list's callback ran,
-  with no callback missed. A `resident` that keeps rising while `evictions`
-  stays flat is the sign of a leak), `released` (entries popped the moment the
+  registers a slot under the id the dead one held. Every registration first
+  removes the entries of the lists already queued, so the third way drops
+  only an entry whose list's callback never queued it. `expired` minus
+  `collected` counts the last two ways. While `resident` has stayed under
+  the cap, it counts only the third; once the cap binds, it also counts
+  entries of lists freed since the last build, re-registration or release
+  that the cap dropped before a removal could, with no callback missed. A
+  `resident` that keeps rising while `evictions` stays flat is the sign of
+  a leak), `released` (entries popped the moment the
   assembly entry that owned their index was dropped or replaced, rather than
   a million entries later at the cap), `rowDecodes` (document rows decoded,
   a build's or a light read's), `userFacts` (below), and `restoredTurns`.

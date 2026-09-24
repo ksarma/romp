@@ -5066,12 +5066,13 @@ _MAT_LRU = collections.OrderedDict()  # (id(LazyAtoms), row) → (the list's _Li
 #                                       takes the rest with it (the collection event, 2026-09-24): a tree that outlived its entry could read
 #                                       a released slot again and register it against an index nothing releases again, and when that tree
 #                                       went its entries stood dead until the cap, which at MemTotal / 32 KiB never came (6.15 million
-#                                       entries against a 7.73 million cap after 73 hours on a nine-session machine, at least 87 percent of
-#                                       them for freed lists). Each list's _ListRef queues itself when the list is freed; its callback
-#                                       takes no lock, since it can fire at any decref, under this lock included, and the lock is not
-#                                       reentrant; the next registration or release drains the queue under the lock (_mat_drain). The cap
-#                                       is the backstop, counted in `evictions`: on that machine the live entries are at most about 1.0
-#                                       million (27 live indexes at the peak, times the largest document's 37,226 rows), so the cap sits
+#                                       entries against a 7.73 million cap after 73 hours on a nine-session machine, at least 83 percent of
+#                                       them for freed lists, by the live bound below: 1 - 1,005,102 / 6.15 million). Each list's _ListRef
+#                                       queues itself when the list is freed; its callback takes no lock, since it can fire at any decref,
+#                                       under this lock included, and the lock is not reentrant; the next registration or release drains
+#                                       the queue under the lock (_mat_drain). The cap is the backstop, counted in `evictions` for a live
+#                                       entry (a dead entry it drops counts `expired`): on that machine the live entries are at most
+#                                       1,005,102 (27 live indexes at the peak, times the largest document's 37,226 rows), so the cap sits
 #                                       about 7.7 times above them; a cap under the live entries rebuilds on every pass (above).
 _MAT_LOCK = threading.Lock()
 _MAT_COLLECTED = collections.deque()  # the _ListRef of every LazyAtoms freed since the last drain, queued by _mat_collected and
@@ -5102,7 +5103,8 @@ _ASM_INDEX_STATS = {"materialized": 0, "materializedBy": {}, "materializedByStag
 #                                                              a build from an unmarked thread reads "none:<caller>", the read boot's face)
 #                                                              released: entries LazyIndex.release popped for a dropped assembly entry;
 #                                                              expired: entries of a collected list dropped, at the drain after its collection, at the cap,
-#                                                              or when a live list registers under the id the dead one held; no slot touched
+#                                                              or at a registration under the id the dead one held (the drain runs first, so only an entry
+#                                                              whose list's callback never queued it); no slot touched
 #                                                              collected: the entries the drain removed (_mat_drain), the collection event's part of expired
 _PRE_TURN_KEYS = ("pre", "uuids", "lastT", "maxT", "lastModel", "tools", "segs", "pcs", "hT")   # a pre-turn's fields beyond a plain turn's
 
@@ -5145,9 +5147,9 @@ def _materialize_caller():
 
 def _mat_register(la, i):
     """Under _MAT_LOCK: la's slot i joins the LRU at its young end under la's OWN weak reference (its _ListRef). An entry
-    already under the key that is not la's (a collected list whose id this one reuses: ids recycle the moment a list is
-    freed) is popped first and counted `expired`, and popped rather than assigned over, since an assignment to a standing
-    key keeps the key's old position and the fresh entry would sit at the old end, first to go."""
+    already under the key that is not la's (since the drain runs first, only an entry the queue never held: a missed
+    callback, or a planted test entry) is popped first and counted `expired`, and popped rather than assigned over, since
+    an assignment to a standing key keeps the key's old position and the fresh entry would sit at the old end, first to go."""
     key = (id(la), i)
     old = _MAT_LRU.pop(key, None)
     if old is not None and old[0]() is not la:
@@ -5160,9 +5162,9 @@ def _mat_trim():
     placeholder, counted `evictions`); an entry whose list has been collected is dropped and counted `expired`, and no slot is
     touched for it (the list is gone, and its id may by now be another live list's, whose slot this entry never described).
     A freed list's entries leave at the drain that runs before every registration (_mat_drain), so the dead entries this
-    branch meets are those the queue has not seen: a list freed on another thread in the moment between the collector
-    clearing its reference and its callback queuing it, or an entry planted with another reference. Those count `expired`
-    without `collected`."""
+    branch meets belong to lists freed since this registration's drain (the reference cleared and the callback queued or
+    about to be: at a last decref on another thread, or in a collection on any thread, this one included), or are planted
+    with another reference; they count `expired` without `collected`, and no callback is missed."""
     while len(_MAT_LRU) > _MAT_CAP:
         _, (ref, j) = _MAT_LRU.popitem(last=False)
         lz = ref()
@@ -5176,9 +5178,10 @@ def _mat_trim():
 def _mat_drain():
     """Under _MAT_LOCK: the entries of every list freed since the last drain leave the LRU, counted `expired` (entries of a
     collected list dropped) and `collected`. An entry is removed only when it holds the freed list's own reference, never by
-    id alone, so an entry a live list registered under the recycled id stays; no slot is touched (the list is gone). The
-    cost is one dict lookup per row of each freed list, the walk release() pays for a live index. It runs before each
-    registration and at each release, never in the /perf read (asm_index_stats changes nothing)."""
+    id alone (a guard: an entry under a recycled id cannot precede the drain, and a dead entry the queue never held is left
+    for the trim); no slot is touched (the list is gone). The cost is one dict lookup per row of each freed list, the walk
+    release() pays for a live index. It runs before each registration and at each release, never in the /perf read
+    (asm_index_stats changes nothing)."""
     q = _MAT_COLLECTED
     n = 0
     while q:
@@ -5285,8 +5288,8 @@ class LazyIndex:
                 for i, a in enumerate(list.__iter__(la)):
                     if a is _UNMAT:
                         continue
-                    if _MAT_LRU.pop((id(la), i), None) is not None:   # a built slot's entry is its own (a stale key under a reused
-                        n += 1                                        #  id was popped at the build), so the count is this list's
+                    if _MAT_LRU.pop((id(la), i), None) is not None:   # a built slot's entry is its own (the drain leaves no freed
+                        n += 1                                        #  list's entry under a reused id), so the count is this list's
                     list.__setitem__(la, i, _UNMAT)
             self._minted[:] = live                        # in place: a constructor holding this list appends to the one list
             _ASM_INDEX_STATS["released"] += n
@@ -5639,9 +5642,10 @@ def asm_index_stats():
 #                                                                                       live indexes (a dropped index takes its cache with it)
 #   resident is len(_MAT_LRU): the live entries plus those of lists freed since the last registration or release (this read drains
 #   nothing, so a snapshot changes no state). released, expired and collected are the counters the removal roads bump (the LRU's weak
-#   ownership, measured 2026-09-15; the collection event, 2026-09-24): collected counts what the drain removed. expired minus collected
-#   means something only while evictions is flat: once the cap binds, the trim's dead branch also counts entries whose list was freed
-#   on another thread just before its callback queued it. A resident count that keeps rising while evictions stays flat is the leak signal.
+#   ownership, measured 2026-09-15; the collection event, 2026-09-24): collected counts what the drain removed. While resident has
+#   stayed under the cap, expired minus collected counts only _mat_register's pops, entries whose list's callback never queued them;
+#   once the cap binds, the trim's dead branch also counts entries of lists freed since the last drain, with no callback missed.
+#   A resident count that keeps rising while evictions stays flat is the leak signal.
 _ASM_CKPT_CAP = 16 * 1024 * 1024   # a document past this is not written (counted): that session parses whole as today
 _ASM_CKPT_STATS = {"written": 0, "restored": 0, "fallbacks": {}, "skipped": {}, "hydratedBytes": 0, "hydratedAtoms": 0,
                    "restoreMs": {"load": 0.0, "verify": 0.0, "index": 0.0, "seed": 0.0, "total": 0.0},   # the restore's parts since boot, ms
