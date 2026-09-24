@@ -3850,39 +3850,42 @@ class TheCountersOneSite(unittest.TestCase):
         the finder, its samples and its roster at once, and a name removed from _TRAVERSAL with its samples when no exemption row and no
         reference inside _walk uses it, each unseen, since no count pins either roster, and a road per form with no sample row, which no
         derivation counts and only the plants the history paragraphs record pin (the finder case, the comment above _FINDER_FORMS); a
-        further reference to a traversal name under an exempt key, a _WALK_EXEMPT row being keyed by the owner label
+        use of a traversal name that walks no tree (a parent map listing a node's children, `from os import walk`, any star import),
+        which the finder, keyed on the names of _TRAVERSAL, reports as a reference, so the finder case reds on it until a _WALK_EXEMPT
+        row sets it aside, the finder's false positive, which reds where a miss passes unseen (_traversal_references, the finder case);
+        a further reference to a traversal name under an exempt key, a _WALK_EXEMPT row being keyed by the owner label
         _traversal_references gives and not by site, so one anywhere under an exempt owner passes the finder unseen, the stranger
         witness still driving the parent-map defs as roster rows and not the refusal case's method (the comment above _WALK_EXEMPT,
         _traversal_references); the stranger witness's residue, the roots of the other parse modes, a census that reads a child off the
         parent the walk yielded, which reds with an exception that is not the refusal, a census whose walk stops before the module
         body's last statement, which the plant placed first no longer catches, and a census that parses under another road or is handed
-        a pre-parsed tree, outside the roster's floor (the stranger witness, _census_floor); which real source a roster row's drive
-        parses, its drive's, held by the stranger witness only to be real (the stranger witness's accept-side message); the class chains
-        and the module-level statement the roster case pins outside the roster, which the stranger witness does not drive, each outside
-        by a reason that is a judgment, the site case's census of the counter across the kernel by the round-8 ruling that placed it in
-        that case (the roster case, the stranger witness); each position's record, its kind, list shape, base and primitive types,
-        bounded by what the hand-kept corpus showed, each stranger deriving from that base (_grammar_positions, the stranger witness);
-        the refusal's text, matched for the stranger's name and the table's phrase alone, so an AssertionError from any code whose text
-        holds that name and that phrase, raised on a drive whose parse was planted, passes the refuse side as _walk's refusal (the
-        stranger witness's Bounds sentence, its first case); the instrument case's samples, the field names the reduced corpus must name
-        and the hand-read position ClassDef.body against the walked FunctionDef.body, each check holding at its samples alone (the
-        stranger witness's Bounds sentence, the instrument case); a compatibility class the running interpreter lacks, no red, since
-        that set shrinks by version (_walk); the gate's equality, asserted only where the fixture caches every parse, its bound the
-        general pin (the module docstring); the Bounds pin reading the label and a roster's spelling and not the truth of the sentence,
-        a roster read through a helper the row calls outside it (the stranger witness's Bounds case and its messages); the axis pin's
-        narrowing of the standard, which the reviewer accepted: no roster row's Derives sentence is read, and only a row whose def reads
-        a hand-written roster by Name owes a Bounds sentence, so a Derives sentence deleted from any row, or a Bounds sentence deleted
-        from a row that reads no hand-written roster, leaves the module green (the round-7 and round-8 paragraphs, the stranger
-        witness's Bounds case); the case-count sweep reading by value no count spelled as a word, no historical clean line, no per-state
-        figure, each riding on its re-take (the current head's paragraph's read for their form alone), and no historical paragraph's
-        figures, read for the head label alone, the figures of a mutation whose words spell 'this head' among them (the Docs count
-        case); every case and helper docstring, the site case's list among them, read for its truth by no case, and of the module
-        docstring the Docs cases read only the pointer to the reference, every case count with its head label, and the current head's
-        label, clean line and paragraph figures, so the rest of its prose, the claim's limits among it, is read by nothing (the Bounds
-        pin reads a roster row's docstring for the label and the spelling alone), and a false sentence in either leaves the module green
-        (the round-7 paragraph, the Docs cases); the ledger entry, carried by hand and read by no case (the reference case); and the
-        stranger witness's cost floor, every roster row at every plantable position with a breadth-first first walk (the module
-        docstring)."""
+        a pre-parsed tree and walks by hand, outside the roster's floor (the stranger witness, _census_floor); which real source a
+        roster row's drive parses, its drive's, held by the stranger witness only to be real (the stranger witness's accept-side
+        message); the class chains and the module-level statement the roster case pins outside the roster, which the stranger witness
+        does not drive, each outside by a reason that is a judgment, the site case's census of the counter across the kernel by the
+        round-8 ruling that placed it in that case (the roster case, the stranger witness); each position's record, its kind, list
+        shape, base and primitive types, bounded by what the hand-kept corpus showed, each stranger deriving from that base
+        (_grammar_positions, the stranger witness); the refusal's text, matched for the stranger's name and the table's phrase alone, so
+        an AssertionError from any code whose text holds that name and that phrase, raised on a drive whose parse was planted, passes
+        the refuse side as _walk's refusal (the stranger witness's Bounds sentence, its first case); the instrument case's samples, the
+        field names the reduced corpus must name and the hand-read position ClassDef.body against the walked FunctionDef.body, each
+        check holding at its samples alone (the stranger witness's Bounds sentence, the instrument case); a compatibility class the
+        running interpreter lacks, no red, since that set shrinks by version (_walk); the gate's equality, asserted only where the
+        fixture caches every parse, its bound the general pin (the module docstring); the Bounds pin reading the label and a roster's
+        spelling and not the truth of the sentence, a roster read through a helper the row calls outside it (the stranger witness's
+        Bounds case and its messages); the axis pin's narrowing of the standard, which the reviewer accepted: no roster row's Derives
+        sentence is read, and only a row whose def reads a hand-written roster by Name owes a Bounds sentence, so a Derives sentence
+        deleted from any row, or a Bounds sentence deleted from a row that reads no hand-written roster, leaves the module green (the
+        round-7 and round-8 paragraphs, the stranger witness's Bounds case); the case-count sweep reading by value no count spelled as a
+        word, no historical clean line, no per-state figure, each riding on its re-take (the current head's paragraph's read for their
+        form alone), and no historical paragraph's figures, read for the head label alone, the figures of a mutation whose words spell
+        'this head' among them (the Docs count case); every case and helper docstring, the site case's list among them, read for its
+        truth by no case, and of the module docstring the Docs cases read only the pointer to the reference, every case count with its
+        head label, and the current head's label, clean line and paragraph figures, so the rest of its prose, the claim's limits among
+        it, is read by nothing (the Bounds pin reads a roster row's docstring for the label and the spelling alone), and a false
+        sentence in either leaves the module green (the round-7 paragraph, the Docs cases); the ledger entry, carried by hand and read
+        by no case (the reference case); and the stranger witness's cost floor, every roster row at every plantable position with a
+        breadth-first first walk (the module docstring)."""
         self._the_named_def("_auto_nudge_session", km._auto_nudge_session, "_auto_nudge_session")
         at = [i for i, _ln in _loader_sites(km._auto_nudge_session, "jd.load_goals_shared")]
         self.assertEqual(len(at), 1, "one shared load in the walk's look, by either spelling of the shared door: a second call site is "
@@ -5303,7 +5306,8 @@ class TheWalkersRefuseAStrangerByExecution(unittest.TestCase):
         a subtree a row holds, keeps a parse as a value, reads a line number or a def's first statement and walks nothing, or reads
         a synthetic grammar tree; the site case's census of the counter across the kernel walks a whole tree with _walk and is
         outside the roster by the round-8 ruling that placed it in the case); and the floor's own boundary, the spelling of the reader (_TREE_READERS and _walk by Name), so a
-        census parsing under another road or handed a pre-parsed tree joins the roster by the comment's rule alone."""
+        census parsing under another road or handed a pre-parsed tree, and walking by hand, joins the roster by the comment's rule
+        alone."""
         tree = ast.parse(Path(os.path.realpath(__file__)).read_text(encoding="utf-8"))
         defs, classes, module = _census_floor(tree)
         names = {name for name, _shape, _drive in _CENSUSES}
