@@ -905,7 +905,7 @@ def _env_block(text, env_indent, keys_out=None):
             elif v[:1] in ("'", '"'):
                 value = v
             else:
-                value = re.split(r"[ \t]#", " " + v, 1)[0].strip()
+                value = re.split(r"[ \t]#", " " + v, maxsplit=1)[0].strip()
             out[km.group(1)] = value
             keys.append((off, km.group(1)))
     return out
@@ -1028,7 +1028,7 @@ def _step_run(stext):
     if close > 0:
         first = first[1:close]
     else:
-        first = re.split(r"[ \t]#", " " + first, 1)[0].strip()
+        first = re.split(r"[ \t]#", " " + first, maxsplit=1)[0].strip()
     return [(off, first, off)] if first else []
 
 
