@@ -2046,8 +2046,9 @@ def run_pytest_status(src):
        them.
     The residual: a write to those files that does not spell their names, such as one by a script or action a step
     calls (actions/setup-python writes both) or one through `${{ github.env }}`; and a command that names its
-    interpreter or pytest by a path, which may be a script. Returns (the file lines of the pytest commands read,
-    [(line, text, reason)] refused); a missing job, step or run text is a refusal."""
+    interpreter or pytest by a path, which may be a script. Returns (the file line of the step's command line that
+    PYTEST_CMD_RE reads as pytest, whatever else is refused on it, [(line, text, reason)] refused); a missing job, step
+    or run text is a refusal."""
     lines_of = src.splitlines()
     read, refused = [], []
 
@@ -2104,7 +2105,10 @@ def run_pytest_status(src):
             if not commands:
                 refuse(sbase, "the Run pytest step's run text holds no command")
                 continue
-            target = next(((o, c) for o, c in commands if PYTEST_CMD_RE.match(_comment_cut(c).strip())), commands[0])
+            target = next(((o, c) for o, c in commands if PYTEST_CMD_RE.match(_comment_cut(c).strip())), None)
+            if target is not None:
+                read.append(_line_of(src, sbase + target[0]))
+            target = target or commands[0]
             for o, _c in commands:
                 if o != target[0]:
                     refuse(sbase + o, "a second command line in the Run pytest step's run text: the step runs one command, "
@@ -2119,7 +2123,6 @@ def run_pytest_status(src):
             if not hit:
                 refuse(sbase + off, "the Run pytest command line is not a command PYTEST_CMD_RE reads as pytest")
                 continue
-            read.append(_line_of(src, sbase + off))
             for name, _value in INLINE_ENV_RE.findall(hit.group("env")):
                 if name not in RUN_PYTEST_ENV:
                     refuse(sbase + off, "the env key %s, a prefix on the Run pytest command, not an entry of RUN_PYTEST_ENV" % name)
@@ -2272,13 +2275,13 @@ class PytestPopulation(unittest.TestCase):
         # pytest's and the cell's is the step's (run_pytest_status; its cases in PopulationCheckReds). The read must hold
         # the matrix step's own pytest line, so an empty read is red, not green
         read, refused = run_pytest_status(self.src)
-        matrix = [i["line"] for i in self.found if (i["job"], i["step"]) == MATRIX_STEP]
-        self.assertEqual(read, matrix, "the check read no Run pytest command, or another line than the population's: an empty "
-                         "or partial read is red, not green")
         self.assertEqual(refused, [], "on the Run pytest step, its job or the workflow, something that can discard pytest's "
                          "failure or let it exit 0 without running the suite (run_pytest_status's docstring is the rule; "
                          "RUN_PYTEST_OPTIONS and RUN_PYTEST_ENV are its two allowlists, each entry with its reason):\n  "
                          + "\n  ".join("line %d: %s (%s)" % r for r in refused))
+        matrix = [i["line"] for i in self.found if (i["job"], i["step"]) == MATRIX_STEP]
+        self.assertEqual(read, matrix, "the check read no Run pytest command, or another line than the population's: an empty "
+                         "or partial read is red, not green")
 
     def test_every_listed_entry_names_an_invocation_that_exists(self):
         # a stale entry is a reason with no subject: the step was renamed or removed and the list did not follow; and a
@@ -3029,6 +3032,7 @@ class PopulationCheckReds(unittest.TestCase):
             with self.subTest(plant=label):
                 read, refused = run_pytest_status(src)
                 self.assertEqual([r[0] for r in refused], [line], "%s: %r" % (label, refused))
+                self.assertEqual(read, [i["line"] for i in pytest_invocations(src) if (i["job"], i["step"]) == MATRIX_STEP], label)
                 self.assertIn(why, refused[0][2], label)
                 self.assertEqual(refused[0][1], src.splitlines()[line - 1].strip(), label)
                 self.assertEqual([verdict(i) for i in pytest_invocations(src) if (i["job"], i["step"]) == MATRIX_STEP], ["ok"], label)
