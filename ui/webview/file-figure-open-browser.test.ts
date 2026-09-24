@@ -63,7 +63,11 @@
 // review's round 14, correctness-2), red at a margin of the ring's width on every side, 56aedf384's, where the runs of f lost the ink
 // they paint past their own boxes to the ring and the float's dash read the text it wraps under 3:1 (the margin ruling of
 // 2026-09-24), and the pane's case red at a fixed 7px across the line, 5f147e582's, where the heading runs and, at 150%, the italic
-// and bold italic runs lost ink to the ring (the second margin ruling that day). The ring's line pin (ringClearsTheLines), in a case
+// and bold italic runs lost ink to the ring (the second margin ruling that day). The pane's case also reads an italic run glued to a
+// picture inside two nested small elements, whose margin, 0.3em of the picture's smaller text, falls short of the run's reach: the ink
+// the ring covers there is held within the bound the sheets state (SMALLER_BOUND), 1 to 4 pixels, with the dash beside it at 3:1, so
+// a margin that widens the bound or closes it reds (red at 3px plus 0.6em across the line and at 3px). The ring's line pin
+// (ringClearsTheLines), in a case
 // of its own at a device scale of 2 on the chat modal, reads a picture under a line of descenders holding an inline code span and
 // under a line of keys for the paint the ring covers, and one in a note callout, an even table row and a highlight for the ring's
 // pixels past the picture's margin box: red at 2px up and down by a key's bottom row and a row of each tint, and at 1px and with none
@@ -947,8 +951,10 @@ async function paintedLegible(page: any, where: string, fails: string[], note: (
   await frames(page, 2);
   return out;
 }
-/** A neighbour pin scene: the alt of the picture whose ring is read, the scene, and the neighbours the scene glues to the picture. */
-type Scene = [string, string, string[]];
+/** A neighbour pin scene: the alt of the picture whose ring is read, the scene, the neighbours the scene glues to the picture, and,
+ *  for a picture set in smaller text than the run glued before it, the least and the most pixels of that run's ink the ring covers,
+ *  the bound the sheets state for it (none: the ring covers no ink). */
+type Scene = [string, string, string[], [number, number]?];
 const GLUED = ["the glyph before it", "the glyph after it"];
 /** The runs of f glued to a picture on both sides (GLYPH_RUNS), in the tiny report and in the Files pane report alike. */
 const RUNS: Scene[] = [["ngf", "an upright f run", GLUED], ["ngi", "an italic f run", GLUED], ["ngb", "a bold italic f run", GLUED]];
@@ -957,10 +963,20 @@ const NEIGHBOURS: Scene[] = [["ngp", "a paragraph", GLUED], ["ngh", "a highlight
 /** The italic runs of f in a level-2 and a level-1 heading (HEADING_RUNS), where the reach of a slanted f past its own box grows with
  *  the heading's text (the second margin ruling of 2026-09-24). */
 const HEADINGS: Scene[] = [["nh2", "an italic f run in a level-2 heading", GLUED], ["nh1", "an italic f run in a level-1 heading", GLUED]];
-/** The Files pane report's scenes (PANE_TEXT): the runs, the heading runs, and a left-floated picture in a note callout, the text it
+/** The bound the sheets state for a picture in smaller text than an italic or bold italic f glued before it: the margin across the
+ *  line is 3px plus 0.3em of the PICTURE's own text size, short of that f's reach, so the ring covers some of its ink, at most 4
+ *  pixels in one read at a device scale of 1 (measured by screenshot pixels with the picture inside small, sub and sup, two nested
+ *  small elements and text at 0.8em and 0.7em of the f's, in both themes, in the eleven configurations, at every text size from
+ *  100% to 200% and with the line moved by each eighth of a pixel), and every dash still reads the token's own ratio, since the f
+ *  stands before the picture and the ring paints over its ink. This scene reads 2 in both themes at 100% and at 150%. At least 1:
+ *  the scene records the residual, so a margin that closes it reds here as one that widens it does, and the sentences that state
+ *  it are reworded: red at 3px plus 0.6em across the line, where it reads 0, and at 3px, where it reads 12 at 100% and 17 at 150%. */
+const SMALLER_BOUND: [number, number] = [1, 4];
+/** The Files pane report's scenes (PANE_TEXT): the runs, the heading runs, a left-floated picture in a note callout, the text it
  *  wraps starting at its margin box, where at a horizontal margin of the ring's width the dash's outer side read that text's first
- *  glyph. */
-const PANE_NEIGHBOURS: Scene[] = [...RUNS, ...HEADINGS, ["cfloat", "a left float in a note callout", ["the glyph after it"]]];
+ *  glyph, and an italic run glued to a picture in two nested small elements (SMALLER_RUN), held to SMALLER_BOUND. */
+const PANE_NEIGHBOURS: Scene[] = [...RUNS, ...HEADINGS, ["cfloat", "a left float in a note callout", ["the glyph after it"]],
+  ["nss", "an italic f run glued to a picture in two nested small elements", GLUED, SMALLER_BOUND]];
 /** The ring covers no neighbouring ink and the dash beside a neighbour reads 3:1 on both sides (the file review's round 14,
  *  correctness-2 with extra5-1 and extra5-2, and the margin ruling of 2026-09-24): a box-shadow takes no layout and paints with the
  *  picture in tree order, so the ring covers whatever stands before the picture within its width, and text painted after the picture
@@ -968,7 +984,9 @@ const PANE_NEIGHBOURS: Scene[] = [...RUNS, ...HEADINGS, ["cfloat", "a left float
  *  (the glyph glued before it and the one glued after it, found through any element holding them, or the badge glued before the
  *  second badge) is shot three times: as painted, with every mark's box-shadow overridden to none (the page without the ring, the
  *  margin kept, so nothing moves), and with the ring off and the text of the picture's parent element transparent (the page without
- *  that text's ink). A neighbour fails when a pixel whose centre lies inside its rect changes with the ring, or an ink pixel of it
+ *  that text's ink). A picture that is the only child of inline elements (two nested small elements) is read through the
+ *  outermost: its siblings are the neighbours and its parent holds the text. A neighbour fails when a pixel whose centre lies
+ *  inside its rect changes with the ring, or an ink pixel of it
  *  does (a pixel of the ring-off shot more than 24 off the rect's modal colour on a channel); the scene fails when the ring covers
  *  any ink of that text anywhere in the clip (a pixel the ring changes where the ring-off and ink-off shots differ), which reads the
  *  ink a glyph paints past its own box toward the picture, an f's hook or a slanted run's last letter; and when the mark's worst
@@ -978,12 +996,14 @@ const PANE_NEIGHBOURS: Scene[] = [...RUNS, ...HEADINGS, ["cfloat", "a left float
  *  take the ring off (the picture's computed box-shadow none under them) and move nothing. With a margin of the ring's width on every
  *  side, 56aedf384's, the runs of f red by the ink the ring covers and the Files pane's float by its dash, 2.06:1 dark and 2.91:1
  *  light; at a fixed 7px across the line, 5f147e582's, the heading runs red by the ink the ring covers, and at 150% the italic and
- *  bold italic runs. Each failure is pushed onto `fails`, each read handed to `note`; the scroll is restored. */
+ *  bold italic runs. A scene with a bound (SMALLER_BOUND, a picture in smaller text than the run glued before it) fails when the
+ *  ink the ring covers anywhere in the clip falls outside it, not when there is any, its neighbours' rects and its dash read as
+ *  above. Each failure is pushed onto `fails`, each read handed to `note`; the scroll is restored. */
 async function ringCoversNoNeighbour(page: any, where: string, fails: string[], note: (m: string) => void, hover = false, scenes: Scene[] = NEIGHBOURS): Promise<void> {
   type Rect = { left: number; top: number; right: number; bottom: number };
   await page.mouse.move(5, 5);
   const top = await page.evaluate(() => (document.querySelector(".fileview-body") as HTMLElement).scrollTop);
-  for (const [alt, scene, want] of scenes) {
+  for (const [alt, scene, want, bound] of scenes) {
     const layout = (scroll: boolean): Promise<{ img: Rect; near: Record<string, Rect>; outline: string; shadow: string; hovered: boolean }> => page.evaluate(([alt, scroll, want]: [string, boolean, string[]]) => {
       const img = Array.from(document.querySelectorAll(".fileview-md img")).find((x) => x.getAttribute("alt") === alt) as HTMLElement;
       if (scroll) img.scrollIntoView({ block: "center" });
@@ -995,10 +1015,12 @@ async function ringCoversNoNeighbour(page: any, where: string, fails: string[], 
         const t = node as Text; const r = document.createRange(); r.setStart(t, last ? t.length - 1 : 0); r.setEnd(t, last ? t.length : 1); return box(r.getBoundingClientRect());
       };
       const near: Record<string, { left: number; top: number; right: number; bottom: number }> = {};
-      const b = img.previousSibling;
+      // the picture read through the inline elements it is the only child of, so its neighbours are their siblings
+      let host: Element = img; while (host.parentElement && getComputedStyle(host.parentElement).display === "inline" && host.parentElement.childNodes.length === 1) host = host.parentElement;
+      const b = host.previousSibling;
       if (want.includes("the badge before it") && b && b.nodeType === 1 && (b as Element).localName === "img") near["the badge before it"] = box((b as Element).getBoundingClientRect());
       const g = want.includes("the glyph before it") ? glyph(b, true) : null; if (g) near["the glyph before it"] = g;
-      const a = want.includes("the glyph after it") ? glyph(img.nextSibling, false) : null; if (a) near["the glyph after it"] = a;
+      const a = want.includes("the glyph after it") ? glyph(host.nextSibling, false) : null; if (a) near["the glyph after it"] = a;
       const cs = getComputedStyle(img);
       return { img: box(img.getBoundingClientRect()), near, outline: cs.outlineStyle, shadow: cs.boxShadow, hovered: img.matches(":hover") };
     }, [alt, scroll, want]);
@@ -1020,7 +1042,9 @@ async function ringCoversNoNeighbour(page: any, where: string, fails: string[], 
     const shot = async () => decodePng(await page.screenshot({ clip: { x: cx, y: cy, width: cw, height: ch } }));
     const withRing = await shot();
     await page.evaluate((alt: string) => {
-      (Array.from(document.querySelectorAll(".fileview-md img")).find((x) => x.getAttribute("alt") === alt) as HTMLElement).parentElement!.setAttribute("data-neighbour-line", "");
+      let host = Array.from(document.querySelectorAll(".fileview-md img")).find((x) => x.getAttribute("alt") === alt) as Element;
+      while (host.parentElement && getComputedStyle(host.parentElement).display === "inline" && host.parentElement.childNodes.length === 1) host = host.parentElement;
+      host.parentElement!.setAttribute("data-neighbour-line", "");
       const st = document.createElement("style"); st.id = "neighbour-pin-noring"; st.textContent = ".fileview-md img[data-fv-figweb] { box-shadow: none !important; }"; document.head.appendChild(st);
     }, alt);
     await frames(page, 3);
@@ -1072,7 +1096,10 @@ async function ringCoversNoNeighbour(page: any, where: string, fails: string[], 
     note("neighbour, " + inkRead);
     // FAILS BEFORE (56aedf384, a margin of the ring's width on every side): the runs of f, the ink an f paints past its own box; and
     // at 5f147e582's fixed 7px across the line the heading runs, and at 150% the italic and bold italic runs
-    if (covered > 0) fails.push(inkRead + ": the ring covers ink a neighbour paints past its own box (" + lost.join("; ") + ")");
+    if (!bound && covered > 0) fails.push(inkRead + ": the ring covers ink a neighbour paints past its own box (" + lost.join("; ") + ")");
+    // a picture in smaller text than the run glued before it: the ink covered within the bound the sheets state, at least its least
+    // (the residual recorded) and at most its most
+    if (bound && (covered < bound[0] || covered > bound[1])) fails.push(inkRead + ": outside the bound the sheets state for a picture in smaller text than the run glued before it, " + bound[0] + " to " + bound[1] + " pixels" + (lost.length ? " (" + lost.join("; ") + ")" : ""));
     const p = await paintedRatio(page, alt, "mark", hover ? "hover" : "rest");
     const dashRead = where + ": " + scene + ": the mark paints " + p.dash + " over " + p.ground + ", " + p.ratio.toFixed(3) + ":1 (the worst read: " + p.at + ")";
     note("neighbour, " + dashRead);
@@ -1496,11 +1523,15 @@ test("in Chromium launched as a trackpad-plus-touchscreen laptop (hover: hover, 
 // 3px plus 0.3em of the picture's own text size, since the reach of a slanted f past its own box grows with the text: at a fixed 7px,
 // 5f147e582's, an italic f glued to the picture lost ink to the ring in a level-2 heading (clear at 8px) and a level-1 heading (clear at
 // 10px), and the italic and bold italic runs lost ink at a text size of 150%. So the report holds the heading runs too, and the case
-// reads every scene again at 150%, the size stepped by the viewer's own control.
+// reads every scene again at 150%, the size stepped by the viewer's own control. The em is the picture's own, so a picture in smaller
+// text than an italic f glued before it gets less margin than that f's reach needs: the report holds one inside two nested small
+// elements after an italic run, whose ink the ring covers within the bound the sheets state (SMALLER_BOUND), read at both sizes.
 const FLOAT_WORDS = "Tall words wrap around the floated picture here and deep gjpqy words ";
 /** An italic run of f glued to a picture under the floor on both sides in a level-2 heading and in a level-1 heading. */
 const HEADING_RUNS = "## Heading *ffff*![nh2](" + WEB + "/nh2.svg)*ffff* glued\n\n# Title *ffff*![nh1](" + WEB + "/nh1.svg)*ffff* glued\n\n";
-const PANE_TEXT = "# Report\n\n" + PARA(1) + "\n\n" + GLYPH_RUNS + HEADING_RUNS
+/** An italic run of f glued on both sides to a picture under the floor inside two nested small elements, text 0.694 of the run's. */
+const SMALLER_RUN = "Smaller *ffff*<small><small>![nss](" + WEB + "/nss.svg)</small></small>*ffff* glued\n\n";
+const PANE_TEXT = "# Report\n\n" + PARA(1) + "\n\n" + GLYPH_RUNS + HEADING_RUNS + SMALLER_RUN
   + "> [!note]\n> " + '<img src="' + WEB + '/cfloat.svg" alt="cfloat" align="left">' + "jTW " + FLOAT_WORDS.repeat(5) + "\n\n" + PARA(2) + "\n";
 /** The viewer's text size stepped up `n` times by its own control: the zoom glyph opens the flyout, A+ takes one step of the table. */
 async function stepTextSizeUp(page: any, n: number): Promise<void> {
@@ -1510,8 +1541,8 @@ async function stepTextSizeUp(page: any, n: number): Promise<void> {
     await frames(page, 3);
   }
 }
-test("in a browser, under CDP touch emulation on the Files pane, the ring's neighbour pin: runs of f glued to a remote picture under the floor on both sides, upright, italic and bold italic, and italic runs in a level-2 and a level-1 heading keep all their ink, the ink past their own boxes too, and a left-floated one in a note callout, the text it wraps starting at its margin box, reads its dash at 3:1 or better on both sides, in both themes, at the viewer's default text size and at 150% (ringCoversNoNeighbour; the margin ruling of 2026-09-24: at a margin of the ring's width on every side the runs lost the ink past their boxes to the ring and the float's dash read its wrapped text's first glyph at 2.06:1 dark and 2.91:1 light; the second margin ruling that day: at a fixed 7px across the line the heading runs lost ink to the ring, and at 150% the italic and bold italic runs; a property pin read off the page)", { timeout: 240000 }, async (t) => {
-  const second = await secondServer([], Object.fromEntries(["ngf", "ngi", "ngb", "nh2", "nh1", "cfloat"].map((n) => ["/" + n + ".svg", [20, 20] as [number, number]])));
+test("in a browser, under CDP touch emulation on the Files pane, the ring's neighbour pin: runs of f glued to a remote picture under the floor on both sides, upright, italic and bold italic, and italic runs in a level-2 and a level-1 heading keep all their ink, the ink past their own boxes too, and a left-floated one in a note callout, the text it wraps starting at its margin box, reads its dash at 3:1 or better on both sides, and an italic run glued to one inside two nested small elements loses 1 to 4 pixels of ink to the ring, the bound the sheets state for a picture in smaller text than the f before it, its dash at 3:1 or better, in both themes, at the viewer's default text size and at 150% (ringCoversNoNeighbour; the margin ruling of 2026-09-24: at a margin of the ring's width on every side the runs lost the ink past their boxes to the ring and the float's dash read its wrapped text's first glyph at 2.06:1 dark and 2.91:1 light; the second margin ruling that day: at a fixed 7px across the line the heading runs lost ink to the ring, and at 150% the italic and bold italic runs; a property pin read off the page)", { timeout: 240000 }, async (t) => {
+  const second = await secondServer([], Object.fromEntries(["ngf", "ngi", "ngb", "nh2", "nh1", "cfloat", "nss"].map((n) => ["/" + n + ".svg", [20, 20] as [number, number]])));
   try {
     await inBrowser(t, async (browser) => {
       const before = async (pg: any): Promise<void> => {
@@ -1522,7 +1553,7 @@ test("in a browser, under CDP touch emulation on the Files pane, the ring's neig
       };
       const { page, errors } = await openViewer(browser, "pane", 900, 600, { docs: { [REPORT]: PANE_TEXT }, before });
       await page.click('[data-act="fv-load"]');
-      await page.waitForFunction(() => { const imgs = Array.from(document.querySelectorAll(".fileview-md img")) as HTMLImageElement[]; return imgs.length === 6 && imgs.every((i) => i.complete && i.naturalWidth > 0 && i.hasAttribute("data-fv-figweb")); }, null, { timeout: 10000 });
+      await page.waitForFunction(() => { const imgs = Array.from(document.querySelectorAll(".fileview-md img")) as HTMLImageElement[]; return imgs.length === 7 && imgs.every((i) => i.complete && i.naturalWidth > 0 && i.hasAttribute("data-fv-figweb")); }, null, { timeout: 10000 });
       const cdp = await page.context().newCDPSession(page);
       await cdp.send("Emulation.setTouchEmulationEnabled", { enabled: true, maxTouchPoints: 1 });
       await frames(page, 3);
@@ -1547,7 +1578,7 @@ test("in a browser, under CDP touch emulation on the Files pane, the ring's neig
         await ringCoversNoNeighbour(page, theme + " theme, at a text size of 150%, at rest under touch emulation on the Files pane", fails, (m) => t.diagnostic(m), false, PANE_NEIGHBOURS);
       }
       await page.evaluate(() => document.body.classList.remove("theme-light"));
-      assert.deepEqual(fails, [], "the ring covers no ink of the runs of f, in a paragraph and in both headings, at the default text size and at 150%, and the float's dash reads 3:1 on both sides (a property pin read off the page):\n" + fails.join("\n"));
+      assert.deepEqual(fails, [], "the ring covers no ink of the runs of f, in a paragraph and in both headings, at the default text size and at 150%, the float's dash reads 3:1 on both sides, and the run before a picture in smaller text loses ink within the bound the sheets state, its dash at 3:1 (a property pin read off the page):\n" + fails.join("\n"));
       assert.deepEqual(errors, [], "no page errors");
       await page.close();
     });

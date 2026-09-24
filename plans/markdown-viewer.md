@@ -8518,10 +8518,16 @@ table header, an even row or a callout fell under 3:1 on a VS Code editor ground
 under screen on every pointer, 3px up and down and 3px plus 0.3em across the line, each axis the least that keeps the ring off the
 neighbours' ink by screenshot pixels (across the line the ring's 3px and the reach of an italic or bold italic f past its own box
 toward the picture, 4px at the default text size and more as the text grows, so the margin is 7.485px at the default size and grows
-with the text, in a heading and at every text size; up and down the ring's width, so the ring stands inside the picture's margin box,
-where at 2px it covered the bottom row of a key on the line above), a line holding such a picture up to 6px taller and the text after
-it 14.97px along at the default size (the file review's round 14, correctness-2 with extra5-1 and extra5-2, the margin measured per
-axis on the two margin rulings of 2026-09-24; the open leg's neighbour pin reads runs of f, heading runs and a callout's float at the
+with the text, in a heading and at every text size, for an f set in the picture's own text size; the em is the picture's, so a
+picture in smaller text than an italic or bold italic f glued before it, inside `<small>`, `<sub>` or `<sup>`, inside two nested
+`<small>` or in text at 0.8em or 0.7em of the f's, gets less margin than that f reaches and the ring covers up to 4 pixels of the f's
+ink in one read (device pixels at a device scale of 2; inside one `<small>`, `<sub>` or `<sup>`, up to 2), at every text size from
+100% to 200% with the line moved by each eighth of a pixel, every dash still at 4.83:1 dark and 4.90:1 light, since the f paints
+before the picture and the ring over it, and text under 0.7em of the f's is not measured; up and down the ring's width, so the ring
+stands inside the picture's margin box, where at 2px it covered the bottom row of a key on the line above), a line holding such a
+picture up to 6px taller and the text after it 14.97px along at the default size (the file review's round 14, correctness-2 with
+extra5-1 and extra5-2, the margin measured per axis on the two margin rulings of 2026-09-24; the open leg's neighbour pin reads runs
+of f, heading runs, a callout's float and an italic run glued to a picture in two nested `<small>`, held to that bound, at the
 default text size and at 150%, and its line pin, at a device scale of 2, a code span and keys on the line above and three tinted
 grounds), so a tap's open is shown before it
 happens where the title is no surface; the file review's round 12, fresh-1; the web control rests at full opacity where the at-rest rule

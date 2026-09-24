@@ -1988,11 +1988,18 @@ a.fileview-gh-note { border-style: dashed; }
    hover on a fine pointer, and on the chat modal at a device scale of 2, in both themes (the file review's round 14, correctness-2
    with extra5-1 and extra5-2; the two margin rulings of 2026-09-24). Across the line 3px plus 0.3em of the picture's own text size,
    7.485px at the viewer's default size: the ring's 3px and the ink an italic or bold italic f paints past its own box toward the
-   picture, 4px at the default size and more as the text grows, so the margin grows with the text and clears that f at every text
-   size from 100% to 200% and in a level-1 and a level-2 heading (at a fixed 7px an italic f lost ink to the ring in both headings and
-   at a text size of 115% and above; at 6px it lost ink at the default size; at the ring's width an upright f and a slash lost theirs,
-   and the text a note callout wraps beside a left-floated picture put its first glyph in the ring's outer pixel, where the dash's
-   outer side read 2.06:1 dark on the Files pane). Up and down 3px, the ring's width, so the ring stands inside the picture's margin
+   picture, 4px at the default size and more as the text grows, so the margin grows with the text and clears that f, set in the
+   picture's own text size, at every text size from 100% to 200% and in a level-1 and a level-2 heading (at a fixed 7px an italic f
+   lost ink to the ring in both headings and at a text size of 115% and above; at 6px it lost ink at the default size; at the ring's
+   width an upright f and a slash lost theirs, and the text a note callout wraps beside a left-floated picture put its first glyph in
+   the ring's outer pixel, where the dash's outer side read 2.06:1 dark on the Files pane). The em is the picture's own, so a picture
+   set in smaller text than an italic or bold italic f glued before it gets less margin than that f reaches: with the picture inside
+   <small>, <sub> or <sup>, inside two nested <small>, or in text at 0.8em or 0.7em of the f's, the ring covers up to 4 pixels of that
+   f's ink in one read (device pixels at a device scale of 2; inside one <small>, <sub> or <sup>, up to 2), read the same way at every
+   text size from 100% to 200% with the line moved by each eighth of a pixel, and every dash still reads 4.83:1 dark and 4.90:1 light
+   on both sides, since the f paints before the picture and the ring over it (file-figure-open-browser.test.ts holds one such picture,
+   in two nested <small>, to that bound, SMALLER_BOUND); text smaller than 0.7em of the f's is not measured. Up and down 3px, the
+   ring's width, so the ring stands inside the picture's margin
    box on every side, which the picture's own line holds, and reaches no other line: at 2px it covered the bottom row of a key (kbd)
    on the line above, whose box reaches its line's edge, and painted the page's ground over the tint of the highlight, table row or
    callout the picture stands in one pixel past the margin box (a row 26px wide below a 20px picture, and above it too in a table row
