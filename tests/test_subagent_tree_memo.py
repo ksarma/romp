@@ -504,22 +504,25 @@ class Reported(_Tree):
 
 class UnreadableRoot(_Tree):
     """A root whose own lstat fails for a reason other than absence (EACCES from a parent without search permission, EIO)
-    is a read that did not happen, not an absent tree: nothing is popped, no eviction is recorded, nothing is noted absent,
-    no counter moves, each reader answers its standing entry unheld, and the next call after the fault clears reads the
-    disk again and finds the entry standing (a validation, never a walk). RED FIRST: until 2026-09-21 the root's
-    `except OSError` took every errno for absence, so an EIO popped the entry, moved the generation, answered (), () and
-    noted the tree absent to the chat build, which showed no subagents until the fault cleared; the module's own cases
+    is a read that did not happen, not an absent tree: nothing is popped, nothing is noted absent, no counter moves, each
+    reader answers its standing entry unheld, and the next call after the fault clears reads the disk again and finds the
+    entry standing (a validation, never a walk). This is the second of the two rules in which this branch's tree read
+    differs from upstream's: #1822's _subagent_tree_sample takes every OSError on the root's lstat for absence and pops.
+    RED FIRST: until 2026-09-21 the root's `except OSError` took every errno for absence, so an EIO popped the entry,
+    answered (), () and noted the tree absent to the chat build, which showed no subagents until the fault cleared; the
+    module's own cases
     drove only ENOENT there. Two faults: an EIO by mock on os.lstat of the root alone (every other path reads) and a REAL
     EACCES from the parent directory without search permission (nothing under it reads either; skipped as root, whom
     permission bits do not bind). The scope is open under the fault, so "nothing held" is executed, not implied, and it is
-    the WHOLE scope that is compared, its three maps (trees, stamps, launches) each empty after the tree reads: a pin over
-    one map is narrower than "no scope entry", and a stamps entry recorded on the raise left the trees-only pin green (the
-    owner's pass before round 2 of #882, its fixes-by-execution lens). After the agent-file lookup under the real EACCES
+    the WHOLE scope that is compared, its three slots (subagent_trees, subagent_stamps, subagent_launches) each empty
+    after the tree reads: a pin over one slot is narrower than "no scope entry", and a stamps entry recorded on the raise
+    left a trees-only pin green (the owner's pass before round 2 of #882, its fixes-by-execution lens). After the
+    agent-file lookup under the real EACCES
     the whole scope is compared again, by equality, to the one entry the walk holds: the project directory's stamp, since
     a fault excludes its own tree from the walk and nothing else, so the walk goes on to list the project directory (round
     2 of #882, group A; FaultExcludesItsOwnTree below executes the exclusion)."""
 
-    EMPTY = {"trees": {}, "stamps": {}, "launches": {}}   # the scope as _subagent_scope_open mints it: nothing held in any of its three maps
+    EMPTY = {"trees": {}, "stamps": {}, "launches": {}}   # the tree scope as a cycle opens it: nothing held in any of its three slots
 
     def _standing(self):
         """The memo entry and the cached sidecar map, standing before the fault; the workflow agent's resolution cold."""
@@ -534,14 +537,14 @@ class UnreadableRoot(_Tree):
     def _open_scope(self):
         """A cycle's scope, opened after every pre-fault read so nothing is held: the fault must be observed by the lstat, not
         served from a hold (a served read never reaches the disk); what the fault must leave empty."""
-        km._subagent_scope_open()
-        self.addCleanup(km._subagent_scope_close)
-        self.assertEqual(km._subagent_scope(), self.EMPTY,
-                         "premise: nothing held before the fault, in any of the scope's three maps (trees, stamps, launches)")
+        _scope_open()
+        self.addCleanup(_scope_close)
+        self.assertEqual(_scope(), self.EMPTY,
+                         "premise: nothing held before the fault, in any of the scope's three slots (trees, stamps, launches)")
 
     def _fault_holds(self, root, entry, m, errno_expected):
         """Under the fault: the sidecar map first (the reader the chat build asks), then the memo, the feed key, the lookup."""
-        g0, evicted, before = km._SUBAGENT_TREES_GEN[0], dict(km._SUBAGENT_ROOT_EVICTED), dict(km._SUBAGENT_TREE_STATS)
+        before = dict(km._SUBAGENT_TREE_STATS)
         deps = {"task_outs": [], "postal_any": False}
         km._chat_dep_scope.deps = deps
         try:
@@ -550,16 +553,14 @@ class UnreadableRoot(_Tree):
             km._chat_dep_scope.deps = None
         self.assertIn(root, km._SUBAGENT_TREES, "the entry stands: a read that did not happen pops nothing")
         self.assertIs(km._SUBAGENT_TREES[root], entry, "the same entry, untouched")
-        self.assertEqual(km._SUBAGENT_TREES_GEN[0], g0, "no eviction is recorded: the generation did not move")
-        self.assertEqual(km._SUBAGENT_ROOT_EVICTED, evicted, "and no root gained an eviction record")
         self.assertNotIn((root, None), deps["task_outs"], "the tree is not noted absent to the chat build")
         self.assertEqual(deps["task_outs"], [(root, km._TREE_UNREADABLE)],
                          "it is noted unreadable, under a key no stat equals, so the tab is rebuilt next cycle and reads again")
         self.assertIs(meta, m, "the standing map is answered, unheld (its cache entry neither popped nor re-keyed)")
         self.assertEqual({k: km._SUBAGENT_TREE_STATS[k] - before[k] for k in ("hit", "miss", "scoped", "evict", "dirStats")},
                          {"hit": 0, "miss": 0, "scoped": 0, "evict": 0, "dirStats": 0}, "no counter moves: the read answered no tree")
-        self.assertEqual(km._subagent_scope(), self.EMPTY,
-                         "nothing is held in the cycle scope, in any of its three maps (trees, stamps, launches): the fail-closed read "
+        self.assertEqual(_scope(), self.EMPTY,
+                         "nothing is held in the cycle scope, in any of its three slots (trees, stamps, launches): the fail-closed read "
                          "records no scope entry, so the next call retries (keyed on the whole scope by equality; a pin over the trees "
                          "map alone stayed green with a stamps entry recorded on the raise)")
         with self.assertRaises(km._SubagentTreeUnreadable) as cm:
@@ -570,8 +571,8 @@ class UnreadableRoot(_Tree):
             km._subagent_dirs(root)                             # never [], which is absence
         self.assertIs(km._subagent_dirs_ident(SID, root), entry,
                       "the feed key's component is the standing entry, not the missing root's (d,), (None,)")
-        self.assertEqual(km._subagent_scope(), self.EMPTY,
-                         "still nothing held after the direct reads, in any of the three maps (trees, stamps, launches)")
+        self.assertEqual(_scope(), self.EMPTY,
+                         "still nothing held after the direct reads, in any of the three slots (trees, stamps, launches)")
 
     def _fold_has_the_calls_lifetime(self):
         """The awaiting fold over a resolution that could not be made is held for the call alone, never the cycle."""
@@ -579,7 +580,7 @@ class UnreadableRoot(_Tree):
         cmd = km._awaiting_item("commands", "toolu_tree_cmd1", "run the api tests", None)
         agents, commands = km._awaiting_nest([row], [cmd], {}, str(self.tpath))
         self.assertEqual((len(agents), len(commands)), (1, 1), "nothing attributed this call")
-        self.assertEqual(km._subagent_scope()["launches"], {},
+        self.assertEqual(_scope()["launches"], {},
                          "the fold of a resolution that could not be made is held for the call alone, not the cycle")
         return row, cmd
 
@@ -597,7 +598,7 @@ class UnreadableRoot(_Tree):
         self.assertEqual(km._subagent_file(str(self.tpath), AID_WF), wf_file, "the lookup is made")
         self.assertEqual(km._SUBAGENT_FILE_CACHE[(str(self.tpath), AID_WF)][1], wf_file, "and memoized now that it was")
         km._awaiting_nest([row], [cmd], {}, str(self.tpath))
-        self.assertIn((str(self.tpath), AID_WF), km._subagent_scope()["launches"],
+        self.assertIn((str(self.tpath), AID_WF), _scope()["launches"],
                       "the next call in the cycle resolves the file and holds its fold")
 
     def test_an_eio_on_the_roots_own_lstat_pops_records_and_notes_nothing_and_the_next_call_reads_the_disk_again(self):
@@ -635,18 +636,18 @@ class UnreadableRoot(_Tree):
                 os.lstat(root)
             self.assertEqual(cm.exception.errno, errno.EACCES, "the real fault this case drives")
             self._fault_holds(root, entry, m, errno.EACCES)
-            g, proj = km._SUBAGENT_TREES_GEN[0], str(self.proj)
+            proj = str(self.proj)
             faults = []
             self.assertEqual(km._subagent_file(str(self.tpath), AID_WF, faults), wf_file,
                              "the standing resolution is answered, unheld")
             self.assertEqual(faults, ["PermissionError"], "and the caller is told the lookup could not be made")
             self.assertIs(km._SUBAGENT_FILE_CACHE[(str(self.tpath), AID_WF)], standing, "its memo entry is untouched")
             row, cmd = self._fold_has_the_calls_lifetime()
-            self.assertEqual(km._subagent_scope(),
-                             {"trees": {}, "stamps": {proj: ((proj, os.stat(proj).st_mtime_ns), None, g)}, "launches": {}},
+            self.assertEqual(_scope(),
+                             {"trees": {}, "stamps": {proj: (proj, os.stat(proj).st_mtime_ns)}, "launches": {}},
                              "at the fault's end the scope holds the project directory's stamp and nothing else, compared whole: the "
                              "agent-file walk excludes the own tree it could not read and goes on to list the project directory, "
-                             "whose stamp it takes as an own stat (round 2 of #882, group A); under the parent at mode 000 every "
+                             "whose stamp it takes as an own stamp (round 2 of #882, group A); under the parent at mode 000 every "
                              "stat of the lookup's re-check fails, and a stat that raises is never held")
         finally:
             os.chmod(parent, 0o755)
@@ -1102,7 +1103,8 @@ class FailClosedRoads(_Walk):
     def test_enotdir_at_the_root_is_absence_answered_empty_with_the_entry_popped_a_boundary_guard(self):
         """A boundary guard, green before the fail-closed change and since, by design: ENOTDIR on the root's own lstat (a
         regular file where the session directory above the root should be) is absence, answered ((), ()) with the memo entry
-        popped and its eviction recorded, as ENOENT is. The fail-closed change of 2026-09-21 kept ENOTDIR on the absence side,
+        popped, as ENOENT is (upstream's pop, with no eviction record under the one-cycle lag). The fail-closed change of
+        2026-09-21 kept ENOTDIR on the absence side,
         and the `except OSError` before it read ENOTDIR as absence too, so this case cannot fail before that change; it turns
         red if a later change moves ENOTDIR to the unreadable side (a raise, the entry kept)."""
         root = str(self.subdir)
@@ -1113,7 +1115,6 @@ class FailClosedRoads(_Walk):
         sess.write_text("")                                         # a regular file where the session directory was
         with self.assertRaises(NotADirectoryError, msg="premise: the root's lstat fails with ENOTDIR"):
             os.lstat(root)
-        g0 = km._SUBAGENT_TREES_GEN[0]
         try:
             got = km._subagent_tree(root)
         except km._SubagentTreeUnreadable as e:
@@ -1121,8 +1122,6 @@ class FailClosedRoads(_Walk):
                       "root" % (e,))
         self.assertEqual(got, ((), ()), "ENOTDIR at the root is absence: ((), ())")
         self.assertNotIn(root, km._SUBAGENT_TREES, "and the entry is popped, as for a missing root")
-        self.assertEqual((km._SUBAGENT_TREES_GEN[0] - g0, km._SUBAGENT_ROOT_EVICTED.get(root)), (1, km._SUBAGENT_TREES_GEN[0]),
-                         "and its eviction is recorded (the generation moved by one, the table naming the root at that value)")
 
 
 class StandingResolutionUnderAFault(_Walk):
