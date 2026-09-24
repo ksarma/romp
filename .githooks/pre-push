@@ -686,10 +686,15 @@
 # nothing; a rename by its edits (-M), so a pure rename adds nothing; every
 # blob as text (--text), its NUL bytes mapped to 0x01 so any awk carries the
 # line; and no textconv, no colour and no porcelain key, since diff-tree is
-# plumbing given each option explicitly. The read is whole when each commit's
-# name arrives ahead of its diff and again after it (the two lines --always
-# prints for a commit fed as <rev> and again as <rev> <rev>), in the order
-# fed, and the awk's count of commits read whole equals the count fed: a
+# plumbing given each option explicitly, with core.quotePath=true on its
+# command line (git -c), so a path comes in git's quoted form whatever the
+# clone sets (under false a name with a byte over 127 printed raw, and one
+# gitleaks' allowlist case-folds to a name it skips, pnpm-loc<U+212A>.yaml
+# with the Kelvin sign, was selected for the path-scoped run below and
+# skipped by gitleaks, refusing a clean push). The read is whole when each
+# commit's name arrives ahead of its diff and again after it (the two lines
+# --always prints for a commit fed as <rev> and again as <rev> <rev>), in the
+# order fed, and the awk's count of commits read whole equals the count fed: a
 # missing, foreign or out-of-order name line, a line after the last tail, or a
 # count short of the one fed refuses the push as unscanned naming the read.
 # The awk writes each file's added lines, commit by commit, to scratch files
@@ -2961,10 +2966,17 @@ scan_identifiers() {
 # core.bigFileThreshold say; --no-color, --no-textconv and --no-ext-diff
 # (color.ui and color.diff, a textconv driver, an external diff);
 # --ignore-submodules=none and --submodule=short (a gitlink change stays its
-# Subproject line). tr maps NUL to 0x01, byte for byte, ahead of the awk: an
-# awk that ends a record at a NUL would lose the rest of the line while every
-# count stayed consistent, and no default rule names either byte. The awk
-# reads the list file diff-tree reads (through the environment, never a -v
+# Subproject line); and git -c core.quotePath=true, which sets on the
+# command line the key that shapes a path's text, so each path comes in
+# git's quoted form whatever the clone sets and no key moves the paths
+# either (under core.quotePath=false a name with a byte over 127 printed
+# raw, and pnpm-loc<U+212A>.yaml, the Kelvin sign in place of lock's k, a
+# name the path-scoped selection below takes and gitleaks' case-folding
+# allowlist skips, refused a clean push on that run's figure; the round 9d
+# audit, 2026-09-24). tr maps NUL to 0x01, byte for byte, ahead of the awk:
+# an awk that ends a record at a NUL would lose the rest of the line while
+# every count stayed consistent, and no default rule names either byte. The
+# awk reads the list file diff-tree reads (through the environment, never a -v
 # operand: awk escape-processes a -v value, and a path may carry a backslash
 # pair), checks each commit's head marker in the order fed and its tail
 # marker, and compares names as strings ($0 "" == sha: two all-digit names
@@ -2990,7 +3002,7 @@ scan_identifiers() {
 # names the cause rather than a SIGPIPE status. Its status, under pipefail,
 # is diff-tree's, tr's or the awk's (a kill included).
 credential_feed() {   # <list file> <record file> <piece directory> <index file> <path-scoped index file>
-    git diff-tree --stdin -p -U0 -r -M -c --root --always --text --no-color --no-textconv --no-ext-diff --ignore-submodules=none --submodule=short < "$1" \
+    git -c core.quotePath=true diff-tree --stdin -p -U0 -r -M -c --root --always --text --no-color --no-textconv --no-ext-diff --ignore-submodules=none --submodule=short < "$1" \
     | LC_ALL=C tr '\000' '\001' \
     | LC_ALL=C ROMP_LIST_FILE=$1 ROMP_RECORD_FILE=$2 ROMP_PIECE_DIR=$3 ROMP_INDEX_FILE=$4 ROMP_PATH_INDEX_FILE=$5 awk '
         BEGIN {

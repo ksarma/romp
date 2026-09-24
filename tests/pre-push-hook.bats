@@ -630,7 +630,7 @@ fail_diff_tree() {   # [<sha whose diff-tree fails; every commit's when omitted>
     fi
 }
 fail_rev_list_parents() { git_refusing '[ "${1:-}" = rev-list ] && [ "${2:-}" = --parents ]' 128 "fatal: shim: rev-list --parents refused"; }
-fail_diff_tree_stdin() { git_refusing '[ "${1:-}" = diff-tree ] && [[ " $* " == *" --text "* ]]' 128 "fatal: shim: diff-tree --text refused"; }   # the credential feed's read alone (the one diff-tree given --text; re-keyed in round 9 from the retired count's --stdin read)
+fail_diff_tree_stdin() { git_refusing '[[ " $* " == *" diff-tree "*" --text "* ]]' 128 "fatal: shim: diff-tree --text refused"; }   # the credential feed's read alone (the one diff-tree given --text; re-keyed in round 9 from the retired count's --stdin read, and in round 9e from diff-tree as the first word, since the feed's git carries -c core.quotePath=true ahead of it)
 
 # The tip's CONTENT scan is one `git grep` over the tree. It exits 1 for no match
 # and above 1 when it could not scan (a git that would not run, a killed process,
@@ -1230,7 +1230,7 @@ two_files_credential_second() {   # sha is the commit
     commit_file file.txt "nothing to see" "clean"
     sha="$(git -C "$REPO" rev-parse HEAD)"
     fail_diff_tree_stdin                                # keyed on the feed's shape (diff-tree with --text): the identifier scan's diff-tree runs unchanged
-    run _hook_in "$REPO" -c 'printf "%s\n%s %s\n" "$1" "$1" "$1" | git diff-tree --stdin -p -U0 -r -M -c --root --always --text' _ "$sha"
+    run _hook_in "$REPO" -c 'printf "%s\n%s %s\n" "$1" "$1" "$1" | git -c core.quotePath=true diff-tree --stdin -p -U0 -r -M -c --root --always --text' _ "$sha"
     [ "$status" -eq 128 ]
     run _hook_in "$REPO" -c 'git diff-tree -p -r -M -c --root --no-commit-id --no-color "$1" >/dev/null' _ "$sha"
     [ "$status" -eq 0 ]
@@ -1489,7 +1489,8 @@ substitute_for() {   # <commit>: a clean commit over the same parent, with a cle
 
 # A git that runs the real git unchanged and, for the feed's shape, first
 # writes the command-scope configuration it sees (the environment's pairs, in
-# index order) to a file, and for any call made under the scanner (a wrapper
+# index order, then the pairs its own leading -c options set, as git lists
+# them) to a file, and for any call made under the scanner (a wrapper
 # exports ROMP_UNDER_SCANNER) records the call: what the feed's git was given,
 # and whether gitleaks ran a git at all.
 git_recording_feed_pairs_and_scanner_calls() {   # <pairs file> <calls file>
@@ -1500,7 +1501,9 @@ git_recording_feed_pairs_and_scanner_calls() {   # <pairs file> <calls file>
         printf '#!/usr/bin/env bash\n'
         printf '[ -z "${ROMP_UNDER_SCANNER:-}" ] || printf "%%s\\n" "git $*" >> %q\n' "$2"
         printf 'if %s; then\n' "$FEED_GIT"
-        printf '    %q config --show-scope --list | grep "^command" > %q\n' "$real_git" "$1"
+        printf '    a=("$@"); c=(); i=0\n'
+        printf '    while [ "${a[i]:-}" = -c ]; do c+=(-c "${a[i + 1]}"); i=$((i + 2)); done\n'
+        printf '    %q "${c[@]}" config --show-scope --list | grep "^command" > %q\n' "$real_git" "$1"
         printf 'fi\n'
         printf 'exec %q "$@"\n' "$real_git"
     } > "$TEST_DIR/shim/git"
@@ -1508,7 +1511,7 @@ git_recording_feed_pairs_and_scanner_calls() {   # <pairs file> <calls file>
     export PATH="$TEST_DIR/shim:$PATH"
 }
 
-@test "the hook exports no GIT_CONFIG pair of its own and gitleaks runs no git: with the caller's GIT_CONFIG_COUNT=1 (gc.auto) set, the feed's diff-tree sees exactly that pair in its command scope, a git on PATH records no call made under the scanner, and a clean root-commit push under log.showRoot=false passes (round 9d: this slot held the scanner's own git log, which no longer runs)" {
+@test "the hook exports no GIT_CONFIG pair of its own and gitleaks runs no git: with the caller's GIT_CONFIG_COUNT=1 (gc.auto) set, the feed's diff-tree sees exactly that pair and its own core.quotePath=true (git -c, round 9e) in its command scope, a git on PATH records no call made under the scanner, and a clean root-commit push under log.showRoot=false passes (round 9d: this slot held the scanner's own git log, which no longer runs)" {
     real_gitleaks
     # the caller's environment: one pair of its own in place of the floor's five (the floor's global config file still carries those keys)
     export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=gc.auto GIT_CONFIG_VALUE_0=0
@@ -1521,9 +1524,10 @@ git_recording_feed_pairs_and_scanner_calls() {   # <pairs file> <calls file>
     run_hook
     [ "$status" -eq 0 ]
     [[ "$output" != *"romp pre-push"* ]]
-    # the caller's pair alone, nothing appended (a negative pin)
+    # the caller's pair, then the feed's one pair on its own command line (git -c core.quotePath=true, so the path
+    # text is git's quoted form whatever the clone sets), nothing else appended (a negative pin)
     run cat "$TEST_DIR/feed-git-pairs"
-    [ "$output" = "$(printf 'command\tgc.auto=0')" ]
+    [ "$output" = "$(printf 'command\tgc.auto=0\ncommand\tcore.quotepath=true')" ]
     # no git ran under the scanner: it read the pieces (at cad898dd2 its own git log is recorded here)
     [ ! -e "$TEST_DIR/calls.under-scanner" ]
 }
@@ -8650,8 +8654,8 @@ r8b5_eleven_parent_merge() {   # a base on the remote (BASE); ten sides from it,
 # that brings in content a remote holds and a pure rename of a published file pass), two refs at one commit fed
 # once, the allowlist, and the additive run over the five rules that fire on a file's path (the owner's item 1:
 # each rule's witness refused, silent with the run removed; its figure checked like the main run's, the files
-# gitleaks' global path allowlist skips left out by the rule the hook states). Every credential-shaped string is
-# assembled at run time: gitleaks scans this file too.
+# gitleaks' global path allowlist skips left out by the rule the hook states, under either core.quotePath since
+# round 9e). Every credential-shaped string is assembled at run time: gitleaks scans this file too.
 
 r9d_witness() {   # <rule>: writes the file the path-scoped rule names, with content only that rule catches (silent in the main run under a piece's digit name); sets wfile
     case "$1" in
@@ -8926,7 +8930,7 @@ r9d_witness_case() {   # <rule>: the witness committed and pushed for real: refu
     at_base
 }
 
-@test "round 9d: the path-scoped run leaves out a file gitleaks' global path allowlist skips under its name, so its figure is exact: a pnpm-lock.yaml holding a Kubernetes Secret beside a clean ok.yaml passes, the second run reading ok.yaml's copy alone (with the lockfile's copy in it, gitleaks would skip that copy and read fewer bytes than were copied)" {
+@test "round 9d: the path-scoped run leaves out a file gitleaks' global path allowlist skips under its name, so its figure is exact: a pnpm-lock.yaml holding a Kubernetes Secret beside a clean ok.yaml passes, the second run reading ok.yaml's copy alone (with the lockfile's copy in it, gitleaks would skip that copy and read fewer bytes than were copied); and a clean file named with the Kelvin sign in place of the lockfile's k passes under core.quotePath=false exactly as under true, since the feed's git quotes every path whatever the clone sets (round 9e)" {
     r9d_base
     r9d_witness kubernetes-secret-yaml
     mv "$REPO/secret.yaml" "$REPO/pnpm-lock.yaml"
@@ -8938,6 +8942,32 @@ r9d_witness_case() {   # <rule>: the witness committed and pushed for real: refu
     [[ "$output" != *"romp pre-push"* ]]
     [ "$(grep -c 'INF scanned ~' <<< "$output")" -eq 2 ]
     [[ "$output" == *"scanned ~14 bytes"* ]]                          # the second run: ok.yaml's copy, its ~ line and its one line
+    [ "$(git -C "$TEST_DIR/remote.git" rev-parse refs/heads/main)" = "$(git -C "$REPO" rev-parse HEAD)" ]
+    # Round 9e (the round 9d audit's finding 9): pnpm-loc, U+212A (the Kelvin sign, which gitleaks' allowlist
+    # case-folds to k) and .yaml, a name the hook's C-locale test does not fold, so the path-scoped run selects it.
+    # The feed's git runs as git -c core.quotePath=true, so the name reaches the selection in git's quoted form
+    # under either setting, its copy carrying the escapes, which gitleaks reads. Without the -c, core.quotePath=false
+    # printed the name raw, gitleaks skipped its copy as pnpm-lock.yaml, and the clean push was refused on that
+    # run's figure (read 0 of the 14 bytes). The name is built at run time; the push under true is the control.
+    kelvin="$(printf 'pnpm-loc\342\204\252.yaml')"
+    mkdir -p "$REPO/qt" "$REPO/qf"
+    printf 'name: probe\n' > "$REPO/qt/$kelvin"
+    git -C "$REPO" add -- "qt/$kelvin"
+    git -C "$REPO" commit -qm "the folded lockfile name, pushed under core.quotePath=true"
+    git -C "$REPO" config core.quotePath true
+    push_main_through_hook_with_shim
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"romp pre-push"* ]]
+    under_true="$(grep -o 'INF scanned ~[0-9]* bytes' <<< "$output")"
+    [ "$under_true" = "$(printf 'INF scanned ~14 bytes\nINF scanned ~14 bytes')" ]   # the piece, then its copy
+    printf 'name: probe\n' > "$REPO/qf/$kelvin"
+    git -C "$REPO" add -- "qf/$kelvin"
+    git -C "$REPO" commit -qm "the same name, pushed under core.quotePath=false"
+    git -C "$REPO" config core.quotePath false
+    push_main_through_hook_with_shim
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"romp pre-push"* ]]
+    [ "$(grep -o 'INF scanned ~[0-9]* bytes' <<< "$output")" = "$under_true" ]
     [ "$(git -C "$TEST_DIR/remote.git" rev-parse refs/heads/main)" = "$(git -C "$REPO" rev-parse HEAD)" ]
 }
 
