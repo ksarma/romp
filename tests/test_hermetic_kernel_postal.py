@@ -135,10 +135,11 @@ splatted argv, and a keywords splat a spawn is handed alone; and, for a spawn wi
 Python child's -c program that mentions the kernel and calls a callee the scan cannot name or a dynamic road (a child
 that runs the kernel as __main__ through runpy or an exec of its source among them; N79 to N91, N93, N103), and a text
 in the argv or executable=, outside such a program, that spells a name one of whose declarations holds romp-kernel as
-text (what globals()[...], a %-mapping over locals(), eval, getattr or a shell's environment variable reads by name; N67
-to N78, N101, N102). A listed entry requires no trio, and those two kinds hold real launches, among them exec of a
-constant program (N89), __import__ (N80), getattr (N87), globals()[...] (N70) and runpy.run_path with run_name
-'__main__' (N82). What it does not list, in the classes found so far, each held by a
+text (what a run-time lookup reads by name, among them globals()[...], a %-mapping over locals(), eval, getattr,
+string.Template and a shell's environment variable; N67 to N78, N101, N102). A listed entry requires no trio, and those
+two kinds hold real launches, among them exec of a constant program (N89), __import__ (N80), getattr (N87),
+globals()[...] (N70) and runpy.run_path with run_name '__main__' (N82). What it does not list, in the classes found so
+far, each held by a
 PLANT_TABLE row: a program handed on the child's stdin (input=, stdin=, communicate(); N92); an argv mutated by append,
 extend or insert (N29); a spawn function reached through functools.partial or getattr (N30); a spawn function outside
 the subprocess module (os.execv, os.posix_spawn, asyncio.create_subprocess_exec; N31), and the subprocess module's
@@ -282,20 +283,24 @@ SHELL_C_FLAG = re.compile(r"-[A-Za-z]*c[A-Za-z]*")
 OPTION_ARGUMENTS = {"-o", "+o", "-O", "+O", "--rcfile", "--init-file", "-W", "-X", "--check-hash-based-pycs"}
 PYTHON_PROGRAM = re.compile(r"(?:^|/)python[0-9.]*t?$")
 SHELL_OPERATOR = set("();<>|&")    # a word of these alone is an operator: a redirection when it holds < or >, else control
-# the calls that start a process, by the canonical name a callee resolves to: the spawn functions and the rest of the
-# subprocess module's, os's system, popen, exec, spawn, posix_spawn and fork families, pty.spawn, asyncio's subprocess
-# starters and multiprocessing's Process. The listing of a Python child's -c program reads its callees for any of them
-# (_callee_reading's "starts"; PROCESS_SPELLINGS: the bare spelling of an unbound callee, and the method name of asyncio's
-# loop-level starters, whose receiver no binding reaches), and takes no program that calls one (_program_calls)
+# calls that start a process that the listing of a Python child's -c program reads, by the canonical name a callee
+# resolves to, among them the spawn functions and the rest of the subprocess module's, os's system, popen, exec, spawn,
+# posix_spawn and fork families, pty.spawn, asyncio's subprocess starters and multiprocessing's Process. No such list is
+# complete. A starter outside it, among them _posixsubprocess.fork_exec (row N108), is named by the comparison under its
+# rule. The listing of a Python child's -c program reads its callees for any of them (_callee_reading's "starts";
+# PROCESS_SPELLINGS: the bare spelling of an unbound callee, and the method name of asyncio's loop-level starters, whose
+# receiver no binding reaches), and takes no program that calls one (_program_calls)
 PROCESS_FUNCTIONS = (SPAWN_FUNCTIONS | {"subprocess.getoutput", "subprocess.getstatusoutput", "pty.spawn",
                                         "asyncio.create_subprocess_exec", "asyncio.create_subprocess_shell", "multiprocessing.Process"}
                      | {"os." + f for f in ("system", "popen", "posix_spawn", "posix_spawnp", "execl", "execle", "execlp", "execlpe", "execv",
                                             "execve", "execvp", "execvpe", "spawnl", "spawnle", "spawnlp", "spawnlpe", "spawnv", "spawnve",
                                             "spawnvp", "spawnvpe", "fork", "forkpty")})
 PROCESS_SPELLINGS = {f.rsplit(".", 1)[-1] for f in PROCESS_FUNCTIONS} | {"subprocess_exec", "subprocess_shell"}
-# the dynamic roads a Python -c child's callee may take to code or a function the scan cannot read: by the last part of the
-# name it denotes (exec, eval, compile, __import__, getattr, functools.partial) or by the module it comes from (importlib,
-# runpy), an alias of one included (_callee_reading's "dynamic", which _program_calls reports to the listing)
+# dynamic roads the listing reads among those a Python -c child's callee may take to code or a function the scan cannot
+# read: by the last part of the name it denotes (exec, eval, compile, __import__, getattr, functools.partial) or by the
+# module it comes from (importlib, runpy), an alias of one included (_callee_reading's "dynamic", which _program_calls
+# reports to the listing). A road outside them, among them a function that runs a text (row N109) or a starter handed over
+# as a value (row N106), is named by the comparison.
 DYNAMIC_CALLS = {"exec", "eval", "compile", "__import__", "getattr", "partial"}
 DYNAMIC_MODULES = {"importlib", "runpy"}
 KERNEL_MENTION = re.compile(r"romp-kernel|bin/romp(?![\w-])")   # a -c program's text that names the kernel or the CLI
@@ -437,10 +442,10 @@ class _SpawnScan:
         it sits in the call, else as the argv that reached it; and each string in the argv or the executable= (an
         f-string whole), outside a Python child's program, that spells, as a whole word, a name a declaration of which,
         in any scope of the module, holds the kernel's name as text (_kernel_named): the scan reads it as text and a
-        run-time lookup reads it as that name (globals()[...], a %-mapping over locals(), eval, getattr,
-        string.Template). A listed entry requires no trio, and both kinds hold real launches, among them exec of a
-        constant program (row N89), __import__ (N80), getattr (N87), globals()[...] (N70) and runpy.run_path with
-        run_name '__main__' (N82)."""
+        run-time lookup reads it as that name (among them globals()[...], a %-mapping over locals(), eval, getattr,
+        string.Template and a shell's environment variable). A listed entry requires no trio, and both kinds hold real
+        launches, among them exec of a constant program (row N89), __import__ (N80), getattr (N87), globals()[...] (N70)
+        and runpy.run_path with run_name '__main__' (N82)."""
         start, end = (call.lineno, call.col_offset), (call.end_lineno, call.end_col_offset)
         for e in self._unproven:
             inside = start <= (e.lineno, e.col_offset) and (e.end_lineno, e.end_col_offset) <= end
@@ -1776,10 +1781,10 @@ def _regex_scan_comparison(src, name, scan_all=False, scanned=None, hand=()):
     and no reader carries an exemption keyed on a spelling. Returns (dropped, missed, not_calls, flagged, by_hand):
     `dropped` the (line, matched text, call text) of every match named (for a hit at no call, the line of the regex's
     call parenthesis and that line's text); `missed` the lines of the sites the regex census did not flag, reported and
-    asserting nothing; `not_calls` the lines of every regex hit at no call of the module's ast (a comment, a docstring,
-    a string holding a program), each accounted for or named as above; `flagged` the number of calls of the ast the
-    regex flags; `by_hand` the entries of `hand` that cover a match. A source the regex flags nowhere is not scanned
-    unless `scan_all`, so its `missed` is empty.
+    asserting nothing; `not_calls` the lines of every regex hit at no call of the module's ast (among them a comment, a
+    docstring, a string holding a program, and a def or class header named Popen), each accounted for or named as above;
+    `flagged` the number of calls of the ast the regex flags; `by_hand` the entries of `hand` that cover a match. A
+    source the regex flags nowhere is not scanned unless `scan_all`, so its `missed` is empty.
     `scanned` is (tree, scan, sites, refused) from a scan of `src` its caller already ran (_roads_row, so the tree is
     scanned once), else the source is parsed and scanned here (a planted row's text)."""
     census = _round8_regex_census(src)
