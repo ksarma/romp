@@ -156,14 +156,17 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   (`setUpModule`, `setUpClass`, a module- or class-scoped fixture) are outside the
   census and checked by conftest's `_module_env_restored` for the names it watches
   (`MODULE_WATCHED_ENV_NAMES`: the seams below and the postal trio): it takes its
-  snapshot before the module's first setup and fails naming the module when a watched
-  name differs after the module's teardown (the port against its floor, unset, since
-  conftest pops it before every test); every other name is outside it. conftest pops
-  every watched name at import, so the developer's shell does not change what the
-  check reads. Neither this check nor the per-test one reads a write by a session- or
-  package-scoped fixture: pytest sets such a fixture up before the module's first
-  setup, so both snapshots already carry its write. The tree has none, and the
-  hermetic module holds that count at zero.
+  snapshot before the module's `setUpModule`, `setUpClass` and module- and
+  class-scoped fixtures run and fails naming the module when a watched name differs
+  after the module's teardown (the port against its floor, unset, since conftest pops
+  it before every test); every other name is outside it. conftest pops every watched
+  name at import, so the developer's shell does not change what the check reads. A
+  write by a session- or package-scoped fixture is never read by the per-test check,
+  and is read by this one only when a later test of a module is the first to use the
+  fixture: one first set up for a module's first test (an autouse one always is) runs
+  before this check's snapshot, so both snapshots already carry its write. The tree
+  has no fixture scoped above module, and the hermetic module holds that list at
+  empty.
   `python -m tests.test_hermetic_kernel_postal --census` prints the counts by name
   and shape. The per-test half, set in setUp and put back by a cleanup registered
   right after the write (`restore_env` from `tests/conftest.py`, or a method of the

@@ -759,11 +759,14 @@ def restore_env(name, prior):
 # module's teardown (its tearDownModule, tearDownClass and fixtures have run by then). What it names is a write made in
 # the module's own setup, tests or teardown that the module leaves behind for later modules; one made and put back inside
 # the module is quiet. What it does not read, each for its reason: a write made at import, during collection (the
-# census reads that); a write by a session- or package-scoped fixture, which reaches later modules too, but pytest sets
-# such a fixture up before any module-scoped fixture of the module whose test first requests it, so this snapshot, and
-# every per-test snapshot of _shared_state_restored, already carries the write, and its teardown runs at the end of the
-# session or package, after every module's check (the verifier's plant on round 2 of fork PR #894; the tree has no such
-# fixture, which tests/test_hermetic_kernel_postal.py holds at none); a write by a plugin's own hook or
+# census reads that); a write by a session- or package-scoped fixture that is first set up for the first test of a
+# module (an autouse one always is, and so is one that test is the first in the run to request), which reaches every
+# later module: pytest sets up a test's fixtures scoped above module before its module- and function-scoped ones, so
+# this snapshot, and every per-test snapshot of _shared_state_restored, already carries the write, and the fixture's
+# teardown runs at the end of the session or package, after every module's check. When a later test of a module is the
+# first to request such a fixture, its setup follows this snapshot and this check names that module, while the per-test
+# check still does not (the verifier's plants on round 2 of fork PR #894, run by tests/test_hermetic_kernel_postal.py;
+# the tree has no fixture scoped above module, which that module holds at none); a write by a plugin's own hook or
 # fixture outside the module's setup; and any name the list in the docstring leaves out. Every watched name is popped at
 # this file's import, before collection (the lines above), so nothing the developer's shell carries reaches the check,
 # and it reads the same run on every box.
@@ -774,7 +777,9 @@ MODULE_ENV_FLOORS = {"ROMP_POSTAL_PORT": None}
 @pytest.fixture(scope="module", autouse=True)
 def _module_env_restored(request):
     """Fail naming the module when a watched name differs after the module's teardown from its value before the module's
-    first setup. The watched names, MODULE_WATCHED_ENV_NAMES: the seams _shared_state_restored watches per test
+    setUpModule, setUpClass and module- and class-scoped fixtures ran (a fixture scoped above module that the module's
+    first test sets up has run by then: the comment above says what that leaves unread). The watched names,
+    MODULE_WATCHED_ENV_NAMES: the seams _shared_state_restored watches per test
     (_SEAM_ENV_NAMES: the sessions file, the serve token and the bus name) and the postal trio (peers, client-only and
     the port). Not watched: PYTEST_CURRENT_TEST, which pytest writes for every phase, and every name this file
     re-asserts before every test (the dead ports, the service-env, claude-config, catalog, scope and CLI-binary floors,

@@ -571,9 +571,11 @@ def _import_time_nodes(body, nested=False):
 # write in setUpModule, setUpClass or a module- or class-scoped fixture is outside the scan, and conftest's
 # _module_env_restored checks it for the names it watches (the seams and the postal trio), naming the module that leaves
 # one changed after its teardown (the reviewer's ruling of round 1 on fork PR #894). A write by a session- or
-# package-scoped fixture is read by neither: pytest sets such a fixture up before the module's first setup, so the
-# module's snapshot, and each test's, already carries the write; the tree has none (_fixtures_scoped_above_module, held
-# at none by a pin). The census at this head found two
+# package-scoped fixture is never read by the per-test check, and is read by the module check only when a later test of
+# a module is the first to set the fixture up: one set up for a module's first test (always, for an autouse one) runs
+# before the module's snapshot, which, and each test's, already carries the write (conftest's comment above
+# _module_env_restored; run by test_a_write_by_a_fixture_scoped_above_module_is_named_only_when_a_later_test_first_sets_it_up);
+# the tree has none (_fixtures_scoped_above_module, held at none by a pin). The census at this head found two
 # calls at import that reach a write, both licensed: tests/test_intr_marks_memo.py and tests/test_merge_tx_sets_light.py
 # call test_asm_checkpoint.kernel_module() at module level (`import test_asm_checkpoint as TA; km = TA.kernel_module()`)
 # and its body setdefaults ROMP_KERNEL_NO_OPEN to "1"; the verifier's own walker had counted the shape empty, so the
@@ -1096,33 +1098,81 @@ def _conftest_import_pops(src=None):
 _SCOPE_WORD = re.compile(r"\bscope\s*=")
 
 
+def _fixture_spellings(tree):
+    """The names a call to pytest's fixture function is spelled by in `tree`, besides any attribute named fixture:
+    fixture itself, a name an import binds to it (`from pytest import fixture as fx`), and a name a plain assignment
+    binds to one of these (`fx = pytest.fixture`, `fx2 = fx`), followed to a fixed point."""
+    names = {"fixture"}
+    for n in ast.walk(tree):
+        if isinstance(n, ast.ImportFrom):
+            names |= {a.asname for a in n.names if a.name == "fixture" and a.asname}
+    grew = True
+    while grew:
+        grew = False
+        for n in ast.walk(tree):
+            if (isinstance(n, ast.Assign) and len(n.targets) == 1 and isinstance(n.targets[0], ast.Name)
+                    and n.targets[0].id not in names and _spelled_fixture(n.value, names)):
+                names.add(n.targets[0].id)
+                grew = True
+    return names
+
+
+def _spelled_fixture(f, names):
+    return (isinstance(f, ast.Attribute) and f.attr == "fixture") or (isinstance(f, ast.Name) and f.id in names)
+
+
 def _fixtures_scoped_above_module(root=None):
     """Every fixture defined under tests/ (or `root`) whose scope is above module, as (path relative to the root, line,
     function name, the scope as written): "session", "package", or a scope that is not a string literal (either at run
-    time). Neither of conftest's environment checks can read a watched name such a fixture writes: pytest sets it up
-    before the module's first setup, so _module_env_restored's snapshot and every per-test snapshot already carry the
-    write. It reads every def decorated with a call to a name or attribute spelled fixture that passes scope= (the
-    installed pytest takes the scope by keyword only; a positional first argument is the fixture function), in each file
-    under the root whose text has both fixture and scope=. What it does not read: a scope passed through **kwargs, and a
-    decorator built from pytest.fixture by a partial or a wrapper (none in the tree; either would pass here unread), and a
-    fixture a plugin outside the root defines."""
+    time). conftest's module check reads a watched name such a fixture writes only when a later test of a module is the
+    first to set it up, and the per-test check never does (conftest's comment above _module_env_restored says why), so
+    the tree holds none. It reads every call to pytest's fixture function that passes scope= (the installed pytest takes
+    the scope by keyword only; a positional first argument is the fixture function), wherever the call is: a decorator
+    (`@pytest.fixture(scope="session")`), a call applied to the function (`pytest.fixture(scope="session")(body)`) or
+    passed it (`pytest.fixture(body, scope="session")`), and a factory held in a name (`sess =
+    pytest.fixture(scope="session")`), under any name _fixture_spellings finds for the function (an attribute named
+    fixture, fixture itself, an import alias, a name a plain assignment binds), in each file under the root whose text
+    has both fixture and scope=. The function name is the decorated def's, or the one the call is applied to or passed,
+    else "?". What it does not read, each passing here unread (none is in the tree): a scope passed through **kwargs; a
+    fixture function reached by any other route (functools.partial(pytest.fixture, scope=...), whose scope sits on the
+    partial's call; getattr(pytest, "fixture"); a binding other than an import alias or a plain assignment, such as a
+    tuple target or a walrus; one held in a container or passed as an argument); and a fixture a plugin outside the root
+    defines. A wrapper def that calls the fixture function with scope= is read at that call, the safe side: a parameter
+    it passes as the function is shown as the function name, and one it passes as the scope as the scope."""
     root = HERE if root is None else root
     out = []
     for path in sorted(glob.glob(os.path.join(root, "**", "*.py"), recursive=True)):
         text = open(path, encoding="utf-8", errors="replace").read()
         if "fixture" not in text or not _SCOPE_WORD.search(text):
             continue
-        for fn in ast.walk(ast.parse(text, filename=path)):
-            if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        tree = ast.parse(text, filename=path)
+        names = _fixture_spellings(tree)
+        parent, decorates = {}, {}
+        for n in ast.walk(tree):
+            for c in ast.iter_child_nodes(n):
+                parent[id(c)] = n
+            if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                for d in n.decorator_list:
+                    decorates[id(d)] = n
+        found = []
+        for c in ast.walk(tree):
+            if not (isinstance(c, ast.Call) and _spelled_fixture(c.func, names)):
                 continue
-            for d in fn.decorator_list:
-                f = d.func if isinstance(d, ast.Call) else None
-                if (f.attr if isinstance(f, ast.Attribute) else f.id if isinstance(f, ast.Name) else None) != "fixture":
+            for kw in c.keywords:
+                literal = kw.value.value if isinstance(kw.value, ast.Constant) and isinstance(kw.value.value, str) else None
+                if kw.arg != "scope" or literal in ("function", "class", "module"):
                     continue
-                for kw in d.keywords:
-                    literal = kw.value.value if isinstance(kw.value, ast.Constant) and isinstance(kw.value.value, str) else None
-                    if kw.arg == "scope" and literal not in ("function", "class", "module"):
-                        out.append((os.path.relpath(path, root), fn.lineno, fn.name, ast.unparse(kw.value)))
+                up = parent.get(id(c))
+                if id(c) in decorates:
+                    line, name = decorates[id(c)].lineno, decorates[id(c)].name
+                elif isinstance(up, ast.Call) and up.func is c and up.args:
+                    line, name = c.lineno, ast.unparse(up.args[0])
+                elif c.args:
+                    line, name = c.lineno, ast.unparse(c.args[0])
+                else:
+                    line, name = c.lineno, "?"
+                found.append((os.path.relpath(path, root), line, name, ast.unparse(kw.value)))
+        out.extend(sorted(found, key=lambda r: (r[1], r[2])))
     return out
 
 
@@ -3015,14 +3065,21 @@ class HermeticKernelPostal(unittest.TestCase):
         process that is not Python, or is started with -S or -I or an environment without this PYTHONPATH (none loads
         the sitecustomize), a connect below socket.socket, and a spawn outside subprocess.Popen whose child is not a
         Python process that loads the spy (os.system, os.exec*, os.posix_spawn called directly). At the round-1 head
-        (951479a14), with this module's text overlaid, the pin is red, and each order records dials to the fixed port from
-        seven tests: the three set_working tests of tests/test_postal_relay_honesty.py and four of the five kernel tests
-        the refuters named (KnownHostMemory's detach and set-trust tests and PersistedIntent's detach test in both
-        orders, and one of the two tests behind the GET /peers routes: the forget-route test in the order that runs
-        tests/test_kernel_known_hosts.py before tests/test_kernel_remote_update.py, the listing test in the other); and
-        postal-service starts from two of the three detach tests the refuters named, KnownHostMemory's
-        test_detach_remembers_the_host_and_its_trust and PersistedIntent's test_detach_is_the_one_end_of_intent (a revive
-        still in flight absorbs a later one: the kernel's revive is single-flight)."""
+        (951479a14), with this module's text overlaid, the pin is red. In every run, each order records dials to the
+        fixed port from six tests, the three set_working tests of tests/test_postal_relay_honesty.py and KnownHostMemory's
+        detach and set-trust tests and PersistedIntent's detach test, and postal-service starts from two of the three
+        detach tests the refuters named, KnownHostMemory's test_detach_remembers_the_host_and_its_trust and
+        PersistedIntent's test_detach_is_the_one_end_of_intent (a revive still in flight absorbs a later one: the kernel's
+        revive is single-flight). The rest depends on timing, for two reasons. First, the five tests that build the
+        tunnels listing (KnownHostRoutes' forget-route and tunnels-payload tests and UpdateListing's three) read the bus's
+        /peers snapshot through the kernel's 3-second cache, which the two modules share, since both load the one
+        romp_kernel module. The first of them in the run always dials: the forget-route test when
+        tests/test_kernel_known_hosts.py runs first, the listing test in the other order. A later one dials only when it
+        runs 3 s or more after the last dial, which varies with the box's load: in the known_hosts-first order,
+        UpdateListing's test_the_route_and_the_cli_agree_on_the_flag did so in all seven of the verifier's runs on round
+        2's seventh commit on fork PR #894 and in neither of the two runs that commit's message cited. With the cache
+        disabled all five dial in both orders; with a cache that never expires only the first does. Second, a revive's
+        ensure child that starts after its test's call phase has ended is listed under that test's teardown."""
         self.maxDiff = None
         fixed = _fixed_bus_port()
         phase = lambda r: r["test"] or "(no test phase, thread %s)" % r["thread"]     # noqa: E731
@@ -3047,14 +3104,17 @@ class HermeticKernelPostal(unittest.TestCase):
         """A child pytest over `modules` ({file name: text}) in a scratch directory holding copies of tests/conftest.py and
         the pattern module it loads by path, the checkout on PYTHONPATH (the copied conftest imports the tests package),
         built as tests/test_env_value_redaction.py builds its child runs; `env` names to set, a None value a name to
-        remove. Returns (returncode, output, the scratch directory, which is the child's TMPDIR)."""
+        remove. A file name may carry a directory (`pkg/__init__.py`), made as needed; the child is given the test_*.py
+        files only. Returns (returncode, output, the scratch directory, which is the child's TMPDIR)."""
         d = os.path.realpath(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, d, True)
         for name in ("conftest.py", "credential_patterns.py"):
             shutil.copy(os.path.join(HERE, name), os.path.join(d, name))
         for name, text in modules.items():
+            os.makedirs(os.path.dirname(os.path.join(d, name)), exist_ok=True)
             with open(os.path.join(d, name), "w", encoding="utf-8") as f:
                 f.write(text)
+        modules = [m for m in modules if os.path.basename(m).startswith("test_")]
         child = dict(os.environ)
         child.pop("PYTEST_CURRENT_TEST", None)
         for k, v in (env or {}).items():
@@ -3308,23 +3368,97 @@ class HermeticKernelPostal(unittest.TestCase):
             self.assertEqual(rc, 0, "%s: %s" % (label, out[-6000:]))
             self.assertIn("1 passed", out, label)
 
+    def test_a_write_by_a_fixture_scoped_above_module_is_named_only_when_a_later_test_first_sets_it_up(self):
+        """THE PLANTS for the class conftest's comment above _module_env_restored names (the verifier's finding on round 2
+        of fork PR #894: its plant showed the module check naming a module whose second test first requested a session
+        fixture, where the comment said neither check reads such a write). Five child pytests (a copy of
+        tests/conftest.py), each over a planted module that writes ROMP_SESSIONS_FILE with no restore from a fixture
+        scoped above module, and a later module whose test spawns a child that reports the value it inherited: a session
+        fixture that is autouse, one the module's first test requests, one only its second test requests, and a package
+        fixture that is autouse and one only the second test requests. Every later child inherits the planted value, and
+        the per-test check names nothing: pytest sets a fixture scoped above module up before the requesting test's
+        function-scoped fixtures. The module check names the module whose second test first sets the fixture up, session
+        and package alike, since the fixture then runs after the module's snapshot; it names nothing where the module's
+        first test does (autouse, or requested by that test), since the snapshot already carries the write."""
+        later = textwrap.dedent("""\
+            import os, subprocess, sys
+
+            def test_a_child_reports_what_it_inherited():
+                v = subprocess.run([sys.executable, "-c", "import os; print(os.environ.get('ROMP_SESSIONS_FILE'))"],
+                                   capture_output=True, text=True, timeout=60).stdout.strip()
+                with open(os.environ["ROMP_TEST_MODULE_ENV_MARKER"], "w") as f:
+                    f.write(v)
+        """)
+
+        def plant(scope, autouse, requested_by):
+            return textwrap.dedent("""\
+                import os, pytest
+
+                @pytest.fixture(scope=%r, autouse=%r)
+                def seam():
+                    os.environ["ROMP_SESSIONS_FILE"] = os.path.join(os.environ["ROMP_TEST_PLANT_DIR"], "planted.json")
+                    yield
+
+                def test_one(%s):
+                    pass
+
+                def test_two(%s):
+                    pass
+            """) % (scope, autouse, "seam" if requested_by == "first" else "", "seam" if requested_by == "second" else "")
+        cases = [("a session fixture that is autouse", "", plant("session", True, None), []),
+                 ("a session fixture the first test requests", "", plant("session", False, "first"), []),
+                 ("a session fixture only the second test requests", "", plant("session", False, "second"), ["test_p1.py"]),
+                 ("a package fixture that is autouse", "pkg/", plant("package", True, None), []),
+                 ("a package fixture only the second test requests", "pkg/", plant("package", False, "second"),
+                  ["pkg/test_p1.py"])]
+        for label, where, text, named_expected in cases:
+            plant_dir = tempfile.mkdtemp()
+            self.addCleanup(shutil.rmtree, plant_dir, True)
+            marker = os.path.join(plant_dir, "inherited.txt")
+            modules = {where + "test_p1.py": text, where + "test_p2_later.py": later}
+            if where:
+                modules[where + "__init__.py"] = ""
+            rc, out, _d = self._scratch_conftest_run(modules, env={"ROMP_TEST_MODULE_ENV_MARKER": marker, "ROMP_TEST_PLANT_DIR": plant_dir,
+                                                                   "ROMP_SESSIONS_FILE": None})
+            with open(marker, encoding="utf-8") as f:
+                self.assertEqual(f.read(), os.path.join(plant_dir, "planted.json"),
+                                 "%s: the later module's child inherits the planted value: %s" % (label, out[-3000:]))
+            self.assertEqual(re.findall(r"left shared state changed", out), [], "%s: the per-test check names nothing: %s"
+                             % (label, out[-3000:]))
+            named = re.findall(r"module (\S+) left the environment changed after its teardown", out)
+            self.assertEqual(named, named_expected, "%s: the module check names %s: %s" % (label, named_expected or "nothing",
+                                                                                          out[-3000:]))
+            self.assertEqual(rc, 1 if named_expected else 0, "%s: %s" % (label, out[-3000:]))
+            self.assertIn("3 passed", out, label)
+
     def test_no_fixture_in_the_tree_is_scoped_above_module(self):
-        """The class neither of conftest's environment checks can read (the verifier's finding on round 2 of fork PR #894):
+        """The class conftest's environment checks read only in part (the verifier's findings on round 2 of fork PR #894):
         a watched name a session- or package-scoped fixture writes is already in the module's snapshot, and in each
-        test's, since pytest sets such a fixture up before the module's first setup. conftest's comment above
-        _module_env_restored and tests/README.md name the class; the tree has no such fixture, and the list
+        test's, when the test that first sets the fixture up is its module's first, so neither check reads it; the
+        module check names the module only when a later test of it is the first (the executed plants in
+        test_a_write_by_a_fixture_scoped_above_module_is_named_only_when_a_later_test_first_sets_it_up). conftest's
+        comment above _module_env_restored and tests/README.md name the class; the tree has no such fixture, and the list
         _fixtures_scoped_above_module derives is held EQUAL to empty. Over a planted tree it lists a session fixture, a
-        package fixture, a fixture imported by its bare name and one whose scope is a name, and not a module or a class
-        fixture, so the list is known to fill when one appears."""
+        package fixture, a fixture imported by its bare name and one whose scope is a name; a fixture registered by a
+        call applied to its function, or passed it, a decorator imported under another name or bound to one by an
+        assignment, a factory held in a name, and wrapper defs; and not a module or a class fixture, nor the three
+        routes its docstring names as unread (a scope through **kwargs, functools.partial, getattr), so the list is
+        known to fill when a read one appears and the unread list is known to be true."""
         self.assertEqual(_fixtures_scoped_above_module(), [], "no fixture under tests/ is scoped above module")
         d = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, d, True)
         os.makedirs(os.path.join(d, "sub"))
         with open(os.path.join(d, "sub", "test_planted.py"), "w", encoding="utf-8") as f:
             f.write(textwrap.dedent("""\
+                import functools
                 import pytest
+                import pytest as pt
                 from pytest import fixture
+                from pytest import fixture as fx
                 SCOPE = "session"
+                OPTS = {"scope": "session"}
+                alias = pytest.fixture
+                alias2 = alias
 
                 @pytest.fixture(scope="session")
                 def a():
@@ -3349,12 +3483,60 @@ class HermeticKernelPostal(unittest.TestCase):
                 @pytest.fixture(scope="class")
                 def f():
                     yield
+
+                def g_body():
+                    yield
+
+                g = pt.fixture(scope="session", autouse=True, name="g")(g_body)
+
+                def h_body():
+                    yield
+
+                h = pytest.fixture(h_body, scope="package")
+
+                @fx(scope="session")
+                def i():
+                    yield
+
+                def j_body():
+                    yield
+
+                j = alias2(scope="session")(j_body)
+
+                sess = pytest.fixture(scope="session")
+
+                @sess
+                def k():
+                    yield
+
+                def session_fixture(fn):
+                    return pytest.fixture(scope="session")(fn)
+
+                def make(scope):
+                    return pytest.fixture(scope=scope)
+
+                m = pytest.fixture(scope="module")(g_body)
+
+                @pytest.fixture(**OPTS)
+                def u1():
+                    yield
+
+                u2_factory = functools.partial(pytest.fixture, scope="session")
+
+                @u2_factory
+                def u2():
+                    yield
+
+                @getattr(pytest, "fixture")(scope="session")
+                def u3():
+                    yield
             """))
+        at = os.path.join("sub", "test_planted.py")
         self.assertEqual([(p, n, sc) for p, _line, n, sc in _fixtures_scoped_above_module(d)],
-                         [(os.path.join("sub", "test_planted.py"), "a", "'session'"),
-                          (os.path.join("sub", "test_planted.py"), "b", "'package'"),
-                          (os.path.join("sub", "test_planted.py"), "c", "'session'"),
-                          (os.path.join("sub", "test_planted.py"), "d", "SCOPE")])
+                         [(at, "a", "'session'"), (at, "b", "'package'"), (at, "c", "'session'"), (at, "d", "SCOPE"),
+                          (at, "g_body", "'session'"), (at, "h_body", "'package'"), (at, "i", "'session'"),
+                          (at, "j_body", "'session'"), (at, "?", "'session'"), (at, "fn", "'session'"),
+                          (at, "?", "scope")])
 
     def test_the_scan_completes_and_derives_the_same_records_under_a_tag_another_census_left_on_the_parsers_shared_singletons(self):
         """THE PLANT for the contract _fresh states (the reviewer's ruling of 2026-09-22, from a CI red on fork PR #891):
