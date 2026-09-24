@@ -90,8 +90,9 @@
 // viewer before the summary predicate by the open beside the toggle and by the line and the mark, while the web control inside the
 // summary opens once with the fold shut and the pictures of a stray summary open as anywhere else, controls green there by design;
 // and a remote picture under the floor in a details element's second summary, no fold's title, with the details opened carries
-// its address line and the mark and opens its tab once on a plain click, the details staying open (the file review's round 15,
-// tests-4: green before the round's fixes by design, red with figureFoldOf's loop replaced by `return s;`). A
+// its address line, the origin alone, and the mark and opens its tab once on a plain click, the details staying open (the file
+// review's round 15, tests-4: its fold cells green before the round's fixes by design, red with figureFoldOf's loop replaced by
+// `return s;`, its title cell red there by the path the title printed before the origin cut). A
 // finger's tap on the web control and on the mark is read frame by frame in cases of their own at the file's end (the tap-highlight
 // ruling of 2026-09-24): on a phone, under CDP touch emulation and on the touchscreen laptop, on the chat modal, the feed and the
 // Files pane, in both themes, each frame read from the tap until the element settles (a frame about every 33 ms, not every frame the
@@ -2428,17 +2429,21 @@ for (const key of ["Space", "Enter", "NumpadEnter"] as const) {
 // (the file review's round 14, fresh-1: the figures' click listener read no summary, so one click on a picture inside a details
 // element's own first summary toggled the fold AND opened the picture, a remote picture's tab or a local picture's open in the
 // viewer in place of the report, and a Ctrl-click toggled the fold too and opened the picture's tab; the picture under the floor
-// wore the address line and the outbound mark, which promised the open.) The report: six pictures, each in a summary, the remote
+// wore the address line and the outbound mark, which promised the open.) The report: seven pictures, each in a summary, the remote
 // ones from the second server through the gate: a remote picture under the floor (20 by 20, "stiny"), a local picture ("slocal")
 // and a remote picture over the floor ("sbig"), each in a details element's own first summary; a remote picture inside an author's
 // named anchor inside such a summary ("snamed"); and a remote and a local picture each in a stray summary outside any details
-// ("stray", "straylocal"), which toggles nothing. On a fine pointer in the dark theme, window.open stubbed to a record, each fold's
+// ("stray", "straylocal"), which toggles nothing; and a remote picture under the floor in a details element's SECOND summary
+// ("slater"), no fold's title, whose details its own case opens first. On a fine pointer in the dark theme, window.open stubbed to a record, each fold's
 // toggles recorded by a MutationObserver on its open attribute as the click's task runs (so a navigation that replaces the report
 // after the click cannot hide the toggle), a Ctrl-click the key held around the click with its ctrlKey read back at the document,
 // and an open that must not happen read after a bounded settle (the viewer's navigation is a fetch and a paint, so the bar's name is
 // awaited up to 2 s for a change). Each case collects its cells, logs its record as diagnostics and asserts the cells once. The
 // first three are property pins read off the page, red over the viewer before the summary predicate (file-view.ts figureFoldOf) by
-// the open beside the toggle and by the title line and the mark; the fourth holds the ruling's two controls, green there by design.
+// the open beside the toggle and by the title line and the mark; the fourth holds the ruling's two controls, green there by design;
+// the fifth, the later summary (the file review's round 15, tests-4), is green there on every fold cell by design and red with
+// figureFoldOf's loop replaced by `return s;`, and its title cell, equal to the origin's address line, is red there by the path
+// the title printed before the origin cut (the file review's round 15, extra9-2).
 const FOLD_TEXT = "# Report\n\n" + PARA(1) + "\n\n"
   + '<details><summary><img src="' + WEB + '/stiny.svg" alt="stiny"> Build badge</summary>\n\nfolded text one\n\n</details>\n\n' + PARA(2) + "\n\n"
   + '<details><summary><img src="figs/plot.svg" alt="slocal"> Local screenshots</summary>\n\nfolded text two\n\n</details>\n\n' + PARA(3) + "\n\n"
@@ -2596,7 +2601,7 @@ test("in a browser (a fine pointer), the fold's two controls: the web control of
   });
 });
 
-test("in a browser (a fine pointer), a remote picture under the floor in a details element's SECOND summary is no fold's title line: with the details opened, so the later summary is laid out and the picture decided again over its box, it carries the address line in its title and the outbound mark, and a plain click on it opens its tab once and toggles nothing, the details staying open and the viewer on the report (the file review's round 15, tests-4: figureFoldOf's rule that only a details element's own first summary is a fold's title had been held by a spelling pin alone; green before the round's fixes by design, red with its loop replaced by `return s;`; a property pin read off the page)", { timeout: 120000 }, async (t) => {
+test("in a browser (a fine pointer), a remote picture under the floor in a details element's SECOND summary is no fold's title line: with the details opened, so the later summary is laid out and the picture decided again over its box, it carries the address line in its title, the origin alone, and the outbound mark, and a plain click on it opens its tab once and toggles nothing, the details staying open and the viewer on the report (the file review's round 15, tests-4: figureFoldOf's rule that only a details element's own first summary is a fold's title had been held by a spelling pin alone; its fold cells green before the round's fixes by design, red with its loop replaced by `return s;`, and its title cell red before the origin cut by the path; a property pin read off the page)", { timeout: 120000 }, async (t) => {
   await foldCase(t, async (page, figs, cell, log) => {
     assert.equal(figs[6].alt, "slater", "slater, the seventh picture (a precondition)");
     // a later summary is not rendered while its details is shut: open it, then wait for the decision over the laid-out box (the
@@ -2610,9 +2615,9 @@ test("in a browser (a fine pointer), a remote picture under the floor in a detai
     assert.equal(now.control, false, "slater wears no control, under the floor (a precondition)");
     // FAILS under figureFoldOf's loop replaced by `return s;`: the later summary reads as the fold's title, so the picture wears no
     // address line and no mark, and its click opens nothing
-    // the address line is read by its head, the new tab and the origin: whether the path follows is the origin cut's (the file
-    // review's round 15, extra9-2), held by the outbound cases' equality on WEB_LINE, so this cell stays green before that cut too
-    cell("slater: the address line in its title", true, (now.title || "").startsWith(WEB_LINE(WEB)));
+    // the address line equal to the origin's (ruling G: WEB_LINE, showing the origin under the origin cut of the file review's
+    // round 15, extra9-2), so this cell alone is red before that cut, by the path the title printed, while the fold cells stay green
+    cell("slater: the address line in its title, the origin alone", WEB_LINE(WEB), now.title);
     cell("slater: the outbound mark", true, now.mark);
     await page.evaluate(() => { const w = window as any; if (w.__mo) w.__mo.disconnect(); w.__toggled = []; const ds = Array.from(document.querySelectorAll(".fileview-md details")); w.__mo = new MutationObserver((recs) => { for (const r of recs) w.__toggled.push(ds.indexOf(r.target as Element) + ":" + (r.target as HTMLDetailsElement).open); }); for (const d of ds) w.__mo.observe(d, { attributes: true, attributeFilter: ["open"] }); });
     const b = await page.evaluate(() => { const i = Array.from(document.querySelectorAll(".fileview-md img")).find((x) => x.getAttribute("alt") === "slater")!; i.scrollIntoView({ block: "center" }); const q = i.getBoundingClientRect(); return { x: q.left + q.width * 0.3, y: q.top + q.height * 0.6 }; });
