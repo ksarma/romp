@@ -1561,11 +1561,14 @@ class KernelFolds(Base):
         self.assertIn("_cursor_recordable(", inspect.getsource(em.checkpoint_write))
         self.assertIn("_count_recordable(", inspect.getsource(em._carry_forward_states))
         self.assertIn("_path_needs_write(", inspect.getsource(em.checkpoint_converge_candidates))
-        self.assertIn("_path_needs_write(", inspect.getsource(em._drop_quiescent_entry))
         self.assertIn("_cursor_recordable(", inspect.getsource(em._path_needs_write))
-        src = inspect.getsource(em._drop_quiescent_entry)
-        self.assertLess(src.index("checkpoint_write("), src.index("with _JSONL_CACHE_LOCK"), "the write before the reader's lock")
+        src = inspect.getsource(em._drop_write)             # the drop's write, shared by the quiescent drop and the release at an agent's end
+        self.assertIn("_path_needs_write(", src)
         self.assertIn("checkpoint_cycle_take(", src); self.assertNotIn("checkpoint_cycle_room(", src)   # the room check and the charge are one step
+        for fn in (em._drop_quiescent_entry, em.release_entry):
+            src = inspect.getsource(fn)
+            self.assertLess(src.index("_drop_write("), src.index("with _JSONL_CACHE_LOCK:\n        if _JSONL_CACHE.get(key) is ent"),
+                            "%s: the write before the reader's lock that pops" % fn.__name__)
 
     def test_perf_carries_the_checkpoint_counters_and_the_kernel_wires_the_three_events(self):
         snap = km._PERF_STATS.snapshot()

@@ -3069,9 +3069,25 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   (the byte budget in the same unit: half of MemTotal in resident bytes,
   divided by the resident bytes a held file byte takes,
   `RECORD_CACHE_RESIDENT_PER_FILE_BYTE` in `kernel/event_model.py`, never
-  under 4 GiB; `ROMP_RECORD_CACHE_BUDGET_MB` sets it outright), `countCap`, `inserts`, `evictions`,
+  under 4 GiB; `ROMP_RECORD_CACHE_BUDGET_MB` sets it outright), `bytesMax`
+  (the most `bytes` has been this life, never lowered; a whole re-read of a
+  held file keeps both copies alive for the length of the read and the
+  ledger counts one, so the process's peak can exceed it by up to the
+  largest file), `countCap`, `inserts`, `evictions`,
   `evictedBytes`, `budgetEvictions`, `dropped` and `droppedBytes` (the
-  quiescence drop), and `wholeReads`: every read that pulled a file whole,
+  quiescence drop); the release at an agent's end (the SDK backend queues
+  each agent entering or leaving a session's live set, and the pusher, at
+  each cycle's start, writes an ended agent's checkpoint document and then
+  drops its records, so a later fold restores a tail from the document):
+  `released` (per reason, today `agentEnded`, with `count` and `bytes`),
+  `releaseDeferred` (releases owed to the next cycle: its checkpoint budget
+  refused the write, or a read replaced the entry before the drop),
+  `releaseLost` (releases given up, the entry left to the count cap: no
+  document could be written, as with `ROMP_CKPT_CONVERGE_MS=0`, or a bounded
+  queue overflowed; said once on stderr per cause), `falseEnds` (agents
+  released at their end that entered the live set again) and
+  `releasedReread` (`count` and `bytes` of whole reads of a path whose last
+  removal was a release: what releasing cost); and `wholeReads`: every read that pulled a file whole,
   keyed `kind<-caller` (the reader's kind, one of `zero`, `rewrite`, `guard`,
   `shrunk` and `upgrade`, and the first calling function outside the event
   model and the parse family), with `count` and `bytes`; a tail read, an
@@ -4560,7 +4576,7 @@ pass's own, `failures` its tier crashes, and the four blocks (`recordCache` and 
 `parses` as the parse store's misses and hits, `goalIo` as the goal-store loads, saves and writes) are the DIFFERENCES
 against the previous pass's snapshot for every counter, so the kernel can feed its `/perf` counters per pass, while each
 block's GAUGES ride as their current values: in `recordCache` the keys `entries`, `bytes` (the cache's contents now),
-`budgetBytes` and `countCap` (its caps); in `asmCheckpoint` the key `asmDocMemo` (the document memo's size and cap);
+`bytesMax` (the life maximum of `bytes`), `budgetBytes` and `countCap` (its caps); in `asmCheckpoint` the key `asmDocMemo` (the document memo's size and cap);
 `parses` and `goalIo` carry counters only. `asmCheckpoint.restoreMs` is a counter like its neighbours (the restore's parts
 since boot, as described above), so the line carries the pass's own restore time. A non-numeric value (a name) rides as
 current too. `recovered` is the child's judge-module recovery flag (the once-per-storm

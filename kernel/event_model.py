@@ -658,8 +658,9 @@ _JSONL_CACHE_MAX = 1024           # bounds MEMORY only (384 → 1024 on 2026-09-
 # a budget below it does not save memory, it thrashes: 18 entries filled the 1 GiB, every build re-read whole
 # transcripts (14.9 GB read in the first 3.5 minutes, 724 evictions, one pusher cycle of 132 s, chat builds of 3 s
 # each), and glibc's arenas kept the churn, 14 GB resident over a 1 GiB cache. What is not needed until looked at
-# (subagent transcripts) leaves through drop_after="quiescent" folds instead; the budget is the backstop, not the
-# mechanism. ROMP_RECORD_CACHE_BUDGET_MB still sets it outright.
+# (subagent transcripts) leaves by events instead: release_entry at the agent's end (2026-09-24), and drop_after="quiescent"
+# folds for a file whose end the kernel never saw; the budget is the backstop, not the mechanism.
+# ROMP_RECORD_CACHE_BUDGET_MB still sets it outright.
 RECORD_CACHE_BUDGET_FLOOR_BYTES = 4 * 1024 ** 3
 RECORD_CACHE_BUDGET_FRACTION = 0.5
 RECORD_CACHE_RESIDENT_PER_FILE_BYTE = 3.2   # resident bytes per held file byte: the largest measured figure, rounded up
@@ -703,6 +704,18 @@ _RECORD_CACHE_STATS = {"inserts": 0, "evictions": 0, "evictedBytes": 0, "budgetE
 #                                          outside this module (T384: the way hydratedBy named the planner; the 0.8 GB of whole
 #                                          reads of restored leaves the per-path bytes could not attribute). A restore's tail read
 #                                          and an append are not whole reads and are not counted here.
+_RECORD_CACHE_STATS.update({   # the release at an agent's end (release_entry, 2026-09-24):
+    "released": {},            #  reason -> {"count", "bytes"}: entries a release popped (the reason today: agentEnded)
+    "releaseDeferred": 0,      #  releases owed to the next pusher cycle: its checkpoint budget refused the document write, or a
+    #                             read replaced the entry between the write and the pop (paid by checkpoint_pay_owed_drops)
+    "releaseLost": 0,          #  releases given up, the entry left to the count cap: no document could be written (the drop writes
+    #                             off, no checkpoint directory, a write that wrote nothing), or a bounded queue of them overflowed
+    "falseEnds": 0,            #  agents released at their end that entered their session's live set again (a resumed agent, or an
+    #                             end reported early): note_false_end, counted by the kernel
+    "releasedReread": {"count": 0, "bytes": 0}})   # whole reads of a path whose last removal was a release: what releasing cost
+_RELEASED_MARKS = {}              # path -> True for the paths a release popped, under _JSONL_CACHE_LOCK: taken by the path's next whole
+#                                   read (releasedReread), cleared by any other pop of it, kept by a same-path replace (a restored tail
+#                                   growing); at most _JSONL_CACHE_MAX, oldest first
 _DROP_AFTER_QUIESCENT_S = float(os.environ.get("ROMP_RECORD_CACHE_DROP_QUIESCENT_S", "120"))   # a file this long unchanged
 #                                   is one whose writer has finished (a subagent that returned): its records are not kept
 
@@ -731,8 +744,11 @@ def _entry_weight(ent) -> int:
         return 0
 
 
-def _cache_pop_locked(path):
-    """Under _JSONL_CACHE_LOCK: drop `path`'s entry and its weight; returns the weight (0 when absent)."""
+def _cache_pop_locked(path, keep_mark=False):
+    """Under _JSONL_CACHE_LOCK: drop `path`'s entry and its weight; returns the weight (0 when absent). A pop other than the
+    insert's own replace (`keep_mark`) clears the path's release mark: a whole read after an eviction is the eviction's."""
+    if not keep_mark and _RELEASED_MARKS:
+        _RELEASED_MARKS.pop(path, None)
     ent = _JSONL_CACHE.pop(path, None)
     if ent is None:
         return 0
@@ -744,7 +760,7 @@ def _cache_pop_locked(path):
 def _cache_insert_locked(path, ent):
     """Under _JSONL_CACHE_LOCK: insert `ent` at the LRU tail, evicting the least recently used entries past the count cap
     and past the byte budget (the new entry's own weight counted; an entry larger than the budget alone still inserts)."""
-    _cache_pop_locked(path)
+    _cache_pop_locked(path, keep_mark=True)
     w = _entry_weight(ent)
     while len(_JSONL_CACHE) >= _JSONL_CACHE_MAX:
         _RECORD_CACHE_STATS["evictions"] += 1
@@ -770,7 +786,48 @@ def record_cache_stats() -> dict:
         out["wholeReads"] = {k: dict(v) for k, v in table.items()} if isinstance(table, dict) else {}
         bys = _RECORD_CACHE_STATS.get("wholeReadsByStage")             # T401: the same reads per (stage, caller)
         out["wholeReadsByStage"] = {k: dict(v) for k, v in bys.items()} if isinstance(bys, dict) else {}
+        rel = _RECORD_CACHE_STATS.get("released")
+        out["released"] = {k: dict(v) for k, v in rel.items()} if isinstance(rel, dict) else {}
+        rr = _RECORD_CACHE_STATS.get("releasedReread")
+        out["releasedReread"] = dict(rr) if isinstance(rr, dict) else {"count": 0, "bytes": 0}
         return out
+
+
+def _stat_table_locked(key, empty=dict):
+    """Under _JSONL_CACHE_LOCK: the dict counter `key` of _RECORD_CACHE_STATS (a harness that zeroes every counter zeroes a
+    table too: a table again)."""
+    t = _RECORD_CACHE_STATS.get(key)
+    if not isinstance(t, dict):
+        t = _RECORD_CACHE_STATS[key] = empty()
+    return t
+
+
+def note_false_end():
+    """The kernel saw an agent it released at its end enter its session's live set again (recordCache.falseEnds)."""
+    with _JSONL_CACHE_LOCK:
+        _RECORD_CACHE_STATS["falseEnds"] = int(_RECORD_CACHE_STATS.get("falseEnds") or 0) + 1
+
+
+_RELEASE_LOST_SAID = set()        # the causes of a lost release already said on stderr: once per process each
+
+
+def note_release_lost(n=1, cause="overflow"):
+    """`n` releases given up (recordCache.releaseLost), their entries left to the count cap; each cause is said once on stderr."""
+    with _JSONL_CACHE_LOCK:
+        _RECORD_CACHE_STATS["releaseLost"] = int(_RECORD_CACHE_STATS.get("releaseLost") or 0) + int(n)
+        if cause in _RELEASE_LOST_SAID:
+            return
+        _RELEASE_LOST_SAID.add(cause)
+    why = {"writesOff": "the checkpoint drop writes are off (ROMP_CKPT_CONVERGE_MS or ROMP_CKPT_CONVERGE_MB is 0, or there is no "
+                        "checkpoint directory), and a release without its document would read the file whole at its next fold",
+           "noDocument": "the file's checkpoint document could not be written, and a release without it would read the file "
+                         "whole at its next fold",
+           "overflow": "a bounded queue of agent ends or owed releases passed its bound"}.get(cause, cause)
+    try:
+        sys.stderr.write("record cache: a finished agent's records stay in memory until the count cap evicts them: %s "
+                         "(counted as recordCache.releaseLost; said once)\n" % why)
+    except Exception:
+        pass
 
 
 _JSONL_TAIL_GUARD = 64            # bytes of pre-offset content re-verified before an incremental read
@@ -969,6 +1026,9 @@ _CKPT_CYCLE = {"cap": _ckpt_cycle_default_cap(), "spent": 0}   # the cycle in pr
 _DROP_OWED = {}                   # path -> when its quiescence drop was deferred for the cycle's budget (T362): paid at the next
 #                                   cycle's start with the room it has, oldest first, or by the next fold over the file
 _DROP_OWED_MAX = 4096             # over it the OLDEST owed entry is popped unwritten (its memory released), never the table cleared
+_RELEASE_OWED = {}                # path -> reason: a release at an agent's end deferred to the next cycle (release_entry: the cycle's
+#                                   budget refused its write, or a read replaced the entry before the pop); paid at the next cycle's
+#                                   start with the owed drops. At most _DROP_OWED_MAX: over it the oldest is given up (releaseLost)
 _DROP_HOLD = threading.local()    # the converge pass holds this thread's quiescence drops while it heals and primes a leaf, then pays
 #                                   them once (T362 follow-up review, low 2): {path: pop} of the drops held, or absent
 _CKPT_LOCK = threading.Lock()
@@ -1049,6 +1109,7 @@ def set_checkpoint_dir(fn):
         _ASM_DOC_MEMO.clear(); _ASM_DOC_MEMO_BYTES[0] = 0   # nor does the seeded walk's memoized document (round two)
     with _CKPT_LOCK:
         _CKPT_PENDING.clear(); _CKPT_SEQ.clear(); _FOLD_DIRTY.clear(); _CKPT_DOC_FOLDS.clear(); _DROP_OWED.clear()
+        _RELEASE_OWED.clear()                             # an owed release was owed a document in the directory being left
         _RETIRED_FOLDS.clear()                            # a retirement never outlives a state rebind (round two, low 2)
         _DOC_MEMO.clear(); _DOC_MEMO_BYTES[0] = 0         # nor does a memoized document (the harnesses' fresh process is this setter)
         _CKPT_CYCLE["cap"] = _ckpt_cycle_default_cap(); _CKPT_CYCLE["spent"] = 0
@@ -1409,6 +1470,12 @@ def checkpoint_pay_owed_drops():
         with _CKPT_LOCK:
             if key not in _DROP_OWED:
                 paid += 1
+    with _CKPT_LOCK:                                      # the releases at an agent's end owed from an earlier cycle: no age gate,
+        owed_rel = list(_RELEASE_OWED.items())            #  since the agent's end is the event; over the budget again they re-defer
+        _RELEASE_OWED.clear()
+    for key, reason in owed_rel:
+        if release_entry(key, reason) == "released":
+            paid += 1
     return paid
 
 
@@ -2079,6 +2146,9 @@ def _read_jsonl_entry_unlocked(path, on_fail=None, tail_ok=False, tail_from=None
                         bys = _RECORD_CACHE_STATS["wholeReadsByStage"] = {}
                     ws = bys.setdefault("%s:%s<-%s" % (stg, kind, who), {"count": 0, "bytes": 0})
                     ws["count"] += 1; ws["bytes"] += nread
+                    if _RELEASED_MARKS and _RELEASED_MARKS.pop(path, None) is not None:   # a path a release popped, read whole
+                        rr = _stat_table_locked("releasedReread", lambda: {"count": 0, "bytes": 0})   #  again: what the release cost
+                        rr["count"] = rr.get("count", 0) + 1; rr["bytes"] = rr.get("bytes", 0) + nread
             if _READER_TRACE:
                 fr, inner = sys._getframe(1), []          # the caller outside this module, and the path through it
                 while fr is not None and fr.f_code.co_filename == __file__:
@@ -2288,40 +2358,23 @@ def _drop_quiescent_entry(key, ent, pop=True):
     # _CKPT_LOCK and _JSONL_CACHE_LOCK itself); it charges the pusher cycle's byte budget shared with the pass, and over the
     # budget the write AND the drop are deferred by one cycle (the entry stays; the read is not lost), counted under
     # checkpoints.converge.dropDeferred.
-    try:
-        needs = checkpoint_drop_writes_on() and _path_needs_write(key, ent, at_drop=True)   # off (a cap of 0): the pop alone
-    except Exception:
-        needs = False
-    wrote = False
-    if needs:
-        cp = _ckpt_file(key)
-        try:
-            est = cp.stat().st_size if cp is not None and cp.exists() else 0
-        except OSError:
-            est = 0
-        if est <= 0:                                      # no previous document (a first write, or one the fallback removed): an
-            est = max(4096, int(ent[1]) // 8)             #  estimate from the file, never a free pass against the budget
-        if not checkpoint_cycle_take(2 * est):           # the previous document read for the carry, and about as much written:
-            oldest = None                                 #  taken in one step, or deferred (the drop owed) when it does not fit
-            with _CKPT_LOCK:
-                _CKPT_STATS["converge"]["dropDeferred"] += 1
-                if pop:
-                    _DROP_OWED[key] = time.time()
-                    if len(_DROP_OWED) > _DROP_OWED_MAX:  # over the bound the OLDEST owed drop is paid by its pop alone (round
-                        oldest = next(iter(_DROP_OWED))   #  two, low 1: a cleared mark left its entry neither paid nor popped)
-                        _DROP_OWED.pop(oldest, None)
-            if oldest is not None:
-                _pop_owed_entry(oldest)                   # outside _CKPT_LOCK: the reader's lock alone
-            return False
-        if checkpoint_write(key):
-            try:
-                written = cp.stat().st_size if cp is not None else 0
-            except OSError:
-                written = 0
-            checkpoint_cycle_charge(written - est)       # the true-up: what was written against the estimate taken above
-            wrote = True
-            with _CKPT_LOCK:
-                _CKPT_STATS["converge"]["dropWrites"] += 1
+    res = _drop_write(key, ent)                           # off (a cap of 0): nothing written, the pop alone
+    if res == "refused":                                  # over the budget: deferred (the drop owed) when it does not fit
+        oldest = None
+        with _CKPT_LOCK:
+            _CKPT_STATS["converge"]["dropDeferred"] += 1
+            if pop:
+                _DROP_OWED[key] = time.time()
+                if len(_DROP_OWED) > _DROP_OWED_MAX:      # over the bound the OLDEST owed drop is paid by its pop alone (round
+                    oldest = next(iter(_DROP_OWED))       #  two, low 1: a cleared mark left its entry neither paid nor popped)
+                    _DROP_OWED.pop(oldest, None)
+        if oldest is not None:
+            _pop_owed_entry(oldest)                       # outside _CKPT_LOCK: the reader's lock alone
+        return False
+    wrote = res == "wrote"
+    if wrote:
+        with _CKPT_LOCK:
+            _CKPT_STATS["converge"]["dropWrites"] += 1
     if not pop:
         return wrote
     with _JSONL_CACHE_LOCK:
@@ -2330,6 +2383,95 @@ def _drop_quiescent_entry(key, ent, pop=True):
             _RECORD_CACHE_STATS["dropped"] += 1
             _RECORD_CACHE_STATS["droppedBytes"] += w
     return wrote
+
+
+def _drop_write(key, ent):
+    """A drop's document write (T362), shared by the quiescent drop and the release at an agent's end: when the file's
+    document lacks something this process holds (_path_needs_write at the drop), it is written now from the entry in hand,
+    with neither lock held, charged to the pusher cycle's checkpoint budget. Returns "clean" (nothing to write, or the drop
+    writes off), "wrote", "failed" (a write was due and wrote nothing) or "refused" (the budget had no room for the previous
+    document's read and about as much written, taken in one step: nothing charged, the caller defers)."""
+    try:
+        needs = checkpoint_drop_writes_on() and _path_needs_write(key, ent, at_drop=True)
+    except Exception:
+        needs = False
+    if not needs:
+        return "clean"
+    cp = _ckpt_file(key)
+    try:
+        est = cp.stat().st_size if cp is not None and cp.exists() else 0
+    except OSError:
+        est = 0
+    if est <= 0:                                          # no previous document (a first write, or one the fallback removed): an
+        est = max(4096, int(ent[1]) // 8)                 #  estimate from the file, never a free pass against the budget
+    if not checkpoint_cycle_take(2 * est):
+        return "refused"
+    if not checkpoint_write(key):
+        return "failed"
+    try:
+        written = cp.stat().st_size if cp is not None else 0
+    except OSError:
+        written = 0
+    checkpoint_cycle_charge(written - est)                # the true-up: what was written against the estimate taken above
+    return "wrote"
+
+
+def release_entry(path, reason):
+    """Release `path`'s parsed records from the reader's cache because the event that ends their use arrived (`reason`; today
+    "agentEnded": the kernel's pusher, at a cycle's start, for each agent that left its session's live set; 2026-09-24). The
+    quiescent drop's body without its age gate: the 120 s mtime age stands in for "the writer finished", and it never fired for
+    an agent the kernel folded while it ran (every fold lands seconds after an append; after the end every fold is a hit, which
+    never pops), so those entries stayed whole until the count cap reached them. Here the end is the event itself.
+    - An absent entry, or one weighing nothing (a restored tail), is left alone: "absent".
+    - The file gone: nothing to write, everything to release.
+    - The document is written first (_drop_write) and the entry popped after, so a later fold restores a tail from the
+      document and reads nothing whole. With the drop writes off (a cycle cap of 0, or no checkpoint directory), or a write
+      that wrote nothing, the entry stays and the release is given up, counted and said once: a release without its
+      document would read the file whole at every fold that follows ("lost").
+    - The cycle's budget refusing the write defers the release to the next cycle's start ("deferred").
+    - A read that replaced the entry between the write and the pop defers it too, never drops it ("raced").
+    Returns "released", "absent", "lost", "deferred" or "raced". Runs on the pusher thread with neither lock held."""
+    key = str(path)
+    with _JSONL_CACHE_LOCK:
+        ent = _JSONL_CACHE.get(key)
+    if ent is None or _entry_weight(ent) == 0:
+        return "absent"
+    if os.path.exists(key):
+        if _ckpt_dir() is None or not checkpoint_drop_writes_on():
+            note_release_lost(1, "writesOff")
+            return "lost"
+        res = _drop_write(key, ent)
+        if res == "refused":
+            _owe_release(key, reason)
+            return "deferred"
+        if res == "failed":
+            note_release_lost(1, "noDocument")
+            return "lost"
+    with _JSONL_CACHE_LOCK:
+        if _JSONL_CACHE.get(key) is ent:
+            w = _cache_pop_locked(key)
+            rel = _stat_table_locked("released").setdefault(reason, {"count": 0, "bytes": 0})
+            rel["count"] += 1; rel["bytes"] += w
+            _RELEASED_MARKS.pop(key, None); _RELEASED_MARKS[key] = True
+            while len(_RELEASED_MARKS) > _JSONL_CACHE_MAX:
+                _RELEASED_MARKS.pop(next(iter(_RELEASED_MARKS)), None)
+            return "released"
+    _owe_release(key, reason)
+    return "raced"
+
+
+def _owe_release(key, reason):
+    """Defer `key`'s release to the next cycle's start (releaseDeferred); over the owed table's bound the oldest is given up."""
+    lost = False
+    with _CKPT_LOCK:
+        _RELEASE_OWED.pop(key, None); _RELEASE_OWED[key] = reason
+        if len(_RELEASE_OWED) > _DROP_OWED_MAX:
+            _RELEASE_OWED.pop(next(iter(_RELEASE_OWED)), None)
+            lost = True
+    with _JSONL_CACHE_LOCK:
+        _RECORD_CACHE_STATS["releaseDeferred"] = int(_RECORD_CACHE_STATS.get("releaseDeferred") or 0) + 1
+    if lost:
+        note_release_lost(1, "overflow")
 
 
 _UNPINNED = object()

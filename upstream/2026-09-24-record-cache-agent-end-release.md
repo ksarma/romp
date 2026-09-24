@@ -1,0 +1,11 @@
+---
+title: kernel: a finished agent's parsed transcript is released from the record cache at the agent's end (the SDK backend queues every agent leaving a session's live set, and the pusher, at its next cycle's start, writes the file's checkpoint document and then drops the records, so a later fold restores a tail), and the record cache's byte budget counts resident bytes (half of MemTotal divided by RECORD_CACHE_RESIDENT_PER_FILE_BYTE, 3.2), with /perf recordCache counters for the release and the life maximum bytesMax
+status: candidate
+where: kernel/event_model.py, kernel/sdk_backend.py, kernel/kernel.py, kernel/judge.py, cli/perf_public.py, cli/perf_export.py, docs/reference.md, tests/test_record_cache_agent_end.py, tests/test_kernel_jsonl_cache.py, tests/test_fold_checkpoints.py, tests/test_judge_serve.py, tests/test_perf_export.py, upstream/2026-09-24-record-cache-agent-end-release.md
+added: 2026-09-24
+pr:
+tier: fix
+offered:
+closed:
+---
+Upstream has both defects: the quiescent drop never fires for an agent the kernel folded while it ran (every fold lands seconds after an append, and after the end every fold is a hit), so finished agents' whole entries stay until the count cap evicts them; and the budget compares half of MemTotal with file bytes, which at about three resident bytes per file byte names 1.6 times the machine. For an offer, the budget change is the maintainer's call: the corrected budget is 3.2 times smaller on every machine above 25.6 GiB of MemTotal (a 32 GiB machine goes from 16 to 5 GiB of file bytes, a 64 GiB one from 32 to 10), and the 2026-09-11 thrash on a 50-session machine (a 1 GiB budget under a working set inferred near 2.8 GB) keeps a margin of at least two only above about 36 GiB of MemTotal; the 4 GiB floor still governs below 25.6 GiB. bytesMax is re-applied from the fork's unmerged self-sample gauge branch, whose own entry names it; whichever lands second drops it from its entry. The /perf export receiver's vocabulary needs the new keys (released, agentEnded, releaseDeferred, releaseLost, falseEnds, releasedReread, bytesMax) before an export carrying them uploads.

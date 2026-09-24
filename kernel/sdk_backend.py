@@ -6324,7 +6324,8 @@ class SdkSession:
         #   {"type","since"}. Fed by the SubagentStart hook — the exact, event-based "what's running right now"
         #   signal the tmux backend never had; drained by SubagentStop, a Workflow run's per-agent progress list,
         #   the agent's own task end, and the client teardown (see _reconcile_workflow_agents / _drop_live_work).
-        #   Keeps the session 'working' while any run and surfaces a live count on the lane.
+        #   Keeps the session 'working' while any run and surfaces a live count on the lane. Every add and removal is
+        #   queued for the kernel's record cache (_note_live_agents), which releases an ended agent's parsed transcript.
         self._bg_tasks: dict[str, dict] = {}         # LIVE background tasks (a run_in_background Bash, a bg agent):
         #   task_id -> {"desc","type","since","toolUseId","lastTool"}. Fed by the CLI's DESIGNED task lifecycle
         #   stream (system/task_started..task_updated — see _on_message), terminal statuses clear — so an idle
@@ -12039,6 +12040,7 @@ class SdkSession:
         if aid:
             with self._sub_lock:
                 self._subagents[aid] = {"type": (inp.get("agent_type") or ""), "since": int(time.time())}
+            self._note_live_agents([aid], True)
             self.backend._poke()
         return {}
 
@@ -12057,10 +12059,22 @@ class SdkSession:
         if aid:
             with self._sub_lock:
                 gone = self._subagents.pop(aid, None) is not None
+            if gone:
+                self._note_live_agents([aid], False)
             self.backend._poke()
             if gone:
                 self._note_work_ended("a subagent")
         return {}
+
+    def _note_live_agents(self, aids, live):
+        """The agents `aids` just entered (`live`) or left this session's live set: each is queued for the kernel's record
+        cache (SdkBackend.note_agent_live), whose pusher releases an ended agent's parsed transcript at its next cycle's start.
+        Called with _sub_lock released; a backend double without the queue is skipped."""
+        note = getattr(self.backend, "note_agent_live", None)
+        if note is None:
+            return
+        for aid in aids:
+            note(self.sid, aid, live)
 
     def _live_subagents(self) -> list:
         """The Task subagents running RIGHT NOW: [{"type","since","agentId"}], oldest first. Copied under the
@@ -12082,6 +12096,7 @@ class SdkSession:
         actually dropped something, so a stale count that healed here stays visible."""
         with self._sub_lock:
             n = len(self._subagents)
+            gone_agents = list(self._subagents)
             self._subagents.clear()
             self._wf_agents.clear()
             self._wf_slots.clear()
@@ -12093,6 +12108,7 @@ class SdkSession:
             #   the mirror is not work that ended (the reviewer's round 2, 2026-09-19; its regression-1); nor does a
             #   stand-down or a detach (_on_session_gone holds a detached session's rows; the round 3 pre-check)
             self._reported_tasks.clear()   # a row a report spoke for dies with the CLI too (round 4, 2026-09-19)
+        self._note_live_agents(gone_agents, False)
         if died:
             note = task_death_notice(died, cause=self._RECONNECT_CAUSE)
             with self._lock:
@@ -12231,6 +12247,7 @@ class SdkSession:
             for a in drop:
                 self._subagents.pop(a, None)
         if drop:
+            self._note_live_agents(drop, False)
             self.backend._poke()
             # no arm of a held settings pick here (2026-09-09): a removal never arms, the settle that finds
             # the live sets empty does (_arm_reconnect_if_quiet); the line says the pick still waits
@@ -12298,6 +12315,8 @@ class SdkSession:
                     wf = (gone or {}).get("type") == "local_workflow" or tid in self._wf_agents
             if ended and self._subagents.pop(tid, None) is not None:
                 sub_changed = True   # a Task agent's own task ended — with or without its SubagentStop
+        if sub_changed:
+            self._note_live_agents([tid], False)
         if wf and (ended or isinstance(d.get("workflow_progress"), list)):
             # pokes when it retires anything; a progress event without the list (a throttled
             # pure-progress tick) carries no agent states and is skipped
@@ -13324,6 +13343,12 @@ class SdkBackend:
         self.sessions: dict[str, SdkSession] = {}
         self._lock = threading.Lock()
         self._turn_seq: dict = {}                 # sid -> turns ended this kernel life (turn_seq; under _lock)
+        self._agent_live_q = deque()              # (sid, agent id, live) in arrival order: an agent entering (True) or leaving
+        #                                           (False) a session's live set (SdkSession._subagents), for the kernel's record
+        #                                           cache, whose pusher drains it at each cycle's start and releases an ended
+        #                                           agent's parsed transcript (drain_agent_live_events; 2026-09-24)
+        self._agent_live_dropped = 0              # events dropped past _AGENT_LIVE_MAX (oldest first), reported by the drain
+        self._agent_live_lock = threading.Lock()
         self._seed_writes: dict = {}              # tok → {sid, value, prior, priorTok}: set_model's optimistic
         #                                             writes to the SHARED sdk-defaults `model`, pending the
         #                                             CLI's verdict (see _seed_write_pending); under _defaults_lock
@@ -20799,6 +20824,35 @@ class SdkBackend:
                              "prompt delivered" if ok else "DELIVERY FAILED (prompt lost — see above)"))
                 fired += 1
         return fired
+
+    _AGENT_LIVE_MAX = 4096   # the queue's bound: at the pusher's cadence it is drained long before, so passing it means
+    #                          nothing drains it (a backend without a kernel) or the pusher is stuck
+
+    def note_agent_live(self, sid, agent_id, live):
+        """An agent entered (`live`) or left a session's live set: queued for the kernel's record cache. Called by the session
+        at the one site that adds (the SubagentStart hook) and at every site that removes (SubagentStop, the agent's own task
+        end, the workflow roster's done/error/re-minted slot or the run's end, the CLI teardown), outside the session's lock.
+        Past _AGENT_LIVE_MAX the oldest event is dropped and counted, so a backend nothing drains stays bounded."""
+        q = getattr(self, "_agent_live_q", None)
+        if q is None:
+            return                                   # a __new__-built test double: nothing drains it
+        with self._agent_live_lock:
+            if len(q) >= self._AGENT_LIVE_MAX:
+                q.popleft()
+                self._agent_live_dropped += 1
+            q.append((str(sid), str(agent_id), bool(live)))
+
+    def drain_agent_live_events(self):
+        """The queued live-set events in arrival order, and how many were dropped past the bound since the last drain; both
+        reset. The kernel's pusher calls it at each cycle's start (kernel._release_ended_agents)."""
+        q = getattr(self, "_agent_live_q", None)
+        if q is None:
+            return [], 0
+        with self._agent_live_lock:
+            out = list(q)
+            q.clear()
+            dropped, self._agent_live_dropped = self._agent_live_dropped, 0
+        return out, dropped
 
     def live_sessions(self) -> dict[str, dict]:
         """{sid: state-dict} for every alive SDK session — merged by the kernel

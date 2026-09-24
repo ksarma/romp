@@ -1,0 +1,379 @@
+#!/usr/bin/env python3
+"""A finished agent's parsed transcript leaves the record cache at the agent's end (2026-09-24).
+
+The kernel folds a running agent's transcript within seconds of each append (the awaiting rows attribute a background
+command through it, the agent head steps it), so the quiescent drop, which pops only at a fold that steps records over a
+file unchanged for 120 s, never fires for it; after the agent ends every fold is a hit, which never pops, and the whole
+entry stayed until the count cap evicted it. On a long-lived kernel those entries were most of the cache's non-leaf held
+bytes. The SDK backend knows the end exactly: the agent leaves its session's live set on SubagentStop, its own task's end,
+its workflow slot's done or error state, a re-minted slot, the run's end, or the CLI's teardown. Each of those removals
+queues the agent; the pusher drains the queue at its next cycle's start and releases the agent's entry after writing the
+file's checkpoint document, so a later fold restores a zero-weight tail instead of reading the file whole.
+
+Synthetic data only: a notes-api project under a temp root, placeholder ids, a private sid, hostname TESTHOST.
+"""
+import asyncio
+import contextlib
+import io
+import json
+import os
+import shutil
+import tempfile
+import unittest
+from pathlib import Path
+from romp_load import load_source
+
+HERE = os.path.dirname(os.path.realpath(__file__))
+BIN = os.path.join(os.path.dirname(HERE), "bin")
+os.environ["ROMP_KERNEL_NO_OPEN"] = "1"
+os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp(prefix="agent-end-state-")   # hermetic state BEFORE the load
+os.environ.pop("ROMP_STATE_DIR", None)
+km = load_source("romp_kernel_agent_end", os.path.join(BIN, "romp-kernel"))
+em, jd = km.em, km.jd
+sb = load_source("romp_sdk_backend_agent_end", os.path.join(BIN, "romp_sdk_backend.py"))
+jd.STATE.mkdir(parents=True, exist_ok=True)
+(jd.STATE / "session-hosts").write_text("off\n")   # this module mints its own state root: no per-session host
+
+SID = "11111111-2222-3333-4444-a9e7e1d0c0de"          # a private synthetic sid
+AID = "a0123456789abcdef"                              # an agent id in the hook's shape (a + 16 hex)
+WF_AID = "afedcba9876543210"                           # a workflow agent
+WF_AID2 = "a2222222222222222"                          # the slot's retried attempt
+WF_TID = "w0000000000000001"                           # the workflow run's task id
+LAUNCH = "toolu_notesapi_bg_tests"                     # the agent's run_in_background Bash: the pending command the rows attribute
+
+
+def _agent_lines(aid, start, n):
+    out = []
+    for i in range(start, start + n):
+        ts = "2026-09-24T10:%02d:%02d.000Z" % (i // 60 % 60, i % 60)
+        use = LAUNCH if i == 0 else "toolu_%s_%04d" % (aid[-4:], i)
+        base = {"sessionId": SID, "agentId": aid, "isSidechain": True, "timestamp": ts, "cwd": "/home/TESTHOST/notes-api"}
+        out.append(dict(base, type="assistant", uuid="11111111-2222-3333-4444-%012d" % (2 * i), message={
+            "role": "assistant", "content": [
+                {"type": "text", "text": "Checking the notes-api route for field %d before the migration runs." % i},
+                {"type": "tool_use", "id": use, "name": "Bash",
+                 "input": {"command": "pytest -q tests/test_notes_api.py", "run_in_background": use == LAUNCH}}]}))
+        out.append(dict(base, type="user", uuid="11111111-2222-3333-4444-%012d" % (2 * i + 1), message={
+            "role": "user", "content": [
+                {"type": "tool_result", "tool_use_id": use, "content": "notes-api: 12 passed, schema unchanged. " * 8}]}))
+    return out
+
+
+def _append(path, recs):
+    with open(path, "a", encoding="utf-8") as f:
+        for r in recs:
+            f.write(json.dumps(r) + "\n")
+
+
+def _wf(index, aid, state):
+    return {"type": "workflow_agent", "index": index, "agentId": aid, "state": state}
+
+
+class AgentEnd(unittest.TestCase):
+
+    def setUp(self):
+        self.root = tempfile.mkdtemp(prefix="agent-end-")
+        proj = os.path.join(self.root, "projects", "-home-TESTHOST-notes-api")
+        self.leaf = os.path.join(proj, SID + ".jsonl")
+        sub = os.path.join(proj, SID, "subagents")
+        self.agent = os.path.join(sub, "agent-%s.jsonl" % AID)
+        self.wf_agent = os.path.join(sub, "workflows", "wf_notesapi01", "agent-%s.jsonl" % WF_AID)
+        os.makedirs(os.path.dirname(self.wf_agent))
+        _append(self.leaf, [{"type": "user", "uuid": "11111111-2222-3333-4444-000000000001", "sessionId": SID,
+                             "timestamp": "2026-09-24T09:59:00.000Z",
+                             "message": {"role": "user", "content": "Run the notes-api tests in the background."}}])
+        _append(self.agent, _agent_lines(AID, 0, 40))
+        _append(self.wf_agent, _agent_lines(WF_AID, 0, 40))
+        self.ckdir = os.path.join(self.root, "checkpoints")
+        em.set_checkpoint_dir(lambda: Path(self.ckdir))   # the harnesses' fresh-process setter: pending, dirty and owed tables clear
+        em._JSONL_CACHE.clear(); em._JSONL_CACHE_BYTES[0] = 0
+        for k in list(em._RECORD_CACHE_STATS):
+            em._RECORD_CACHE_STATS[k] = 0
+        getattr(em, "_JSONL_CACHE_BYTES_MAX", [0])[0] = 0
+        getattr(em, "_RELEASED_MARKS", {}).clear()
+        getattr(em, "_RELEASE_LOST_SAID", set()).clear()
+        getattr(km, "_AGENT_RELEASED", {}).clear()
+        km._AGENT_LAUNCH_IDS_CACHE.clear(); km._AGENT_GIST_CACHE.clear()
+        self._saved = {n: getattr(km, n) for n in ("_bg_live_norm", "_bg_pending", "_path_of", "_sdk_backend",
+                                                   "CKPT_CONVERGE_MS", "CKPT_CONVERGE_BYTES")}
+        km._bg_live_norm = lambda sid, path, live=None: (
+            [{"tid": LAUNCH, "desc": "run the notes-api tests", "t": 100, "type": "local_bash"}] if sid == SID else [])
+        km._bg_pending = lambda sid, path, tasks: tasks
+        km._path_of = lambda sid, now=None: self.leaf if sid == SID else None
+        km.CKPT_CONVERGE_MS, km.CKPT_CONVERGE_BYTES = 150.0, 8 * 1024 * 1024
+        self.state = os.path.join(self.root, "sdk-state")
+        os.makedirs(self.state)
+        with open(os.path.join(self.state, "session-hosts"), "w") as f:
+            f.write("off\n")
+        self.be = sb.SdkBackend(self.state, "/bin/true", lambda *a, **k: None)
+        self.s = sb.SdkSession(self.be, {"sid": SID, "name": "api", "cwd": self.root})
+        km._sdk_backend = self.be
+
+    def tearDown(self):
+        for n, v in self._saved.items():
+            setattr(km, n, v)
+        em.set_checkpoint_dir(lambda: jd.STATE / "checkpoints")
+        em._JSONL_CACHE.clear(); em._JSONL_CACHE_BYTES[0] = 0
+        shutil.rmtree(self.root, ignore_errors=True)
+
+    # ---- helpers ----
+
+    def _start(self, aid):
+        asyncio.run(self.s._subagent_start_hook({"agent_id": aid, "agent_type": "general-purpose"}, None, None))
+
+    def _stop(self, aid):
+        asyncio.run(self.s._subagent_stop_hook({"agent_id": aid}, None, None))
+
+    def _ent(self, path):
+        with em._JSONL_CACHE_LOCK:
+            return em._JSONL_CACHE.get(path)
+
+    def _weight(self, path):
+        ent = self._ent(path)
+        return None if ent is None else em._entry_weight(ent)
+
+    def _whole_reads(self):
+        return sum(v["count"] for v in em.record_cache_stats()["wholeReads"].values())
+
+    def _stat(self, key, default=None):
+        return em.record_cache_stats().get(key, default)
+
+    def _fold_while_running(self, aid, path):
+        """The kernel folds the running agent's file the way it does in production: the snapshot lists the agent live, the
+        rows attribute the pending background command through the agent's own launches (_awaiting_nest ->
+        _agent_launch_ids), and the agent head steps it (_agent_steps). The agent appends between the two passes."""
+        self._start(aid)
+        km._awaiting_live_rows(SID, self.leaf, self.s.snapshot())
+        _append(path, _agent_lines(aid, 40, 5))
+        km._awaiting_live_rows(SID, self.leaf, self.s.snapshot())
+        km._agent_steps(path)
+        ent = self._ent(path)
+        self.assertIsNotNone(ent, "precondition: the running agent's file is in the cache")
+        self.assertEqual((ent[5], em._entry_weight(ent)), (0, os.path.getsize(path)), "precondition: whole, weighing its file")
+        return os.path.getsize(path)
+
+    def _released_at_the_end(self, aid, path, end):
+        size = self._fold_while_running(aid, path)
+        held = self._stat("bytes")
+        end()
+        self.assertNotIn(aid, self.s._subagents, "the agent left the live set")
+        km._begin_checkpoint_cycle()                                     # the pusher's next cycle begins
+        ent = self._ent(path)
+        self.assertTrue(ent is None or em._entry_weight(ent) == 0,
+                        "the finished agent's records left the cache (held: base %s, weight %s of %d)"
+                        % (ent and ent[5], ent and em._entry_weight(ent), size))
+        self.assertEqual(self._stat("bytes"), held - size, "the held bytes fell by the file's size")
+        self.assertTrue(em._ckpt_file(path).exists(), "its checkpoint document was written before the pop")
+        self.assertEqual(self._stat("released"), {"agentEnded": {"count": 1, "bytes": size}})
+        return size
+
+    # ---- the defect: every road out of the live set releases the entry ----
+
+    def test_an_agent_folded_while_it_ran_is_released_at_its_stop_hook(self):
+        self._released_at_the_end(AID, self.agent, lambda: self._stop(AID))
+
+    def test_an_agent_folded_while_it_ran_is_released_at_its_own_task_end(self):
+        self._released_at_the_end(AID, self.agent,
+                                  lambda: self.s._on_task_event("task_notification", {"task_id": AID, "status": "completed"}))
+
+    def test_a_workflow_agent_is_released_when_its_slot_reports_done(self):
+        self.s._on_task_event("task_started", {"task_id": WF_TID, "task_type": "local_workflow"})
+        self._released_at_the_end(WF_AID, self.wf_agent, lambda: self.s._on_task_event(
+            "task_progress", {"task_id": WF_TID, "workflow_progress": [_wf(1, WF_AID, "done")]}))
+
+    def test_a_workflow_agent_is_released_when_its_slot_is_re_minted(self):
+        self.s._on_task_event("task_started", {"task_id": WF_TID, "task_type": "local_workflow"})
+        self.s._on_task_event("task_progress", {"task_id": WF_TID, "workflow_progress": [_wf(1, WF_AID, "progress")]})
+        self._released_at_the_end(WF_AID, self.wf_agent, lambda: self.s._on_task_event(
+            "task_progress", {"task_id": WF_TID, "workflow_progress": [_wf(1, WF_AID2, "progress")]}))
+
+    def test_a_workflow_agent_is_released_at_its_run_end(self):
+        self.s._on_task_event("task_started", {"task_id": WF_TID, "task_type": "local_workflow"})
+        self.s._on_task_event("task_progress", {"task_id": WF_TID, "workflow_progress": [_wf(1, WF_AID, "progress")]})
+        self._released_at_the_end(WF_AID, self.wf_agent,
+                                  lambda: self.s._on_task_event("task_notification", {"task_id": WF_TID, "status": "completed"}))
+
+    def test_an_agent_is_released_when_its_cli_is_torn_down(self):
+        self._released_at_the_end(AID, self.agent, lambda: self.s._drop_live_work("reconnect"))
+
+    # ---- after the release ----
+
+    def test_a_released_agent_folds_from_its_document_without_a_whole_read(self):
+        # the positive control first: in this setup a pop WITHOUT a document costs a whole read at the next fold, so the zero
+        # below is the document's doing, not a counter that cannot see
+        self._fold_while_running(WF_AID, self.wf_agent)
+        with em._JSONL_CACHE_LOCK:
+            em._cache_pop_locked(self.wf_agent)
+        w0, r0 = self._whole_reads(), em._READ_BYTES.get(self.wf_agent, 0)
+        km._agent_launch_ids(self.wf_agent)
+        self.assertEqual(self._whole_reads(), w0 + 1, "control: a pop without a document reads the file whole at the next fold")
+        self.assertGreaterEqual(em._READ_BYTES.get(self.wf_agent, 0) - r0, os.path.getsize(self.wf_agent))
+        asyncio.run(self.s._subagent_stop_hook({"agent_id": WF_AID}, None, None))
+        km._begin_checkpoint_cycle()
+
+        size = self._fold_while_running(AID, self.agent)
+        ids, steps = set(km._agent_launch_ids(self.agent)), json.dumps(km._agent_steps(self.agent), sort_keys=True)
+        self._stop(AID)
+        km._begin_checkpoint_cycle()
+        self.assertIsNone(self._weight(self.agent), "released")
+        w0, r0 = self._whole_reads(), em._READ_BYTES.get(self.agent, 0)
+        for _ in range(3):                                               # three builds fold the finished agent again
+            self.assertEqual(set(km._agent_launch_ids(self.agent)), ids, "the launch fold answers as before")
+            self.assertEqual(json.dumps(km._agent_steps(self.agent), sort_keys=True), steps, "the agent head answers as before")
+        self.assertEqual(self._whole_reads(), w0, "no whole read: the folds restored from the document")
+        self.assertLess(em._READ_BYTES.get(self.agent, 0) - r0, size // 4, "only the document's guard bytes were read")
+        ent = self._ent(self.agent)
+        self.assertTrue(ent is not None and ent[5] > 0 and em._entry_weight(ent) == 0, "a restored tail weighing nothing")
+
+    def test_a_whole_read_after_a_release_is_counted_and_one_after_another_pop_is_not(self):
+        size = self._released_at_the_end(AID, self.agent, lambda: self._stop(AID))
+        km._agent_launch_ids(self.agent)                                 # a fold restores the tail from the document
+        ent = self._ent(self.agent)
+        self.assertTrue(ent is not None and ent[5] > 0, "a restored tail")
+        self.assertEqual(self._stat("releasedReread"), {"count": 0, "bytes": 0}, "a restore is not a whole read")
+        em._read_jsonl_incremental(self.agent)                           # a whole reader (the agent viewer) upgrades it
+        self.assertEqual(self._stat("releasedReread"), {"count": 1, "bytes": size}, "what the release cost: one whole read")
+        em._read_jsonl_incremental(self.agent)
+        self.assertEqual(self._stat("releasedReread")["count"], 1, "a hit afterwards costs nothing more")
+        # control: a released path popped by something else before its whole read is that pop's, not the release's
+        self._fold_while_running(WF_AID, self.wf_agent)
+        asyncio.run(self.s._subagent_stop_hook({"agent_id": WF_AID}, None, None))
+        km._begin_checkpoint_cycle()
+        self.assertIsNone(self._weight(self.wf_agent), "the workflow agent was released too")
+        km._agent_launch_ids(self.wf_agent)
+        with em._JSONL_CACHE_LOCK:
+            em._cache_pop_locked(self.wf_agent)                          # an eviction of the restored tail
+        em._read_jsonl_incremental(self.wf_agent)
+        self.assertEqual(self._stat("releasedReread")["count"], 1, "a whole read after another pop is not counted")
+
+    def test_a_resumed_agent_is_a_false_end_and_appends_to_its_tail(self):
+        size = self._fold_while_running(AID, self.agent)
+        self._stop(AID)
+        km._begin_checkpoint_cycle()
+        self._start(AID)                                                 # the agent is resumed after its end
+        km._begin_checkpoint_cycle()
+        before = os.path.getsize(self.agent)
+        _append(self.agent, _agent_lines(AID, 45, 3))
+        w0 = self._whole_reads()
+        km._awaiting_live_rows(SID, self.leaf, self.s.snapshot())       # the running agent is folded again
+        ent = self._ent(self.agent)
+        self.assertTrue(ent is not None and ent[5] > 0, "the fold restored a tail from the document, not the whole file")
+        self.assertEqual(em._entry_weight(ent), os.path.getsize(self.agent) - before, "the tail holds the appended records alone")
+        self.assertEqual(self._whole_reads(), w0, "no whole read")
+        self.assertEqual(self._stat("falseEnds"), 1, "the released agent entered the live set again")
+        self.assertEqual(self._stat("released")["agentEnded"]["bytes"], size)
+
+    def test_an_end_and_a_start_in_one_cycle_release_nothing(self):
+        size = self._fold_while_running(AID, self.agent)
+        self._stop(AID)
+        self._start(AID)                                                 # resumed before the pusher's next cycle
+        km._begin_checkpoint_cycle()
+        self.assertEqual(self._weight(self.agent), size, "the running agent keeps its records")
+        self.assertEqual((self._stat("released", {}), self._stat("falseEnds", 0)), ({}, 0))
+
+    # ---- false ends: no liveness snapshot ends an agent ----
+
+    def test_a_staler_snapshot_a_failed_row_and_a_dormant_one_release_nothing(self):
+        stale = self.s.snapshot()                                        # taken before the agent started: subagents []
+        size = self._fold_while_running(AID, self.agent)
+        fresh = self.s.snapshot()
+        sb.write_reg(self.state, SID, {"sid": SID, "alive": True, "name": "api", "cwd": self.root})
+        self.be._live_row = lambda reg, sid: 1 / 0                       # one session's row raises: the listing's fallback row
+        with contextlib.redirect_stderr(io.StringIO()):
+            failed = self.be.live_sessions()[SID]
+        self.assertEqual(failed["subagents"], [], "the backend's failure row lists no agent")
+        self.assertEqual(stale["subagents"], [])
+        for row in (stale, fresh, failed, fresh, None, fresh, stale):   # three threads' snapshots, out of order
+            km._awaiting_live_rows(SID, self.leaf, row)
+            km._begin_checkpoint_cycle()
+            self.assertEqual(self._weight(self.agent), size, "the running agent keeps its records")
+        self.assertEqual(self._stat("released", {}), {}, "nothing was released")
+
+    # ---- the release's refusals ----
+
+    def test_a_release_racing_a_read_is_owed_not_lost(self):
+        size = self._fold_while_running(AID, self.agent)
+        self._stop(AID)
+        real, fired = em.checkpoint_write, []
+
+        def racing_write(path, *a, **k):                                 # between the document write and the pop, a read of the
+            out = real(path, *a, **k)                                    #  grown file replaces the entry
+            if str(path) == self.agent and not fired:
+                fired.append(1)
+                _append(self.agent, _agent_lines(AID, 45, 2))
+                em._read_jsonl_incremental(self.agent)
+            return out
+        em.checkpoint_write = racing_write
+        try:
+            km._begin_checkpoint_cycle()
+        finally:
+            em.checkpoint_write = real
+        self.assertTrue(fired, "the release wrote the agent's document")
+        grown = os.path.getsize(self.agent)
+        self.assertGreater(grown, size)
+        self.assertEqual(self._weight(self.agent), grown, "the newer entry stands")
+        self.assertEqual((self._stat("releaseDeferred"), self._stat("released")), (1, {}), "owed, not popped, not lost")
+        km._begin_checkpoint_cycle()                                     # the next cycle pays it
+        self.assertIsNone(self._weight(self.agent), "released at the next cycle")
+        self.assertEqual(self._stat("released"), {"agentEnded": {"count": 1, "bytes": grown}})
+
+    def test_a_release_the_cycle_budget_refuses_waits_for_the_next_cycle(self):
+        size = self._fold_while_running(AID, self.agent)
+        self._stop(AID)
+        km.CKPT_CONVERGE_BYTES = 1                                       # no room for the document this cycle
+        km._begin_checkpoint_cycle()
+        self.assertEqual(self._weight(self.agent), size, "deferred: the entry stays until its document can be written")
+        km.CKPT_CONVERGE_BYTES = 8 * 1024 * 1024
+        km._begin_checkpoint_cycle()
+        self.assertIsNone(self._weight(self.agent), "released at the next cycle with room")
+        self.assertTrue(em._ckpt_file(self.agent).exists())
+        self.assertEqual((self._stat("releaseDeferred"), self._stat("released")), (1, {"agentEnded": {"count": 1, "bytes": size}}))
+
+    def test_with_the_drop_writes_off_the_release_keeps_the_entry_and_says_so_once(self):
+        km.CKPT_CONVERGE_MS = 0                                          # the pass off: the cycle begins with no budget
+        size = self._fold_while_running(AID, self.agent)
+        self._stop(AID)
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            km._begin_checkpoint_cycle()
+        self.assertEqual(err.getvalue().count("recordCache.releaseLost"), 1, "said on stderr: %r" % err.getvalue())
+        self.assertEqual(self._weight(self.agent), size, "kept: a release without its document would read it whole again")
+        wf_size = self._fold_while_running(WF_AID, self.wf_agent)
+        asyncio.run(self.s._subagent_stop_hook({"agent_id": WF_AID}, None, None))
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            km._begin_checkpoint_cycle()
+        self.assertEqual(err.getvalue(), "", "said once per process")
+        self.assertEqual(self._weight(self.wf_agent), wf_size)
+        self.assertEqual((self._stat("releaseLost"), self._stat("released")), (2, {}))
+
+    def test_events_past_the_queue_bound_are_releases_given_up(self):
+        self.be._AGENT_LIVE_MAX = 2                                      # this backend's bound, for the test
+        self._start(AID); self._stop(AID); self._start(WF_AID); self._stop(WF_AID)
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            km._begin_checkpoint_cycle()
+        self.assertEqual(self._stat("releaseLost"), 2, "the two oldest events were dropped and counted")
+        self.assertIn("recordCache.releaseLost", err.getvalue())
+
+    def test_a_cycle_over_a_backend_without_the_queue_does_nothing(self):
+        for be in (None, False, object()):                               # not built, unavailable, a double without the queue
+            km._sdk_backend = be
+            km._begin_checkpoint_cycle()
+        self.assertEqual(self._stat("released"), {})
+
+    # ---- /perf ----
+
+    def test_perf_carries_the_release_counters_and_the_maximum(self):
+        st = em.record_cache_stats()
+        self.assertEqual(sorted(st), sorted(["entries", "bytes", "bytesMax", "budgetBytes", "countCap", "inserts", "evictions",
+                                             "evictedBytes", "budgetEvictions", "dropped", "droppedBytes", "wholeReads",
+                                             "wholeReadsByStage", "released", "releaseDeferred", "releaseLost", "falseEnds",
+                                             "releasedReread"]))
+        self.assertEqual((st["released"], st["releasedReread"]), ({}, {"count": 0, "bytes": 0}), "tables, even when zeroed")
+        self.assertEqual(jd._SERVE_GAUGES["recordCache"], ("entries", "bytes", "bytesMax", "budgetBytes", "countCap"),
+                         "bytesMax is the one new gauge; every new counter is differenced per judge pass")
+
+
+if __name__ == "__main__":
+    unittest.main()
