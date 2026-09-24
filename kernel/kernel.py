@@ -35719,7 +35719,7 @@ def _subagent_tree_memo_report():
     _awaiting_nest makes (the chat build's Agent head, _stamp_agents; an open viewer's frame, _subagent_frame_cached and
     _subagent_meta, and build_subagent when it rebuilds); E the project directory's entries, files included; S_d the
     directories of a sibling tree the agent-file walk reads; K the project directory's session directories with no
-    subagents/; W the lstats of the own root by os.path.islink and os.path.realpath together, and W' the lstats
+    subagents/; W the lstats of the own root by the walk's lstat of its type and os.path.realpath together, and W' the lstats
     os.path.realpath takes on a sibling's subagents place itself, both the interpreter's and counted in the cases by
     running the calls. The cases are in tests/test_subagent_tree_stamps_per_cycle.py. Per pusher cycle or jobs pass, for
     the two loops' own reads:
@@ -35791,8 +35791,8 @@ def _subagent_tree_memo_report():
         a sibling root whose stat raises (EACCES from its parent), held in the stamps of an agent found past it: G lstats,
         the tree's root lstat, which raises before realpath (MissPathRoads
         test_a_sibling_root_whose_stat_raises_costs_one_failed_stat_per_lookup_of_each_agent_found_past_it_and_is_never_held);
-        the own root whose stat raises while the agent is found under a sibling: 2G lstats, islink's and the tree's
-        root lstat, beside what the unreadable-tree entry's readers pay for the same root (MissPathRoads
+        the own root whose stat raises while the agent is found under a sibling: 2G lstats, the walk's lstat of its type
+        and the tree's root lstat, beside what the unreadable-tree entry's readers pay for the same root (MissPathRoads
         test_the_own_root_whose_stat_raises_costs_one_failed_stat_per_lookup_of_each_agent_found_under_a_sibling_beside_the_unreadable_trees_own);
         and an absent own root, or a dangling link in its place: G x (W + 1) lstats (MissPathRoads
         test_an_absent_or_dangling_own_root_costs_one_failed_stat_per_lookup_of_each_agent_whose_file_is_nowhere). The
@@ -35810,10 +35810,10 @@ def _subagent_tree_memo_report():
         the walk and nothing else, as round 2 of #882's group A left it): nothing is held, so every read resolves every
         agent of that session again, all under the tree and every call failing, with the resolutions standing: per read
         _subagent_meta_map's root lstat, and per agent the re-check of the stamps its walk read (D_s for a file under a
-        workflow directory), the walk's own-root stamp (a stat), the flat place's, islink's and the root's lstats, and the
-        fold of the standing resolution's file, so 1 + 3 A_s lstats and A_s x (D_s + 2) stats per read, N times per
-        cycle; plus each walk's project-directory part above (its stamp once per cycle, dirStats 1); the failed calls
-        move no counter; and the
+        workflow directory), the walk's own-root stamp (a stat), the lstats of the flat place, of the own root's type
+        and of the root by the tree read, and the fold of the standing resolution's file, so 1 + 3 A_s lstats and
+        A_s x (D_s + 2) stats per read, N times per cycle; plus each walk's project-directory part above (its stamp once per
+        cycle, dirStats 1); the failed calls move no counter; and the
         chat build is told the tree is unreadable (_TREE_UNREADABLE, which no re-stat equals: the comment at its
         definition), so its tab is rebuilt every cycle while the fault lasts (tests/test_subagent_tree_memo.py FailClosedRoads, and
         FaultExcludesItsOwnTree's no-holder cases). Guards
@@ -36213,22 +36213,37 @@ def _subagent_file_walk(path, agent_id, read=None, faults=None, notes=None, excl
     listing's own `except OSError` never takes it for a missing tree; that clause itself takes ENOENT and ENOTDIR alone
     for no project directory to list, and any other errno for a listing that could not be made.
 
-    The walk's own reads of a place read the error, never a boolean helper that answers a fault as False, and partition
-    it two ways. A candidate file, the own place included, is read by os.lstat: ENOENT and ENOTDIR are absence, any other
-    errno a fault; the walk never takes a symlink and an lstat never reads through one at the path it is given, so a
-    fault it raises lies on the path the walk would take, never in a link's target. A
-    project-directory entry's type is read by os.stat, which follows a link, so a sibling session directory reached
-    through one stays walkable: _REG_MISSING_ERRNOS (ENOENT, ENOTDIR, EBADF, ELOOP) reads as not a directory, a dangling
-    or looping link among them, and any other errno is a fault. The own place is the own root's candidate (the own
-    tree's first directory is its root), so the flat check before the own tree's read takes the file on an lstat that
-    finds a regular file and excludes nothing on a fault: _find_agent_file's lstat of the same path excludes it once the
-    own tree reads, and when the own tree cannot be read the own root's exclusion covers it, so the first exclusion is
-    the own root. Under a symlinked subagents/ the same lstat reads the own place through that link, and the walk takes
-    nothing there, so its answer decides the dependency note alone: ENOENT or ENOTDIR notes (the place, None), and a
-    fault, like anything present, notes nothing and excludes nothing. Until round 3 of #882 (group A) the walk read a candidate through os.path.isfile, which answers False
-    on any error, and an entry through Path.is_dir, which before 3.14 raised on any errno but ENOENT, ENOTDIR, EBADF and
-    ELOOP and from 3.14 answers False on every error, so such a fault was taken for absence and its miss memoized on
-    stamps a chmod or a cleared EIO never moves (tests/test_subagent_tree_memo.py FaultOnTheWalksOwnRead)."""
+    The walk's reads that decide whether a place holds the file read the error, never a boolean helper that answers a
+    fault as False: the own subagents directory's lstat, the own place's lstat, a candidate's lstat and a
+    project-directory entry's stat. They partition the error two ways. The own subagents directory and a candidate file,
+    the own place included, are read by os.lstat: ENOENT and ENOTDIR are absence, any other errno a fault; the walk never
+    takes a symlink and an lstat never reads through one at the path it is given, so a fault it raises lies on the path
+    the walk would take, never in a link's target. A project-directory entry's type is read by os.stat, which follows a
+    link, so a sibling session directory reached through one stays walkable: _REG_MISSING_ERRNOS (ENOENT, ENOTDIR,
+    EBADF, ELOOP) reads as not a directory, a dangling or looping link among them, and any other errno is a fault. The
+    own subagents directory's lstat comes first and tells a symlinked subagents/ from a real one; a fault on it excludes
+    the own root, which is then the first exclusion, the walk takes and notes nothing at the own place, and the own
+    tree's read that follows excludes the same root a second time, which changes nothing `faults` or the note reads.
+    Otherwise the own place is the own root's candidate (the own tree's first directory is its root), so the flat check
+    before the own tree's read takes the file on an lstat that finds a regular file and excludes nothing on a fault:
+    _find_agent_file's lstat of the same path excludes it once the own tree reads, and when the own tree cannot be read
+    the own root's exclusion covers it, so the first exclusion is the own root. Under a symlinked subagents/ the same
+    lstat reads the own place through that link, and the walk takes nothing there, so its answer decides the dependency
+    note alone: ENOENT or ENOTDIR notes (the place, None), and a fault, like anything present, notes nothing and excludes
+    nothing, since the walk searches nothing there. One read answers a path and reads no error: _find_agent_file's
+    containment check, whose two os.path.realpath calls answer a path when an lstat they make fails. It runs only on a
+    tree whose read succeeded, and on a candidate whose lstat found a regular file. That this is safe is claimed for two
+    faults, an EACCES from a parent and an EIO on a local filesystem: each also fails traversal through the path, so the
+    tree read or the candidate's lstat raises before realpath reads a path through the faulted place (the real EACCES:
+    FaultOnTheWalksOwnRead's control and its listable-but-not-searchable cases, FaultExcludesItsOwnTree). No wider claim
+    is made for it.
+    Until round 3 of #882 (group A) the walk read a candidate through os.path.isfile, which answers False on any error,
+    and an entry through Path.is_dir, which before 3.14 raised on any errno but ENOENT, ENOTDIR, EBADF and ELOOP and from
+    3.14 answers False on every error, so such a fault was taken for absence and its miss memoized on stamps a chmod or a
+    cleared EIO never moves (tests/test_subagent_tree_memo.py FaultOnTheWalksOwnRead). Until the rebuild of #882
+    (2026-09-24) it read the own subagents directory's type through os.path.islink, which answers False on any error,
+    so a fault on that lstat alone read a symlinked subagents/ as a real one, and the flat check took the file through
+    the link, memoized it and served it after the fault cleared (FaultOnTheWalksOwnRead's symlinked-subagents case)."""
     read = read if read is not None else []
     notes = notes if notes is not None else []
     excluded = excluded if excluded is not None else []   # (path, kept) per tree, place, candidate, entry or listing the walk could not read
@@ -36241,14 +36256,21 @@ def _subagent_file_walk(path, agent_id, read=None, faults=None, notes=None, excl
     own = _subagents_dir(path)
     read.append(_dir_stamp(str(own)))
     ap = own / name
-    own_is_link = os.path.islink(own)                     # a symlinked subagents/ is not taken: nothing found through it is
+    own_fault = None                                      # the own subagents directory's type, read by one lstat whose error is read:
+    try:                                                  #  a symlinked subagents/ is not taken, and nothing found through it is
+        own_is_link = stat.S_ISLNK(os.lstat(own).st_mode)
+    except (FileNotFoundError, NotADirectoryError):       # ENOENT, ENOTDIR: no link there; the flat check reads the own place
+        own_is_link = False
+    except OSError as e:                                  # any other errno is a fault on the own subagents directory: the own
+        own_is_link, own_fault = False, e                 #  root is excluded (the first exclusion), and nothing at the own
+        exclude(str(own), e)                              #  place is taken or noted, whatever its lstat below answers
     try:                                                  # the own place, read by one lstat whose error is read, whatever own is
-        if stat.S_ISREG(os.lstat(ap).st_mode) and not own_is_link:
+        if stat.S_ISREG(os.lstat(ap).st_mode) and not own_is_link and own_fault is None:
             return ap                                     # this tree's own file: a symlink at the place is not taken
-        ap_absent = False                                 # present and refused: a symlink or a directory at the place, or
-        #                                                   anything there reached through a symlinked subagents/
-    except (FileNotFoundError, NotADirectoryError):       # ENOENT, ENOTDIR: nothing at the own place
-        ap_absent = True
+        ap_absent = False                                 # present and refused: a symlink or a directory at the place, anything
+        #                                                   there reached through a symlinked subagents/, or own's type unread
+    except (FileNotFoundError, NotADirectoryError):       # ENOENT, ENOTDIR: nothing at the own place, noted below unless the
+        ap_absent = own_fault is None                     #  own subagents directory's lstat faulted (its exclusion covers it)
     except OSError:                                       # a fault, not an absence, and not excluded here: in a real subagents/
         ap_absent = False                                 #  ap is the own root's candidate, which _find_agent_file excludes below
     own_tree = None                                     # stays None when the own tree could not be read: the loop skips its note
@@ -36273,7 +36295,9 @@ def _subagent_file_walk(path, agent_id, read=None, faults=None, notes=None, excl
     # lstat, under a real or a symlinked subagents/ alike, and a fault on it is not an absence and notes nothing: in a
     # real subagents/ the place is excluded (the own root's candidate read, or the own root's exclusion), and a file
     # found nowhere is noted under _TREE_UNREADABLE; through a symlinked one the walk takes nothing whatever the lstat
-    # answers, so the miss stands once the fault clears too. A boolean helper (os.path.lexists) answers a fault as an
+    # answers, so the miss stands once the fault clears too. A fault on the lstat of the own subagents directory itself
+    # notes nothing for the place whatever the place's lstat answers: the own root is excluded, and a file found nowhere is
+    # noted under _TREE_UNREADABLE for that root. A boolean helper (os.path.lexists) answers a fault as an
     # absence, and its (ap, None), which the re-stat answers while the fault lasts and not after, was replayed from the
     # memo, whose stamps a chmod or a cleared EIO never moves, so the tab was rebuilt every cycle once the fault cleared
     # (the pass over round 3 of #882's takes; DependencyKey's symlinked-subagents fault cases).

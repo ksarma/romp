@@ -44,15 +44,17 @@ be read, its root reading (FaultBelowTheRoot): a workflows/ or workflow director
 directory whose own lstat fails and an entry whose type cannot be read each exclude that place from the agent-file
 walk, so with the file under it the lookup answers None with the fault, memoizes nothing and walks again at the next
 lookup, the chat build's record re-arms once the fault clears, the lookup then finds the file, and a standing
-resolution under the place is answered and left standing; (16) the agent-file walk's own reads of a place
-read the error (FaultOnTheWalksOwnRead): a candidate file whose lstat fails for a reason other than ENOENT and ENOTDIR
-(in a directory that can be listed but not searched, or an EIO), in a workflow directory and at the flat place, and a
-project-directory entry whose os.stat fails outside _REG_MISSING_ERRNOS, each with the file there alone, answer None
-with the fault, memoize nothing, walk again at each lookup and note the place unreadable, and once the fault clears the
-lookup finds the file; a standing resolution beside a faulted candidate is not answered; a file found past such a
-fault is answered as before, and absent candidates, links at a candidate and links as an entry read as absence or not
-a directory, with no fault. Red-first on (1), the jobs-pass half of (6), (9), (10), (11), (14), (15) and (16) (its
-entry pin on 3.14t alone); (12) is red under a mutant per road; (13) is green before its change by design and red
+resolution under the place is answered and left standing; (16) the agent-file walk's reads that decide whether a
+place holds the file read the error (FaultOnTheWalksOwnRead): a candidate file whose lstat fails for a reason other
+than ENOENT and ENOTDIR (in a directory that can be listed but not searched, or an EIO), in a workflow directory and at
+the flat place, and a project-directory entry whose os.stat fails outside _REG_MISSING_ERRNOS, each with the file there
+alone, answer None with the fault, memoize nothing, walk again at each lookup and note the place unreadable, and once
+the fault clears the lookup finds the file; a standing resolution beside a faulted candidate is not answered; a file
+found past such a fault is answered as before, and absent candidates, links at a candidate and links as an entry read
+as absence or not a directory, with no fault; and a fault on the lstat of a symlinked subagents/ itself (by mock)
+excludes the own root, so the file behind the link is not taken, and after the fault clears the lookup is a miss,
+memoized, as a symlinked subagents/ always is. Red-first on (1), the jobs-pass half of (6), (9), (10), (11), (14), (15)
+and (16) (its entry pin on 3.14t alone); (12) is red under a mutant per road; (13) is green before its change by design and red
 under the follow-up that has the viewer state the fault.
 Synthetic fixtures only: placeholder ids, invented text, a temp directory."""
 import contextlib
@@ -60,6 +62,7 @@ import errno
 import json
 import os
 import shutil
+import stat
 import sys
 import tempfile
 import time
@@ -1526,25 +1529,35 @@ class FaultBelowTheRoot(_Walk):
 
 
 class FaultOnTheWalksOwnRead(_Walk):
-    """The agent-file walk's own reads of a place read the error, never a boolean helper that answers a fault as False
-    (round 3 of #882, group A: correctness-1, extra5-1, kernel-1, extra8-1). A candidate file, the own place included, is
-    read by os.lstat: ENOENT and ENOTDIR are absence, any other errno a fault that excludes the candidate path. A
+    """The agent-file walk's reads that decide whether a place holds the file read the error, never a boolean helper that
+    answers a fault as False (round 3 of #882, group A: correctness-1, extra5-1, kernel-1, extra8-1; the own subagents
+    directory's type since the rebuild of #882, group A of its round-4 rulings). A candidate file, the own place included,
+    is read by os.lstat: ENOENT and ENOTDIR are absence, any other errno a fault that excludes the candidate path. A
     project-directory entry's type is read by os.stat: _REG_MISSING_ERRNOS reads as not a directory, any other errno a
-    fault that excludes the entry. RED FIRST at the round-3 head: the walk read a candidate through os.path.isfile, which
-    answers False on EACCES and EIO on every interpreter, and an entry through Path.is_dir, which answers False on any
-    error from 3.14 (3.10 to 3.13 raised, and the entry was excluded already), so the fault was taken for absence, the
-    miss memoized on stamps a chmod or a cleared EIO never moves, and the lookup after the fault cleared was answered
-    the memoized miss. The real shape: a directory that can be listed but not searched (read without execute) holding
-    only files, whose listing succeeds and types its entries with no child to lstat, so the tree read reports no fault,
-    while the candidate's lstat raises EACCES. Each pin asserts, under the fault, None, the fault passed to the caller,
-    nothing memoized, a walk per lookup and the (place, _TREE_UNREADABLE) note by equality on the place, and after the
-    fault clears, the memo entry absent before the next lookup and the file found. The EIO pins mock os.stat and
-    os.lstat both for the candidate alone, as a real EIO fails every stat of the path: a mock of the lstat alone is
+    fault that excludes the entry. The own subagents directory's type is read by os.lstat before the flat check: a
+    symlink there is a symlinked subagents/, through which nothing is taken; ENOENT and ENOTDIR are no link; any other
+    errno is a fault that excludes the own root, and nothing at the own place is taken or noted (case (5)).
+    Cases (1) to (3), RED FIRST at the round-3 head: the walk read a candidate through os.path.isfile, which answers
+    False on EACCES and EIO on every interpreter, and an entry through Path.is_dir, which answers False on any error
+    from 3.14 (3.10 to 3.13 raised, and the entry was excluded already), so the fault was taken for absence, the miss
+    memoized on stamps a chmod or a cleared EIO never moves, and the lookup after the fault cleared was answered the
+    memoized miss. The real shape: a directory that can be listed but not searched (read without execute) holding only
+    files, whose listing succeeds and types its entries with no child to lstat, so the tree read reports no fault, while
+    the candidate's lstat raises EACCES. Each of those pins asserts, under the fault, None, the fault passed to the
+    caller, nothing memoized, a walk per lookup and the (place, _TREE_UNREADABLE) note by equality on the place, and
+    after the fault clears, the memo entry absent before the next lookup and the file found. The EIO pins mock os.stat
+    and os.lstat both for the candidate alone, as a real EIO fails every stat of the path: a mock of the lstat alone is
     never seen by os.path.isfile, and the red would be for another reason. The entry pin is red at the round-3 head on
     3.14t alone; on 3.10 its EIO variant fails there too, but only because 3.10's pathlib stats through the os.stat it
     bound at import and never sees the mock, which is not the defect; elsewhere it is green at both heads, the control
-    that the new partition keeps what pathlib did before 3.14. The controls and boundaries at the end are green at both
-    heads by design, each saying so. The EACCES cases skip as root, whom permission bits do not bind."""
+    that the new partition keeps what pathlib did before 3.14. Case (5)'s pin and its control state their own red and
+    green. The controls and boundaries at the end are green at both heads by design, each saying so. The EACCES cases
+    skip as root, whom permission bits do not bind.
+
+    Named mutants, each applied alone to kernel/kernel.py and red on the case named (each run recorded outside the repo
+    with its command, interpreter and head):
+    - M1, the own subagents directory's type read by os.path.islink(own) again, which answers False on a fault: case
+      (5)'s pin, on the file taken through the link."""
 
     ERR = {"eacces": "PermissionError", "eio": "OSError"}   # the type name the walk passes to the caller's faults
 
@@ -1660,6 +1673,93 @@ class FaultOnTheWalksOwnRead(_Walk):
         got, faults, _notes = self._looked_up(AID_WF)
         self.assertEqual((got, faults), (None, []), "the fault cleared: the file is nowhere, a real miss, with no fault")
         self.assertIsNone(km._SUBAGENT_FILE_CACHE[self.wf_key][1], "and the miss is memoized")
+
+    # ── (5) the own subagents directory's type, read for its error ──────────────────────────────────────────────────
+    def _symlinked_subagents(self):
+        """subagents/ replaced by a symlink to a directory elsewhere holding what it held, AID's flat file among them:
+        (the link's path, the flat place through it)."""
+        target = Path(self.td) / "linked-subagents"
+        os.rename(str(self.subdir), str(target))
+        self.subdir.symlink_to(target)
+        _age(str(target))
+        own, ap = str(self.subdir), str(self.subdir / ("agent-%s.jsonl" % AID))
+        self.assertTrue(os.path.islink(own) and os.path.isfile(ap),
+                        "premise: subagents/ is a symlink to a directory holding AID's flat file")
+        return own, ap
+
+    def _after_the_fault(self, what):
+        """AID's lookup once the fault has cleared: None with no fault and the miss memoized, since a file behind a
+        symlinked subagents/ is never taken."""
+        got, faults, _notes = self._looked_up(AID)
+        self.assertEqual((got, faults), (None, []), "%s cleared: a file behind a symlinked subagents/ is never taken, so the "
+                                                    "lookup is a miss with no fault" % what)
+        self.assertIsNone(km._SUBAGENT_FILE_CACHE.get(self.flat_key, (None, "unset"))[1], "%s cleared: the miss is memoized" % what)
+
+    def test_a_fault_on_the_own_subagents_directorys_lstat_under_a_symlinked_subagents_directory_excludes_the_own_root_and_takes_nothing(self):
+        """(A1) subagents/ a symlink to a directory holding AID's flat file, and os.lstat raising EIO for the own
+        subagents directory's path alone (by mock: a non-root test cannot drive a fault on that lstat alone for real,
+        since a real fault there, an EACCES from a parent, also fails the flat place's lstat and the own tree's read,
+        which the control below drives). The walk reads the own subagents directory's type from that lstat, so the fault
+        excludes the own root: None, faults ['OSError'], nothing memoized, and the running chat build told that the own
+        root is unreadable, the place by equality; once the fault clears, None with no fault and the miss memoized. RED
+        at the round-4 head, where os.path.islink(own) answered False on the fault, so the flat check took the file
+        through the link with no fault, memoized it and served it after the fault cleared; and under M1."""
+        own, ap = self._symlinked_subagents()
+        real = os.lstat
+
+        def eio(p, *a, **k):
+            if not isinstance(p, int) and os.fsdecode(p) == own:
+                raise OSError(errno.EIO, "input/output error")
+            return real(p, *a, **k)
+        with mock.patch.object(os, "lstat", eio):
+            with self.assertRaises(OSError, msg="premise: the own subagents directory's lstat raises under the mock"):
+                os.lstat(own)
+            self.assertTrue(stat.S_ISREG(os.lstat(ap).st_mode),
+                            "premise: the flat place's lstat, through the link, still finds a regular file: the mock reaches "
+                            "the own subagents directory's path alone")
+            got, faults, notes = self._looked_up(AID)
+            memo = km._SUBAGENT_FILE_CACHE.get(self.flat_key)
+        after, after_faults, _notes = self._looked_up(AID)
+        rel = lambda p: p and os.path.relpath(str(p), self.td)
+        seen = (rel(got), faults, memo and ("a memo entry answering", rel(memo[1])), rel(after), after_faults)
+        self.assertEqual(seen, (None, ["OSError"], None, None, []),
+                         "(the answer, faults and memo entry under the fault on the own subagents directory's lstat, then the answer "
+                         "and faults once it cleared) = %r; keyed on (None, ['OSError'], None, None, []): the fault excludes the own "
+                         "root, so nothing at the own place is taken or memoized, and a file behind a symlinked subagents/ is never "
+                         "taken (a boolean read of that type, os.path.islink, answered False on the fault, so the flat check took the "
+                         "file through the link, memoized it and served it after the fault cleared)" % (seen,))
+        self.assertEqual([p for p, k in notes if k == km._TREE_UNREADABLE], [own],
+                         "the running chat build is told the own root is unreadable, the place by equality: %r" % (notes,))
+        self.assertIsNone(km._SUBAGENT_FILE_CACHE.get(self.flat_key, (None, "unset"))[1],
+                          "the fault cleared: the miss is memoized")
+
+    def test_control_a_real_eacces_on_the_own_subagents_directory_under_a_symlinked_subagents_directory_excludes_the_own_root_first(self):
+        """The control, green at the round-4 head and here by design: the same world with the session directory at mode
+        000 (a real EACCES from a parent; skipped as root, whom permission bits do not bind), which fails the own
+        subagents directory's lstat, the flat place's and the own tree's read alike: None, faults ['PermissionError'],
+        nothing memoized, the running chat build told that the own root is unreadable, and the walk's first exclusion the
+        own root; once the mode is restored, None with no fault and the miss memoized."""
+        if os.geteuid() == 0:
+            self.skipTest("permission bits do not bind root: no EACCES to drive")
+        own, ap = self._symlinked_subagents()
+        sess = str(self.subdir.parent)
+        os.chmod(sess, 0o000)                                     # restored in the finally, before tearDown removes the tree
+        try:
+            for p in (own, ap):
+                with self.assertRaises(PermissionError, msg="premise: the real fault fails the lstat of %s" % os.path.relpath(p, self.td)):
+                    os.lstat(p)
+            got, faults, notes = self._looked_up(AID)
+            memo = km._SUBAGENT_FILE_CACHE.get(self.flat_key)
+            excluded = []
+            km._subagent_file_walk(str(self.tpath), AID, excluded=excluded)
+        finally:
+            os.chmod(sess, 0o755)
+        self.assertEqual((got, faults, memo), (None, ["PermissionError"], None),
+                         "under the real EACCES: (answer, faults, memo entry); keyed on (None, ['PermissionError'], None)")
+        self.assertEqual([p for p, k in notes if k == km._TREE_UNREADABLE], [own],
+                         "the running chat build is told the own root is unreadable, the place by equality: %r" % (notes,))
+        self.assertEqual(excluded[:1], [(own, None)], "the walk's first exclusion is the own root: %r" % (excluded,))
+        self._after_the_fault("the mode is restored and the fault")
 
     # ── controls and boundaries, green at both heads by design ──────────────────────────────────────────────────────
     def _found_past(self, fault):

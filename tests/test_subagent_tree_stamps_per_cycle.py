@@ -821,8 +821,8 @@ class _World(unittest.TestCase):
         rest of the cycle is served), the walk's dependency notes to the running chat build (the absent own place, every
         directory of each tree it looked through) come from the pair the lookup was answered, the served tree, so they cost
         no stat on the tree's directories (0 os.stat; round 1 of #882's correctness-1: the own tree's note was a fresh
-        _chat_stat_key stat, 1 per walk), and each walk pays W lstats of the own root, its two symlink checks (os.path.islink,
-        and os.path.realpath's lstat per component), counted by running those two calls, and one os.lstat per candidate
+        _chat_stat_key stat, 1 per walk), and each walk pays W lstats of the own root, its lstat of the root's type and
+        os.path.realpath's lstat per component, counted by running those two calls, and one os.lstat per candidate
         file, the flat place and one per served directory (D + 1, the flat place being the own root's candidate, so its
         path is read twice), counted by path inside the walk (_PathCalls), with no os.stat of any file under the tree but
         the A folds'. The walk's own ask on the root is among the first read's and is
@@ -838,7 +838,7 @@ class _World(unittest.TestCase):
         self.live_aids.extend(ghosts)                         # in the live row; no sidecar and no file anywhere
         own = str(self.sub)
         with self._spy() as sp0:
-            os.path.islink(own); os.path.realpath(own)
+            os.lstat(own); os.path.realpath(own)
         W = sp0.total()["dir_lstat"]
         proj = Path(self.path).parent
         E = len(list(proj.iterdir()))                         # the project directory's entries: the transcript and the session directory
@@ -868,7 +868,7 @@ class _World(unittest.TestCase):
                          % (D, what, t["dir_stat"]))
         self.assertEqual(t["dir_lstat"], D + G * W,
                          "os.lstat on the tree's directories: %d; expected D + G x W = %d + %d x %d, the one validation plus each walk's "
-                         "symlink checks of the own root" % (t["dir_lstat"], D, G, W))
+                         "type lstat and realpath lstats of the own root" % (t["dir_lstat"], D, G, W))
         self.assertEqual(t["file_stat"], A,
                          "os.stat on files under the tree: %d; expected A = %d, one fold per agent with a file and nothing else: the walk "
                          "reads its candidates by os.lstat (until round 3 of #882, group A, by os.path.isfile, an os.stat each, A + G x "
@@ -1020,7 +1020,8 @@ class MissPathRoads(_World):
     up M more times, as the chat build's Agent head (_stamp_agents) and an open viewer (_subagent_frame_cached,
     build_subagent) look an agent up. A ghost's first cycle is cold (its walk runs, memoizing its answer), the next
     steady (each lookup a memo hit re-checking the walk's stamps). Every count is derived in the case from D, A, CALLS,
-    G, K, S, M and the interpreter's realpath and islink, which are counted by running them."""
+    G, K, S, M and the interpreter's realpath, counted by running it (the absent-or-dangling own-root case also runs
+    os.path.islink, whose one lstat equals the walk's lstat of the own root's type)."""
 
     M = 2   # a ghost's lookups per cycle beyond the one _awaiting_nest makes (its held launch fold answers the rest)
 
@@ -1222,11 +1223,11 @@ class MissPathRoads(_World):
         lies at the top of a readable sibling's tree. Each such walk excludes the own tree, finds the file under the
         sibling and memoizes it with (own root, None) among its stamps, so every lookup of each such agent pays one
         failing os.stat of the own root: G x (1 + M) per cycle, cold and steady; and its cold walk two lstats of it,
-        islink's and the tree's root lstat (realpath is never reached: the tree read raises first): 2G. The same root is
-        read by the unreadable-tree entry's readers too, whose resolutions stand from setUp's warm read and are made again
-        on every read: per read and per agent, its memo hit's re-check of the root among its stamps and its walk's own-root
-        stamp (2 stats), and _subagent_meta_map's root lstat per read and per agent islink's and the tree's root lstat
-        (1 + 2A lstats; the flat place's lstat is another path). So the pin keys on the sum derived road by road from both
+        the walk's lstat of its type and the tree's root lstat (realpath is never reached: the tree read raises first):
+        2G. The same root is read by the unreadable-tree entry's readers too, whose resolutions stand from setUp's warm
+        read and are made again on every read: per read and per agent, its memo hit's re-check of the root among its
+        stamps and its walk's own-root stamp (2 stats), and _subagent_meta_map's root lstat per read and per agent the
+        walk's type lstat and the tree's root lstat (1 + 2A lstats; the flat place's lstat is another path). So the pin keys on the sum derived road by road from both
         entries, and on the step between G values (1 + M stats and, cold, 2 lstats per added agent), never on G x (1 +
         M) alone, which the other readers' stats of the root would turn red on correct behaviour. Red under a kernel
         that holds the failed stamp for the cycle. Skipped as root."""
@@ -1252,8 +1253,8 @@ class MissPathRoads(_World):
                                          "(os.stat, os.lstat) on the unreadable own root over %s: %r; keyed on the sum road by road = "
                                          "%r: the unreadable-tree entry's CALLS x A x 2 stats (each agent's re-check and walk stamp, "
                                          "per read) plus this entry's G x (1 + M), and CALLS x (1 + 2A) lstats plus, cold, 2G (each "
-                                         "found agent's walk: islink and the tree's root lstat); a kernel that holds the failed stamp "
-                                         "for the cycle pays fewer stats" % (what, got, want))
+                                         "found agent's walk: its lstat of the root's type and the tree's root lstat); a kernel that "
+                                         "holds the failed stamp for the cycle pays fewer stats" % (what, got, want))
         for phase in ("cold", "steady"):
             steps = [tuple(b - a for a, b in zip(seen[(phase, G)], seen[(phase, G + 1)])) for G in (1, 2)]
             want = [(1 + self.M, 2 if phase == "cold" else 0)] * 2
