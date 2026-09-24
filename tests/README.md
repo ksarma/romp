@@ -139,8 +139,8 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   import counting as a binding of every name), it is unreadable, and a write
   through it fails the test naming the file and line; a rebinding through the
   module's namespace (`globals()`, `vars()`, `sys.modules`) or by a string `exec`
-  runs is not seen, and each is one of the shapes listed outside the scan. What
-  stays outside the scan
+  or `eval` runs (a walrus binds in an `eval` string) is not seen, and each is one
+  of the shapes listed outside the scan. What stays outside the scan
   is listed in one place, the comment above `_Module` in that module, each shape
   with a plant the scan is held to recording nothing for. The licences
   are per name and checkable, each with a condition on

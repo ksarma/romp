@@ -227,10 +227,11 @@ class _EnvNames:
     enumerate aliasing. What the rule does not read: a binding or a mutation made through the module's namespace rather
     than spelled by name (`globals()["k"] = v`, `vars()["k"] = v`, `sys.modules[__name__].k = v`, setattr on the
     module, `vars()["D"][K] = v`, `sys.modules[__name__].D[K] = v`), by another module that imports this one back, or by
-    a string that exec runs (`exec("k = v")`); the comment above _Module names them ([namespace-rebinding],
-    [exec-eval]) with the reason and the plants. Built from the code that runs at import (a class body's bindings among
-    it, read as the module's: the body runs at import, and a name bound in both scopes is bound twice); a function's own
-    bindings are added when the function is walked (`within`), its parameters shadowing every table. `bindings` (since
+    a string that exec or eval runs (`exec("k = v")`, a walrus in `eval("(k := v)")`, `eval("D.update(K=v)")`); the
+    comment above _Module names them ([namespace-rebinding], [exec-eval]) with the reason and the plants. Built from the
+    code that runs at import (a class body's bindings among it, read as the module's: the body runs at import, and a
+    name bound in both scopes is bound twice); a function's own bindings are added when the function is walked
+    (`within`), its parameters shadowing every table. `bindings` (since
     the fixup of 2026-09-22, the verifier's finding that five licences had no value condition) is every name bound at
     import, to its value expression when its one binding is an assignment and None otherwise, so a licence's value check
     reads a value written through a name (`_ROOT = tempfile.mkdtemp(); os.environ["XDG_STATE_HOME"] = _ROOT`,
@@ -269,9 +270,10 @@ class _EnvNames:
         and a star import after it; either order leaves the name unreadable); a target that is not a bare name leaves
         each name it binds unreadable. A rebinding the module does not spell is not seen, and the loop's literals are
         still read: through the module's namespace (`globals()["k"] = v`, `vars()`, `sys.modules[__name__].k = v`,
-        setattr on the module) or by a string that exec runs (the verifier's finding on round 2's thirteenth commit of
-        fork PR #894, where this docstring said a name bound by anything else stays unreadable). The comment above
-        _Module names both ([namespace-rebinding], [exec-eval]), with a plant of a loop name for each form."""
+        setattr on the module) or by a string that exec or eval runs (`exec("k = v")`, a walrus in `eval("(k := v)")`;
+        the verifier's findings on round 2's thirteenth commit of fork PR #894, where this docstring said a name bound
+        by anything else stays unreadable, and on its fourteenth, where it named exec alone). The comment above _Module
+        names both ([namespace-rebinding], [exec-eval]), with a plant of a loop name for each form."""
         if isinstance(n.target, ast.Name):
             literal = (isinstance(n.iter, (ast.Tuple, ast.List)) and n.iter.elts
                        and all(isinstance(e, ast.Constant) and isinstance(e.value, str) for e in n.iter.elts))
@@ -376,9 +378,9 @@ class _EnvNames:
         """Every tracked dict (a name bound once to a literal mapping) referenced anywhere under `scope` (the module's tree,
         or a function), in any nested scope, other than by one of _DICT_READS becomes unreadable (None). A reference is a
         Name node or a string that binds the name (_names_bound_by_a_string); one through the module's namespace
-        (`globals()["D"]`, `sys.modules[__name__].D`), from another module or in a string that exec runs
-        (`exec("D[K] = v")`) is not seen, and the comment above _Module names those ([namespace-rebinding],
-        [exec-eval]). One BFS walk:
+        (`globals()["D"]`, `sys.modules[__name__].D`), from another module or in a string that exec or eval runs
+        (`exec("D[K] = v")`, `eval("D.update(K=v)")`) is not seen, and the comment above _Module names those
+        ([namespace-rebinding], [exec-eval]). One BFS walk:
         ast.walk visits a parent before its children, so an allowed reference is recorded, by id(node) in a side table,
         before the name under it is reached."""
         tracked = {name for name, items in self.dicts.items() if items is not None}
@@ -494,8 +496,9 @@ class _Substitute(ast.NodeTransformer):
     `global` in a def, or any name after a star import, stays a name here (the reviewer's ruling of round 1 on fork PR
     #894: before it such a name resolved to its first assignment, and a licence's value check passed a value the module
     never writes; the star import since the verifier's finding on round 2). A name rebound through the module's
-    namespace (`globals()["_ROOT"] = v`) or by a string that exec runs (`exec('_ROOT = v')`) is not seen, and still
-    resolves to its first assignment: the comment above _Module names both ([namespace-rebinding], [exec-eval])."""
+    namespace (`globals()["_ROOT"] = v`) or by a string that exec or eval runs (`exec('_ROOT = v')`, a walrus in
+    `eval('(_ROOT := v)')`) is not seen, and still resolves to its first assignment: the comment above _Module names
+    both ([namespace-rebinding], [exec-eval])."""
 
     def __init__(self, bindings, seen=frozenset()):
         self.bindings, self.seen = bindings, seen
@@ -516,11 +519,12 @@ def _resolved(node, names):
     value and not the name; the text of `node` itself where nothing substitutes (a name bound again by any binding the
     module's code spells, or bound by something other than an assignment, stays a name: THE RULE in _EnvNames); "" for
     None. A name rebound through the module's namespace (`globals()["_ROOT"] = "/srv/real-state"`) or by a string that
-    exec runs (`exec('_ROOT = "/srv/real-state"')`) is not seen and still resolves to its first assignment, so a
-    licence's value check passes the first value (the verifier's findings on round 2 of fork PR #894, where this
-    docstring said a name bound again by anything stays a name, and on its thirteenth commit, where it named the
-    namespace alone); the comment above _Module names both ([namespace-rebinding], [exec-eval]), and the licence test
-    holds a plant of each clean, so a change that starts reading either reds."""
+    exec or eval runs (`exec('_ROOT = "/srv/real-state"')`, a walrus in `eval('(_ROOT := "/srv/real-state")')`) is not
+    seen and still resolves to its first assignment, so a licence's value check passes the first value (the verifier's
+    findings on round 2 of fork PR #894, where this docstring said a name bound again by anything stays a name, on its
+    thirteenth commit, where it named the namespace alone, and on its fourteenth, where it named exec alone); the
+    comment above _Module names both ([namespace-rebinding], [exec-eval]), and the licence test holds a plant of the
+    namespace form, the exec form and the eval form clean, so a change that starts reading any of them reds."""
     if node is None:
         return ""
     # Contract: a parsed tree is read-only for every consumer, so the value is re-parsed from its text, never deep-copied.
@@ -929,10 +933,12 @@ def _import_time_defs(body):
 #     bare its __init_subclass__, and no other special method is read.
 #   [call-result] a callee or a base bound to a call's result (`arm = make(); arm()`, `class K(make_base())`,
 #     `under_conftest = unittest.skipUnless(...)`): the call itself is followed, not what it returns.
-#   [exec-eval] `exec` or `eval` of a string: a write in it, and a binding or a mutation it makes (`exec("k = v")` after
-#     a loop binds k, `exec("D[K] = v")` on a tracked dict), which leaves the name read through its first binding, as
-#     under [namespace-rebinding]; the value side (`exec('_ROOT = "/srv/real-state"')`) is held clean by the licence test
-#     beside that entry's.
+#   [exec-eval] `exec` or `eval` of a string: a write in it, and a binding or a mutation it makes (`exec("k = v")`, or
+#     a walrus in `eval("(k := v)")`, after a loop binds k; `exec("D[K] = v")` or `eval("D.update(K=v)")` on a tracked
+#     dict), which leaves the name read through its first binding, as under [namespace-rebinding]; the value side
+#     (`exec('_ROOT = "/srv/real-state"')`, `eval('(_ROOT := "/srv/real-state")')`) is held clean by the licence test
+#     beside that entry's. Each form has its plant for exec and for eval (the verifier's finding on round 2's fourteenth
+#     commit of fork PR #894, where the binding, the mutation and the value side were planted for exec alone).
 #   [inherited-metaclass] a metaclass a class inherits from a base of another module (`class K(helper.B)` where B has
 #     `metaclass=M`).
 #   [inherited-method] a method a class inherits from a base of another module (`class K(helper.Base)`, then `K()` runs
@@ -1376,7 +1382,10 @@ _OUTSIDE_THE_SCAN = {
                   _outside_plant("import os\neval(\"os.environ.update({key}='1')\")\n"),
                   # the verifier's finding on round 2's thirteenth commit: a binding or a mutation the string makes
                   _outside_plant("import os\nfor k in ('ROMP_PLANTED_DECOY',):\n    pass\nexec(\"k = '{key}'\")\nos.environ[k] = '1'\n"),
-                  _outside_plant("import os\nD = {'ROMP_PLANTED_DECOY': '1'}\nexec(\"D['{key}'] = '1'\")\nos.environ.update(D)\n")],
+                  _outside_plant("import os\nD = {'ROMP_PLANTED_DECOY': '1'}\nexec(\"D['{key}'] = '1'\")\nos.environ.update(D)\n"),
+                  # the verifier's finding on round 2's fourteenth commit: that binding (a walrus) and mutation by eval
+                  _outside_plant("import os\nfor k in ('ROMP_PLANTED_DECOY',):\n    pass\neval(\"(k := '{key}')\")\nos.environ[k] = '1'\n"),
+                  _outside_plant("import os\nD = {'ROMP_PLANTED_DECOY': '1'}\neval(\"D.update({key}='1')\")\nos.environ.update(D)\n")],
     "inherited-metaclass": [_outside_plant("from h_meta import B\nclass _K(B):\n    pass\n",
                                    {"h_meta.py": "import os\nclass M(type):\n    def __init__(cls, *a):\n"
                                                  "        if cls.__name__ == '_K':\n            os.environ['{key}'] = '1'\n"
@@ -2858,8 +2867,9 @@ class HermeticKernelPostal(unittest.TestCase):
         seen, so its first assignment is the value checked and the write passes: that residual is named above _Module
         ([namespace-rebinding]) and held here as it is, so a change that starts reading it reds (the verifier's finding on
         round 2 of fork PR #894, where _resolved's docstring said a name bound again by anything stays a name). The same
-        holds for a name rebound by a string that exec runs ([exec-eval]; the verifier's finding on round 2's thirteenth
-        commit, where the texts named the namespace alone), held here beside it."""
+        holds for a name rebound by a string that exec or eval runs, an assignment in an exec string and a walrus in an
+        eval string ([exec-eval]; the verifier's findings on round 2's thirteenth commit, where the texts named the
+        namespace alone, and on its fourteenth, where only the exec form was held), each held here beside it."""
         def records_of(src, rel):
             out = collections.defaultdict(list)
             for name, rec in _module_level_records(ast.parse(src), rel):
@@ -2979,10 +2989,11 @@ class HermeticKernelPostal(unittest.TestCase):
             self.assertEqual(len(faults), 1, faults)
             self.assertIn("bound more than once at import", faults[0])
         # the disclosed residuals [namespace-rebinding] and [exec-eval]: the rebinding through globals() or by a string
-        # exec runs is not seen, the value resolves to the first assignment, and the licence passes a value the module
-        # never writes
+        # exec or eval runs (a walrus binds in an eval string) is not seen, the value resolves to the first assignment,
+        # and the licence passes a value the module never writes
         for tag, rebinding in (("namespace-rebinding", 'globals()["_ROOT"] = "/srv/real-state"'),
-                               ("exec-eval", "exec('_ROOT = \"/srv/real-state\"')")):
+                               ("exec-eval", "exec('_ROOT = \"/srv/real-state\"')"),
+                               ("exec-eval", "eval('(_ROOT := \"/srv/real-state\")')")):
             spoofed = 'import os, tempfile\n_ROOT = tempfile.mkdtemp()\n%s\nos.environ["XDG_STATE_HOME"] = _ROOT\n' % rebinding
             recs = _module_level_env_write_records(ast.parse(spoofed), "test_planted.py")
             self.assertEqual([(w.key, w.resolved) for w, _n in recs], [("XDG_STATE_HOME", "tempfile.mkdtemp()")],
@@ -3242,8 +3253,8 @@ class HermeticKernelPostal(unittest.TestCase):
         only the value table, so a write keyed by a rebound loop name, or by a parameter or a local of the same name,
         was recorded as the module-level loop's literal (a licensed name) while the module wrote another, a leak name
         among them. Now any later binding the module's code spells makes the name unreadable (a rebinding through the
-        module's namespace or by a string exec runs is not seen: [namespace-rebinding] and [exec-eval] above _Module, each
-        with a plant of a loop name), and a write through it is loud, naming the module
+        module's namespace or by a string exec or eval runs is not seen: [namespace-rebinding] and [exec-eval] above
+        _Module, each with a plant of a loop name), and a write through it is loud, naming the module
         and the line: an assignment, an import, a def, a with target, a loop over a tuple target, and in a callee a
         parameter or a local assignment. At the round-1 head each was recorded as ROMP_KERNEL_NO_OPEN or
         ROMP_MANAGER_PORT (the reassigned loop name had been loud before that round's commits). A function's own loop over
@@ -3591,7 +3602,9 @@ class HermeticKernelPostal(unittest.TestCase):
         found two of those classes wider than their plants: a def or class bound inside a function takes the mapping into
         a parameter the way a lambda does, with the scan silent (now nested-def-parameter), and a loop name or a tracked
         dict is rebound or mutated with the scan silent through vars(), sys.modules, setattr on the module or a string
-        that exec runs, as through globals() (plants added under namespace-rebinding and exec-eval)."""
+        that exec runs, as through globals() (plants added under namespace-rebinding and exec-eval). Its finding on the
+        fourteenth commit found exec-eval's binding and mutation planted for exec alone: a walrus in an eval string
+        binds a loop name, and a method call in one mutates a tracked dict, with the scan silent (eval plants added)."""
         self.maxDiff = None
         text = open(os.path.join(HERE, "test_hermetic_kernel_postal.py"), encoding="utf-8").read()
         self.assertIn("OUTSIDE the scan, named here", text, "the list's one home is the comment above _Module")
