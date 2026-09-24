@@ -3,7 +3,7 @@ title: kernel: a finished agent's parsed transcript is released from the record 
 status: candidate
 where: kernel/event_model.py (RECORD_CACHE_RESIDENT_PER_FILE_BYTE and the budget comment above it, _record_cache_default_budget_bytes, _JSONL_CACHE_BYTES_MAX, _RECORD_CACHE_STATS (the release counters), _RELEASED_MARKS, _cache_pop_locked, _cache_insert_locked, record_cache_stats, _stat_table_locked, note_false_end, _RELEASE_LOST_SAID, note_release_lost, set_checkpoint_dir, _RELEASE_OWED, _owe_release, checkpoint_pay_owed_releases, cancel_owed_release, owed_release_paths, checkpoint_write, _read_jsonl_entry_unlocked, _drop_quiescent_entry, _drop_write, release_entry), kernel/sdk_backend.py (SdkSession: __init__ with _wf_ended, _subagent_start_hook, _subagent_stop_hook, _note_live_agents, _drop_live_work, _reconcile_workflow_agents, _on_task_event; SdkBackend: __init__, _on_session_gone, _AGENT_LIVE_MAX, note_agent_live, drain_agent_live_events), kernel/kernel.py (_begin_checkpoint_cycle, _AGENT_RELEASED, _AGENT_RELEASED_MAX, _release_ended_agents), kernel/judge.py (_SERVE_GAUGES and its header comment), cli/perf_public.py and cli/perf_export.py (the budget bound prose), docs/reference.md (the checkpoint budget paragraph, the recordCache fields, the bound coarsening and the judge gauges), tests/test_record_cache_agent_end.py (new: AgentEnd), tests/test_kernel_jsonl_cache.py (DropAfterQuiescentFold, RecordCacheByteBudget, RecordCacheDefaultBudget, WholeReadsByCaller), tests/test_fold_checkpoints.py (KernelFolds), tests/test_judge_serve.py (Deltas, OnePass), tests/test_perf_export.py (bounds_snapshot, BoundCoarsening), upstream/2026-09-24-record-cache-agent-end-release.md (this entry)
 added: 2026-09-24
-pr:
+pr: 913
 tier: fix
 offered:
 closed:
