@@ -888,10 +888,13 @@
 // judges the definition where it stands; an opaque expansion from a cwd outside every project, a leading opaque expansion, or one after a literal
 // head outside every project, from a cwd in no project (B2 as ruled, with its boundary). A shape outside these classes that reaches a tracked file is
 // a rule to state, not a residual. The same
-// paragraph,
-// and THE RESIDUAL PROPERTY, are on the vendored SKILL.md, hooks/README.md
-// and docs/install.md, pinned identical by a test; the property is on decision 47, docs/guide.md and the ledger entry too, pinned
-// identical there as well, and its classes are the ones tools/romp-track-bash-guard.test.mjs's RESIDUAL_TABLE measures.
+// paragraph is on the vendored SKILL.md, hooks/README.md and docs/install.md, pinned identical by a test. THE RESIDUAL PROPERTY stands
+// identical on five surfaces, the developer ones: this header, decision 47, hooks/README.md, docs/install.md and the ledger entry, pinned
+// so by a test; its classes are the ones tools/romp-track-bash-guard.test.mjs's RESIDUAL_TABLE measures, and THE RESIDUAL TABLE holds 226
+// rows over 8 classes, a figure that test asserts from the table's own length and class count on this header, decision 47 and the ledger
+// entry. The vendored SKILL.md states the classes in its reader's words, held to RESIDUAL_CLASSES by name, and docs/guide.md points
+// at docs/install.md for the statement (round 7 of fork PR #780 review, thirty-fifth commit, the reviewer's regression-2, extra7-3 and
+// extra6-4; the two user-facing surfaces had carried the developer paragraph, review provenance and the hook's internal names included).
 // ROUND 6, SEVENTH COMMIT (2026-09-21; the round's three verifiers on the sixth commit's head): a regression, an unsound reading and the round's
 // pre-existing allows, the mechanism fixed and the rest disclosed as residual rows. THE SPLICED PRINTER (printerOf, splicedPrinter, splicedOutput):
 // a command name that is an expansion THE HEAD CANDIDATES resolve to a printer is spliced BEFORE printer-ness is decided (the same order the writer,

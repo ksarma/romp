@@ -4948,6 +4948,14 @@ document stands on its own, each with the reasoning it was given.
     outside every project, from a cwd in no project (B2 as ruled, with its boundary). A shape outside these classes
     that reaches a tracked file is a rule to state, not a
     residual.
+    ROUND 7 OF FORK PR #780 REVIEW, THIRTY-FIFTH COMMIT (2026-09-24; the reviewer's regression-2, extra7-3 and extra6-4):
+    THE RESIDUAL PROPERTY stands identical on five surfaces, the developer ones: this decision, the hook header,
+    hooks/README.md, docs/install.md and the ledger entry, pinned so by the plan test. The two user-facing surfaces had
+    carried the developer paragraph, review provenance and the hook's internal names included: the vendored SKILL.md
+    now states the classes in its reader's words, each under its own name and held to RESIDUAL_CLASSES by name,
+    and docs/guide.md keeps its two sentences on the refusal and points at docs/install.md for the statement. THE
+    RESIDUAL TABLE holds 226 rows over 8 classes, a figure tools/romp-track-bash-guard.test.mjs asserts from the table's
+    own length and class count on this decision, the hook header and the ledger entry.
 48. **Sessions commit the comments folder** (2026-09-10). The user found that their sessions never added
     `.trackchanges/` to git, so the user's comments on the sessions' files and the record of the tracked changes
     were not archived with the work. Decision 25 is unchanged: romp does no git operation, and a `.gitignore` line is the

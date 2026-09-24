@@ -28,6 +28,8 @@ also runs on every push to main).
    discussed before it joins a batch; a `hold` label keeps a PR out of the next batch.
 3. Optionally end the body with a trailer the batch body reads:
    `<!-- romp-pr: {"tier":"fix","rounds":8,"sweep":{"pytest":"8461 passed","bats":528,"npm":3013,"typecheck":"clean"},"sweep_head":"<sha>","flakes":[]} -->`.
+   `rounds` counts the review rounds whose reviewer has reported, so a push that answers round 5's
+   findings still says 5, and the count moves to 6 when round 6's report comes in.
    A missing trailer is not a failure; the member is listed under "Read these first" with "not
    stated", which costs the maintainer a look.
 4. For an upstream-worthy change, add the ledger entry file and commit it with the change. Do not

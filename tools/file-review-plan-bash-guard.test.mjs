@@ -216,13 +216,24 @@ test('the Tests and Docs sections name the modules and the doc sentences this sl
 const installDoc = read('docs', 'install.md').replace(/\s+/g, ' ');
 const ledger = read('upstream', '2026-09-18-track-guard-non-literal-targets.md').replace(/\s+/g, ' ');
 
-test('the install guide, the hook\'s README row and the ledger entry say a name built from $RANDOM or $SECONDS is refused inside a tracked project, in every shell, and the hook\'s numeric set is the process id alone', () => {
+test('the install guide, the hook\'s README row and the ledger entry say a name built from $RANDOM or $SECONDS is refused inside a tracked project, in every shell, and the hook\'s numeric set is the process id alone; the README row states what passes unread as the residual property does', () => {
   assert.ok(installDoc.includes('A temp file named only by the shell\'s process id (`$$`), at an absolute path where no tracked file could land'), 'docs/install.md: the exception, as the code allows it');
   assert.ok(installDoc.includes('still runs; a name built from `$RANDOM` or `$SECONDS` is refused, since a script can reassign those'), 'docs/install.md: the refused names, with the reason');
   const row = hooksReadme.split('\n').find((l) => l.startsWith('| `romp-track-bash-guard.mjs` |'));
   assert.ok(row, 'the hook has a row in hooks/README.md');
   assert.ok(row.includes('a target whose only expansions are `$$` or `${$}`, the shell\'s process id, at an absolute path outside every project in play is allowed, and nothing else is'), 'hooks/README.md: the exception');
   assert.ok(row.includes('since `$RANDOM`, `$SECONDS` and every other name can be unset or shadowed by the command and then hold a path, so a `log.$RANDOM` inside a tracked project is refused in every shell, a deliberate false refusal recoverable in one step'), 'hooks/README.md: the refused names, with the reason');
+  // round 7 of fork PR #780 review, thirty-fifth commit (the reviewer's regression-1): the row's clause on a command it cannot read states the
+  // property, a text the guard cannot read, and names neither eval nor trap as unreadable, since both are scripts of this shell when their text
+  // is one the guard reads (the round-5 row listed `eval` and 'a script held in a variable' as passing). This pin holds the README's WORDS to the
+  // residual property; what the hook does is executed elsewhere: the refusals by EV-eval, EV-eval-var and EV-trap in tools/romp-track-bash-guard.test.mjs
+  // (the round 6, second commit test of THE ALIAS ROAD and THE HEAD SPLICE) and the passes by RT-read-var-head and RT-xargs in THE RESIDUAL TABLE
+  const CLAUSE = 'A read passes; a command whose text it cannot read (a script held in a name it cannot read, an eval of such a name, xargs) passes, except that such a name or eval whose literal operand names a tracked file is refused (THE RESIDUAL PROPERTY, later in this row);';
+  assert.ok(row.includes(CLAUSE), 'hooks/README.md: the clause on a command whose text the guard cannot read states the residual property (its executed rows: EV-eval, EV-eval-var and EV-trap refused, RT-read-var-head and RT-xargs allowed, in tools/romp-track-bash-guard.test.mjs)');
+  assert.ok(!row.includes('(eval, xargs, a script held in a variable)') && !/cannot read[^;]*\(eval\b/.test(row) && !/cannot read[^;]*\btrap\b/.test(row), 'hooks/README.md: no clause names eval or trap as a road the guard cannot read (both are refused where their text is read: EV-eval, EV-trap)');
+  const guardTestSrc = read('tools', 'romp-track-bash-guard.test.mjs');
+  for (const id of ['EV-eval', 'EV-eval-var', 'EV-trap']) assert.ok(guardTestSrc.includes(`['${id}', 'nad', `), `the executed row ${id} the clause's message points at stands in the guard's test`);
+  for (const id of ['RT-read-var-head', 'RT-xargs']) assert.ok(guardTestSrc.includes(`['${id}', '`), `the residual row ${id} the clause's message points at stands in THE RESIDUAL TABLE`);
   assert.ok(ledger.includes('a target whose only expansions are `$$` or `${$}`, the shell\'s process id, at an absolute path outside every project in play is allowed, and no other expansion is numeric'), 'the ledger entry: the exception (round 5: no other expansion is numeric; a name the guard resolves is allowed by the path it names, which the old "nothing else is" denied)');
   assert.ok(ledger.includes('the process id is the one OPAQUE expansion allowed inside a tracked project'), 'the ledger entry says what the exception is the one of');
   assert.ok(ledger.includes('so a `log.$RANDOM` inside a tracked project is refused in every shell, a deliberate false refusal recoverable in one step'), 'the ledger entry: the refused names');
@@ -259,7 +270,9 @@ test('the best-effort contract and its unmodelled-writer list are stated identic
   // sentence and restated the residual with its boundary, an opaque expansion from a cwd outside every project)
   const CONTRACT_PARAGRAPH = 'this guard is best-effort against known write forms: it refuses the shell writes it models and, by design, allows anything it does not recognise, so it never blocks ordinary work it cannot read; it is a backstop, not a complete boundary. the allow-by-default for an unmodelled writer is deliberately not flipped, since flipping it would refuse almost all normal work. what it does refuse, while a tracked project is in play, is a write it reads but cannot place: a target it cannot read, a path it cannot check (a stat error other than not-found), an option on a modelled writer or wrapper it does not parse in full, an env -s string, a shell option it does not know to be inert for paths, a link whose source it cannot read, a `~` or `$home` write beside a mention of home or beside a variable name the shell fills in, a template or format string as an interpreter\'s write path, and, from any working directory, a write through an alias the command makes (a hard link, `cp -l`, `cp -s`, `link`, a link whose source it cannot read) whose source lies in a tracked project or is one it cannot read. deleting or moving a tracked file away (`rm`, `unlink`, `mv` to another name, `find -delete`) is not a write it refuses: the contract is the write that lands on a tracked file, and whether the tracked set shrinking is such a write is a scope question raised with the round\'s review and not decided here. a value it can read is resolved first and the real path judged. a name is readable only when every write to it in the command is a plain top-level `name=plain-string` the shell performs as spelled: no tilde opening the value, no declaration flag at all, no `declare`, `typeset` or `local` (dash has none of the three; `export` and `readonly` with no option word are the two declarations every shell performs), no nameref reaching it, no name the shell fills in, no subshell, pipeline, piped group or body scope, no `{ }` group opened after `&&`, `||` or `|`, no wrapper argument, no call of a function the command defines in any spelling, no subscript; any other construct that can write the name, listed here or not, leaves it unreadable, the doctrine a `read` and a loop variable already had. home, pwd, oldpwd, `~+` and `~-` are read the same way: home after a plain top-level `home=<path>` assignment of its own, and none of the three once the command names or may fill in the name in any other form. ';
   // since round 6's second commit (2026-09-21) the closing list is THE RESIDUAL PROPERTY, whose classes are the ones RESIDUAL_TABLE in
-  // tools/romp-track-bash-guard.test.mjs measures (the seven-surface pin below holds the same text on decision 47, docs/guide.md and the ledger too)
+  // tools/romp-track-bash-guard.test.mjs measures (the five-surface pin below holds the same text on decision 47 and the ledger too); since round 7
+  // of fork PR #780 review, thirty-fifth commit (the reviewer's extra7-3), the vendored SKILL.md carries the contract paragraph and, in the
+  // property's place, a statement of its classes in the reader's words, held to RESIDUAL_CLASSES by name in the guard's test
   const LIST = 'the residual property. the guard refuses a write only when it resolves the command to a writer it models (the writer cases of extract\'s switch, a write redirection, an interpreter\'s write call it scans) reached through a road it reads (the wrapper set, the shells\' script roads, the readings of the resolver, the alias and hash roads), with a target it can place or cannot read, or when a command whose name, script or piped script it does not read names a tracked file as a literal operand. every write that still reaches a tracked file is one the guard does not resolve to such a writer through such a road, whether or not its text stands in the command, and falls in one of these classes, each measured by execution in tools/romp-track-bash-guard.test.mjs (the residual table, whose rows are the population this statement is over): a writer outside the model, a program, or a write form of a program the hook models, that writes the file by its own nature and is not among the write forms the hook reads (rsync, patch, tar -x, ed, ex, vim, make, shuf -o, gawk -i inplace, awk\'s print redirect, uniq, scp, openssl -out, shred, curl -o, wget -o, find -exec, a git alias or a subcommand that writes the tree, bash\'s history -w, zsh\'s sysopen and mapfile modules, sed\'s e command and a w command in a sed script the resolver cannot read, busybox\'s applets); a reader outside the roads, a program that runs a command or a script the hook does not follow into it (xargs, an interpreter\'s system, exec or subprocess call, a wrapper outside the set, a shell outside shells, a file the command writes and then runs or sources, a function\'s call of itself, which the replay does not follow again); a command name the resolver never reads, a command whose name is an expansion of a kind the resolver does not read ("${a[@]}", a loop variable, a name read or filled by getopts, printf -v or a nameref, a name the shell itself sets (${shell}, $0, $bash, $zsh_argzero, $_ after a command), a substitution outside the output model such as $(which cp), a ${...} operator form the resolver does not read, a positional parameter of a script handed to a fresh shell with arguments of its own; "$@", $1 and $* stand for the operands of a called function or of a `set` this shell ran since round 6\'s sixth commit), handed no literal operand that names a tracked file (the operand a directory, or a word the resolver does not read): since round 7\'s twenty-fifth commit a command so named, or a script or piped script the resolver does not read, whose literal operand names a tracked file is refused by name (the reviewer\'s q1: the target known, the writer not); a script held in a variable, a value the command gives a name through a construct the resolver does not read (`read`, `printf -v`, a positional parameter of a fresh shell\'s script), run as a command or handed to a shell (`$c` after `read c`, `eval "$1"` inside a `bash -c` given arguments, `bash -c "$c"` after `printf -v c`; a value an assignment word gives, whitespace included, is read through the head candidates since round 6\'s fourth commit, and a `${name:=word}` gives word since the sixth); a producer outside the output model, a pipe into a shell, or a write redirection into a process substitution running one, from anything but a literal echo or printf, alone or in a subshell or group of such commands, or a plain cat passing such a text through, or a command substitution over such a producer handed to a shell, an eval or a here-string (a call of a function the command defines, a tee or a pipe through another command, a cat of a file, an eval or a shell -c inside the substitution); zsh\'s glob grouping, a `(..)` inside a word handed to zsh, read as a subshell by the lexer\'s zsh grammar while zsh globs it (a lexer gap, stated since the first commit of this round); zsh\'s hook functions, a function the command defines under a name zsh calls on its own (chpwd, precmd, preexec, periodic, zshexit, and the names in chpwd_functions and its kin), whose body runs when the shell moves, prompts or exits, from the directory the shell is in then, while the guard judges the definition where it stands; an opaque expansion from a cwd outside every project, a leading opaque expansion, or one after a literal head outside every project, from a cwd in no project (b2 as ruled, with its boundary). a shape outside these classes that reaches a tracked file is a rule to state, not a residual.';
   const CONTRACT = 'best-effort against known write forms';
   const surfaces = {
@@ -268,14 +281,16 @@ test('the best-effort contract and its unmodelled-writer list are stated identic
     'hooks/README.md': read('hooks', 'README.md'),
     'docs/install.md': read('docs', 'install.md'),
   };
+  const READER = 'the guard refuses a write only when it recognises the command as a writer it knows';   // the skill's statement opens so
   for (const [name, text] of Object.entries(surfaces)) {
     const n = norm(text);
+    const skill = name === 'the vendored SKILL.md';
     assert.ok(n.includes(CONTRACT), `${name} states the check is best-effort against known forms`);
-    assert.ok(n.includes(LIST), `${name} carries the identical unmodelled-writer list (a differing list fails here)`);
+    assert.ok(skill ? !n.includes(LIST) : n.includes(LIST), skill ? `${name} no longer carries the developer paragraph of the residual property (review provenance and the hook's internal names included)` : `${name} carries the identical unmodelled-writer list (a differing list fails here)`);
     assert.ok(n.includes('allows anything it does not recognise') || n.includes('allow') , `${name} says the default is allow`);
     // the third pass (2026-09-19): the WHOLE paragraph is identical on the four surfaces, the two sentences the hook
     // header alone carried (the allow-by-default is not flipped; what is refused) included
-    assert.ok(n.includes(CONTRACT_PARAGRAPH + LIST), `${name} carries the identical contract paragraph, the allow-by-default sentence and the refused-class sentence included`);
+    assert.ok(n.includes(CONTRACT_PARAGRAPH + (skill ? READER : LIST)), `${name} carries the identical contract paragraph, the allow-by-default sentence and the refused-class sentence included, then ${skill ? 'the reader\'s statement of the classes' : 'the residual property'}`);
   }
 });
 
@@ -662,23 +677,37 @@ test("decision 47, the hook and the prose surfaces record the fifth addendum's t
 });
 
 // Round 6's second commit (2026-09-21; round 5's ruling C): THE RESIDUAL PROPERTY is one paragraph, identical (whitespace and case
-// aside) on the seven surfaces that describe the guard, and its classes are exactly the ones the residual table in
+// aside) on the surfaces that describe the guard, and its classes are exactly the ones the residual table in
 // tools/romp-track-bash-guard.test.mjs measures (RESIDUAL_CLASSES there carries the same class names and glosses, asserted against the
-// hook header by that test), so a class added to the table without the sentence, or a surface that drifts, fails here by name.
-test("round 6, second commit: THE RESIDUAL PROPERTY is stated identically on the hook header, decision 47, the vendored SKILL.md, hooks/README.md, docs/install.md, docs/guide.md and the ledger entry, and the alias road, the head splice and the output model are recorded on decision 47 and the hook header", () => {
+// hook header by that test), so a class added to the table without the sentence, or a surface that drifts, fails here by name. Since round 7
+// of fork PR #780 review, thirty-fifth commit (the reviewer's regression-2 and extra7-3), the identical text stands on the five developer
+// surfaces only: the vendored SKILL.md states the classes in its reader's words (held to RESIDUAL_CLASSES by name in the guard's test) and
+// docs/guide.md points at docs/install.md (tests/test_guide_files_bash_guard.py), and neither carries the developer paragraph.
+test("round 6, second commit: THE RESIDUAL PROPERTY is stated identically on the five developer surfaces (the hook header, decision 47, hooks/README.md, docs/install.md and the ledger entry) and on no user-facing one, the count stated on the hook header and decision 47, and the alias road, the head splice and the output model are recorded on decision 47 and the hook header", () => {
   const norm = (s) => s.replace(/\/\//g, ' ').replace(/\s+/g, ' ').toLowerCase();
   const PROPERTY = 'the residual property. the guard refuses a write only when it resolves the command to a writer it models (the writer cases of extract\'s switch, a write redirection, an interpreter\'s write call it scans) reached through a road it reads (the wrapper set, the shells\' script roads, the readings of the resolver, the alias and hash roads), with a target it can place or cannot read, or when a command whose name, script or piped script it does not read names a tracked file as a literal operand. every write that still reaches a tracked file is one the guard does not resolve to such a writer through such a road, whether or not its text stands in the command, and falls in one of these classes, each measured by execution in tools/romp-track-bash-guard.test.mjs (the residual table, whose rows are the population this statement is over): a writer outside the model, a program, or a write form of a program the hook models, that writes the file by its own nature and is not among the write forms the hook reads (rsync, patch, tar -x, ed, ex, vim, make, shuf -o, gawk -i inplace, awk\'s print redirect, uniq, scp, openssl -out, shred, curl -o, wget -o, find -exec, a git alias or a subcommand that writes the tree, bash\'s history -w, zsh\'s sysopen and mapfile modules, sed\'s e command and a w command in a sed script the resolver cannot read, busybox\'s applets); a reader outside the roads, a program that runs a command or a script the hook does not follow into it (xargs, an interpreter\'s system, exec or subprocess call, a wrapper outside the set, a shell outside shells, a file the command writes and then runs or sources, a function\'s call of itself, which the replay does not follow again); a command name the resolver never reads, a command whose name is an expansion of a kind the resolver does not read ("${a[@]}", a loop variable, a name read or filled by getopts, printf -v or a nameref, a name the shell itself sets (${shell}, $0, $bash, $zsh_argzero, $_ after a command), a substitution outside the output model such as $(which cp), a ${...} operator form the resolver does not read, a positional parameter of a script handed to a fresh shell with arguments of its own; "$@", $1 and $* stand for the operands of a called function or of a `set` this shell ran since round 6\'s sixth commit), handed no literal operand that names a tracked file (the operand a directory, or a word the resolver does not read): since round 7\'s twenty-fifth commit a command so named, or a script or piped script the resolver does not read, whose literal operand names a tracked file is refused by name (the reviewer\'s q1: the target known, the writer not); a script held in a variable, a value the command gives a name through a construct the resolver does not read (`read`, `printf -v`, a positional parameter of a fresh shell\'s script), run as a command or handed to a shell (`$c` after `read c`, `eval "$1"` inside a `bash -c` given arguments, `bash -c "$c"` after `printf -v c`; a value an assignment word gives, whitespace included, is read through the head candidates since round 6\'s fourth commit, and a `${name:=word}` gives word since the sixth); a producer outside the output model, a pipe into a shell, or a write redirection into a process substitution running one, from anything but a literal echo or printf, alone or in a subshell or group of such commands, or a plain cat passing such a text through, or a command substitution over such a producer handed to a shell, an eval or a here-string (a call of a function the command defines, a tee or a pipe through another command, a cat of a file, an eval or a shell -c inside the substitution); zsh\'s glob grouping, a `(..)` inside a word handed to zsh, read as a subshell by the lexer\'s zsh grammar while zsh globs it (a lexer gap, stated since the first commit of this round); zsh\'s hook functions, a function the command defines under a name zsh calls on its own (chpwd, precmd, preexec, periodic, zshexit, and the names in chpwd_functions and its kin), whose body runs when the shell moves, prompts or exits, from the directory the shell is in then, while the guard judges the definition where it stands; an opaque expansion from a cwd outside every project, a leading opaque expansion, or one after a literal head outside every project, from a cwd in no project (b2 as ruled, with its boundary). a shape outside these classes that reaches a tracked file is a rule to state, not a residual.';
   const surfaces = {
     'hook header': hook,
     'decision 47': d47,
-    'the vendored SKILL.md': read('vendor', 'track-changents', 'skill', 'SKILL.md'),
     'hooks/README.md': hooksReadme,
     'docs/install.md': read('docs', 'install.md'),
-    'docs/guide.md': read('docs', 'guide.md'),
     'the ledger entry': read('upstream', '2026-09-18-track-guard-non-literal-targets.md'),
   };
-  const body = PROPERTY.slice(PROPERTY.indexOf('the guard refuses a write only when'));   // the guide opens the paragraph in its own words; the statement is the same
+  const body = PROPERTY.slice(PROPERTY.indexOf('the guard refuses a write only when'));
   for (const [name, text] of Object.entries(surfaces)) assert.ok(norm(text).includes(body), `${name} carries THE RESIDUAL PROPERTY identical`);
+  // the user-facing surfaces carry none of the developer paragraph: not its statement, not its label, not a clause of its provenance
+  const userFacing = { 'the vendored SKILL.md': read('vendor', 'track-changents', 'skill', 'SKILL.md'), 'docs/guide.md': read('docs', 'guide.md') };
+  for (const [name, text] of Object.entries(userFacing)) {
+    const n = norm(text);
+    assert.ok(!n.includes(body.slice(0, 200)) && !n.includes('the residual property') && !n.includes("stated since the first commit of this round") && !n.includes('b2 as ruled, with its boundary'), `${name} carries no part of the developer paragraph of THE RESIDUAL PROPERTY`);
+  }
+  // the count, derived from the surfaces this test holds identical, stated with them on the hook header and decision 47
+  const WORDS = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine'];
+  const count = WORDS[Object.keys(surfaces).length];
+  assert.ok(norm(hook).includes(`the residual property stands identical on ${count} surfaces, the developer ones: this header, decision 47, hooks/readme.md, docs/install.md and the ledger entry`), `the hook header states the ${count} surfaces the property is pinned identical on, and names them`);
+  assert.ok(norm(d47).includes(`the residual property stands identical on ${count} surfaces, the developer ones: this decision, the hook header, hooks/readme.md, docs/install.md and the ledger entry`), `decision 47 states the ${count} surfaces, and names them`);
+  assert.ok(!norm(hook).includes('the property is on decision 47, docs/guide.md and the ledger entry too'), 'the hook header no longer states the guide as a surface of the property');
+  assert.ok(norm(surfaces['the ledger entry']).includes(`keeps that text identical on the ${count} developer surfaces (the hook header, decision 47, hooks/readme.md, docs/install.md and this entry)`), `the ledger entry states the ${count} surfaces, and names them`);
   for (const [name, text] of [['decision 47', d47], ['the hook header', hook]]) {
     const flat = norm(text);
     for (const phrase of ['round 6, second commit (2026-09-21', 'the alias road', 'the head splice', 'the output model', 'the evidence a row needs', 'pins the key set of construct_heads by kind']) assert.ok(flat.includes(phrase), `${name} records: ${phrase}`);
@@ -725,7 +754,7 @@ test("round 6, fourth commit: decision 47 and the hook header record the descrip
 // Round 6's fifth commit (2026-09-21; the round's three verifiers on the fourth commit's head): every finding a write a shell performed
 // while the guard allowed it, each closed by a rule fitted to its class, recorded on decision 47 and the hook header with the functions
 // that carry it; the contract paragraph gains the sentence on deleting or moving a tracked file (the four-surface pin above holds it), and
-// the property's classes name getopts and the plain cat the output model now passes through (the seven-surface pin holds those).
+// the property's classes name getopts and the plain cat the output model now passes through (the property's surface pin holds those).
 test("round 6, fifth commit: decision 47 and the hook header record the parameter's value, the moved shell, the duplicated descriptor, the passed-through text, the startup feed, the exported function, the spliced definition, the called body and the assignment value, the hook has the functions that carry them, the contract paragraph says a deletion or a move away is not a write it refuses, and no committed line names the reviewer's session", () => {
   for (const [name, text] of [['decision 47', d47], ['the hook header', hook]]) {
     const flat = text.replace(/\/\//g, ' ').replace(/\s+/g, ' ').toLowerCase();
@@ -745,7 +774,7 @@ test("round 6, fifth commit: decision 47 and the hook header record the paramete
 // text the hook could not establish reached an allow through a null, so the mechanism is fixed once (THE APPLIED RESOLVER) and the rows follow;
 // with it the unread script word, the special parameter, the assigned default, the shell's option word, the positional value and the empty
 // alternative, each recorded on decision 47 and the hook header in the same words with the functions that carry it, and the property's second,
-// third and fourth classes restated for the members the table gained (the seven-surface pin above holds the paragraph).
+// third and fourth classes restated for the members the table gained (the property's surface pin above holds the paragraph).
 test("round 6, sixth commit: decision 47 and the hook header record the applied resolver, the unread script word, the special parameter, the assigned default, the shell's option word, the positional value and the empty alternative, the hook has the functions that carry them, and the property's classes name a function's call of itself and a fresh shell's positional parameters", () => {
   for (const [name, text] of [['decision 47', d47], ['the hook header', hook]]) {
     const flat = text.replace(/\/\//g, ' ').replace(/\s+/g, ' ').toLowerCase();
@@ -764,7 +793,7 @@ test("round 6, sixth commit: decision 47 and the hook header record the applied 
 // Round 6's eighth commit (2026-09-22; the round's three verifiers on the seventh commit's head): the regression left open through the wrappers,
 // the vanishing operand and the case pattern's paren, each fixed at the mechanism and recorded on decision 47 and the hook header in the same
 // words with the functions that carry it; the property's third class names the shell-set names and an eighth class zsh's hook functions (the
-// seven-surface pin above holds the paragraph); the piped-script fixture names its allowed rows without writer evidence in a field of its own.
+// property's surface pin above holds the paragraph); the piped-script fixture names its allowed rows without writer evidence in a field of its own.
 test("round 6, eighth commit: decision 47 and the hook header record the wrapped printer, the vanishing operand and the paren rule, the hook has the functions that carry them and asks the paren rule from the walk and the lexer alike, the property's third class names the shell-set names and its eighth class zsh's hook functions, and the piped-script fixture names its allowed rows without writer evidence", () => {
   for (const [name, text] of [['decision 47', d47], ['the hook header', hook]]) {
     const flat = text.replace(/\/\//g, ' ').replace(/\s+/g, ' ').toLowerCase();
@@ -785,7 +814,7 @@ test("round 6, eighth commit: decision 47 and the hook header record the wrapped
 
 // Round 6's ninth commit (2026-09-22; the round's three verifiers on the eighth commit's head): the positional target, the peeled name, the
 // vanished text and the written process substitution, each fixed at the mechanism and recorded on decision 47 and the hook header in the same
-// words with the functions that carry it; the property's fifth class names the write redirection into a process substitution (the seven-surface
+// words with the functions that carry it; the property's fifth class names the write redirection into a process substitution (the property's surface
 // pin above holds the paragraph); the eighth commit's records date it the day of its commit.
 test("round 6, ninth commit: decision 47 and the hook header record the positional target, the peeled name, the vanished text and the written process substitution, the hook has the functions that carry them and consumes the stream reading through placeReading alone, the property's fifth class names the write redirection into a process substitution, and the eighth commit's records date it 2026-09-22", () => {
   for (const [name, text] of [['decision 47', d47], ['the hook header', hook]]) {
@@ -852,8 +881,10 @@ test("round 6, twelfth commit: decision 47 and the hook header record the subscr
   }
   for (const fn of ['const ZSH_POSITIONAL_SUBSCRIPT = ', 'const NEVER_EMPTY = ', 'const vanishedHeadTexts = (w) => {', "const posEl = (k) => positionals[k] && positionals[k].literal", "if (name === 'set' && positionalsApply())"]) assert.ok(hook.includes(fn), `the hook has ${fn.trim()}`);
   const CONDUIT = 'or a command substitution over such a producer handed to a shell, an eval or a here-string';
-  const surfaces = { 'the hook header': hook, 'decision 47': d47, 'the vendored SKILL.md': read('vendor', 'track-changents', 'skill', 'SKILL.md'), 'hooks/README.md': hooksReadme, 'docs/install.md': installDoc, 'docs/guide.md': guide, 'the ledger entry': read('upstream', '2026-09-18-track-guard-non-literal-targets.md') };
+  // the developer surfaces since round 7 of fork PR #780 review, thirty-fifth commit; the vendored SKILL.md names the conduit in its reader's words
+  const surfaces = { 'the hook header': hook, 'decision 47': d47, 'hooks/README.md': hooksReadme, 'docs/install.md': installDoc, 'the ledger entry': read('upstream', '2026-09-18-track-guard-non-literal-targets.md') };
   for (const [name, text] of Object.entries(surfaces)) assert.ok(text.replace(/\/\//g, ' ').replace(/\s+/g, ' ').includes(CONDUIT), `${name} names the conduit in the fifth class`);
+  assert.ok(read('vendor', 'track-changents', 'skill', 'SKILL.md').replace(/\s+/g, ' ').includes('or a command substitution over such a producer handed to a shell, an eval or a here-string'), 'the vendored SKILL.md names the conduit in its statement of the fifth class');
   assert.ok(!/\u2014/.test(d47), 'no em dash in decision 47');
 });
 
@@ -883,4 +914,59 @@ test("round 6, thirteenth commit: decision 47 and the hook header record the emp
   assert.ok(!/\d+ rows since round 7's nineteenth commit/.test(surfaces['the ledger entry']), 'the ledger entry states no count of the deleted class\'s rows');
   for (const id of ['RT-printf-v-unset-head', 'RT-cat-procsub-pipe', 'RT-procsub-function-cat']) assert.ok(guardTest.includes(`['${id}', `), `the witnessed member ${id} is a row`);
   assert.ok(!/\u2014/.test(d47), 'no em dash in decision 47');
+});
+
+// Round 7 of fork PR #780 review, thirty-fifth commit (the reviewer's tests-3, as its refuter corrected it): the ledger entry's `where:` line is
+// the output of the notes' ledger-where.sh, derived from the PR's whole diff against its merge base with main, and no test held it (round 6's
+// fifteenth commit said a plan pin did; none did, and a seventh matrix fixture added with the line untouched left this module green). The file
+// list below is `git diff --name-only 01434a45b..HEAD` at the head, recorded verbatim in git's order, the shape of
+// tools/upstream-ledger-figure-gate-before-adoption.test.mjs: this module reads no git (a pin that shelled out would have to skip where git or the
+// base is absent, and report green having checked nothing), so a file the PR adds later is caught by re-running the command, or ledger-where.sh,
+// which prints this same block beside the line, and re-recording both in the same commit; a file re-recorded here and not named in the line reds
+// by name, and the self-check holds the block to the command's shape, which a hand edit tends to break. 01434a45b is the merge base with main.
+const DIFF_OUTPUT = `
+docs/batching.md
+docs/guide.md
+docs/install.md
+hooks/README.md
+hooks/romp-track-bash-guard.mjs
+plans/file-review.md
+tests/test_batch_tool.py
+tests/test_guide_files_bash_guard.py
+tools/file-review-plan-bash-guard-review.test.mjs
+tools/file-review-plan-bash-guard.test.mjs
+tools/romp-track-bash-guard-brace-matrix.json
+tools/romp-track-bash-guard-census.mjs
+tools/romp-track-bash-guard-construct-matrix.json
+tools/romp-track-bash-guard-corpus.json
+tools/romp-track-bash-guard-heredoc-body-matrix.json
+tools/romp-track-bash-guard-param-word-matrix.json
+tools/romp-track-bash-guard-piped-script-matrix.json
+tools/romp-track-bash-guard-shapes.test.mjs
+tools/romp-track-bash-guard-stdin-script-matrix.json
+tools/romp-track-bash-guard.test.mjs
+tools/vendor-drift.test.mjs
+tools/vendor-patches.test.mjs
+upstream/2026-09-18-track-guard-non-literal-targets.md
+vendor/track-changents/README.md
+vendor/track-changents/patches/0009-skill-non-literal-target-refused.patch
+vendor/track-changents/skill/SKILL.md
+`;
+const DIFF_FILES = DIFF_OUTPUT.trim().split('\n');
+test("round 7, thirty-fifth commit: every file of the PR's diff against its merge base, recorded verbatim, is named in the ledger entry's where: line, which names nothing else, and the record keeps the command's shape", () => {
+  const entry = read('upstream', '2026-09-18-track-guard-non-literal-targets.md');
+  const whereLine = entry.split('\n').find((l) => l.startsWith('where: '));
+  assert.ok(whereLine, 'the entry has a where: line');
+  // an entry is a path, then optionally the definitions the hunks name in parentheses (ledger-where.sh's form); entries are joined by '; '
+  const named = whereLine.slice('where: '.length).split('; ').map((e) => e.replace(/ \([^()]*\)$/, ''));
+  const unnamed = DIFF_FILES.filter((f) => !named.includes(f));
+  assert.deepEqual(unnamed, [], 'every recorded path is named in the where: line (re-run ledger-where.sh: it prints the line and this block together)');
+  assert.deepEqual(named.filter((f) => !DIFF_FILES.includes(f)), [], 'and the line names no file the diff lacks');
+  assert.deepEqual(DIFF_FILES.filter((f) => !fs.existsSync(path.join(REPO, f))), [], 'every recorded file exists in the tree (the PR deletes none)');
+  // the command's shape: byte-sorted as git prints, one plain path per line, no duplicate and no blank
+  assert.ok(DIFF_FILES.length > 0, 'the record is not empty');
+  assert.deepEqual(DIFF_FILES, [...DIFF_FILES].sort(), 'byte-sorted, as `git diff --name-only` prints (a hand-appended path lands out of order)');
+  assert.equal(new Set(DIFF_FILES).size, DIFF_FILES.length, 'no path twice');
+  assert.ok(DIFF_FILES.every((f) => /^[A-Za-z0-9._\/-]+$/.test(f)), 'one plain path per line, no blank and no stray text');
+  for (const f of ['hooks/romp-track-bash-guard.mjs', 'tools/file-review-plan-bash-guard.test.mjs', 'upstream/2026-09-18-track-guard-non-literal-targets.md']) assert.ok(DIFF_FILES.includes(f), `the record holds ${f}`);
 });

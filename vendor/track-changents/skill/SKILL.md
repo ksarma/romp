@@ -233,7 +233,53 @@ spelling, no subscript; any other construct that can write the name, listed here
 or not, leaves it unreadable, the doctrine a `read` and a loop variable already
 had. HOME, PWD, OLDPWD, `~+` and `~-` are read the same way: HOME after a plain
 top-level `HOME=<path>` assignment of its own, and none of the three once the
-command names or may fill in the name in any other form. THE RESIDUAL PROPERTY. The guard refuses a write only when it resolves the command to a writer it models (the writer cases of extract's switch, a write redirection, an interpreter's write call it scans) reached through a road it reads (the wrapper set, the shells' script roads, the readings of the resolver, the alias and hash roads), with a target it can place or cannot read, or when a command whose name, script or piped script it does not read names a tracked file as a literal operand. Every write that still reaches a tracked file is one the guard does not resolve to such a writer through such a road, whether or not its text stands in the command, and falls in one of these classes, each measured by execution in tools/romp-track-bash-guard.test.mjs (THE RESIDUAL TABLE, whose rows are the population this statement is over): a writer outside the model, a program, or a write form of a program the hook models, that writes the file by its own nature and is not among the write forms the hook reads (rsync, patch, tar -x, ed, ex, vim, make, shuf -o, gawk -i inplace, awk's print redirect, uniq, scp, openssl -out, shred, curl -o, wget -O, find -exec, a git alias or a subcommand that writes the tree, bash's history -w, zsh's sysopen and mapfile modules, sed's e command and a w command in a sed script the resolver cannot read, busybox's applets); a reader outside the roads, a program that runs a command or a script the hook does not follow into it (xargs, an interpreter's system, exec or subprocess call, a wrapper outside the set, a shell outside SHELLS, a file the command writes and then runs or sources, a function's call of itself, which the replay does not follow again); a command name the resolver never reads, a command whose name is an expansion of a kind the resolver does not read ("${a[@]}", a loop variable, a name read or filled by getopts, printf -v or a nameref, a name the shell itself sets (${SHELL}, $0, $BASH, $ZSH_ARGZERO, $_ after a command), a substitution outside the output model such as $(which cp), a ${...} operator form the resolver does not read, a positional parameter of a script handed to a fresh shell with arguments of its own; "$@", $1 and $* stand for the operands of a called function or of a `set` this shell ran since round 6's sixth commit), handed no literal operand that names a tracked file (the operand a directory, or a word the resolver does not read): since round 7's twenty-fifth commit a command so named, or a script or piped script the resolver does not read, whose literal operand names a tracked file is refused by name (the reviewer's Q1: the target known, the writer not); a script held in a variable, a value the command gives a name through a construct the resolver does not read (`read`, `printf -v`, a positional parameter of a fresh shell's script), run as a command or handed to a shell (`$c` after `read c`, `eval "$1"` inside a `bash -c` given arguments, `bash -c "$c"` after `printf -v c`; a value an assignment word gives, whitespace included, is read through THE HEAD CANDIDATES since round 6's fourth commit, and a `${name:=word}` gives word since the sixth); a producer outside the output model, a pipe into a shell, or a write redirection into a process substitution running one, from anything but a literal echo or printf, alone or in a subshell or group of such commands, or a plain cat passing such a text through, or a command substitution over such a producer handed to a shell, an eval or a here-string (a call of a function the command defines, a tee or a pipe through another command, a cat of a file, an eval or a shell -c inside the substitution); zsh's glob grouping, a `(..)` inside a word handed to zsh, read as a subshell by the lexer's zsh grammar while zsh globs it (a lexer gap, stated since the first commit of this round); zsh's hook functions, a function the command defines under a name zsh calls on its own (chpwd, precmd, preexec, periodic, zshexit, and the names in chpwd_functions and its kin), whose body runs when the shell moves, prompts or exits, from the directory the shell is in then, while the guard judges the definition where it stands; an opaque expansion from a cwd outside every project, a leading opaque expansion, or one after a literal head outside every project, from a cwd in no project (B2 as ruled, with its boundary). A shape outside these classes that reaches a tracked file is a rule to state, not a residual. Whichever way you
+command names or may fill in the name in any other form.
+
+The guard refuses a write only when it recognises the command as a writer it
+knows (a copy, a move, an install, a link, `tee`, `sed -i`, `perl -i`, a write
+redirection, a write call in an inline python or node script), reached in a way it
+follows, with a target it can place or cannot read, or when a command whose name or
+script it cannot read names a tracked file as a literal operand. A write that
+reaches a tracked file any other way is not refused, and falls in one of these
+classes:
+
+- **a writer outside the model**: a program that writes files by its own nature
+  and is not one the guard reads (rsync, patch, tar -x, ed, ex, vim, make, shuf -o,
+  gawk -i inplace, awk's print redirect, uniq, scp, openssl -out, shred, curl -o,
+  wget -O, find -exec, a git alias or a git subcommand that writes the working tree,
+  bash's history -w, zsh's sysopen and mapfile modules, sed's e command and a w
+  command in a sed script the guard cannot read, busybox's applets);
+- **a reader outside the roads**: a program that runs a command or a script the
+  guard does not follow into it (xargs, an interpreter's system, exec or subprocess
+  call, a wrapper the guard does not know, a shell it does not read, a file the
+  command writes and then runs or sources, a function that calls itself);
+- **a command name the resolver never reads**: a command whose name is filled in
+  a way the guard cannot read (`"${a[@]}"`, a loop variable, a name set by getopts,
+  `printf -v` or a nameref, a name the shell sets itself such as `$SHELL`, `$0`,
+  `$BASH`, `$ZSH_ARGZERO` or `$_`, a substitution such as `$(which cp)`, a `${...}`
+  operator form it does not read, a positional parameter of a script handed to a
+  new shell with arguments of its own), when no literal operand names a tracked
+  file (one that does is refused);
+- **a script held in a variable**: a value the command puts in a name in a way the
+  guard cannot read (`read`, `printf -v`, a positional parameter of a new shell's
+  script), then runs as a command or hands to a shell (`$c` after `read c`,
+  `bash -c "$c"` after `printf -v c`);
+- **a producer outside the output model**: a pipe into a shell, or a write
+  redirection into a process substitution that runs one, fed by anything but a
+  plain `echo` or `printf` (a function call, a `tee`, a pipe through another
+  command, a `cat` of a file, an eval or a shell's `-c`), or a command substitution
+  over such a producer handed to a shell, an eval or a here-string;
+- **zsh's glob grouping**: a `(..)` inside a word handed to zsh, which zsh reads as
+  a glob and the guard as a subshell;
+- **zsh's hook functions**: a function the command defines under a name zsh calls
+  on its own (chpwd, precmd, preexec, periodic, zshexit, and the names in
+  chpwd_functions and its kin), whose body runs later, from the directory the shell
+  is in then;
+- **an opaque expansion from a cwd outside every project**: run from a directory
+  outside every tracked project, a target that opens with an expansion the guard
+  cannot read, or has one after a literal head outside every project.
+
+Any other write that reaches a tracked file is a gap in the guard. Whichever way you
 write a tracked file, use `track-edit`, so your change comes back to be accepted
 or rejected.
 

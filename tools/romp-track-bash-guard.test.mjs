@@ -7797,8 +7797,8 @@ test("round 6, second commit, THE OUTPUT MODEL: a subshell or a `{ }` group of e
 
 // THE RESIDUAL TABLE (round 6's second commit; round 5's ruling C): every shape the round could name that still reaches a tracked
 // file from the tracked cwd (or the cwd the row names, since round 6's thirteenth commit), run through the hook (allowed) and the shells (the writers measured), each under the class of THE
-// RESIDUAL PROPERTY stated on the hook header, decision 47, the vendored SKILL.md, hooks/README.md, docs/install.md, docs/guide.md
-// and the ledger entry. A row whose program this box lacks is NOT RUN by name. The table is the population the property is a
+// RESIDUAL PROPERTY stated on the hook header, decision 47, hooks/README.md, docs/install.md and the ledger entry (the vendored SKILL.md
+// states the classes in its reader's words, held to RESIDUAL_CLASSES by name in the thirty-fifth commit's test below). A row whose program this box lacks is NOT RUN by name. The table is the population the property is a
 // statement over: a shape added here must be under one of its classes (the class is a key of RESIDUAL_CLASSES, whose text the
 // property carries), and a row that stops writing, or that the hook starts refusing, reds here (a rule to state, not drift).
 const RESIDUAL_CLASSES = {
@@ -8305,6 +8305,45 @@ test("round 6, second commit, THE RESIDUAL TABLE: every shape the round could na
     for (const cls of new Set(RESIDUAL_TABLE.map((r) => r[1]))) assert.ok(Object.hasOwn(RESIDUAL_CLASSES, cls), `every class the table uses is stated: ${cls}`);
     assert.deepEqual(Object.keys(RESIDUAL_CLASSES).filter((c) => !RESIDUAL_TABLE.some((r) => r[1] === c)), ['an opaque expansion from a cwd outside every project'], 'every class but the B2 residual (pinned by its own rows above) has a row in the table');
   } finally { process.env.HOME = savedHome; w.rm(); }
+});
+
+// Round 7 of fork PR #780 review, thirty-fifth commit (the reviewer's extra7-3 and extra6-4): two pins keyed on the table's own values.
+// THE READER'S STATEMENT: the vendored SKILL.md had carried the developer paragraph of THE RESIDUAL PROPERTY verbatim, the review's provenance
+// and the hook's internal names included, to an agent that has no referent for either; it states the classes in the reader's words now, one
+// bullet per class under the class's own name, and this test holds that list of names to RESIDUAL_CLASSES exactly (a class added to or
+// dropped from the table's classes without the skill reds here by name). THE TABLE'S FIGURE: the size of the table stood hand-typed on the hook
+// header, decision 47 and the ledger entry and was pinned as a spelled phrase on two of them, so a row added under any class left every test
+// green while all three were wrong; each surface now states the figure once, and it is read here against RESIDUAL_TABLE.length and
+// Object.keys(RESIDUAL_CLASSES).length.
+const repoText = (...parts) => fs.readFileSync(fileURLToPath(new URL(`../${parts.join('/')}`, import.meta.url)), 'utf8');
+test("round 7, thirty-fifth commit, the reader's statement: the vendored SKILL.md states exactly RESIDUAL_CLASSES's classes by name in the reader's words, with no review provenance and none of the hook's internal names", () => {
+  const skill = repoText('vendor', 'track-changents', 'skill', 'SKILL.md');
+  const OPEN = 'The guard refuses a write only when it recognises the command as a writer it';
+  const CLOSE = 'Any other write that reaches a tracked file is a gap in the guard.';
+  const a = skill.indexOf(OPEN);
+  const b = skill.indexOf(CLOSE, a);
+  assert.ok(a >= 0 && b > a, "the skill's statement of the classes stands between its opening and closing sentences");
+  const statement = skill.slice(a, b + CLOSE.length);
+  const named = [...statement.matchAll(/^- \*\*([^*]+)\*\*: /gm)].map((m) => m[1]);
+  assert.deepEqual([...named].sort(), Object.keys(RESIDUAL_CLASSES).sort(), 'one bullet per class of RESIDUAL_CLASSES, under its own name, and no other');
+  assert.equal(new Set(named).size, named.length, 'no class twice');
+  assert.equal((statement.match(/^- /gm) || []).length, named.length, 'every bullet of the statement is a class');
+  // no provenance of the review and none of the hook's internal names (the class names are the reader's labels, kept whole)
+  const flat = statement.replace(/\s+/g, ' ');
+  for (const re of [/\bround\b/i, /\bcommit/i, /\bas ruled\b/i, /\bB2\b/, /\bextract's\b/, /\bSHELLS\b/, /residual table/i, /residual property/i, /head candidates/i, /\bthe hook\b/i, /romp-track-bash-guard/, /\.test\.mjs/, /\breviewer\b/i, /\breplay\b/, /\blexer\b/i]) {
+    assert.ok(!re.test(flat), `the skill's statement carries none of ${re}`);
+  }
+  assert.ok(!/\u2014/.test(statement), 'no em dash');
+});
+test("round 7, thirty-fifth commit, the table's figure: the hook header, decision 47 and the ledger entry each state the residual table's size once, as RESIDUAL_TABLE.length rows over Object.keys(RESIDUAL_CLASSES).length classes", () => {
+  const plan = repoText('plans', 'file-review.md');
+  const d47 = plan.slice(plan.indexOf('47. **A guard on the Bash tool too**'), plan.indexOf('\n48. **'));
+  const surfaces = { 'the hook header': fs.readFileSync(HOOK, 'utf8').replace(/\n\/\/ ?/g, ' '), 'decision 47': d47, 'the ledger entry': repoText('upstream', '2026-09-18-track-guard-non-literal-targets.md') };
+  for (const [name, text] of Object.entries(surfaces)) {
+    const found = [...text.replace(/\s+/g, ' ').matchAll(/THE RESIDUAL TABLE holds (\d+) rows over (\d+) classes/g)].map((m) => [Number(m[1]), Number(m[2])]);
+    assert.equal(found.length, 1, `${name} states the table's size once (${found.length})`);
+    assert.deepEqual(found[0], [RESIDUAL_TABLE.length, Object.keys(RESIDUAL_CLASSES).length], `${name} states the table's size as its rows and classes are: ${RESIDUAL_TABLE.length} rows over ${Object.keys(RESIDUAL_CLASSES).length} classes`);
+  }
 });
 
 // the rows' NOT RUN line runMatrixAgainstPin prints once per program a matrix's rows need and this box lacks (round 6's third commit: the
