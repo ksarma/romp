@@ -14,7 +14,7 @@
 //     pins, restated here so the two pins cannot disagree); every file path the step's comment names (each token shaped
 //     like a file name whose suffix begins with a letter) is in the tree;
 //   - the step carries a timeout-minutes of its own that fits the margin under the job's cap at the measured head (the job's
-//     comment derives it and names the same number), and the script passes node a --test-timeout above every timeout:
+//     comment names the same number and says it fits), and the script passes node a --test-timeout above every timeout:
 //     value a rostered source spells, each read as a digit literal (_ separators allowed) or refused by name (the check's
 //     guarantee is that no single value exceeds the file bound, and a leg's whole-file seconds are measured in the PR's
 //     body), and under the step's bound, so a hung leg fails by name before the step is cut;
@@ -212,14 +212,14 @@ function boundReds(sources, ms) {
   return reds;
 }
 
-test('the step is bounded twice: its own timeout-minutes fits the margin under the job\'s cap at the measured head and the job\'s comment derives that number; node\'s --test-timeout in the script sits above every timeout: value a rostered source spells, each read as a digit literal or refused by name, and under the step\'s bound, so a hung leg fails by name before the step is cut', () => {
+test('the step is bounded twice: its own timeout-minutes fits the margin under the job\'s cap at the measured head and the job\'s comment names that number; node\'s --test-timeout in the script sits above every timeout: value a rostered source spells, each read as a digit literal or refused by name, and under the step\'s bound, so a hung leg fails by name before the step is cut', () => {
   const job = extensionJob();
   const { cap, capLine } = jobCap(job);
   const step = steps(job).find((s) => s.name === STEP);
   assert.ok(step, 'the step exists (the first test holds the rest of its shape)');
   const bound = Number(step.fields['timeout-minutes']);
   assert.ok(Number.isInteger(bound) && bound >= 1, 'the step carries a timeout-minutes of its own (a roster whose legs exceed it fails this step by name rather than cancelling the job nameless): ' + JSON.stringify(step.fields['timeout-minutes']));
-  // the margin the bound was cut from: the job's measured minutes and seconds in the step's own comment, under the cap
+  // the margin the bound must fit: the job's measured minutes and seconds in the step's own comment, under the cap
   const comment = step.comments.join('\n');
   const took = /in a job of (\d+) min (\d+) s/.exec(comment);
   assert.ok(took, 'the step\'s comment states the measured job time as "in a job of N min N s"');
@@ -227,7 +227,7 @@ test('the step is bounded twice: its own timeout-minutes fits the margin under t
   assert.ok(bound * 60 <= marginSeconds, 'the step\'s bound (' + bound + ' min) fits the margin under the cap at the measured head (' + marginSeconds + ' s): a step that runs to its bound still ends the job under ' + cap + ' minutes; a larger roster raises the bound and the cap together; a job whose other phases grow under an unchanged cap re-measures the margin the same way (the step comment states the same)');
   assert.ok(comment.includes('re-measures here'), 'the step\'s comment names the re-measure condition for growth outside the roster (the job\'s other phases toward the cap), not only the roster-growth trigger');
   const jobComment = job.lines.slice(0, job.lines.indexOf(capLine)).filter((l) => /^\s*#/.test(l)).join('\n');
-  assert.ok(new RegExp('\\b' + bound + ' minutes \\(its timeout-minutes\\)').test(jobComment), 'the job\'s cap comment derives the step\'s bound and names the same number (' + bound + ' minutes (its timeout-minutes)): a changed bound rewrites the sentence');
+  assert.ok(new RegExp('\\b' + bound + ' minutes \\(its timeout-minutes\\)').test(jobComment), 'the job\'s cap comment names the step\'s bound, the same number (' + bound + ' minutes (its timeout-minutes)), and says it fits the margin this test derives: a changed bound rewrites the sentence');
   // the job comment's passage about this step (two sentences, from "The Browser legs step below" to "in the same PR.") points at this pin for the margin
   // and carries no copy of the measured job time or the margin in seconds: the measured time has one home, the step comment
   // above, which this pin reads (the job comment's other sentences record the served step's own history and are not read here)
@@ -811,9 +811,10 @@ test('the phrase the script reads a lost browser by is a literal in inBrowser\'s
   const helper = read(path.join(REPO, 'ui', 'webview', 'real-viewer-leg.ts'));
   assert.ok(helper.includes('"' + phrase + ': "'), 'the shared phrase: ui/webview/real-viewer-leg.ts holds the literal ' + JSON.stringify(phrase + ': ') + ' that vscode-extension/scripts/ci-browser-legs.sh hands awk (awk -v msg=), so a reword in one file is red here and the lost-browser remedy is never dropped in silence. This reads source text and guards the phrase alone, not the behaviour: that inBrowser FAILS with it under ' + SWITCH + ' and skips without is executed by ' + path.relative(REPO, SWITCH_TEST) + ' (a child node --test with PLAYWRIGHT_BROWSERS_PATH emptied), which the vscode-extension job runs; a green here with that test red is a helper that carries the words and not the behaviour');
   // the executed test this message points at exists and is rostered (so the step runs its leg with a browser on every CI
-  // run, and the Test step runs its three child arms); what it asserts is its own to state, and the PR's reviewer holds it to
-  // the roster rule. The helper's playwrightInstalled export has that test as its consumer (the reason the child names is
-  // derived from the helper's own module read, never from a second one): presence pins, which say only that the file names these
+  // run, and the Test step runs its three child arms); what it asserts is its own to state, and the reviewer of any PR that
+  // changes it holds it to the roster rule. The helper's playwrightInstalled export has that test as its consumer (the
+  // reason the child names is derived from the helper's own module read, never from a second one): presence pins, which say
+  // only that the file names these
   assert.ok(fs.existsSync(SWITCH_TEST), 'the executed test of the switch exists at ' + path.relative(REPO, SWITCH_TEST));
   assert.ok(read(SWITCH_TEST).includes('playwrightInstalled()'), path.relative(REPO, SWITCH_TEST) + ' consumes the helper\'s playwrightInstalled export (a presence pin: the export is not dead code in this tree)');
   assert.ok(parseRoster(read(path.join(EXT, ROSTER))).some((e) => e.bundle === 'out-tests/ui/webview/real-viewer-leg-switch.test.js'), path.relative(REPO, SWITCH_TEST) + ' is rostered in ' + ROSTER + ', so the step runs its leg with a browser on every CI run');

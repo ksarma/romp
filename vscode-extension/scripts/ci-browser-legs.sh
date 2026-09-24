@@ -25,12 +25,13 @@
 # a todo test that passes beside a real pass; a leg that catches inBrowser's rejection and passes (a try and catch around
 # the awaited call, .catch(), .then's second argument or Promise's allSettled). A leg built to pass without a browser is
 # outside what the step can detect. tools/ci-browser-legs.test.mjs runs a synthetic leg of each example and reads it green.
-# Nothing checks that every browser leg in the tree is rostered, and main has no such check. Only inBrowser reads the
-# switch, so a launch or a skip of the leg's own stands outside it, and Chromium is the one engine the job installs. A leg
-# with no line runs only under the Test step, before the job installs a browser. tools/ci-browser-legs.test.mjs (CI's Shell
-# job, no node_modules) runs this script over synthetic trees, with a stub node on PATH that records the node --test call
-# and writes the record a case hands it, and with the real node and the real reporter. `--check` runs the pre-run checks
-# alone and starts no node --test (it does not check that the bundles are built, which the step's run does).
+# Nothing checks that every browser leg in the tree is rostered, and main has no such check. Of the code a leg runs, only
+# inBrowser reads the switch, so a launch or a skip of the leg's own stands outside it, and Chromium is the one engine the
+# job installs. A leg with no line runs only under the Test step, before the job installs a browser.
+# tools/ci-browser-legs.test.mjs (CI's Shell job, no node_modules) runs this script over synthetic trees, with a stub node
+# on PATH that records the node --test call and writes the record a case hands it, and with the real node and the real
+# reporter. `--check` runs the pre-run checks alone and starts no node --test (it does not check that the bundles are built,
+# which the step's run does).
 # After node --test it reads the run's record from scripts/ci-browser-legs-reporter.mjs (one line per result, attributed to
 # its bundle by node's own record of the file; node's TAP record names no file for a pass, so it cannot say which leg a pass
 # belongs to) and derives, per rostered leg, that A TEST OF ITS BUNDLE PASSED: at least one result attributed to it is a pass
@@ -112,12 +113,13 @@ if [ "${#legs[@]}" -eq 0 ]; then echo "no legs in the roster"; exit 0; fi
 rep=$(mktemp)
 trap 'rm -f "$rep"' EXIT
 status=0
-# --test-timeout bounds each FILE's whole run (node cancels the file and ends the run, naming it; a leg's own { timeout } names
-# its test and leaves the process alive on a live browser handle), so a hung leg fails by name inside the step's own
-# timeout-minutes (.github/workflows/ci.yml) instead of the job being cancelled nameless. The value sits above the largest
-# { timeout } a rostered leg passes and under the step's bound; tools/ci-browser-legs.test.mjs holds both edges. The roster
-# array is node's argument list directly (no xargs, whose mapping of a failed command's status differs by platform: 123 on
-# GNU, 1 on BSD and macOS), so the status below is node's own everywhere.
+# --test-timeout bounds each FILE's whole run (node cancels that file and ends its process at the bound, naming it, and runs
+# the other files on; a leg's own { timeout } names its test and leaves the process alive on a live browser handle), so a
+# hung leg fails by name inside the step's own timeout-minutes (.github/workflows/ci.yml) instead of the job being cancelled
+# nameless. The value sits above the largest { timeout } a rostered leg passes and under the step's bound;
+# tools/ci-browser-legs.test.mjs holds both edges. The roster array is node's argument list directly (no xargs, whose
+# mapping of a failed command's status differs by platform: 123 on GNU, 1 on BSD and macOS), so the status below is node's
+# own everywhere.
 node --test --test-timeout=240000 --test-reporter=spec --test-reporter-destination=stdout --test-reporter="$REPORTER" --test-reporter-destination="$rep" "${legs[@]}" || status=$?
 
 # One pass over the record with the roster on stdin: per rostered leg a TALLY line (passes that count, fails that count,

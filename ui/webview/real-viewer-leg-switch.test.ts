@@ -1,11 +1,13 @@
 // The shared launcher's switch, executed: inBrowser in ./real-viewer-leg reads ROMP_BROWSER_LEGS_REQUIRE, and under the
 // switch, inBrowser FAILS a launch it cannot make, naming the switch and the reason, instead of skipping, where without it
 // the leg skips naming the reason (CI's browser-legs step sets the switch after the job's Chromium install; the Test step,
-// before any install, does not). The
-// test below began as fork PR 860's test of this behaviour, copied with its mechanism unchanged (two lines differed: the
-// comment's name for the leg it drives, and the --test-name-pattern that picks it); this branch adds a third arm, the switch
-// set to a non-"1" non-empty value ("yes"), which executes the arming rule every header states (any non-empty value arms
-// it) and is OFFERED to 860 for its copy, so the two branches carry one mechanism and, until 860 takes the arm, not one test.
+// before any install, does not). The test below began as fork PR 860's test of this behaviour, copied with its mechanism
+// unchanged (two lines differed: the comment's name for the leg it drives, and the --test-name-pattern that picks it); this
+// branch adds a third arm, the switch set to a non-"1" non-empty value ("yes"), which executes the arming rule every header
+// states (any non-empty value arms it) and is OFFERED to 860 for its copy, so the two branches carry one mechanism and,
+// until 860 takes the arm, not one test. Beside the third arm, whose words already made the test's title differ from 860's,
+// this branch narrows the title from the browser legs' skip to the skip of a leg that launches through the shared launch:
+// the switch turns that skip alone into a failure, and any other leg's own skip stands.
 // This branch also asserts, under both armed arms, that the failure's message begins with the phrase the step's script
 // reads a lost browser by, read at run time from vscode-extension/scripts/ci-browser-legs.sh, which 860 does not have, so
 // that assertion stays this branch's and the offer to 860 is the third arm alone.
@@ -24,7 +26,7 @@ import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { spawnSync } from "node:child_process";
-import { EXT, inBrowser, playwrightInstalled } from "./real-viewer-leg";   // the launch every browser leg of the fork shares, and its switch read
+import { EXT, inBrowser, playwrightInstalled } from "./real-viewer-leg";   // the shared launch, used by the legs that launch through it, and its switch read
 
 test("the launcher's own leg opens a page through the shared launch", { timeout: 60000 }, async (t) => {
   await inBrowser(t, async (browser) => {
@@ -34,7 +36,7 @@ test("the launcher's own leg opens a page through the shared launch", { timeout:
   });
 });
 
-test("ROMP_BROWSER_LEGS_REQUIRE, read in the shared launch helper, turns the browser legs' skip into a failure that names the switch and the reason, under \"1\" and under any other non-empty value, and without it the skip stands naming the reason: CI's browser-legs step after the Chromium install sets it", { timeout: 180000 }, (t) => {
+test("ROMP_BROWSER_LEGS_REQUIRE, read in the shared launch helper, turns the skip of a leg that launches through it into a failure that names the switch and the reason, under \"1\" and under any other non-empty value, and without it the skip stands naming the reason: CI's browser-legs step after the Chromium install sets it", { timeout: 180000 }, (t) => {
   // a child run of this file's leg with playwright pointed at an empty browsers directory (the pane bench's probe):
   // under the switch the leg fails naming the switch and the reason; without it the leg skips, as the Test step's run does.
   // The reason the child names is this machine's: with the module installed and its browsers hidden, no browser; with the module

@@ -281,9 +281,9 @@ jobs:
     # growing: PR 1790's run 35138058863 was cancelled at 25 min 04 s mid served-lab on a slow runner,
     # every step green up to the cut (2026-09-16). 40 min: the served step's 20-odd minutes on a slow
     # runner plus the 600 s per-test timeout plus setup. The Browser legs step below carries a bound of
-    # its own, 5 minutes (its timeout-minutes), the roster's budget: the job's margin under this cap at
-    # the head the step's own comment names, rounded down to whole minutes (tools/ci-browser-legs.test.mjs
-    # derives it from that comment and this cap, so the figures have one home), so a step that runs to
+    # its own, 5 minutes (its timeout-minutes), the roster's budget, which fits within the job's margin
+    # under this cap at the head the step's own comment names (tools/ci-browser-legs.test.mjs derives
+    # the margin from that comment and this cap, so the figures have one home), so a step that runs to
     # its bound fails by name and the job still ends under this cap. A roster whose legs together exceed
     # that bound raises the step's timeout-minutes and this cap in the same PR.
     timeout-minutes: 40
@@ -357,27 +357,29 @@ jobs:
         # real pass; a leg that catches inBrowser's rejection and passes (a try and catch around the awaited call,
         # .catch(), .then's second argument or Promise's allSettled). A leg built to pass without a browser is outside
         # what the step can detect. tools/ci-browser-legs.test.mjs runs a synthetic leg of each example and reads it
-        # green. Nothing checks that every browser leg in the tree is rostered, and main has no such check. Only
-        # inBrowser reads the switch, so a private skip stays a skip and a private launch that fails is never the
-        # failure naming the switch. The step sits directly after the Chromium install with nothing before the Test
-        # step moved, so plans/markdown-viewer.md's CI sentence and the pin that reads it
-        # (tools/markdown-viewer-plan-gate-adopt.test.mjs) stay true. The Dashboard pane bench and the served-page
-        # tests below run only after this step passes: a red here skips them for the run, as a red step
-        # before them always has. The script
-        # (scripts/ci-browser-legs.sh) checks before node --test that every roster line is a bundle path, listed once,
-        # whose source is in the tree and whose bundle is under out-tests/ (the Test step's npm test built it; the Build
-        # step writes dist/ only), a red naming the line and the fix; after node --test it reads its own reporter's
-        # record (scripts/ci-browser-legs-reporter.mjs) and a rostered leg with no passing test of its own, a skipped
-        # test, a failure inside a todo, or a file that failed as a whole is red too, naming the leg or the test; an
-        # empty roster prints "no legs in the roster" and exits 0 without starting node --test, whose default glob would
-        # rerun the whole suite (tools/ci-browser-legs.test.mjs, in the shell job, runs the script over synthetic trees).
-        # Two bounds: this step's timeout-minutes (the job comment above derives it from the margin under the job's
-        # cap), so a roster whose legs together exceed it fails this step by name instead of cancelling the job
-        # nameless; and node's --test-timeout in the script, a per-FILE bound under the step's, so one hung leg fails by
-        # name (node ends the run; a leg's own { timeout } does not, since a live browser handle keeps the process up
-        # after the named failure). Nothing reads a leg's cost before it runs: a PR that rosters a leg measures it in its
-        # own run and raises both bounds together when the total needs it. Step seconds, job minutes and the job's
-        # 40-minute cap:
+        # green. Nothing checks that every browser leg in the tree is rostered, and main has no such check. Of the
+        # code a leg runs, only inBrowser reads the switch, so a private skip stays a skip and a private launch that
+        # fails is never the failure naming the switch. The step sits directly after the Chromium install with nothing
+        # before the Test step moved, so plans/markdown-viewer.md's CI sentence and the pin that reads it
+        # (tools/markdown-viewer-plan-gate-adopt.test.mjs) stay true. The Dashboard pane bench and the served-page tests
+        # below run only after this step passes: a red here skips them for the run, as a red step before them always
+        # has. The script (scripts/ci-browser-legs.sh) checks before node --test that every roster line is a bundle
+        # path, listed once, whose source is in the tree and whose bundle is under out-tests/ (the Test step's npm test
+        # built it; the Build step writes dist/ only), a red naming the line and the fix; after node --test it reads its
+        # own reporter's record (scripts/ci-browser-legs-reporter.mjs) and a rostered leg with no passing test of its
+        # own, a skipped test, a failure inside a todo, or a file that failed as a whole is red too, naming the leg or
+        # the test; an empty roster prints "no legs in the roster" and exits 0 without starting node --test, whose
+        # default glob would rerun the whole suite (tools/ci-browser-legs.test.mjs, in the shell job, runs the script
+        # over synthetic trees).
+        # Two bounds: this step's timeout-minutes (the job comment above says it fits within the margin under the
+        # job's cap at the measured head), so a roster whose legs together exceed it fails this step by name instead of
+        # cancelling the job nameless; and node's --test-timeout in the script, a per-FILE bound under the step's, so
+        # one hung leg fails by name (node cancels that file and ends its process at the bound, naming it, and runs the
+        # other files on; a leg's own { timeout } does not end the process, since a live browser handle keeps it up
+        # after the named failure). Nothing reads a leg's cost before it runs: a PR that rosters a leg measures it in
+        # its own run, raises the step's timeout-minutes and the job's cap together when the total needs it (the job
+        # comment above), and node's --test-timeout when one leg's own bound or its whole-file seconds need it. Step
+        # seconds, job minutes and the job's 40-minute cap:
         # (measured on the runner at 74db18d9c, the merge of the fork's main into this branch before the review's round 3, the merge whose title says so, one leg rostered, the launcher's own switch test: 15 s for this step in a job of 35 min 0 s, under the 40-minute cap, a margin of 300 s. The script then also ran a census of the tree's test modules and checks over an exclusions file before node --test; both have left this branch since (the fork's branch ci-browser-legs-census keeps them), so this step now runs less than was measured: at 4353df2d3, the commit that removed them, three runs of this step's command from vscode-extension/ on a development box, with the bundles built and the switch set, took 1.86 s, 1.82 s and 1.83 s at a load average of about 10 on 60 cores (node's own duration in the first, 1.75 s). The files this step runs are the roster (vscode-extension/ci-browser-legs.txt), each rostered leg's source (today ui/webview/real-viewer-leg-switch.test.ts alone), the script (scripts/ci-browser-legs.sh), its reporter (scripts/ci-browser-legs-reporter.mjs) and the launcher (ui/webview/real-viewer-leg.ts): between 74db18d9c and 4353df2d3 the roster's header comment and the script change, by that removal and by rewording the script's comments and messages, and the roster's one line, the switch test, the reporter and the launcher are as measured. A later commit, or a merge of the fork's main when the branch takes one, is read against the same files from its diff, and one that changes none of them leaves those files as measured (the Playwright version vscode-extension/package-lock.json pins, which fixes the Chromium the install step fetches, and the runner can still move the step's seconds). The step's seconds and the job's length, which moves with the suite, are re-read from CI at each pushed head in the PR's body. This description of the measured head and of what changed after it is NOT PINNED: tools/ci-browser-legs.test.mjs pins the figures beside it by shape and against the cap and the step's own bound, and the head is named by its sha and its merge's title, which the fork's merge-commit landings keep in main's history (a rebase or an offer elsewhere re-measures and renames it), while the Shell job checks out at depth 1, so no pin there can read the sha's title or its diff, and a reader checks both against the branch's history. The margin is the job's other phases' to spend, so a job that grows toward the cap with the roster unchanged re-measures here and lowers this bound or raises the cap; the first pushed head, with the roster empty, took 9 s inside a job that lasted 33 min 51 s; each PR that adds a leg states its own leg's numbers in its body.)
         timeout-minutes: 5
         env:

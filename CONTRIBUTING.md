@@ -68,10 +68,10 @@ process and tolerates the child's failure; a todo test that passes beside a real
 argument or Promise's allSettled). A leg built to pass without a browser is outside what the step can
 detect. `tools/ci-browser-legs.test.mjs` runs a synthetic leg of each example and reads it green. Nothing
 checks that every browser leg in the tree is rostered, and main has no such check. A leg with no line runs
-only under the Test step, before the job installs a browser. Only `inBrowser` reads the switch, so a leg's
-own skip stays a skip and its own failed launch is never the failure naming the switch. Chromium is the one
-engine the job installs (a leg's Firefox and WebKit runs live elsewhere, a served pytest step or a local
-run).
+only under the Test step, before the job installs a browser. Of the code a leg runs, only `inBrowser`
+reads the switch, so a leg's own skip stays a skip and its own failed launch is never the failure naming
+the switch. Chromium is the one engine the job installs (a leg's Firefox and WebKit runs live elsewhere,
+a served pytest step or a local run).
 
 The step's script, `vscode-extension/scripts/ci-browser-legs.sh`, refuses before `node --test` a roster
 line that is malformed, duplicated or names a source that moved or was deleted, and a rostered bundle
