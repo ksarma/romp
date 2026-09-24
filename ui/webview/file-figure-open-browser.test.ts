@@ -965,7 +965,7 @@ const NEIGHBOURS: Scene[] = [["ngp", "a paragraph", GLUED], ["ngh", "a highlight
 const HEADINGS: Scene[] = [["nh2", "an italic f run in a level-2 heading", GLUED], ["nh1", "an italic f run in a level-1 heading", GLUED]];
 /** The bound the sheets state for a picture in smaller text than an italic or bold italic f glued before it: the margin across the
  *  line is 3px plus 0.3em of the PICTURE's own text size, short of that f's reach, so the ring covers some of its ink, at most 4
- *  pixels in one read at a device scale of 1 (measured by screenshot pixels with the picture inside small, sub and sup, two nested
+ *  pixels in one read at a device scale of 1 or 2, counted in device pixels (measured by screenshot pixels with the picture inside small, sub and sup, two nested
  *  small elements and text at 0.8em and 0.7em of the f's, in both themes, in the eleven configurations, at every text size from
  *  100% to 200% and with the line moved by each eighth of a pixel), and every dash still reads the token's own ratio, since the f
  *  stands before the picture and the ring paints over its ink. This scene reads 2 in both themes at 100% and at 150%. At least 1:

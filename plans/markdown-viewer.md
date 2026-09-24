@@ -8522,7 +8522,7 @@ toward the picture, 4px at the default text size and more as the text grows, so 
 with the text, in a heading and at every text size, for an f set in the picture's own text size; the em is the picture's, so a
 picture in smaller text than an italic or bold italic f glued before it, inside `<small>`, `<sub>` or `<sup>`, inside two nested
 `<small>` or in text at 0.8em or 0.7em of the f's, gets less margin than that f reaches and the ring covers up to 4 pixels of the f's
-ink in one read (device pixels at a device scale of 2; inside one `<small>`, `<sub>` or `<sup>`, up to 2), at every text size from
+ink in one read (at a device scale of 1 or 2, counted in device pixels; inside one `<small>`, `<sub>` or `<sup>`, up to 2), at every text size from
 100% to 200% with the line moved by each eighth of a pixel, every dash still at 4.83:1 dark and 4.90:1 light, since the f paints
 before the picture and the ring over it, and text under 0.7em of the f's is not measured; up and down the ring's width, so the ring
 stands inside the picture's margin box, where at 2px it covered the bottom row of a key on the line above), a line holding such a

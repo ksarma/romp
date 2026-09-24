@@ -5017,7 +5017,7 @@ body.filebrowse-open { overflow: hidden; }
    the ring's outer pixel, where the dash's outer side read 2.06:1 dark on the Files pane). The em is the picture's own, so a picture
    set in smaller text than an italic or bold italic f glued before it gets less margin than that f reaches: with the picture inside
    <small>, <sub> or <sup>, inside two nested <small>, or in text at 0.8em or 0.7em of the f's, the ring covers up to 4 pixels of that
-   f's ink in one read (device pixels at a device scale of 2; inside one <small>, <sub> or <sup>, up to 2), read the same way at every
+   f's ink in one read (at a device scale of 1 or 2, counted in device pixels; inside one <small>, <sub> or <sup>, up to 2), read the same way at every
    text size from 100% to 200% with the line moved by each eighth of a pixel, and every dash still reads 4.83:1 dark and 4.90:1 light
    on both sides, since the f paints before the picture and the ring over it (file-figure-open-browser.test.ts holds one such picture,
    in two nested <small>, to that bound, SMALLER_BOUND); text smaller than 0.7em of the f's is not measured. Up and down 3px, the
