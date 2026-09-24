@@ -35730,9 +35730,9 @@ def _subagent_tree_memo_report():
         test_one_pusher_cycle_over_three_sessions_costs_the_sum_over_their_roots and its jobs-pass twin (sum_r D_r over
         three roots of unequal size);
       - the walk with no entry, or with an entry holding an unvouched directory (which never validates): D_r lstats and
-        D_r listings, an entry's type coming from the listing; once per root per change, held for the cycle when every
-        listing and child lstat succeeded and paid again at the next read when one failed; miss 1 and walkMs, no
-        dirStats;
+        D_r listings, an entry's type coming from the listing; once per root per change, held for the cycle unless the
+        walk reported a fault below the root (a listing, an entry's type or a child's lstat that failed for a reason
+        other than absence) and then paid again at the next read; miss 1 and walkMs, no dirStats;
       - a failed validation, then the walk (an entry whose identities no longer stand: a directory added, removed or
         written; D_old the entry's directories, D_new the tree's now): the validation's D_old lstats, then the walk's
         lstat of each directory below the root (the root's one lstat serves both), D_old + D_new - 1 lstats, and D_new
@@ -35750,8 +35750,8 @@ def _subagent_tree_memo_report():
       - the agent-file memo's re-check (_subagent_file's hit, _dir_stamps over the directories its walk read), per
         lookup: a directory of a tree held this cycle is served; any other (the project directory, a sibling tree's
         directories in a cycle that did not read that tree, the own tree's when a command row's owner lookup runs before
-        the read that validates it) costs one os.stat per cycle, an own stat the scope holds under root None for every
-        later lookup; dirStats 1 each; the own root's place when a file or a live link stands in it (no tree there, but
+        the read that validates it) costs one os.stat per cycle, an own stamp the stamp index holds for every later
+        lookup; dirStats 1 each; the own root's place when a file or a live link stands in it (no tree there, but
         its stat succeeds) is one of these, held once per cycle. BoundPerCycleAndPerPass
         test_two_agents_whose_files_are_nowhere_share_the_project_directorys_one_stamp_stat (the project directory, 1 at
         one row and at two); MissPathRoads
