@@ -1025,7 +1025,7 @@ const FLOOR_BOUND: [number, number] = [1, 30];
  *  PANE_NEIGHBOURS at 100% (21) and 150% (40, the configuration of that maximum) and at 200% (22). The count stops growing with the f
  *  near an f of 33px because a 20 by 20 picture's ring reaches no higher than its top; a picture under the floor on its width
  *  alone can be any height, and beside a taller one the count grows with the f without a bound (204 pixels at a device scale of 1
- *  and 761 device pixels at 2 for a bold italic f of 185px, ten nested big elements at 200%, beside a picture 20 by 200, and nested
+ *  and 753 device pixels at 2 for a bold italic f of 185px, ten nested big elements at 200%, beside a picture 20 by 200, and nested
  *  big elements grow the f without end), which the sheets state and no row holds. */
 const FLOOR_LARGE_BOUND: [number, number] = [1, 40];
 const FLOOR_LARGE_SCENE = "an italic f run in a level-2 heading glued to a picture inside a hundred nested small elements, the margin across the line at the ring's 3px";
