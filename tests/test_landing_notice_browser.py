@@ -5,7 +5,7 @@ the gap where the target will be, the loading glyph in the empty space; the land
 ONLY cancel: the target and the notice go, the reply still inserts its run in place, and the view does not move. Served, on the
 window lab's hermetic kernel (a synthetic transcript longer than the wire tail: the deep target is in the head gap at boot).
 
-Roads, ten fresh pages (the socket death first, then the notice roads, then the answered-question anchor, the cancel-then-click road, the fault road, three roads on the per-ask records: two cancels, a cancelled origin, a lost cancelled frame, then an older fetch in flight and the pipe's down edge): the deep link landing with the notice (the words, the pre-jump write, the window ask, the landing, the notice
+Roads, ten fresh pages (the socket death first, then the notice roads, then the answered-question anchor, the cancel-then-click road, the fault road, three roads on the per-ask records: two cancels, a cancelled origin, a lost cancelled frame, then an older fetch in flight and the pipe's down edge, and last a deep link whose land runs inside the frame after a re-window's write): the deep link landing with the notice (the words, the pre-jump write, the window ask, the landing, the notice
 gone); then a second deep link with its ask HELD at the socket, the notice clicked (a locateDiag row filed as cancelled, the notice
 gone, the view still), the ask released (the run inserts, the view still where the reader was).
 
@@ -502,7 +502,46 @@ await noticeHidden(); await painted();
 const targetB15 = await onScreen(deepB15);
 await page.waitForTimeout(700);                                                       // past the cut animation's own length: a listener the hide did not remove would still be there
 const afterCut15 = await page.evaluate(() => ({ add: window.__aeAdd, remove: window.__aeRemove, cls: !!document.querySelector(".tx-landing-notice.pulse"), shown: (() => { const n = document.querySelector(".tx-landing-notice"); return !!n && getComputedStyle(n).display !== "none"; })() }));
-process.stdout.write("RESULT:" + JSON.stringify({ listeners15, cut15, afterCut15, first15, pulsed15, afterEnd15, targetA15, reshow15, targetB15, inGap6, regions13, hadFrame13, heldIn13a, heldIn13, heldOlder13, askState13, trail13, toast13, target13, asks13, before14, down14, after14, askedA10, askedB10, asks10, before10, relA10, afterA10, relB10, afterB10, runN10a, runN10b, runN10c, writes10, originA11, askedA11, foundB11, askedB11, noticeB11, atAsk11, afterMissing11, writes11, askedA12, reask12, target12, trail12, askedA8, afterCancel8, askedB8, busy8, toast8, noticeB8, released8, targetB8, residentA8, runN8Before, runN8After, asked9, fault9, rows9, top9Before, writes9, pxPerTurn9, heldAsk6, point6Before, point6After, fillWrites6, after6, head4, filled4, afterDrop5: { notice: afterDrop5.notice }, askBefore5, heldRaw5, askState5, winBefore5, winAtDeath5, redialed5, recvAfter5, sentAfter5, flushAsk5, reask5, landed5, top7a, turnAttr7a, point7a, realign7a, rowB7Before, pointB7Before, rowB7Held, pointB7Held, rowB7After, pointB7After, held7b, askState7b, fillWrites7b, runNBefore7b, runNAfter7b, asked3, nospan3, boot: { gaps: boot.gaps, atBottom: boot.atBottom, notice: boot.notice, regions: await page.evaluate(() => (typeof window.__rompRegions === "function" ? window.__rompRegions() : null)) }, asked1: { notice: asked1.notice, noticeText: asked1.noticeText, top: asked1.top, gaps: asked1.gaps, loadAround: heldAsk1 }, trace1, released1, guess1, trace2,
+// ROAD 16 (a fresh page): road 10's defect entered on EVERY run. A deep link A's pre-jump into the head gap (A's ask held, its notice clicked
+// away) re-windows the view, and the re-window writes #content 0 -> 8 without syncing the view's saved place, which its scroll event does a
+// frame later. A deep link B whose land runs inside that frame, its ask held so the land misses, put back the row captured at the saved
+// place's stale 0: the reader went from 8 to 0, above the first element that names a turn (road 10's record on two CI runs once PR 861
+// landed, whose cancels have no frame between them and leave the ordering to the runner's timing; a painted() there would hide the defect).
+// Here B's focus is dispatched from a frame callback queued behind the page's own scroll listeners on A's pre-jump echo, so it runs after
+// virtualizeToViewport's re-window callback in the same frame and before the scroll event of the write that callback made (the next
+// frame's); the log records both, and the test refuses a run that did not reach the ordering
+await reboot();
+const deepA16 = "11111111-2222-3333-4444-" + pad(2 * 60), deepB16 = "11111111-2222-3333-4444-" + pad(2 * 170);
+await page.evaluate(() => { window.__hold.add("loadAround"); window.__hold.add("loadTurns"); });   // no reply lands and no head page fills: the lands' own writes are all that moves the reader
+const sentAt16 = await page.evaluate(() => window.__sent.length);
+const order16 = await page.evaluate(([sid, aA, tA, aB, tB]) => new Promise((resolve) => {
+  const c = document.getElementById("content");
+  const log = []; let events = 0, armed = false, fired = false;
+  const fire = (d) => window.dispatchEvent(new MessageEvent("message", { data: d, source: window }));
+  const cancel = () => { const n = document.querySelector(".tx-landing-notice"); const up = !!n && getComputedStyle(n).display !== "none"; if (up) n.dispatchEvent(new MouseEvent("click", { bubbles: true })); return up; };
+  c.addEventListener("scroll", () => {
+    events++;
+    if (!armed || fired) return;
+    const queuedAt = events;
+    requestAnimationFrame(() => {   // queued after the page's scroll listeners, so it runs after virtualizeToViewport's re-window callback in the same frame
+      if (fired || c.scrollTop < 4) return;   // the re-window has not written yet: the next scroll event queues again
+      fired = true;
+      log.push({ at: "B", top: c.scrollTop, events, queuedAt });   // events === queuedAt: no scroll event since the one that queued this callback, so the re-window write's has not run
+      fire({ type: "focus", id: sid, anchor: aB, anchorT: tB });
+      log.push({ at: "afterB", top: c.scrollTop, events, cancelled: cancel() });
+      resolve(log);
+    });
+  }, { passive: true });
+  fire({ type: "focus", id: sid, anchor: aA, anchorT: tA });
+  log.push({ at: "A", top: c.scrollTop, events, cancelled: cancel() });
+  armed = true;
+  setTimeout(() => { if (!fired) { fired = true; log.push({ at: "timeout", top: c.scrollTop, events }); resolve(log); } }, 8000);
+}), [cfg.sid, deepA16, cfg.base + 2 * 60, deepB16, cfg.base + 2 * 170]);
+await painted();
+const at16 = { order: order16, top: await page.evaluate(() => document.getElementById("content").scrollTop), row: await rowAtTop(), point: await pointNow(),
+  writes: await page.evaluate((n) => window.__sent.slice(n).filter((m) => m.type === "clientDiag" && m.what === "scrollwrite" && m.data).map((m) => [m.data.writer, m.data.before, m.data.after]), sentAt16) };
+await page.evaluate(() => { window.__hold.delete("loadAround"); window.__hold.delete("loadTurns"); window.__heldRaw = []; });
+process.stdout.write("RESULT:" + JSON.stringify({ at16, listeners15, cut15, afterCut15, first15, pulsed15, afterEnd15, targetA15, reshow15, targetB15, inGap6, regions13, hadFrame13, heldIn13a, heldIn13, heldOlder13, askState13, trail13, toast13, target13, asks13, before14, down14, after14, askedA10, askedB10, asks10, before10, relA10, afterA10, relB10, afterB10, runN10a, runN10b, runN10c, writes10, originA11, askedA11, foundB11, askedB11, noticeB11, atAsk11, afterMissing11, writes11, askedA12, reask12, target12, trail12, askedA8, afterCancel8, askedB8, busy8, toast8, noticeB8, released8, targetB8, residentA8, runN8Before, runN8After, asked9, fault9, rows9, top9Before, writes9, pxPerTurn9, heldAsk6, point6Before, point6After, fillWrites6, after6, head4, filled4, afterDrop5: { notice: afterDrop5.notice }, askBefore5, heldRaw5, askState5, winBefore5, winAtDeath5, redialed5, recvAfter5, sentAfter5, flushAsk5, reask5, landed5, top7a, turnAttr7a, point7a, realign7a, rowB7Before, pointB7Before, rowB7Held, pointB7Held, rowB7After, pointB7After, held7b, askState7b, fillWrites7b, runNBefore7b, runNAfter7b, asked3, nospan3, boot: { gaps: boot.gaps, atBottom: boot.atBottom, notice: boot.notice, regions: await page.evaluate(() => (typeof window.__rompRegions === "function" ? window.__rompRegions() : null)) }, asked1: { notice: asked1.notice, noticeText: asked1.noticeText, top: asked1.top, gaps: asked1.gaps, loadAround: heldAsk1 }, trace1, released1, guess1, trace2,
   landed1: { notice: landed1.notice, gaps: landed1.gaps, turns: landed1.turns, top: landed1.top, strip: landed1.strip, regions: regionsLanded }, target1, rows1,
   asked2: { notice: asked2.notice, noticeText: asked2.noticeText, top: asked2.top }, clicked2: { notice: clicked2.notice, top: clicked2.top, gaps: clicked2.gaps }, rows2, released2,
   late2: { notice: late2.notice, top: late2.top, gaps: late2.gaps, turns: late2.turns, regions: regionsLate }, noticeHit, regionsClicked, rowClicked2, rowLate2, target2, deep2Turn: 190, bootTop: boot.top }) + "\n");
@@ -675,6 +714,20 @@ class ServedLandingNotice(WindowLab):
         asks = r["asks10"].get("asks")
         self.assertIsNotNone(asks, "the ask-state hook lists the per-ask records: %r" % r["asks10"])
         self.assertEqual([a["cancelled"] for a in asks], [True, True], "two records, both cancelled, neither overwritten: %r" % asks)
+
+    def test_a_deep_link_whose_land_misses_inside_the_frame_after_a_re_window_write_leaves_the_reader_where_the_scroller_holds_them(self):
+        # road 16: road 10's flake entered on every run. The ordering first (a run that did not reach it proves nothing either way), then the
+        # behaviour: no anchor restore moves the reader, who stays where the scroller held them when B's land ran, with the point named
+        r = self._result()["at16"]
+        order = {e["at"]: e for e in r["order"]}
+        self.assertIn("B", order, "the road reached its ordering: B's focus ran from the frame callback after the re-window's write: %r" % r["order"])
+        self.assertTrue(order["A"]["cancelled"], "A's notice was up and clicked away in A's own task: %r" % r["order"])
+        b = order["B"]
+        self.assertGreaterEqual(b["top"], 4, "the re-window had written when B's focus ran: %r" % r["order"])
+        self.assertEqual(b["events"], b["queuedAt"], "B's focus ran before the re-window write's scroll event, the frame in which the view's saved place lags the scroller: %r" % r["order"])
+        self.assertEqual([w for w in r["writes"] if w[0] == "anchor-restore"], [], "no anchor restore moved the reader (before the fix it wrote them from the scroller's place back to the saved place's stale one): %r" % r["writes"])
+        self.assertEqual(r["top"], b["top"], "the reader is where the scroller held them when B's land ran: %r, the writes %r" % (r["top"], r["writes"]))
+        self.assertIsNotNone(r["point"], "the point under the viewport top is named (before the fix the reader sat above the first element that names a turn): %r" % r)
 
     def test_a_cancelled_landings_origin_dies_with_the_cancel_so_a_later_dead_end_leaves_the_reader_where_it_found_them(self):
         # round eight, medium 2: click A (pre-jump into the gap), cancel; click B with no time (no pre-jump); B missing

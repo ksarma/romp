@@ -161,9 +161,9 @@ class Host {
   querySelector(sel: string): Node | null { return this.querySelectorAll(sel)[0] ?? null; }
 }
 
-type Arm = { anchor?: string; t?: number; keepY?: number; seek?: { sid: string; uuid: string; kind: string }; reload?: unknown; land?: boolean; landT?: boolean; rebuild?: (host: Host) => void };
+type Arm = { anchor?: string; t?: number; keepY?: number; seek?: { sid: string; uuid: string; kind: string }; reload?: unknown; land?: boolean; landT?: boolean; rebuild?: (host: Host) => void; preJump?: number };
 type Opts = { spacerH?: number; n?: number; rowH?: number; clientHeight?: number; saved: number; scrollTop?: number; shown?: boolean; stick?: boolean; parked?: boolean; bottomSpacerH?: number; gap?: boolean };
-type World = { content: Content; host: Host; v: any; spacer: Node; rows: Node[]; writes: Write[]; calls: any[]; rows_: any[]; toasts: string[]; trace: string[]; geometryAt: Record<string, string[]>; land: (content: Content | null, v: any) => void; parked: () => boolean };
+type World = { content: Content; host: Host; v: any; spacer: Node; rows: Node[]; writes: Write[]; calls: any[]; rows_: any[]; toasts: string[]; trace: string[]; geometryAt: Record<string, string[]>; land: (content: Content | null, v: any, scrollerHolds?: boolean) => void; parked: () => boolean };
 const D = 300;   // the take's delta: the head spacer re-sized by the re-measured figure over the head gap's turns
 
 /** A view of `n` rows of `rowH` under a head spacer of `spacerH` (uuids r0..), in a scroller of `clientHeight`; `saved` is the view's
@@ -171,7 +171,9 @@ const D = 300;   // the take's delta: the head spacer re-sized by the re-measure
  *  on a re-show; the LEAVING tab's on a switch, the default here being the saved place). `parked`: a figure waits for a taker, and the
  *  take grows the head spacer by D (the stubbed applyMeasure models what sizeSpacers draws from the taken figure). `arm` is what the
  *  land finds armed and how the stubbed landings answer (`land`: scrollToAnchor's answer, `landT`: landNearestMoment's; `rebuild` runs
- *  over the host before scrollToAnchor answers: the window rebuilt around the anchor's unit, rows leaving). `gap`: a 40 px gap row
+ *  over the host before scrollToAnchor answers: the window rebuilt around the anchor's unit, rows leaving; `preJump`, the place the attempt's
+ *  pre-jump writes (land-guess) before scrollToAnchor answers, the record synced to the scroller after it and follow mode ended, as
+ *  preJumpIntoGap does for a deep link with a time whose window is asked for). `gap`: a 40 px gap row
  *  (`tx-gap`, with the unit range production's redraw reads) between r4 and r5, and `bottomSpacerH` a bottom spacer, so a view holds every
  *  kind of child production's spacer code draws on: a gap redraw or a bottom-spacer resize planted in the ordering window matched nothing in a
  *  view without them and moved no geometry (the author's fixer pass over the pass after the maintainer's round 4 ruling, VE-3). */
@@ -204,7 +206,7 @@ function world(o: Opts, arm: Arm = {}): World {
   });
   const H: any = { content, v, spacer, writes: [] as Write[], calls: [] as any[], rows: [] as any[], toasts: [] as string[], deferred: [] as any[], trace, geometryAt: {} as Record<string, string[]>,
                    delta: D, arm,
-                   land: (uuid: string) => { if (arm.rebuild) arm.rebuild(host); return !!arm.land; }, landT: (t: number) => !!arm.landT };
+                   land: (uuid: string) => { if (arm.rebuild) arm.rebuild(host); if (arm.preJump != null) { v.stick = false; H.writeScroll(content, arm.preJump, "land-guess"); v.scrollTop = content.scrollTop; } return !!arm.land; }, landT: (t: number) => !!arm.landT };
   // the take state, the persisted top and the geometry, traced in order with the writes (the ordering test below). The take state: the parked
   // flag, which the stubs hold in place of production's parked figures, and the view's own three fields (`measured`, `avgTurnH`, `pxPerTurn`:
   // the fields the take writes, the untake restores and the parked figures are read from, derived from render.ts's tree and stated once in
@@ -226,6 +228,7 @@ function world(o: Opts, arm: Arm = {}): World {
   // the document stand-in: getElementById alone (the one call the lifted span makes); every other member fails closed with the model's
   // message, so production's `document.createElement` or `document.querySelectorAll` planted in the window reds by the model's refusal
   // rather than a bare TypeError (the author's fixer pass over the pass after the maintainer's round 4 ruling, VE-4)
+  H.writeScroll = (c: Content, top: number, writer: string, stick = false, from?: number): void => { H.writes.push({ writer, top, stick, from }); H.trace.push("write " + writer); H.geometryAt["write " + writer] = H.geometry(); c.scrollTop = Math.max(0, Math.min(top, c.scrollHeight - c.clientHeight)); };
   H.document = failClosed({ getElementById: (id: string) => (id === "content" ? content : null) }, "document");
   Object.defineProperty(H, "parked", { get: () => parkedFlag, set: (x: boolean) => { H.trace.push("parked=" + x); parkedFlag = x; } });
   for (const f of Object.keys(takeState)) Object.defineProperty(vRaw, f, { configurable: false, enumerable: true, get: () => takeState[f], set: (x: unknown) => { H.trace.push(f + "=" + JSON.stringify(x)); takeState[f] = x; } });
@@ -236,7 +239,7 @@ function world(o: Opts, arm: Arm = {}): World {
     H.trace.push("record#" + k); H.geometryAt["record#" + k] = geometry();
     return { id: r.id, stick: r.stick, anchor: r.anchor, get top(): number { H.trace.push("read rs.top#" + k); return r.top; } };
   };
-  const js = liftBetween("function landActive(content: HTMLElement | null, v: View): void {", "// Scroll ANCHORING for scrolled-up re-renders")
+  const js = liftBetween("function landActive(content: HTMLElement | null, v: View", "// Scroll ANCHORING for scrolled-up re-renders")
            + liftBetween("function captureScrollAnchor(", "// Live tail-append to the ACTIVE view");
   const prelude = `"use strict";
     const H = HOOKS;
@@ -257,10 +260,10 @@ function world(o: Opts, arm: Arm = {}): World {
     const landNearestMoment = (t) => { H.calls.push(["landNearestMoment", t]); return H.landT(t); };
     const revealProgressTick = () => {}; const clearSeek = () => { H.calls.push("clearSeek"); }; const showSeekNote = () => { H.calls.push("showSeekNote"); };
     const settleSample = () => {}; const landToast = (m) => { H.toasts.push(m); }; const notifyShell = () => {};
-    const writeScroll = (c, top, writer, stick = false, from) => { H.writes.push({ writer, top, stick, from }); H.trace.push("write " + writer); H.geometryAt["write " + writer] = H.geometry(); c.scrollTop = Math.max(0, Math.min(top, c.scrollHeight - c.clientHeight)); };
+    const writeScroll = H.writeScroll;
     const scheduleRailSticky = () => {}; const updateJumpBtn = () => {}; const cssEscape = (s) => s;
   `;
-  const land = new Function("HOOKS", prelude + js + "\nreturn landActive;")(H) as (content: Content | null, v: any) => void;
+  const land = new Function("HOOKS", prelude + js + "\nreturn landActive;")(H) as (content: Content | null, v: any, scrollerHolds?: boolean) => void;
   return { content, host, v, spacer, rows, writes: H.writes, calls: H.calls, rows_: H.rows, toasts: H.toasts, trace: H.trace, geometryAt: H.geometryAt, land, parked: () => H.parked };
 }
 const takes = (w: World) => w.calls.filter((c) => c === "applyMeasure").length;
@@ -304,6 +307,59 @@ test("the same miss on a tab SWITCH: the scroller still holds the leaving tab's 
   assert.equal(w.spacer.h, 2000 + D);
   assert.deepEqual(w.writes, [{ writer: "anchor-restore", top: 2350 + D, stick: false, from: undefined }], "r3, the row at the saved place, back at its offset");
   assert.equal(w.rows[3].getBoundingClientRect().top, R3_OFFSET);
+});
+
+// The saved place on a view ALREADY ON SCREEN (the landing lab's road 10, red in CI on two PRs once PR 861 landed). The view's record
+// `v.scrollTop` follows the reader through the #content scroll listener (followReader), so it lags the scroller by one frame after any page
+// write that does not sync it: the re-window's (virtualizeToViewport), whose scroll event runs a frame later. A deep link on the displayed tab
+// inside that frame captured the saved place's row at the stale record, and when its land missed (a fetch armed) put that row back: the
+// anchor restore wrote the reader to where they stood a frame earlier (the lab's record: the scroller 8, the record 0, the restore 8 -> 0).
+// When the view was already on screen and no deferred build came between (showActive's `scrollerHolds`), the scroller holds the reader
+// and landActive reads the saved place from it; a switch keeps the record, because the scroller still holds the leaving tab (the switch
+// road above, and the contrast at the end of the second road below). The worlds: a 2000 px head spacer standing for the head gap (no child
+// there carries a uuid, so the row captured is the first below it, as in the lab), the scroller at 8 where the re-window wrote it, the
+// record still at 0, nothing parked (the lab's missed land took nothing: its restore wrote the row's own y back)
+const STALE: Opts = { saved: 0, scrollTop: 8, parked: false };
+const LINK = "11111111-2222-4333-8444-000000000021";
+const LINK_SEEK = { sid: "A", uuid: LINK, kind: "user" };   // setActive arms the durable seek for the link it lands (armSeek): a miss keeps searching, no toast
+
+test("a deep link WITH a time on the view already on screen, run inside the frame between a page write and its scroll event: the pre-jump writes where the scroller already stands and syncs the record, the fetch-armed land misses, and the reader stays where the scroller held them; no anchor restore writes them back to the record's stale place", () => {
+  const w = world(STALE, { anchor: LINK, t: 1700000000, seek: LINK_SEEK, land: false, preJump: 8 });
+  const r0Before = w.rows[0].getBoundingClientRect().top;   // 1992: the first row under the head gap, as the reader sees it
+  w.land(w.content, w.v, true);
+  assert.equal(w.content.scrollTop, 8, "the reader is where the scroller held them (at the base the anchor restore put them at the record's 0, the row captured there written back to its y there): " + JSON.stringify(w.writes));
+  assert.deepEqual(w.writes.filter((x) => x.top !== 8), [], "no write moves the reader off the scroller's place: the pre-jump writes 8 and the saved place's row goes back at 8: " + JSON.stringify(w.writes));
+  assert.equal(w.rows[0].getBoundingClientRect().top, r0Before, "the row under the head gap sits where the reader saw it");
+  assert.deepEqual(w.toasts, [], "the seek keeps searching; the miss raises no toast"); assert.ok(w.calls.includes("showSeekNote"));
+});
+
+test("a deep link WITHOUT a time on the view already on screen, inside the same frame: no pre-jump, the fetch-armed land misses, and the reader stays where the scroller held them; no anchor restore writes them back to the record's stale place", () => {
+  const w = world(STALE, { anchor: LINK, seek: LINK_SEEK, land: false });
+  const r0Before = w.rows[0].getBoundingClientRect().top;
+  w.land(w.content, w.v, true);
+  assert.equal(w.content.scrollTop, 8, "the reader is where the scroller held them (at the base the anchor restore wrote 0): " + JSON.stringify(w.writes));
+  assert.deepEqual(w.writes.filter((x) => x.top !== 8), [], "no write moves the reader off the scroller's place: " + JSON.stringify(w.writes));
+  assert.equal(w.rows[0].getBoundingClientRect().top, r0Before, "the row under the head gap sits where the reader saw it");
+  // the contrast: the same world on a SWITCH (the scroller does not hold this view's reader, so the flag is false) captures at the record,
+  // the saved place, and puts the row it held back at its offset
+  const sw = world(STALE, { anchor: LINK, seek: LINK_SEEK, land: false });
+  sw.land(sw.content, sw.v, false);
+  assert.deepEqual(sw.writes.map((x) => [x.writer, x.top]), [["anchor-restore", 0]], "on a switch the record is the saved place");
+});
+
+test("the raw land-saved write on a missed land with no row at the saved place, on the view already on screen inside the same frame: the saved scrollTop written is the scroller's, not the lagging record's (this read predates PR 861); a pre-jump in the same pass still stands, because the write reads the record after the attempt synced it", () => {
+  // rows 0..1000 then a 5000 px bottom spacer; the scroller at 3008 and the record a frame behind at 3000: no row at or below the viewport top
+  const o: Opts = { spacerH: 0, saved: 3000, scrollTop: 3008, bottomSpacerH: 5000, parked: false };
+  const w = world(o, { anchor: LINK, seek: LINK_SEEK, land: false });
+  w.land(w.content, w.v, true);
+  assert.equal(w.content.scrollTop, 3008, "the reader is where the scroller held them (at the base the raw write put them at the record's 3000): " + JSON.stringify(w.writes));
+  assert.deepEqual(w.writes, [{ writer: "land-saved", top: 3008, stick: false, from: undefined }], "no row to put back: the raw write, of the scroller's place");
+  // a pre-jump in the same pass (a link with a time) placed the reader, and the record was synced to it: the raw write keeps it (a write
+  // of the place read before the attempt would reverse the pre-jump on this road, where it stands today and stood before PR 861)
+  const j = world(o, { anchor: LINK, t: 1700000000, seek: LINK_SEEK, land: false, preJump: 4000 });
+  j.land(j.content, j.v, true);
+  assert.deepEqual(j.writes.map((x) => [x.writer, x.top]), [["land-guess", 4000], ["land-saved", 4000]], "the pre-jump stands on the raw road");
+  assert.equal(j.content.scrollTop, 4000);
 });
 
 test("an armed miss with no row at the saved place (the saved place inside a spacer): the take, then, with no row to put back, the take undone and the raw land-saved write exact in the layout the saved place was measured in (the maintainer's round 3 ruling B: until then the take stood and the raw write moved the reader by its delta, disclosed)", () => {
