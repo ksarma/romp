@@ -15355,8 +15355,8 @@ function showActive(keep?: { uuid: string; y: number } | null) {
   // and no deferred build is pending (followReader's transient: while one is, the scroller can hold the reveal's clamp). Then the
   // scroller's own scrollTop is the reader's place and the view's record can only lag it, by the one frame between a page write that does
   // not sync the record (the re-window's) and that write's scroll event, so landActive reads the saved place from the scroller
-  // (land-active-keep.test.ts's no-time and raw roads turn red without it; the landing lab's road 16 runs this hand-off, but its link's
-  // pre-jump stands on the fetch-armed miss whatever the record reads, so it passes without it). A switch fails the first test (the scroller still holds the leaving tab), a hidden pane has no reader, and the deferred
+  // (the landing lab's road 16, whose second link carries no time, and land-active-keep.test.ts's no-time and raw roads turn red without
+  // it). A switch fails the first test (the scroller still holds the leaving tab), a hidden pane has no reader, and the deferred
   // build's land below passes nothing: while a build is pending the scroller can hold the reveal's clamp, which followReader keeps out of
   // the record. That gate keeps out every scroll event of the pending interval, a re-window's echo too, so a deep link that defers its build
   // on the view already on screen still reads a record that can lag the scroller (a residual no road reaches)
