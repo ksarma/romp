@@ -159,7 +159,7 @@ class Accounting(Synthetic):
             em._MAT_LRU[("TESTKEY", 0)] = (dead, 0)                # at the old end, under a key no list can hold
         ixa, la = _mint(2, "v")
         la[0]; la[1]                                               # the second build is one over the cap: the dead entry goes
-        self.assertEqual(_entries(), (2, 0), "the dead entry left at the old end, both live ones stand")
+        self.assertEqual(_entries(), (2, 0), "the dead entry left, both live ones stand")
         st = em.asm_index_stats()
         self.assertEqual((st["expired"], st["evictions"]), (1, 0), "dropped as dead, no live slot evicted for it")
         self.assertEqual(st["collected"], 0, "the trim counts it expired only: the drain never saw it")
@@ -484,7 +484,7 @@ class CollectionEvent(Synthetic):
         self.assertIsNone(seen["wl"](), "the list is freed")
         ln[0]
         self.assertEqual(_entries(), (1, 0))
-        self.assertGreater(seen["after"], seen["before"], "the queue grew on the dropping thread while it held the lock")
+        self.assertGreater(seen["after"], seen["before"], "the queue grew across the drop, read while the dropping thread held the lock")
         self.assertTrue(seen["mine"], "...by the freed list's own reference")
         st = em.asm_index_stats()
         self.assertEqual((st["resident"], st["expired"], st["collected"]), (1, k, k))
