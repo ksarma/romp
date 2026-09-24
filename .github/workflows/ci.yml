@@ -243,17 +243,21 @@ jobs:
           # env:, a quoted or spaced key, a key-shaped line deeper than its block's keys, a step's shell:
           # or a job's defaults). Any write of the switch that does not spell its name is outside it: in
           # a run block (env -i, an indirect unset, a loop over the environment), in a shell: or defaults
-          # key, by a script or action a step calls, or to $GITHUB_ENV. The check reads this file's text,
-          # in the YAML forms this file uses and no others: every line here is in one of them (block
-          # mappings and sequences two columns per level, one-line plain and quoted scalars without
-          # escapes, one-line flow sequences of them, a literal block as a step's run, comments), or the
-          # check refuses it by name, valid YAML included (an anchor, an alias, a folded block, a quoted
-          # scalar over two lines, among others): a form the check does not accept is refused by name;
-          # reword the step in an accepted form. Every line here that spells pytest, outside a comment or
-          # a name: key's own line and other than a pip install, is read as a command or is red until it
-          # is read (its line census), and so is a job key it does not read; a run line that never spells
-          # pytest, a pytest run by a script or action a step calls, and the other workflow files are
-          # outside it.
+          # key, by a script or action a step calls, or to $GITHUB_ENV. It reads a run block as written,
+          # and GitHub substitutes a ${{ }} expression into the block before the shell reads it, so a
+          # pytest step whose run block holds one is red until the value moves to an env: key the block
+          # reads as a shell variable; anything that rewrites a pytest command's arguments after that (a
+          # shell function or alias, a python earlier on PATH, a step's shell:) is outside the check.
+          # The check reads this file's text, in the YAML forms this file uses and no others: every line
+          # here is in one of them (block mappings and sequences two columns per level, one-line plain
+          # and quoted scalars without escapes, one-line flow sequences of them, a literal block as a
+          # step's run, comments), or the check refuses it by name, valid YAML included (an anchor, an
+          # alias, a folded block, a quoted scalar over two lines, among others): a form the check does
+          # not accept is refused by name; reword the step in an accepted form. Every line here that
+          # spells pytest, outside a comment or a name: key's own line and other than a pip install, is
+          # read as a command or is red until it is read (its line census), and so is a job key it does
+          # not read; a run line that never spells pytest, a pytest run by a script or action a step
+          # calls, and the other workflow files are outside it.
           ROMP_SDK_REQUIRE: "1"
           # The free-threaded cell runs with the GIL off, stated rather than defaulted (a 't'
           # build disables it by default, and an extension that lacks free-threading support

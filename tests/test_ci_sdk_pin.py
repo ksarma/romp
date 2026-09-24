@@ -71,8 +71,14 @@ This module holds five things, and it never skips: a pin that skips reports gree
    on the words `-p` and `no:anyio`, consecutive in the command's arguments as the shell splits them (so the spelling
    inside a quoted argument is not the flag), the switch half on the merged value reading exactly 1 (a quoted value
    read verbatim, so `"1 "` is not 1, and a plain value to YAML's comment, so `1#x` is not 1), and their messages say
-   so. The switch half reads what the run text does to the variable only by its spelling (round
-   4's ruling, 2026-09-23): a step whose run text spells ROMP_SDK_REQUIRE anywhere other than as a VAR=value prefix on
+   so. Both read the run text as written, and GitHub substitutes a `${{ }}` expression into that text before the
+   shell reads it (`${{ '#' }}` before the flag, or a matrix value '#' there, cuts the flag off as a comment), so a
+   pytest command in a step whose run text holds `${{`, anywhere in it and in a comment too, is `unparsed`, red until
+   the value moves to an env: key and the run text reads it as a shell variable (the allowlist's second verify pass,
+   2026-09-24: such a step read ok, or listed, while pytest ran without the flag). Outside the flag half's read:
+   anything that rewrites a pytest command's arguments after the run text is read, among them a shell function or
+   alias the run text defines, a python earlier on PATH, and a step's shell: or a job's defaults. The switch half
+   reads what the run text does to the variable only by its spelling (round 4's ruling, 2026-09-23): a step whose run text spells ROMP_SDK_REQUIRE anywhere other than as a VAR=value prefix on
    its pytest command (an unset, export, declare, env -u or assignment, on an earlier line or before the command on
    its own line; a comment too), or whose job's other run texts spell it (a write to $GITHUB_ENV sets it for the steps
    after), is `unparsed`, red until read, since the parser does not run the shell. And every line of ci.yml that spells
@@ -1053,7 +1059,9 @@ def pytest_invocations(src, read=None, switch_read=None):
     step whose run text spells ROMP_SDK_REQUIRE other than as a VAR=value prefix on its pytest command, or whose job's
     other run texts spell it (keyed on the spelling, comments included; the env merge reads the declared scopes, and
     an unset, export or assignment in the shell, or a write to $GITHUB_ENV in an earlier step, changes what pytest
-    starts with), a dict with `unparsed` set to the reason and args None. `read`, when a list is given, receives {first, last, text} for every command line the
+    starts with), and for a pytest command in a step whose run text holds a `${{ }}` expression (keyed on the
+    spelling, comments included: GitHub substitutes the expression before the shell reads the text, so the text read
+    here is not the text the shell runs), a dict with `unparsed` set to the reason and args None. `read`, when a list is given, receives {first, last, text} for every command line the
     parser read in a step's run, row or not (pytest_line_census judges the pip exclusion on that text; the switch
     census counts those lines as run text read). `switch_read`, when a list is given, receives {line, job, step, scope}
     for every ROMP_SDK_REQUIRE key line _env_block read in a scope the merge reads (the workflow's env, a job's env, a
@@ -1071,8 +1079,9 @@ def pytest_invocations(src, read=None, switch_read=None):
     run forms read are _step_run's; comment lines are skipped; a line ending in an unescaped backslash is joined with
     the next the way the shell joins it (_continues, _join_continuation: nothing inserted).
     Outside this parser by construction: a pytest run by a
-    script or action the workflow calls, and a run line that never spells pytest (a `$RUNNER` variable set elsewhere,
-    or `make test`)."""
+    script or action the workflow calls, a run line that never spells pytest (a `$RUNNER` variable set elsewhere, or
+    `make test`), and anything that rewrites a pytest command's arguments after the run text is read (a shell function
+    or alias the run text defines, a python earlier on PATH, a step's shell: or a job's defaults)."""
     sections = _top_sections(src)
     assert "jobs" in sections, "ci.yml has no jobs: mapping at column 0: re-anchor this parser"
 
@@ -1165,6 +1174,15 @@ def pytest_invocations(src, read=None, switch_read=None):
             # own line), or whose job's other run texts spell it (a write to $GITHUB_ENV reaches the steps after it), is
             # unparsed: the parser does not run the shell, so it cannot say what value pytest starts with
             k = inv["step_index"]
+            # an expression in the run text (the allowlist's second verify pass, 2026-09-24): GitHub substitutes it
+            # into the text before the shell reads it, so the text read here is not the text the shell runs, and
+            # `${{ '#' }}` before the flag, or a matrix value '#' there, cut the flag off as a comment while the step
+            # read ok; keyed on the spelling, comments included, wherever in the step's run text it sits
+            if inv["unparsed"] is None and "${{" in inv["run"]:
+                inv["unparsed"] = ("the step's run text holds a ${{ }} expression, which GitHub substitutes before the shell "
+                                   "reads the text, so the text read here is not the text the shell runs: move the value to "
+                                   "an env: key and read it in the run text as a shell variable")
+                inv["args"] = None
             if inv["unparsed"] is None:
                 others = [step_names[j] for j in sorted(run_spellings) if j != k and run_spellings[j]]
                 if run_spellings[k] > prefix_spellings[k]:
@@ -1710,8 +1728,8 @@ def invocations_by_key(found):
 def verdict(inv):
     """'ok': the args carry -p no:anyio and the env sets ROMP_SDK_REQUIRE to 1; 'listed': the flag, no switch, and
     (job, step) in SWITCH_LISTED; 'unparsed': a pytest mention the parser did not read as a command, or a command whose
-    step spells the switch in its run text other than as a prefix on it, or whose job's other steps spell it in theirs
-    (pytest_invocations); 'ambiguous': a
+    step spells the switch in its run text other than as a prefix on it, or whose job's other steps spell it in theirs,
+    or whose step's run text holds a `${{ }}` expression (pytest_invocations); 'ambiguous': a
     named step whose name another pytest-running step of the job shares, so the (job, step name) key names two steps
     (red whatever the invocations carry: a listing under that key would excuse the other step too); 'unlisted':
     anything else, the failure this check exists for (the flag missing has no listing that excuses it)."""
@@ -1875,7 +1893,9 @@ class PytestPopulation(unittest.TestCase):
     goes is a job the parser reads, so no step is read under the job above it; and every line of the file is in a YAML
     form the file itself uses (the allowlist, yaml_line_forms, the owner's allowlist design, 2026-09-24), the forms
     derived from the file, so the parser and the censuses read no YAML they do not model. Outside the check: a run line
-    that never spells pytest, a pytest run by a script or action a step calls, and any other workflow file."""
+    that never spells pytest, a pytest run by a script or action a step calls, anything that rewrites a pytest
+    command's arguments after the run text is read (a shell function or alias, a python earlier on PATH, a step's
+    shell:), and any other workflow file."""
     def setUp(self):
         self.src = open(WF).read()
         self.found = pytest_invocations(self.src)
@@ -2523,6 +2543,54 @@ class PopulationCheckReds(unittest.TestCase):
         # the control: without the writing step the same job env makes it ok
         control = self._with_shell_job_env(self._with_step_in_shell_job(runner)[0])
         self.assertEqual([verdict(i) for i in self._new(control)], ["ok"])
+
+    def test_a_pytest_step_whose_run_text_holds_an_expression_is_unparsed(self):
+        # the allowlist's second verify pass (S08, S09, S10, 2026-09-24): GitHub substitutes a `${{ }}` expression into
+        # the run text before the shell reads it, and the parser reads the text as written. `${{ '#' }}` before the flag
+        # on either of the file's pytest lines, or a matrix value '#' there, read ok (or listed, on the served step)
+        # while pytest got no flag (the pass's substitution by string replacement, then bash with a python shim that
+        # printed its argv). A pytest command in a step whose run text holds `${{`, wherever it sits, is unparsed now;
+        # neither of the file's pytest steps holds one, and each case is in the forms the scan accepts
+        expr = "${{ '#' }}"
+        run_line = [l for l in self.src.splitlines() if l.startswith("        run: python -m pytest -q -p no:anyio ")]
+        served_line = [l for l in self.src.splitlines() if l.startswith("          python -m pytest tests/test_*_browser.py")]
+        self.assertEqual((len(run_line), len(served_line)), (1, 1), "the two pytest lines moved: re-anchor this case")
+        s08 = self.src.replace(run_line[0], run_line[0].replace(" -q -p no:anyio ", " -q %s -p no:anyio " % expr), 1)
+        s09 = self.src.replace(served_line[0], served_line[0].replace(" -p no:anyio ", " %s -p no:anyio " % expr), 1)
+        s10 = self._with_job_before_shell(
+            "  mx:\n    runs-on: ubuntu-latest\n    strategy:\n      matrix:\n        x: ['#']\n"
+            '    env:\n      %s: "1"\n    steps:\n      - name: Matrix hash (pytest)\n' % SWITCH +
+            "        run: python -m pytest -q ${{ matrix.x }} -p no:anyio tests/test_a.py\n")[0]
+        earlier = self._with_shell_job_env(self._with_step_in_shell_job(
+            "      - name: Expression on an earlier line (pytest)\n        run: |\n          ${{ matrix.setup }}\n"
+            "          python -m pytest tests/test_a.py -q -p no:anyio\n")[0])
+        for label, src, key in (("the Run pytest line, an expression before the flag (S08)", s08, MATRIX_STEP),
+                                ("the served step's pytest line, an expression before the flag (S09)", s09, SERVED_STEP),
+                                ("a matrix value '#' before the flag (S10)", s10, ("mx", "Matrix hash (pytest)")),
+                                ("an expression on an earlier line of the run text", earlier,
+                                 ("shell", "Expression on an earlier line (pytest)"))):
+            with self.subTest(form=label):
+                self.assertNotEqual(src, self.src, "%s: the splice changed nothing: re-anchor this case" % label)
+                inv = [i for i in pytest_invocations(src) if (i["job"], i["step"]) == key]
+                self.assertEqual([verdict(i) for i in inv], ["unparsed"], "%s: %r" % (label, [_describe(i) for i in inv]))
+                self.assertIn("run text holds a ${{ }} expression, which GitHub substitutes before the shell reads the text",
+                              _describe(inv[0]))
+                self.assertIn("python -m pytest", src.splitlines()[inv[0]["line"] - 1], _describe(inv[0]))
+                self.assertEqual(yaml_line_forms(src)[1], [], "%s: in the forms the scan accepts" % label)
+        # the control: the value in an env: key, read in the run text as a shell variable, is not re-read by the shell as
+        # text, and the step reads ok
+        via_env, first = self._with_step_in_shell_job('      - name: Expression through env (pytest)\n        env:\n          '
+                                                      '%s: "1"\n          EXTRA: ${{ matrix.extra }}\n' % SWITCH +
+                                                      '        run: python -m pytest tests/test_a.py -q -p no:anyio $EXTRA\n')
+        self.assertEqual([verdict(i) for i in self._new(via_env)], ["ok"])
+        # the stated residual, held by execution: a shell function the run text defines rewrites the flag's word before
+        # pytest gets it (S07; bash hands pytest no:cacheprovider in its place), and the step reads ok, since anything
+        # that rewrites a pytest command's arguments after the run text is read is outside the read
+        rewrite, first = self._with_step_in_shell_job(
+            '      - name: Rewritten by a function (pytest)\n        env:\n          %s: "1"\n        run: |\n' % SWITCH +
+            '          python() { local a=() x; for x in "$@"; do [ "$x" = no:anyio ] && x=no:cacheprovider; a+=("$x"); '
+            'done; command python "${a[@]}"; }\n          python -m pytest tests/test_a.py -q -p no:anyio\n')
+        self.assertEqual([verdict(i) for i in self._new(rewrite)], ["ok"])
 
     def test_a_switch_written_where_the_env_merge_does_not_look_is_named_by_the_switch_census(self):
         # review round 4's verify (attacks, M2, and prose-records, 2026-09-23): with the shell job's env setting the switch
