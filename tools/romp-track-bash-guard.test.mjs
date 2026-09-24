@@ -13,9 +13,29 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { spawn, spawnSync as _spawnSync } from 'node:child_process';
+import { spawn as rawSpawn, spawnSync as rawSpawnSync } from 'node:child_process';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
+
+// THE PROBE'S RUN (round 7 of fork PR #780 review, thirty-third commit; the round's verifiers on the thirty-second, X4r: the real-programs
+// test's call site, spelled back to its own spawn of the probe with three pipes, left the group's 13 tests green, since none of the eight
+// real programs detaches, and no pin held a call site on runProbe). Every text probeOf makes is recorded, and a spawn that hands one to a
+// program without a fourth pipe throws by name, through this file's spawnSync, its raw binding (_spawnSync) and its spawn alike, so a run
+// of a probe that could end before a command its program detached has exited reds at its call site however the call is spelled. The parse
+// check, which hands the text to a shell's -n and runs nothing, is the one spawn of a probe without it. This file binds child_process's two
+// spawns only here, each behind the check (pinned by its source in the thirty-third commit's test).
+const PROBE_TEXTS = new Set();
+const splitSpawnArgs = (rest) => (rest.length && !Array.isArray(rest[0]) && rest[0] !== undefined ? [[], rest[0]] : rest);   // (cmd, [args], [options])
+const refusePipelessProbe = (cmd, args, opts) => {
+  const probe = (Array.isArray(args) ? args : []).find((a) => typeof a === 'string' && PROBE_TEXTS.has(a));
+  if (probe === undefined) return;
+  if (JSON.stringify(args) === JSON.stringify(parseArgv(path.basename(String(cmd)), probe))) return;   // the parse check: read, not run
+  const stdio = opts && opts.stdio;
+  if (Array.isArray(stdio) && stdio.length >= 4 && stdio[3] === 'pipe') return;
+  throw new Error(`THE PROBE'S RUN: a probe of THE REFUSING PROGRAM ran without the fourth pipe, so the run could end before a command its program detached had exited; run it through runProbe: ${String(cmd)} ${JSON.stringify(probe).slice(0, 200)}`);
+};
+const _spawnSync = (cmd, ...rest) => { refusePipelessProbe(cmd, ...splitSpawnArgs(rest)); return rawSpawnSync(cmd, ...rest); };
+const spawn = (cmd, ...rest) => { refusePipelessProbe(cmd, ...splitSpawnArgs(rest)); return rawSpawn(cmd, ...rest); };
 
 import * as guard from '../hooks/romp-track-bash-guard.mjs';
 import engine from '../vendor/track-changents/engine.js';   // the module the hook holds, so a throw planted in it reaches the hook (round 6's catch-all stages)
@@ -137,7 +157,10 @@ const rowsNotRun = (rows, pin, table = NAMED_PROBE) => {
 // ~/.zshenv or ~/.bashrc, whatever those files run, and its reading depended on them. The wrapper gives every spawn whose environment opens
 // a road the environment that closes it: ZDOTDIR set to /dev/null, under which zsh finds no file and reads the system's /etc/zsh/zshenv
 // alone; SHLVL set to 1, under which bash counts itself a nested shell and reads BASH_ENV alone, which a named environment carries only
-// where its leg sets one; and an inherited environment without the account's BASH_ENV. A shell the leg's own command starts inherits it. A
+// where its leg sets one; and an inherited environment without the account's BASH_ENV. A shell the leg's own command starts inherits it,
+// unless the command clears or rewrites that environment first, or starts bash as a login or interactive shell, which reads its profile or
+// ~/.bashrc by HOME: THE CLEARED ENVIRONMENT, below, holds those commands (the thirty-third commit: R6V-F-env-i's `env -i` took the first
+// road while the thirty-second commit's census, through wrappers on PATH that an absolute path and `env -i` pass by, counted none). A
 // leg whose environment names a HOME of its own (every test world's) keeps its reading, so the rows that write a .zshenv into the world's
 // HOME and run zsh (RT-zshenv-home) still measure what they measure, and so does one that sets ZDOTDIR, SHLVL or BASH_ENV itself.
 const ACCOUNT_HOMES = new Set([(() => { try { return os.userInfo().homedir; } catch { return null; } })(), process.env.HOME].filter(Boolean).map((h) => path.resolve(h)));
@@ -157,12 +180,178 @@ const withoutAccountStartup = (opts) => {
   if (roads.bashEnv) delete next.BASH_ENV;
   return { ...(opts || {}), env: next };
 };
+// THE CLEARED ENVIRONMENT (round 7 of fork PR #780 review, thirty-third commit; the round's verifiers on the thirty-second, LOW: that
+// commit's census counted the shells its wrappers on PATH started, and R6V-F-env-i's `env -i .. /usr/bin/bash -c c` passed them by, so the
+// row's bash opened the account's ~/.bashrc in every leg, bash, zsh and dash alike: under no HOME and no SHLVL, its standard input a socket,
+// it took the rshd branch; strace over every process of the four modules' run found those three opens and no other). The keep-out above
+// reaches a shell a leg's command starts only through the environment that shell inherits. A command that clears or rewrites that
+// environment first, starts a shell by the passwd entry or by $SHELL, or starts bash as a login or interactive shell under no HOME of a
+// world, takes a road the keep-out cannot close, so the wrapper reads each text a spawn hands a program (an argument holding a blank or an
+// operator, and the standard input it is fed) and the spawn's other words for the spellings that do so. A clear, a road when the text
+// names bash or zsh (a word whose last component is bash, rbash or zsh, one glued to an option such as env's -S, or an expansion of SHELL,
+// BASH, ZSH_NAME, ZSH_ARGZERO or $0): env's clearing operands (-i or a short cluster holding it, a lone -, --ignore-environment and every
+// abbreviation of it, -u or --unset naming HOME, SHLVL or ZDOTDIR, and -S or --split-string, whose string env splits into a command of its
+// own); exec's -c (a cluster holding c); setpriv's --reset-env; sudo, pkexec, doas and systemd-run, which reset the environment for the
+// command they run; and a word naming HOME, SHLVL or ZDOTDIR anywhere but in a read of it and in an assignment of a value that keeps its
+// road shut (SHLVL a count of 1 or more; HOME or ZDOTDIR a literal absolute path that is no account home), so unset, export -n, typeset
+// +x, read, printf -v and `${NAME:=word}` each count. A start of a shell the text need not name, a road wherever it stands: su, runuser,
+// login, ssh, machinectl, script, tmux and screen, which start the passwd entry's shell or $SHELL, sudo's -s, -i, --shell and --login,
+// and systemd-run's -S and --shell. And where the spawn's environment has no HOME of a world, a bash given a login or interactive option
+// (-l, -i, --login, --rcfile, --init-file, a cluster holding l or i), `exec -l`, or an argv0 opening with `-` (`exec -a`, env's -a or
+// --argv0); zsh needs no such reading, since every file of the account's it reads by name lies under the ZDOTDIR the keep-out gives. A
+// road throws by name unless its text is one of CLEARED_LEGS, each run under strace in every present shell by the thirty-third commit's
+// test and pinned to open no startup file under the account's home. The reading is of spellings, read wherever they stand, a quoted text
+// or a here-document included, so a clear before a shell it does not start costs a listing and nothing else; a clear, or a shell's name,
+// spelled through an expansion the reader does not name (`e=env; $e -i bash`, `env -i $sh -c ..`) is not read, the residual a reader of
+// spellings has, and the census by strace over every process is the measurement that sees it.
+const ACCOUNT_STARTUP_NAMES = ['.bashrc', '.bash_profile', '.bash_login', '.profile', '.bash_logout', '.bash_aliases', '.bash_history', '.inputrc', '.zshenv', '.zshrc', '.zprofile', '.zlogin', '.zlogout', '.zsh_history'];
+const STARTUP_NAME = /^(?:HOME|SHLVL|ZDOTDIR)$/;
+// a text's words for the reader: the reads of the three names taken out first (`$HOME`, `${HOME}`, `${HOME:-w}`, `${#HOME}`; `${HOME=w}`
+// and `${HOME:=w}` assign, and stay), then split at blanks and operators, quotes and backslashes dropped
+const clearedWords = (text) => String(text).replace(/\$(?:HOME|SHLVL|ZDOTDIR)(?![A-Za-z0-9_])/g, '').replace(/\$\{[#!]?(?:HOME|SHLVL|ZDOTDIR)(?=[}:#%/^,@?+[-])(?!:?=)/g, '').split(/[\s;&|()`{}<>]+/).map((w) => w.replace(/['"\\]/g, '')).filter(Boolean);
+const wordBase = (w) => w.slice(w.lastIndexOf('/') + 1);
+const longOf = (o, name) => o.startsWith('--') && o.length > 2 && name.startsWith(o.slice(2).split('=')[0]);   // a long option or an abbreviation of it
+const ENV_CLEARERS = new Set(['sudo', 'pkexec', 'doas', 'systemd-run']);   // reset the environment for the command they run
+const SHELL_STARTERS = new Set(['su', 'runuser', 'login', 'ssh', 'machinectl', 'script', 'tmux', 'screen']);   // start the passwd entry's shell, or $SHELL
+const keepsRoadShut = (name, value) => (name === 'SHLVL' ? /^0*[1-9]\d*$/.test(value) : /^\/[^$`~*?[]*$/.test(value) && !ACCOUNT_HOMES.has(path.resolve(value)));
+// a clear: a road when the text names bash or zsh
+const clearingSpellings = (text) => {
+  const found = [];
+  const ws = clearedWords(text);
+  for (let i = 0; i < ws.length; i++) {
+    const w = ws[i];
+    const base = wordBase(w);
+    if (base === 'env') {
+      for (let j = i + 1; j < ws.length; j++) {   // env's operands up to its command word
+        const o = ws[j];
+        if (o === '-') { found.push('env -'); continue; }
+        if (o === '--') continue;
+        if (o.startsWith('--')) {
+          if (longOf(o, 'ignore-environment') || longOf(o, 'split-string')) found.push(`env ${o}`);
+          else if (longOf(o, 'unset')) { const name = o.includes('=') ? o.slice(o.indexOf('=') + 1) : ws[++j] || ''; if (STARTUP_NAME.test(name)) found.push(`env ${o} ${name}`); }
+          else if (!o.includes('=') && (longOf(o, 'chdir') || longOf(o, 'argv0'))) j++;   // its value word
+          continue;
+        }
+        if (o.startsWith('-')) {
+          for (let k = 1; k < o.length; k++) {
+            if (o[k] === 'i') found.push(`env ${o}`);
+            else if (o[k] === 'S') { found.push(`env ${o}`); break; }   // the split string: its words stand in the text, the first glued to -S
+            else if (o[k] === 'u') { const name = o.slice(k + 1) || ws[++j] || ''; if (STARTUP_NAME.test(name)) found.push(`env -u ${name}`); break; }
+            else if ('Ca'.includes(o[k])) { if (k === o.length - 1) j++; break; }   // the rest of the cluster, or the next word, is its value
+          }
+          continue;
+        }
+        if (/^[A-Za-z_]\w*=/.test(o)) continue;   // an assignment: the name rule below reads it
+        break;
+      }
+    }
+    if (w === 'exec') for (let j = i + 1; j < ws.length && ws[j].startsWith('-'); j++) { if (/^-[^-]*c/.test(ws[j])) found.push(`exec ${ws[j]}`); if (/^-[^-]*a$/.test(ws[j])) j++; }
+    if (base === 'setpriv') for (let j = i + 1; j < ws.length; j++) if (ws[j].length >= 7 && longOf(ws[j], 'reset-env')) found.push(`setpriv ${ws[j]}`);
+    if (ENV_CLEARERS.has(base)) found.push(base);
+    if (/HOME|SHLVL|ZDOTDIR/.test(w)) {
+      const a = w.match(/^(HOME|SHLVL|ZDOTDIR)=(.*)$/);
+      if (!(a && keepsRoadShut(a[1], a[2]))) found.push(`the name in ${w}`);
+    }
+  }
+  return found;
+};
+// a text that names bash or zsh: a word whose last component is one (an argv0's leading `-` and an option glued before it, as env's
+// `-Sbash` or `--split-string=zsh`, taken off), or an expansion of a parameter that holds a shell's path
+const namesStartupShell = (text) => /\$\{?(?:SHELL|BASH|ZSH_NAME|ZSH_ARGZERO|0)(?![A-Za-z0-9_])/.test(String(text)) || clearedWords(text).some((w) => ['bash', 'rbash', 'zsh'].includes(wordBase(w.replace(/^--[\w-]*=/, '').replace(/^-[^-/]*S(?=.)/, '')).replace(/^-/, '')));
+// a start of a shell the text need not name: a road wherever it stands
+const shellStarterSpellings = (text) => {
+  const found = [];
+  const ws = clearedWords(text);
+  for (let i = 0; i < ws.length; i++) {
+    const base = wordBase(ws[i]);
+    if (SHELL_STARTERS.has(base)) found.push(base);
+    if (base === 'sudo' || base === 'systemd-run') {
+      for (let j = i + 1; j < ws.length && ws[j].startsWith('-') && ws[j] !== '--'; j++) {
+        const o = ws[j];
+        const long = base === 'sudo' ? ['shell', 'login'] : ['shell'];
+        if (o.startsWith('--')) { if (long.some((n) => longOf(o, n))) found.push(`${base} ${o}`); continue; }
+        const letters = base === 'sudo' ? 'si' : 'S';
+        const valued = base === 'sudo' ? 'ughpCDrtTRU' : 'pEMuHG';
+        for (let k = 1; k < o.length; k++) {
+          if (letters.includes(o[k])) { found.push(`${base} ${o}`); break; }
+          if (valued.includes(o[k])) { if (k === o.length - 1) j++; break; }
+        }
+      }
+    }
+  }
+  return found;
+};
+// a bash started as a login or interactive shell, which reads its profile or ~/.bashrc by HOME: a road under no HOME of a world
+const loginSpellings = (text) => {
+  const found = [];
+  const ws = clearedWords(text);
+  for (let i = 0; i < ws.length; i++) {
+    const w = ws[i];
+    const base = wordBase(w);
+    if (base === '-bash' || base === '-rbash') found.push(base);
+    if (base === 'bash' || base === 'rbash') {
+      for (let j = i + 1; j < ws.length && /^[-+]/.test(ws[j]); j++) {
+        const o = ws[j];
+        if (o === '--login' || o === '--rcfile' || o === '--init-file' || /^-[^-]*[li]/.test(o)) found.push(`${base} ${o}`);
+        if (['--rcfile', '--init-file', '-O', '+O', '-o', '+o'].includes(o)) j++;   // its value word
+      }
+    }
+    if (w === 'exec') {
+      for (let j = i + 1; j < ws.length && ws[j].startsWith('-'); j++) {
+        if (/^-[^-]*l/.test(ws[j])) found.push(`exec ${ws[j]}`);
+        if (/^-[^-]*a$/.test(ws[j])) { if ((ws[j + 1] || '').startsWith('-')) found.push(`exec ${ws[j]} ${ws[j + 1]}`); j++; }
+      }
+    }
+    if (base === 'env') {
+      for (let j = i + 1; j < ws.length && ws[j].startsWith('-'); j++) {
+        if ((ws[j] === '-a' || (longOf(ws[j], 'argv0') && !ws[j].includes('='))) && (ws[j + 1] || '').startsWith('-')) found.push(`env ${ws[j]} ${ws[j + 1]}`);
+        else if (/^--a[a-z0-9]*=-/.test(ws[j])) found.push(`env ${ws[j]}`);
+      }
+    }
+  }
+  return found;
+};
+// the commands a leg may run though they clear the environment before a shell, each with the row that runs it, its cwd in the sixth
+// pass's world and why no shell it starts reads a startup file of the account's (measured by the thirty-third commit's test)
+const CLEARED_LEGS = new Map([
+  ["env -i SHLVL=1 'BASH_FUNC_c%%=() { cp ../base/report.md report.md; }' /usr/bin/bash -c c", ['R6V-F-env-i', 'nad', 'SHLVL=1 inside the cleared environment: bash counts itself nested, takes no rshd branch and reads no startup file']],
+  ["e=echo; env -i $e 'cp ../base/report.md report.md' | bash", ['S8-wp-env-i', 'nad', "the environment cleared is echo's; the bash reading the pipe is the leg shell's child and inherits its environment"]],
+  ["printf '%s\\n' 'cp ../base/report.md report.md' > ../scratch/.zshenv; ZDOTDIR=../scratch zsh -c :", ['RT-zshenv-zdotdir', 'nad', "ZDOTDIR is the world's scratch/, where the row wrote the .zshenv zsh reads"]],
+  ["printf '%s\\n' 'cp ../base/report.md report.md' > ../scratch/.zshenv; HOME=../scratch zsh -c :", ['RT-zshenv-home', 'nad', "HOME is the world's scratch/, where the row wrote the .zshenv zsh reads"]],
+  ["mkdir -p ../scratch/z; printf 'cp ../base/report.md report.md\\n' > ../scratch/z/.zshrc; ZDOTDIR=../scratch/z zsh -i -c true", ['RT-zsh-zdotdir-i', 'nad', "ZDOTDIR is a directory under the world's scratch/, where the row wrote the .zshrc zsh reads"]],
+  ["mkdir -p ../scratch/h; printf 'cp ../base/report.md report.md\\n' > ../scratch/h/.bash_profile; HOME=$PWD/../scratch/h bash -l -c true", ['RT-bash-login-home', 'nad', "HOME is a directory under the world's scratch/, where the row wrote the .bash_profile the login bash reads"]],
+  ["script -qc 'cp ../base/report.md report.md' /dev/null", ['RT-script-wrapper', 'nad', "script runs its command under $SHELL, else /bin/sh; the world's environment names no SHELL", 'script']],
+  ['script -qc true report.md', ['RT-script-typescript', 'nad', "script runs its command under $SHELL, else /bin/sh; the world's environment names no SHELL", 'script']],
+  ['tmux -L rompguardtest new -d cp ../base/report.md report.md; while tmux -L rompguardtest has-session 2>/dev/null; do sleep 0.1; done', ['RT-tmux-new', 'nad', "tmux runs its command under the passwd entry's shell, with the world's HOME", 'tmux']],
+]);
+// the reader's verdict on one spawn: null, or the text and the spellings by which a shell it starts may read the account's startup files
+const clearedRoad = (cmd, args, env, input) => {
+  if (String(cmd) === process.execPath) return null;   // node runs the hook or this file, whose own legs meet this wrapper there
+  const strs = (Array.isArray(args) ? args : []).filter((a) => typeof a === 'string');
+  const isText = (a) => /[\s;&|]/.test(a);
+  const noWorldHome = !env || !env.HOME || ACCOUNT_HOMES.has(path.resolve(env.HOME));
+  for (const t of [[String(cmd), ...strs.filter((a) => !isText(a))].join(' '), ...strs.filter(isText), ...(typeof input === 'string' && input ? [input] : [])]) {
+    if (CLEARED_LEGS.has(t)) continue;
+    const starts = shellStarterSpellings(t);
+    if (starts.length) return { text: t, spellings: starts };
+    const clears = clearingSpellings(t);
+    if (clears.length && namesStartupShell(t)) return { text: t, spellings: clears };
+    const login = noWorldHome ? loginSpellings(t) : [];
+    if (login.length) return { text: t, spellings: login };
+  }
+  return null;
+};
+const CLEARED_THROW = ({ text, spellings }) => `THE CLEARED ENVIRONMENT: a leg's command clears or rewrites the environment before it starts bash or zsh, starts a shell it need not name, or starts bash as a login or interactive shell under no HOME of a world, so that shell may read a startup file of the account's (${spellings.join(', ')}): ${JSON.stringify(text).slice(0, 300)}; give the shell its keep-out in the command itself (SHLVL=1 for bash, a world's HOME or a ZDOTDIR for zsh) and list the command in CLEARED_LEGS, whose test runs it under strace`;
 // THE LIVE-VALUE CHECK (round 5): the spawnSync every leg of this file calls. A shell the probe declined throws by name, so a leg
 // written outside shellsFor cannot run that shell in silence, however its list is spelled; `table` and `raw` are parameters so
-// the wrapper is pinned in-process against a synthetic table. It hands every spawn the options NO STARTUP FILE OF THE ACCOUNT'S gives.
+// the wrapper is pinned in-process against a synthetic table. It hands every spawn the options NO STARTUP FILE OF THE ACCOUNT'S gives,
+// and throws by name for a spawn THE PROBE'S RUN or THE CLEARED ENVIRONMENT refuses.
 const guardedSpawn = (table, raw) => (cmd, ...rest) => {
   if (Object.hasOwn(table, cmd) && !probeOk(table, cmd)) throw new Error(`a real-shell leg ran ${cmd} outside the probe: real ${cmd} ${probeWhy(table, cmd)}; ask shellsFor first`);
-  const [args, opts] = rest.length && !Array.isArray(rest[0]) && rest[0] !== undefined ? [[], rest[0]] : rest;   // spawnSync(cmd, [args], [options])
+  const [args, opts] = splitSpawnArgs(rest);   // spawnSync(cmd, [args], [options])
+  refusePipelessProbe(cmd, args, opts);
+  const road = clearedRoad(cmd, args, opts && opts.env ? opts.env : process.env, opts && opts.input);
+  if (road) throw new Error(CLEARED_THROW(road));
   return raw(cmd, args, withoutAccountStartup(opts));
 };
 const spawnSync = guardedSpawn(SHELL_PROBE, _spawnSync);
@@ -7857,7 +8046,11 @@ const safeWitness = (witness) => typeof witness === 'string' && SAFE_WITNESS.tes
 const WITNESS_SPELLING = (witness) => `THE REFUSING PROGRAM's witness is an absolute path of safe characters ending in a plain file name, spelled bare into the probe: ${JSON.stringify(witness)}`;
 // the probe of `cmd` for the witness at `witness`: the copy replaced by the witness's touch, the witness spelled twice so a suffix the row
 // glues onto the copy's target glues onto the second operand and the first is the witness as spelled (THE REFUSING PROGRAM, (iii))
-const probeOf = (cmd, witness) => cmd.replace(WRITE_SPELLING, () => `touch ${witness} ${witness}`);
+const probeOf = (cmd, witness) => {
+  const probe = cmd.replace(WRITE_SPELLING, () => `touch ${witness} ${witness}`);
+  if (probe !== cmd) PROBE_TEXTS.add(probe);   // THE PROBE'S RUN: a spawn that runs it needs the fourth pipe
+  return probe;
+};
 // the witness and every entry of its directory named with the witness's name as a prefix (a glued second operand), unlinked. touch makes
 // regular files alone, so an entry of that name that is anything else (a directory, a link) is none the probe made: the call throws
 // naming it and unlinks nothing, and nothing is removed recursively (the thirty-second commit; a witness of a bad spelling throws too)
@@ -8516,7 +8709,7 @@ test("round 6, fifth commit, the rows: the parameter's value joins a default wor
       // (6) THE EXPORTED FUNCTION
       ['R6V-F-env-at', 'nad', `env 'BASH_FUNC_c%%=() { cp "$@"; }' bash -c 'c ${CP.slice(3)}'`, A, 'name'],   // round 6's sixth commit (THE POSITIONAL VALUE): the call replays the body with its operands, so the copy is refused by name (as split before)
       ['R6V-F-env-literal', 'nad', `env 'BASH_FUNC_c%%=() { ${CP}; }' bash -c c`, A, 'name'],
-      ['R6V-F-env-i', 'nad', `env -i 'BASH_FUNC_c%%=() { ${CP}; }' /usr/bin/bash -c c`, A, 'name'],
+      ['R6V-F-env-i', 'nad', `env -i SHLVL=1 'BASH_FUNC_c%%=() { ${CP}; }' /usr/bin/bash -c c`, A, 'name'],   // round 7's thirty-third commit: SHLVL=1 in the cleared environment, so the bash it starts takes no rshd branch and reads no ~/.bashrc of the account's (THE CLEARED ENVIRONMENT)
       ['R6V-F-env-piped', 'nad', `echo c | env 'BASH_FUNC_c%%=() { ${CP}; }' bash`, A, 'name'],
       ['R6V-F-env-s', 'nad', `env 'BASH_FUNC_c%%=() { ${CP}; }' bash -s <<< c`, BZ, 'name'],
       ['R6V-F-env-shadow-cat', 'nad', `env 'BASH_FUNC_cat%%=() { command cp "$@"; }' bash -c 'cat ${CP.slice(3)}'`, A, 'name'],
@@ -10722,6 +10915,195 @@ test("round 7 of fork PR #780 review, thirty-second commit, NO STARTUP FILE OF T
       assert.ok(sourced(own).includes(path.join(home, '.zshenv')), `a zsh under a ZDOTDIR of its own reads the .zshenv there: ${JSON.stringify(sourced(own))}`);
     } finally { fs.rmSync(home, { recursive: true, force: true }); }
   }
+});
+
+test("round 7 of fork PR #780 review, thirty-third commit, THE CLEARED ENVIRONMENT in-process: the reader finds every spelling that clears or rewrites the environment before a bash or zsh (env's clearing operands in every form, exec -c, setpriv --reset-env, a word naming HOME, SHLVL or ZDOTDIR but in a read or an assignment that keeps its road shut, a program that resets the environment for its command), every start of a shell the text need not name (su, tmux and their kin, sudo -s and -i, systemd-run -S), and under no HOME of a world a bash started as a login or interactive shell; a text holding none, or naming no bash or zsh beside a clear, is no road; the wrapper throws by name for a road, whether the text is an argument, the standard input or the spawn's own words, and passes a listed command, a world's HOME and a spawn of node; and every listed command names a row of this file", () => {
+  const acct = [...ACCOUNT_HOMES][0];
+  const WORLD = { PATH: '/bin', HOME: '/w/home' };
+  const NONE = { PATH: '/bin' };
+  const road = (text, env = WORLD) => { const r = clearedRoad('x', ['-c', text], env); return r ? r.spellings : null; };
+  // [text, a spelling the road names]: each clears or rewrites the environment before a shell the text names
+  const CLEARS = [
+    ['env -i bash -c x', 'env -i'], ['env - bash -c x', 'env -'], ['env --ignore-environment bash -c x', 'env --ignore-environment'],
+    ['env --ignore-env bash -c x', 'env --ignore-env'], ['env --i zsh -c x', 'env --i'], ['env -iv bash -c x', 'env -iv'],
+    ['env -vi /usr/bin/zsh -c x', 'env -vi'], ['env -0i bash -c x', 'env -0i'], ['/usr/bin/env -i /usr/bin/bash -c x', 'env -i'],
+    ['command env -i bash -c x', 'env -i'], ["bash -c 'env -i zsh -c x'", 'env -i'], ['env FOO=1 -i bash -c x', 'env -i'],
+    ['env -u HOME zsh -c x', 'env -u HOME'], ['env -uSHLVL bash -c x', 'env -u SHLVL'], ['env -vuZDOTDIR zsh -c x', 'env -u ZDOTDIR'],
+    ['env --unset=ZDOTDIR zsh -c x', 'env --unset=ZDOTDIR ZDOTDIR'], ['env --unset SHLVL bash -c x', 'env --unset SHLVL'], ['env --un=HOME zsh -c x', 'env --un=HOME HOME'],
+    ["env -S 'bash -c x'", 'env -S'], ["env -vS'bash -c x'", 'env -vSbash'], ["env --split-string='bash -c x'", 'env --split-string=bash'],
+    ['exec -c bash -c x', 'exec -c'], ['exec -cl bash', 'exec -cl'], ['exec -a sh -c zsh -c x', 'exec -c'],
+    ['unset HOME; zsh -c x', 'the name in HOME'], ['unset -v SHLVL; bash -c x', 'the name in SHLVL'], ['export -n SHLVL; bash -c x', 'the name in SHLVL'],
+    ['typeset +x HOME; zsh -c x', 'the name in HOME'], ['declare +x SHLVL; bash -c x', 'the name in SHLVL'], ['read HOME <<< /x; zsh -c x', 'the name in HOME'],
+    ['printf -v HOME %s /x; zsh -c x', 'the name in HOME'], ['printf -vSHLVL 0; bash -c x', 'the name in -vSHLVL'], [': ${HOME:=/x}; zsh -c x', 'the name in HOME:=/x'],
+    [': ${SHLVL=0}; bash -c x', 'the name in SHLVL=0'], ['HOME= zsh -c x', 'the name in HOME='], ['HOME=$x zsh -c x', 'the name in HOME=$x'],
+    ['HOME=~ bash -c x', 'the name in HOME=~'], [`HOME=${acct} zsh -c x`, `the name in HOME=${acct}`], [`HOME=${acct}/ zsh -c x`, `the name in HOME=${acct}/`],
+    ['HOME=../w zsh -c x', 'the name in HOME=../w'], ['SHLVL=0 bash -c x', 'the name in SHLVL=0'], ['SHLVL= bash -c x', 'the name in SHLVL='],
+    ['SHLVL=x bash -c x', 'the name in SHLVL=x'], ['ZDOTDIR=$HOME zsh -c x', 'the name in ZDOTDIR='], ['export ZDOTDIR=/w/a$b; zsh -c x', 'the name in ZDOTDIR=/w/a$b'],
+    ['setpriv --reset-env bash -c x', 'setpriv --reset-env'], ['setpriv --reset bash -c x', 'setpriv --reset'], ["su -c 'bash -c x' nobody", 'su'],
+    ['sudo bash -c x', 'sudo'], ['sudo -u nobody zsh -c x', 'sudo'], ['runuser -u nobody -- bash -c x', 'runuser'], ['systemd-run --user bash -c x', 'systemd-run'],
+    ['ssh localhost bash -c x', 'ssh'], ["script -qc 'bash -c x' /dev/null", 'script'], ['tmux new -d bash', 'tmux'], ['screen -dm zsh', 'screen'],
+    ['pkexec bash', 'pkexec'], ['doas zsh', 'doas'], ['login -f nobody bash', 'login'], ['machinectl shell bash', 'machinectl'],
+    ["cat <<'EOF' | bash\nenv -i zsh -c x\nEOF", 'env -i'], ['rbash -c "env -i rbash -c x"', 'env -i'],
+    // a shell started by the passwd entry or $SHELL: a road with no shell named
+    ['su nobody', 'su'], ['runuser -u nobody true', 'runuser'], ['login', 'login'], ['ssh localhost', 'ssh'], ['machinectl shell', 'machinectl'],
+    ['script -q /dev/null', 'script'], ['tmux new -d', 'tmux'], ['screen -dm', 'screen'], ['sudo -s', 'sudo -s'], ['sudo -i true', 'sudo -i'],
+    ['sudo -u nobody -s', 'sudo -s'], ['sudo -iu nobody', 'sudo -iu'], ['sudo --login', 'sudo --login'], ['sudo --sh', 'sudo --sh'],
+    ['systemd-run --user -S', 'systemd-run -S'], ['systemd-run --shell', 'systemd-run --shell'],
+    // a shell named through an expansion of a parameter that holds a shell's path
+    ["env -S '${SHELL} -c x'", 'env -S'], ['env -i $SHELL -c x', 'env -i'], ['env -i "$BASH" -c x', 'env -i'], ['env -u HOME ${ZSH_NAME} -c x', 'env -u HOME'], ['exec -c $0 -c x', 'exec -c'],
+  ];
+  // no road: no clearing spelling, or no bash or zsh named
+  const CLEAN = [
+    'env FOO=1 bash -c x', 'env -C /w bash -c x', 'env -C/w/i bash -c x', 'env --chdir /i bash -c x', 'env --chdir=/i bash -c x', 'env -u FOO bash -c x',
+    'env -v bash -c x', 'env -uFOO -v zsh -c x', 'env -i ls', 'env -i x=1', 'exec bash -c x', 'exec -a name bash -c x', 'SHLVL=1 bash -c x',
+    'SHLVL=2 bash -c x', "SHLVL='3' zsh -c x", 'SHLVL=01 bash -c x', 'HOME=/w/home zsh -c x', 'ZDOTDIR=/dev/null zsh -c x', 'ZDOTDIR=/w/z zsh -c x',
+    'echo $HOME; bash -c x', 'echo ${HOME}; zsh -c x', 'echo ${HOME:-x} ${#HOME} ${HOME%/} ${SHLVL:+y} ${ZDOTDIR?}; bash -c x', 'cd ~; bash -c x',
+    "bash -c 'echo $SHLVL'", 'bash --norc -c x', 'bash --noprofile -c x', 'bash -e -c x', 'bash -o pipefail -c x', 'bash -O extglob -c x',
+    'nice bash -c x', 'timeout 5 zsh -c x', 'unset FOO; bash -c x', 'setpriv --reuid=0 bash -c x', 'zsh -l -c x', 'zsh -i -c x', 'dash -l -c x',
+    'unset HOME; dash -c x', 'sudo true', 'sudo -u nobody cp a b', 'sudo -E -H cp a b', 'systemd-run --user -p X=1 true', 'env -u S bash -c x', 'sh -c "env -i sh -c x"',
+    "env -S'cp base/report.md docs/report.md'", "env -S '-u FOO cp base/report.md docs/report.md'", "env -S 'ls -l'", 'env -vSls', 'env -i $x -c y',
+  ];
+  // a bash started as a login or interactive shell: a road under no HOME of a world alone
+  const LOGINS = [
+    ['bash -l -c x', 'bash -l'], ['bash -lc x', 'bash -lc'], ['bash -ic x', 'bash -ic'], ['bash -i -c x', 'bash -i'], ['bash --login -c x', 'bash --login'],
+    ['bash --rcfile /w/r -c x', 'bash --rcfile'], ['bash --init-file /w/r -c x', 'bash --init-file'], ['bash -O extglob -l -c x', 'bash -l'], ['/usr/bin/rbash -l -c x', 'rbash -l'],
+    ['exec -l bash', 'exec -l'], ['exec -a -bash bash', 'exec -a -bash'], ['env -a -bash bash', 'env -a -bash'], ['env --argv0=-bash bash', 'env --argv0=-bash'],
+    ['env --argv0 -bash bash', 'env --argv0 -bash'], ['nice bash -il -c x', 'bash -il'],
+  ];
+  const got = [];
+  const want = [];
+  for (const [text, spelling] of CLEARS) { const r = road(text); got.push([text, r !== null && r.includes(spelling), r]); want.push([text, true, r]); }
+  for (const text of CLEAN) { got.push([text, road(text)]); want.push([text, null]); }
+  for (const text of CLEAN.filter((t) => !/(?:^|[\s;])bash (?:-[^-]*[li]|--login)/.test(t))) { got.push([`${text} (no HOME)`, road(text, NONE)]); want.push([`${text} (no HOME)`, null]); }
+  for (const [text, spelling] of LOGINS) {
+    for (const [what, env] of [['no HOME', NONE], ["the account's HOME", { PATH: '/bin', HOME: acct }]]) { const r = road(text, env); got.push([`${text} (${what})`, r !== null && r.includes(spelling), r]); want.push([`${text} (${what})`, true, r]); }
+    got.push([`${text} (a world's HOME)`, road(text)]);
+    want.push([`${text} (a world's HOME)`, null]);
+  }
+  assert.deepEqual(got, want, 'each spelling a road, each clean text none, each login spelling a road under no HOME of a world alone');
+  // every clearing spelling class the reader has, each named by at least one row above (env's operands, exec, a name, a resetter)
+  const classes = new Set(CLEARS.map(([t, s]) => (shellStarterSpellings(t).length ? 'starter' : s.startsWith('env ') ? 'env' : s.startsWith('exec ') ? 'exec' : s.startsWith('the name in ') ? 'name' : s.startsWith('setpriv ') ? 'setpriv' : 'clearer')));
+  assert.deepEqual([...classes].sort(), ['clearer', 'env', 'exec', 'name', 'setpriv', 'starter'], 'a row for every class of spelling the reader has');
+  assert.deepEqual([...ENV_CLEARERS, ...SHELL_STARTERS].filter((p) => !CLEARS.some(([, s]) => s === p)), [], 'every program the reader names has a row');
+  // the wrapper, over a synthetic raw spawn: throws by name before the spawn for a road, wherever the text stands; passes the rest
+  const calls = [];
+  const guarded = guardedSpawn({ x: true, bash: true }, (...a) => { calls.push(a[1]); return { status: 0 }; });
+  const THROW = /^Error: THE CLEARED ENVIRONMENT: a leg's command clears or rewrites the environment before it starts bash or zsh, starts a shell it need not name, or starts bash as a login or interactive shell under no HOME of a world, so that shell may read a startup file of the account's \(env -i\): "env -i bash -c y"; give the shell its keep-out in the command itself/;
+  assert.throws(() => guarded('x', ['-c', 'env -i bash -c y'], { env: WORLD }), THROW, 'a road in the -c text');
+  assert.throws(() => guarded('x', [], { input: 'env -i bash -c y', env: WORLD }), /^Error: THE CLEARED ENVIRONMENT: .*\(env -i\): "env -i bash -c y"/, 'a road in the standard input');
+  assert.throws(() => guarded('strace', ['-f', 'env', '-i', 'bash', '-c', 'y'], { env: WORLD }), /^Error: THE CLEARED ENVIRONMENT: .*\(env -i\): "strace -f env -i bash -c y"/, "a road in the spawn's own words");
+  assert.throws(() => guarded('bash', ['-l', '-c', 'y'], { env: NONE }), /^Error: THE CLEARED ENVIRONMENT: .*\(bash -l\): "bash -l -c y"/, "a login bash as the leg's own shell under no HOME");
+  assert.throws(() => guarded('bash', ['-c', 'bash -i -c y']), /^Error: THE CLEARED ENVIRONMENT: .*\(bash -i\)/, "a login bash under the inherited environment, whose HOME is the account's");
+  assert.deepEqual(calls, [], 'no refused spawn reached the raw spawn');
+  const listed = [...CLEARED_LEGS.keys()][0];
+  guarded('x', ['-c', listed], { env: WORLD });
+  guarded('bash', ['-l', '-c', 'y'], { env: WORLD });
+  guarded(process.execPath, ['-e', 'env -i bash -c y'], { env: WORLD });
+  guarded('x', ['-c', 'env -i ls'], { env: NONE });
+  assert.deepEqual(calls, [['-c', listed], ['-l', '-c', 'y'], ['-e', 'env -i bash -c y'], ['-c', 'env -i ls']], "a listed command, a login bash under a world's HOME, a spawn of node and a clear before no shell reach the raw spawn");
+  // every listed command names a row of this file and a cwd the sixth pass's world has, with a reason
+  const src = fs.readFileSync(fileURLToPath(import.meta.url), 'utf8');
+  for (const [text, [id, cwd, why]] of CLEARED_LEGS) {
+    assert.ok(src.split('\n').some((l) => l.trimStart().startsWith(`['${id}', `) && !l.includes('CLEARED_LEGS')), `${id}: a row of this file`);
+    assert.ok(['na', 'nas', 'nad', 'nan', 'out'].includes(cwd) && why.length > 20, `${id}: its cwd and its reason`);
+    assert.ok(clearedRoad('x', ['-c', `${text} `], WORLD) !== null, `${id}: its command is a road the reader finds, so its listing is what lets it run`);
+  }
+});
+
+test("round 7 of fork PR #780 review, thirty-third commit, THE CLEARED ENVIRONMENT by execution: every command CLEARED_LEGS lists, run in every present shell over a fresh world from its row's cwd under strace (every process traced, the startup files under the account's home watched), opens none of them, while the instrument sees the roads it watches in a world's home: a bash leg with no SHLVL whose standard input is a socket opens the world's ~/.bashrc, and so does a bash a dash leg starts, a zsh leg opens the world's .zshenv, and SHLVL 1 or zsh's -f shuts each; where strace is absent, or refuses to run in its recorded shape, a NOT RUN line, and any other failure of it reds", () => {
+  const WHAT = 'THE CLEARED ENVIRONMENT by execution';
+  if (!hasProgram('strace')) { console.error(`NOT RUN: real strace is not on this runner, so its evidence leg did not run: ${WHAT}`); return; }
+  const check = spawnSync('strace', ['-f', '-qq', '-o', '/dev/null', 'true'], { encoding: 'utf8', env: { PATH: process.env.PATH }, timeout: 20000 });
+  if (check.status !== 0) {   // a refusal is NOT RUN only in its recorded shape (THE REFUSING PROGRAM's (ii)); any other failure reds
+    assert.ok(REFUSAL_SHAPES.strace.some((shape) => shape.test(String(check.stderr || ''))), `strace fails to trace \`true\` with no refusal recorded for it (exit ${check.status}): ${String(check.stderr || '').slice(0, 300)}`);
+    console.error(`NOT RUN: real strace refuses to run on this runner (${refusalReason(check.stderr)}), so its evidence leg did not run: ${WHAT}`);
+    return;
+  }
+  const w = sixthPassWorld();
+  try {
+    const trace = path.join(w.W, 'trace');
+    // the lines of the trace that open a watched file, every process of the run traced (-f)
+    const opened = (watched, argv, cwd, env) => {
+      fs.rmSync(trace, { force: true });
+      const r = spawnSync('strace', ['-f', '-qq', '-e', 'trace=open,openat,openat2', '-e', 'signal=none', '-o', trace, ...watched.flatMap((p) => ['-P', p]), ...argv], { cwd, input: '', encoding: 'utf8', env, timeout: 30000 });
+      assert.ok(fs.existsSync(trace), `strace wrote its trace: ${argv.join(' ').slice(0, 200)}: ${String(r.stderr || '').slice(0, 300)}`);
+      return fs.readFileSync(trace, 'utf8').split('\n').filter((l) => /\bopen(?:at2?)?\(/.test(l));
+    };
+    const shells = shellsFor(['bash', 'zsh', 'dash'], WHAT);
+    // the roads, seen in a world's home (never the account's): a file there that each shell opens by the road it watches
+    w.build();
+    const worldFiles = ['.bashrc', '.zshenv'].map((n) => path.join(w.HOME, n));
+    for (const f of worldFiles) fs.writeFileSync(f, ':\n');
+    const E = { PATH: process.env.PATH, HOME: w.HOME };
+    const controls = [];
+    const want = [];
+    const control = (what, argv, env, opens) => { controls.push([what, opened(worldFiles, argv, w.HOME, env).length > 0]); want.push([what, opens]); };
+    if (shells.includes('bash')) {
+      control('a bash leg, no SHLVL, its standard input a socket', ['bash', '-c', 'true'], E, true);
+      control('a bash leg, SHLVL 1', ['bash', '-c', 'true'], { ...E, SHLVL: '1' }, false);
+      if (shells.includes('dash')) control('a bash a dash leg starts, no SHLVL', ['dash', '-c', 'bash -c true'], E, true);
+    }
+    if (shells.includes('zsh')) {
+      control('a zsh leg', ['zsh', '-c', 'true'], E, true);
+      control('a zsh leg started with -f', ['zsh', '-f', '-c', 'true'], E, false);
+    }
+    assert.deepEqual(controls, want, "the instrument sees each road it watches, in a world's home");
+    // every listed command, in every present shell, the account's startup files watched; the watch sees an open of each of them (head
+    // opens each file and reads none of it), so a zero below is a measurement of these files
+    const accountFiles = [...ACCOUNT_HOMES].flatMap((h) => ACCOUNT_STARTUP_NAMES.map((n) => path.join(h, n)));
+    const measure = (argv, cwd, env) => opened(accountFiles, argv, cwd, env).map((l) => l.replace(/^\d+ /, ''));
+    const headOpened = new Set(measure(['head', '-c', '0', '--', ...accountFiles], w.W, { PATH: process.env.PATH }).map((l) => (l.match(/^open(?:at2?)?\((?:AT_FDCWD, )?"([^"]+)"/) || [])[1]));
+    assert.deepEqual(accountFiles.filter((f) => !headOpened.has(f)), [], "the watch sees an open of every startup file under the account's home");
+    const got = [];
+    const none = [];
+    let lacking = 0;
+    for (const [text, [id, cwd, , program]] of CLEARED_LEGS) {
+      if (program && !hasProgram(program)) { console.error(`NOT RUN: real ${program} is not on this runner, so its evidence leg did not run: ${WHAT}, ${id}`); lacking++; continue; }
+      for (const shell of shells) {
+        w.build();
+        got.push([id, shell, measure([shell, ...shellArgv(shell, text)], w.cwds[cwd], w.env)]);
+        none.push([id, shell, []]);
+      }
+    }
+    assert.deepEqual(got, none, "no listed command opens a startup file under the account's home, in any present shell");
+    assert.deepEqual(got.map(([id, shell]) => `${id} ${shell}`), [...CLEARED_LEGS.values()].filter(([, , , p]) => !p || hasProgram(p)).flatMap(([id]) => shells.map((shell) => `${id} ${shell}`)), 'each listed command measured in every present shell');
+    console.log(`# THE CLEARED ENVIRONMENT by execution: ${CLEARED_LEGS.size - lacking} of ${CLEARED_LEGS.size} listed commands in ${shells.join(', ')} (${lacking} for a program this box lacks), ${accountFiles.length} files under the account's home watched, ${controls.length} controls`);
+  } finally { w.rm(); }
+});
+
+test("round 7 of fork PR #780 review, thirty-third commit, THE PROBE'S RUN: a spawn handed a text probeOf made throws by name unless it carries a fourth pipe, the parse check's read alone exempt, through this file's spawnSync wrapper, its raw binding and its spawn, before any process starts; a text probeOf did not make, and a command with no copy for probeOf to replace, is no probe; and child_process's two spawns are bound only here, each behind the check", () => {
+  const witness = path.join(os.tmpdir(), 'q33-probe-run-never-made');   // no call below runs a probe
+  const probe = probeOf('cp ../base/report.md report.md', witness);
+  assert.ok(PROBE_TEXTS.has(probe), 'probeOf records the probe it makes');
+  assert.equal(probeOf('echo no copy here', witness), 'echo no copy here');
+  assert.ok(!PROBE_TEXTS.has('echo no copy here'), 'a command with no copy to replace is recorded as no probe');
+  const calls = [];
+  const guarded = guardedSpawn({ bash: true, zsh: true, dash: true }, (...a) => { calls.push([a[0], a[1]]); return { status: 0 }; });
+  const THROW = /^Error: THE PROBE'S RUN: a probe of THE REFUSING PROGRAM ran without the fourth pipe, so the run could end before a command its program detached had exited; run it through runProbe: /;
+  const refused = [
+    ['three pipes', () => guarded('bash', shellArgv('bash', probe), { input: '', stdio: ['pipe', 'pipe', 'pipe'] })],
+    ['no stdio given', () => guarded('zsh', shellArgv('zsh', probe), { input: '' })],
+    ['a fourth descriptor that is no pipe', () => guarded('dash', shellArgv('dash', probe), { stdio: ['pipe', 'pipe', 'pipe', 'ignore'] })],
+    ['a shell by its path, its options otherwise', () => guarded('/usr/bin/bash', ['-c', probe])],
+    ['the probe as an operand of a program', () => guarded('perf', ['stat', 'bash', '-c', probe])],
+    ["the parse check's words for another shell", () => guarded('dash', parseArgv('bash', probe))],
+  ];
+  for (const [what, call] of refused) assert.throws(call, THROW, what);
+  assert.deepEqual(calls, [], 'no refused spawn reached the raw spawn');
+  guarded('bash', shellArgv('bash', probe), { input: '', stdio: ['pipe', 'pipe', 'pipe', 'pipe'] });
+  guarded('bash', parseArgv('bash', probe), { input: '' });
+  guarded('zsh', parseArgv('zsh', probe));
+  guarded('bash', ['-c', 'true']);
+  assert.deepEqual(calls.map(([c]) => c), ['bash', 'bash', 'zsh', 'bash'], "the fourth pipe, the parse check in each shell's words and a text that is no probe reach the raw spawn");
+  // the raw binding and the async spawn throw before starting a process
+  assert.throws(() => _spawnSync('bash', shellArgv('bash', probe), { stdio: ['pipe', 'pipe', 'pipe'] }), THROW, 'the raw binding');
+  assert.throws(() => spawn('bash', shellArgv('bash', probe)), THROW, 'the async spawn');
+  // the bindings, by the source: one import from child_process, each of its two names used once more, by its checked wrapper
+  const src = fs.readFileSync(fileURLToPath(import.meta.url), 'utf8');
+  const RS = ['raw', 'SpawnSync'].join('');
+  const R = ['raw', 'Spawn'].join('');
+  assert.deepEqual(src.match(/^import [^\n]* from 'node:child_process';$/gm), [`import { spawn as ${R}, spawnSync as ${RS} } from 'node:child_process';`], "this file's one import of child_process binds its two spawns under the raw names");
+  for (const name of [RS, R]) assert.equal((src.match(new RegExp(`\\b${name}\\b`, 'g')) || []).length, 2, `${name}: the import and its checked wrapper's call alone`);
 });
 
 // ── round 7 of fork PR #780 review, seventeenth commit (2026-09-23): the reviewer's correctness-1, correctness-2 and extra6-2 ─────────
