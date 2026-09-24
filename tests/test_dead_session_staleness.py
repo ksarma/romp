@@ -153,6 +153,8 @@ LEGACY = "legacy:list"                               # the key a whitespace-list
 # the real builders, handlers and folds (the reviewer's round-3 refuters' probe scenarios, ported)
 R_US, R_B, R_C, R_HUB, R_F = "TESTHOST-us", "TESTHOST-b", "TESTHOST-c", "TESTHOST-hub", "TESTHOST-f"
 R_VIA_B, R_VIA_F = "via:" + R_HUB + "/" + R_B, "via:" + R_HUB + "/" + R_F   # the hub's word about B, and about the far host F
+R_HUB2, R_HUB_DECL = "TESTHOST-hub2", "TESTHOST-hub-hostname"   # a second hub; the name the hub declares before our dial
+R_VIA_F2, R_VIA_F_DECL = "via:" + R_HUB2 + "/" + R_F, "via:" + R_HUB_DECL + "/" + R_F   # their words about F (the thirty-first commit)
 ROAD_SIDS = {                                        # private synthetic sids, the probe's
     "other": "a11f0001-1111-4222-8333-000000000101",     # a session on B (or on F), live at its host's last answered listing
     "goss": "a11f0001-1111-4222-8333-000000000102",      # a session started on B while our kernel holds B down: the hub names it
@@ -1025,7 +1027,12 @@ class ReaderFollowsTheWriter(unittest.TestCase):
     cached word through a hub our kernel then holds down (V7), each rule 5 under the twenty-ninth commit's arm and
     cannot-determine by the arm since; residual (3c), a session whose mail landed on a cached exchange before our bus
     restarted, which still answers rule 5; and the witness of cost (f), a host held down after a cached exchange that
-    never returns.
+    never returns. Since the thirty-first commit (the reviewer's verifier at the thirtieth, by execution) the hub's
+    restart: a far host's cached word through a hub, carrying its session's mail here, held on the hub's row across
+    the hub's bus restart (W1), beside a second hub's older answered word about the host and then released by our own
+    bus's restart, residual (3c)'s far-host face (W2), and across the restart of a hub known here only by the name it
+    declares and this bus's fold of it under the alias; each rule 5 at the thirtieth commit at the hub's restart and
+    cannot-determine by the arm since, W1 and the declared-name road until the far host answers the restarted hub.
     The control isolates the old path: with the bus's file removed and a line at STATE/remote-sids, the
     judge's read path until 2026-09-22, the reader answers cannot-determine, so the read MOVED to the
     bus's file rather than widening to both, and a reverted read fails this pin by its own message. The
@@ -1786,7 +1793,7 @@ import json, os, shutil, sys, time
 from pathlib import Path
 tests_dir, bin_dir, others_root = sys.argv[1:4]
 S = json.loads(sys.argv[4])
-US, B, C, HUB, F = sys.argv[5:10]
+US, B, C, HUB, F, HUB2, HUB_DECL = sys.argv[5:12]
 sys.path.insert(0, tests_dir)
 from romp_load import load_source
 jd = load_source("romp_judge_roads", os.path.join(bin_dir, "romp-judge"))
@@ -2234,8 +2241,96 @@ us = load_bus("us2")
 notify(us, C, True)
 dial(c, C, us, US)
 step(road, "restartedCHeard", us, nobody=S["nobody"], csid=S["csid"])
+# THE HUB'S RESTART (round 4 of fork PR #897, the thirty-first commit; the reviewer's verifier at the thirtieth, by
+# execution): F, not linked here, behind the hub; C linked and answered, vouching. F's kernel blinks, a session (new)
+# starts on F and mails OUR session through the hub on F's cached exchange; the hub's exchange relays it here beside F's
+# cached word; then the hub's BUS restarts (a fresh module over its own root: a new bus id, nothing heard) and its first
+# exchange here omits F; F's next exchange with the restarted hub is over its cache; then F's listing answers
+def far_behind_hub(road, hub_name):                # F behind the hub, the hub relaying to us under hub_name, C vouching
+    us = fresh_us(); f, hub, c = other(road, "f"), other(road, "hub"), other(road, "c")
+    LISTINGS["f"], LISTINGS["hub"], LISTINGS["c"], LISTINGS["us"] = [S["other"]], [S["hubsid"]], [S["csid"]], [S["web"]]
+    notify(us, HUB, True); notify(us, C, True)
+    with As(hub):
+        hub.peer_update({"host": US, "port": 50001, "up": True})
+        hub.peer_update({"host": F, "port": 50003, "up": True})
+    with As(f):
+        f.peer_update({"host": HUB, "port": 50002, "up": True})
+    dial(c, C, us, US)
+    dial(hub, hub_name, us, US)                    # the hub learns our roster from our response
+    dial(f, F, hub, HUB)                           # F learns it through the hub's gossip; the hub hears F answered
+    dial(hub, hub_name, us, US)                    # the hub gossips F's answered word here
+    return us, f, hub, c
+def restart_hub(road, hub_name):                   # the hub's bus restarts over its own root and dials us first
+    hub = load_bus("hub", Path(others_root) / road / "hub")
+    LISTINGS["hub"] = [S["hubsid"]]
+    with As(hub):
+        hub.peer_update({"host": US, "port": 50001, "up": True})
+        hub.peer_update({"host": F, "port": 50003, "up": True})
+    return hub, dial(hub, hub_name, us, US)
+road = "farCachedHubRestarts"
+us, f, hub, c = far_behind_hub(road, HUB)
+step(road, "farAnswered", us, newOnFar=S["new"], nobody=S["nobody"])
+LISTINGS["f"] = None
+out["roads"][road] = {"park": park(f, S["new"], "px-hub1")}
+out["roads"][road]["landingAtHub"] = mail_dial(f, F, hub, HUB)
+out["roads"][road]["landingHere"] = mail_dial(hub, HUB, us, US)
+step(road, "relayLanded", us, newOnFar=S["new"], nobody=S["nobody"])
+hub, out["roads"][road]["restartDial"] = restart_hub(road, HUB)
+step(road, "hubRestarted", us, newOnFar=S["new"], nobody=S["nobody"], other=S["other"])
+dial(hub, HUB, us, US)
+step(road, "hubRestartedAgain", us, newOnFar=S["new"], nobody=S["nobody"])
+dial(us, US, hub, HUB)                             # OUR dial to the restarted hub: its response omits F too
+step(road, "ourDialToRestartedHub", us, newOnFar=S["new"], nobody=S["nobody"])
+dial(f, F, hub, HUB); dial(hub, HUB, us, US)       # F, still blinking, exchanges with the restarted hub over its cache
+step(road, "farCachedAtRestartedHub", us, newOnFar=S["new"], nobody=S["nobody"])
+LISTINGS["f"] = [S["other"], S["new"]]
+dial(f, F, hub, HUB)                               # F's answering exchange with the restarted hub: the first half
+step(road, "farAnswersHub", us, newOnFar=S["new"], nobody=S["nobody"])
+dial(hub, HUB, us, US)                             # the hub's next exchange here: the release
+step(road, "released", us, newOnFar=S["new"], nobody=S["nobody"])
+# a second hub's OLDER answered word about F (before the blink) stands beside the first hub's cached word; the first
+# hub's bus restarts; then OUR bus restarts, the kernel re-notifies every link, and C and both hubs are heard
+road = "secondHubFirstRestarts"
+us, f, hub, c = far_behind_hub(road, HUB)
+hub2 = other(road, "hub2")
+LISTINGS["hub2"] = []
+notify(us, HUB2, True)
+with As(f):
+    f.peer_update({"host": HUB2, "port": 50004, "up": True})
+dial(f, F, hub2, HUB2); dial(hub2, HUB2, us, US)   # F answered, through the second hub too
+LISTINGS["f"] = None
+out["roads"][road] = {"park": park(f, S["new"], "px-hub2")}
+out["roads"][road]["landingAtHub"] = mail_dial(f, F, hub, HUB)
+out["roads"][road]["landingHere"] = mail_dial(hub, HUB, us, US)
+dial(hub2, HUB2, us, US)
+step(road, "relayLanded", us, newOnFar=S["new"], nobody=S["nobody"])
+hub, out["roads"][road]["restartDial"] = restart_hub(road, HUB)
+dial(hub2, HUB2, us, US)
+step(road, "hubRestarted", us, newOnFar=S["new"], nobody=S["nobody"], other=S["other"])
+us = load_bus("us2")                               # our bus restarts over the same root: the held word was this process's
+notify(us, HUB, True); notify(us, HUB2, True); notify(us, C, True)
+dial(c, C, us, US); dial(hub, HUB, us, US); dial(hub2, HUB2, us, US)
+step(road, "ourBusRestarted", us, newOnFar=S["new"], nobody=S["nobody"], other=S["other"])
+# the hub known here only by the name it DECLARES (this bus has not dialed its alias yet): it relays F's cached word and
+# the new session's mail; its bus restarts and dials us under that name; then OUR dial to the alias folds it there, and
+# the declared-name row is forgotten (_drop_peer_name_dupes); then F answers the restarted hub
+road = "declaredHubRestartsThenFolds"
+us, f, hub, c = far_behind_hub(road, HUB_DECL)
+LISTINGS["f"] = None
+out["roads"][road] = {"park": park(f, S["new"], "px-hub3")}
+out["roads"][road]["landingAtHub"] = mail_dial(f, F, hub, HUB)
+out["roads"][road]["landingHere"] = mail_dial(hub, HUB_DECL, us, US)
+step(road, "relayLanded", us, newOnFar=S["new"], nobody=S["nobody"])
+hub, out["roads"][road]["restartDial"] = restart_hub(road, HUB_DECL)
+step(road, "hubRestarted", us, newOnFar=S["new"], nobody=S["nobody"], other=S["other"])
+out["roads"][road]["foldDial"] = dial(us, US, hub, HUB)
+out["roads"][road]["heardAfterFold"] = sorted(h for h, st in us.PEER_STATE.items() if st.get("seenAt"))
+step(road, "folded", us, newOnFar=S["new"], nobody=S["nobody"], other=S["other"])
+LISTINGS["f"] = [S["other"], S["new"]]
+dial(f, F, hub, HUB); dial(us, US, hub, HUB)
+step(road, "released", us, newOnFar=S["new"], nobody=S["nobody"])
 print(json.dumps(out))
-""", HERE, BIN, str(others), json.dumps(ROAD_SIDS), R_US, R_B, R_C, R_HUB, R_F],
+""", HERE, BIN, str(others), json.dumps(ROAD_SIDS), R_US, R_B, R_C, R_HUB, R_F, R_HUB2, R_HUB_DECL],
                              capture_output=True, text=True, env=full, cwd=str(home), timeout=120)
         assert out.returncode == 0, "%s roads child failed: %s" % (shape, out.stderr[-2000:])
         got = json.loads(out.stdout.strip().splitlines()[-1])
@@ -3127,7 +3222,9 @@ print(json.dumps(out))
 
     def test_the_release_is_the_sources_next_answering_exchange(self):
         """The release (the ruling: no new event and no new writer state; the row's bit is replaced by the source's next
-        answering exchange, which both recorders record). B_cached: B answered, blinked (its request and our dial's
+        answering exchange, which both recorders record; the population's one piece of writer state since the
+        thirty-first commit, a hub's held word, is released by the same event, the hub's word naming the far host
+        again: the hub-restart witnesses below). B_cached: B answered, blinked (its request and our dial's
         response each serving the cache), answered again naming the session: rule 5 for a sid nothing names. B_older_peer:
         B's payloads lacking the field, then its request carrying it: rule 5. Both read so before the arm too; a writer
         that kept a row's unanswered bit across an answering exchange reds here."""
@@ -3209,8 +3306,9 @@ print(json.dumps(out))
         link state, and a hub never forgets a far host's PEER_STATE (the only pop is _drop_peer_name_dupes), so it keeps
         gossiping F's last word with viaAnswered False. Our via row stays reachable (the hub's link) and unanswered, and
         the arm holds every sid nothing names at cannot-determine, across the hub's exchanges, until F answers the hub
-        again, the hub restarts, or this bus holds F directly and F's own answering exchange lands here. No false settle.
-        Until the twenty-ninth commit, rule 5 here."""
+        again and the hub's next exchange reaches here, or this bus holds F directly and F's own answering exchange lands
+        here (while F's row speaks), or this bus restarts; since the thirty-first commit the hub's restart is no release
+        (the hub-restart witnesses below). No false settle. Until the twenty-ninth commit, rule 5 here."""
         via = UNANSWERED(R_VIA_F + " (listing unanswered)")
         for shape, got in self.roads.items():
             with self.subTest(shape=shape):
@@ -3403,6 +3501,112 @@ print(json.dumps(out))
                                  "[true, 5, no-reachable-host-names-it] each time)")
                 self.assertEqual(self._road(got, "heldDownForGood", "restartedCHeard", "nobody"), RULE_5,
                                  "the restart's carry makes B's row not heard, and C, heard again, vouches: rule 5")
+
+    # ── THE HUB'S RESTART (round 4 of fork PR #897, the thirty-first commit; the reviewer's verifier at the thirtieth, by
+    # execution): a hub's silence about a far host is not that host's answer, so a far host's unanswered word stays heard
+    # on the hub's row across the hub's exchanges that omit it (postal_service.py _via_held) ──
+
+    def test_a_far_hosts_cached_word_stays_held_when_its_hub_restarts_until_the_far_host_answers(self):
+        """W1, the verifier's road: F behind the hub, C linked and answered. F's kernel blinks, a session starts on F and
+        mails our session through the hub on F's cached exchange, and the hub relays it here beside F's cached word. Then
+        the hub's BUS restarts (a new bus id, its PEER_STATE empty) and dials us before F has exchanged with it: its roster
+        omits F. The ruling of 00:27Z allows two releases of the arm, the far host's next answering exchange and this
+        bus's restart; until this commit the hub's first exchange after its restart dropped F's word from the hub's row,
+        the via row was carried (heard false, out of the arm), and the session whose mail had just landed here answered
+        rule 5 on C's vouch. Now the hub's word stays held on its row (heard, its bit False) across the hub's exchanges,
+        across F's exchange with the restarted hub over its cache, and across F's answering exchange with the hub until
+        the hub relays it here: the release."""
+        S = ROAD_SIDS
+        via = UNANSWERED(R_VIA_F + " (listing unanswered)")
+        held = [True, False, True, False, True, False, [S["other"]]]
+        for shape, got in self.roads.items():
+            with self.subTest(shape=shape):
+                road = got["roads"]["farCachedHubRestarts"]
+                self.assertEqual((road["park"]["resolve"][:2], road["landingHere"]["acks"]), (["relay", R_HUB], ["px-hub1"]),
+                                 "the session on F mailed our session through the hub, and our handler acked it")
+                self.assertEqual((road["landingAtHub"]["reqAnswered"], road["landingAtHub"]["reqRelays"]), (False, [S["new"]]),
+                                 "the mail rode F's CACHED exchange with the hub")
+                self.assertEqual(self._road(got, "farCachedHubRestarts", "relayLanded", "newOnFar"), via)
+                self.assertEqual(road["restartDial"], [200, True, [S["hubsid"]]],
+                                 "the restarted hub's first exchange here: answered, its own roster, nothing about F")
+                self.assertEqual(self._road(got, "farCachedHubRestarts", "hubRestarted", "newOnFar"), via,
+                                 "THE RULE: the hub's restart is not F's answer; the arm still names the hub's word about F "
+                                 "(until the thirty-first commit [true, 5, no-reachable-host-names-it], the session whose mail "
+                                 "had just landed presumed closed)")
+                self.assertEqual(road["hubRestarted"]["rows"][R_VIA_F], held,
+                                 "the held word: heard in this process, unanswered, reachable by the hub's link, F's last "
+                                 "roster (until the thirty-first commit carried: not heard, unreachable)")
+                self.assertEqual(self._road(got, "farCachedHubRestarts", "hubRestarted", "other"), RULE_4,
+                                 "the sid F's cached word names stays rule 4's by the held word")
+                self.assertEqual([self._road(got, "farCachedHubRestarts", step, "newOnFar")
+                                  for step in ("hubRestartedAgain", "ourDialToRestartedHub", "farCachedAtRestartedHub", "farAnswersHub")],
+                                 [via, via, via, via],
+                                 "held across the restarted hub's next dial here and our dial to it (both recorders), F's exchange "
+                                 "with it over its cache, and F's answering exchange with the hub before the hub relays it here")
+                self.assertEqual((self._road(got, "farCachedHubRestarts", "released", "newOnFar"),
+                                  self._road(got, "farCachedHubRestarts", "released", "nobody")), (RULE_4, RULE_5),
+                                 "THE RELEASE: the hub relays F's answered word, which names the session")
+
+    def test_a_second_hubs_older_answered_word_does_not_release_the_first_hubs_held_word_and_our_restart_does(self):
+        """W2, the verifier's second road: a second hub carries F's ANSWERED word from before the blink, beside the first
+        hub's cached word, which relays the new session's mail here. The first hub's bus restarts. Until this commit the
+        first hub's word was carried out of the arm, and the second hub's older word, vouching and not naming the new
+        session, let rule 5 presume it closed. Now the first hub's word is held, and the second hub's older word, which
+        is no answering exchange of F's since, releases nothing. The other release the ruling allows, this bus's restart:
+        the held word lives in this process's memory, so after our restart the first hub's word is carried (heard false)
+        and holds nothing, and the new session answers rule 5 while C vouches: residual (3c), whose far-host face this is,
+        a false rule 5 left open until F's first word here in the new process."""
+        S = ROAD_SIDS
+        via = UNANSWERED(R_VIA_F + " (listing unanswered)")
+        for shape, got in self.roads.items():
+            with self.subTest(shape=shape):
+                road = got["roads"]["secondHubFirstRestarts"]
+                self.assertEqual(road["landingHere"]["acks"], ["px-hub2"], "the new session's mail landed through the first hub")
+                self.assertEqual(road["relayLanded"]["rows"][R_VIA_F2], [True, False, True, True, True, True, [S["other"]]],
+                                 "the second hub's older word about F: answered, vouching, silent about the new session")
+                self.assertEqual(self._road(got, "secondHubFirstRestarts", "relayLanded", "newOnFar"), via)
+                self.assertEqual(self._road(got, "secondHubFirstRestarts", "hubRestarted", "newOnFar"), via,
+                                 "THE RULE: the first hub's restart releases nothing, and the second hub's older word is no "
+                                 "answering exchange of F's (until the thirty-first commit [true, 5, no-reachable-host-names-it])")
+                self.assertEqual(road["hubRestarted"]["rows"][R_VIA_F], [True, False, True, False, True, False, [S["other"]]])
+                self.assertEqual(self._road(got, "secondHubFirstRestarts", "ourBusRestarted", "newOnFar"), RULE_5,
+                                 "RESIDUAL (3c), a far host's face: after this bus's restart the first hub's word is carried and "
+                                 "holds nothing; when this pin reds, the residual has closed and the disclosure moves with it")
+                self.assertEqual(road["ourBusRestarted"]["rows"][R_VIA_F], [False, False, True, False, False, False, [S["other"]]],
+                                 "carried: not heard, the kernel's seed of the hub's link up, the last process's bit")
+
+    def test_a_hub_known_by_its_declared_name_that_restarts_and_then_folds_keeps_the_held_word(self):
+        """The fold after a restart: the hub is known here only by the name it declares (this bus has not dialed its alias
+        yet) when it relays F's cached word and the new session's mail; its bus restarts and dials us under that name
+        (its new bus id matches no row, so it is filed there again); then this bus's own dial to the alias lands with the
+        new bus id, and _drop_peer_name_dupes forgets the declared-name row. The held word moves to the alias's row with
+        it; dropped with the row, the carry's rename drop (the hub's bus heard under another name) would drop the via row
+        too, and the new session would answer rule 5 with no answering exchange of F's (the builder's road at the
+        thirty-first commit, by execution through the real builders, handlers, folds, this bus's writer and the reader;
+        rule 5 at the thirtieth). The alias's row then carries the word under its key until F answers the restarted hub
+        and the hub's word reaches here."""
+        S = ROAD_SIDS
+        decl = UNANSWERED(R_VIA_F_DECL + " (no link state, listing unanswered)")
+        via = UNANSWERED(R_VIA_F + " (listing unanswered)")
+        for shape, got in self.roads.items():
+            with self.subTest(shape=shape):
+                road = got["roads"]["declaredHubRestartsThenFolds"]
+                self.assertEqual(road["landingHere"]["acks"], ["px-hub3"], "the new session's mail landed through the hub")
+                self.assertEqual(self._road(got, "declaredHubRestartsThenFolds", "relayLanded", "newOnFar"), decl,
+                                 "the hub's word under its declared name, a name the kernel never notified (no link state)")
+                self.assertEqual(self._road(got, "declaredHubRestartsThenFolds", "hubRestarted", "newOnFar"), decl,
+                                 "held across the restart under the declared name (until the thirty-first commit "
+                                 "[true, 5, no-reachable-host-names-it])")
+                self.assertEqual(road["heardAfterFold"], [R_C, R_HUB], "the fold forgot the declared-name row")
+                self.assertEqual(self._road(got, "declaredHubRestartsThenFolds", "folded", "newOnFar"), via,
+                                 "THE RULE: the held word moved to the alias's row with the fold (with it dropped, [true, 5, "
+                                 "no-reachable-host-names-it])")
+                self.assertNotIn(R_VIA_F_DECL, road["folded"]["rows"], "the declared-name key left with its row")
+                self.assertEqual(self._road(got, "declaredHubRestartsThenFolds", "folded", "other"), RULE_4,
+                                 "F's cached roster, held, still names the session live at F's last answered listing")
+                self.assertEqual((self._road(got, "declaredHubRestartsThenFolds", "released", "newOnFar"),
+                                  self._road(got, "declaredHubRestartsThenFolds", "released", "nobody")), (RULE_4, RULE_5),
+                                 "THE RELEASE: F answers the restarted hub, and the hub's word reaches here")
 
     def test_a_peer_mode_beat_vouches_for_presence_alone_and_the_legacy_scheme_keeps_its_ttl_vouch(self):
         """Round 3 of fork PR #897, the reviewer's ruling on its refuters' finding (the peer-mode beat phase of the class

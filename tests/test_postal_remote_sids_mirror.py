@@ -89,7 +89,10 @@ which a direct row speaks for nothing about a session started on its host since,
 session stands as a via row beside the cached row, carrying the far host's bit as the hub stamped it, and with the hub
 not heard the carried via row stands beside the cached row, until the far host's exchange that answers, the event (at
 the eleventh commit the gate read heard and not held down alone, the hub's word folded into the cached row, and the
-hub, vouching for absence, let rule 5 presume a live session closed for one exchange interval of the far host); and
+hub, vouching for absence, let rule 5 presume a live session closed for one exchange interval of the far host); a
+hub's HELD word (round 4 of fork PR #897, the thirty-first commit): a far host's unanswered word through a hub stays
+heard on the hub's row across the hub's rosters that omit the host, a restarted hub's among them, until the hub names
+the host again, by name or by bus id, while an answered word the hub omits is carried as before; and
 the heartbeat row's scheme gate (round 3 of fork PR #897, the reviewer's ruling): a beat through the real recorder
 during a listing blink in peer mode vouching for presence alone, nothing vouching beside a peer the kernel holds down,
 the same rows under ROMP_POSTAL_PEERS=0 vouching by the TTL; the four earlier heartbeat pins of this module that
@@ -2098,6 +2101,62 @@ class Mirror(unittest.TestCase):
         pm._write_remote_sids()
         self.assertEqual((self._reach()[VIA_FAR][4], self._answered()[VIA_FAR]), ([C, D], False),
                          "every element about the host must carry the bit for the row to be answered")
+
+    def test_a_hubs_held_word_about_a_far_host_stays_heard_until_the_hub_names_that_host_again(self):
+        """Round 4 of fork PR #897, the thirty-first commit (the reviewer's verifier at the thirtieth, by execution): a far
+        host's UNANSWERED word through a hub stays on the hub's row (`viaHeld`, _via_held) when the hub's next roster omits
+        the host (a restarted hub has not heard it yet), and this writer files it as the hub's word, heard in this process,
+        unanswered, so the reader's listing-unanswered arm keeps holding; each held row carries the second its word was
+        last heard (`heldAt`), which the via row's seenAt reads. The hub's word naming the host again releases it, under
+        the hub's name for the host or under a new name by the host's bus id (the hub's own fold). A word whose bit was
+        True is NOT held: carried, heard false, as before. Through the real handler (the recorder) and this writer."""
+        self._forget_presence_cache()
+        self._local_listing_answered_empty()
+        self._notify(HUB, up=True)
+        far_cached = {"id": B, "name": "api", "via": FAR, "viaBus": "far-bus", "viaAnswered": False}
+        self._far_dials_us(HUB, [{"id": A, "name": "web"}, far_cached], "hub-bus")
+        self.assertEqual((self._rows()[VIA_FAR], self._answered()[VIA_FAR]), ((True, False, [B]), False),
+                         "the hub's word about FAR, the far host's cache: heard, unanswered")
+        pm.PEER_STATE[HUB]["seenAt"] -= 100                                 # that exchange landed 100 s before the next
+        first_seen = pm.PEER_STATE[HUB]["seenAt"]
+        for _ in range(2):                                                  # the hub's bus restarted; then its next exchange
+            self._far_dials_us(HUB, [{"id": A, "name": "web"}], "hub-bus-restarted")
+            self.assertEqual((self._rows()[VIA_FAR], self._answered()[VIA_FAR]), ((True, False, [B]), False),
+                             "HELD: the hub's roster omits FAR, and the far host's unanswered word stays heard (until the "
+                             "thirty-first commit carried: (False, False, [B]), out of the arm)")
+            self.assertEqual([(pa["id"], pa["via"], pa.get("heldAt")) for pa in pm.PEER_STATE[HUB]["viaHeld"]],
+                             [(B, FAR, first_seen)], "the hub's row keeps the word, stamped with the second it was heard")
+            self.assertEqual(self._doc()["hosts"][VIA_FAR]["seenAt"], first_seen,
+                             "the via row's seenAt is the held word's second, not the hub's later exchange")
+            self.assertNotIn(FAR, [pa.get("via") for pa in pm.PEER_STATE[HUB]["presence"]],
+                             "the display and routing roster is the hub's word alone")
+        for junk in ([{"id": A, "name": "web"}, "not an object"], {"not": "a list"}, 5):   # rosters in shapes no bus sends
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err):                           # (the writer's own read of them is not under test)
+                self._far_dials_us(HUB, junk, "hub-bus-restarted")          # the exchange still lands: 200
+            self.assertEqual([(pa["id"], pa["via"]) for pa in pm.PEER_STATE[HUB]["viaHeld"]], [(B, FAR)],
+                             "a roster in a shape no bus sends names no far host, and the recorder, reading what it can, keeps "
+                             "the held word (%r)" % (junk,))
+        self._far_dials_us(HUB, [{"id": A, "name": "web"}, dict(far_cached, via=FAR_ALIAS, id=C, viaAnswered=True)],
+                           "hub-bus-restarted")                             # the hub now calls the far bus FAR_ALIAS
+        self.assertEqual(pm.PEER_STATE[HUB]["viaHeld"], [], "the hub's word names the far bus again: the held word is released")
+        self.assertNotIn(VIA_FAR, self._rows(), "...and the old name's row is gone (the carry's drop by the hub's current word)")
+        self.assertEqual((self._rows()[VIA + HUB + "/" + FAR_ALIAS], self._answered()[VIA + HUB + "/" + FAR_ALIAS]),
+                         ((True, False, [C]), True))
+        self._far_dials_us(HUB, [{"id": A, "name": "web"}], "hub-bus-restarted-again")   # an ANSWERED word the hub omits
+        self.assertEqual((pm.PEER_STATE[HUB]["viaHeld"], self._rows()[VIA + HUB + "/" + FAR_ALIAS]), ([], (False, False, [C])),
+                         "a word whose bit was True is not held: carried, heard false, vouching for nothing")
+        self._far_dials_us(HUB, [{"id": A, "name": "web"}, far_cached], "hub-bus-restarted-again")
+        self._far_dials_us(HUB, [{"id": A, "name": "web"}, dict(far_cached, viaAnswered=True)], "hub-bus-restarted-again")
+        self.assertEqual((pm.PEER_STATE[HUB]["viaHeld"], self._answered()[VIA_FAR]), ([], True),
+                         "the hub's word naming the host under the same name, answered: the release")
+        no_bus = dict(far_cached, viaBus="")                                # a far bus that sends no bus id: the hub stamps ""
+        self._far_dials_us(HUB, [{"id": A, "name": "web"}, no_bus], "hub-bus-restarted-again")
+        self._far_dials_us(HUB, [{"id": A, "name": "web"}], "hub-bus-restarted-thrice")
+        self.assertEqual([(pa["id"], pa["via"]) for pa in pm.PEER_STATE[HUB]["viaHeld"]], [(B, FAR)], "held, with no bus id")
+        self._far_dials_us(HUB, [{"id": A, "name": "web"}, dict(no_bus, viaAnswered=True)], "hub-bus-restarted-thrice")
+        self.assertEqual((pm.PEER_STATE[HUB]["viaHeld"], self._answered()[VIA_FAR]), ([], True),
+                         "with no bus id on either word the hub's name for the host is the only match, and it releases")
 
     def test_a_hubs_answered_word_about_a_directly_held_host_stands_beside_that_hosts_cached_row_until_it_answers(self):
         """Round 3 of fork PR #897, the reviewer's verifier at the eleventh commit, by execution through the real builder,
