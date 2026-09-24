@@ -5,7 +5,7 @@ the gap where the target will be, the loading glyph in the empty space; the land
 ONLY cancel: the target and the notice go, the reply still inserts its run in place, and the view does not move. Served, on the
 window lab's hermetic kernel (a synthetic transcript longer than the wire tail: the deep target is in the head gap at boot).
 
-Roads, ten fresh pages (the socket death first, then the notice roads, then the answered-question anchor, the cancel-then-click road, the fault road, three roads on the per-ask records: two cancels, a cancelled origin, a lost cancelled frame, then an older fetch in flight and the pipe's down edge, and last a deep link whose land runs inside the frame after a re-window's write): the deep link landing with the notice (the words, the pre-jump write, the window ask, the landing, the notice
+Roads, on the boot page and twelve fresh ones (the socket death first, then the notice roads, then the answered-question anchor, the cancel-then-click road, the fault road, three roads on the per-ask records: two cancels, a cancelled origin, a lost cancelled frame, then an older fetch in flight, the pipe's down edge and the notice's one-shot pulse, and last a deep link whose land runs inside the frame after a re-window's write): the deep link landing with the notice (the words, the pre-jump write, the window ask, the landing, the notice
 gone); then a second deep link with its ask HELD at the socket, the notice clicked (a locateDiag row filed as cancelled, the notice
 gone, the view still), the ask released (the run inserts, the view still where the reader was).
 
