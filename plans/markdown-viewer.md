@@ -8514,11 +8514,13 @@ hover on a fine pointer and at rest where hover is none or any pointer is coarse
 the one the control's dashed border wears at rest (the file review's round 13, ui-1 with extra6-1), over a ring of the page's own ground
 under the outline, a box-shadow of `var(--bg)` 3px wide, so both sides of every dash and the gaps between them read that ground
 whatever the page paints behind the picture (inside a ==highlight== the dark theme's dashes had read 2.40:1 against its tint, and a
-table header, an even row or a callout fell under 3:1 on a VS Code editor ground inside the stated bound), with a margin of the ring's
-width at rest under screen on every pointer so the ring covers no pixel of a neighbour's own box, a line holding such a picture up to
-6px taller (the file review's round 14, correctness-2 with extra5-1 and extra5-2; the sheets' comment states the two bounds the
-margin leaves, a glyph's ink past its own box toward the picture and the edge of text painted after the picture in the ring's outer
-pixel, and the open leg's bound case records them), so a tap's open is shown before it
+table header, an even row or a callout fell under 3:1 on a VS Code editor ground inside the stated bound), with a margin at rest
+under screen on every pointer, 1px up and down and 7px across the line, each axis the least that keeps the ring off the neighbours'
+ink by screenshot pixels (across the line the ring's 3px and the 4px an italic or bold italic f paints past its own box toward the
+picture at the default text size, up and down the line of descenders above), a line holding such a picture up to 2px taller and the
+text after it 14px along (the file review's round 14, correctness-2 with extra5-1 and extra5-2, the margin measured per axis on the
+margin ruling of 2026-09-24; the sheets' comment states where a slanted f still reaches the ring, in a heading and at a larger text
+size, and the open leg's neighbour pin reads runs of f and a callout's float), so a tap's open is shown before it
 happens where the title is no surface; the file review's round 12, fresh-1; the web control rests at full opacity where the at-rest rule
 stands, a local one at 0.8, any focus reveals it, a keyboard's or one a script gives it with no ring, no mouse press of any button
 focuses it (the press cancelled in the body's mousedown listener) and Enter or Space opens it only while it is in view at the key,

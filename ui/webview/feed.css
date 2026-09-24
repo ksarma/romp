@@ -1981,14 +1981,20 @@ a.fileview-gh-note { border-style: dashed; }
    2.40:1 against its tint, while a table header, an even row or a callout fell under 3:1 on a VS Code editor ground inside the bound
    stated below. 3px is the least width that covers both sides, the 1px offset, the 1px line and the pixel outside it (at 2px the
    line's outer side kept the tint). A box-shadow takes no layout and paints with the picture in tree order, so a bare ring covered its
-   width of whatever stood before the picture on its line; a margin of the ring's width, at rest under `screen` on every pointer (a
-   margin keyed on hover moved the picture from under a pointer at its edge, and the hover toggled frame by frame), keeps the ring off
-   every pixel whose centre lies in a neighbour's own box, and a line holding such a picture stands up to 6px taller
-   (the file review's round 14, correctness-2 with extra5-1 and extra5-2). The margin leaves no pixel of slack past that box, so two
-   things stay outside it, each recorded as it stands by the open leg's bound case: a glyph whose ink reaches past its own box toward
-   the picture (an italic run's last letter, an f, a slash) loses that ink to the ring, where without the margin the picture itself
-   stood, and text painted after the picture, the line a callout wraps beside a floated one, can put its edge in the ring's outer
-   pixel, where the dash's outer side reads that edge, under 3:1 on a left float in a note callout on the Files pane. Both at-rest
+   width of whatever stood before the picture on its line, and text painted after the picture paints over the ring, where the dash's
+   outer side reads it. A margin at rest under `screen` on every pointer (a margin keyed on hover moved the picture from under a
+   pointer at its edge, and the hover toggled frame by frame) keeps the ring off the neighbours' ink, each axis the least that does,
+   measured by screenshot pixels on the chat modal, the feed and the Files pane, at rest under touch, on the touchscreen laptop and on
+   hover on a fine pointer, and on the chat modal at a device scale of 2, in both themes (the file review's round 14, correctness-2
+   with extra5-1 and extra5-2; the margin ruling of 2026-09-24). Across the line 7px: the ring's 3px and the 4px an italic or bold
+   italic f paints past its own box toward the picture at the viewer's default text size (at 6px an italic f still lost ink to the
+   ring; at the ring's width an upright f and a slash lost theirs, and the text a note callout wraps beside a left-floated picture
+   put its first glyph in the ring's outer pixel, where the dash's outer side read 2.06:1 dark on the Files pane). Up and down 1px:
+   the nearest ink of a line of descenders above and of a line of accented capitals below stands at least 3px from the picture, the
+   ring's width (with no margin up and down a descender of the line above lost pixels to the ring). So a line holding such a picture
+   stands up to 2px taller, and the picture sits 7px along its line and the text after it 14px. A slanted f reaches further as the
+   text grows, so an italic f glued to such a picture still loses ink to the ring in a level-2 heading (clear at 8px) and a level-1
+   heading (clear at 10px), and at a text size of 115% and above, where its reach grows to 7px at 200% (clear at 10px). Both at-rest
    rules key on `(hover: none)` OR `(any-pointer: coarse)`,
    `screen` written on both queries (css-rules' underScreen reads a list member by member): `hover` describes the PRIMARY pointer, and a
    touchscreen laptop's is a hovering trackpad, so neither dress stood there at rest while a finger's tap opened the tab (the section
@@ -2039,7 +2045,7 @@ a.fileview-gh-note { border-style: dashed; }
 @media screen and (hover: none), screen and (any-pointer: coarse) { .fileview-md .fv-figopen-web { opacity: 1; } }   /* the web control at rest at full, where a local one keeps 0.8: at 0.8 the picture under it showed through its dashed line (the comment above); never print */
 @media screen { .fileview-md .fv-figopen-web:focus-visible { outline-offset: 2px; } }   /* the focus ring 2px off the web control's border, so its dashed line shows under a keyboard focus (the comment above) */
 @media screen { .fileview-md .fv-figopen-web:active { transform: none; } }   /* the press cue off on the web control alone: the release that opens the tab comes while it is held, so the pressed paint is held to 3:1 too (the comment above) */
-@media screen { .fileview-md img[data-fv-figweb] { margin: 3px; } }   /* the ring's width, at rest on every pointer, so the ring below covers no pixel of a neighbour's own box (the comment above, with its two bounds); never keyed on hover, never print */
+@media screen { .fileview-md img[data-fv-figweb] { margin: 1px 7px; } }   /* 1px up and down and 7px across the line, each axis the least that keeps the ring below off the neighbours' ink (the comment above); at rest on every pointer, never keyed on hover, never print */
 @media screen { .fileview-md img[data-fv-figweb]:hover { outline: 1px dashed var(--outbound-line); outline-offset: 1px; box-shadow: 0 0 0 3px var(--bg); } }
 @media screen and (hover: none), screen and (any-pointer: coarse) { .fileview-md img[data-fv-figweb] { outline: 1px dashed var(--outbound-line); outline-offset: 1px; box-shadow: 0 0 0 3px var(--bg); } }   /* touch, and a coarse pointer beside a hovering one: a picture under the floor has no control and its tooltip never shows to a finger, so the mark stands at rest; never print */
 @media screen { .fileview-md a.fv-dead:has(.fv-figopen-web), .fileview-md a.fv-dead:has(img[data-fv-figweb]) { opacity: 1; color: color-mix(in srgb, currentColor 70%, transparent); } }   /* a dead link holding the outbound dress dims by colour, not by opacity, which dimmed the dress inside it (the comment above); print keeps the opacity */
