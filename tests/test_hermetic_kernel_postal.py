@@ -80,22 +80,18 @@ with the path after its first word, a placeholder template, an env-override defa
 comprehension argv, a subclass's override of a base attribute, `romp up`) with every check green, since the tree held
 no instance of those shapes and the table was written from what the scan read (PR #850's ninth review round). So the
 comparison case runs the regex pair, copied verbatim (_round8_regex_census), beside the scan over every module the trio
-test reads and every row, and names every match of a call the regex flags that the scan accounts for by none of a site,
-a listed entry containing the match and a refusal, unless one of three exclusions proves it. Each exclusion is
-FAIL-CLOSED: it excuses only the narrow shape it can prove from the call (the passes of that round had each closed the
-shapes they were shown while every exclusion excused a match unless a clause refused it). A word collision:
-the match lies on an identifier token, never in a string (a text a run-time lookup reads by name), every name of that
-spelling in the call reads as no path, and no declaration the scan visits reading the call sits on a line the regex's
-one-line pattern binds while reading as no path, since the regex read that declaration. A Python child's -c program
-(the interpreter, found past the option words before the flag, names Python) whose every text parses and whose every
-callee the scan names, none a process starter or a dynamic road (exec, eval, compile, __import__, importlib, runpy,
-getattr, functools.partial; the ruling point below). The CLI as the command word of its simple command (past
-assignments and the pass-through wrappers timeout, nohup, env, exec, command and sudo) with a literal verb bin/romp's
-dispatch has outside KERNEL_VERBS, while every verb in KERNEL_VERBS is one it dispatches; the element after a shell's -c
-program, a word xargs or parallel hands over and an expansion are never that verb. What no exclusion proves is named
-unless the scan lists it, and clean shapes pay for that: the CLI with a verb the dispatch lacks (N27) or behind another
-wrapper (stdbuf, N104) and a Python child behind env (N100) are named, and a word collision inside a string is listed
-(N2 to N8), as is tests/test_chat_pages.py's -c child, whose program calls methods of values the scan cannot name.
+test reads and every row, under one rule: for each call the regex flags, the scan gives a site at the call's line, or a
+listed entry at that line whose expression contains the match, or refuses the module (UnreadableSpawn, red in the trio
+test); any other match at a call is named. No proof inside a reader excuses a match, and no reader carries an exemption
+keyed on a spelling (PR #850's tenth review round, after each proof that a call launches nothing had grown into a list
+the next round extended). The one visible listing is the one --roads prints under `# unresolved:`: the scan's derived
+entries, each with its kind, and the entries listed by hand in LISTED_BY_HAND, each naming the module, the line's text,
+a kind and a reason, which the comparison reads as covering a match on that line of that module; a hand entry that
+covers no match reds the comparison case, naming the entry, so the listing holds only lines that exist. The cost of
+failing closed is stated and intended: a clean line the regex matches that the scan does not read as a site is named,
+and its author lists it by hand with its reason. The rows hold examples of the clean shapes that cost, among them the
+CLI with refresh or --help (N26, N43, N96, N97, N104), a -c child that load_sources the kernel (N9, N10, N44, N98, N99,
+N100) and a word collision (N1, N94, N95).
 
 Roads and residual, derived by one command (`python tests/test_hermetic_kernel_postal.py --roads [directory]`, one
 line per module the trio test reads, then the unresolved names, then a summary line with every count): a module's
@@ -145,12 +141,13 @@ bodies and methods (setattr on a class, a subclass of another module's base; N51
 target (N52); and a consumer call's arguments (a builtin, a function imported from any module, a helper of another test
 module included, or any method but the path-preserving ones: `os.path.relpath(K)`, `shutil.which(K)`, `K.replace(...)`;
 N32). A shape in none of these classes is unread by the same rule. The comparison case measures the split with the regex
-pair: the rows whose label says the regex missed them too carry no call it flags, and that is held; every other match
-the scan neither reads nor lists is named unless an exclusion proves it, which the rows whose label says the comparison
-names them hold (a name that reaches a one-line binding the scan cannot read, the CLI's verb handed by xargs, parallel
-or the shell's positional parameters, a -c child that starts the kernel through a process starter the scan reads only by
-its spelling), as do the consumer plants of the comparison case (N32 binds its path across two lines, which the regex
-misses too).
+pair: the rows whose label says the regex missed them too carry no call it flags, and that is held; every other match at
+a call the regex flags is a site, a listed entry containing it, or named (a refused module is red in the trio test).
+The rows whose label says the comparison names them hold the named ones, among them launches the scan neither reads nor
+lists (a name that reaches a one-line binding the scan cannot read, the CLI's verb handed by xargs, parallel or the
+shell's positional parameters, the CLI launched in a word beside a clean CLI word, a -c child that starts the kernel
+through a process starter handed over as a value or reached through a dunder) and the clean shapes above, as do the
+consumer plants of the comparison case (N32 binds its path across two lines, which the regex misses too).
 
 Ruling point, the maintainers' to decide (2026-09-21): a child interpreter that load_sources the kernel
 (`[sys.executable, "-c", <program>]`) is read here as NOT a kernel process. It is the in-process shape one process
@@ -273,11 +270,11 @@ SHELL_C_FLAG = re.compile(r"-[A-Za-z]*c[A-Za-z]*")
 OPTION_ARGUMENTS = {"-o", "+o", "-O", "+O", "--rcfile", "--init-file", "-W", "-X", "--check-hash-based-pycs"}
 PYTHON_PROGRAM = re.compile(r"(?:^|/)python[0-9.]*t?$")
 SHELL_OPERATOR = set("();<>|&")    # a word of these alone is an operator: a redirection when it holds < or >, else control
-SHELL_EXPANSION = set("$`*?[{")    # a word holding one of these may reach the command as some other text
 # the calls that start a process, by the canonical name a callee resolves to: the spawn functions and the rest of the
 # subprocess module's, os's system, popen, exec, spawn, posix_spawn and fork families, pty.spawn, asyncio's subprocess
-# starters and multiprocessing's Process. Exclusion (b) reads a -c program for any of them (PROCESS_SPELLINGS: the bare
-# spelling of an unbound callee, and the method name of asyncio's loop-level starters, whose receiver no binding reaches)
+# starters and multiprocessing's Process. The listing of a Python child's -c program reads its callees for any of them
+# (_callee_reading's "starts"; PROCESS_SPELLINGS: the bare spelling of an unbound callee, and the method name of asyncio's
+# loop-level starters, whose receiver no binding reaches), and takes no program that calls one (_program_calls)
 PROCESS_FUNCTIONS = (SPAWN_FUNCTIONS | {"subprocess.getoutput", "subprocess.getstatusoutput", "pty.spawn",
                                         "asyncio.create_subprocess_exec", "asyncio.create_subprocess_shell", "multiprocessing.Process"}
                      | {"os." + f for f in ("system", "popen", "posix_spawn", "posix_spawnp", "execl", "execle", "execlp", "execlpe", "execv",
@@ -286,7 +283,7 @@ PROCESS_FUNCTIONS = (SPAWN_FUNCTIONS | {"subprocess.getoutput", "subprocess.gets
 PROCESS_SPELLINGS = {f.rsplit(".", 1)[-1] for f in PROCESS_FUNCTIONS} | {"subprocess_exec", "subprocess_shell"}
 # the dynamic roads a Python -c child's callee may take to code or a function the scan cannot read: by the last part of the
 # name it denotes (exec, eval, compile, __import__, getattr, functools.partial) or by the module it comes from (importlib,
-# runpy); exclusion (b) excuses no program that calls one, nor an alias of one (_callee_reading)
+# runpy), an alias of one included (_callee_reading's "dynamic", which _program_calls reports to the listing)
 DYNAMIC_CALLS = {"exec", "eval", "compile", "__import__", "getattr", "partial"}
 DYNAMIC_MODULES = {"importlib", "runpy"}
 KERNEL_MENTION = re.compile(r"romp-kernel|bin/romp(?![\w-])")   # a -c program's text that names the kernel or the CLI
@@ -344,7 +341,6 @@ class _SpawnScan:
         self._bound_paths = 0         # resolutions that yielded the path while reading one argv (the road label)
         self._line = 0
         self._self_reads = {}         # id(declaration) -> does its value read its own name (_reads_itself)
-        self._visited = None          # a list while exclusion (a) records the declarations a reading visits (_visit)
         self._programs = []           # the Python children's -c programs met while reading one argv (_list_unread)
         self._unproven = []           # ...and those among them that _list_unread lists
         self._names = None            # name -> its declarations in every scope of the module (_kernel_named)
@@ -487,7 +483,6 @@ class _SpawnScan:
         path (a parameter extended in place): no path, listed as unresolved with its bases' kinds."""
         verdicts, path, silent = {}, False, []
         for decls in readings:
-            self._visit(decls)
             bases = [d for d in decls if not self._reads_itself(d)]
             extensions = [d for d in decls if self._reads_itself(d)]
             said = []
@@ -527,12 +522,6 @@ class _SpawnScan:
             kinds = {d.kind for decls in silent for d in decls}
             self._note_unresolved(node, "+".join(sorted(kinds)) if kinds else self._receiver_kind(node, scope))
         return False
-
-    def _visit(self, decls):
-        """Record `decls`, declarations a reading of an argv resolved a name or target to, while exclusion (a) collects
-        them (_visited a list: _regex_match_excluded)."""
-        if self._visited is not None:
-            self._visited.extend(decls)
 
     def _reads_itself(self, d):
         """Does declaration `d`'s value read the name or target `d` binds? Keyed on the binding, never the spelling: a
@@ -812,7 +801,7 @@ class _SpawnScan:
     def _python_program_at(self, elts, i, scope):
         """Is elts[i] the program after a "-c" whose interpreter names no shell (_shell_program_at): a Python child's
         program as the scan reads it for spawns (_program_spawns_kernel), an interpreter it cannot name included, the side
-        that finds more sites. Exclusion (b) and the listing of a program the scan cannot prove ask more
+        that finds more sites. The listing of a program that mentions the kernel and calls a dynamic road asks more
         (_python_child_at)."""
         return (i >= 1 and isinstance(elts[i - 1], ast.Constant) and elts[i - 1].value == "-c"
                 and not self._shell_program_at(elts, i, scope))
@@ -821,8 +810,8 @@ class _SpawnScan:
         """Is elts[i] the program of a Python child the scan can name: the element after a "-c" whose interpreter, the
         argv's first element past the option words before the flag (_interpreter_at), names a Python interpreter
         (_names_python)? With `loose`, the element right before the flag may name it instead (`["env", "python3", "-c",
-        ...]`), the reading that keeps a Python program from being read at shell words (_command_string_at); exclusion
-        (b) and the program listing take the strict reading."""
+        ...]`), the reading that keeps a Python program from being read at shell words (_command_string_at); the
+        program listing (holds_kernel_path, _list_unread) takes the strict reading."""
         if not (i >= 1 and isinstance(elts[i - 1], ast.Constant) and elts[i - 1].value == "-c"):
             return False
         first = _interpreter_at(elts, i)
@@ -874,7 +863,6 @@ class _SpawnScan:
         if isinstance(node, ast.Name):
             decls, where = scope.resolve(node.id)
             key = (id(where), node.id)
-            self._visit(decls)
             if not decls or key in seen or any(d.value is None for d in decls):
                 return None, True
             texts = []
@@ -918,7 +906,6 @@ class _SpawnScan:
             return None, False
         decls, where = scope.resolve(node.id)
         key = (id(where), node.id)
-        self._visit(decls)
         if not decls or key in seen:
             return None, True
         out = []
@@ -952,14 +939,6 @@ class _SpawnScan:
                 return True
         self._bound_paths = before
         return False
-
-    def program_starts_no_process(self, elts, j, scope):
-        """Exclusion (b)'s proof for elts[j], the program after a "-c": true only for the program of a Python child the
-        scan can name (_python_child_at: the interpreter found past the option words names Python, never a shell and
-        never an interpreter the scan cannot name) that calls only callees the scan names, none a process starter or a
-        dynamic road (_program_calls "named", every text assembled, parsed and free of opaque placeholders): the ruling
-        point's in-process load one process down, and nothing else."""
-        return self._python_child_at(elts, j, scope) and self._program_calls(elts, j, scope)[0] == "named"
 
     def _program_calls(self, elts, j, scope):
         """What the -c program at elts[j] calls, over every text the scan assembles for it (_program_texts), with whether
@@ -1026,21 +1005,6 @@ class _SpawnScan:
                    or (d.kind == "assign" and isinstance(d.value, (ast.Name, ast.Attribute))
                        and self._callee_fully_named(d.value, self.bindings.scope_of(d.value), seen | {key}, False)) for d in decls)
 
-    def _is_the_cli(self, node, scope):
-        """Is `node`, the command word exclusion (c) found the regex's match in, the CLI's path and nothing else: a
-        string, f-string or template with no whitespace in its text that reads as the CLI (is_kernel_path with `cli`), or
-        a call of a path-building function (PATH_FUNCTIONS) or of a path-preserving method (PATH_METHODS) that reads as
-        it? Anything else is not (a name holds no text the regex matches, so none reaches here as the match's word)."""
-        pieces = _template_pieces(node)
-        if pieces is not None:
-            return (not any(isinstance(p, str) and any(c.isspace() for c in p) for p in pieces)
-                    and self.is_kernel_path(node, scope, cli=True))
-        if isinstance(node, ast.Call):
-            builds = (self._callee_names(node.func, scope) & PATH_FUNCTIONS
-                      or (isinstance(node.func, ast.Attribute) and node.func.attr in PATH_METHODS))
-            return bool(builds) and self.is_kernel_path(node, scope, cli=True)
-        return False
-
     def _names_a_shell(self, node, scope, seen=frozenset()):
         """Does `node` name a shell (SHELL_PROGRAM, by name or path): a string, a name bound to one (resolved by binding),
         or a call handed one (`shutil.which("bash")`)? Anything else is read as no shell."""
@@ -1049,7 +1013,6 @@ class _SpawnScan:
         if isinstance(node, ast.Name):
             decls, where = scope.resolve(node.id)
             key = (id(where), node.id)
-            self._visit(decls)
             return key not in seen and any(d.value is not None and self._names_a_shell(d.value, self.bindings.scope_of(d.value), seen | {key})
                                            for d in decls)
         if isinstance(node, ast.Call):
@@ -1399,18 +1362,19 @@ def _source(path):
 
 
 TREE_SKIP = (os.path.basename(__file__),)   # the trio test's population: every module under tests/ but this one
-_RoadsTable = collections.namedtuple("_RoadsTable", "roads hermetic compared verbs_hold paths")
+_RoadsTable = collections.namedtuple("_RoadsTable", "roads hermetic compared paths")
 _TreeRead = collections.namedtuple("_TreeRead", "table env_writes paths root")
 
 
-def _roads_row(name, src, tree, verbs_hold):
+def _roads_row(name, src, tree, hand=()):
     """One module's reading for the roads table: ((road, sites, unresolved), whether its text carries the trio
     (_hermetic), its comparison values or None). The comparison values are _regex_scan_comparison's, read with the same
     scan, when the round-8 regex census flags a call or the scan finds a site, so the comparison case scans no module
-    again; `verbs_hold` is the KERNEL_VERBS verdict they are read under. Everything returned is tuples, strings and
-    numbers: no node, no scan and no bindings. The scan's bindings are released (Bindings.release) before this returns,
-    which breaks their cycles (a scope holds its declarations and each declaration its scope), so the module's tree and
-    bindings are freed by reference counting once the caller drops the tree."""
+    again; `hand` is the module's entries of the hand listing, which the comparison reads as covering a match on their
+    line. Everything returned is tuples, strings and numbers: no node, no scan and no bindings. The scan's bindings are
+    released (Bindings.release) before this returns, which breaks their cycles (a scope holds its declarations and each
+    declaration its scope), so the module's tree and bindings are freed by reference counting once the caller drops the
+    tree."""
     scan = _SpawnScan(tree, name)
     try:
         try:
@@ -1418,18 +1382,18 @@ def _roads_row(name, src, tree, verbs_hold):
         except UnreadableSpawn as e:
             sites, refused = ((0, str(e), "refused"),), True
         unresolved = tuple(scan.unresolved)
-        dropped, missed, not_calls, flagged, excused = _regex_scan_comparison(
-            src, name, verbs_hold, scan_all=bool(sites) and not refused, scanned=(tree, scan, [] if refused else sites, refused))
+        dropped, missed, not_calls, flagged, by_hand = _regex_scan_comparison(
+            src, name, scan_all=bool(sites) and not refused, scanned=(tree, scan, [] if refused else sites, refused), hand=hand)
     finally:
         scan.bindings.release()
     road = ("refused" if refused else "neither" if not sites else "binding" if any(r == "binding" for _, _, r in sites)
             else "argv")
-    compared = ((tuple(dropped), tuple(missed), tuple(not_calls), flagged, tuple(excused)) if flagged or missed or not_calls
+    compared = ((tuple(dropped), tuple(missed), tuple(not_calls), flagged, tuple(by_hand)) if flagged or missed or not_calls
                 else None)
     return (road, sites, unresolved), _hermetic(src), compared
 
 
-def _read_root(root, skip=()):
+def _read_root(root, skip=(), listing=None):
     """THE READ of a directory, one function for the real tree (_tree_read: `root` tests/, `skip` TREE_SKIP) and for
     every plant (_roads_table over any other directory; _peers_writers handed a plant's read): every .py under `root`,
     walked recursively (_tree_module_paths; over tests/ the peers test's population), and every module directly under
@@ -1438,13 +1402,14 @@ def _read_root(root, skip=()):
     so the read holds one file's tree at a time and none once it returns. From that one parse: each walked file's
     module-level environment writes (_module_level_env_writes: the set of keys, or the message of the UnreadableEnvWrite
     raised for a file whose keys the scan cannot read, which _peers_writers raises again), and each table module's roads
-    row (_roads_row). The value is a _TreeRead of plain values: `table` the _RoadsTable (`roads` {name: (road, sites,
-    unresolved)}, spawn_roads says what each holds; `hermetic` the names of the modules that carry the trio; `compared`
-    {name: comparison values}; `verbs_hold` the KERNEL_VERBS verdict, _verbs_bin_romp_lacks over bin/romp; `paths` the
-    table's files), `env_writes` {path under `root`: keys or the refusal's message}, `paths` the walked files, and
-    `root`. A file that does not parse raises from the read with its name. Nothing is memoised here: over tests/ the
-    module run's one read is _tree_read's, and a plant is read again on each call."""
-    verbs_hold = not _verbs_bin_romp_lacks(KERNEL_VERBS, _bin_romp_text())
+    row (_roads_row), its comparison read with the module's entries of `listing`, the hand listing (LISTED_BY_HAND
+    unless a plant hands its own). The value is a _TreeRead of plain values: `table` the _RoadsTable (`roads` {name:
+    (road, sites, unresolved)}, spawn_roads says what each holds; `hermetic` the names of the modules that carry the
+    trio; `compared` {name: comparison values}; `paths` the table's files), `env_writes` {path under `root`: keys or the
+    refusal's message}, `paths` the walked files, and `root`. A file that does not parse raises from the read with its
+    name. Nothing is memoised here: over tests/ the module run's one read is _tree_read's, and a plant is read again on
+    each call."""
+    listing = LISTED_BY_HAND if listing is None else listing
     paths = _tree_module_paths(root)
     in_walk = set(paths)
     in_table = {os.path.join(root, name) for name in os.listdir(root) if name.endswith(".py") and name not in skip}
@@ -1459,13 +1424,13 @@ def _read_root(root, skip=()):
                 env_writes[rel] = str(e)
         if path in in_table:
             table_paths.append(path)
-            roads[rel], carries, comparison = _roads_row(rel, src, tree, verbs_hold)
+            roads[rel], carries, comparison = _roads_row(rel, src, tree, tuple(e for e in listing if e[0] == rel))
             if carries:
                 hermetic.add(rel)
             if comparison is not None:
                 compared[rel] = comparison
         del src, tree                     # dropped before the next parse, so no two trees are alive at once
-    table = _RoadsTable(roads, frozenset(hermetic), compared, verbs_hold, tuple(table_paths))
+    table = _RoadsTable(roads, frozenset(hermetic), compared, tuple(table_paths))
     return _TreeRead(table, env_writes, tuple(paths), root)
 
 
@@ -1558,15 +1523,14 @@ def _module_end_faults():
 
 
 def _release():
-    """What the module holds, dropped when it ends (tearDownModule): the tree's read, the counters, the weak references,
-    bin/romp's dispatch (_DISPATCH) and the start count (_AT_START). No tree or Bindings is among them."""
+    """What the module holds, dropped when it ends (tearDownModule): the tree's read, the counters, the weak references
+    and the start count (_AT_START). No tree or Bindings is among them."""
     _TREE_READ.clear()
     _PARSES.clear()
     _READS[0] = 0
     _PLACEMENT_PARSES[0] = 0
     del _TREES[:]
     del _BINDINGS[:]
-    del _DISPATCH[:]
     del _AT_START[:]
 
 
@@ -1581,14 +1545,15 @@ def tearDownModule():
         raise AssertionError("\n".join(faults))
 
 
-def _roads_table(directory, skip=()):
-    """The roads table over `directory`: over the real tree (`directory` HERE and `skip` TREE_SKIP) the table of the
-    module run's one read (_tree_read), so the trio test, the guard test, the comparison case and the --roads arm read
-    one table; over any other directory, a plant under a fresh temporary path among them, the table of a read made on
-    this call (_read_root, the function the real tree's read is) and cached nowhere."""
-    if os.path.realpath(directory) == HERE and tuple(skip) == TREE_SKIP:
+def _roads_table(directory, skip=(), listing=None):
+    """The roads table over `directory`: over the real tree (`directory` HERE and `skip` TREE_SKIP, the hand listing
+    LISTED_BY_HAND) the table of the module run's one read (_tree_read), so the trio test, the guard test, the comparison
+    case and the --roads arm read one table; over any other directory, a plant under a fresh temporary path among them,
+    or with a `listing` of its own, the table of a read made on this call (_read_root, the function the real tree's read
+    is) and cached nowhere."""
+    if os.path.realpath(directory) == HERE and tuple(skip) == TREE_SKIP and listing is None:
         return _tree_read().table
-    return _read_root(directory, skip).table
+    return _read_root(directory, skip, listing).table
 
 
 def _kernel_spawn_offenders(directory, skip=()):
@@ -1614,12 +1579,14 @@ def spawn_roads(directory, skip=()):
     return _roads_table(directory, skip).roads
 
 
-def _print_roads(directory, skip=()):
+def _print_roads(directory, skip=(), listing=None):
     """The --roads arm: one line per module (`<module> <road> [<line>:<road>:<argv> ...]`), the unresolved names,
-    targets and calls under `# unresolved:`, and a summary line with every count, so the census's population is derived
-    by one command rather than stated. It prints the roads table (_roads_table), over the real tree the table of the
-    one read the tests share."""
-    table = _roads_table(directory, skip)
+    targets and calls under `# unresolved:`, then under the same heading each entry of the hand listing (LISTED_BY_HAND,
+    or `listing` when given) whose module the table holds (`<module>: <line> (<kind>; listed by hand: <reason>)`), and a
+    summary line with every count of the scan's derived entries, so the census's population is derived by one command
+    rather than stated. It prints the roads table (_roads_table), over the real tree the table of the one read the tests
+    share."""
+    table = _roads_table(directory, skip, listing)
     roads = table.roads
     for name, (road, sites, _) in roads.items():
         print("%s %s%s" % (name, road, "".join(" %d:%s:%s" % (line, r, argv.replace("\n", " ")) for line, argv, r in sites)))
@@ -1631,6 +1598,9 @@ def _print_roads(directory, skip=()):
             kinds[kind] = kinds.get(kind, 0) + 1
             calls.add((name, line))
             modules.add(name)
+    for module, line, kind, reason in LISTED_BY_HAND if listing is None else listing:
+        if module in roads:
+            print("%s: %s (%s; listed by hand: %s)" % (module, line, kind, reason))
     count = {r: sum(1 for road, _, _ in roads.values() if road == r) for r in ("argv", "binding", "neither", "refused")}
     sites = [(r, name) for name, (_, s, _) in roads.items() for _, _, r in s]
     offenders = [(name, line, argv) for name, (road, s, _) in roads.items() if road in ("argv", "binding") and
@@ -1648,10 +1618,8 @@ def _round8_regex_census(src):
     (test_the_scan_covers_every_call_the_regex_census_it_replaced_flagged). The definitions below are copied
     verbatim from this module as it stood at the head of PR #850's eighth review round, the last head to run them as
     the census. Returns, for each call span _spawns_kernel reads that matches, (offset of the call's opening
-    parenthesis, [(offset, matched text, name, lines)]): every KERNEL_ARGV match with name None and no lines, and every
-    match of a name KERNEL_NAME bound, with that name and the lines of the source KERNEL_NAME binds it on. Loud if that
-    per-call reading disagrees with the verbatim verdict. Returned with the lines of the source KERNEL_NAME binds any
-    name on, the lines exclusion (a) holds the declarations a reading visits against."""
+    parenthesis, [(offset, matched text)]): every KERNEL_ARGV match and every whole-word match of a name KERNEL_NAME
+    binds. Loud if that per-call reading disagrees with the verbatim verdict."""
     # -- verbatim: the round-8 regex census ---------------------------------------------------------------------------
     CALL = re.compile(r"(?:subprocess\.(?:Popen|run|check_output|check_call|call)|(?<![\w.])Popen)\s*\(")
     # the kernel's path as an argv spells it: the script's name, the bare CLI (not the other bin/romp-* scripts), a path
@@ -1676,19 +1644,15 @@ def _round8_regex_census(src):
         names = [re.compile(r"\b%s\b" % re.escape(n)) for n in KERNEL_NAME.findall(src)]
         return any(KERNEL_ARGV.search(span) or any(n.search(span) for n in names) for span in _call_spans(src))
     # -- end of the verbatim copy ---------------------------------------------------------------------------------------
-    bound = {}   # each name KERNEL_NAME binds: the lines of the source it binds the name on
-    for b in KERNEL_NAME.finditer(src):
-        bound.setdefault(b.group(1), set()).add(src.count("\n", 0, b.start(1)) + 1)
     hits = []
     for m, span in zip(CALL.finditer(src), _call_spans(src)):
-        found = [(m.end() + x.start(), x.group(0), None, frozenset()) for x in KERNEL_ARGV.finditer(span)]
-        found += [(m.end() + x.start(), x.group(0), n, frozenset(bound[n])) for n in KERNEL_NAME.findall(src)
-                  for x in re.finditer(r"\b%s\b" % re.escape(n), span)]
+        found = [(m.end() + x.start(), x.group(0)) for x in KERNEL_ARGV.finditer(span)]
+        found += [(m.end() + x.start(), x.group(0)) for n in KERNEL_NAME.findall(src) for x in re.finditer(r"\b%s\b" % re.escape(n), span)]
         if found:
             hits.append((m.end() - 1, sorted(found, key=lambda f: f[0])))
     if bool(hits) != _spawns_kernel(src):
         raise AssertionError("the per-call reading of the round-8 census disagrees with its verbatim verdict")
-    return hits, frozenset().union(*bound.values())
+    return hits
 
 
 def _source_offsets(src):
@@ -1737,14 +1701,31 @@ def _bin_romp_text():
         return f.read()
 
 
-_Comparison = collections.namedtuple("_Comparison", "dropped missed not_calls flagged excused")
+# THE HAND LISTING (PR #850's tenth review round): lines the round-8 regex census matches at a call that the scan does
+# not read as a site, each listed with the reason it starts no kernel, since the comparison names every other such match
+# (_regex_scan_comparison). An entry is (module, line, kind, reason): the module's path under tests/, the text of the
+# line holding the match with its surrounding whitespace stripped, a kind, and the reason. --roads prints each under
+# `# unresolved:` with its kind and reason, the comparison reads it as covering every match on that line of that module,
+# and an entry that covers no match reds the comparison case, naming the entry (_hand_entries_covering_nothing), so the
+# listing holds only lines that exist. Empty: the tree needs no entry.
+LISTED_BY_HAND = ()
+
+_Comparison = collections.namedtuple("_Comparison", "dropped missed not_calls flagged by_hand")
+
+
+def _hand_entries_covering_nothing(compared, listing):
+    """The entries of `listing`, a hand listing, that cover no match: none of the comparison values in `compared`
+    (_regex_scan_comparison's, or a roads table's `compared` values) holds the entry among those that covered a match
+    (`by_hand`)."""
+    used = {entry for values in compared for entry in values[4]}
+    return [entry for entry in listing if entry not in used]
 
 
 def _regex_hits_at_calls(src, tree, census=None):
     """The round-8 regex census's hits in `src` (_round8_regex_census, or `census`, its value for `src` already read),
     each at the call of `tree` whose opening parenthesis it names: ([(call, or None for a match at no call, the
-    parenthesis's line, matches)], the lines KERNEL_NAME binds a name on, the offset reader)."""
-    hits, lines = census or _round8_regex_census(src)
+    parenthesis's line, matches)], the offset reader)."""
+    hits = _round8_regex_census(src) if census is None else census
     at = _source_offsets(src)
     calls = {}
     for node in ast.walk(tree):
@@ -1753,26 +1734,26 @@ def _regex_hits_at_calls(src, tree, census=None):
             while paren < len(src) and src[paren].isspace():   # loop-ok: bounded by the source's length
                 paren += 1
             calls[paren] = node
-    return [(calls.get(paren), src[:paren].count("\n") + 1, matches) for paren, matches in hits], lines, at
+    return [(calls.get(paren), src[:paren].count("\n") + 1, matches) for paren, matches in hits], at
 
 
-def _regex_scan_comparison(src, name, verbs_hold=True, scan_all=False, scanned=None):
+def _regex_scan_comparison(src, name, scan_all=False, scanned=None, hand=()):
     """Every call the round-8 regex census (_round8_regex_census) flags in `src`, held against the spawn scan over the
-    same source. Returns (dropped, missed, not_calls, flagged, excused): `dropped` the (line, matched text, call text)
-    of every match the scan accounts for in none of these ways: a site at the call's line (the module then owes the
-    trio); an entry listed under `unresolved` whose expression contains the match (a listing requires no trio, so an
-    unrelated one at the same call, sys.executable most often, explains nothing); the module refused (UnreadableSpawn,
-    loud); or one of the three exclusions, each FAIL-CLOSED (_regex_match_excluded: it excuses only the narrow shape it
-    proves from the call, and any other match is named here); `excused` the (line, matched text, exclusion) of each match
-    an exclusion took; `missed` the lines of the sites the regex census did not flag, reported and asserting nothing;
-    `not_calls` the lines of regex matches at no call of the module's ast (a comment, a docstring, a string holding a
-    snippet); `flagged` the number of calls of the ast the regex flags. Exclusion (c) reads bin/romp's dispatch only
-    while every verb in KERNEL_VERBS is one it dispatches (`verbs_hold`: an exclusion keyed on a list that names a verb
-    the CLI has not excuses nothing). A source the regex flags nowhere is not scanned unless `scan_all`, so its
-    `missed` is empty. `scanned` is (tree, scan, sites, refused) from a scan of `src` its caller already ran
-    (_roads_row, so the tree is scanned once), else the source is parsed and scanned here (a planted row's text)."""
+    same source under one rule: for each call the regex flags, the scan gives a site at the call's line (the module then
+    owes the trio), or a listed entry at that line whose expression contains the match (a listing requires no trio, so
+    an unrelated one at the same call, sys.executable most often, explains nothing), or refuses the module
+    (UnreadableSpawn, red in the trio test); any other match at a call is named. The listed entries are the scan's
+    (`unresolved`) and `hand`, the module's entries of the hand listing (LISTED_BY_HAND), each covering every match on
+    the line whose text, its surrounding whitespace stripped, is the entry's. No proof excuses a match. Returns
+    (dropped, missed, not_calls, flagged, by_hand): `dropped` the (line, matched text, call text) of every match named;
+    `missed` the lines of the sites the regex census did not flag, reported and asserting nothing; `not_calls` the lines
+    of regex matches at no call of the module's ast (a comment, a docstring, a string holding a snippet), reported and
+    asserting nothing; `flagged` the number of calls of the ast the regex flags; `by_hand` the entries of `hand` that
+    cover a match. A source the regex flags nowhere is not scanned unless `scan_all`, so its `missed` is empty.
+    `scanned` is (tree, scan, sites, refused) from a scan of `src` its caller already ran (_roads_row, so the tree is
+    scanned once), else the source is parsed and scanned here (a planted row's text)."""
     census = _round8_regex_census(src)
-    if not census[0] and not scan_all:
+    if not census and not scan_all:
         return _Comparison([], [], [], 0, [])
     if scanned is None:
         tree = _parse_text(src, name)
@@ -1784,14 +1765,14 @@ def _regex_scan_comparison(src, name, verbs_hold=True, scan_all=False, scanned=N
     else:
         tree, scan, sites, refused = scanned
     listed = list(scan.unresolved_nodes)
-    hits, lines, at = _regex_hits_at_calls(src, tree, census)
-    verbs = _non_starting_verbs() if verbs_hold else None
+    hits, at = _regex_hits_at_calls(src, tree, census)
+    lines = src.split("\n")
 
     def extent(node):
         return at(node.lineno, node.col_offset), at(node.end_lineno, node.end_col_offset)
 
     site_lines = {line for line, _, _ in sites}
-    flagged, dropped, not_calls, excused = set(), [], [], []   # flagged: the lines of the calls the regex flags
+    flagged, dropped, not_calls, by_hand = set(), [], [], []   # flagged: the lines of the calls the regex flags
     for call, paren_line, matches in hits:
         if call is None:
             not_calls.append(paren_line)
@@ -1799,202 +1780,15 @@ def _regex_scan_comparison(src, name, verbs_hold=True, scan_all=False, scanned=N
         flagged.add(call.lineno)
         if refused or call.lineno in site_lines:
             continue
-        for offset, text, word, _ in matches:
+        for offset, text in matches:
             if any(start <= offset < end for line, node in listed if line == call.lineno for start, end in [extent(node)]):
                 continue
-            exclusion = _regex_match_excluded(scan, call, offset, text, word, lines, extent, verbs)
-            if exclusion:
-                excused.append((call.lineno, text, exclusion))
-            else:
-                dropped.append((call.lineno, text, ast.unparse(call)))
-    return _Comparison(dropped, sorted(site_lines - flagged), not_calls, len(hits) - len(not_calls), excused)
-
-
-def _exclusion_accounts(src, verbs_hold=True, verbs=None):
-    """(line, matched text, exclusion or None) for every match the round-8 regex census flags at a call of `src`, each
-    judged by the exclusions alone (_regex_match_excluded), whatever the scan finds at the call: the plants that hold a
-    refusal clause of an exclusion where a site or a listing would account for the match first. `verbs` stands in for
-    bin/romp's dispatch (_non_starting_verbs) when given, so a clause of (c) can be held against any verb set."""
-    tree = _parse_text(src)
-    scan = _SpawnScan(tree, "planted.py")
-    try:
-        try:
-            scan.sites()
-        except UnreadableSpawn:
-            pass
-        hits, lines, at = _regex_hits_at_calls(src, tree)
-        verbs = verbs or (_non_starting_verbs() if verbs_hold else None)
-        extent = lambda node: (at(node.lineno, node.col_offset), at(node.end_lineno, node.end_col_offset))   # noqa: E731
-        return [(call.lineno, text, _regex_match_excluded(scan, call, offset, text, word, lines, extent, verbs))
-                for call, _, matches in hits if call is not None for offset, text, word, _ in matches]
-    finally:
-        scan.bindings.release()
-
-
-_DISPATCH = []   # bin/romp's top-level dispatch (_bin_romp_verbs), read once per module run by _non_starting_verbs
-
-
-def _non_starting_verbs():
-    """Exclusion (c)'s verbs, as a test on a word: a verb bin/romp's top-level dispatch has (_bin_romp_verbs: a literal
-    arm, or a word one of its =~ patterns finds), less KERNEL_VERBS, the verbs that start a kernel."""
-    if not _DISPATCH:
-        _DISPATCH.append(_bin_romp_verbs(_bin_romp_text()))
-    dispatched, patterns = _DISPATCH[0]
-    return lambda verb: verb not in KERNEL_VERBS and (verb in dispatched or any(re.search(p, verb) for p in patterns))
-
-
-ASSIGNMENT = re.compile(r"[A-Za-z_]\w*=.*", re.S)   # a shell's NAME=value word, or env's
-DURATION = re.compile(r"\d+(?:\.\d+)?[smhd]?")      # timeout's duration
-
-
-def _command_word(words, k, assignments):
-    """The index of the command word of the simple command whose words, from index k, are `words` (each a text, None
-    for a word that is no literal): past the NAME=value assignments before it when `assignments` (a shell's simple
-    command; an argv run without a shell has none), and past the known pass-through wrappers: timeout with a
-    duration, nohup, env with -i and NAME=value words, exec, command, and sudo with the option words after it. A word
-    no literal is the command word itself; None when the words run out first."""
-    while k < len(words):   # loop-ok: each pass consumes at least one word
-        word = words[k]
-        if word is None:
-            return k
-        if assignments and ASSIGNMENT.fullmatch(word):
-            k += 1
-        elif word in ("nohup", "exec", "command"):
-            k += 1
-        elif word == "timeout" and k + 1 < len(words) and words[k + 1] is not None and DURATION.fullmatch(words[k + 1]):
-            k += 2
-        elif word in ("env", "sudo"):
-            k += 1
-            while k < len(words) and words[k] is not None and (   # loop-ok: bounded by the words
-                    (word == "env" and (words[k] in ("-i", "--ignore-environment") or ASSIGNMENT.fullmatch(words[k])))
-                    or (word == "sudo" and len(words[k]) > 1 and words[k][0] == "-")):
-                k += 1
-        else:
-            return k
-    return None
-
-
-def _command_words(texts):
-    """The indices of the command words of a shell string's words (_shell_words, each a text): one per simple command,
-    the commands split at the control operators (a word of SHELL_OPERATOR characters holding no < or >)."""
-    heads, start = set(), 0
-    for i in range(len(texts) + 1):
-        if i == len(texts) or (texts[i] and set(texts[i]) <= SHELL_OPERATOR and not set(texts[i]) & set("<>")):
-            k = _command_word(texts[start:i], 0, assignments=True)
-            if k is not None:
-                heads.add(start + k)
-            start = i + 1
-    return heads
-
-
-def _regex_match_excluded(scan, call, offset, text, word, kernel_name_lines, extent, verbs):
-    """Which exclusion, if any, excuses one regex match in `call` (_regex_scan_comparison): "a", "b" or "c", else None.
-    Each is FAIL-CLOSED: it excuses only the narrow shape it can prove from the call, and a match outside every such
-    shape is left to a site or a listed entry, else named. `kernel_name_lines` holds the lines the regex's KERNEL_NAME
-    binds a name on; `verbs` tests a word for a verb that starts no kernel (_non_starting_verbs), None when (c) may
-    excuse nothing.
-    (a) a word collision: the match lies on an identifier token of the word (a name, an attribute's name, a keyword
-    argument's or a parameter's name), never on or inside a string (a text a run-time lookup reads by name is never
-    (a)); every name or attribute of that spelling in the call reads as no path (with the subscripts taken from it);
-    and no declaration the scan visits while reading the call's argv and executable= (_SpawnScan._visit: names, self
-    and cls attributes, tuple unpacks, dict values) sits on a line in `kernel_name_lines` and reads as no path, since
-    the regex read that declaration and the scan does not read its value.
-    (b) a Python -c child: the match lies inside the program after an element that is exactly "-c", in a literal list
-    whose interpreter, found past the option words before the flag, names Python, and the program calls only callees
-    the scan names, none a process starter or a dynamic road (_SpawnScan.program_starts_no_process).
-    (c) the CLI with a verb that starts no kernel: the match is the CLI's (no romp-kernel in it), and either the argv
-    is a literal list whose command word (its first element past the pass-through wrappers, _command_word) holds the
-    match, is the CLI's path and nothing else (_SpawnScan._is_the_cli) and has a string in `verbs` as the next element;
-    or the match lies in a string read at the shell's words (_shell_words) in which every word that is the CLI is the
-    command word of its simple command (_command_words) and has as its next word a literal with no expansion or operator
-    in it that is in `verbs`. The element after a shell's -c program, xargs -I, parallel ::: and $1 are no command word
-    and no verb."""
-    scan._line = call.lineno
-    scope = scan.bindings.scope_of(call)
-    argv = _spawn_argv(call)
-    program = next((kw.value for kw in call.keywords if kw.arg == "executable"), None)
-    if word is not None and _excused_as_collision(scan, call, offset, word, kernel_name_lines, extent, argv, program, scope):
-        return "a"
-    for node in ast.walk(argv) if argv is not None else ():
-        if isinstance(node, (ast.List, ast.Tuple)):
-            for j in range(1, len(node.elts)):
-                start, end = extent(node.elts[j])
-                if start <= offset < end and scan.program_starts_no_process(node.elts, j, scan.bindings.scope_of(node.elts[j])):
-                    return "b"
-    if word is None and verbs is not None and "romp-kernel" not in text and _excused_as_cli(scan, offset, argv, extent, verbs):
-        return "c"
-    return None
-
-
-def _excused_as_collision(scan, call, offset, word, kernel_name_lines, extent, argv, program, scope):
-    """Exclusion (a)'s proof for the match of `word` at `offset` in `call` (_regex_match_excluded)."""
-    parent = {id(c): n for n in ast.walk(call) for c in ast.iter_child_nodes(n)}
-    token, named = False, []
-    for n in ast.walk(call):
-        if isinstance(n, ast.Name) and n.id == word:
-            named.append(n)
-            token = token or extent(n)[0] == offset
-        elif isinstance(n, ast.Attribute) and n.attr == word:
-            named.append(n)
-            token = token or extent(n)[1] - len(word) == offset
-        elif isinstance(n, (ast.keyword, ast.arg)) and n.arg == word:
-            token = token or extent(n)[0] == offset
-    if not token:
-        return False
-    spelled = []
-    for n in named:
-        while isinstance(parent.get(id(n)), ast.Subscript) and parent[id(n)].value is n:   # loop-ok: climbs the call's tree
-            n = parent[id(n)]
-        spelled.append(n)
-    scan._visited = []
-    try:
-        if argv is not None:
-            scan.holds_kernel_path(argv, scope)
-        if program is not None:
-            scan.is_kernel_path(program, scope)
-        if any(scan.is_kernel_path(n, s) or scan.holds_kernel_path(n, s) for n in spelled for s in [scan.bindings.scope_of(n)]):
-            return False
-        visited = scan._visited
-    except UnreadableSpawn:
-        return False
-    finally:
-        scan._visited = None
-    for d in visited:
-        if d.lineno in kernel_name_lines:
-            try:
-                reads = d.value is not None and (scan.is_kernel_path(d.value, scan.bindings.scope_of(d.value))
-                                                 or scan.holds_kernel_path(d.value, scan.bindings.scope_of(d.value)))
-            except UnreadableSpawn:
-                reads = False
-            if not reads:
-                return False
-    return True
-
-
-def _excused_as_cli(scan, offset, argv, extent, verbs):
-    """Exclusion (c)'s proof for the CLI's match at `offset` in the argv (_regex_match_excluded)."""
-    if argv is None:
-        return False
-    if isinstance(argv, (ast.List, ast.Tuple)):
-        words = [e.value if isinstance(e, ast.Constant) and isinstance(e.value, str) else None for e in argv.elts]
-        k = _command_word(words, 0, assignments=False)
-        if k is not None and k + 1 < len(words):
-            start, end = extent(argv.elts[k])
-            if (start <= offset < end and words[k + 1] is not None and verbs(words[k + 1])
-                    and scan._is_the_cli(argv.elts[k], scan.bindings.scope_of(argv.elts[k]))):
-                return True
-    for c in (n for n in ast.walk(argv) if isinstance(n, ast.Constant) and isinstance(n.value, str)):
-        start, end = extent(c)
-        if not start <= offset < end:
-            continue
-        words = _shell_words([c.value])
-        texts = [_literal(w) for w in words] if words is not None else []
-        clis = [i for i, t in enumerate(texts) if CLI_PATH.search(t or "")]
-        heads = _command_words(texts)
-        return bool(clis) and all(
-            i in heads and i + 1 < len(texts) and texts[i + 1] and not set(texts[i + 1]) & (SHELL_EXPANSION | SHELL_OPERATOR)
-            and verbs(texts[i + 1]) for i in clis)
-    return False
+            entries = [e for e in hand if e[1] == lines[src.count("\n", 0, offset)].strip()]
+            if entries:
+                by_hand += [e for e in entries if e not in by_hand]
+                continue
+            dropped.append((call.lineno, text, ast.unparse(call)))
+    return _Comparison(dropped, sorted(site_lines - flagged), not_calls, len(hits) - len(not_calls), by_hand)
 
 
 class UnreadableEnvWrite(AssertionError):
@@ -2396,11 +2190,11 @@ def _method_chain(cls, name, classes):
 # path bound across two lines, missed by the regex census because its KERNEL_NAME pattern read one line. The comparison
 # case (test_the_scan_covers_every_call_the_regex_census_it_replaced_flagged) runs that census over every row as well,
 # and every shape PR #850's ninth review round probed has a row here at the class that round's ruling gave it; a row
-# whose label says the regex missed it too is held to that by the comparison case. The comparison case holds each row to
-# the account its label claims as well: a row whose label says the comparison names it carries a match no site, listing,
-# refusal or exclusion takes (a launch, or a clean shape, that the fail-closed exclusions refuse and the scan neither
-# reads nor lists); a row whose label ends in "listed)" carries no match an exclusion takes; a row whose label names an
-# exclusion, "(exclusion (a))", carries a match that exclusion takes.
+# whose label says the regex missed it too is held to that by the comparison case, and every shape class PR #850's
+# tenth review round found a removed exclusion excusing has a row labelled named. The comparison case holds each row to
+# the account its label claims as well: a row whose label says the comparison names it carries a match at a call that no
+# site, listed entry or refusal takes (a launch, or a clean shape the scan neither reads as a site nor lists: the cost of
+# failing closed the module docstring states), and every match at a call of every other row is taken by one of them.
 PLANT_TABLE = (
     ("B1 two-line binding (the ruling's required case)", 'caught-by-binding', 3,
      'KERNEL = os.path.join(\n    BIN, "romp-kernel")\nsubprocess.Popen([KERNEL])'),
@@ -2688,7 +2482,7 @@ PLANT_TABLE = (
      'subprocess.Popen([shutil.which("bash"), "-c", "\'bin/romp-kernel\'"])'),
     ("A49 the path quoted as the whole program of a login shell's -lc (the flag in a cluster)", 'caught-by-argv', 1,
      'subprocess.Popen(["bash", "-lc", "\'bin/romp-kernel\'"])'),
-    ('N1 a same-named local in another function', 'no-spawn', None,
+    ('N1 a same-named local in another function (the comparison names it)', 'no-spawn', None,
      'def a():\n    k = os.path.join(BIN, "romp-kernel")\ndef b():\n    k = [sys.executable, "-m", "pytest"]\n    subprocess.run(k)'),
     ('N2 p beside -p', 'no-spawn', None,
      'p = os.path.join(BIN, "romp-kernel")\nopen(p).read()\nsubprocess.run([sys.executable, "-m", "pytest", "-p", "no:cacheprovider"])'),
@@ -2696,7 +2490,7 @@ PLANT_TABLE = (
      'k = os.path.join(BIN, "romp-kernel")\nopen(k).read()\nsubprocess.run([sys.executable, "-m", "pytest", "-k", "boot"])'),
     ('N4 src beside src/main.ts', 'no-spawn', None,
      'src = open(os.path.join(BIN, "romp-kernel")).read()\nsubprocess.run(["node", "src/main.ts"])'),
-    ('N5 km beside import km, inside the program of a Python -c child (exclusion (b))', 'no-spawn', None,
+    ('N5 km beside import km, inside the program of a Python -c child (the comparison names it)', 'no-spawn', None,
      'km = load_source("romp_kernel_x", os.path.join(BIN, "romp-kernel"))\nsubprocess.run([sys.executable, "-c", "import km"])'),
     ('N6 kernel beside grep kernel', 'no-spawn', None,
      'kernel = os.path.join(BIN, "romp-kernel")\nsubprocess.run(["grep", "kernel", "docs"])'),
@@ -2704,9 +2498,9 @@ PLANT_TABLE = (
      'lines = open(os.path.join(BIN, "romp-kernel")).read().splitlines()\nsubprocess.run([sys.executable, "-m", "pytest", "-k", "lines"])'),
     ("N8 the shape that collided (text spelling the path, -p)", 'no-spawn', None,
      'p = "os.path.join(BIN, \'romp-kernel\')"\nsubprocess.run([sys.executable, "-m", "pytest", "-p", "tests.conftest"])'),
-    ('N9 a -c child that loads the kernel, inline', 'no-spawn', None,
+    ('N9 a -c child that loads the kernel, inline (the comparison names it)', 'no-spawn', None,
      'subprocess.run([sys.executable, "-c", "load_source(\'k\', os.path.join(%r, \'romp-kernel\'))" % BIN])'),
-    ('N10 a -c child that loads the kernel, the program held in a name', 'no-spawn', None,
+    ('N10 a -c child that loads the kernel, the program held in a name (the comparison names it)', 'no-spawn', None,
      'CODE = "km = load_source(\'k\', os.path.join(BIN, \'romp-kernel\'))\\n"\nsubprocess.run([sys.executable, "-c", CODE])'),
     ('N11 a comment spelling a launch', 'no-spawn', None,
      'x = 1  # subprocess.Popen([os.path.join(BIN, "romp-kernel")])\nsubprocess.run(["true"])'),
@@ -2722,24 +2516,23 @@ PLANT_TABLE = (
      'def start(argv):\n    return subprocess.Popen(argv)'),
     ('N17 a Popen handle named beside -k', 'no-spawn', None,
      'proc = subprocess.Popen([os.path.join(BIN, "romp-judge")])\nsubprocess.run([sys.executable, "-m", "pytest", "-k", "proc"])'),
-    ('N18 a module constant shadowed by a local argv', 'no-spawn', None,
+    ('N18 a module constant shadowed by a local argv (the comparison names it)', 'no-spawn', None,
      'KERNEL = os.path.join(BIN, "romp-kernel")\ndef b():\n    KERNEL = [sys.executable, "-m", "pytest"]\n    subprocess.run(KERNEL)'),
     ('N19 a build and the postal service', 'no-spawn', None,
      'subprocess.run(["node", "esbuild.js"], cwd=EXT)\nsubprocess.run(["bin/romp-postal-service", "ensure"])'),
-    ("N20 the judge's element of a tuple by index, the kernel's beside it", 'no-spawn', None,
+    ("N20 the judge's element of a tuple by index, the kernel's beside it (the comparison names it)", 'no-spawn', None,
      'SCRIPTS = (os.path.join(BIN, "romp-kernel"), os.path.join(BIN, "romp-judge"))\nsubprocess.run([SCRIPTS[1], "--once"])'),
-    ("N21 the judge's entry of a dict by key, the kernel's beside it", 'no-spawn', None,
+    ("N21 the judge's entry of a dict by key, the kernel's beside it (the comparison names it)", 'no-spawn', None,
      'PATHS = {"kernel": os.path.join(BIN, "romp-kernel"), "judge": os.path.join(BIN, "romp-judge")}\nsubprocess.run([PATHS["judge"], "--once"])'),
-    ('N22 a key the dict has not', 'no-spawn', None,
+    ('N22 a key the dict has not (the comparison names it)', 'no-spawn', None,
      'PATHS = {"kernel": os.path.join(BIN, "romp-kernel")}\nsubprocess.run([PATHS["judge"]])'),
     ('N23 a name bound by assignment to a builtin, no spawn function', 'no-spawn', None,
      'run = print\nrun(os.path.join(BIN, "romp-kernel"))'),
     ("N25 a helper's return (the stated residual, listed)", 'no-spawn', None,
      'def kpath():\n    return os.path.join(BIN, "romp-kernel")\nsubprocess.run([kpath()])'),
-    ('N26 the CLI with refresh, which acts through a manager already running', 'no-spawn', None,
+    ('N26 the CLI with refresh, which acts through a manager already running (the comparison names it)', 'no-spawn', None,
      'subprocess.run([os.path.join(BIN, "romp"), "refresh"])'),
-    ('N27 the CLI with kernel, a verb bin/romp does not have, which exclusion (c) cannot prove starts no kernel (the comparison '
-     'names it)', 'no-spawn', None,
+    ('N27 the CLI with kernel, a verb bin/romp does not have (the comparison names it)', 'no-spawn', None,
      'subprocess.check_output([os.path.join(BIN, "romp"), "kernel", "--serve"])'),
     ('N28 a suffixed word: the path with .orig after it, bound across two lines', 'no-spawn', None,
      'KERNEL = os.path.join(\n    BIN, "romp-kernel")\nsubprocess.run(["cp", f"{KERNEL}.orig", "/tmp/TESTHOST"])'),
@@ -2767,7 +2560,8 @@ PLANT_TABLE = (
      'def start(**kw):\n    return subprocess.run(**kw)'),
     ('N37 a class attribute read through the class name (the stated residual, listed)', 'no-spawn', None,
      'class Lab:\n    K = os.path.join(BIN, "romp-kernel")\nsubprocess.run([Lab.K])'),
-    ("N38 a subclass's own method reading an attribute it overrides with another script, the base's the kernel", 'no-spawn', None,
+    ("N38 a subclass's own method reading an attribute it overrides with another script, the base's the kernel (the "
+     "comparison names it)", 'no-spawn', None,
      'class Base:\n    SCRIPT = os.path.join(BIN, "romp-kernel")\nclass T(Base):\n    SCRIPT = os.path.join(BIN, "romp-judge")\n'
      '    def test_a(self):\n        subprocess.Popen([sys.executable, self.SCRIPT])'),
     ('N39 an argv extended in place by +=, the path in neither the base nor the extension', 'no-spawn', None,
@@ -2781,9 +2575,11 @@ PLANT_TABLE = (
      "the stated residual, listed)", 'no-spawn', None,
      'class T:\n    kernel = os.path.join(BIN, "romp-kernel")\n    @staticmethod\n    def launch(self):\n'
      '        subprocess.Popen([sys.executable, self.kernel])'),
-    ('N43 the CLI with --help in a shell string, a ; right after the verb (the shell hands it --help)', 'no-spawn', None,
+    ('N43 the CLI with --help in a shell string, a ; right after the verb (the shell hands it --help; the comparison names '
+     'it)', 'no-spawn', None,
      'subprocess.run("bin/romp --help; true", shell=True)'),
-    ('N44 a -c child that load_sources the kernel, its program a str.join of lines and %r templates', 'no-spawn', None,
+    ('N44 a -c child that load_sources the kernel, its program a str.join of lines and %r templates (the comparison names '
+     'it)', 'no-spawn', None,
      'subprocess.run([sys.executable, "-c", "\\n".join(["import sys", "sys.path.insert(0, %r)" % HERE,\n'
      '                                                 "km = load_source(\'k\', %r)" % os.path.join(BIN, "romp-kernel")])])'),
     ('N45 a program that starts a kernel other than romp-kernel and the CLI at bin/romp: bin/romp-serve, romp-manager up, '
@@ -2845,8 +2641,7 @@ PLANT_TABLE = (
      '        KERNEL, n = k, 0\n        return subprocess.run([KERNEL])\n    return go'),
     ('N63 the CLI with -- and then up, -- being no verb bin/romp dispatches (the comparison names it)', 'no-spawn', None,
      'subprocess.Popen(["bin/romp", "--", "up"])'),
-    ('N64 the CLI with help, then the CLI handed up by xargs in the same shell string, every CLI word held to (c) '
-     '(the comparison names it)', 'no-spawn', None,
+    ('N64 the CLI with help, then the CLI handed up by xargs in the same shell string (the comparison names it)', 'no-spawn', None,
      'subprocess.run("bin/romp help; echo up | xargs bin/romp", shell=True)'),
     ("N65 a Python -c child that starts the kernel through a star import's run, a process starter by its spelling "
      '(the comparison names it)', 'no-spawn', None,
@@ -2899,7 +2694,7 @@ PLANT_TABLE = (
      'dynamic road, listed)', 'no-spawn', None,
      'subprocess.run([sys.executable, "-c", "sp = __import__(\'subprocess\'); sp.run([\'bin/romp-kernel\'])"])'),
     ('N86 a Python -c child that loads the kernel in-process through runpy.run_path (a dynamic road; a clean shape '
-     'the fail-closed (b) leaves to the listing, listed)', 'no-spawn', None,
+     'the listing takes, listed)', 'no-spawn', None,
      'subprocess.run([sys.executable, "-c", "import runpy; runpy.run_path(\'bin/romp-kernel\')"])'),
     ("N87 a Python -c child that starts the kernel through getattr(subprocess, 'Popen') (a dynamic road, listed)", 'no-spawn', None,
      'subprocess.run([sys.executable, "-c", "import subprocess as s; getattr(s, \'Popen\')([\'bin/romp-kernel\'])"])'),
@@ -2922,20 +2717,23 @@ PLANT_TABLE = (
      'KERNEL = os.path.join(\n    BIN, "romp-kernel")\n'
      'subprocess.run([sys.executable, "-c", "import runpy; runpy.run_path(%r, run_name=\'__main__\')" % KERNEL])\n'
      'subprocess.run([sys.executable, "-c", "exec(open(%r).read())" % KERNEL])'),
-    ('N94 a keyword argument in the call named like a one-line binding (exclusion (a))', 'no-spawn', None,
+    ('N94 a keyword argument in the call named like a one-line binding (the comparison names it)', 'no-spawn', None,
      'k = os.path.join(BIN, "romp-kernel")\nsubprocess.run(["true"], env=dict(os.environ, k="1"))'),
-    ("N95 a lambda's parameter in the call named like a one-line binding (exclusion (a))", 'no-spawn', None,
+    ("N95 a lambda's parameter in the call named like a one-line binding (the comparison names it)", 'no-spawn', None,
      'k = os.path.join(BIN, "romp-kernel")\nsubprocess.run(sorted(["b", "a"], key=lambda k: k))'),
-    ('N96 the CLI with refresh behind timeout 5 and env -i with an assignment, in an argv (exclusion (c))', 'no-spawn', None,
+    ('N96 the CLI with refresh behind timeout 5 and env -i with an assignment, in an argv (the comparison names it)',
+     'no-spawn', None,
      'subprocess.run(["timeout", "5", "env", "-i", "ROMP_X=1", "bin/romp", "refresh"])'),
-    ('N97 the CLI with --help after an assignment, nohup, sudo -E, command and exec, after && in a shell string (exclusion (c))', 'no-spawn', None,
+    ('N97 the CLI with --help after an assignment, nohup, sudo -E, command and exec, after && in a shell string (the '
+     'comparison names it)', 'no-spawn', None,
      'subprocess.run("cd /tmp && ROMP_X=1 nohup sudo -E command exec bin/romp --help", shell=True)'),
-    ('N98 a Python -c child that defines and calls a function that loads the kernel (exclusion (b))', 'no-spawn', None,
+    ('N98 a Python -c child that defines and calls a function that loads the kernel (the comparison names it)', 'no-spawn', None,
      'subprocess.run([sys.executable, "-c", "def load():\\n    return load_source(\'k\', \'bin/romp-kernel\')\\nload()"])'),
-    ('N99 a Python -c child of python3 named by its path, behind -W error and -B, that loads the kernel (exclusion (b))', 'no-spawn', None,
+    ('N99 a Python -c child of python3 named by its path, behind -W error and -B, that loads the kernel (the comparison '
+     'names it)', 'no-spawn', None,
      'subprocess.run(["/usr/bin/python3", "-W", "error", "-B", "-c", "km = load_source(\'k\', \'bin/romp-kernel\')"])'),
     ('N100 a -c child of python3 behind env that loads the kernel by a quoted path: read as Python and not at the '
-     "shell's words, and exclusion (b) takes no interpreter behind env (the comparison names it)", 'no-spawn', None,
+     "shell's words (the comparison names it)", 'no-spawn', None,
      'subprocess.run(["env", "python3", "-c", "km = load_source(\'k\', \'bin/romp-kernel\')"])'),
     ("N101 an environment variable a bash -c program in an f-string expands, set to the kernel's path (a text the "
      'shell reads by name, listed)', 'no-spawn', None,
@@ -2945,9 +2743,51 @@ PLANT_TABLE = (
      'KERNEL = os.path.join(BIN, "romp-kernel")\nsubprocess.Popen(["kernel", "--serve"], executable=globals()["KERNEL"])'),
     ('N103 a Python -c child whose argv, held in a name, starts the kernel through __import__ (a dynamic road, listed)', 'no-spawn', None,
      'cmd = [sys.executable, "-c", "__import__(\'subprocess\').run([\'bin/romp-kernel\'])"]\nsubprocess.run(cmd)'),
-    ("N104 the CLI with refresh behind stdbuf -oL, a wrapper exclusion (c) does not pass through, so the CLI is no "
-     'command word (the comparison names it)', 'no-spawn', None,
+    ('N104 the CLI with refresh behind stdbuf -oL (the comparison names it)', 'no-spawn', None,
      'subprocess.run(["stdbuf", "-oL", "bin/romp", "refresh"])'),
+    ('N105 the CLI launched in a word that is not the CLI (a backtick, eval, bash -c, an assigned variable), beside a clean '
+     'CLI word in the same shell string (the comparison names it)', 'no-spawn', None,
+     'subprocess.run("bin/romp refresh && echo `bin/romp up`", shell=True)\n'
+     'subprocess.run("bin/romp help; eval \'bin/romp up\'", shell=True)\n'
+     'subprocess.run("bin/romp status; bash -c \'bin/romp up\'", shell=True)\n'
+     'subprocess.run("bin/romp help; K=bin/romp; $K up", shell=True)'),
+    ('N106 a Python -c child handing a process starter over as a value: map and atexit.register (the comparison names it)',
+     'no-spawn', None,
+     'subprocess.run([sys.executable, "-c", "import subprocess; list(map(subprocess.run, [[\'bin/romp-kernel\', \'--serve\']]))"])\n'
+     'subprocess.run([sys.executable, "-c", "import atexit, subprocess; atexit.register(subprocess.run, [\'bin/romp-kernel\'])"])'),
+    ('N107 a Python -c child calling a dunder of a process starter (the comparison names it)', 'no-spawn', None,
+     'subprocess.run([sys.executable, "-c", "import subprocess; subprocess.run.__call__([\'bin/romp-kernel\', \'--serve\'])"])'),
+    ('N108 a Python -c child calling a process starter of a module PROCESS_FUNCTIONS does not list, _posixsubprocess.fork_exec '
+     '(the comparison names it)', 'no-spawn', None,
+     'subprocess.run([sys.executable, "-c", "import _posixsubprocess; _posixsubprocess.fork_exec([\'bin/romp-kernel\'])"])'),
+    ('N109 a Python -c child calling a function that runs a text: timeit.timeit, and code.InteractiveInterpreter.runsource '
+     'through the class (the comparison names it)', 'no-spawn', None,
+     'subprocess.run([sys.executable, "-c", "import timeit; timeit.timeit(\\"import subprocess; '
+     'subprocess.run([\'bin/romp-kernel\', \'--serve\'])\\", number=1)"])\n'
+     'subprocess.run([sys.executable, "-c", "import code; code.InteractiveInterpreter.runsource(code.InteractiveInterpreter(), '
+     '\\"import subprocess; subprocess.run([\'bin/romp-kernel\', \'--serve\'])\\")"])'),
+    ('N110 a Python -c child with a placeholder in an attribute, in an imported name, or glued into a name (the comparison '
+     'names it)', 'no-spawn', None,
+     'subprocess.run([sys.executable, "-c", "import subprocess; subprocess.%s([\'bin/romp-kernel\'])" % VERB])\n'
+     'subprocess.run([sys.executable, "-c", "from subprocess import %s as go; go([\'bin/romp-kernel\'])" % VERB])\n'
+     'subprocess.run([sys.executable, "-c", "import subprocess; subprocess.r%s([\'bin/romp-kernel\'])" % TAIL])'),
+    ("N111 a local of the matched spelling bound to an imported helper's return, beside a module name bound on one line to "
+     "the kernel's path (the comparison names it)", 'no-spawn', None,
+     'from helpers import staged\nKERNEL = os.path.join(BIN, "romp-kernel")\ndef test_a():\n    KERNEL = staged()\n'
+     '    subprocess.Popen([KERNEL, "--serve"])'),
+    ('N112 a Python -c child that names the kernel and calls a process starter beside a dynamic road (the comparison names '
+     'it)', 'no-spawn', None,
+     'subprocess.run([sys.executable, "-c", "import os; os.system(\\"exec \'bin/romp-kernel\' --serve\\"); exec(SRC)"])'),
+    ("N113 a Python -c child that starts the kernel through a star import's run beside a dynamic road (the comparison names "
+     "it)", 'no-spawn', None,
+     'subprocess.run([sys.executable, "-c", "from subprocess import *; run([\'bin/romp-kernel\']); exec(SRC)"])'),
+    ('N114 a Python -c program held in a name, one text that does not parse and one that calls a dynamic road (the '
+     'comparison names it)', 'no-spawn', None,
+     'if FLAG:\n    CODE = "exec \'bin/romp-kernel\' --serve"\nelse:\n    CODE = "exec(SRC)  # romp-kernel.real"\n'
+     'subprocess.run([sys.executable, "-c", CODE])'),
+    ('N115 a Python -c program that reads an opaque placeholder as code beside a dynamic road (the comparison names it)',
+     'no-spawn', None,
+     'subprocess.run([sys.executable, "-c", "%s; exec(SRC)  # romp-kernel.real" % STMT])'),
     ('R1 a rebinding in one function', 'refused-loud', (4, 2, 3),
      'def t():\n    k = os.path.join(BIN, "romp-kernel")\n    k = [sys.executable, "-m", "pytest", "-k", "boot"]\n    subprocess.run(k)'),
     ('R2 two module-level bindings that disagree', 'refused-loud', (3, 1, 2),
@@ -3178,53 +3018,38 @@ class HermeticKernelPostal(unittest.TestCase):
         """The old-versus-new comparison (review round 9: a replacement instrument covers at least what it replaced, and
         the proof is the old and the new run over one population). The census the scan replaced (_round8_regex_census,
         round 8's regex pair copied verbatim) and the scan run over every module the trio test reads and every
-        PLANT_TABLE row: for each call the regex flags, the scan gives a site at the call's line, lists an unresolved
-        entry whose expression contains the match, or refuses the module, or the match is one of the three exclusions,
-        each FAIL-CLOSED (_regex_match_excluded: a word collision on an identifier token reaching no declaration the
-        regex read that the scan reads as no path, a match inside the program of a Python child whose every callee the
-        scan names and none starts a process or takes a dynamic road, the CLI as a command word with a verb bin/romp
-        dispatches outside KERNEL_VERBS). A match in none of these reds the case, naming the module or row, the line and
-        the match, except in the rows whose label says the comparison names them, each of which must carry at least one
-        such match (a launch or a clean shape the exclusions refuse and the scan neither reads nor lists). Every row is
-        held to its account: a row whose label says it is listed has no match an exclusion takes; a row whose label
-        names an exclusion has a match that exclusion takes; a row whose label says the regex missed it too carries no
-        call the regex flags. Reported and asserting nothing: the rows and the modules whose sites the regex missed (B1
-        and the rest of round 8's silent half), the rows whose regex match lies at no call of the ast (N11, N12) and the
-        tree's matches an exclusion takes. The tree half is read from the roads table (_roads_table), whose one read
-        compared each module with the scan it ran for the roads, so this case scans no module of the tree again. Then
-        plants the comparison must red: consumer calls the regex flags (os.path.relpath of a name bound to the path,
-        beside a listed sys.executable that does not cover it, and of the path spelled inline); names bound on one line
-        that reach the binding the regex read (through .replace, which the scan does not read, and through
-        os.path.relpath, whose arguments it does); the CLI in a shell string handed a verb the shell expands ($VERB); -c
-        programs exclusion (b) must not excuse (a Python child that loads the kernel and starts another process, one
-        that starts a process through os.system, a %s placeholder read as code, a program that does not parse as Python,
-        a shell's program that Python would parse); and the refresh row with KERNEL_VERBS taken to name a verb bin/romp
-        lacks. Last, each exclusion judged alone over plants a site or a listing would account for first
-        (_exclusion_accounts), one per refusal clause the rows cannot reach."""
-        text = _bin_romp_text()
-        verbs_hold = not _verbs_bin_romp_lacks(KERNEL_VERBS, text)
+        PLANT_TABLE row, under one rule (_regex_scan_comparison): for each call the regex flags, the scan gives a site at
+        the call's line, or a listed entry at that line whose expression contains the match (the scan's own entries, and
+        the entries of the hand listing, LISTED_BY_HAND, each covering a match on its line), or refuses the module
+        (UnreadableSpawn, red in the trio test); any other match at a call is named. A named match reds the case, naming
+        the module or row, the line and the match, except in the rows whose label says the comparison names them, and
+        each of those must carry at least one (a launch, or a clean shape the scan neither reads as a site nor lists:
+        the cost of failing closed the module docstring states). A hand entry that covers no match reds the case, naming
+        the entry. A row whose label says the regex missed it too carries no call the regex flags. Reported and
+        asserting nothing: the rows and the modules whose sites the regex missed (B1 and the rest of round 8's silent
+        half) and the rows whose regex match lies at no call of the ast (N11, N12). The tree half is read from the roads
+        table (_roads_table), whose one read compared each module with the scan it ran for the roads, so this case scans
+        no module of the tree again. Then plants the comparison must name: consumer calls the regex flags
+        (os.path.relpath of a name bound to the path, beside a listed sys.executable that does not cover it, and of the
+        path spelled inline); names bound on one line that reach the binding the regex read (through .replace, which the
+        scan does not read, and through os.path.relpath, whose arguments it does); the CLI in a shell string handed a
+        verb the shell expands ($VERB); and -c programs the scan neither reads as a site nor lists (a Python child that
+        loads the kernel and starts another process, one that starts a process through os.system, a %s placeholder read
+        as code, a program that does not parse as Python, a shell's program that Python would parse)."""
         table = _roads_table(HERE, TREE_SKIP)
-        self.assertEqual(table.verbs_hold, verbs_hold, "the roads table's read compared the tree under the KERNEL_VERBS "
-                         "verdict this case reads for the rows")
-        dropped, tree_flagged, rows_flagged, missed, not_calls, tree_missed, tree_excused = [], 0, 0, [], [], [], []
-        for name, (d, rm, _, flagged, excused) in sorted(table.compared.items()):
+        dropped, tree_flagged, rows_flagged, missed, not_calls, tree_missed = [], 0, 0, [], [], []
+        for name, (d, rm, _, flagged, _) in sorted(table.compared.items()):
             dropped += [(name,) + x for x in d]
             tree_flagged += flagged
             tree_missed += ["%s:%s" % (name, ",".join(map(str, rm)))] if rm else []
-            tree_excused += ["%s:%d %s (%s)" % ((name,) + x) for x in excused]
-        named, off_account, also_missed = {}, [], {}
+        named, also_missed = {}, {}
         for label, _, _, src in PLANT_TABLE:
             row = label.split()[0]
-            c = _regex_scan_comparison(src, "planted.py", verbs_hold, scan_all=True)
+            c = _regex_scan_comparison(src, "planted.py", scan_all=True)
             if "the comparison names it" in label:
                 named[row] = [(line, match) for line, match, _ in c.dropped]
             else:
                 dropped += [(label,) + x for x in c.dropped]
-            if "listed)" in label and c.excused:
-                off_account.append("%s: labelled listed, and excused %r" % (row, c.excused))
-            claimed = re.search(r"\(exclusion \((\w)\)\)", label)
-            if claimed and claimed.group(1) not in {x for _, _, x in c.excused}:
-                off_account.append("%s: labelled exclusion (%s), which takes none of its matches: %r" % (row, claimed.group(1), c))
             if "the regex missed it too" in label:
                 also_missed[row] = c.flagged
             rows_flagged += c.flagged
@@ -3234,20 +3059,23 @@ class HermeticKernelPostal(unittest.TestCase):
                         "the comparison's population is empty" % (tree_flagged, rows_flagged))
         self.assertTrue(also_missed and not any(also_missed.values()), "the rows whose label says the regex missed them too, "
                         "each with no call the regex flags (row: flagged calls): %r" % also_missed)
-        self.assertTrue(named and all(named.values()), "the rows whose label says the comparison names them, each named at "
-                        "least once (row: named matches): %r" % named)
-        self.assertEqual(off_account, [], "rows off their account in the comparison:\n%s" % "\n".join(off_account))
+        self.assertTrue(named, "no row's label says the comparison names it")
+        self.assertEqual([row for row, matches in named.items() if not matches], [], "rows whose label says the comparison "
+                         "names them, with no match named (a site, a listed entry containing each match, or a refusal took "
+                         "every one)")
+        self.assertEqual(_hand_entries_covering_nothing(table.compared.values(), LISTED_BY_HAND), [], "entries of the hand "
+                         "listing (LISTED_BY_HAND) that cover no match of the round-8 regex census over the tree: the "
+                         "listing holds only lines that exist ((module, line, kind, reason))")
         self.assertEqual(dropped, [], "calls the round-8 regex census flagged that the scan neither reads as a site nor lists, "
-                         "and that no exclusion covers ((module or row, line, match, call); KERNEL_VERBS held to bin/romp: %s): "
+                         "and that no entry of the hand listing covers, each match named ((module or row, line, match, call)): "
                          "%r. Over %d flagged calls of the tree and %d of the rows; the rows whose sites the regex missed: %s; "
-                         "the modules whose sites it missed (module:lines): %s; the rows whose regex match lies at no call: %s; "
-                         "the tree's matches an exclusion takes: %s"
-                         % (verbs_hold, dropped, tree_flagged, rows_flagged, missed, tree_missed, not_calls, tree_excused))
+                         "the modules whose sites it missed (module:lines): %s; the rows whose regex match lies at no call: %s"
+                         % (dropped, tree_flagged, rows_flagged, missed, tree_missed, not_calls))
         consumer = 'KERNEL = os.path.join(BIN, "romp-kernel")\nsubprocess.run([sys.executable, os.path.relpath(KERNEL)])'
         scan = _SpawnScan(_parse_text(consumer), "planted.py")
         self.assertEqual((scan.sites(), [text for line, text, _ in scan.unresolved if line == 2]), ([], ["sys.executable"]),
                          "the consumer plant: no site, and sys.executable the one entry listed at the call")
-        self.assertEqual([(line, match) for line, match, _ in _regex_scan_comparison(consumer, "planted.py", verbs_hold)[0]],
+        self.assertEqual([(line, match) for line, match, _ in _regex_scan_comparison(consumer, "planted.py")[0]],
                          [(2, "KERNEL")], "a consumer call the regex flags is dropped by the scan, and the comparison names it "
                          "(the listed sys.executable at that call does not contain the match)")
         for plant, match, what in (
@@ -3258,14 +3086,14 @@ class HermeticKernelPostal(unittest.TestCase):
                 ('K = os.path.relpath(os.path.join(BIN, "romp-kernel"))\nsubprocess.run([sys.executable, K])', (2, "K"),
                  "a name bound on one line to a consumer's value, whose arguments the scan reads as holding the path")):
             self.assertEqual(_kernel_spawn_sites(plant, "planted.py"), [], "%s: the scan reads no site: %s" % (what, plant))
-            self.assertEqual([(line, m) for line, m, _ in _regex_scan_comparison(plant, "planted.py", verbs_hold)[0]], [match],
-                             "%s: the regex flags it and the scan reads no site, so the comparison names it, and no exclusion "
-                             "takes it for a word collision: %s" % (what, plant))
+            self.assertEqual([(line, m) for line, m, _ in _regex_scan_comparison(plant, "planted.py")[0]], [match],
+                             "%s: the regex flags it, the scan reads no site and lists no entry containing the match, so "
+                             "the comparison names it: %s" % (what, plant))
         verb = 'subprocess.Popen("bin/romp $VERB", shell=True)'
         self.assertEqual(_kernel_spawn_sites(verb, "planted.py"), [], "the CLI handed a verb the shell expands: no site")
-        self.assertEqual([(line, m) for line, m, _ in _regex_scan_comparison(verb, "planted.py", verbs_hold)[0]], [(1, "bin/romp")],
-                         "the CLI handed a verb the shell expands ($VERB) is named: exclusion (c) excuses only a verb the "
-                         "shell hands over as known text outside KERNEL_VERBS")
+        self.assertEqual([(line, m) for line, m, _ in _regex_scan_comparison(verb, "planted.py")[0]], [(1, "bin/romp")],
+                         "the CLI handed a verb the shell expands ($VERB) is named: the scan reads no site and lists no "
+                         "entry containing the match")
         for plant, what in (
                 ('subprocess.run([sys.executable, "-c", "km = load_source(\'k\', \'bin/romp-kernel\'); import subprocess; '
                  'subprocess.run([\'git\', \'status\'])"])', "a Python -c child that loads the kernel and starts another process"),
@@ -3278,49 +3106,46 @@ class HermeticKernelPostal(unittest.TestCase):
                 ('subprocess.run(["sh", "-c", "bin/romp-kernel.real"])',
                  "a shell's -c program that Python would parse (a shell's program is no Python child)")):
             self.assertEqual(_kernel_spawn_sites(plant, "planted.py"), [], "%s: the scan reads no site: %s" % (what, plant))
-            self.assertEqual([(line, m) for line, m, _ in _regex_scan_comparison(plant, "planted.py", verbs_hold)[0]], [(1, "romp-kernel")],
-                             "%s: named, since exclusion (b) excuses only a Python child's program that parses, holds no "
-                             "placeholder read as code, and starts no process: %s" % (what, plant))
-        refresh = next(src for label, _, _, src in PLANT_TABLE if label.startswith("N26 "))
-        self.assertEqual(_regex_scan_comparison(refresh, "planted.py", verbs_hold)[0], [], "the refresh row: the CLI with a verb "
-                         "outside KERNEL_VERBS, excluded while every verb in it is one bin/romp dispatches")
-        self.assertEqual(len(_regex_scan_comparison(refresh, "planted.py", False)[0]), 1, "...and not excluded with verbs_hold "
-                         "False, the value the case passes when KERNEL_VERBS names a verb bin/romp lacks")
-        for plant, match, what in (
-                ('subprocess.run(["bin/romp", "up"])', "bin/romp", "(c), an argv: up is a verb that starts a kernel"),
-                ('subprocess.Popen("bin/romp up", shell=True)', "bin/romp", "(c), a shell string: up is a verb that starts a kernel"),
-                ('subprocess.run("bin/romp", shell=True)', "bin/romp", "(c): the CLI with no word after it has no verb"),
-                ('subprocess.run("echo bin/romp help", shell=True)', "bin/romp", "(c): the CLI as an argument of another "
-                 "command, no command word"),
-                ('subprocess.run("bin/romp >/dev/null help", shell=True)', "bin/romp", "(c): the word after the CLI is a "
-                 "redirection, no verb"),
-                ("subprocess.run(\"bin/romp help 'bin/romp' up\", shell=True)", "bin/romp", "(c): a CLI word that is no command "
-                 "word at the shell's words, though a split at whitespace alone sees it quoted"),
-                ('subprocess.run(["bin/romp up", "help"])', "bin/romp", "(c): a command word holding the CLI among other words "
-                 "is not the CLI and nothing else"),
-                ('subprocess.run("bin/romp help romp-kernel", shell=True)', "romp-kernel", "(c): a match on the kernel's name is "
-                 "never the CLI's"),
-                ('subprocess.run([sys.executable, "-c", make("import subprocess; subprocess.run([\'bin/romp-kernel\'])")])',
-                 "romp-kernel", "(b): a program the scan cannot assemble"),
-                ('subprocess.run([INTERP, "-c", "k = \'romp-kernel.real\'"])', "romp-kernel", "(b): an interpreter the scan "
-                 "cannot name"),
-                ('subprocess.run(["bash", "-e", "-c", "k = \'romp-kernel.real\'"])', "romp-kernel", "(b): a shell's program "
-                 "behind an option word, which Python would parse"),
-                ('KERNEL = os.path.join(BIN, "romp-kernel")\nsubprocess.run(["grep", "KERNEL", "docs"])', "KERNEL",
-                 "(a): a match inside a string")):
-            accounts = [x for _, m, x in _exclusion_accounts(plant, verbs_hold) if m == match]
-            self.assertTrue(accounts and not any(accounts), "%s: the regex matches %r at a call and no exclusion takes it, "
-                            "judged alone: %r for %s" % (what, match, accounts, plant))
-        watch = 'subprocess.run(["bin/romp", "watch", "--cmd", "bin/romp up"])'
-        self.assertEqual([x for _, m, x in _exclusion_accounts(watch, verbs_hold) if m == "bin/romp"], ["c", None],
-                         "(c) takes the CLI's match in its command word, whose verb watch starts no kernel, and not the "
-                         "match in a later element, which that verb does not cover (a command it is handed): " + watch)
-        for plant, what in (('subprocess.run("bin/romp $VERB", shell=True)', "an expansion"),
-                            ('subprocess.run("bin/romp ; true", shell=True)', "an operator"),
-                            ('subprocess.run(["bin/romp", VERB])', "an element that is no string")):
-            accounts = [x for _, m, x in _exclusion_accounts(plant, verbs=lambda word: True) if m == "bin/romp"]
-            self.assertTrue(accounts and not any(accounts), "(c) takes no verb that is %s, whatever the dispatch holds (a verb "
-                            "test that takes every word): %r for %s" % (what, accounts, plant))
+            self.assertEqual([(line, m) for line, m, _ in _regex_scan_comparison(plant, "planted.py")[0]], [(1, "romp-kernel")],
+                             "%s: the scan reads no site and lists no entry containing the match, so the comparison names "
+                             "it: %s" % (what, plant))
+
+    def test_a_line_listed_by_hand_covers_the_match_on_it_and_an_entry_that_covers_none_is_named(self):
+        """THE HAND LISTING'S PIN (PR #850's tenth review round). Over a plant directory read by _read_root (the function
+        the real tree's read is): a module whose one clean line the round-8 regex matches at a call and the scan does not
+        read as a site (the CLI with refresh) is named by the comparison with no entry, and with a hand entry for that
+        line the entry covers the match, nothing is named, and --roads prints the entry under `# unresolved:` with its
+        kind and reason; the same entry over a module without that line covers no match, and the check the comparison
+        case runs on LISTED_BY_HAND (_hand_entries_covering_nothing) names it. The red that the comparison reads the
+        entries is the round's mutant run: with that read removed, the covered module is named."""
+        line = 'subprocess.run(["bin/romp", "refresh"])'
+        entry = ("test_listed.py", line, "the CLI with a verb outside KERNEL_VERBS", "refresh acts through a manager already running")
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, True)
+        with open(os.path.join(d, "test_listed.py"), "w", encoding="utf-8") as f:
+            f.write("import subprocess\n\n\ndef test_a():\n    %s\n" % line)
+        bare = _read_root(d, listing=()).table
+        self.assertEqual(([(n, m) for n, m, _ in bare.compared["test_listed.py"][0]], bare.roads["test_listed.py"][1]),
+                         ([(5, "bin/romp")], ()), "with no entry, the clean line's match is named and the scan reads no site")
+        listed = _read_root(d, listing=(entry,)).table
+        self.assertEqual((listed.compared["test_listed.py"][0], listed.compared["test_listed.py"][4]), ((), (entry,)),
+                         "the entry covers the match on its line: nothing named, and the entry among those that covered one")
+        self.assertEqual(_hand_entries_covering_nothing(listed.compared.values(), (entry,)), [], "an entry that covers a "
+                         "match is no fault")
+        printed = io.StringIO()
+        with contextlib.redirect_stdout(printed):
+            _print_roads(d, listing=(entry,))
+        out = printed.getvalue().splitlines()
+        opens = out.index(next(o for o in out if o.startswith("# unresolved:")))
+        self.assertEqual(out[opens + 1:-1], ["test_listed.py: %s (%s; listed by hand: %s)" % entry[1:]], "--roads prints the "
+                         "entry under the unresolved heading with its kind and its reason, and the module's scan lists nothing")
+        stale = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, stale, True)
+        with open(os.path.join(stale, "test_listed.py"), "w", encoding="utf-8") as f:
+            f.write('import subprocess\n\n\ndef test_a():\n    subprocess.run(["true"])\n')
+        table = _read_root(stale, listing=(entry,)).table
+        self.assertEqual(_hand_entries_covering_nothing(table.compared.values(), (entry,)), [entry], "the same entry over a "
+                         "module without its line covers no match, and the comparison case's check names it")
 
     def test_every_kernel_verb_is_a_verb_bin_romp_dispatches(self):
         """Existence only: each verb in KERNEL_VERBS is one bin/romp's top-level dispatch has (_bin_romp_verbs, read from
@@ -3422,7 +3247,7 @@ class HermeticKernelPostal(unittest.TestCase):
         self.assertEqual(dict(foreign), {}, "the tree's read holds values other than tuples, strings, numbers, None, dicts "
                          "and frozensets (type: count)")
         saved = (dict(_TREE_READ), collections.Counter(_PARSES), _READS[0], list(_TREES), list(_BINDINGS), _PLACEMENT_PARSES[0],
-                 list(_DISPATCH), list(_AT_START))
+                 list(_AT_START))
 
         def put_back():
             _release()
@@ -3432,13 +3257,11 @@ class HermeticKernelPostal(unittest.TestCase):
             _TREES[:] = saved[3]
             _BINDINGS[:] = saved[4]
             _PLACEMENT_PARSES[0] = saved[5]
-            _DISPATCH[:] = saved[6]
-            _AT_START[:] = saved[7]
+            _AT_START[:] = saved[6]
 
         def sizes():
             return {"_TREE_READ": len(_TREE_READ), "_PARSES": len(_PARSES), "_READS": _READS[0], "_TREES": len(_TREES),
-                    "_BINDINGS": len(_BINDINGS), "_PLACEMENT_PARSES": _PLACEMENT_PARSES[0], "_DISPATCH": len(_DISPATCH),
-                    "_AT_START": len(_AT_START)}
+                    "_BINDINGS": len(_BINDINGS), "_PLACEMENT_PARSES": _PLACEMENT_PARSES[0], "_AT_START": len(_AT_START)}
 
         try:
             tearDownModule()                                           # the check: raises on any fault it reads
