@@ -371,7 +371,7 @@ test("render.ts: showActive decides whether the scroller holds the view's reader
   assert.ok(decl >= 0 && flip > decl, "the decision reads the view's display, the pane's height and the pending build before the loop that shows the entering view");
   assert.equal((body.match(/landActive\(/g) || []).length, 2, "showActive lands on two paths");
   assert.match(body, /syncView\(activeId!\); landActive\(content, v, scrollerHolds\);/, "the synchronous land is handed the decision");
-  assert.match(body, /syncView\(target\);[^\n]*\n\s*landActive\(cc, vv\);/, "the deferred land passes nothing: after a pending build the record is the truth");
+  assert.match(body, /syncView\(target\);[^\n]*\n\s*landActive\(cc, vv\);/, "the deferred land passes nothing: while a build is pending the scroller can hold the reveal's clamp, which the record never took");
   assert.match(RENDER, /if \(c && vv\) landActive\(c, vv\); \}\);/, "the hidden pane's retry passes nothing");
 });
 

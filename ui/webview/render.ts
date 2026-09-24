@@ -15354,7 +15354,9 @@ function showActive(keep?: { uuid: string; y: number } | null) {
   // scroller's own scrollTop is the reader's place and the view's record can only lag it, by the one frame between a page write that does
   // not sync the record (the re-window's) and that write's scroll event, so landActive reads the saved place from the scroller (the landing
   // lab's road 16). A switch fails the first test (the scroller still holds the leaving tab), a hidden pane has no reader, and the deferred
-  // build's land below passes nothing: there the record is the truth, since the pending build kept the clamp out of it
+  // build's land below passes nothing: while a build is pending the scroller can hold the reveal's clamp, which followReader keeps out of
+  // the record. That gate keeps out every scroll event of the pending interval, a re-window's echo too, so a deep link that defers its build
+  // on the view already on screen still reads a record that can lag the scroller (a residual no road reaches)
   const scrollerHolds = v.el.style.display !== "none" && content.clientHeight > 0 && pendingBuildRaf == null;
   // Bound the switch. A view the user scrolled to the top of has had its window expanded to the WHOLE
   // transcript (winStart crept to 0 via lazy-expand), and compact mode renders the whole folded stream —

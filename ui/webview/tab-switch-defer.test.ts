@@ -26,7 +26,7 @@ test("the heavy build is deferred via rAF, replacing any in-flight one, and skip
 
 test("the landing (scroll/anchor/diagnostics) is factored so sync + deferred paths land identically", () => {
   // one landing for both paths; the synchronous one also says whether the scroller holds the view's reader, and the deferred one passes
-  // nothing, its record being the truth after a pending build (land-active-keep.test.ts executes the difference)
+  // nothing, since while a build is pending the scroller can hold the reveal's clamp (land-active-keep.test.ts executes the difference)
   assert.match(RENDER, /function landActive\(content: HTMLElement \| null, v: View, scrollerHolds: boolean = false\): void/);
   // called after the deferred build, on the #content read once for the land and the T249 re-show anchor restore
   assert.match(RENDER, /const cc = document\.getElementById\("content"\);\n\s*syncView\(target\);[^\n]*\n\s*landActive\(cc, vv\);\n\s*if \(keepAnchor && cc\) keepPlaceAcrossWindow\(cc, vv, keepAnchor\);/);
