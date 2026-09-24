@@ -60,7 +60,8 @@ cost nothing, a launch appended to an agent's transcript between two cycles is f
 (A folds, the launch folds being the cycle's) and nests its command there, and, the contract, a directory created after a
 cycle's validation waits for the next cycle; and the stamps' release at the cycle's end pinned on its own: a second cycle
 over the miss-path world re-takes the project directory's own stat (dirStats D, where a stamps map carried across cycles
-serves the stale stamp and pays D - 1); (3) two
+serves the stale stamp and pays D - 1); and a pusher cycle or a jobs pass whose work raises leaves none of the three
+slots set on its thread, each cleared in the function's finally; (3) two
 threads: a pusher cycle and a jobs pass running at once each validate once with their own scope object, never served
 by the other's; (4) the guards, each against the input it refuses and the input it accepts: a
 stamp stat that raises is answered (dir, None) and not held while one that succeeds is held; a walk with a failed
@@ -210,7 +211,10 @@ command, interpreter and head):
   forget case, both pop cases and the held-root lag case for the tree slot; the held-root lag case and
   ScopedInvalidation's two cached-agent-file cases for the stamp index; ScopedInvalidation's own-root folds case and
   sibling-resolved fold case for the launch folds;
-- an own stamp not held, beside the two-row case: ScopedInvalidation's own-stamps case, on its second lookup's stats.
+- an own stamp not held, beside the two-row case: ScopedInvalidation's own-stamps case, on its second lookup's stats;
+- a slot's clear moved from _pusher_cycle's or _jobs_cycle's finally to the end of its try, the tree slot's or either
+  derived slot's: PerCycleNotSticky's raising-work case, on that slot left set after the raise (SlotSites stays green,
+  since its census counts the assignments per function and not the block they sit in).
 Retired by name with the eviction table (round 4 of #882, D3: the table they mutated is gone, upstream's one-cycle lag is
 the accepted model, and Guards' held-root lag case and forget case pin the lag): no eviction record from the forget or from
 either pop; a stamp or a launch fold served without its root's vouch; a table clear that records no generation.
@@ -1896,7 +1900,7 @@ class FoundRoads(_World):
 
 class PerCycleNotSticky(_World):
     """(2) The memo is the cycle's, never longer: what lands between cycles is seen by the next; what lands after a
-    cycle's validation waits for the next, one cycle at most."""
+    cycle's validation waits for the next, one cycle at most; and a cycle or pass whose work raises leaves no slot set."""
 
     def test_a_directory_and_an_agent_landing_between_cycles_are_seen_by_the_next_cycle(self):
         rec1 = {}
@@ -2041,6 +2045,32 @@ class PerCycleNotSticky(_World):
         self.assertFalse(rec["same"], "a later read in the same cycle is served the cycle's validated listing (the lag the fix "
                                       "accepts: a change after the validation waits for the next cycle)")
         self.assertTrue(rec2["next"], "the next cycle's first read validates against the disk, walks and lists it: one cycle later at most")
+
+    def test_a_pusher_cycle_or_a_jobs_pass_whose_work_raises_leaves_none_of_the_three_slots_set(self):
+        """The clearing point on the raise path. SlotSites counts each slot's `= None` per function, not the block it sits
+        in, so this case executes it: the pusher cycle's work (_pusher_cycle_jobs) and then the jobs pass's (_jobs_pass)
+        replaced by a stand-in that records this thread's three slots and raises, the real _pusher_cycle and _jobs_cycle
+        run under assertRaises. Premise: the work ran with the three slots open, each a dict. Then each of subagent_trees,
+        subagent_stamps and subagent_launches is None on this thread. Red under any slot's clear moved from the function's
+        finally to the end of its try, the tree slot's or a derived slot's, in either function: the raise skips it and the
+        slot stays set."""
+        class WorkRaised(Exception):
+            pass
+        for fn, work in (("_pusher_cycle", "_pusher_cycle_jobs"), ("_jobs_cycle", "_jobs_pass")):
+            seen = {}
+
+            def raising(*a, **k):
+                seen.update({slot: type(getattr(km._live_scope, slot, None)).__name__ for slot in SLOTS})
+                raise WorkRaised(work)
+            with mock.patch.object(km, work, raising):
+                with self.assertRaises(WorkRaised, msg="premise: the raise in %s's work reaches its caller" % fn):
+                    getattr(km, fn)()
+            self.assertEqual(seen, {slot: "dict" for slot in SLOTS}, "premise: %s's work ran with the three slots open: %r" % (fn, seen))
+            left = {slot: getattr(km._live_scope, slot, None) for slot in SLOTS}
+            self.assertEqual(left, {slot: None for slot in SLOTS},
+                             "the slots on this thread after %s's work raised: %r; keyed on each of the three None: each is cleared in "
+                             "the function's finally, which the raise does not skip (a clear at the end of the try is skipped, and the "
+                             "slot stays set)" % (fn, left))
 
 
 class TwoThreadsEachValidateOnce(_World):
@@ -4382,7 +4412,8 @@ class SlotSites(unittest.TestCase):
     assigns the derived slot as often as the tree slot. The connect push's close clears the owned slots through its
     setattr loop over chat_push_owned, whose names are not literals: the leak test in
     tests/test_chat_build_sig_inputs.py executes that clear. Red with any one site's line removed or moved to another
-    function."""
+    function. The census does not see which block of a function a clear sits in; that each clear in _pusher_cycle and
+    _jobs_cycle sits in the finally is executed by PerCycleNotSticky's raising-work case."""
 
     SITES = {"{}": {"_pusher_cycle", "_jobs_cycle", "_chat_push_scopes_open"}, "None": {"_pusher_cycle", "_jobs_cycle"}}
 
