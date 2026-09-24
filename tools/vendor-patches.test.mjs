@@ -266,10 +266,14 @@ test('P9 the skill says a shell write whose target is not a literal path is refu
   assert.ok(section.includes('best-effort against known write forms') && section.includes('allows anything it does not recognise'), 'the contract, stated');
   // round 6's second commit (2026-09-21): the closing hand list is THE RESIDUAL PROPERTY, one paragraph whose classes are the ones the
   // residual table in tools/romp-track-bash-guard.test.mjs measures; since round 7 of fork PR #780 review, thirty-fifth commit (the reviewer's
-  // extra7-3), the paragraph stands identical on the five developer surfaces (tools/file-review-plan-bash-guard.test.mjs) and the skill states its
+  // extra7-3), the paragraph stands identical on the developer surfaces (tools/file-review-plan-bash-guard.test.mjs, which derives their count) and the skill states its
   // classes in its reader's words instead, held to RESIDUAL_CLASSES by name in tools/romp-track-bash-guard.test.mjs; patch 0009 was regenerated
   assert.ok(section.includes('The guard refuses a write only when it recognises the command as a writer it knows') && section.includes('- **a producer outside the output model**: '), "the reader's statement of the residual classes, in place of the unmodelled-writer list");
   assert.ok(!section.includes('THE RESIDUAL PROPERTY') && !section.includes("extract's switch") && !section.includes('B2 as ruled'), "the developer paragraph, with the hook's internal names and the review's provenance, is not the skill's");
+  // round 7 of fork PR #780 review, thirty-sixth commit (the reviewer's verifier): the writers named are examples (the guard knows dd, truncate and sort -o
+  // too, and a list with no 'such as' read as the whole set), and a piped script stands beside a name and a script among the texts it cannot read
+  const flatReader = section.replace(/\s+/g, ' ');
+  assert.ok(flatReader.includes('as a writer it knows (such as a copy, a move,') && flatReader.includes('a command whose name, script or piped script it cannot read names a tracked file as a literal operand'), "the reader's statement names its writers as examples and the three texts the guard may not read");
   // the walk-around lens third pass (2026-09-19): the six rules re-keyed on what the guard can see, each named so a
   // session knows the refusal it meets, and the contract paragraph's two sentences the other surfaces carry
   const flat = section.replace(/\s+/g, ' ');   // the skill hard-wraps its paragraphs

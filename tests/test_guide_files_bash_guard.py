@@ -36,10 +36,16 @@ SENTENCE_2 = ("In a project that tracks files, a shell write whose target Romp c
 # The sentence after those two, since round 7 of fork PR #780's review (the reviewer's regression-2 with extra7-3): round 6 had put
 # the hook header's whole residual paragraph into the guide under a heading of its own, the mechanism's words and the review's
 # provenance included, against the guide's voice (the behaviour, not the mechanism). The paragraph and its heading left the guide;
-# this one sentence, in the same voice, points the reader at docs/install.md, where the full statement stands under the installer's
-# section on what it links into ~/.claude/. It stays clear of the two words CONTEXT.md avoids for the comments log.
-POINTER = ("What a shell command can still do to a tracked file is set out in full in [Install](install.md), under what "
-           "the installer links into `~/.claude/`.")
+# this one sentence, in the same voice, points the reader at docs/install.md, where the full statement stands in the installer's
+# section on the tooling it puts in ~/.claude/. It stays clear of the two words CONTEXT.md avoids for the comments log, and of
+# the verbs its About entry avoids in this paragraph (the thirty-fifth commit's "links" turned the vocabulary module red; the
+# thirty-sixth names the section without it).
+POINTER = ("What a shell command can still do to a tracked file is set out in full in [Install](install.md), in its section "
+           "on the tooling the installer puts in `~/.claude/`.")
+# the names CONTEXT.md's About entry avoids for a comment about a change, as they show up in prose (the Files section's paragraphs
+# are held to them by tests/test_guide_files_about_vocabulary.py, which reads the entry; held here too, so a pointer that
+# uses one reds beside its own pin)
+AVOIDED = r"\b(bound|binds?|binding|links?|linked|linking|threads?)\b"
 # the words a user-facing sentence here never carries: the mechanism (the first five) and the review's provenance (the last three)
 BARRED = ("hook", "PreToolUse", "matcher", "ROMP_SID", "guard", "round", "commit", "as ruled")
 
@@ -141,6 +147,10 @@ class TrackChangesParagraphNamesTheRefusal(unittest.TestCase):
             self.assertNotIn("\u2014", sentence)
         for word in ("history", "ledger"):
             self.assertNotRegex(POINTER, re.compile(r"\b" + word, re.I))
+        # the prose of each sentence (code spans and bold control names set aside, as the vocabulary module reads it)
+        for sentence in (SENTENCE, SENTENCE_2, POINTER):
+            prose = re.sub(r"\*\*[^*]*\*\*", "", re.sub(r"`[^`]*`", "", sentence))
+            self.assertNotRegex(prose, re.compile(AVOIDED, re.I), "an avoided name in %r" % sentence)
 
 
 if __name__ == "__main__":

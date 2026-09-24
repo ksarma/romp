@@ -236,10 +236,11 @@ top-level `HOME=<path>` assignment of its own, and none of the three once the
 command names or may fill in the name in any other form.
 
 The guard refuses a write only when it recognises the command as a writer it
-knows (a copy, a move, an install, a link, `tee`, `sed -i`, `perl -i`, a write
-redirection, a write call in an inline python or node script), reached in a way it
-follows, with a target it can place or cannot read, or when a command whose name or
-script it cannot read names a tracked file as a literal operand. A write that
+knows (such as a copy, a move, an install, a link, `tee`, `dd`, `truncate`,
+`sort -o`, `sed -i`, `perl -i`, a write redirection, a write call in an inline
+python or node script), reached in a way it follows, with a target it can place or
+cannot read, or when a command whose name, script or piped script it cannot read
+names a tracked file as a literal operand. A write that
 reaches a tracked file any other way is not refused, and falls in one of these
 classes:
 

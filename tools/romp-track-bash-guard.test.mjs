@@ -7832,7 +7832,8 @@ const RESIDUAL_TABLE = [
   ['RT-script-wrapper', 'a reader outside the roads', 'script', "script -qc 'cp ../base/report.md report.md' /dev/null", ['bash', 'zsh', 'dash']],
   ['RT-strace', 'a reader outside the roads', 'strace', 'strace -o /dev/null cp ../base/report.md report.md', ['bash', 'zsh', 'dash']],
   ['RT-busybox-sh', 'a reader outside the roads', 'busybox', "busybox sh -c 'cp ../base/report.md report.md'", ['bash', 'zsh', 'dash']],
-  ['RT-nameref-head', 'a command name the resolver never reads', null, 'c=cp; declare -n r=c; $r ../base/report.md report.md', ['bash']],
+  // RT-nameref-head (`c=cp; declare -n r=c; $r ../base/report.md report.md`, bash writing) left the table in round 7's thirty-sixth commit: THE NAMEREF
+  // reads a reference beside a text not read, so the literal tracked operand is refused by name (E36-ref-head, the thirty-sixth commit's rows)
   ['RT-shell-var-c', 'a command name the resolver never reads', null, "${SHELL} -c 'cp ../base/report.md report.md'", ['bash']],   // the world's SHELL is bash's alone (zsh and dash have no SHELL of their own here)
   ['RT-function-producer', 'a producer outside the output model', null, "f() { echo 'cp ../base/report.md report.md'; }; f | bash", ['bash', 'zsh', 'dash']],
   ['RT-tee-producer', 'a producer outside the output model', 'tee', "echo 'cp ../base/report.md report.md' | tee /dev/null | bash", ['bash', 'zsh', 'dash']],
@@ -14770,4 +14771,158 @@ test("round 7, twenty-ninth commit: the population by group and where the code l
   assert.ok(hook.includes('if (cmd.args.some(valued)) return valuedOperandOutput(cmd, valued, unread);') && hook.includes('activeOperandTexts = (w) => {'), 'THE PRINTER\'S OPERAND VALUE: the operand stands for the texts THE HEAD CANDIDATES compose (behaviour: E29-val-*)');
   assert.ok(hook.includes("return w.readings && !w.readingParams ? w.readings : [];") && hook.includes("if (beside) wordReadings = { raw: spelling, texts: beside, params: null };"), 'the texts read beside the rest reach scriptTexts through placeReading, the word recorded all the same (behaviour: E29-val-*-out; E29-val-ctl-harmless refuses in play)');
   assert.ok(hook.includes('const tw = trapWhy(s);') && hook.includes("const t = texts.find((x) => /^\\s*(?:(?:command|builtin)\\s+)*\\\\?trap(?:\\s|$)/.test(x));") && hook.includes("if (cmd && cmd.name === 'eval' && cmd.args.length && cmd.args.every((w) => w.literal) && depth < NESTED_DEPTH_CAP) {"), 'THE TRAP\'S TEXT in every spelling: read before the operator and the redirections, a head standing for `trap`, an eval setting one (behaviour: E29-trap-*)');
+});
+
+// Round 7 of fork PR #780 review, thirty-sixth commit (2026-09-24; the reviewer's verifier on the thirty-fifth commit). THE NAMEREF: a nameref
+// declaration's operand was taken as the name's value, so `c=cp; declare -n r=c; $r ../base/report.md report.md` read as the command `c` and was
+// allowed from docs/ while bash copied (RT-nameref-head stood in THE RESIDUAL TABLE), with 14 more of the verifier's 19 rows (typeset -n, declare
+// -rn, `declare -n r; r=c`, "$r", ${r}, an eval of "$r", a script in the target, mv, tee, cp -f, the project root, a cwd in no project, a `read`
+// of the target), and `declare -n r=cp; cp=ls; $r ..` was refused for a cp bash does not run. The class, derived: the target written through the
+// reference (a plain write, a `read`, a `printf -v`, a body's `local -n`), a reference an eval or a called body declares, an assignment before the
+// declaration, `-n` apart from `-r`, after `--`, on a second operand, in an option word the shell fills in, a reference to a target the shell fills
+// in, a script road, `${r@P}`, the startup feed. THE OPERAND'S VALUE: THE UNREAD OPERAND read a word as a path whole and after the `=` of a word
+// opening with `-`, so a key's value (dd's `of=FILE`) and a short option's glued value (`-oFILE`, `-uoFILE`) went unread, on every road and cwd.
+// Each row runs through the hook as a process from its cwd (and, where the row's own cwd is in a project, from a cwd in no project, the paths
+// then naming no tracked file) and unguarded in every present shell over a fresh world. [id, cwd, command, the shells that write, the verdict
+// ('name', 'allow', or ['refuse', a part of the reason]), the verdict from a cwd in no project (null: the row's own cwd is one), a part the reason
+// must not carry]
+const E36_ROWS = (() => {
+  const A = ['bash', 'zsh', 'dash'];
+  const B = ['bash'];
+  const BZ = ['bash', 'zsh'];
+  const N = [];
+  const Q1_R = ['refuse', 'its command name is filled in from `$r`, a text I do not read'];
+  return [
+    // THE NAMEREF: the verifier's fifteen rows allowed at the thirty-fifth commit with bash writing (N2 was RT-nameref-head)
+    ['E36-ref-head', 'nad', 'c=cp; declare -n r=c; $r ../base/report.md report.md', B, 'name'],
+    ['E36-ref-before-assign', 'nad', 'declare -n r=c; c=cp; $r ../base/report.md report.md', B, 'name'],
+    ['E36-ref-typeset', 'nad', 'c=cp; typeset -n r=c; $r ../base/report.md report.md', B, 'name'],
+    ['E36-ref-quoted', 'nad', 'c=cp; declare -n r=c; "$r" ../base/report.md report.md', B, 'name'],
+    ['E36-ref-braced', 'nad', 'c=cp; declare -n r=c; ${r} ../base/report.md report.md', B, 'name'],
+    ['E36-ref-eval', 'nad', 'c=cp; declare -n r=c; eval "$r" ../base/report.md report.md', B, 'name'],
+    ['E36-ref-script-in-target', 'nad', "c='cp ../base/report.md report.md'; declare -n r=c; $r", B, 'name'],
+    ['E36-ref-out-abs', 'out', 'c=cp; declare -n r=c; $r {NA}/base/report.md {NA}/docs/report.md', B, 'name', null],
+    ['E36-ref-cp-f', 'nad', 'c=cp; declare -n r=c; $r -f ../base/report.md report.md', B, 'name'],
+    ['E36-ref-read-target', 'nad', 'declare -n r=c; read c <<< cp; $r ../base/report.md report.md', B, Q1_R],
+    ['E36-ref-rn', 'nad', 'c=cp; declare -rn r=c; $r ../base/report.md report.md', B, 'name'],
+    ['E36-ref-mv', 'nad', 'c=mv; declare -n r=c; $r ../base/report.md report.md', B, 'name'],
+    ['E36-ref-root', 'na', 'c=cp; declare -n r=c; $r base/report.md docs/report.md', B, 'name'],
+    ['E36-ref-tee', 'nad', 'c=tee; declare -n r=c; echo x | $r report.md', B, 'name'],
+    ['E36-ref-assigned-target', 'nad', 'declare -n r; r=c; c=cp; $r ../base/report.md report.md', B, 'name'],
+    // the verifier's row refused for a cp bash does not run: refused by name as a command name not read, the reason naming no cp
+    ['E36-ref-target-named-cp', 'nad', 'declare -n r=cp; cp=ls; $r ../base/report.md report.md', N, Q1_R, 'allow', 'its cp through'],
+    // the class, derived: the target written through the reference, a reference declared where the walk replays it, every spelling of the option
+    ['E36-ref-target-written', 'nad', 'c=ls; declare -n r=c; r=cp; $c ../base/report.md report.md', B, 'name'],
+    ['E36-ref-target-read', 'nad', 'c=ls; declare -n r=c; read r <<< cp; $c ../base/report.md report.md', B, 'name'],
+    ['E36-ref-target-printf-v', 'nad', 'c=ls; declare -n r=c; printf -v r cp; $c ../base/report.md report.md', B, 'name'],
+    ['E36-ref-target-filled', 'nad', 'h=c; c=ls; declare -n r=$h; r=cp; $c ../base/report.md report.md', B, 'name'],
+    ['E36-ref-body-writes-target', 'nad', 'f() { local -n r=$1; r=cp; }; c=ls; f c; $c ../base/report.md report.md', B, 'name'],
+    ['E36-ref-eval-declares', 'nad', "c=cp; r=ls; eval 'declare -n r=c'; $r ../base/report.md report.md", B, 'name'],
+    ['E36-ref-assign-before-declare', 'nad', 'c=cp; r=c; declare -n r; $r ../base/report.md report.md', B, 'name'],
+    ['E36-ref-global-in-body', 'nad', 'f() { declare -gn r=c; }; c=cp; f; $r ../base/report.md report.md', B, 'name'],
+    ['E36-ref-local-in-body', 'nad', 'f() { local -n r=c; $r ../base/report.md report.md; }; c=cp; f', B, 'name'],
+    ['E36-ref-local-positional', 'nad', 'f() { local -n r=$1; $r ../base/report.md report.md; }; c=cp; f c', B, 'name'],
+    ['E36-ref-dashdash', 'nad', 'c=cp; declare -n -- r=c; $r ../base/report.md report.md', B, 'name'],
+    ['E36-ref-second-operand', 'nad', 'c=cp; declare -n s=x r=c; $r ../base/report.md report.md', B, 'name'],
+    ['E36-ref-option-apart', 'nad', 'c=cp; declare -r -n r=c; $r ../base/report.md report.md', B, 'name'],
+    ['E36-ref-option-word-value', 'nad', 'f=-n; c=cp; declare $f r=c; $r ../base/report.md report.md', B, 'name'],
+    ['E36-ref-option-word-unread', 'nad', 'read f <<< -n; c=cp; declare $f r=c; $r ../base/report.md report.md', B, 'name'],   // an option word the shell fills in: both readings
+    ['E36-ref-declare-word-unread', 'nad', "read x <<< '-n r=c'; c=cp; declare $x; $r ../base/report.md report.md", B, Q1_R],
+    ['E36-ref-bash-c', 'nad', 'c=cp; declare -n r=c; bash -c "$r ../base/report.md report.md"', B, 'name'],
+    ['E36-ref-out-assigned-target', 'out', 'declare -n r; r=c; c=cp; $r {NA}/base/report.md {NA}/docs/report.md', B, 'name', null],
+    ['E36-ref-notes', 'nan', 'c=cp; declare -n r=c; $r ../base/report.md n1.md', B, 'name'],
+    ['E36-ref-at-P', 'nad', "c='$(cp ../base/report.md report.md)'; declare -n r=c; : ${r@P}", B, 'name'],
+    // twins the thirty-fifth commit refused already: a later plain assignment is the name's value in zsh and dash, where the declaration failed, and a
+    // -n after an operand is an operand to bash, which assigns the name before it plainly, so the value stays a reading
+    ['E36-ref-zsh-dash-plain', 'nad', 'typeset -n r; r=cp; $r ../base/report.md report.md', ['zsh', 'dash'], 'name'],
+    ['E36-ref-plain-script', 'nad', "declare -n r; r='cp ../base/report.md report.md'; $r", ['dash'], 'name'],
+    ['E36-ref-trailing-option', 'nad', "declare r='cp ../base/report.md report.md' -n; $r", B, 'name'],
+    // a stated cost: the startup feed through a reference to BASH_ENV, which this shell does not export, so the bash it starts reads nothing
+    ['E36-ref-cost-bash-env', 'nad', "declare -n r=BASH_ENV; r=/dev/stdin; bash -c : <<< 'cp ../base/report.md report.md'", N, 'name'],
+    // controls: nothing tracked named, an export's -n (bash unexports), a plain declare
+    ['E36-ref-ctl-harmless', 'nad', 'c=cp; declare -n r=c; $r ../base/report.md ../scratch/new.md', N, 'allow'],
+    ['E36-ref-ctl-export-n', 'nad', 'c=cp; export -n r=c; $r ../base/report.md report.md', N, 'allow'],
+    ['E36-ref-ctl-out-harmless', 'out', 'c=cp; declare -n r=c; $r {NA}/base/report.md {OUT}/scratch/x.md', N, 'allow', null],
+    ['E36-ref-ctl-plain-declare', 'nad', 'declare r=c; c=cp; $r ../base/report.md ../scratch/x.md', N, 'allow'],
+    // THE OPERAND'S VALUE: a key's value, a short option's glued value, bash's `~` after an assignment-shaped word's `=`, on every road and cwd
+    ['E36-val-dd-key', 'nad', 'read c <<< dd; $c if=../base/report.md of=report.md status=none', BZ, 'name'],
+    ['E36-val-dd-key-root', 'na', 'read c <<< dd; $c if=base/report.md of=docs/report.md status=none', BZ, 'name'],
+    ['E36-val-dd-key-out', 'out', 'read c <<< dd; $c if={NA}/base/report.md of={NA}/docs/report.md status=none', BZ, 'name', null],
+    ['E36-val-dd-key-notes-out', 'out', 'read c <<< dd; $c if={NA}/base/report.md of={NA}/notes/n1.md status=none', BZ, 'name', null],
+    ['E36-val-dd-key-scratch', 'nas', 'read c <<< dd; $c if=../base/report.md of=../docs/report.md status=none', BZ, 'name'],
+    ['E36-val-dd-key-notes', 'nan', 'read c <<< dd; $c if=../base/report.md of=n1.md status=none', BZ, 'name'],
+    ['E36-val-dd-tilde-out', 'out', 'read c <<< dd; $c if={NA}/base/report.md of=~/../notes-api/docs/report.md status=none', B, 'name', null],
+    ['E36-val-dd-subst', 'nad', '$(command -v dd) if=../base/report.md of=report.md status=none', A, 'name'],
+    ['E36-val-dd-loop', 'nad', 'for c in dd; do $c if=../base/report.md of=report.md status=none; done', A, 'name'],
+    ['E36-val-dd-eval', 'nad', 'read c <<< dd; eval "$c if=../base/report.md of=report.md status=none"', BZ, 'name'],
+    ['E36-val-dd-eval-out', 'out', 'read c <<< dd; eval "$c if={NA}/base/report.md of={NA}/docs/report.md status=none"', BZ, 'name', null],
+    ['E36-val-dd-bash-c', 'nad', 'read c <<< dd; bash -c "$c if=../base/report.md of=report.md status=none"', BZ, 'name'],
+    ['E36-val-dd-sourced', 'nad', 'read c <<< dd; . /dev/stdin <<< "$c if=../base/report.md of=report.md status=none"', BZ, 'name'],
+    ['E36-val-sort-glued', 'nad', 'read c <<< sort; $c ../base/report.md -oreport.md', BZ, 'name'],
+    ['E36-val-sort-glued-root', 'na', 'read c <<< sort; $c base/report.md -odocs/report.md', BZ, 'name'],
+    ['E36-val-sort-glued-out', 'out', 'read c <<< sort; $c {NA}/base/report.md -o{NA}/docs/report.md', BZ, 'name', null],
+    ['E36-val-sort-glued-notes', 'nan', 'read c <<< sort; $c ../base/report.md -on1.md', BZ, 'name'],
+    ['E36-val-sort-cluster', 'nad', 'read c <<< sort; $c -uoreport.md ../base/report.md', BZ, 'name'],
+    ['E36-val-sort-cluster-out', 'out', 'read c <<< sort; $c -uo{NA}/docs/report.md {NA}/base/report.md', BZ, 'name', null],
+    ['E36-val-sort-eval-glued', 'nad', 'read c <<< sort; eval "$c ../base/report.md -oreport.md"', BZ, 'name'],
+    // twins refused already (a long option's value, a separate operand), the piped road's own refusal in a project, and the stated costs: a
+    // program that takes no file from the word (sort's `-o=FILE` writes `=FILE`, cat reads a file named `of=..`) is refused all the same
+    ['E36-val-sort-long', 'nad', 'read c <<< sort; $c ../base/report.md --output=report.md', BZ, 'name'],
+    ['E36-val-sort-apart', 'nad', 'read c <<< sort; $c ../base/report.md -o report.md', BZ, 'name'],
+    ['E36-val-dd-piped', 'nad', 'read c <<< dd; echo "$c if=../base/report.md of=report.md status=none" | bash', BZ, ['refuse', 'its piped script is filled in from']],
+    ['E36-val-cost-sort-short-eq', 'nad', 'read c <<< sort; $c ../base/report.md -o=report.md', N, 'name'],
+    ['E36-val-cost-cat-key', 'nad', 'read c <<< cat; $c of=report.md', N, 'name'],
+    // carried to the Q1 group, not this commit's: from a cwd in no project the text an echo prints with an operand not read is no text the piped
+    // road scans for a literal operand (a separate operand the same: `read c <<< cp; echo "$c {NA}/base/report.md {NA}/docs/report.md" | bash`),
+    // the eighth class's case (an opaque expansion from a cwd outside every project), allowed at the round-5 head too
+    ['E36-val-carried-piped-out', 'out', 'read c <<< dd; echo "$c if={NA}/base/report.md of={NA}/docs/report.md status=none" | bash', BZ, 'allow', null],
+    // controls: the values name no tracked file
+    ['E36-val-ctl-dd', 'nad', 'read c <<< dd; $c if=../base/report.md of=../scratch/x.md status=none', N, 'allow'],
+    ['E36-val-ctl-sort', 'nad', 'read c <<< sort; $c ../base/report.md -o../scratch/x.md', N, 'allow'],
+  ];
+})();
+const e36Judge = (w, [id, cwd, raw, writers, expect, outside = 'allow', notIn = null]) => {
+  const cmd = w.fill(raw);
+  const at = w.cwds[cwd];
+  const verdict = (h, want, where) => {
+    assert.ok(!h.reason.includes('an error of my own'), `${id}: no internal error ${where}: ${h.reason.split('\n')[0]}`);
+    if (want === 'allow') { assert.equal(h.status, 0, `${id}: allowed ${where}: ${cmd}: ${h.reason}`); return; }
+    assert.equal(h.status, 2, `${id}: refused ${where}: ${cmd}: ${h.reason}`);
+    assert.ok(!h.reason.includes(String.fromCharCode(0x2014)) && !ROMP_NOUNS.test(h.reason.split(w.W).join('<w>')), `${id}: no em dash, no romp noun`);
+    if (want === 'name') assert.match(h.reason, BY_NAME_RE, `${id}: by name ${where}: ${h.reason.split('\n')[0]}`);
+    else assert.ok(h.reason.includes(want[1]), `${id}: refused ${where}, the reason including (${want[1]}): ${h.reason.split('\n')[0]}`);
+    if (notIn) assert.ok(!h.reason.includes(notIn), `${id}: the reason ${where} carries no (${notIn}): ${h.reason.split('\n')[0]}`);
+  };
+  w.build();
+  verdict(w.hook(cmd, at), expect, `from ${cwd}`);
+  if (outside != null) { w.build(); verdict(w.hook(cmd, w.cwds.out), outside, 'from a cwd in no project'); }
+  if (namedPresent(cmd, `${id}, whose command names it: ${cmd}`)) for (const shell of shellsFor(['bash', 'zsh', 'dash'], id)) {
+    const r = w.run(cmd, at, shell);
+    assert.equal(r.changed, writers.includes(shell), `${id}: run unguarded, ${shell} ${writers.includes(shell) ? 'writes' : 'leaves'} the tracked subset: ${cmd}: ${r.stderr}`);
+  }
+};
+const e36Group = (prefix) => {
+  const w = sixthPassWorld();
+  const savedHome = process.env.HOME;
+  process.env.HOME = w.HOME;
+  try {
+    const rows = E36_ROWS.filter((r) => r[0].startsWith(prefix));
+    assert.ok(rows.length > 0, 'the group has rows');
+    for (const row of rows) e36Judge(w, row);
+  } finally { process.env.HOME = savedHome; w.rm(); }
+};
+test("round 7 of fork PR #780 review, thirty-sixth commit, the rows, THE NAMEREF: a nameref declaration's operand gives the name no value, a word over a reference stands for its targets' values and a word over a target for its references', each beside a text not read, so a command name over either with a literal operand naming a tracked file is refused by name from every cwd, on every road and in every spelling of the declaration (RT-nameref-head left THE RESIDUAL TABLE); each with the shells that write", () => e36Group('E36-ref-'));
+test("round 7 of fork PR #780 review, thirty-sixth commit, the rows, THE OPERAND'S VALUE: a command whose name, script or piped script is not read, handed a key's value (`of=FILE`), a short option's glued value (`-oFILE`, `-uoFILE`) or bash's `~` after an assignment-shaped word's `=` naming a tracked file, is refused by name as a separate operand is, on the head, script, eval and sourced roads and from the tracked folder, the project root and a cwd in no project; each with the shells that write", () => e36Group('E36-val-'));
+test("round 7 of fork PR #780 review, thirty-sixth commit: the population by group and where the code lives (the rows above prove what it does; each pin names the rows that red without it)", () => {
+  const count = (p) => E36_ROWS.filter((r) => r[0].startsWith(p)).length;
+  assert.deepEqual({ ref: count('E36-ref-'), val: count('E36-val-'), all: E36_ROWS.length }, { ref: 44, val: 28, all: 72 }, 'the population by group, as measured (r7-f36-measure-rows.log)');
+  assert.equal(new Set(E36_ROWS.map((r) => r[0])).size, E36_ROWS.length, 'every id once');
+  assert.ok(!RESIDUAL_TABLE.some((r) => r[0] === 'RT-nameref-head' || /declare -[A-Za-z]*n|typeset -[A-Za-z]*n|local -[A-Za-z]*n/.test(r[3])), 'no row of THE RESIDUAL TABLE is a nameref (E36-ref-head is RT-nameref-head, refused)');
+  const hook = fs.readFileSync(HOOK, 'utf8');
+  assert.ok(hook.includes('const namerefs = ctx.namerefs || { refs: new Map(), anyTarget: null };') && hook.includes('vanishedValues, namerefs, execFeeds,'), 'THE NAMEREF: the references are shared by every recursion (behaviour: E36-ref-eval-declares, E36-ref-global-in-body, E36-ref-body-writes-target)');
+  assert.ok(hook.includes('if (kind && noteReference(w, kind, cmd.name)) continue;') && hook.includes("noteDeclaration(c, noteCandidate);") && hook.includes('noteDeclaration(cmd, noteAtWalk);'), "THE NAMEREF: a reference's operand gives its name no value, before the walk and at it (behaviour: E36-ref-head, E36-ref-target-named-cp)");
+  assert.ok(hook.includes('const ref = referenceOf(n);') && hook.includes('const notRead = vanishedValues.has(n) || !!ref;'), "THE NAMEREF: a word over a reference or a target reads the other's values beside a text not read (behaviour: E36-ref-target-written, E36-ref-script-in-target)");
+  assert.ok(hook.includes("if (w.literal && /^[-+]./.test(w.text)) { if (/^-[A-Za-z]*n/.test(w.text)) kind = 'ref'; continue; }") && hook.includes("if (!w.literal && kind === null) kind = 'maybe';"), 'THE NAMEREF: -n in any cluster before the first operand, or an option word the shell fills in (behaviour: E36-ref-rn, E36-ref-option-apart, E36-ref-option-word-unread, E36-ref-trailing-option)');
+  assert.ok(hook.includes("for (let k = w.text.indexOf('='); k >= 0; k = w.text.indexOf('=', k + 1)) if (k + 1 < w.text.length) one(sliceWord(w, k + 1));") && hook.includes('if (/^-[^-]/.test(w.text)) for (let k = 2; k < w.text.length; k++) one(sliceWord(w, k));'), "THE OPERAND'S VALUE: after each `=` and at each place after a short option's letter (behaviour: E36-val-dd-key, E36-val-sort-glued, E36-val-sort-cluster)");
+  assert.ok(hook.includes("if (eq > 0 && IDENTIFIER.test(w.text.slice(0, eq)) && w.text[eq + 1] === '~'"), "THE OPERAND'S VALUE: bash's `~` after an assignment-shaped word's `=` (behaviour: E36-val-dd-tilde-out)");
 });

@@ -774,8 +774,8 @@ as `cp`, `tee`, `sed -i` or a `>` redirection, is refused and pointed at its tra
 so its edits still come to you as changes. In a project that tracks files, a shell write whose
 target Romp cannot read (a substitution, a name the command never sets to a plain string, or a
 glob it cannot expand) is refused too, and the session is asked for the literal path. What a
-shell command can still do to a tracked file is set out in full in [Install](install.md), under
-what the installer links into `~/.claude/`.
+shell command can still do to a tracked file is set out in full in [Install](install.md), in its
+section on the tooling the installer puts in `~/.claude/`.
 
 **Edit** works while changes are pending. The editor shows them inline, an insertion tinted
 and a deletion struck, and typing around them moves them with the text. Click a change to

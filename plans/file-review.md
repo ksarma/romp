@@ -4954,8 +4954,18 @@ document stands on its own, each with the reasoning it was given.
     carried the developer paragraph, review provenance and the hook's internal names included: the vendored SKILL.md
     now states the classes in its reader's words, each under its own name and held to RESIDUAL_CLASSES by name,
     and docs/guide.md keeps its two sentences on the refusal and points at docs/install.md for the statement. THE
-    RESIDUAL TABLE holds 226 rows over 8 classes, a figure tools/romp-track-bash-guard.test.mjs asserts from the table's
+    RESIDUAL TABLE holds 225 rows over 8 classes, a figure tools/romp-track-bash-guard.test.mjs asserts from the table's
     own length and class count on this decision, the hook header and the ledger entry.
+    ROUND 7 OF FORK PR #780 REVIEW, THIRTY-SIXTH COMMIT (2026-09-24; the reviewer's verifier on the thirty-fifth commit,
+    by execution): THE NAMEREF. A nameref declaration's operand had been read as the name's value, a text no shell gives
+    it, so a command name over the reference read as the target's name and `c=cp; declare -n r=c; $r ../base/report.md
+    report.md` was allowed while bash copied; the operand now gives the name no value, a word over a reference or its
+    target stands for the other's values beside a text not read, and the literal tracked operand is refused by name
+    (the row left the residual table, one fewer than the thirty-fifth commit's figure). THE OPERAND'S VALUE: a command
+    whose name, script or piped script is not read has a tracked file in a key's value (`of=FILE`) or a short option's
+    glued value (`-oFILE`, `-uoFILE`) read as a separate operand is. The guide's pointer names the installer's section
+    without the verb the About entry of CONTEXT.md avoids in that paragraph, and the skill's list of known writers
+    reads as examples.
 48. **Sessions commit the comments folder** (2026-09-10). The user found that their sessions never added
     `.trackchanges/` to git, so the user's comments on the sessions' files and the record of the tracked changes
     were not archived with the work. Decision 25 is unchanged: romp does no git operation, and a `.gitignore` line is the

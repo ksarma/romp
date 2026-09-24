@@ -890,7 +890,7 @@
 // a rule to state, not a residual. The same
 // paragraph is on the vendored SKILL.md, hooks/README.md and docs/install.md, pinned identical by a test. THE RESIDUAL PROPERTY stands
 // identical on five surfaces, the developer ones: this header, decision 47, hooks/README.md, docs/install.md and the ledger entry, pinned
-// so by a test; its classes are the ones tools/romp-track-bash-guard.test.mjs's RESIDUAL_TABLE measures, and THE RESIDUAL TABLE holds 226
+// so by a test; its classes are the ones tools/romp-track-bash-guard.test.mjs's RESIDUAL_TABLE measures, and THE RESIDUAL TABLE holds 225
 // rows over 8 classes, a figure that test asserts from the table's own length and class count on this header, decision 47 and the ledger
 // entry. The vendored SKILL.md states the classes in its reader's words, held to RESIDUAL_CLASSES by name, and docs/guide.md points
 // at docs/install.md for the statement (round 7 of fork PR #780 review, thirty-fifth commit, the reviewer's regression-2, extra7-3 and
@@ -1152,6 +1152,16 @@
 // 'a command name the resolver never reads' keeping those members. 190 rows left the residual table (137 of the ninth class, 53 of the third), each
 // pinned as a refusal with the shells that write in tools/romp-track-bash-guard.test.mjs (round 7, twenty-fifth commit), and the table gains the
 // class's directory and unread-operand members.
+// ROUND 7 OF FORK PR #780 REVIEW, THIRTY-SIXTH COMMIT (2026-09-24; the reviewer's verifier on the thirty-fifth commit, by execution): the README's
+// and the skill's statement that a name the guard cannot read, handed a literal operand naming a tracked file, is refused was false for a nameref,
+// and a tracked file in an option's value went unread. THE NAMEREF (extract's namerefKind, noteReference, noteDeclaration, referenceOf): a nameref
+// declaration's operand had been taken as the name's value, a text no shell gives it, so `c=cp; declare -n r=c; $r ../base/report.md report.md`
+// read as the command `c` and was allowed while bash copied (RT-nameref-head, and 14 more of the verifier's rows); the operand gives the name no
+// value, a word over a reference stands for its targets' values and a word over a target for its references' (a write through the reference
+// lands on the target), each beside a text not read, so the head takes THE UNREAD OPERAND and is refused by name. THE OPERAND'S VALUE
+// (unreadOperands): a literal word is read as a path after each `=` in it and, where it opens with one `-` and a letter, at each place after that
+// letter, so dd's `of=FILE`, sort's `-oFILE` and the cluster `-uoFILE` are read as `--output=FILE` was. RT-nameref-head left THE RESIDUAL TABLE;
+// the rows are pinned with the shells that write in tools/romp-track-bash-guard.test.mjs (round 7 of fork PR #780 review, thirty-sixth commit).
 
 import fs from 'node:fs';
 import os from 'node:os';
@@ -5367,6 +5377,72 @@ function extractIn(command, ctx) {
   const vanishedValues = ctx.vanishedValues || new Set();   // THE VANISHED VALUE (round 7's twenty-third commit, 2026-09-23): the names one of whose values is THE VANISHED TEXT's reading (the expansions the command never gives a value removed: `v=$(cat f)` holds the empty text beside whatever the cat printed), so a word over such a name stands for the value read AND for a text not read; candidateTexts marks the texts it answers over one `vanished`, scriptTexts raises vanishedRead (or the head road's meta) on them, and THE UNHELD ROAD is taken beside the reading wherever this shell runs the text in place
   const unreadValueWhy = ctx.unreadValueWhy || new Map();   // why a name of unreadValues holds a value not read, where the reading said (round 7's twenty-fifth commit: a value composed from a positional parameter of a list rebound to values not read)
   const unreadValues = ctx.unreadValues || new Set();   // the names a value the resolver looked at and could not establish is given (round 6's fifth commit): a command name or script formed from such a name is UNRESOLVABLE
+  // THE NAMEREF (round 7 of fork PR #780 review, thirty-sixth commit, 2026-09-24; the reviewer's verifier on the thirty-fifth commit: `c=cp; declare -n
+  // r=c; $r ../base/report.md report.md` was allowed from docs/ while bash copied, and so were typeset -n, declare -rn, `declare -n r; r=c`, "$r", ${r},
+  // an eval of "$r", mv, tee, cp -f, the project root and a cwd in no project, 15 of 19 rows, while `declare -n r=cp; cp=ls; $r ..` was refused for a
+  // cp bash does not run): noteCandidate took a nameref declaration's operand as the name's value, a text no shell gives it (bash reads `$r` as the
+  // value of the name the operand names; zsh 5.9 and dash reject the declaration and assign nothing: measured). A declare, typeset or local whose
+  // option words, before its first operand, hold -n in any cluster (`-n`, `-rn`, `-r -n`) makes each NAME=WORD operand a reference, and one whose
+  // option word the shell fills in may (-n among its values): the operand gives NAME no text in the first case (both readings in the second), and
+  // WORD names the target where it is a literal name (a target the shell fills in, or a name the shell fills in made a reference, may be any name, and
+  // then every name holds a text not read: `anyTarget`). A later `NAME=WORD` stands for WORD (zsh and dash, where the declaration failed, and bash,
+  // which writes WORD through the reference and reads it back) and, where WORD is a name, names a target too (bash's first assignment to a reference
+  // with none sets it). So a word over a reference stands for its own values and each target's, a word over a target for its own values and each
+  // reference's (a write through the reference lands on the target: `c=ls; declare -n r=c; r=cp; $c ..` copied in bash), and both beside a text not
+  // read (THE VANISHED VALUE's tag: a `read`, a `printf -v`, a chain of references or another declaration may write either), so a command name over
+  // either takes THE UNHELD ROAD and THE UNREAD OPERAND beside its readings, refused by name where a literal operand names a tracked file. Shared by
+  // every recursion, as the candidates are: a reference an eval, a called body or a head splice declares holds for the rest of the command.
+  const namerefs = ctx.namerefs || { refs: new Map(), anyTarget: null };   // refs: a reference's name -> the literal names its declarations name as targets
+  // the declaration's kind: 'ref' where a literal option word before the first operand holds -n, 'maybe' where an option word there is one the shell fills
+  // in, null otherwise (an option word after an operand is an operand to bash, which assigns the name before it plainly; zsh and dash have no -n: measured)
+  const namerefKind = (cmd) => {
+    if (!cmd || !(cmd.name === 'declare' || cmd.name === 'typeset' || cmd.name === 'local')) return null;
+    let kind = null;
+    for (const w of cmd.args) {
+      if (w.literal && w.text === '--') break;
+      if (w.literal && /^[-+]./.test(w.text)) { if (/^-[A-Za-z]*n/.test(w.text)) kind = 'ref'; continue; }
+      const m = w.text.match(/^([A-Za-z_][A-Za-z0-9_]*)(\+?=|\[|$)/);
+      if (m && !(w.marks && /x/.test(w.marks.slice(0, m[1].length)))) break;   // the first operand: the options end here
+      if (!w.literal && kind === null) kind = 'maybe';   // a word the shell fills in, in an option word's place: -n may be among its values
+      break;
+    }
+    return kind;
+  };
+  // records a declaration operand's reference and answers whether the operand gives its name no value (a 'ref' declaration's NAME=WORD)
+  const noteReference = (w, kind, verb) => {
+    if (w.literal && /^[-+]./.test(w.text)) return false;   // an option word
+    const m = w.text.match(/^([A-Za-z_][A-Za-z0-9_]*)(\+?=|$)/);
+    if (!m || (w.marks && /x/.test(w.marks.slice(0, m[1].length)))) {   // a name the shell fills in, or a word that may stand for options and operands alike
+      if (!namerefs.anyTarget) namerefs.anyTarget = `the command's \`${verb}\` may make a name the shell fills in (\`${w.raw}\`) a reference to another name, so which name any word stands for is not known`;
+      return false;
+    }
+    const name = m[1];
+    if (!namerefs.refs.has(name)) namerefs.refs.set(name, new Set());
+    const target = w.text.slice(m[0].length);
+    if (m[2] === '=' && w.literal && IDENTIFIER.test(target)) namerefs.refs.get(name).add(target);
+    else if (m[2] && !(m[2] === '=' && w.literal && target === '') && !namerefs.anyTarget) namerefs.anyTarget = `the command's \`${verb}\` makes \`${name}\` a reference to a name I cannot read (\`${w.raw}\`), which may be any name`;
+    return kind === 'ref';
+  };
+  // a declaration's operands, noted as `note` notes a word, each reference recorded first (noteCandidates before the walk, THE VALUE AT THE WALK in it)
+  const noteDeclaration = (cmd, note) => {
+    const kind = namerefKind(cmd);
+    for (const w of cmd.args) {
+      if (kind && noteReference(w, kind, cmd.name)) continue;
+      note(w);
+    }
+  };
+  // what a word over `n` stands for through a reference, beside the name's own values: null where n is no reference, no target of one, and no name may be
+  // written through one; else the texts (a reference's targets' values, a target's references' values)
+  const referenceOf = (n) => {
+    const { refs, anyTarget } = namerefs;
+    if (!refs.size && !anyTarget) return null;
+    const targetsOf = (r) => { const s = new Set(refs.get(r)); for (const v of candidates.get(r) || []) if (IDENTIFIER.test(v)) s.add(v); return s; };
+    let hit = !!anyTarget;
+    const texts = new Set();
+    if (refs.has(n)) { hit = true; for (const t of targetsOf(n)) for (const v of candidates.get(t) || []) texts.add(v); }
+    for (const r of refs.keys()) if (r !== n && targetsOf(r).has(n)) { hit = true; for (const v of candidates.get(r) || []) texts.add(v); }
+    return hit ? { texts: [...texts] } : null;
+  };
   const noteCandidate = (w) => {
     // THE ELEMENT WRITE (round 7 of fork PR #780 review, twenty-ninth commit, 2026-09-24; the reviewer's verifier on the twenty-eighth commit, which
     // marked the name wholly unread here): `NAME[subscript]=value` writes an element of NAME. bash's `$NAME` is `${NAME[0]}`, which an element other
@@ -5479,7 +5555,7 @@ function extractIn(command, ctx) {
       if (c === null) { for (const w of s.words) noteCandidate(w); continue; }
       if (c.unknown || c.opaque || 'script' in c) continue;
       for (const w of s.words.slice(0, c.name ? s.words.length - c.args.length - 1 : s.words.length)) noteCandidate(w);   // the words before the command name: prefix assignments, a wrapper's assignment operands (`env c=cp bash -c '$c a b'`, `c=cp bash -c '..'`)
-      if (c.name && (VAR_ASSIGNERS.has(c.name) || c.name === 'local')) for (const w of c.args) noteCandidate(w);
+      if (c.name && (VAR_ASSIGNERS.has(c.name) || c.name === 'local')) noteDeclaration(c, noteCandidate);   // THE NAMEREF: a reference's operand gives its name no value
     }
   };
   // THE EXEC FEED (round 6's fourth commit): the segments of a bare `exec` with redirections alone, whose here-documents, here-strings and `<`
@@ -6506,9 +6582,12 @@ function extractIn(command, ctx) {
           continue;
         }
         if (unreadValues.has(n)) return { unread: n, why: unreadValueWhy.get(n) };
-        if (!candidates.has(n)) { if (marker) { texts = texts.map((t) => t + UNREAD_MARKER); continue; } if (!vanish) return null; continue; }   // THE VANISHED TEXT: a name the command gives no value may be empty
-        if (vanishedValues.has(n)) vanished = true;
-        texts = texts.flatMap((t) => [...candidates.get(n), ...(marker && vanishedValues.has(n) ? [UNREAD_MARKER] : [])].map((v) => t + v));
+        const ref = referenceOf(n);   // THE NAMEREF: a reference's targets' values, a target's references' values, each beside a text not read
+        if (!candidates.has(n) && !(ref && ref.texts.length)) { if (marker) { texts = texts.map((t) => t + UNREAD_MARKER); continue; } if (!vanish) return null; continue; }   // THE VANISHED TEXT: a name the command gives no value may be empty
+        const notRead = vanishedValues.has(n) || !!ref;
+        if (notRead) vanished = true;
+        const vals = [...new Set([...(candidates.get(n) || []), ...(ref ? ref.texts : [])])];
+        texts = texts.flatMap((t) => [...vals, ...(marker && notRead ? [UNREAD_MARKER] : [])].map((v) => t + v));
         if (texts.length > 64) return null;
       }
       i = j;
@@ -6708,9 +6787,24 @@ function extractIn(command, ctx) {
       for (const t of targets.splice(t0)) { t.q1 = q1; q1Targets.push(t); }
       for (const u of unresolved.splice(u0)) { u.q1 = q1; q1Unresolved.push(u); }
     };
+    // THE OPERAND'S VALUE (round 7 of fork PR #780 review, thirty-sixth commit, 2026-09-24; the reviewer's verifier on the thirty-fifth commit: `read c
+    // <<< dd; $c if=../base/report.md of=report.md status=none` and `read c <<< sort; $c ../base/report.md -oreport.md` were allowed from docs/, the
+    // project root and a cwd in no project while bash and zsh wrote, where `--output=report.md` and `-o report.md` were refused by name): a program
+    // takes a file from one word in three shapes, a long option's value after `=` (`--output=FILE`), a key's value after `=` (dd's `of=FILE`) and a
+    // short option's value glued on (`-oFILE`, the cluster `-uoFILE`), and which letter takes a value is the program's, so a literal word is read
+    // as a path after each `=` in it and, where it opens with one `-` and a letter, at each place after that letter; bash also expands a `~` after the
+    // `=` of an assignment-shaped word (dd's reading, round 7's twenty-sixth commit), read beside the literal reading. The same read on every road
+    // (a head, a script, a piped script, a sourced text) and from every cwd, a path judged by its own project.
     for (const w of words) {
       one(w);
-      if (w && w.literal && /^-[^=]*=./.test(w.text)) one(sliceWord(w, w.text.indexOf('=') + 1));   // an option's glued value: `--out=PATH`, `-o=PATH`
+      if (!w || !w.literal || w.glob || !w.text) continue;
+      for (let k = w.text.indexOf('='); k >= 0; k = w.text.indexOf('=', k + 1)) if (k + 1 < w.text.length) one(sliceWord(w, k + 1));   // a value after `=`: `--out=PATH`, `-o=PATH`, `of=PATH`
+      if (/^-[^-]/.test(w.text)) for (let k = 2; k < w.text.length; k++) one(sliceWord(w, k));   // a short option's value glued on: `-oPATH`, `-uoPATH`
+      const eq = w.text.indexOf('=');
+      if (eq > 0 && IDENTIFIER.test(w.text.slice(0, eq)) && w.text[eq + 1] === '~' && (!w.marks || w.marks[eq + 1] === 'u')) {   // bash's `~` after an assignment-shaped word's `=`
+        const { value } = plainValue(w, eq);
+        if (value != null && value !== w.text.slice(eq + 1)) one(word(value, true, w.raw));
+      }
     }
   };
   // THE UNREAD OPERAND inside a text (q1Scan): a script text read as THE VANISHED TEXT reads it stands for the text with the expansions not read removed,
@@ -6836,7 +6930,7 @@ function extractIn(command, ctx) {
     const homeValue = vars.has('HOME') && vars.get('HOME') != null ? [['HOME', vars.get('HOME')]] : [];
     const sub = extract(text, {
       dir, unknownDir, unknownWhy, shell: sh, depth: depth + 1, homeAssigned: homeUnreadableNow(), homeWhy: homeWhyNow(), unreadableNames, links, cdFunctions, mutated, keywordMode,
-      ifsNamed, candidates, unreadValues, unreadValueWhy, vanishedValues, execFeeds,   // THE IFS RULE, THE HEAD CANDIDATES (THE VANISHED VALUE with them) and THE EXEC FEED hold in every text this command hands over, a fresh shell's included (round 6's fourth commit)
+      ifsNamed, candidates, unreadValues, unreadValueWhy, vanishedValues, namerefs, execFeeds,   // THE IFS RULE, THE HEAD CANDIDATES (THE VANISHED VALUE and THE NAMEREF with them) and THE EXEC FEED hold in every text this command hands over, a fresh shell's included (round 6's fourth commit)
       aliases: fresh ? new Map() : aliases, hashes: fresh ? new Map() : hashes, aliasState: fresh ? { unread: null } : aliasState, bound, aliasChain: chain, headSplice: spliced,   // THE ALIAS ROAD: a fresh shell starts with no alias or hash; the paths made are on the filesystem for every shell
       spliceLine: spliced ? defLineOf(walkIdx >= 0 ? segments[walkIdx] : null) : undefined,   // a definition inside the splice binds at the spliced segment's line (defLineOf)
       functionBodies, functionLines, fnChain: opts.fnChain || fnChain, runFunction: opts.runFunction || null,   // THE CALLED BODY
@@ -7594,7 +7688,7 @@ function extractIn(command, ctx) {
     // in the command defines that function for the bash it reaches, its body read as a definition's is (walked, not run: a writer inside
     // refuses, `cp "$@"` through THE SPLIT OPERAND), as `export -f` already was
     for (const w of seg.words) { const m = w.literal ? w.text.match(/^BASH_FUNC_([A-Za-z_][A-Za-z0-9_]*)%%=(\(\) \{[^]*)$/) : null; if (m) recurse(`${m[1]} ${m[2]}`, 'bash', true, ` through the exported function \`BASH_FUNC_${m[1]}%%\``, []); }
-    if (shell == null || shell === 'bash') for (const w of seg.words) for (const e of w.raw.matchAll(/\$\{([A-Za-z_][A-Za-z0-9_]*)@P\}/g)) for (const v of candidates.get(e[1]) || []) recurse(v, shell, false, ` through \`\${${e[1]}@P}\``);
+    if (shell == null || shell === 'bash') for (const w of seg.words) for (const e of w.raw.matchAll(/\$\{([A-Za-z_][A-Za-z0-9_]*)@P\}/g)) for (const v of [...(candidates.get(e[1]) || []), ...((referenceOf(e[1]) || { texts: [] }).texts)]) recurse(v, shell, false, ` through \`\${${e[1]}@P}\``);
     if (shell == null || shell === 'zsh') {
       // THE PARAMETER TABLES (round 6's seventh commit, 2026-09-21; the residuals verifier: `aliases[c]=cp` on a line before `c a b` inside `zsh <<'EOF'`,
       // `aliases=(c cp)`, the same through `printf .. | zsh`, `galiases[R]=report.md; cp .. R`, `saliases[md]='cp ..'; report.md`, `zsh -c 'commands[c]=
@@ -7674,7 +7768,7 @@ function extractIn(command, ctx) {
       else compoundBody(seg, at + 1, f, true, preWords);
     }
     const cmd = commandOf(seg.words);
-    if (cmd && cmd.name) { for (const w of seg.words.slice(0, seg.words.length - cmd.args.length - 1)) noteAtWalk(w); if (VAR_ASSIGNERS.has(cmd.name) || cmd.name === 'local') for (const w of cmd.args) noteAtWalk(w); }   // THE VALUE AT THE WALK: the prefix assignments and a declaration's operands, as noteCandidates reads them
+    if (cmd && cmd.name) { for (const w of seg.words.slice(0, seg.words.length - cmd.args.length - 1)) noteAtWalk(w); if (VAR_ASSIGNERS.has(cmd.name) || cmd.name === 'local') noteDeclaration(cmd, noteAtWalk); }   // THE VALUE AT THE WALK: the prefix assignments and a declaration's operands, as noteCandidates reads them (THE NAMEREF's operands included)
     if (!cmd) {
       if (seg.words.every((w) => isAssignmentWord(w) || (plainWord(w) && RESERVED.has(w.text)))) for (const w of seg.words) noteAtWalk(w);
       // assignment words (and reserved words) alone once compoundBody dropped a condition's words or the head branch `repeat N`
@@ -8362,7 +8456,7 @@ function extractIn(command, ctx) {
           // operand, in any text of the command) that names the standard input or a descriptor this shell is fed (STDIN_NAMES, fdOfName) is
           // the text fed, which the shell sources at startup; read whether or not this shell would (bash reads BASH_ENV when not interactive
           // and ENV under POSIX mode when interactive, dash reads ENV when interactive: the safe side, as `--rcfile` is read)
-          for (const nm of STARTUP_FILE_NAMES) for (const v of candidates.get(nm) || []) if (isStdinName(v)) for (const body of stdinBodies(idx, fdOfName(v))) recurse(body, name, undefined, ` through \`${nm}\``, []);
+          for (const nm of STARTUP_FILE_NAMES) for (const v of [...(candidates.get(nm) || []), ...((referenceOf(nm) || { texts: [] }).texts)]) if (isStdinName(v)) for (const body of stdinBodies(idx, fdOfName(v))) recurse(body, name, undefined, ` through \`${nm}\``, []);
           // THE UNREAD OPERAND on the script roads (round 7's twenty-fifth commit; the reviewer's Q1): a `-c` text, a script file operand that is an
           // expansion or a process substitution, or a script fed on the standard input, that the resolver did not read, whole or in part, may be any
           // script, so a literal operand of the script (the shell's words after it) naming a tracked file is refused by name; a script file spelled out
