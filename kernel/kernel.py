@@ -34112,16 +34112,28 @@ def _awaiting_nest(agents, commands, cmd_owner, path):
     if not by_agent:
         return agents, commands
     # (transcript, agentId) → (the launch tool_use ids in that agent's own transcript, the (path, key) pairs its resolution
-    # reported to its build: _subagent_file's `notes`, the walk's dependency notes), read lazily, once per call. A fold that
-    # did not read the file (the reader's fail path, or a raise), or whose resolution could not be made (the file found
-    # under no tree the walk could read while one could not be: _subagent_file's faults, since 2026-09-21; a file found
-    # past such a tree is resolved, and faults nothing), answers set() and is held in `faulted`, so the call's other owner
-    # lookups are served it (each of the A agents' lookups consults every other agent's launches, so a fault re-folded per
-    # lookup cost A x (A - 1) folds per call where the parent's call-local memo cost A: round 1 of #882's extra9-2). A
-    # file that resolved to nothing (ap None) is a state, held. A held fold answers without calling _subagent_file, so it
-    # replays the pairs its entry stores to the build it answers, once per call (round 2 of #882, group B), never the
-    # agent-file memo's entry, which can be gone or newer by then.
-    launch_sets = {}
+    # reported to its build: _subagent_file's `notes`, the walk's dependency notes), read lazily. The map is the launch-fold
+    # slot, `_live_scope.subagent_launches`, on a thread that holds it: it opens and clears with `subagent_trees` (a pusher
+    # cycle, a jobs pass, a connect push's chat loop: _chat_push_scopes_open), so each agent is resolved and folded once per
+    # cycle or pass there and once per push on a connect push, across the up-to-five _session_awaiting calls per session
+    # per cycle (each re-folded every agent's file, a stat and a checkpoint realpath per agent per call). On a thread that
+    # holds no slot the map is this call's own, read once per call. The attribution then sees an agent's file as it stood
+    # at the fold; a launch appended after it nests at the next cycle's fold, the one-cycle lag the tree slot accepts. A
+    # fold that did not read the file (the reader's fail path, or a raise), or whose resolution could not be made (the file
+    # found under no tree the walk could read while one could not be: _subagent_file's faults, since 2026-09-21; a file
+    # found past such a tree is resolved, and faults nothing), answers set() and is held in `faulted`, this call's own map
+    # and never the slot, so the call's other owner lookups are served it (each of the A agents' lookups consults every
+    # other agent's launches, so a fault re-folded per lookup cost A x (A - 1) folds per call where the parent's call-local
+    # memo cost A: round 1 of #882's extra9-2) and the next call reads again. A file that resolved to nothing (ap None) is
+    # a state, held. A held fold answers without calling _subagent_file, so it replays the pairs its entry stores to the
+    # build it answers, once per call (round 2 of #882, group B), never the agent-file memo's entry, which can be gone or
+    # newer by then: that memo is cleared whole past 1024 entries by any thread's lookup
+    # (tests/test_subagent_tree_stamps_per_cycle.py DependencyKey
+    # test_a_held_fold_replays_its_own_walks_notes_after_the_agent_file_memo_was_cleared), and a later lookup's walk
+    # replaces the entry with pairs the held ids never reflected.
+    launch_sets = getattr(_live_scope, "subagent_launches", None)
+    if launch_sets is None:
+        launch_sets = {}                                  # no launch-fold slot on this thread: this call's own map
     faulted = {}
     reported = set()                                      # agents whose resolution's keys this call's build holds (one call, one build)
     pkey = str(path or "")
@@ -39240,7 +39252,9 @@ def _chat_push_scopes_open():
     without the slot, and a viewer frame's agent-file re-walk on a cache miss (its first open, or after
     a file landed in a directory the walk read) samples the root once more; a handler thread's push
     shares one sample per root across its chat loop and those re-walks, exactly as a pusher cycle does.
-    The frame's hit-path re-stats through _dir_stamps are a separate route, a follow-up). A pusher cycle
+    The frame's hit-path re-stats through _dir_stamps are a separate route, a follow-up), opened with
+    the launch folds derived from them (`subagent_launches`, _awaiting_nest: one fold per agent per push),
+    which live exactly where the samples do. A pusher cycle
     already holds the last three, so only the absent ones are opened, and the record says which;
     _chat_push_scopes_close clears exactly what was opened here, so a cycle's own scopes are never
     touched. The ownership record is written BEFORE the shared components are read (2026-09-18, the
@@ -39262,6 +39276,8 @@ def _chat_push_scopes_open():
     if getattr(_live_scope, "subagent_trees", None) is None:
         _live_scope.subagent_trees = {}                   # one sample per subagents root across this push's chat loop and its
         owned.append("subagent_trees")                    #  viewer frames' agent-file re-walks (_push_subagents runs before the close), 2026-09-18
+        _live_scope.subagent_launches = {}                # the launch folds derived from those samples, opened and owned with them
+        owned.append("subagent_launches")                 #  so they live exactly where the trees do (_awaiting_nest)
     _live_scope.chat_push_owned = owned                   # recorded before the read below can raise (2026-09-18): the close must
     _live_scope.chat_shared = _chat_sig_shared()          #  find every slot this open set, on the except path too
 
@@ -66081,6 +66097,9 @@ def _pusher_cycle():
         #                                       cycles live, an estimated 30-50% of them re-samples, the `scoped` tally
         #                                       measures the realized share; an absent root stays one lstat per caller,
         #                                       never a validation)
+        _live_scope.subagent_launches = {}      # …and the cycle's launch folds (_awaiting_nest), derived from the held
+        #                                       trees and living exactly where they do: one resolution and fold per
+        #                                       awaiting agent per cycle, where each _session_awaiting call folded again
         _live_scope.msgsum = [_MSGSUM_UNSET]    # …and the cycle's caption-map slot (_msg_summaries_scoped): the
         #                                       first chat build that needs the map fetches it, the rest read it
         _live_scope.names = _names_snapshot()   # …and the cycle's NAMES snapshot, same idiom: the name/
@@ -66097,6 +66116,7 @@ def _pusher_cycle():
         _live_scope.paths = None
         _live_scope.sessions = None
         _live_scope.subagent_trees = None
+        _live_scope.subagent_launches = None
         _live_scope.msgsum = None
         _live_scope.auth = None
         _PERF_STATS.cycle(time.monotonic() - _t_cycle, time.thread_time() - _c_cycle,
@@ -66375,6 +66395,7 @@ def _jobs_cycle():
         _live_scope.auth = {}
         _live_scope.subagent_trees = {}         # the pass's subagents-tree samples (2026-09-18): the reminder walk's
         #                                       _session_awaiting readers and _mark_nudge_failed read the same roots per pass
+        _live_scope.subagent_launches = {}      # the pass's launch folds (_awaiting_nest), beside the trees they come from
         _live_scope.msgsum = [_MSGSUM_UNSET]
         _live_scope.names = _names_snapshot()
         _PERF_STATS.stage("jobs.prelude", time.monotonic() - _t)
@@ -66387,6 +66408,7 @@ def _jobs_cycle():
         _live_scope.sessions = None
         _live_scope.auth = None
         _live_scope.subagent_trees = None
+        _live_scope.subagent_launches = None
         _live_scope.msgsum = None
         _live_scope.files_stat = None
         _live_scope.files_dirty = None

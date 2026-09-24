@@ -106,6 +106,32 @@ def _age(root):
         os.utime(r, ns=(t, t))
 
 
+SLOTS = ("subagent_trees", "subagent_stamps", "subagent_launches")   # the tree scope's slots on _live_scope (upstream's held
+#   samples and the stamp index and launch folds derived from them), which every cycle opens together and clears together
+
+
+def _scope_open():
+    """Open the tree scope's three slots on this thread, as _pusher_cycle's try opens them."""
+    for slot in SLOTS:
+        setattr(km._live_scope, slot, {})
+
+
+def _scope_close():
+    """Clear them, as _pusher_cycle's finally does."""
+    for slot in SLOTS:
+        setattr(km._live_scope, slot, None)
+
+
+def _scope():
+    """This thread's open tree scope as {"trees", "stamps", "launches"}, the three slots' own objects, or None when no tree
+    scope is open."""
+    trees = getattr(km._live_scope, "subagent_trees", None)
+    if trees is None:
+        return None
+    return {"trees": trees, "stamps": getattr(km._live_scope, "subagent_stamps", None),
+            "launches": getattr(km._live_scope, "subagent_launches", None)}
+
+
 class _Listings:
     """Counts every directory listing the os module performs (scandir, walk, listdir) inside the block: os.walk binds
     `scandir` from the os module's globals, so patching os.scandir counts its listings too."""
@@ -889,15 +915,16 @@ class FaultExcludesItsOwnTree(_Walk):
             # The caller: _awaiting_nest's fold, whose own lookup walks under the fault, is held for the cycle, since
             # _subagent_file passes it no fault when a file was found (a fault holds the fold for the one call).
             km._SUBAGENT_FILE_CACHE.pop(self.fork_key, None)
-            km._subagent_scope_open()
+            _scope_open()
             try:
                 row = km._awaiting_item("agents", "toolu_tree_0003", "Workflow", None, agent_id=AID_FORK)
                 cmd = km._awaiting_item("commands", "toolu_tree_cmd2", "run the api tests", None)
                 km._awaiting_nest([row], [cmd], {}, str(self.tpath))
-                self.assertIn(self.fork_key, km._subagent_scope()["launches"],
-                              "the fold over the found file is held for the cycle: no fault reached _awaiting_nest")
+                self.assertIn(self.fork_key, _scope()["launches"],
+                              "the fold over the found file is held for the cycle in the launch-fold slot "
+                              "(_live_scope.subagent_launches): no fault reached _awaiting_nest")
             finally:
-                km._subagent_scope_close()
+                _scope_close()
         if how == "eacces":
             self._skipped_then_walked_again(before, holder_file)
 

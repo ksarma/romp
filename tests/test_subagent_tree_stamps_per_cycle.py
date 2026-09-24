@@ -2038,7 +2038,7 @@ class Guards(_World):
                                                     "read (the call-local hold of the fault), not once per owner lookup that consulted it, "
                                                     "A x (A - 1) = %d (a fault returned without a hold)" % (len(f1), n, n * (n - 1)))
                         self.assertEqual([k for k in sc["launches"] if k[0] == self.path], [],
-                                         "refused: a fold that did not read the file is held in no cycle scope")
+                                         "refused: a fold that did not read the file is held in no launch-fold slot")
                         c2, f2 = read()
                         self.assertEqual(c2, n)
                         self.assertEqual(f2, names, "read 2, the fault persisting: %d folds; folded again, A = %d, since the fault is not "
@@ -2050,12 +2050,13 @@ class Guards(_World):
                         self.assertEqual(f3, names, "read 3, the fault lifted: %d folds; the files that became readable are folded at this "
                                                     "read, A = %d, one each" % (len(f3), n))
                         self.assertEqual({k[1] for k in sc["launches"] if k[0] == self.path}, set(self.aids),
-                                         "accepted: every fold that read its file is held for the cycle")
+                                         "accepted: every fold that read its file is held for the cycle in the launch-fold slot "
+                                         "(_live_scope.subagent_launches)")
                         c4, f4 = read()
                         self.assertEqual(c4, n)
                         self.assertEqual(f4, [], "read 4: every agent's launches served from the scope, 0 folds: %r" % (f4,))
                 finally:
-                    km._subagent_scope_close()
+                    _scope_close()
 
     def test_the_fault_producer_names_the_readers_fail_path_and_a_raising_fold_and_stays_empty_on_a_read(self):
         """_agent_launch_ids's `faults` producer, driven directly (the case above sees only its effect through the memo): a
