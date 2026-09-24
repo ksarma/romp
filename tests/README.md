@@ -162,15 +162,17 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   the kernel at import needs the value before the load) and a migrated one fails
   until its line is removed. Then the dead ports and the catalog, scope,
   claude-config and service-env floors (one value or a path under the module's
-  root, and `tests/conftest.py` re-asserts the name before every test, by an
-  unconditional plain assignment or pop before the yield of a function-scoped
-  autouse fixture, one in a `for` over a literal tuple included, so the module
-  value cannot outlive collection; a fixture counts only where the reader proves
-  pytest runs it, reading `tests/conftest.py`'s fixtures and hooks from the module
-  Python imported, the way pytest registers them, where a hook other than the five
-  the conftest implements refuses every fixture, and a synthetic source by its
-  text, where any statement it cannot prove, in any function, refuses every
-  fixture, named), and
+  root, and `tests/conftest.py` re-asserts the name before every test, so the
+  module value cannot outlive collection). The re-assert is proved by running it:
+  a static reader first names the candidates (an unconditional plain assignment or
+  pop before the yield of a function-scoped autouse fixture, one in a `for` over a
+  literal tuple included, in a fixture it can show pytest registers, reading
+  `tests/conftest.py`'s fixtures and hooks from the module Python imported). That
+  reader only refuses. A name is licensed only when a child pytest over a copy of
+  the conftest writes the name at a probe module's import, sets it again in a
+  test, and sees the counted fixture's own code set or pop it in the setup of the
+  test after each write, with the value re-asserted there. Anything that stops
+  the fixture from running, named or not, is then refused by the run. And
   `ROMP_MODELS_URL` (read at kernel import,
   port 9 of 127.0.0.1 and no other); a check over the table itself holds every
   licence to a per-write condition and every temporary one to a since date and a
@@ -222,8 +224,9 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   may read and drops every other tree after its walk (the census pin holds the
   trees it keeps, and those that outlive their walk, read through weak
   references, equal to that list, derived again by a reader of the pin's own,
-  and the ast nodes alive after the walk, counted through `gc.get_objects()`,
-  which changes no collector state, equal to the nodes of the trees it keeps),
+  and the ast objects made in the build and alive after its loop, found through
+  `gc.get_objects()`, which changes no collector state, and counted by class,
+  equal to the nodes, by class, of the trees of that derived list),
   and derives once per set of paths, and the module holds what it keeps in one
   object that its
   `tearDownModule` releases. It does not use `tests/parse_cache.py`'s shared
