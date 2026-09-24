@@ -47169,10 +47169,12 @@ def _subagent_dirs_ident(sid, d):
     (_subagent_trees_forget), not per session. A root that cannot be read (_subagent_tree raises) answers the memo's
     standing (directories, identities) for it when one stands and holds no unvouched (None) identity, unheld (the read
     paid the failed lstat; the next build's key reads again), else (d,) with identity _TREE_UNREADABLE: with no entry
-    standing, and with an entry holding an unvouched identity (a racy stamp or a failed listing), since a lone root's
-    such entry, ((d,), (None,)), equals the missing root's key. So the answer is never the missing root's (d,), (None,),
-    an unreadable tree is never keyed as an absent one, and the frame keyed on the marker moves when the read succeeds
-    (tests/test_subagent_tree_memo.py FailClosedRoads, the feed key's marker cases)."""
+    standing, and with an entry holding an unvouched identity (a racy stamp or a failed listing), whatever directories
+    it lists, since _subagent_tree_sample never serves such an entry as a hit and a lone root's such entry, ((d,),
+    (None,)), equals the missing root's key. So the answer is never the missing root's (d,), (None,), an unreadable tree
+    is never keyed as an absent one, and the frame keyed on the marker moves when the read succeeds
+    (tests/test_subagent_tree_memo.py FailClosedRoads, the feed key's marker cases: no entry, a lone root's entry and
+    a multi-directory one)."""
     try:
         dirs, stats = _subagent_tree(d)
     except _SubagentTreeUnreadable as e:
