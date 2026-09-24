@@ -1594,7 +1594,8 @@ class FoundRoads(_World):
 
     def _add_flat_agent(self):
         """One more live agent, its file and sidecar at the own root, the tree aged and the memos re-warmed outside any
-        scope (setUp's idiom), so its memo entry stands. Returns its file."""
+        scope (setUp's idiom), so its memo entry stands. Returns its file. Which stamps the entry holds is asserted by
+        each case after its figures (_assert_flat_entry), so a kernel that changes them reds a figure first."""
         (self.sub / ("agent-%s.meta.json" % self.FLAT)).write_text(json.dumps(
             {"agentType": "Workflow", "description": "tidy note flat", "spawnDepth": 1, "toolUseId": "toolu_stamps_flat"}))
         f = self.sub / ("agent-%s.jsonl" % self.FLAT)
@@ -1607,8 +1608,14 @@ class FoundRoads(_World):
         self.assertEqual((aw or {}).get("count"), A + 1, "the re-warm sees the A agents and the flat one: %r" % (aw,))
         entry = km._SUBAGENT_FILE_CACHE.get((self.path, self.FLAT))
         self.assertEqual(entry[1] if entry else None, f, "premise: the flat agent's file resolved at the flat place")
-        self.assertEqual([place for place, _m in entry[0]], [str(self.sub)], "premise: its memo entry holds the own root's stamp alone")
         return f
+
+    def _assert_flat_entry(self, f):
+        """The flat agent's memo entry answers its file and holds the own root's stamp alone."""
+        entry = km._SUBAGENT_FILE_CACHE.get((self.path, self.FLAT))
+        self.assertEqual(entry[1] if entry else None, f, "the flat agent's memo entry answers its file")
+        self.assertEqual([place for place, _m in entry[0]], [str(self.sub)], "the flat agent's memo entry holds the own root's stamp alone: %r"
+                         % (entry[0],))
 
     def _w(self):
         """W: the own root's lstats by an lstat of its type and os.path.realpath, as the walk takes them."""
@@ -1671,12 +1678,12 @@ class FoundRoads(_World):
         agent's memo entry, which for a nested file holds every directory of the own tree. One sidecar lands in the last
         workflow directory (index D - 1, holding no agent), so the cycle's first read walks the tree, and every nested
         agent's entry, holding that directory's stamp, walks again at its first lookup, once per cycle, while the flat
-        agent's entry holds the own root's stamp alone, which the landing did not move, so it walks not at all. Keys: the
-        agents that walked (the A nested ones, once each; not the flat one), then per walk (its census under the tree,
-        listings of the project directory, stats of its entries) by equality with ({lstat: W + 1 + (k + 1) + R}, 0, 0),
-        at the A agents' indices, two or more distinct values of k. Red under the miss-walk unit (a walk that goes on past
-        the file it found through the rest of the own tree and the project directory): {lstat: W + 1 + D + R}, one
-        listing and E entry stats per walk."""
+        agent's entry holds the own root's stamp alone, which the landing did not move, so it walks not at all. Keys: per
+        nested agent, one walk, and (its census under the tree, listings of the project directory, stats of its entries)
+        by equality with ({lstat: W + 1 + (k + 1) + R}, 0, 0), at the A agents' indices, two or more distinct values of k;
+        then the agents that walked (the A nested ones and not the flat one) and the flat agent's entry. Red on the first
+        walk's figure under the miss-walk unit (a walk that goes on past the file it found through the rest of the own
+        tree and the project directory): {lstat: W + 1 + D + R}, one listing and E entry stats per walk."""
         flat_file = self._add_flat_agent()
         W = self._w()
         at = {aid: self.dirs.index(str(self.wfroot / ("wf_%016x" % i))) for i, aid in enumerate(self.aids)}
@@ -1688,14 +1695,12 @@ class FoundRoads(_World):
             {"agentType": "Workflow", "description": "tidy note landed", "spawnDepth": 1, "toolUseId": "toolu_stamps_landed"}))
         proj = str(Path(self.path).parent)
         rec, walks, d = self._cycle([self._spy()], A + 1)
-        self.assertEqual(sorted(w["aid"] for w in walks), sorted(self.aids),
-                         "the agents that walked in the cycle: %r; keyed on the A nested agents, once each: each entry holds the last "
-                         "workflow directory's stamp, which the landing moved; the flat agent's entry holds the own root's alone, "
-                         "which it did not (its hit re-checks one directory and is served)" % ([w["aid"] for w in walks],))
-        self.assertEqual(km._SUBAGENT_FILE_CACHE[(self.path, self.FLAT)][1], flat_file, "the flat agent is still answered its file")
         ks = []
-        for w in walks:
-            aid = w["aid"]
+        for aid in self.aids:
+            mine = [w for w in walks if w["aid"] == aid]
+            self.assertEqual(len(mine), 1, "premise: nested agent %s walked once in the cycle (its entry holds the last workflow "
+                                           "directory's stamp, which the landing moved): %d walks" % (aid, len(mine)))
+            w = mine[0]
             k = at[aid]
             ks.append(k)
             self.assertEqual(w["answer"], files[aid], "the walk found %s's file" % aid)
@@ -1708,6 +1713,11 @@ class FoundRoads(_World):
                              "(the miss walk's unit pays {lstat: W + 1 + D + R} with D = %d, one listing and E entry stats)"
                              % (k, got, want, W, R[aid], D))
         self.assertGreaterEqual(len(set(ks)), 2, "premise: the walks found their files at two or more values of k: %r" % (ks,))
+        self.assertEqual(sorted(w["aid"] for w in walks), sorted(self.aids),
+                         "the agents that walked in the cycle: %r; keyed on the A nested agents, once each, and not the flat one: its "
+                         "entry holds the own root's stamp alone, which the landing did not move, so its hit is served"
+                         % ([w["aid"] for w in walks],))
+        self._assert_flat_entry(flat_file)
         self.assertEqual((d["hit"], d["miss"]), (0, 1), "the tree itself: the cycle's one walk after the landing moved its stamp: %r" % (d,))
 
     def test_a_flat_agents_walk_pays_the_own_subagents_directorys_lstat_and_the_flat_places_and_nothing_else_under_the_tree(self):
@@ -1730,6 +1740,7 @@ class FoundRoads(_World):
                          "the flat walk: (calls under the tree by class, listings of the project directory, stats of its entries, stats of "
                          "the directory) %r; keyed on ({lstat: 2}, 0, 0, 0): the own subagents directory's lstat and the flat place's, "
                          "the own root's stamp served" % (got,))
+        self._assert_flat_entry(flat_file)
 
     def test_an_agent_found_under_a_siblings_tree_stats_the_entries_up_to_that_sibling_and_its_candidates_up_to_the_found_directory(self):
         """A file under a sibling's tree costs, per walk: the own tree's part of the miss walk in full ({lstat: W + 1 + D}
@@ -1739,7 +1750,8 @@ class FoundRoads(_World):
         here, the tree not in the memo), and W' + (k + 1) + R lstats (realpath of its subagents place, the candidates up
         to the found directory at k, realpath of the found file's path). The world: two sibling session directories
         sorted after the own session's entries, the first holding the agent's file in its tree at k = 2 of S_d = 4
-        directories, the second a tree of its own. Keys: the agents that walked (this one alone, once), the premise E = 4
+        directories, the second a tree of its own, both made before the memos are re-warmed and out of the walk memo
+        after it, the agent made live after it. Keys: the agents that walked (this one alone, once), the premise E = 4
         entries with the found sibling's at index 2, then per the walk, each by equality: the own tree's census; (the
         project directory's listings, its entry stats, its stamp stats) == (1, 3, 1); the found sibling's census
         {stat: 1, lstat: S_d + W' + (k + 1) + R, scandir: S_d}; and no call on any path of the second sibling. Red under
@@ -1759,6 +1771,11 @@ class FoundRoads(_World):
             _age(r)
             self.addCleanup(km._SUBAGENT_TREES.pop, str(r), None)
             self.addCleanup(km._SUBAGENT_META_CACHE.pop, str(r), None)
+        self._forget_memos()                                 # re-warmed over the grown project directory, before the agent is
+        aw = km._session_awaiting(SID, self.path, True)      #  live, so no other entry holds a stamp the world's growth moved
+        self.assertEqual((aw or {}).get("count"), A, "the re-warm sees the A agents: %r" % (aw,))
+        for r in (sib, after):
+            km._SUBAGENT_TREES.pop(str(r), None)             # neither sibling tree in the walk memo: the found one is walked
         self.live_aids.append(self.SIBLING)
         self.addCleanup(km._SUBAGENT_FILE_CACHE.pop, (self.path, self.SIBLING), None)
         entries = sorted(proj.iterdir())
