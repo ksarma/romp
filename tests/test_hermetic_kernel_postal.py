@@ -120,6 +120,7 @@ import ast
 import collections
 import gc
 import glob
+import inspect
 import json
 import os
 import re
@@ -1097,12 +1098,13 @@ def _import_statement_words(text):
     return set(_IDENTIFIER.findall("\n".join(chunks)))
 
 
-def _under_tests(path):
-    """True for a path under tests/ (this module's directory), read as given, before any symlink is followed."""
-    return os.path.abspath(path).startswith(HERE + os.sep)
+def _under_tests(path, root=None):
+    """True for a path under tests/ (this module's directory; `root` in the plants of the target scan), read as given,
+    before any symlink is followed."""
+    return os.path.abspath(path).startswith((HERE if root is None else root) + os.sep)
 
 
-def _resolver_targets(paths):
+def _resolver_targets(paths, root=None):
     """The realpaths of the files among `paths` that the resolver may read during a census build over them, whose trees
     the census loop therefore holds (_own_tree) where it drops every other tree after its walk (the reviewer's third
     ruling of 2026-09-24 on round 2 of fork PR #894: the test files' trees dropped after their walk, the files the
@@ -1112,15 +1114,78 @@ def _resolver_targets(paths):
     name without .py (a package's __init__.py: its directory's name) is among the words of those files' import
     statements (_import_statement_words, a superset read from the text). A census over no file under tests/ has no
     target and reads no text. A file the resolver reads that this missed is parsed a second time, which the parse-once
-    pins red naming it."""
-    inside = [p for p in paths if _under_tests(p)]
+    pins red naming it. `root` stands in for tests/ in the plants of the target scan (a synthetic tree run through the
+    whole function); the census passes none."""
+    inside = [p for p in paths if _under_tests(p, root)]
     if not inside:
         return frozenset()
     words = set()
-    for p in sorted(set(_tests_tree_walk()) | set(paths)):
+    for p in sorted(set(_tests_tree_walk(root)) | set(paths)):
         with open(p, encoding="utf-8", errors="replace") as f:
             words |= _import_statement_words(f.read())
     return _named_by(inside, words)
+
+
+_WORD_IMPORT = re.compile(r"\bimport\b")
+_WORD_IMPORT_PAREN = re.compile(r"\bimport\s*\(")
+_NAME_CHARS = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+#   the census pin's own copies of the three patterns the census rule is written in (the word import, the word followed
+#   by a parenthesis, an identifier), compiled apart from _import_statement_words' so a change to those is not a change
+#   to these
+
+
+def _import_line_named_files(paths, root=None):
+    """THE CENSUS PIN'S OWN READER of the files the census loop keeps past their walk (the verifier's finding at round 2's
+    twentieth commit of fork PR #894: the pin compared the kept trees with _resolver_targets read again, so a widening
+    inside that function, every file under tests/ returned or every identifier of every file read, held all 958 trees
+    and left the module green): the realpaths of the files among `paths` under tests/ (`root` in a plant) whose module
+    name (the file's name without .py; for a package's __init__.py, its directory's name) is an identifier on a line, of
+    some file under tests/ or among `paths`, that holds the word `import` (backslash continuations joined), or on a line
+    up to the one that closes a parenthesis opened right after that word (a comment's parentheses not counted). It is
+    the census's rule, read by code of its own: none of _resolver_targets, _import_statement_words, _named_by or
+    _tests_tree_walk runs here, so the pin that holds the census's kept trees EQUAL to this set is red under a change to
+    any of them that moves what the census keeps, in either direction. It reads what the rule reads and no more: an
+    import spelled without the keyword (importlib.import_module, __import__), which the resolver does not follow either,
+    is not read, and neither is a file outside tests/ that is not handed in. It is not the set of files an import
+    statement names: the rule reads text, before any tree is parsed, so a docstring, a comment or a string on an import
+    line adds its words, the safe side (measured at round 2's thirty-first commit of fork PR #894: 73 files kept, where
+    an ast read of every import statement under tests/ names 38, all among the 73; an ast read here would parse every
+    file a second time, which the parse-once rule forbids, and could not equal what the census keeps)."""
+    base = HERE if root is None else root
+    by_name = collections.defaultdict(set)
+    for p in paths:
+        full = os.path.abspath(p)
+        if not full.startswith(base + os.sep):
+            continue
+        folder, leaf = os.path.split(full)
+        by_name[os.path.basename(folder) if leaf == "__init__.py" else os.path.splitext(leaf)[0]].add(os.path.realpath(p))
+    if not by_name:
+        return frozenset()
+    found = set()
+    corpus = {os.path.join(d, f) for d, _, fs in os.walk(base) for f in fs if f.endswith(".py")} | set(paths)
+    for p in sorted(corpus):
+        with open(p, encoding="utf-8", errors="replace") as f:
+            lines = f.read().replace("\\\n", " ").split("\n")
+        at = 0
+        while at < len(lines):          # loop-ok: `at` moves forward on every pass, bounded by the file's lines
+            first = lines[at]
+            last = at
+            if "import" in first and _WORD_IMPORT.search(first):
+                opened = _WORD_IMPORT_PAREN.search(first)
+                if opened:
+                    depth, row, code = 0, at, first[opened.end() - 1:]
+                    while True:         # loop-ok: `row` moves forward, bounded by the file's lines
+                        code = code.split("#", 1)[0]
+                        depth += code.count("(") - code.count(")")
+                        if depth <= 0 or row + 1 >= len(lines):
+                            break
+                        row += 1
+                        code = lines[row]
+                    last = row
+                for word in _NAME_CHARS.findall("\n".join(lines[at:last + 1])):
+                    found |= by_name.get(word, set())
+            at = last + 1
+    return frozenset(found)
 
 
 def _named_by(paths, words):
@@ -1662,11 +1727,11 @@ _OUTSIDE_RUNNER = textwrap.dedent("""\
 #   mirror) after its import and after its hook
 
 
-def _tests_tree_walk():
+def _tests_tree_walk(root=None):
     """Every .py under tests/ that an os.walk finds, recursively (fixtures/ included), sorted: the module's own population,
     which _tests_tree_paths checks its glob against and the census pin compares the census's parsed count with, by
-    equality."""
-    return sorted(os.path.join(d, f) for d, _, fs in os.walk(HERE) for f in fs if f.endswith(".py"))
+    equality. `root` walks a synthetic tree instead (the target scan's plants)."""
+    return sorted(os.path.join(d, f) for d, _, fs in os.walk(HERE if root is None else root) for f in fs if f.endswith(".py"))
 
 
 def _tests_tree_paths():
@@ -1712,7 +1777,7 @@ _Derivation = collections.namedtuple("_Derivation", "parsed counts records walks
 #   {name: {shape: count}}; RECORDS, {name: (_Record, ...)}; WALKS, {module: walks} (_walk_unit); OUTLIVED, the modules
 #   whose tree was still alive right after the loop dropped its own reference to it, in order, read through a weak
 #   reference taken just before the drop: the trees something else keeps (the census pin holds them equal to the files
-#   the resolver may read, _resolver_targets)
+#   its own reader derives, _import_line_named_files)
 
 
 def _walk_unit(tree, rel, walks):
@@ -1735,20 +1800,21 @@ def _census_build(paths):
     population by equality); a file that does not parse fails the census naming it; each parsed file is walked through
     _walk_unit, whose count per file the census pin holds at 1. THE DROP, observed: just before the loop drops its
     reference to a file's tree it takes a weak reference to it, and just after, a tree still alive is one something else
-    keeps (`outlived`); the census pin holds the holder's trees of the files handed in equal to the files the resolver
-    may read (_resolver_targets, read again by the pin) and the files it has read, and `outlived` equal to the former,
+    keeps (`outlived`); the census pin holds the holder's trees of the files handed in, and `outlived`, equal to the
+    files its own reader derives (_import_line_named_files, the census rule by code that runs none of this build's),
     so a loop that kept every tree (fork PR #850's E shape, which the measured rule did not ship), kept a dropped one by
-    another road, or dropped it only when the next file's tree replaced it is red there (the verifier's finding at
-    round 2's nineteenth commit of fork PR #894: the shape's defining property, the drop, had no pin, and a loop
-    holding every tree left the module green). THE SINGLETON CHECK (tests/parse_cache.py's
-    check_singletons, which parse_cache.derived ran around the build before the reviewer's ruling of 2026-09-24 took
-    derived() out of this module): before the build (a writer that ran earlier; the build neither runs nor counts) and
-    after it, on the returning road and on the raising road (the build itself wrote on a node the parser shares with
-    every tree: the build is counted and nothing is held, so the next read builds again; a raising build's exception is
-    the AssertionError's __cause__ when the singletons carry attributes, else it propagates as it was). No collector
-    state is touched: no gc.freeze, gc.disable or gc.collect here or anywhere in the module (the same ruling; the freeze
-    is process-global, and the other two walk every tracked object). What the build returns holds only strings, numbers,
-    tuples, dicts and _Record tuples, no node and no cycle."""
+    another road, or dropped it only when the next file's tree replaced it, and a _resolver_targets that names more or
+    fewer files than the rule, is red there (the verifier's findings at round 2's nineteenth and twentieth commits of
+    fork PR #894: the shape's defining property, the drop, had no pin, and then a pin that read _resolver_targets
+    again, so a loop holding every tree, and then a _resolver_targets naming every file, left the module green).
+    THE SINGLETON CHECK (tests/parse_cache.py's check_singletons, which parse_cache.derived ran around the build before
+    the reviewer's ruling of 2026-09-24 took derived() out of this module): before the build (a writer that ran earlier;
+    the build neither runs nor counts) and after it, on the returning road and on the raising road (the build itself
+    wrote on a node the parser shares with every tree: the build is counted and nothing is held, so the next read builds
+    again; a raising build's exception is the AssertionError's __cause__ when the singletons carry attributes, else it
+    propagates as it was). No collector state is touched: no gc.freeze, gc.disable or gc.collect here or anywhere in the
+    module (the same ruling; the freeze is process-global, and the other two walk every tracked object). What the build
+    returns holds only strings, numbers, tuples, dicts and _Record tuples, no node and no cycle."""
     key = tuple(paths)
     where = "the census build over %s (tests/test_hermetic_kernel_postal.py)" % ("1 path" if len(key) == 1 else "%d paths" % len(key))
     PC.check_singletons("before %s: an earlier writer" % where)
@@ -1838,13 +1904,15 @@ def module_level_env_census(paths=None):
     parsed once in the module's run (_OWN_PARSES; red under a second parse, and under a loop that keeps no tree, whose
     dropped files the resolver then parses again); the one-path census test asserts those three counts of its own path;
     the census pin holds THE DROP too, the shape's defining property (the verifier's finding at round 2's nineteenth
-    commit of fork PR #894, where a loop that kept every tree left the module green): the files whose tree outlived its
-    walk in the whole-tree build (_Derivation's `outlived`, read through weak references) are the files the resolver may
-    read (_resolver_targets, read again by the pin, so a build that widened its own list is red too), and the holder's
-    trees of the tree's files are those and the files the resolver has read (red under a loop that keeps every tree,
-    fork PR #850's E shape, under one that keeps a dropped tree alive by another road, and under one that drops it only
-    when the next file's tree replaces it); and the scan's own test holds what it names to the import statements, plant
-    by plant (red under a scan that names a file no import names, the same drop lost by another road); the
+    commit of fork PR #894, where a loop that kept every tree left the module green), BY EQUALITY with a set the pin
+    derives by a reader of its own (_import_line_named_files, the same rule by code that runs none of the census's;
+    the verifier's finding at the twentieth commit, where the pin read _resolver_targets again and a widening inside it
+    passed): the holder's trees of the tree's files are exactly that set, fewer than the files walked, and the files
+    whose tree outlived its walk in the whole-tree build (_Derivation's `outlived`, read through weak references) are
+    that set too (red under a loop that keeps every tree, fork PR #850's E shape, a loop that keeps none,
+    _resolver_targets returning every file under tests/ or reading every identifier, a tree kept alive by another road,
+    and a drop only when the next file's tree replaces it); the target scan's test runs _resolver_targets and the pin's
+    reader whole over a synthetic tree, plant by plant, beside the scan's pure parts; the
     resolver's test, that its record of an imported module is built over the census's own tree of the file; and
     tearDownModule asserts that no file was parsed twice in the module's run, whichever test read it (the same count),
     that the _Census is gone after the release (a weak reference, read with no collection; red under the release
@@ -1919,13 +1987,14 @@ def _census_table(paths=None):
 # (FLOOR_MODULES) are the one home of the run-wide values and are licensed wholesale, except for the five leak names
 # (LEAK_NAMES), of which a floor module may write only upstream's client-only "1" (FLOOR_LEAK_WRITES, _leak_writers).
 #
-# A licence is PER NAME and CHECKABLE: `value` names the one literal the writers may set (the dead port, the off switch);
-# `value_ok` is a predicate over the value expression; `reasserted` requires tests/conftest.py to set or pop the name
-# before every test (an unconditional plain assignment or pop before the yield of a function-scoped autouse fixture,
-# _conftest_reasserted_names), so the module-level value cannot outlive collection under pytest (the dead-port fixture's
-# rule); `until` DATES a licence that waits on an item, naming it: a licence with no date and no owner is how a temporary
-# exemption becomes permanent. A date bounds no writer (it is read for its form alone): the writer modules of the two
-# dated names whose population nothing mandates are committed and compared as sets (below the table).
+# A licence is PER NAME and CHECKABLE: `value` names the one literal the writers may set (the dead port, the off
+# switch); `value_ok` is a predicate over the value expression; `reasserted` requires tests/conftest.py to set or pop
+# the name before every test (an unconditional plain assignment or pop before the yield of a function-scoped autouse
+# fixture that the reader proves pytest runs, _conftest_reasserted_names), so the module-level value cannot outlive
+# collection under pytest (the dead-port fixture's rule); `until` DATES a licence that waits on an item, naming it: a
+# licence with no date and no owner is how a temporary exemption becomes permanent. A date bounds no writer (it is read
+# for its form alone): the writer modules of the two dated names whose population nothing mandates are committed and
+# compared as sets (below the table).
 
 FLOOR_MODULES = ("conftest.py", "__init__.py")     # the runner's floor and its unittest twin (tests/__init__.py)
 
@@ -2063,11 +2132,15 @@ class _Licence:
     def __init__(self, reason, value=None, value_ok=None, reasserted=False, since=None, until=None):
         self.reason, self.value, self.value_ok, self.reasserted, self.since, self.until = reason, value, value_ok, reasserted, since, until
 
-    def fault(self, rec, reasserted_names):
-        """Why the write `rec` (a _Record) falls outside this licence, or None when it is covered."""
+    def fault(self, rec, reasserted_names, refused=()):
+        """Why the write `rec` (a _Record) falls outside this licence, or None when it is covered. `refused` is the
+        conftest reader's refusals (_Reasserted.refused): a re-assert fault counts them, and _licence_faults names each
+        once at the end of its list, so a refusal is seen with its reason."""
         if self.reasserted and self._name not in reasserted_names:
             return ("licensed only while tests/conftest.py re-asserts %s before every test (an unconditional plain assignment "
-                    "or pop before the yield of a function-scoped autouse fixture), and it no longer does" % self._name)
+                    "or pop before the yield of a function-scoped autouse fixture that pytest runs), and it no longer does%s"
+                    % (self._name, ("; the conftest reader refused %d of its fixtures, named at the end of this list"
+                                    % len(refused)) if refused else ""))
         shown = _shown_value(rec)
         if self.value is not None and rec.resolved != repr(self.value):
             return "licensed for the value %r alone, not %s" % (self.value, shown or "a shape with no value")
@@ -2352,7 +2425,10 @@ def _literal_tuple_loop(st):
     return st.target.id, tuple(e.value for e in st.iter.elts)
 
 
-_Reasserted = collections.namedtuple("_Reasserted", "writes removals")
+_Reasserted = collections.namedtuple("_Reasserted", "writes removals refused", defaults=((),))
+#   what _conftest_reasserted_names returns: WRITES and REMOVALS, the names set and the names popped before every
+#   test, kept apart, and REFUSED, one line per function-scoped autouse fixture the reader did not count because it
+#   could not prove pytest runs it, naming the fixture and why (empty when it proved every one)
 
 
 def _module_name_bindings(tree):
@@ -2431,145 +2507,531 @@ def _fixture_names_by_keyword(tree):
 
 
 _PYTEST_OWN = ("pytest", "_pytest")
-#   the top-level packages of pytest's own code: a name imported from one of them is pytest's
+#   the top-level packages of pytest's own code: the runner imported them before any conftest, and a name imported from
+#   one of them is pytest's own object
 _PYTEST_DECORATORS = (("fixture",), ("yield_fixture",), ("hookimpl",))
-#   the attributes of the pytest module a decorator of tests/conftest.py may be (besides any pytest.mark.<name>): the two
-#   fixture functions, whose name= is keyword-only and read in the tree (_fixture_names_by_keyword), and hookimpl, which
-#   registers no fixture
+#   the attributes of the pytest module a module read by its text may decorate with or call (besides any
+#   pytest.mark.<name>): the two fixture functions, whose name= is keyword-only and read in the tree
+#   (_fixture_names_by_keyword), and hookimpl, which registers no fixture
+_PROVEN_DUNDERS = ("__all__", "__doc__")
+#   the only double-underscore names a module read by its text may bind at module level: a module-level __getattr__ or
+#   __dir__ changes what an attribute read returns and what dir() lists, which is how pytest finds a module's fixtures,
+#   and a binding of __builtins__ changes what a builtin name calls
 
 
-def _foreign_registration_roads(tree, bindings):
-    """[(line, what)] for every road in `tree`'s import-time code (its body and blocks, the header parts of a def or class;
-    not a def's, a lambda's or a class's body, as _module_name_bindings reads) by which code of ANOTHER module can register
-    a fixture in the module's namespace, under a name no text of `tree` spells (the verifier's finding at round 2's
-    nineteenth commit of fork PR #894: `from helper import fx` and `@fx def _g()`, where the helper binds
-    `fx = functools.partial(pytest.fixture, autouse=True, name="_f")`, register `_g` over `_f`, and a child pytest showed
-    `_f`'s pop never ran; the name= sits in the helper, where _fixture_names_by_keyword does not read):
-    - a DECORATOR of a def or class that is not pytest's own: pytest's own is a name, or an attribute chain on a name,
-      bound once at import (`bindings`, _module_name_bindings) by `import pytest` (under any alias) or by
-      `from pytest import <attribute>`, that reaches pytest.fixture, pytest.yield_fixture, pytest.hookimpl or a
-      pytest.mark attribute (_PYTEST_DECORATORS), called or not. Anything else may return a fixture registered under a
-      name the module's text does not spell: an imported name (from _pytest too: its FixtureFunctionMarker takes the
-      name positionally), an attribute of another module, another attribute of pytest (one a plugin set on the
-      module), a def of the module's own (its body may apply another module's factory) or a subscript;
-    - a `from M import N` whose M is neither the standard library (sys.stdlib_module_names) nor pytest's own
-      (_PYTEST_OWN), and every relative import: the name it binds may be a fixture that module registers under any name.
-    tests/conftest.py has neither, which the plant test asserts (today its decorators are pytest.fixture and
-    pytest.hookimpl, and its `from` import at import time is from pytest's own _pytest._code.code). What stays unread
-    (the reader's docstring names it): a value the module takes from another module through a name bound to that
-    module, by an assignment or a call."""
-    roots, roads, decorators = {}, [], []
+def _import_roots(where):
+    """(package, directories) for a module sitting in the directory `where`: PACKAGE, its dotted package ("tests" for
+    tests/, "" when `where` has no __init__.py); DIRECTORIES, `where` and each parent up to and including the first with
+    no __init__.py, the directories a pytest run puts ahead of the standard library for a conftest there (pytest's
+    prepend import inserts the first parent with no __init__.py, the checkout for tests/, whose modules also run with
+    tests/ on sys.path; a conftest outside a package has its own directory inserted)."""
+    parts, d = [], os.path.abspath(where)
+    dirs = [d]
+    while os.path.isfile(os.path.join(d, "__init__.py")):      # loop-ok: one parent per turn, ends at the root
+        parts.insert(0, os.path.basename(d))
+        up = os.path.dirname(d)
+        if up == d:
+            break
+        d = up
+        dirs.append(d)
+    return ".".join(parts), dirs
+
+
+def _shadowed(top, dirs):
+    """The first of `dirs` holding an entry named `top` or `top.<anything>` (a module, a package, a namespace directory, an
+    extension module, a stray .pyc) that an import of `top` could take there before the standard library's, or that
+    cannot be listed, else None: a superset of what the import system would take, the safe side."""
+    for d in dirs:
+        try:
+            entries = os.listdir(d)
+        except OSError:
+            return d
+        if any(e == top or e.startswith(top + ".") for e in entries):
+            return d
+    return None
+
+
+def _pytest_object_is_fixture(module, name):
+    """Why `from <module> import <name>`, `module` pytest's own, binds an object pytest may register as a fixture, else
+    None, read from the installed pytest (its public package imported here, which imports the modules of _pytest it is
+    made of; a module of pytest's own that this leaves unimported is refused, named, rather than imported by name): a
+    module of _pytest defines fixtures (the monkeypatch fixture, say), and one imported into a module registers there
+    too."""
+    try:
+        import pytest  # noqa: F401  (pytest's public package, and with it the modules of _pytest it imports)
+        from _pytest.fixtures import FixtureFunctionDefinition
+    except Exception as e:
+        return "the reader could not import the installed pytest (%s: %s)" % (type(e).__name__, e)
+    mod = sys.modules.get(module)
+    obj = getattr(mod, name, None) if mod is not None else None
+    if obj is None:
+        obj = sys.modules.get("%s.%s" % (module, name))
+    if obj is None:
+        return ("%s.%s is not an object of the pytest this process imported, so the reader cannot read whether it is a "
+                "fixture" % (module, name))
+    if type(obj) is FixtureFunctionDefinition:
+        return "%s.%s is a fixture of pytest's own, registered again wherever it is imported" % (module, name)
+    return None
+
+
+def _unproven_statements(tree, where=None):
+    """[(line, what)] for every statement of `tree`'s import-time code (the module's body, its blocks and class bodies
+    however nested, and the header parts of a def or class) that is off THE PROVEN LIST below, each named with why the
+    reader cannot prove it leaves pytest's registrations alone; empty when every statement is on it. `where` is the
+    directory the module is read as sitting in (tests/, where tests/conftest.py sits, when None). This is the text road
+    of _conftest_reasserted_names, for a source handed in: a statement off the list refuses every fixture of the module,
+    so a road not yet named is refused rather than counted (the ruling on the verifier's findings at round 2's
+    twentieth commit of fork PR #894, which found the fifth case of one class, a fixture the reader counted and pytest
+    never ran, each earlier fix having closed one case by name). THE PROVEN LIST:
+    - an import of pytest's own code (_PYTEST_OWN; the runner imported pytest before any conftest), a `from` import of it
+      that names no fixture of pytest's (_pytest_object_is_fixture), an `import` of the module's own package or a parent
+      of it (Python imported it before the module's body ran, so the statement runs no code; tests/conftest.py's
+      `import tests as _tests`), and an import of a standard-library module (sys.stdlib_module_names, or built in) that
+      no entry of that name in `where` or a parent up to the first with no __init__.py can shadow (_import_roots,
+      _shadowed; the same verifier's finding: a sibling colorsys.py registered a fixture over `_f` through `from colorsys
+      import thing`, the standard library's name proving nothing); every other import, a relative one included, is off
+      the list, since the imported module's code or object may register a fixture under any name or rebind
+      pytest.fixture (the same finding: `import _rv4p`, whose code rebound pytest.fixture);
+    - a def or class whose decorators are each pytest's own (a name, or an attribute chain on a name, bound once at import
+      by `import pytest` under any alias or by `from pytest import <attribute>`, that reaches pytest.fixture,
+      pytest.yield_fixture, pytest.hookimpl or a pytest.mark attribute, called or not) and whose defaults and annotations
+      are proven, a class having no base and no keyword too (a base's __init_subclass__ and a metaclass run when the class
+      is made), its body read by these rules;
+    - an assignment (plain, annotated or augmented), a for, an if, a while, a try, a del, an expression statement, an
+      assert, a raise, a pass, a global and a `type` statement, whose targets are names or a subscript of os.environ
+      (through a name bound once by `import os` or by `from os import environ`) and every expression of which is proven:
+      a literal, an f-string, a tuple, list, set or dict display, a name, an attribute chain on a name that no import of
+      the module's own package binds (a value of that package's may be a fixture registered under any name, as a plant of
+      `thing = _pkg.thing` shows; any other module's values come only through an import already off the list), a lambda
+      (its body runs only when called), an operator, a comparison, a conditional
+      expression or a walrus, over proven parts, and a call of pytest.fixture, pytest.yield_fixture, pytest.hookimpl or a
+      pytest.mark attribute, reached as a decorator is, with proven arguments; every other call is off the list, since
+      the code a call runs may register a fixture or rebind a name (importlib.import_module, exec, eval, globals, setattr,
+      getattr, a def of the module's own, a method of any object), and so are a subscript read, a comprehension, a with
+      and a match;
+    - no module-level binding of a double-underscore name but __all__ and __doc__ (_PROVEN_DUNDERS).
+    What the list takes on trust, all of it outside the module's text: code that runs before the module whatever its text
+    says (its package's __init__.py, which Python imports first, a plugin, the interpreter's startup), which may rebind
+    pytest.fixture or an attribute of the standard library before the module's first line; and a directory ahead of the
+    standard library other than those _import_roots names (PYTHONPATH, a .pth file, the directory a run starts in).
+    tests/conftest.py is not read by this road: its text runs code the list cannot prove (a value of the tests package,
+    defs of its own and standard-library functions called at import, tests/credential_patterns.py loaded through
+    importlib), so the reader reads the fixtures of the module Python imported instead, which includes all of that, and
+    the registration test prints what this road refuses there."""
+    where = HERE if where is None else where
+    package, dirs = _import_roots(where)
+    bindings, _star = _module_name_bindings(tree)
+    pytest_roots, std_roots, package_roots, out = {}, {}, set(), []
     todo = list(tree.body)
-    while todo:             # loop-ok: bounded by the nodes of the module's import-time code
+    while todo:             # loop-ok: bounded by the nodes of the module's import-time code (not a class body's names)
         n = todo.pop()
-        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-            decorators.extend(n.decorator_list)
-            todo.extend(c for c in ast.iter_child_nodes(n) if not any(c is s for s in n.body))
+        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)):
             continue
         if isinstance(n, ast.Import):
-            roots.update((a.asname or "pytest", ()) for a in n.names if a.name == "pytest")
-        elif isinstance(n, ast.ImportFrom):
-            top = (n.module or "").split(".")[0]
-            if n.level or not (top in sys.stdlib_module_names or top in _PYTEST_OWN):
-                roads.append((n.lineno, "from %s%s import %s: a name imported from a module other than the standard library "
-                              "and pytest's own" % ("." * n.level, n.module or "", ", ".join(a.name for a in n.names))))
-            if n.module == "pytest":        # a relative one is a road above whatever it binds
-                roots.update((a.asname or a.name, (a.name,)) for a in n.names)
+            for a in n.names:
+                top = a.name.split(".")[0]
+                bound = a.asname or top
+                if top == "pytest":
+                    pytest_roots[bound] = tuple(a.name.split(".")[1:]) if a.asname else ()
+                elif package and (a.name == package or package.startswith(a.name + ".")):
+                    package_roots.add(bound)
+                elif top in sys.stdlib_module_names or top in sys.builtin_module_names:
+                    std_roots[bound] = tuple(a.name.split(".")) if a.asname else (top,)
+        elif isinstance(n, ast.ImportFrom) and not n.level:
+            for a in n.names:
+                if n.module == "pytest":
+                    pytest_roots[a.asname or a.name] = (a.name,)
+                elif (n.module or "").split(".")[0] in sys.stdlib_module_names:
+                    std_roots[a.asname or a.name] = tuple(n.module.split(".")) + (a.name,)
         todo.extend(ast.iter_child_nodes(n))
-    for d in decorators:
-        parts = _dotted(d.func if isinstance(d, ast.Call) else d)
-        path = roots[parts[0]] + tuple(parts[1:]) if parts and parts[0] in roots and bindings[parts[0]] == 1 else None
-        if path is None or not (path in _PYTEST_DECORATORS or path[:1] == ("mark",)):
-            roads.append((d.lineno, "@%s: a decorator that is not pytest's own" % ast.unparse(d)))
-    return sorted(roads)
+
+    def off(node, why):
+        text = ast.unparse(node).split("\n", 1)[0]
+        out.append((getattr(node, "lineno", 0), "%s: %s" % (text if len(text) <= 100 else text[:97] + "...", why)))
+
+    def dunder(node, name, scope):
+        if scope == "module" and name.startswith("__") and name.endswith("__") and name not in _PROVEN_DUNDERS:
+            off(node, "a module-level binding of %s, which changes what an attribute read or dir() gives, or what a builtin "
+                      "name calls, and so what pytest registers" % name)
+
+    def pytest_path(node):
+        parts = _dotted(node)
+        if parts and parts[0] in pytest_roots and bindings[parts[0]] == 1:
+            path = pytest_roots[parts[0]] + tuple(parts[1:])
+            if path in _PYTEST_DECORATORS or path[:1] == ("mark",):
+                return path
+        return None
+
+    def value(n):
+        """None when the expression `n` is proven, else why not (its first part off the list)."""
+        if n is None or isinstance(n, (ast.Constant, ast.Name)):
+            return None
+        if isinstance(n, ast.Attribute):
+            parts = _dotted(n)
+            if parts is None:
+                return value(n.value)
+            if parts[0] in package_roots:
+                return ("%s is a value of the module's own package, which may be a fixture registered under any name"
+                        % ".".join(parts))
+            return None
+        if isinstance(n, ast.Call):
+            if pytest_path(n.func) is None:
+                return ("a call of %s: of the calls a module makes at import the reader proves only pytest.fixture, "
+                        "pytest.yield_fixture, pytest.hookimpl and a pytest.mark attribute, since the code a call runs may "
+                        "register a fixture under any name or rebind a name" % ast.unparse(n.func))
+            parts = list(n.args) + [k.value for k in n.keywords]
+        elif isinstance(n, ast.NamedExpr):
+            if n.target.id.startswith("__") and n.target.id.endswith("__") and n.target.id not in _PROVEN_DUNDERS:
+                return "a walrus binding %s" % n.target.id
+            parts = [n.value]
+        elif isinstance(n, ast.Lambda):
+            parts = list(n.args.defaults) + [d for d in n.args.kw_defaults if d is not None]
+        elif isinstance(n, (ast.Tuple, ast.List, ast.Set)):
+            parts = n.elts
+        elif isinstance(n, ast.Dict):
+            parts = [k for k in n.keys if k is not None] + list(n.values)
+        elif isinstance(n, ast.JoinedStr):
+            parts = n.values
+        elif isinstance(n, ast.FormattedValue):
+            parts = [n.value, n.format_spec]
+        elif isinstance(n, ast.Starred):
+            parts = [n.value]
+        elif isinstance(n, ast.BinOp):
+            parts = [n.left, n.right]
+        elif isinstance(n, ast.BoolOp):
+            parts = n.values
+        elif isinstance(n, ast.UnaryOp):
+            parts = [n.operand]
+        elif isinstance(n, ast.Compare):
+            parts = [n.left] + list(n.comparators)
+        elif isinstance(n, ast.IfExp):
+            parts = [n.test, n.body, n.orelse]
+        else:
+            return "a %s expression, which the reader does not read at import" % type(n).__name__
+        for p in parts:
+            why = value(p)
+            if why:
+                return why
+        return None
+
+    def check(node, *exprs):
+        for e in exprs:
+            why = value(e)
+            if why:
+                off(node, why)
+                return
+
+    def target(t, scope):
+        if isinstance(t, ast.Name):
+            dunder(t, t.id, scope)
+        elif isinstance(t, (ast.Tuple, ast.List)):
+            for e in t.elts:
+                target(e, scope)
+        elif isinstance(t, ast.Starred):
+            target(t.value, scope)
+        elif (isinstance(t, ast.Subscript) and _dotted(t.value) and _dotted(t.value)[0] in std_roots
+              and bindings[_dotted(t.value)[0]] == 1
+              and std_roots[_dotted(t.value)[0]] + tuple(_dotted(t.value)[1:]) == ("os", "environ")):
+            check(t, t.slice)
+        else:
+            off(t, "a write through %s, which may rebind a name of the module's or an attribute of pytest's"
+                   % ast.unparse(t))
+
+    def module_ok(name, node):
+        top = name.split(".")[0]
+        if top in sys.stdlib_module_names or top in sys.builtin_module_names:
+            where_ = _shadowed(top, dirs)
+            if where_ is None:
+                return
+            off(node, "%s is named like a standard-library module, and %s holds an entry of that name an import may take "
+                      "instead (or cannot be listed), whose code may register a fixture or rebind a name" % (top, where_))
+            return
+        off(node, "an import of %s, a module other than pytest's own, the standard library's and the module's own "
+                  "package: its code runs at the import and may register a fixture under any name or rebind "
+                  "pytest.fixture" % name)
+
+    def stmts(body, scope):
+        for s in body:
+            if isinstance(s, ast.Import):
+                for a in s.names:
+                    dunder(s, a.asname or a.name.split(".")[0], scope)
+                    if a.name.split(".")[0] in _PYTEST_OWN or (package and (a.name == package or package.startswith(a.name + "."))):
+                        continue
+                    module_ok(a.name, s)
+            elif isinstance(s, ast.ImportFrom):
+                for a in s.names:
+                    if a.name != "*":
+                        dunder(s, a.asname or a.name, scope)
+                top = (s.module or "").split(".")[0]
+                if s.level:
+                    off(s, "a relative import: the module it names is of the module's own package, whose code runs at the "
+                           "import and whose objects may be fixtures registered under any name")
+                elif top in _PYTEST_OWN:
+                    for a in s.names:
+                        why = ("a star import of pytest's own, which binds names no text spells" if a.name == "*"
+                               else _pytest_object_is_fixture(s.module, a.name))
+                        if why:
+                            off(s, why)
+                elif package and (s.module == package or s.module.startswith(package + ".")):
+                    off(s, "a `from` import of the module's own package, which may import a submodule (running its code) "
+                           "and binds an object of the package's, which may be a fixture registered under any name")
+                else:
+                    module_ok(s.module, s)
+            elif isinstance(s, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                dunder(s, s.name, scope)
+                for d in s.decorator_list:
+                    if pytest_path(d.func if isinstance(d, ast.Call) else d) is None:
+                        off(d, "a decorator that is not pytest's own, which may register a fixture under a name no text "
+                               "spells")
+                    elif isinstance(d, ast.Call):
+                        check(d, *(list(d.args) + [k.value for k in d.keywords]))
+                if isinstance(s, ast.ClassDef):
+                    if s.bases or s.keywords:
+                        off(s, "a class with a base or a keyword: making it runs the base's __init_subclass__ or a "
+                               "metaclass's code")
+                    stmts(s.body, "class")
+                else:
+                    a = s.args
+                    check(s, *(list(a.defaults) + [d for d in a.kw_defaults if d is not None]
+                               + [x.annotation for x in a.posonlyargs + a.args + a.kwonlyargs + [a.vararg, a.kwarg]
+                                  if x is not None and x.annotation is not None] + [s.returns]))
+            elif isinstance(s, ast.Assign):
+                for t in s.targets:
+                    target(t, scope)
+                check(s, s.value)
+            elif isinstance(s, ast.AnnAssign):
+                target(s.target, scope)
+                check(s, s.annotation, s.value)
+            elif isinstance(s, ast.AugAssign):
+                target(s.target, scope)
+                check(s, s.value)
+            elif isinstance(s, ast.Expr):
+                check(s, s.value)
+            elif isinstance(s, (ast.If, ast.While)):
+                check(s, s.test)
+                stmts(s.body, scope)
+                stmts(s.orelse, scope)
+            elif isinstance(s, ast.For):
+                target(s.target, scope)
+                check(s, s.iter)
+                stmts(s.body, scope)
+                stmts(s.orelse, scope)
+            elif isinstance(s, _TRIES):
+                stmts(s.body, scope)
+                for h in s.handlers:
+                    check(h, h.type)
+                    if h.name:
+                        dunder(h, h.name, scope)
+                    stmts(h.body, scope)
+                stmts(s.orelse, scope)
+                stmts(s.finalbody, scope)
+            elif isinstance(s, ast.Delete):
+                for t in s.targets:
+                    target(t, scope)
+            elif isinstance(s, ast.Assert):
+                check(s, s.test, s.msg)
+            elif isinstance(s, ast.Raise):
+                check(s, s.exc, s.cause)
+            elif isinstance(s, (ast.Pass, ast.Global, ast.Nonlocal, ast.Break, ast.Continue)):
+                continue
+            elif _TYPE_ALIAS is not None and isinstance(s, _TYPE_ALIAS):
+                target(s.name, scope)
+            else:
+                off(s, "a %s statement at import, which the reader does not read" % type(s).__name__)
+    stmts(tree.body, "module")
+    return sorted(out)
 
 
-def _registered_once(fn, bindings, star, names=None):
-    """True when pytest registers the module-level fixture def `fn`, and nothing else, under the name it is requested by.
-    Pytest registers the fixtures it finds among the module's attributes after the import, each under its name= keyword
-    when the decorator passes one, else under the attribute's name, and of two fixtures a module registers under one
-    name it runs the one it registered last (the attributes in dir()'s order) and never the other's body. So: the def's
-    name is the one binding it has at import (_module_name_bindings) and no star import could bind it (the verifier's
-    finding on round 2 of fork PR #894: the reader counted a fixture shadowed by a later `def _f(): yield` or `_f = None`,
-    which a child pytest showed never ran; a binding before the def, which the def replaces, is refused too, the safe
-    side: bound once, not bound last); and, from `names` (_fixture_names_by_keyword over the same tree), the name it
-    registers under is registered by no other fixture call's name= (the same verifier's finding at the next commit: a
-    fixture of another def given `name="_f"` shadows `_f` whatever its own attribute is called, and the reader read the
-    def's attribute name alone; a name= on ANY call counts since the verifier's finding at the eighteenth commit, a
-    fixture function reached through functools.partial or getattr registering it too), and when the def passes name=
-    itself, that name is a string literal, equal to the def's own name or bound by no statement of the module (a def or
-    an assignment of that name may register a fixture under it by a spelling the reader does not see; the safe side),
-    and no call in the module passes a name= that is not a literal or unpacks keywords, which could register any name.
-    `names` None reads no name= at all (the callers pass it)."""
-    if bindings[fn.name] != 1 or star:
-        return False
+def _why_not_registered_once(fn, bindings, star, names=None):
+    """None when the module's text registers the module-level fixture def `fn`, and nothing else, under the name it is
+    registered by, else why not (the text road's per-fixture half; _unproven_statements is the other). Pytest registers
+    the fixtures it finds among the module's attributes after the import, each under its name= keyword when the decorator
+    passes one, else under the attribute's name, and of two fixtures a module registers under one name it runs the one
+    it registered last (the attributes in dir()'s order) and never the other's body. So: the def's name is the one
+    binding it has at import (_module_name_bindings) and no star import could bind it (the verifier's finding on round 2
+    of fork PR #894: the reader counted a fixture shadowed by a later `def _f(): yield` or `_f = None`, which a child
+    pytest showed never ran; a binding before the def, which the def replaces, is refused too, the safe side: bound
+    once, not bound last); and, from `names` (_fixture_names_by_keyword over the same tree), the name it registers under
+    is registered by no other call's name= (the same verifier's finding at the next commit: a fixture of another def
+    given `name="_f"` shadows `_f` whatever its own attribute is called; a name= on ANY call counts since the verifier's
+    finding at the eighteenth commit, a fixture function reached through functools.partial or getattr registering it
+    too), and when the def passes name= itself, that name is a string literal, equal to the def's own name or bound by no
+    statement of the module (a def or an assignment of that name may register a fixture under it by a spelling the reader
+    does not see; the safe side), and no call in the module passes a name= that is not a literal or unpacks keywords,
+    which could register any name. `names` None reads no name= at all."""
+    if bindings[fn.name] != 1:
+        return "the module binds its name %s %d times at import, and pytest registers what the name holds at the end" % (
+            fn.name, bindings[fn.name])
+    if star:
+        return "a star import at import time may bind its name"
     if names is None:
-        return True
+        return None
     if names.unknown:
-        return False
+        return "a call of the module passes a name= that is not a string literal, or unpacks keywords, which may register any name"
     own = [kw.value.value for d in fn.decorator_list
            if isinstance(d, ast.Call) and isinstance(d.func, ast.Attribute) and d.func.attr in _FIXTURE_FUNCTIONS
            for kw in d.keywords if kw.arg == "name" and isinstance(kw.value, ast.Constant) and isinstance(kw.value.value, str)]
     if not own:
-        return names.by_keyword[fn.name] == 0
-    return len(own) == 1 and names.by_keyword[own[0]] == 1 and (own[0] == fn.name or bindings[own[0]] == 0)
+        return None if names.by_keyword[fn.name] == 0 else "another call passes name=%r, which registers a fixture over it" % fn.name
+    if len(own) != 1:
+        return "its decorators pass name= %d times" % len(own)
+    if names.by_keyword[own[0]] != 1:
+        return "its name=%r is passed by another call too, which registers a fixture over it" % own[0]
+    if own[0] != fn.name and bindings[own[0]] != 0:
+        return "its name=%r is a name the module binds, which may register a fixture under it" % own[0]
+    return None
 
 
-def _conftest_reasserted_names(src=None):
-    """The environment names tests/conftest.py re-asserts before every test, as _Reasserted(writes, removals), two
-    frozensets kept apart (a pin that reads a pop asks for the removals). A name counts only when a function-scoped autouse
-    fixture (_is_autouse_fixture, _is_function_scoped_fixture) that pytest registers and runs (_registered_once: its name
-    bound once at import, by the def, and the name it registers under registered by no other fixture's name=) sets it by
-    a plain assignment, or pops it by a pop as a statement, as one of the statements that
-    run before its yield on every run (_statements_before_the_yield), unconditionally: a statement of the fixture's own
-    body, or one of the body of a for over a non-empty tuple of string literals there (_literal_tuple_loop; `for var in
-    ("ROMP_SERVICE_ENV_FILE", "ROMP_SERVICE_ENV"): os.environ[var] = ...` re-asserts both, and a rule without it reds the
-    correct conftest). Refused, each read here as no re-assert (the reviewer's ruling of round 1 on fork PR #894, where
-    any write or pop anywhere in an autouse fixture counted): a setdefault or any other write shape; a fixture scoped above
-    function or by a scope that is not a literal; a statement after the yield, or after any statement that holds a return
-    or a raise at any depth (a return nested in an if, a try, a with, a loop or a match ends the fixture on the runs where
-    it is reached, and the verifier's finding on round 2 of fork PR #894 showed a test reading the name unasserted after an
-    `if ...: return`); one under an if, while, with, try or match, or in a for over anything else; one in a def or class
-    nested in the fixture; a del; a fixture whose name the module binds again, before or after the def, or that a star
-    import could bind (the same verifier's finding: pytest never registers a def a later binding replaced); and a fixture
-    another fixture of the module registers its name over by name= (`@pytest.fixture(name="_f")` on a def of any other
-    name), one whose own name= is not a literal or names a name the module binds, and every fixture of a module in which a
-    call passes a name= that is not a literal or unpacks keywords (the verifier's finding at the next commit: of two
-    fixtures registered under one name pytest runs one, and a child pytest showed the shadowed one's pop never ran;
-    _registered_once), the name= of every call read whatever it calls (the verifier's finding at the eighteenth commit:
-    `functools.partial(pytest.fixture, name="_f")` and `getattr(pytest, "fixture")(name="_f")` register over `_f` by
-    roads no spelling follows; _fixture_names_by_keyword); and every fixture of a module whose import-time code has a
-    road by which another module's code can register a fixture under a name the module's text does not spell
-    (_foreign_registration_roads: a decorator that is not pytest's own, and a name imported from a module other than the
-    standard library and pytest's own; the verifier's finding at the nineteenth commit: `from helper import fx` and
-    `@fx def _g()`, the helper's fx a functools.partial of pytest.fixture with name="_f", and a child pytest showed `_f`'s
-    pop never ran). Re-asserted
-    so, a module-level write of the name cannot outlive collection under pytest (the dead-port fixture's rule,
-    2026-08-27); the value conftest writes is not read (the licence's property does not depend on it). What it does not
-    read, each passing as no re-assert (the safe side, a licence that rests on it faults): a write through a call the
-    fixture makes, and a pop whose value is assigned. Not read as an end, and harmless: an exception a call or an assert
-    raises before the statement (pytest.skip, pytest.fail, sys.exit, a failing assert), which errors or skips the test
-    before its body runs, so no test body reads the name unasserted. What it does not see, each read as a re-assert
-    although pytest may not run it for some test (the unsafe side; no pin reds on them): a rebinding of the fixture's name
-    through the module's namespace (globals(), vars(), setattr on the module, sys.modules), by a string exec or eval
-    runs, or by another module or a plugin; a fixture registered over the name by a value the module takes from another
-    module through a name bound to that module, by an assignment (`import helper` then `thing = helper.thing`) or a call
-    (`_g = helper.fx(_g)`), or through a def of its own that it calls at import, when that other module's code gives the
-    value its name= (a child pytest shows each shadowing `_f`, and the plants hold the reader to counting both): unread
-    because tests/conftest.py takes values from the test package that way (`import tests as _tests`, then
-    `_TMP_ROOT = _tests.TMP_ROOT`) and calls defs of its own at import, and whether such a value is a fixture is decided
-    by the other module's code when it runs, so a rule that refused the shape would refuse the real conftest; and a
+def _pytest_registrations(module):
+    """[(attribute, name, autouse, scope, (file, def name, first line) or None)] for every fixture pytest registers from
+    `module`'s attributes, in the order it registers them, read the way the installed pytest (9.1.1) reads a conftest or
+    a test module in FixtureManager.parsefactories: each name dir(module) lists, in that order (sorted, or the order of
+    the module's own __dir__), whose attribute's type is exactly FixtureFunctionDefinition, registered under its
+    marker's name when the marker has one, else under the attribute's name; an attribute that raises when read is
+    skipped, as pytest's safe_getattr skips it. Of the fixtures one module registers under one name, pytest runs the
+    last registered (_register_fixture: fixturedefs of the same visibility keep registration order, and the last
+    registered wins). The last entry is the code of the function the fixture wraps. Self-contained, for the child pytest
+    of the registration test, which runs this function's own source over each synthetic conftest it imports. Raises when
+    the installed pytest has no FixtureFunctionDefinition (pytest before 8.4); the caller refuses, naming the error."""
+    import os
+    from _pytest.fixtures import FixtureFunctionDefinition
+    out = []
+    for attr in dir(module):
+        try:
+            obj = getattr(module, attr)
+        except Exception:
+            continue
+        if type(obj) is not FixtureFunctionDefinition:
+            continue
+        marker = obj._fixture_function_marker
+        code = getattr(obj._get_wrapped_function(), "__code__", None)
+        out.append((attr, marker.name or attr, marker.autouse, marker.scope,
+                    (os.path.realpath(code.co_filename), code.co_name, code.co_firstlineno) if code is not None else None))
+    return out
+
+
+def _why_pytest_does_not_run(fn, registrations, path):
+    """None when pytest runs the module-level def `fn` of the file at `path` before every test as a function-scoped
+    autouse fixture, read from `registrations` (_pytest_registrations): a fixture of the module wraps fn's code (the
+    file, the def's name, and its first line, the first decorator's), the last fixture registered under the name it is
+    registered by wraps that code too, so pytest runs it under that name, and that one's marker is autouse with scope
+    "function"; else why not."""
+    code = (os.path.realpath(path), fn.name, (fn.decorator_list[0] if fn.decorator_list else fn).lineno)
+    mine = [r for r in registrations if r[4] is not None and tuple(r[4]) == code]
+    if not mine:
+        return ("no fixture of the module wraps this def once its import ends: its name holds something else, or what "
+                "its decorator made is not a fixture pytest registers")
+    whys = []
+    for _attr, name, _autouse, _scope, _code in mine:
+        last = [r for r in registrations if r[1] == name][-1]
+        if last[4] is None or tuple(last[4]) != code:
+            whys.append("it is registered under %s, and pytest registers %s under that name after it and runs that"
+                        % (name, last[0]))
+        elif last[2] is not True or last[3] != "function":
+            whys.append("pytest registers it under %s with autouse=%r and scope=%r, which do not run it before every test"
+                        % (name, last[2], last[3]))
+        else:
+            return None
+    return "; ".join(whys)
+
+
+def _real_conftest_module():
+    """tests/conftest.py as Python imported it: tests.conftest, the name pytest imports it under in this tree (tests/ is a
+    package, and pytest's default prepend import), which the test modules import restore_env from too; so under pytest
+    it is the module pytest registered, and under any other runner this import runs it."""
+    from tests import conftest
+    return conftest
+
+
+def _registration_refusals(tree, candidates, real, where=None):
+    """{id(def): None, or why the reader cannot prove pytest runs it} for each def of `candidates` (the function-scoped
+    autouse fixture defs of `tree`), by the reader's two roads. THE MODULE ROAD, for tests/conftest.py (`real`): the
+    fixtures of the module Python imported (_real_conftest_module), read the way pytest registers them
+    (_pytest_registrations, _why_pytest_does_not_run); a module that cannot be imported, is not tests/conftest.py, or
+    whose fixtures cannot be read so refuses every fixture, naming why. THE TEXT ROAD, for a source handed in: every
+    fixture is refused while any statement of the module's import-time code is off the proven list
+    (_unproven_statements), and otherwise each is read by its own registration (_why_not_registered_once)."""
+    if not candidates:
+        return {}
+    if real:
+        try:
+            module = _real_conftest_module()
+        except Exception as e:
+            return dict.fromkeys(map(id, candidates), "the reader reads what pytest registers from tests/conftest.py in "
+                                 "the module Python imported, and importing tests.conftest failed (%s: %s)"
+                                 % (type(e).__name__, e))
+        file = getattr(module, "__file__", None)
+        if not file or os.path.realpath(file) != os.path.realpath(os.path.join(HERE, "conftest.py")):
+            return dict.fromkeys(map(id, candidates), "the module read is %r, not tests/conftest.py" % (file,))
+        try:
+            registrations = _pytest_registrations(module)
+        except Exception as e:
+            return dict.fromkeys(map(id, candidates), "the reader could not read the module's fixtures the way pytest "
+                                 "registers them (%s: %s)" % (type(e).__name__, e))
+        return {id(fn): _why_pytest_does_not_run(fn, registrations, file) for fn in candidates}
+    unproven = _unproven_statements(tree, where)
+    if unproven:
+        why = ("its module's import-time code has statements the reader cannot prove leave pytest's registrations alone: "
+               + "; ".join("line %d: %s" % u for u in unproven))
+        return dict.fromkeys(map(id, candidates), why)
+    bindings, star = _module_name_bindings(tree)
+    names = _fixture_names_by_keyword(tree)
+    return {id(fn): _why_not_registered_once(fn, bindings, star, names) for fn in candidates}
+
+
+def _conftest_reasserted_names(src=None, where=None):
+    """The environment names tests/conftest.py re-asserts before every test, as _Reasserted(writes, removals, refused):
+    two frozensets kept apart (a pin that reads a pop asks for the removals), and one line per fixture refused.
+    THE RULE (the ruling on the verifier's findings at round 2's twentieth commit of fork PR #894): a
+    function-scoped autouse fixture counts only when the reader proves that the fixture pytest runs under the name this
+    def is registered by is this def, reading for tests/conftest.py the fixtures of the module Python imported as pytest
+    registers them, and for a source handed in its text alone, where every statement of the import-time code must be on
+    the proven list and every name the def could be registered under bound once in the module, by the def or its literal
+    name=, and registered by no other call, so that any fixture it cannot prove is refused, named in `refused`, and a
+    road not yet named is refused rather than counted (_registration_refusals has the two roads, and
+    _unproven_statements the list).
+    WHY TWO ROADS: before this ruling the reader closed the class one case at a time, each found by a child pytest in
+    which a counted fixture never ran (a later binding of the fixture's name, the sixteenth commit; another def given its
+    name=, the seventeenth; a name= passed through functools.partial or getattr, the eighteenth; a decorator or a name
+    imported from another module, the nineteenth; a module named like the standard library's that a sibling file
+    shadows, and an imported module whose code rebinds pytest.fixture, the twentieth), and the proof by text alone cannot
+    take tests/conftest.py, whose import-time code takes values from the tests package, calls defs of its own and the
+    standard library, and loads tests/credential_patterns.py through importlib (a refusal there would fault the eight
+    licences marked `reasserted`), so for tests/conftest.py the reader reads the registration itself.
+    WHAT IS COUNTED, once proven: a name the fixture sets by a plain assignment, or pops by a pop as a statement, as one of
+    the statements that run before its yield on every run (_statements_before_the_yield), unconditionally: a statement
+    of the fixture's own body, or one of the body of a for over a non-empty tuple of string literals there
+    (_literal_tuple_loop; `for var in ("ROMP_SERVICE_ENV_FILE", "ROMP_SERVICE_ENV"): os.environ[var] = ...` re-asserts
+    both, and a rule without it reds the correct conftest). Refused, each read here as no re-assert (the reviewer's
+    ruling of round 1 on fork PR #894, where any write or pop anywhere in an autouse fixture counted): a setdefault or any
+    other write shape; a fixture scoped above function or by a scope that is not a literal; a statement after the yield,
+    or after any statement that holds a return or a raise at any depth (a return nested in an if, a try, a with, a loop or
+    a match ends the fixture on the runs where it is reached, and the verifier's finding on round 2 of fork PR #894
+    showed a test reading the name unasserted after an `if ...: return`); one under an if, while, with, try or match, or
+    in a for over anything else; one in a def or class nested in the fixture; a del. Re-asserted so, a module-level write
+    of the name cannot outlive collection under pytest (the dead-port fixture's rule, 2026-08-27); the value conftest
+    writes is not read (the licence's property does not depend on it).
+    What it does not read, each passing as no re-assert (the safe side, a licence that rests on it faults): a write
+    through a call the fixture makes, and a pop whose value is assigned. Not read as an end, and harmless: an exception
+    a call or an assert raises before the statement (pytest.skip, pytest.fail, sys.exit, a failing assert), which errors
+    or skips the test before its body runs, so no test body reads the name unasserted. What it does not see, each read
+    as a re-assert although pytest may not run the fixture for some test (the unsafe side; no pin reds on them): a
     fixture of the same name defined closer to a test (in a test module, a class or a conftest.py below tests/), which
-    pytest resolves for that test in place of this one, since the reader reads tests/conftest.py alone."""
+    pytest resolves for that test in place of this one, since the reader reads tests/conftest.py alone; and, on the
+    module road, an attribute of tests.conftest that code sets or deletes after pytest registered the module's fixtures
+    (pytest read them once, at the conftest's import, and the reader reads them when it runs; the one test that sets an
+    attribute of it in the test process, tests/test_tempdir_hygiene.py's patch of _TMP_ROOT, puts it back). On the text
+    road, what _unproven_statements takes on trust (code that runs before the module whatever its text says, and
+    directories ahead of the standard library that _import_roots does not name)."""
     tree = ast.parse(open(os.path.join(HERE, "conftest.py"), encoding="utf-8", errors="replace").read() if src is None else src)
     names = _EnvNames(tree)
-    bindings, star = _module_name_bindings(tree)
-    fixture_names = _fixture_names_by_keyword(tree)
-    foreign = _foreign_registration_roads(tree, bindings)
-    writes, removals = set(), set()
-    for fn in tree.body:
-        if foreign or not (isinstance(fn, ast.FunctionDef) and _is_autouse_fixture(fn) and _is_function_scoped_fixture(fn)
-                           and _registered_once(fn, bindings, star, fixture_names)):
+    candidates = [fn for fn in tree.body
+                  if isinstance(fn, ast.FunctionDef) and _is_autouse_fixture(fn) and _is_function_scoped_fixture(fn)]
+    whys = _registration_refusals(tree, candidates, src is None, where)
+    writes, removals, refused = set(), set(), []
+    for fn in candidates:
+        if whys[id(fn)]:
+            refused.append("%s (line %d): %s" % (fn.name, fn.lineno, whys[id(fn)]))
             continue
         scope = names.within(fn)
         before = _statements_before_the_yield(fn.body)
@@ -2580,7 +3042,7 @@ def _conftest_reasserted_names(src=None):
             if loop is not None:
                 w, r = _plain_reasserts(st.body, scope, loop)
                 writes, removals = writes | w, removals | r
-    return _Reasserted(frozenset(writes), frozenset(removals))
+    return _Reasserted(frozenset(writes), frozenset(removals), tuple(refused))
 
 
 def _conftest_fixtures(tree):
@@ -2777,13 +3239,16 @@ def _fixtures_scoped_above_module(root=None):
     return out
 
 
-def _licence_faults(records, reasserted_names=None):
+def _licence_faults(records, reasserted_names=None, refused=()):
     """Every way the module-level writes in `records` ({name: [_Record]}) fall outside the licensed set; empty when the set
     of names the TEST MODULES write equals the licensed names and every write meets its licence's condition. A list
     rather than assertions so the check runs over synthetic records and is known to be able to fail. The floor modules'
     writes are licensed wholesale and never faulted; a licensed name with no writer left is a fault too (a dead licence
-    is removed, not kept)."""
-    reasserted_names = _conftest_reasserted_union() if reasserted_names is None else reasserted_names
+    is removed, not kept). With no `reasserted_names` the conftest reader supplies them and its refusals; a test hands
+    both in."""
+    if reasserted_names is None:
+        got = _conftest_reasserted_names()
+        reasserted_names, refused = got.writes | got.removals, got.refused
     faults = []
     written = set()
     for name in sorted(records):
@@ -2799,11 +3264,13 @@ def _licence_faults(records, reasserted_names=None):
                               "it back with a cleanup registered right after the write (tests/README.md), or license the "
                               "name here with its reason, a date and the item it waits on" % (name, at))
                 continue
-            why = lic.fault(rec, reasserted_names)
+            why = lic.fault(rec, reasserted_names, refused)
             if why:
                 faults.append("%s at %s: %s" % (name, at, why))
     for name in sorted(set(LICENSED_MODULE_LEVEL_WRITES) - written):
         faults.append("%s is licensed but no test module writes it at module level any more: remove the licence" % name)
+    if refused and any("the conftest reader refused" in f for f in faults):
+        faults.append("the conftest reader's refusals (_conftest_reasserted_names): " + " | ".join(refused))
     return faults
 
 
@@ -3734,13 +4201,19 @@ class HermeticKernelPostal(unittest.TestCase):
         walked twice), and every file the census read was parsed once in the module's run (_OWN_PARSES; red under
         a second parse, and under a census loop that keeps no tree, whose dropped files the resolver then parses again),
         whatever ran before this test. THE DROP, the shape's defining property (the verifier's finding at round 2's
-        nineteenth commit of fork PR #894: a loop that kept every tree, fork PR #850's E shape, left the module green):
-        the holder keeps the tree of a file of the tree for the files the resolver may read (_resolver_targets, read
-        again here) and the files it has read, and for no other (red under a loop that keeps every tree and under a
-        build that widens its own list of the files to keep), and the files whose tree outlived its walk in the build
-        (_Derivation's `outlived`, a weak reference read right after the loop drops its own) are exactly the files the
-        resolver may read (red under a loop that keeps a dropped tree alive by another road, under one that drops it
-        only when the next file's tree replaces it, and under a build that records no survivor)."""
+        nineteenth commit of fork PR #894: a loop that kept every tree, fork PR #850's E shape, left the module green),
+        held BY EQUALITY with a set this pin derives by a reader of its own (the verifier's finding at the twentieth
+        commit: the pin compared the build with _resolver_targets read again, so a widening inside that function, every
+        file under tests/ returned or every identifier of every file read, held all 958 trees and passed): the holder
+        keeps the tree of a file of the tree for exactly the files _import_line_named_files derives from the import
+        lines under tests/, which runs none of _resolver_targets, _import_statement_words, _named_by or
+        _tests_tree_walk (red under a loop that keeps every tree, a loop that keeps none, _resolver_targets returning
+        every file under tests/ or reading every identifier, and a tree the holder keeps by another road); every file
+        the resolver has read is among them (red under a census rule that misses a file the resolver reads); the build
+        keeps fewer trees than it walks; and the files whose tree outlived its walk in the build (_Derivation's
+        `outlived`, a weak reference read right after the loop drops its own) are exactly the derived files (red under
+        a loop that keeps a dropped tree alive outside the holder, under one that drops it only when the next file's
+        tree replaces it, and under a build that records no survivor)."""
         walked = _tests_tree_walk()
         self.assertGreater(len(walked), 900, "the os.walk finds the tree, recursively, not an empty population: %d files" % len(walked))
         paths = _tests_tree_paths()
@@ -3755,16 +4228,22 @@ class HermeticKernelPostal(unittest.TestCase):
         self.assertEqual([os.path.relpath(p, HERE) for p in paths if _OWN_PARSES[os.path.realpath(p)] != 1], [],
                          "every file the census read was parsed once in this module's run, by the census itself (_own_tree)")
         reals = {p: os.path.realpath(p) for p in paths}
-        targets, in_tree = _resolver_targets(paths), set(reals.values())
-        kept = sorted(os.path.relpath(r, HERE) for r in _held()["trees"] if r in in_tree)     # no local keeps the holder or its trees
-        read = {p for p, _root in _held()["modules"] if p in in_tree}
-        self.assertEqual(kept, sorted(os.path.relpath(r, HERE) for r in targets | read),
-                         "THE DROP: the holder keeps the tree of a file of the tree only for a file the resolver may read "
-                         "(_resolver_targets) or has read (a loop that keeps every tree is fork PR #850's E shape, which the "
-                         "measured rule did not ship)")
-        self.assertEqual(sorted(_census_derivation(paths).outlived), sorted(os.path.relpath(p, HERE) for p in paths if reals[p] in targets),
-                         "THE DROP: the files whose tree outlived its walk in the build are exactly the files the resolver may "
-                         "read; every other tree is freed when the loop drops it, before the next file is parsed")
+        derived, in_tree = _import_line_named_files(paths), set(reals.values())
+        rel = lambda reals_: sorted(os.path.relpath(r, HERE) for r in reals_)
+        kept = rel(r for r in _held()["trees"] if r in in_tree)      # no local keeps the holder or its trees
+        read = rel(p for p, _root in _held()["modules"] if p in in_tree and p not in derived)
+        self.assertEqual(read, [], "every file of the tree the resolver has read is one the pin's own reader derives "
+                                   "(_import_line_named_files): the census rule missed a file the resolver reads")
+        self.assertEqual(kept, rel(derived),
+                         "THE DROP, BY EQUALITY: the holder keeps the tree of a file of the tree for exactly the files the "
+                         "pin's own reader derives from the import lines under tests/ (_import_line_named_files, which "
+                         "shares no code with _resolver_targets): %s kept and not derived, %s derived and not kept (a loop "
+                         "that keeps every tree is fork PR #850's E shape, which the measured rule did not ship)"
+                         % (sorted(set(kept) - set(rel(derived))), sorted(set(rel(derived)) - set(kept))))
+        self.assertLess(len(kept), n, "THE DROP: the build keeps fewer trees than it walks")
+        self.assertEqual(sorted(_census_derivation(paths).outlived), sorted(os.path.relpath(p, HERE) for p in paths if reals[p] in derived),
+                         "THE DROP: the files whose tree outlived its walk in the build are exactly the files the pin's own "
+                         "reader derives; every other tree is freed when the loop drops it, before the next file is parsed")
         self.assertEqual(_licence_table_faults(LICENSED_MODULE_LEVEL_WRITES), [], "every licence is checkable and a temporary one is dated")
         self.assertEqual(_licence_faults(records), [])
         faults = _writer_set_faults(records)
@@ -4009,7 +4488,15 @@ class HermeticKernelPostal(unittest.TestCase):
         faults = _licence_faults(_all_licensed_once(), reasserted - {"ROMP_MANAGER_PORT"})
         self.assertEqual(faults, ["ROMP_MANAGER_PORT at test_licensed.py:1 (assignment): licensed only while tests/conftest.py "
                                   "re-asserts ROMP_MANAGER_PORT before every test (an unconditional plain assignment or pop "
-                                  "before the yield of a function-scoped autouse fixture), and it no longer does"])
+                                  "before the yield of a function-scoped autouse fixture that pytest runs), and it no longer does"])
+        # a refusal of the conftest reader is named in the fault it causes (_Reasserted.refused)
+        faults = _licence_faults(_all_licensed_once(), reasserted - {"ROMP_MANAGER_PORT"}, ("_p (line 3): planted",))
+        self.assertEqual(faults, ["ROMP_MANAGER_PORT at test_licensed.py:1 (assignment): licensed only while tests/conftest.py "
+                                  "re-asserts ROMP_MANAGER_PORT before every test (an unconditional plain assignment or pop "
+                                  "before the yield of a function-scoped autouse fixture that pytest runs), and it no longer "
+                                  "does; the conftest reader refused 1 of its fixtures, named at the end of this list",
+                                  "the conftest reader's refusals (_conftest_reasserted_names): _p (line 3): planted"],
+                         "a refusal of the conftest reader is counted in the fault it causes and named once at the end")
         # a dead licence is a fault
         without = {k: v for k, v in _all_licensed_once().items() if k != "ROMP_MODELS_URL"}
         self.assertEqual(_licence_faults(without, reasserted),
@@ -4042,13 +4529,19 @@ class HermeticKernelPostal(unittest.TestCase):
         called one, is among them too (the wide read had named that class unread for a false reason:
         test_a_fixture_that_is_not_autouse_writes_for_the_tests_after_it runs the premise); the other classes of those
         findings have tests of their own (a write after a block that may end the fixture, and a fixture pytest never
-        registers or never runs)."""
+        registers or never runs). Since the ruling on the findings at round 2's twentieth commit, the reader
+        counts a fixture only where it proves pytest runs it, reading tests/conftest.py's fixtures from the module Python
+        imported, and this pin asserts it refused none there
+        (test_the_reader_counts_a_fixture_only_where_it_proves_pytest_runs_it holds both roads to a child pytest)."""
         got = _conftest_reasserted_names()
         names = got.writes | got.removals
+        self.assertEqual(got.refused, (), "the reader proves pytest runs every function-scoped autouse fixture of "
+                                          "tests/conftest.py, read from the module Python imported (its module road)")
         for name, lic in LICENSED_MODULE_LEVEL_WRITES.items():
             if lic.reasserted:
                 self.assertIn(name, names, "tests/conftest.py no longer re-asserts %s before every test (an unconditional plain "
-                                           "assignment or pop before the yield of a function-scoped autouse fixture)" % name)
+                                           "assignment or pop before the yield of a function-scoped autouse fixture that "
+                                           "pytest runs); the reader refused: %s" % (name, list(got.refused)))
         self.assertEqual(("ROMP_POSTAL_PORT" in got.removals, "ROMP_POSTAL_PORT" in _conftest_fixture_env_writes()), (True, False),
                          "the dead-port fixture pops ROMP_POSTAL_PORT before every test, and no fixture of conftest, autouse or "
                          "not, writes it anywhere in its body, in any shape or scope (2026-09-22); the executed check is "
@@ -4213,7 +4706,7 @@ class HermeticKernelPostal(unittest.TestCase):
         """The verifier's finding at round 2's seventeenth commit of fork PR #894 (the ruled clause: a function-scoped
         autouse fixture, which the reader counts only where pytest runs it): pytest registers a fixture under its name=
         keyword when its decorator passes one, and of two fixtures a module registers under one name it runs one, so a
-        fixture of another def given `name="_f"` leaves `_f`'s body unrun, and _registered_once read the def's attribute
+        fixture of another def given `name="_f"` leaves `_f`'s body unrun, and the reader read the def's attribute
         name alone. THE PREMISE, run: a child pytest whose conftest pops a probe name in `_f` and registers a second
         autouse fixture `_g` under the name `_f`; its second test reads the value its first test set (the pop never ran),
         where the same conftest without `_g` pops it. THE PLANTS, each read as a re-assert at the seventeenth commit and
@@ -4313,21 +4806,24 @@ class HermeticKernelPostal(unittest.TestCase):
         that applies the helper's factory, an assignment of the helper module's fixture object, and an assignment that
         applies the helper's factory to a def; the control, `_f` alone, pops it, and so does `_f` beside a fixture
         object imported under a name that sorts before `_f` (pytest registers `_f` after it and runs `_f`). THE PLANTS:
-        the first four roads and that fifth case, each read as a re-assert at the nineteenth commit, are refused now
-        with every fixture of the module (_foreign_registration_roads: a decorator that is not pytest's own, a name
-        imported from a module other than the standard library and pytest's own; the fifth case is the safe side), and
-        so are a called factory, a class decorator, an async def's decorator, a decorator of a def in a module-level
-        block, a subscript as the decorator, an attribute of pytest outside the fixture functions, hookimpl and mark
-        (one a plugin could set on the module), _pytest's FixtureFunctionMarker (the name passed positionally) and any
-        other name imported from _pytest as the decorator (a root is bound by `import pytest` or `from pytest import`,
-        never from the private package), pytest rebound by a second import, and a relative import (one named like a
-        standard module too). The last two roads stay read as a re-assert, the unsafe side _conftest_reasserted_names'
-        docstring names with its reason (the real conftest takes values from the test package through a module binding),
-        held here so the docstring's claim is executed. Accepted: pytest's own decorators (pytest.fixture,
+        every road, each read as a re-assert at the nineteenth commit, is refused now with every fixture of the module
+        (_unproven_statements, the text road's proven list: a decorator that is not pytest's own, an import of a module
+        other than pytest's own, the standard library's and the module's own package, and a call other than pytest's
+        fixture functions, hookimpl and mark; the case that sorts first is the safe side), and so are a called factory,
+        a class decorator, an async def's decorator, a decorator of a def in a module-level block, a subscript as the
+        decorator, an attribute of pytest outside the fixture functions, hookimpl and mark (one a plugin could set on
+        the module), _pytest's FixtureFunctionMarker (the name passed positionally) and any other name imported from
+        _pytest as the decorator (a root is bound by `import pytest` or `from pytest import`, never from the private
+        package), pytest rebound by a second import, and a relative import (one named like a standard module too). The
+        last two roads, an assignment of the helper module's fixture object and one that applies the helper's factory,
+        were read as a re-assert until the reviewer's ruling on the twentieth commit's findings, the unsafe side the
+        reader named then (the real conftest takes values from the test package through a module binding, which the
+        reader now reads on its module road instead). Accepted: pytest's own decorators (pytest.fixture,
         pytest.yield_fixture, pytest.hookimpl, a pytest.mark.<name>, pytest under an alias, `from pytest import fixture`
         and a fixture it decorates), `from` imports of the standard library and of pytest's own (the real conftest
         imports from _pytest._code.code), and a decorator and a `from` import inside a def's body (they run when it is
-        called); and the real tests/conftest.py has no road."""
+        called). The real tests/conftest.py is read on the reader's module road
+        (test_the_reader_counts_a_fixture_only_where_it_proves_pytest_runs_it has its refusals on the text road)."""
         fx = "import functools, pytest\nfx = functools.partial(pytest.fixture, autouse=True, name='_f')\n"
         thing = "import pytest\n\n\n@pytest.fixture(autouse=True, name='_f')\ndef thing():\n    yield\n"
         roads = (("imported-factory-as-decorator", "from _h_a import fx\n\n\n@fx\ndef _g():\n    yield\n", {"_h_a.py": fx}, "refused"),
@@ -4336,8 +4832,8 @@ class HermeticKernelPostal(unittest.TestCase):
                  ("own-def-applying-the-factory", "import _h_d\n\n\ndef reg(f):\n    return _h_d.fx(f)\n\n\n@reg\ndef _g():\n    yield\n",
                   {"_h_d.py": fx}, "refused"),
                  ("imported-fixture-object-sorting-first", "from _h_s import thing as _a\n", {"_h_s.py": thing}, "refused-safe"),
-                 ("assigned-module-attribute", "import _h_e\nthing = _h_e.thing\n", {"_h_e.py": thing}, "unseen"),
-                 ("assigned-factory-call", "import _h_f\n\n\ndef _g():\n    yield\n\n\n_g = _h_f.fx(_g)\n", {"_h_f.py": fx}, "unseen"))
+                 ("assigned-module-attribute", "import _h_e\nthing = _h_e.thing\n", {"_h_e.py": thing}, "refused"),
+                 ("assigned-factory-call", "import _h_f\n\n\ndef _g():\n    yield\n\n\n_g = _h_f.fx(_g)\n", {"_h_f.py": fx}, "refused"))
         cases, texts = [], {}
         for i, (label, extra, helpers, _kind) in enumerate((("control", "", {}, None),) + roads):
             probe = "ROMP_PROBE_FOREIGN_%d" % i
@@ -4351,9 +4847,8 @@ class HermeticKernelPostal(unittest.TestCase):
                          "under a name that sorts first, _f's pop never ran")
         for label, _e, _h, kind in (("control", "", {}, "counted"),) + roads:
             src, probe = texts[label]
-            self.assertEqual(probe in _conftest_reasserted_names(src).removals, kind in ("counted", "unseen"),
+            self.assertEqual(probe in _conftest_reasserted_names(src).removals, kind == "counted",
                              "%s: %s: %s" % (label, {"refused": "refused", "refused-safe": "refused, the safe side",
-                                                     "unseen": "read as a re-assert, the unsafe side the docstring names",
                                                      "counted": "the control counts"}[kind], src))
         base = '@pytest.fixture(autouse=True)\ndef _f():\n    os.environ["ROMP_MANAGER_PORT"] = "1"\n    yield\n'
         refused = (("a called factory imported from another module", "from _h import make\n@make(autouse=True)\ndef _g():\n    yield\n"),
@@ -4371,7 +4866,7 @@ class HermeticKernelPostal(unittest.TestCase):
         for what, text in refused:
             src = "import os, pytest\n" + base + text
             got = _conftest_reasserted_names(src)
-            self.assertNotEqual(_foreign_registration_roads(ast.parse(src), _module_name_bindings(ast.parse(src))[0]), [], "%s: %s" % (what, src))
+            self.assertNotEqual(_unproven_statements(ast.parse(src)), [], "%s: %s" % (what, src))
             self.assertNotIn("ROMP_MANAGER_PORT", got.writes | got.removals, "%s: another module's code may register over the name: %s"
                              % (what, src))
         accepted = (("pytest.hookimpl", "@pytest.hookimpl(trylast=True)\ndef pytest_sessionfinish(session):\n    pass\n"),
@@ -4388,9 +4883,230 @@ class HermeticKernelPostal(unittest.TestCase):
             got = _conftest_reasserted_names(src)
             self.assertIn("ROMP_MANAGER_PORT", got.writes | got.removals, "%s: pytest's own, or code that runs only when called: %s"
                           % (what, src))
+
+    def _registration_cases_run(self, cases):
+        """ONE child pytest over a scratch root holding a directory per case of `cases` ((label, conftest source, {helper
+        file: source}, probe name)): each directory has its own conftest.py and helper modules, and a test module whose
+        first test sets the probe name and whose second prints the value it reads and the fixtures pytest registered
+        from the directory's conftest, read by _pytest_registrations' own source (the function's text, run in the child)
+        over the conftest module found among the run's plugins by its file. Returns {label: (the value the second test
+        read, "None" when unset; the registrations as _pytest_registrations returns them; the case's directory)}; the
+        child's return code must be 0, and every case must report."""
+        d = os.path.realpath(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, d, True)
+        reader = textwrap.dedent(inspect.getsource(_pytest_registrations))
+        dirs = {}
+        for i, (label, conftest_src, helpers, probe) in enumerate(cases):
+            sub = dirs[label] = os.path.join(d, "c%02d" % i)
+            os.mkdir(sub)
+            module = ("import json, os\n\n\n%s\n\ndef test_1_sets_the_name():\n    os.environ[%r] = '45678'\n\n\n"
+                      "def test_2_reads_it(request):\n"
+                      "    here = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'conftest.py')\n"
+                      "    mods = [m for m in request.config.pluginmanager.get_plugins()\n"
+                      "            if os.path.realpath(getattr(m, '__file__', None) or os.devnull) == here]\n"
+                      "    print('SEEN[%s]=%%s' %% os.environ.get(%r))\n"
+                      "    print('REGS[%s]=%%s' %% json.dumps([_pytest_registrations(m) for m in mods], default=repr))\n"
+                      % (reader, probe, label, probe, label))
+            for name, text in dict(helpers, **{"conftest.py": conftest_src, "test_case_%02d.py" % i: module}).items():
+                with open(os.path.join(sub, name), "w", encoding="utf-8") as f:
+                    f.write(text)
+        child = {k: v for k, v in os.environ.items() if k != "PYTEST_CURRENT_TEST" and not k.startswith("ROMP_PROBE_")}
+        child["TMPDIR"] = d
+        r = subprocess.run([sys.executable, "-m", "pytest", "-q", "-s", "-p", "no:cacheprovider", "--rootdir", d, d],
+                           cwd=d, env=child, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=180)
+        out = r.stdout + r.stderr
+        self.assertEqual(r.returncode, 0, out[-3000:])
+        got = {}
+        for label, _c, _h, _p in cases:
+            seen = [ln.split("SEEN[%s]=" % label, 1)[1].strip() for ln in out.splitlines() if "SEEN[%s]=" % label in ln]
+            regs = [json.loads(ln.split("REGS[%s]=" % label, 1)[1]) for ln in out.splitlines() if "REGS[%s]=" % label in ln]
+            self.assertEqual((len(seen), len(regs)), (1, 1), "%s reported once: %s" % (label, out[-3000:]))
+            self.assertEqual(len(regs[0]), 1, "%s: the child found its directory's conftest among the plugins once" % label)
+            got[label] = (seen[0], [tuple(r[:4]) + (tuple(r[4]) if r[4] else None,) for r in regs[0][0]], dirs[label])
+        return got
+
+    def test_the_reader_counts_a_fixture_only_where_it_proves_pytest_runs_it(self):
+        """THE CLASS, closed by construction (the ruling on the verifier's findings at round 2's twentieth
+        commit of fork PR #894): the reader counted a fixture that pytest never runs in five cases, each closed by name
+        once a child pytest had found it (F2 a later binding of the fixture's name; F2b another def given its name=; F2c
+        a name= passed through functools.partial; F2e a decorator imported from another module; N2b a module named like
+        the standard library's that a sibling file shadows, and an imported module whose code rebinds pytest.fixture).
+        Now a fixture counts only where the reader proves pytest runs it (_conftest_reasserted_names' rule, read on two
+        roads). THE PREMISE, run: ONE child pytest, a directory per case, each conftest popping its probe name in `_f`
+        and each test module's first test setting it: under each of the five cases (N2b twice), under N2b's third road
+        (a value taken through importlib.import_module), and under six roads no earlier plant covered (a write through
+        globals(), a string exec, a setattr through sys.modules, a module-level __dir__, a base class whose
+        __init_subclass__ rebinds `_f`, and a fixture taken from the conftest's own package, `import <package> as _pkg`
+        then `thing = _pkg.thing`, the shape tests/conftest.py takes values from the tests package in), `_f`'s pop never
+        ran before the second test, and neither did it under `_f` rebound to a module-scoped fixture of its own
+        function; under the control it ran, and under three more cases: another fixture registered under `_f` from an
+        attribute that sorts before it (pytest registers `_f` after it), `_f` registered by its own decorator under
+        another name (an autouse fixture runs under any name), and `_f` aliased under a second name. THE MODULE ROAD:
+        the child's second test reads its conftest's fixtures with _pytest_registrations' own source, and
+        _why_pytest_does_not_run over them says pytest runs `_f` in exactly the cases the child saw the pop run, so the
+        road that reads tests/conftest.py is held to pytest's behaviour by execution, road by road. THE TEXT ROAD (a
+        source handed in, read as sitting in the case's directory) counts `_f` in the control, the renamed case and the
+        alias alone, and refuses it everywhere else, each refusal naming what it could not prove: the cases that bind or
+        register `_f` by the module's own text by the registration half (_why_not_registered_once), every road through
+        another module's code, a call or a namespace write by the proven list (_unproven_statements, a statement of
+        which refuses every fixture), and the sorting-first case on the safe side, a false refusal. Before this commit
+        the reader counted each of the N2b roads and each of the six new ones, and the round-1 reader counted all of
+        them (the round's notes record the runs). THE PROVEN LIST, clause by clause: each shape it leaves off (a
+        relative import, a `from` import of the module's own package or an import of its submodule, a fixture or a star
+        import of pytest's own, a write through an attribute of pytest or a subscript other than os.environ's, a
+        subscript read, a comprehension, a with, a match, a binding of __builtins__ or a module-level __getattr__, a
+        decorator not pytest's own, a class keyword, a call in a def's default or a class body, and a name of pytest's
+        own this process never imported) is named, and each it takes (literals, f-strings and displays, an attribute
+        chain of the standard library's, a lambda, operators, a conditional and a walrus, os.environ written and deleted
+        through `os` or a from-imported `environ`, the blocks, __all__, an annotation, a class body, pytest's fixture,
+        mark and hookimpl decorators, and imports of the module's own package, the standard library and pytest's own)
+        passes. THE REAL tests/conftest.py is read on the module road, where the conftest pin asserts no refusal; the
+        text road would refuse every one of its fixtures, on the statements printed here if this test fails (values of
+        the tests package, and calls of defs of its own and of the standard library at import), which is why it is not
+        read that way."""
+        thing = "import pytest\n\n\n@pytest.fixture(autouse=True, name='_f')\ndef thing():\n    yield\n"
+        fx = "import functools, pytest\nfx = functools.partial(pytest.fixture, autouse=True, name='_f')\n"
+        rebind = "import functools, pytest\npytest.fixture = functools.partial(pytest.fixture, name='_f')\n"
+
+        def popper(probe, decorator="@pytest.fixture(autouse=True)"):
+            return "import os, pytest\n\n\n%s\ndef _f():\n    os.environ.pop(%r, None)\n    yield\n\n\n" % (decorator, probe)
+        # (label, the conftest's text after the popper, helpers, the popper's decorator, pytest runs _f, the text road
+        # counts it, a word its refusal names)
+        cases = (("control", "", {}, None, True, True, None),
+                 ("F2-later-binding", "_f = None\n", {}, None, False, False, "binds its name _f 2 times"),
+                 ("F2b-name-on-another-def", "@pytest.fixture(autouse=True, name='_f')\ndef _g():\n    yield\n", {}, None,
+                  False, False, "another call passes name='_f'"),
+                 ("F2c-partial", "import functools\n_fx = functools.partial(pytest.fixture, autouse=True, name='_f')\n\n\n"
+                  "@_fx\ndef _g():\n    yield\n", {}, None, False, False, "functools.partial"),
+                 ("F2e-imported-factory", "from _rc_e import fx\n\n\n@fx\ndef _g():\n    yield\n", {"_rc_e.py": fx}, None,
+                  False, False, "an import of _rc_e"),
+                 ("N2b-stdlib-named-sibling", "from colorsys import thing\n", {"colorsys.py": thing}, None, False, False,
+                  "colorsys is named like a standard-library module"),
+                 ("N2b-import-rebinds-pytest-fixture", "import _rc_b\n\n\n@pytest.fixture(autouse=True)\ndef _g():\n    yield\n\n\n"
+                  "pytest.fixture = pytest.fixture.func\n", {"_rc_b.py": rebind}, None, False, False, "an import of _rc_b"),
+                 ("N2b-importlib-value", "import importlib\nthing = importlib.import_module('_rc_c').thing\n", {"_rc_c.py": thing},
+                  None, False, False, "a call of importlib.import_module"),
+                 ("new-globals-write", "globals()['_f'] = None\n", {}, None, False, False, "globals()"),
+                 ("new-exec-string", "exec('_f = None')\n", {}, None, False, False, "a call of exec"),
+                 ("new-sys-modules-setattr", "import sys\nsetattr(sys.modules[__name__], '_f', None)\n", {}, None, False, False,
+                  "a call of setattr"),
+                 ("new-module-dir", "def __dir__():\n    return ['os', 'pytest']\n", {}, None, False, False,
+                  "a module-level binding of __dir__"),
+                 ("module-scoped-rebinding", "_f = pytest.fixture(autouse=True, scope='module')(_f._get_wrapped_function())\n",
+                  {}, None, False, False, "a call of pytest.fixture(autouse=True, scope='module')"),
+                 ("another-name-sorting-first", "@pytest.fixture(autouse=True, name='_f')\ndef _a():\n    yield\n", {}, None,
+                  True, False, "another call passes name='_f'"),
+                 ("renamed-by-its-own-decorator", "", {}, "@pytest.fixture(autouse=True, name='_renamed')", True, True, None),
+                 ("aliased-under-a-second-name", "_z = _f\n", {}, None, True, True, None),
+                 ("class-base-init-subclass", "class _B:\n    def __init_subclass__(cls, **kw):\n        globals()['_f'] = None\n\n\n"
+                  "class _K(_B):\n    pass\n", {}, None, False, False, "a class with a base or a keyword"),
+                 ("own-package-value", "import {package} as _pkg\nthing = _pkg.thing\n", {"__init__.py": thing}, None, False, False,
+                  "a value of the module's own package"))
+        texts, run = {}, []
+        for i, (label, extra, helpers, decorator, _runs, _counts, _word) in enumerate(cases):
+            probe = "ROMP_PROBE_CLASS_%02d" % i
+            extra = extra.replace("{package}", "c%02d" % i)     # a case directory with an __init__.py is the package c<NN>
+            texts[label] = (popper(probe, decorator or "@pytest.fixture(autouse=True)") + extra, probe)
+            run.append((label, texts[label][0], helpers, probe))
+        got = self._registration_cases_run(run)
+        self.assertEqual({label: got[label][0] for label, *_ in cases},
+                         {label: "None" if runs else "45678" for label, _e, _h, _d, runs, _c, _w in cases},
+                         "THE PREMISE: `_f`'s pop ran before the second test in the control and the three cases pytest runs it "
+                         "in, and never under the others")
+        for label, _extra, _helpers, _decorator, runs, counts, word in cases:
+            src, probe = texts[label]
+            seen, registrations, where = got[label]
+            fn = next(n for n in ast.parse(src).body if isinstance(n, ast.FunctionDef) and n.name == "_f")
+            why = _why_pytest_does_not_run(fn, registrations, os.path.join(where, "conftest.py"))
+            self.assertEqual(why is None, runs, "THE MODULE ROAD, %s: pytest runs _f: %s; the reader says %s over %s"
+                             % (label, runs, why or "it runs", registrations))
+            text = _conftest_reasserted_names(src, where=where)
+            self.assertEqual(probe in text.removals, counts, "THE TEXT ROAD, %s: counted %s, refusals %s: %s"
+                             % (label, probe in text.removals, list(text.refused), src))
+            if not counts:
+                mine = [r for r in text.refused if r.startswith("_f (")]
+                self.assertEqual(len(mine), 1, "%s: _f is refused, named: %s" % (label, list(text.refused)))
+                self.assertIn(word, mine[0], "%s: the refusal names what the reader could not prove" % label)
+        # THE PROVEN LIST, clause by clause, on the text road alone: each shape off the list is named, and each on it passes
+        refused = (("a relative import", "from . import helper\n", "a relative import"),
+                   ("a `from` import of the module's own package", "from tests import helper\n",
+                    "a `from` import of the module's own package"),
+                   ("an import of a submodule of the module's own package", "import tests.helper\n", "an import of tests.helper"),
+                   ("a fixture of pytest's own imported", "from _pytest.monkeypatch import monkeypatch\n",
+                    "a fixture of pytest's own"),
+                   ("a star import of pytest's own", "from pytest import *\n", "a star import of pytest's own"),
+                   ("a name of pytest's own the process never imported", "from _pytest.no_such_module import thing\n",
+                    "is not an object of the pytest this process imported"),
+                   ("a write through an attribute of pytest", "pytest.fixture = pytest.fixture\n", "a write through pytest.fixture"),
+                   ("a write through a subscript of anything but os.environ", "import sys\nsys.modules['x'] = None\n",
+                    "a write through sys.modules"),
+                   ("a subscript read", "X = os.environ['HOME']\n", "a Subscript expression"),
+                   ("a comprehension", "X = [n for n in ()]\n", "a ListComp expression"),
+                   ("a with", "with open(os.devnull):\n    pass\n", "a With statement"),
+                   ("a match", "match 1:\n    case 1:\n        pass\n", "a Match statement"),
+                   ("a binding of __builtins__", "__builtins__ = {}\n", "a module-level binding of __builtins__"),
+                   ("a module-level __getattr__", "def __getattr__(name):\n    return None\n",
+                    "a module-level binding of __getattr__"),
+                   ("a decorator that is not pytest's own", "def deco(f):\n    return f\n@deco\ndef _h():\n    pass\n",
+                    "a decorator that is not pytest's own"),
+                   ("a class keyword", "class _M(metaclass=type):\n    pass\n", "a class with a base or a keyword"),
+                   ("a call in a def's default", "def _d(x=print()):\n    pass\n", "a call of print"),
+                   ("a call in a class body", "class _C:\n    X = print()\n", "a call of print"))
+        for what, text, word in refused:
+            got_ = _unproven_statements(ast.parse("import os, pytest\n" + text))
+            self.assertTrue(got_ and any(word in w for _l, w in got_), "%s is off the proven list, named %r: %s" % (what, word, got_))
+        accepted = ("X = 1\nY = f'{X}'\nZ = (X, [X], {X}, {'k': X})\n", "X = os.devnull\nY = os.path.sep + 'x'\n",
+                    "F = lambda a=1: a\nB = not (1 < 2) and 3 if True else 4\n(W := 5)\n",
+                    "os.environ['ROMP_X'] = '1'\ndel os.environ['ROMP_X']\nos.environ['ROMP_Y'] += 'x'\n",
+                    "from os import environ\nenviron['ROMP_X'] = '1'\n",
+                    "for _v in ('a', 'b'):\n    pass\nif True:\n    pass\nwhile False:\n    pass\n"
+                    "try:\n    pass\nexcept OSError as _e:\n    pass\nassert True, 'x'\n",
+                    "__all__ = ['X']\nX: int = 1\nclass _C:\n    Y = 2\n",
+                    "@pytest.fixture(scope='function', params=[1, 2])\ndef _p(request):\n    yield\n@pytest.mark.skipif(True, reason='x')\n"
+                    "def test_x():\n    pass\n@pytest.hookimpl(trylast=True)\ndef pytest_configure(config):\n    pass\n",
+                    "import tests as _t\nimport tests\nimport json\nfrom collections import abc\n"
+                    "from _pytest._code.code import ReprFileLocation\n")
+        for text in accepted:
+            self.assertEqual(_unproven_statements(ast.parse("import os, pytest\n" + text)), [], "on the proven list: %s" % text)
         real = ast.parse(open(os.path.join(HERE, "conftest.py"), encoding="utf-8").read())
-        self.assertEqual(_foreign_registration_roads(real, _module_name_bindings(real)[0]), [],
-                         "tests/conftest.py has no road by which another module's code registers a fixture over a name")
+        unproven = _unproven_statements(real)
+        self.assertTrue(any("_TMP_ROOT = _tests.TMP_ROOT" in what for _l, what in unproven)
+                        and any("_credpat = _load_credential_patterns()" in what for _l, what in unproven),
+                        "the text road cannot prove tests/conftest.py (a value of the tests package, a def of its own called "
+                        "at import), which is why the reader reads it on the module road:\n"
+                        + "\n".join("line %d: %s" % u for u in unproven))
+
+    def test_the_module_road_refuses_every_fixture_it_cannot_read_and_names_why(self):
+        """The module road's own failure modes (_registration_refusals), each a refusal of every fixture named with its
+        cause, never a count: tests.conftest cannot be imported, the module read is not tests/conftest.py, and its fixtures
+        cannot be read the way pytest registers them (an installed pytest with no FixtureFunctionDefinition, say). Each is
+        planted by replacing _real_conftest_module or _pytest_registrations for the one call; unplanted, the road proves
+        every function-scoped autouse fixture of tests/conftest.py."""
+        from unittest import mock
+        tree = ast.parse(open(os.path.join(HERE, "conftest.py"), encoding="utf-8").read())
+        candidates = [fn for fn in tree.body
+                      if isinstance(fn, ast.FunctionDef) and _is_autouse_fixture(fn) and _is_function_scoped_fixture(fn)]
+        self.assertGreater(len(candidates), 5, "tests/conftest.py's function-scoped autouse fixtures")
+        self.assertEqual(set(_registration_refusals(tree, candidates, True).values()), {None}, "unplanted, every one is proven")
+
+        def planted_import():
+            raise ImportError("planted")
+
+        def planted_read(module):
+            raise AttributeError("planted")
+        elsewhere = type(sys)("tests.conftest")
+        elsewhere.__file__ = os.path.join(os.sep, "elsewhere", "conftest.py")
+        for what, planted, word in (
+                ("an import that fails", {"_real_conftest_module": planted_import},
+                 "importing tests.conftest failed (ImportError: planted)"),
+                ("a module of another file", {"_real_conftest_module": lambda: elsewhere}, "not tests/conftest.py"),
+                ("fixtures it cannot read", {"_pytest_registrations": planted_read},
+                 "could not read the module's fixtures the way pytest registers them (AttributeError: planted)")):
+            with mock.patch.dict(globals(), planted):
+                whys = _registration_refusals(tree, candidates, True)
+            self.assertEqual(len(whys), len(candidates), what)
+            for why in whys.values():
+                self.assertIn(word, why or "", "%s refuses every fixture, naming why" % what)
 
     def test_a_fixture_that_is_not_autouse_writes_for_the_tests_after_it(self):
         """The verifier's finding at round 2's seventeenth commit of fork PR #894: the wide read of conftest's fixture writes
@@ -7327,16 +8043,21 @@ class HermeticKernelPostal(unittest.TestCase):
         self.assertEqual(_OWN_PARSES[asm], 1, "the imported module was parsed once in this module's run")
 
     def test_the_target_scan_names_only_the_files_an_import_statement_names(self):
-        """The upper bound of _resolver_targets, the list of files whose tree the census loop keeps past its walk (the
-        verifier's finding at round 2's nineteenth commit of fork PR #894: the shape's defining property, that every
-        other tree is dropped after its walk, had no pin; the census pin now holds the build to the scan, and this test
-        holds the scan to the import statements, so a scan that names every file, the same drop lost by another road, is
-        red here). _import_statement_words reads the lines that hold the word `import` and nothing else: a name used on
-        another line is not among its words, `important` is not the word, a parenthesized list is read to the line that
-        closes it (a parenthesis in a comment not counted), a backslash continuation is joined, and a docstring line with
-        the word adds its words too (the safe side the scan's docstring names). _named_by keeps a file whose module
-        name, or a package's directory name for its __init__.py, is among the words, and no other. A census over no file
-        under tests/ has no target."""
+        """The files whose tree the census loop keeps past its walk, held plant by plant (the verifier's findings at round
+        2's nineteenth and twentieth commits of fork PR #894: the drop had no pin, and then the pieces planted here were
+        the scan's two pure parts alone, so a widening in _resolver_targets' own loop, every file returned or every
+        identifier read, passed). THE PURE PARTS: _import_statement_words reads the lines that hold the word `import`
+        and nothing else: a name used on another line is not among its words, `important` is not the word, a
+        parenthesized list is read to the line that closes it (a parenthesis in a comment not counted), a backslash
+        continuation is joined, and a docstring line with the word adds its words too (the safe side the scan's
+        docstring names). _named_by keeps a file whose module name, or a package's directory name for its __init__.py,
+        is among the words, and no other. THE WHOLE FUNCTION, and the census pin's own reader beside it
+        (_import_line_named_files): each runs over a synthetic tree standing in for tests/ and names exactly the files
+        an import line names there: a module and a package imported, a submodule named in a `from` import, two names of
+        a parenthesized list that a comment's parenthesis does not close, a module joined by a backslash continuation,
+        and a module named on a docstring's import line (the rule's safe side); and not a module named only on another
+        line, one named after the list closes, one reached through importlib.import_module, nor the file that imports
+        them. A census over no file under tests/ has no target."""
         words = _import_statement_words('import os\nx = helper_one\n"""import helper_two"""\nimportant = helper_three\n'
                                         'from pkg.sub import (a,  # b (\n    c)\nd = helper_four\nfrom e \\\n    import f\n')
         self.assertEqual(sorted(words), sorted({"import", "os", "helper_two", "from", "pkg", "sub", "a", "b", "c", "e", "f"}),
@@ -7347,6 +8068,26 @@ class HermeticKernelPostal(unittest.TestCase):
         self.assertEqual(sorted(_named_by(paths, words)), sorted(os.path.realpath(p) for p in paths[1:3]),
                          "a file is named by its module name, a package by its directory's, and a file no word names is not")
         self.assertEqual(_resolver_targets([os.path.join(d, "test_one.py")]), frozenset(), "no file under tests/: no target")
+        self.assertEqual(_import_line_named_files([os.path.join(d, "test_one.py")]), frozenset(), "no file under tests/: none derived")
+        root = os.path.realpath(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, root, True)
+        files = {"test_a.py": ('import helper_x\nfrom pkg import sub_y\n"""a docstring line: import helper_w"""\n'
+                               'value = helper_z\nfrom pkg2 import (\n    helper_p,  # a parenthesis ) in a comment\n'
+                               '    helper_q)\nlater = helper_r\nfrom helper_b \\\n    import thing\n'
+                               'import importlib\nmod = importlib.import_module("helper_i")\n'),
+                 "pkg/__init__.py": "", "pkg/sub_y.py": "", "pkg2/__init__.py": "", "pkg3/__init__.py": ""}
+        for name in ("helper_x", "helper_w", "helper_z", "helper_p", "helper_q", "helper_r", "helper_b", "helper_i"):
+            files[name + ".py"] = ""
+        for name, text in files.items():
+            os.makedirs(os.path.dirname(os.path.join(root, name)), exist_ok=True)
+            with open(os.path.join(root, name), "w", encoding="utf-8") as f:
+                f.write(text)
+        paths = sorted(os.path.join(root, name) for name in files)
+        want = sorted(("helper_x.py", "pkg/__init__.py", "pkg/sub_y.py", "helper_w.py", "pkg2/__init__.py", "helper_p.py",
+                       "helper_q.py", "helper_b.py"))
+        for reader in (_resolver_targets, _import_line_named_files):
+            self.assertEqual(sorted(os.path.relpath(p, root) for p in reader(paths, root=root)), want,
+                             "%s over a synthetic tree names exactly the files its import lines name" % reader.__name__)
 
     def test_the_module_imports_no_copy_and_deep_copies_no_node(self):
         """The contract's no-deepcopy clause, held on this module's own tree rather than its text (a comment naming the

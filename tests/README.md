@@ -165,7 +165,11 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   root, and `tests/conftest.py` re-asserts the name before every test, by an
   unconditional plain assignment or pop before the yield of a function-scoped
   autouse fixture, one in a `for` over a literal tuple included, so the module
-  value cannot outlive collection), and `ROMP_MODELS_URL` (read at kernel import,
+  value cannot outlive collection; a fixture counts only where the reader proves
+  pytest runs it, reading `tests/conftest.py`'s fixtures from the module Python
+  imported, the way pytest registers them, and a synthetic source by its text,
+  where any statement it cannot prove refuses every fixture, named), and
+  `ROMP_MODELS_URL` (read at kernel import,
   port 9 of 127.0.0.1 and no other); a check over the table itself holds every
   licence to a per-write condition and every temporary one to a since date and a
   named item. The two floor modules, `tests/conftest.py` and `tests/__init__.py`,
@@ -214,7 +218,8 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   with an `os.walk` of the tree by equality; the census parses each file itself,
   once per run of the module, keeps the trees of the files its import resolver
   may read and drops every other tree after its walk (the census pin holds the
-  trees that outlive their walk, read through weak references, to that list),
+  trees it keeps, and those that outlive their walk, read through weak
+  references, equal to that list, derived again by a reader of the pin's own),
   and derives once per set of paths, and the module holds what it keeps in one
   object that its
   `tearDownModule` releases. It does not use `tests/parse_cache.py`'s shared
