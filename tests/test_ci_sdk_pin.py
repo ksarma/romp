@@ -180,17 +180,18 @@ This module holds five things, and it never skips: a pin that skips reports gree
    execlp, execlpe, spawnl, spawnle, spawnlp, spawnlpe; a spawn form's mode and an e form's env set aside), read as
    that argv. And a call of pytest.main or pytest.console_main, or of _pytest.config's main or console_main, by a name
    the census resolves for it (an import from the module that defines the call, an alias, a star import from such a
-   module, a name assigned from one; looked up by scope, as Python looks it up: the call's own scope (for a call in a decorator, a
-   default, an annotation, a return annotation or a type parameter of a def or lambda, or in a class's decorators,
-   bases or keywords, the scope around that def or class, where Python evaluates it; an annotation deferred from 3.14
-   and a type parameter's lazy bound are read too, a row where they may never run), the functions around it with class
-   bodies skipped, their global declarations with them, the module; a binding under a global declaration counted at the
-   module and one under a nonlocal declaration in the enclosing function that binds the name): a pytest session in the
-   calling process, where plugin autoload runs again whatever flag the outer run was given, so its argv, the first
-   positional argument or args=, carries the flag itself. The flag check keys on the argv's constant elements (`-p` then
-   `no:anyio`, or `-pno:anyio`), so a flag carried by a variable reads as absent, the safe side, and the message says
-   so. The modules known to spawn pytest are asserted present, so an empty read is red, and there is no count to keep;
-   the derivation case prints the listing (python -m pytest tests/test_ci_sdk_pin.py -q -p no:cacheprovider -p no:anyio
+   module, a name assigned from one; looked up by scope, as Python looks it up: the call's own scope (for a call in a
+   decorator, a default, an annotation, a return annotation or a type parameter of a def or lambda, or in a class's
+   decorators, bases or keywords, the scope around that def or class, where Python evaluates it; an annotation deferred
+   from 3.14 and a type parameter's lazy bound are read too, a row where they may never run), the functions around it
+   with class bodies skipped, their global declarations with them, the module; a binding under a global declaration
+   counted at the module and one under a nonlocal declaration in the enclosing function that binds the name): a pytest
+   session in the calling process, where plugin autoload runs again whatever flag the outer run was given, so its argv,
+   the first positional argument or args=, carries the flag itself. The flag check keys on the argv's constant elements
+   (`-p` then `no:anyio`, or `-pno:anyio`), so a flag carried by a variable reads as absent, the safe side, and the
+   message says so. The modules known to spawn pytest are asserted present, so an empty read is red, and there is no
+   count to keep; the derivation case prints the listing (python -m pytest tests/test_ci_sdk_pin.py -q -p
+   no:cacheprovider -p no:anyio
    -k ChildPytestLaunchers -rP). What the census leaves unread is its residual. A pytest command in a constant string
    or f-string written at the call and handed to subprocess (run, Popen, call, check_call, check_output, getoutput,
    getstatusoutput), os.system or os.popen, asyncio.create_subprocess_shell, shlex.split or a shell's -c (a
@@ -200,10 +201,11 @@ This module holds five things, and it never skips: a pin that skips reports gree
    argument, which reads sys.argv), and a module that does not parse under the running interpreter. Unparsed the same
    way (the owner's fail-closed design, 2026-09-23), a call whose callee's name the resolution cannot resolve: one
    inside a comprehension or generator expression in a class body that binds the name or declares it global (Python
-   looks it up past the class there, a scope the census does not model); and, in a module with a star import from a module whose calls the census
-   does not read, one through a name the lookup takes to the module, since the census takes only a function scope that
-   binds the name as proof that the star import cannot reach it: a name the module binds (the star import may rebind
-   it, and the census follows no order; the first verify pass, 2026-09-23, found such a binding read as the module's
+   looks it up past the class there, a scope the census does not model); and, in a module with a star import from a
+   module whose calls the census does not read, one through a name the lookup takes to the module, since the census
+   takes only a function scope that binds the name as proof that the star import cannot reach it: a name the module
+   binds (the star import may rebind it, and the census follows no order; the first verify pass, 2026-09-23, found such
+   a binding read as the module's
    own and passed) or a name no scope binds and no builtin names (the name may come from it); and one through a name a
    function binds by a plain or annotated assignment from a name or an attribute whose root name is one of those,
    followed along a chain of such assignments (the second verify pass, 2026-09-23, found `run = main` in a function,
@@ -3229,18 +3231,18 @@ def _launchers_in(src, filename):
     lambda or class (scope_of), the functions around it with class bodies skipped, their global declarations with them,
     the module; straight to the module under a global declaration of the call's own scope or a function around it), a
     name bound more than once there standing for every path it is bound to; a module name that no scope on that chain
-    binds (a star import may have brought it) reads as itself. Unparsed, and red in
-    ChildPytestLaunchers until spelled as an argv or rewritten: a call
-    whose callee's name this resolution cannot resolve (the owner's fail-closed design, 2026-09-23; unresolved): one
-    inside a comprehension or generator expression, outside its first iterable, in a class body that binds the name
-    or declares it global, where Python looks the name up past the class and the census does not model that scope; and, in a module with a
-    star import from a module outside CENSUS_STAR_MODULES (or a relative one), whose names the census does not read,
-    one through a name the lookup takes to the module: a name the module binds, which the star import may rebind, or a
-    name no scope binds and no builtin names, which it may bring; and one through a name a function binds by a plain
-    or annotated assignment from a name or an attribute whose root name is one of those, along a chain of such
-    assignments (from_star). A star import binds at the module, so only a function scope on the lookup that binds the
-    name, other than by such an assignment, is taken as proof that the call does not reach it; a class body's binding
-    is not, since the body reads the name past the class until its own binding runs. Unparsed too: a list or tuple literal that may run pytest and
+    binds (a star import may have brought it) reads as itself. Unparsed, and red in ChildPytestLaunchers until spelled
+    as an argv or rewritten: a call whose callee's name this resolution cannot resolve (the owner's fail-closed design,
+    2026-09-23; unresolved): one inside a comprehension or generator expression, outside its first iterable, in a class
+    body that binds the name or declares it global, where Python looks the name up past the class and the census does
+    not model that scope; and, in a module with a star import from a module outside CENSUS_STAR_MODULES (or a relative
+    one), whose names the census does not read, one through a name the lookup takes to the module: a name the module
+    binds, which the star import may rebind, or a name no scope binds and no builtin names, which it may bring; and one
+    through a name a function binds by a plain or annotated assignment from a name or an attribute whose root name is
+    one of those, along a chain of such assignments (from_star). A star import binds at the module, so only a function
+    scope on the lookup that binds the name, other than by such an assignment, is taken as proof that the call does not
+    reach it; a class body's binding is not, since the body reads the name past the class until its own binding runs.
+    Unparsed too: a list or tuple literal that may run pytest and
     the census cannot tell (after an interpreter head, a -m whose module name is not a constant, or an element that is
     not a constant right before `pytest`; _argv_command's docstring); a constant string or f-string, written at the
     call, handed to subprocess.run, Popen, call, check_call, check_output, getoutput or getstatusoutput, to os.system
