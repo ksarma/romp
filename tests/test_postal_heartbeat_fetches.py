@@ -353,20 +353,32 @@ class Counting(unittest.TestCase):
     # ── a peer's send during a kernel blink ───────────────────────────────────────────────────
 
     def test_after_the_latch_a_local_peer_is_unreachable_by_name_during_a_blink(self):
-        # What changed on 2026-09-06, pinned (review find, 2026-09-08): a local session's beat that landed
-        # while the kernel's listing was unanswered used to be filed as remote presence (the bus could not
-        # call it local), so a send to its name during the blink resolved to that row and delivered into its
-        # mailbox with no wake; the mail sat there unannounced until the kernel returned. Once the bus has
-        # confirmed the session local, its loop has ended and its per-call beat is skipped, so no such row
-        # appears, and the standing blink refusal (503, retry shortly, never a death ruling) covers every
-        # local peer alike: the mail stays with the sender, who is told so.
+        """What changed on 2026-09-06, pinned (review find, 2026-09-08): a local session's beat that landed
+        while the kernel's listing was unanswered used to be filed as remote presence (the bus could not
+        call it local), so a send to its name during the blink resolved to that row and delivered into its
+        mailbox with no wake; the mail sat there unannounced until the kernel returned. Once the bus has
+        confirmed the session local, its loop has ended and its per-call beat is skipped, so no such row
+        appears, and the standing blink refusal (503, retry shortly, never a death ruling) covers every
+        local peer alike: the mail stays with the sender, who is told so.
+        THE PRE-LATCH CASE (round 4 of fork PR #897, the reviewer's ruling, the thirty-fourth commit): a beat
+        filed during a blink, before the session's bus has confirmed it local, is released by the deadness
+        mirror's writer once a listing answers owning the session, and the writer forgets its HEARTBEATS entry
+        with the row (postal_service.py _write_remote_sids). That entry is also the presence resolve_recipient
+        reads, so a send to the session in a later blink, within the beat's TTL, gets the same standing 503: the
+        release completes this design rather than costing it. With the pop deleted (the base's behaviour) the
+        send resolves to the stale presence row and is delivered into the mailbox with no wake. This test is the
+        named witness the writer's docstring cites for that reach."""
         pm.HEARTBEATS.clear()
         self.addCleanup(pm.HEARTBEATS.clear)
+        pm.STATE.mkdir(parents=True, exist_ok=True)              # the bus's state dir, which serve() makes: the mirror's
+        self.addCleanup(lambda: (pm.STATE / "remote-sids").unlink(missing_ok=True))   # write lands (it fails where none is)
         self.assertTrue(pm._heartbeat_once(), "web is confirmed local while the kernel answers")
         self.assertTrue(pm._record_heartbeat(WEB, "web"), "the bus's side of that beat: local, no presence row")
         self.assertNotIn(WEB, pm.HEARTBEATS)
         # the kernel blinks: the listing does not answer
-        pm._kernel_sessions_checked = lambda threads=False: (self.fetches.append(threads), ([], False))[1]
+        answering = pm._kernel_sessions_checked
+        blinking = lambda threads=False: (self.fetches.append(threads), ([], False))[1]
+        pm._kernel_sessions_checked = blinking
         self.posts.clear()
         pm._mcp_call("list_agents", {})                          # web keeps using postal through the blink...
         self.assertEqual([p[1] for p in self.posts], ["/agents?me="], "...and beats nothing: the latch holds")
@@ -380,6 +392,19 @@ class Counting(unittest.TestCase):
         r = pm.resolve_recipient("web", frm_id=API)
         self.assertEqual(r["kind"], "direct", "which is what made the name reachable before the latch")
         self.assertTrue(r["agent"].get("remote"), "as a presence row, delivered with no wake")
+        # THE PRE-LATCH CASE: the kernel answers again, and the session's next beat meets the answered listing, so the
+        # mirror's writer releases the blink beat's row and forgets its entry; then the kernel blinks again, within the
+        # beat's TTL
+        pm._kernel_sessions_checked = answering
+        self.assertTrue(pm._record_heartbeat(WEB, "web"), "the listing answers: local")
+        pm._kernel_sessions_checked = blinking
+        r = pm.resolve_recipient("web", frm_id=API)
+        self.assertEqual((r["kind"], r.get("status")), ("error", 503),
+                         "THE PRE-LATCH CASE: the released beat's presence is gone with its entry, so a send in the next blink "
+                         "gets the standing refusal (with the pop deleted, the base's behaviour, the send resolves to the stale "
+                         "presence row and is delivered into the mailbox with no wake): %r" % (r,))
+        self.assertIn("Retry shortly", r["error"])
+        self.assertNotIn(WEB, pm.HEARTBEATS, "the entry is forgotten with the row")
 
     # ── `romp mail remote` after the latch ────────────────────────────────────────────────────
 

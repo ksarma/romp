@@ -1341,7 +1341,9 @@ def local_agents_checked(threads=False):
     kernel, whichever consumer asked (the recorder at every beat, the presence producer at every exchange, the
     autostop gate at every poll, the inbound relay's bounces); a read that did not answer is recorded as such,
     and releases nothing. A read without thread rows owns no comment thread's sid (the seam filters as the route
-    does), so a thread's beat waits for the recorder's read, which asks for them."""
+    does), so a thread's row is released by the recorder's read, which asks for them: the recorder hands the sid that
+    read owns to the write it triggers (_write_remote_sids' `released`; round 4 of fork PR #897, the thirty-fourth
+    commit), so a thread-less read landing before that write takes the lock does not keep the row."""
     rows, answered = _kernel_sessions_checked(threads=threads)
     _LOCAL_LISTING[0] = (bool(answered), frozenset(str(r.get("id")) for r in rows
                                                     if isinstance(r, dict) and r.get("id")))
@@ -1511,11 +1513,17 @@ def _record_heartbeat(sid, name):
     itself: a key missing from memory while the file still carries its row is re-filed by the mirror's
     carry as a row heard by nobody, for the file's life (the reviewer's refuters, by execution). The
     release is the WRITER's (round 3 of fork PR #897, the reviewer's ruling, the seventeenth commit): at
-    the first write after a listing this bus read ANSWERED and owns the sid (the read made here included,
-    so a beat that meets such a listing is neither recorded nor kept), _write_remote_sids drops the row,
+    the first write after a listing this bus read ANSWERED and owns the sid, _write_remote_sids drops the row,
     heard or carried, and forgets the entry once the file without the row is in place, so nothing re-files
-    it; rules 1 and 2 of the judge's ladder own a sid the local kernel lists. A listing that did not answer
-    releases nothing, so a beat filed during a blink stays, heard, until one answers."""
+    it; rules 1 and 2 of the judge's ladder own a sid the local kernel lists. The read made here is keyed to
+    the write it triggers (round 4 of fork PR #897, the reviewer's ruling on its refuter's narrowing, the
+    thirty-fourth commit): when it answers local, the sid it owns is handed to that write as `released`, which
+    the writer unions with the last read under _REMOTE_SIDS_LOCK, so a beat that meets such a listing is neither
+    recorded nor kept whatever read lands between this one and the write. Until that commit the write read the
+    last read alone, and a thread-less read in that window (the autostop gate's, the presence producer's) owned
+    no comment thread's sid, so a thread's blink row and entry stayed while its loop, told local, beat no more.
+    A listing that did not answer releases nothing, so a beat filed during a blink stays, heard, until one
+    answers."""
     local = False
     if sid and _safe_id(sid):
         rows, answered = local_agents_checked(threads=True)
@@ -1523,8 +1531,8 @@ def _record_heartbeat(sid, name):
             local = True
         else:
             HEARTBEATS[sid] = (name or "?", time.time())
-    _write_remote_sids()                           # presence changed → refresh the deadness mirror
-    return local
+    _write_remote_sids(released=(sid,) if local else ())   # presence changed → refresh the deadness mirror, releasing
+    return local                                           # the sid this beat's own answered read owns
 
 def present_count_checked():
     """(present count, answered) for the autostop gate: local rows plus heartbeat presence, and whether
@@ -3922,7 +3930,10 @@ def _remote_sids_previous(path, now):
     brace; nesting past the parser's depth; a text that opens with a brace, which is a document and never the list, so
     a document cut short is never read as naming the session "true"); a text naming no session id; an EMPTY file, which
     no bus since 2026-09-22 writes and a crash can leave, and which this read cannot tell from the empty list of the
-    shape before (the restricted side); a JSON value of neither shape; and an OSError other than no file. Such a
+    shape before (the restricted side); a JSON value of neither shape, the literal null among them (the arms test
+    whether the parse FAILED, never the value it returned; until the thirty-fourth commit, round 4 of fork PR #897, a
+    parse that returned None read as a failed one, and a file holding null was carried as a legacy row naming the
+    session "null", with no mark and no line); and an OSError other than no file. Such a
     file's rows are lost, so the write carries none and stamps the new document with the mark {"cause", "at"}, the
     cause and the second of the write, said once in the bus log (_remote_sids_lost). While the mark stands the judge
     answers NOT ESTABLISHED where rule 5 would presume a session closed (kernel/judge.py _presumed_closed_verdict,
@@ -3954,14 +3965,14 @@ def _remote_sids_previous(path, now):
     if replaced is not None:                       # not a document at v 2 after the replacing decode: the list keeps the strict read
         return _remote_sids_lost(path, now, "%s: %s, and not a document at v 2 after the replacing decode"
                                  % (type(replaced).__name__, str(replaced)[:120]))
-    if doc is None and not text.lstrip().startswith("{"):
+    if why is not None and not text.lstrip().startswith("{"):   # the parse FAILED: never the value it returned (null)
         sids = sorted({t for t in text.split() if _safe_id(t)})
         if sids:
             return {REMOTE_SIDS_LEGACY: {"kind": "legacy", "sids": sids, "heard": False, "expired": False, "answered": False,
                                          "seenAt": 0}}, None
         if not text.split():
             return _remote_sids_lost(path, now, "an empty file")   # no bus since 2026-09-22 writes one; a crash can leave one
-    if doc is None:
+    if why is not None:
         return _remote_sids_lost(path, now, "%s: %s" % (type(why).__name__, str(why)[:120]))
     return _remote_sids_lost(path, now, "a JSON %s, not a document with a hosts table" % type(doc).__name__)
 
@@ -4036,10 +4047,25 @@ def _remote_sids_lost(path, now, cause):
     """({}, mark) for a previous file _remote_sids_previous cannot read whole: no row carried, and the lost-carry mark
     stamped with the cause and this write's second, said once per distinct text in the bus log (round 3 of fork PR #897,
     the reviewer's ruling of 14:57Z; the twenty-second commit replaced the twenty-first commit's disclosure of the open
-    road, which the reviewer refused, with this mark)."""
+    road, which the reviewer refused, with this mark).
+    The line's clearing clause is built from the scheme at this write (peers_on, read here; round 4 of fork PR #897,
+    the reviewer's ruling on its refuter's narrowing, the thirty-fourth commit), and states the rule of
+    _remote_sids_lost_cleared, never a case: under the legacy singleton scheme (ROMP_POSTAL_PEERS=0) the mark stands
+    for the life of the state root, because that scheme holds no list of links; in peer mode it stands until a bus
+    process that read the kernel's list of links at its start has heard every linked host since the mark. A line
+    naming a failed seed could not be true when written, since this write can run before the seed's outcome is known
+    (the seed's own writes stamp the mark). Until that commit the line said the mark stood until every host the kernel
+    holds a link to is heard, under both schemes, which never holds under the legacy one. The line is said by the bus
+    process that stamps the mark; server.log is opened in append mode, so it outlives that process."""
+    if peers_on():
+        until = ("until a bus process that read the kernel's list of links at its start has heard every linked host since "
+                 "the mark")
+    else:
+        until = ("for the life of the state root, because the legacy singleton scheme (ROMP_POSTAL_PEERS=0) holds no list "
+                 "of links")
     _remote_sids_say("the previous remote-sids mirror %s is unreadable (%s): this write carries none of its rows and marks the "
-                     "mirror, so the judge answers cannot-determine where its rule 5 would presume a session closed, until every "
-                     "host the kernel holds a link to is heard" % (path, cause))
+                     "mirror, so the judge answers cannot-determine where its rule 5 would presume a session closed, %s"
+                     % (path, cause, until))
     return {}, {"cause": "previous mirror unreadable (%s)" % cause, "at": int(now)}
 
 
@@ -4487,7 +4513,7 @@ def _remote_sids_document(now, previous, owned=frozenset(), lost=None):
           reachable on the event that closes the road, its heartbeat or exchange arriving in this process (one
           bad byte in the previous file costs one sid, never the document; a previous file this process cannot
           read whole carries no row and marks the document, so the judge answers cannot-determine where rule 5
-          would fire until every host the kernel links to is heard: _remote_sids_previous, the reviewer's ruling
+          would fire until the mark clears, never under the legacy scheme: _remote_sids_previous, the reviewer's ruling
           of 14:57Z, the twenty-second commit of round 3 of fork PR #897; after that clearing a session on a host
           that no linked host hears now is outside every source, as on a first start: _remote_sids_lost_cleared,
           the reviewer's ruling of 15:45Z);
@@ -4908,7 +4934,7 @@ def _remote_sids_document(now, previous, owned=frozenset(), lost=None):
     return doc
 
 
-def _write_remote_sids():
+def _write_remote_sids(released=()):
     """STATE/remote-sids, the bus's PRESENCE MIRROR for the kernel/judge DEADNESS rule (2026-08-28, the
     dead-session round): a JSON document, atomically replaced, one row per presence source with the
     roster it reported and whether this bus process has heard it (_remote_sids_document has the shape and
@@ -4930,7 +4956,7 @@ def _write_remote_sids():
     alone no longer means the bus has spoken: a bus restarted from
     empty memory writes a first mirror whose hosts are all unreachable (carried from the previous file; one bad
     byte there costs one sid, and a previous file it cannot read whole carries no row and marks the document, said
-    once in the bus log, until every host the kernel links to is heard: _remote_sids_previous) until their
+    once in the bus log, until the mark clears, never under the legacy scheme: _remote_sids_previous) until their
     heartbeats and exchanges arrive; a host whose link the kernel reports
     down is unreachable from that notify until its next heartbeat or exchange arrives with the link up, and vouches for absence
     from that exchange (the up notify plus the host heard since). This
@@ -4965,13 +4991,34 @@ def _write_remote_sids():
     releases it (the order is pinned in tests/test_postal_remote_sids_mirror.py by a write that fails at the
     temporary file and by one that fails at the replace, so a pop anywhere before the replace fails a pin; round
     3 of fork PR #897, the eighteenth and nineteenth commits). A listing that did not answer releases nothing.
+    The release is keyed on the read that triggered the write as well (round 4 of fork PR #897, the reviewer's
+    ruling on its refuter's narrowing, the thirty-fourth commit): `released` is the sid that read owns, which
+    _record_heartbeat passes when its own answered read answers local, and the write unions it with
+    _local_listing_owned() under _REMOTE_SIDS_LOCK. Until that commit the write read the last read alone, and a
+    thread-less read landing between the recorder's read and this lock (the autostop gate's, the presence
+    producer's) owned no comment thread's sid, so the thread's blink row and entry both stayed while its loop,
+    told local, beat no more (the witness: tests/test_postal_remote_sids_mirror.py
+    test_the_recorders_release_is_keyed_on_its_own_read_whatever_read_lands_before_its_write, the window held
+    open by this lock and an event).
+    FORGETTING THE ENTRY REACHES PAST THE MIRROR, and that is the design (round 4 of fork PR #897, the reviewer's
+    ruling, which kept the pop): a HEARTBEATS entry is also the remote presence _with_remote_presence hands to
+    resolve_recipient, the /agents listing and present_count_checked, so forgetting it removes the session's
+    presence from all three. A send to that session during a later listing blink then gets the standing blink
+    refusal (503, retry shortly, never a death ruling) instead of resolving to the beat's presence row. This
+    completes the 2026-09-08 design: after the latch, the standing blink refusal covers every local peer alike,
+    and a local session's blink beat filed as remote presence, which delivered into a mailbox with no wake, is the
+    defect that design names. It is not a cost. The named witness: tests/test_postal_heartbeat_fetches.py
+    test_after_the_latch_a_local_peer_is_unreachable_by_name_during_a_blink (its pre-latch case: a beat filed
+    during a blink, an answered listing that releases it, then a blink, and the send gets the standing 503; with
+    the pop deleted, the base's behaviour, the send resolves to the stale presence row and is delivered).
     Every other row stands for the life of the state root (the cost and the follow-up: _remote_sids_document).
     Under _REMOTE_SIDS_LOCK:
     the write reads the file it replaces, and the heartbeat, exchange, monitor and notify threads all
     write."""
     with _REMOTE_SIDS_LOCK:
         try:
-            owned = _local_listing_owned()            # the sids the local kernel's answered listing owns: released below
+            owned = _local_listing_owned() | frozenset(str(s) for s in released)   # the sids the local kernel's answered
+            #                                           listing owns, and the sid the triggering read owns: released below
             path = STATE / "remote-sids"
             now = time.time()
             previous, lost = _remote_sids_previous(path, now)   # the rows to carry, and the lost-carry mark

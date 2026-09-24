@@ -596,10 +596,30 @@ class PresumedClosed(World):
                          "(a decode with errors='replace' reads HOST as naming another sid, and HOST, vouching for absence, "
                          "answers rule 5 for the sid it named)")
         # ...and a document nested past the JSON parser's depth (found by the twentieth commit's builder, the class of the
-        # bytes): RecursionError is not a ValueError, and it lands in the same arm
-        _mirror().write_text("[" * 100000 + "\n")
-        self.assertEqual(self._verdict_caught(DEAD), UNPARSABLE, "nesting past the parser's depth: the unparsable arm (a reader "
-                         "catching ValueError alone raises RecursionError out of the ladder here)")
+        # bytes): the class the parse raises is the interpreter's (RecursionError, which is not a ValueError, on this box;
+        # JSONDecodeError, a ValueError, on a CI runner's 3.14t), so it is DERIVED here from the same bytes, decoded as the
+        # reader decodes them, as the other three sites that plant one derive it (round 4 of fork PR #897, the thirty-fourth
+        # commit); either class lands in the same arm
+        data = ("[" * 100000 + "\n").encode()
+        _mirror().write_bytes(data)
+        depth = len(data) - len(data.lstrip(b"["))
+        try:
+            json.loads(data.decode("utf-8-sig"))
+        except Exception as e:
+            raised = type(e)
+        else:
+            self.fail("json.loads returned on the document nested %d deep on %s: the step's premise, a file the parse cannot "
+                      "read, is gone" % (depth, sys.version))
+        if issubclass(raised, RecursionError):
+            red = "a reader catching ValueError alone raises RecursionError out of the ladder here"
+        elif issubclass(raised, ValueError):
+            red = ("%s, a ValueError every reader answers, so a reader catching ValueError alone is green here: "
+                   "test_the_writers_previous_read_and_the_reader_catch_both_classes_a_nested_parse_can_raise pins the "
+                   "catch of both classes" % raised.__name__)
+        else:
+            red = "%s, neither class the reader catches, raises out of the ladder here" % raised.__name__
+        self.assertEqual(self._verdict_caught(DEAD), UNPARSABLE, "nesting past the parser's depth, the parse raising %s on "
+                         "%s: the unparsable arm (%s)" % (raised.__name__, sys.version, red))
         # the document's VERSION (the reviewer's ruling, the twentieth commit): v 2 alone, whatever the rows carry; the row
         # would vouch for absence, so a reader without the gate answers rule 5 for a sid it does not name
         for label, v in (("v1", 1), ("no v", None), ("v3", 3), ("the string 2", "2")):
@@ -957,7 +977,7 @@ class ReaderFollowsTheWriter(unittest.TestCase):
                     the mirror is marked and a sid nothing names is carry-lost while B vouches. One stray byte inside the sid B names in the writer's own document: unparsable,
                     never repaired into another sid (a replacing decode reads B as naming another sid, and B's vouch answers
                     rule 5 for the sid B named; the reader stays strict, the writer's parse alone replacing). A document
-                    nested past the JSON parser's depth: unparsable, and B's next exchange replaces it, marked (RecursionError is not a ValueError: until the commit the reader raised it out of
+                    nested past the JSON parser's depth: unparsable, and B's next exchange replaces it, marked (on this box the parse raises RecursionError, which is not a ValueError, the class derived since the twenty-fifth commit: until the commit the reader raised it out of
                     the ladder and the writer's previous-read failed every write; found by the commit's builder, the class
                     of the bytes). A hand-written document whose rows carry a non-bool flag, an unhashable busId
                     and an unhashable sid beside a live session's: the reader refuses it, and B's next exchange writes the
@@ -4353,12 +4373,13 @@ print(json.dumps(out))
     def test_the_writers_previous_read_and_the_reader_catch_both_classes_a_nested_parse_can_raise(self):
         """Round 3 of fork PR #897, the reviewer's ruling of 17:47Z, the twenty-fifth commit (the both classes phase of the
         class docstring): the class json.loads raises on a document nested past its depth is the interpreter's, RecursionError
-        on this box and JSONDecodeError, a ValueError, on a CI runner's 3.14t, so the three cases that plant one derive the class
-        from the parse, and this test pins, once, that the product catches both. json.loads stubbed to raise each class in turn
+        on this box and JSONDecodeError, a ValueError, on a CI runner's 3.14t, so the four sites that plant one derive the class
+        from the parse (the fourth, the PresumedClosed ladder's step, since the thirty-fourth commit, round 4 of fork PR #897),
+        and this test pins, once, that the product catches both. json.loads stubbed to raise each class in turn
         on the nested document: the writer's previous-read (postal_service.py _remote_sids_previous) carries nothing and marks
         the document with that class in the cause, and the reader (judge.py _remote_sids_mirror) answers unparsable, said once
         naming that class. A catch narrowed to ValueError alone lets the stubbed RecursionError out of either, recorded as
-        'raised', where on an interpreter that raises JSONDecodeError the three cases stay green. On both root shapes."""
+        'raised', where on an interpreter that raises JSONDecodeError the four sites stay green. On both root shapes."""
         for shape, got in self.got.items():
             for cls in ("ValueError", "RecursionError"):
                 with self.subTest(shape=shape, raised=cls):
