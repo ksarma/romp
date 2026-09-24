@@ -193,21 +193,25 @@ function testTimeoutMs() {
   assert.equal(m.length, 1, 'the script passes node --test one --test-timeout: ' + JSON.stringify(m));
   return Number(m[0].slice('--test-timeout='.length));
 }
-/** The bound pin's reds over rostered sources ([{ bundle, src, text }]) against node's per-file bound `ms`. Every timeout:
- *  key in a source is read or refused, never skipped: the key bare or quoted, with or without a space before its colon
- *  (['"]?timeout['"]?\s*:), and its value token, from the colon to the next comma, closing brace or closing parenthesis,
- *  trimmed. A token of digits, with _ separators or none (/^\d[\d_]*$/), is read with its separators removed, and is red when
- *  it reaches the file bound. Any other token (an exponent spelling, an identifier, an expression) is red naming the bundle,
- *  the source and the token, with the remedy to spell the value as a literal. A Playwright call's own timeout: option is read
- *  by the same rule: a per-call bound above the file bound is a real cut too. */
+/** The bound pin's reds over rostered sources ([{ bundle, src, text }]) against node's per-file bound `ms`. Every timeout
+ *  key in a source is read or refused, never skipped: the key bare, quoted or computed from a quoted string, with or without
+ *  a space before its colon (['"]?timeout['"]?\s*: and [ "timeout" ]:), and its value token, from the colon to the next
+ *  comma, closing brace or closing parenthesis, trimmed. A token of digits, with _ separators or none (/^\d[\d_]*$/), is read
+ *  with its separators removed, and is red when it reaches the file bound. Any other token (an exponent spelling, an
+ *  identifier, an expression) is red naming the bundle, the source and the token, with the remedy to spell the value as a
+ *  literal. A shorthand property ({ timeout }, the value a name in scope) spells no value to read and is refused the same
+ *  way. A Playwright call's own timeout: option is read by the same rule: a per-call bound above the file bound is a real
+ *  cut too. */
 function boundReds(sources, ms) {
   const reds = [];
+  const literal = ', which this pin cannot read as a number: spell the value as a literal (digits, _ separators allowed), so it is held under node\'s --test-timeout';
   for (const s of sources) {
-    for (const m of s.text.matchAll(/(?<![\w$])['"]?timeout['"]?\s*:([^,})]*)/g)) {
-      const token = m[1].trim(), at = s.bundle + ' (source ' + s.src + ') spells timeout: ' + token;
-      if (!/^\d[\d_]*$/.test(token)) reds.push(at + ', which this pin cannot read as a number: spell the value as a literal (digits, _ separators allowed), so it is held under node\'s --test-timeout');
+    for (const m of s.text.matchAll(/(?<![\w$])(?:\[\s*(['"`])timeout\1\s*\]|['"]?timeout['"]?)\s*:([^,})]*)/g)) {
+      const token = m[2].trim(), at = s.bundle + ' (source ' + s.src + ') spells timeout: ' + token;
+      if (!/^\d[\d_]*$/.test(token)) reds.push(at + literal);
       else if (Number(token.replace(/_/g, '')) >= ms) reds.push(at + ' (' + Number(token.replace(/_/g, '')) + ' ms), which reaches node\'s --test-timeout (' + ms + ' ms): the file bound would cut the leg before its own bound fires, so raise --test-timeout in the script (under the step\'s bound) or lower the value');
     }
+    for (let i = (s.text.match(/(?<=[{,]\s*)timeout(?=\s*[,}])/g) || []).length; i > 0; i--) reds.push(s.bundle + ' (source ' + s.src + ') spells timeout as a shorthand property ({ timeout })' + literal);
   }
   return reds;
 }
@@ -238,8 +242,8 @@ test('the step is bounded twice: its own timeout-minutes fits the margin under t
   // node's per-file bound: above every timeout: value a rostered source spells (else a legitimate slow leg is cut), under the
   // step's bound (else the step is cut nameless first). First the reader, over synthetic sources. A separator spelling above
   // the file bound is read whole (300_000 is 300000 ms, not 300) and is red. An exponent spelling and an identifier are
-  // refused by name, not read as a prefix or skipped. A quoted key with a space before its colon is read. A separator
-  // spelling under the bound passes
+  // refused by name, not read as a prefix or skipped. A quoted key with a space before its colon, and a computed key, are
+  // read. A shorthand property is refused by name. A separator spelling under the bound passes
   const ms = testTimeoutMs();
   const probe = (text) => boundReds([{ bundle: 'out-tests/ui/webview/probe-browser.test.js', src: 'ui/webview/probe-browser.test.ts', text }], ms);
   const over = ms + 60000;
@@ -249,11 +253,14 @@ test('the step is bounded twice: its own timeout-minutes fits the margin under t
     ['test("x", { timeout: ' + exponent + ' }, async () => {});', exponent, 'an exponent spelling'],
     ['test("x", { timeout: LEG_TIMEOUT_MS }, async () => {});', 'LEG_TIMEOUT_MS', 'an identifier'],
     ['test("x", { \'timeout\' : ' + separated + ' }, async () => {});', separated, 'a quoted key with a space before its colon'],
+    ['test("x", { ["timeout"]: ' + separated + ' }, async () => {});', separated, 'a computed key'],
   ]) {
     const reds = probe(text);
     assert.ok(reds.length === 1 && reds[0].includes('out-tests/ui/webview/probe-browser.test.js') && reds[0].includes('ui/webview/probe-browser.test.ts') && reds[0].includes('timeout: ' + token), 'the bound pin reds ' + what + ' (' + JSON.stringify(text) + '), naming the bundle, the source and the token as spelled: ' + JSON.stringify(reds));
   }
   assert.ok(probe('test("x", { timeout: ' + exponent + ' }, () => {});')[0].includes('spell the value as a literal'), 'a refused token carries the remedy, to spell the value as a literal');
+  const shorthand = probe('const timeout = ' + separated + ';\ntest("x", { timeout }, async () => {});');
+  assert.ok(shorthand.length === 1 && shorthand[0].includes('out-tests/ui/webview/probe-browser.test.js') && shorthand[0].includes('ui/webview/probe-browser.test.ts') && shorthand[0].includes('a shorthand property ({ timeout })') && shorthand[0].includes('spell the value as a literal'), 'the bound pin refuses a shorthand property ({ timeout }), whose value is a name in scope, naming the bundle and the source, with the remedy to spell the value as a literal: ' + JSON.stringify(shorthand));
   assert.deepEqual(probe('test("x", { timeout: 1_000 }, () => {});\npage.waitForFunction(f, null, { timeout: 5000 });'), [], 'a separator spelling under the file bound, and a Playwright call\'s own timeout: under it, pass');
   const sources = [];
   for (const e of parseRoster(read(path.join(EXT, ROSTER)))) {
@@ -328,7 +335,9 @@ const RULE_HOMES = [
 ];
 /** A stand-in for inBrowser, spelled as its cannot() is: under the switch it fails with the phrase the script reads a lost
  *  browser by and a reason, and without the switch it skips. The catch example awaits it inside a try, and the witness
- *  test's control awaits it with no try. */
+ *  test's control awaits it with no try. Nothing here reads cannot() in ui/webview/real-viewer-leg.ts, so a PR that changes
+ *  cannot() rewrites this stand-in to match and re-reads the catch example in the homes: with process.exitCode = 1 added to
+ *  cannot(), for example, a real leg that catches the rejection is red as failed as a whole while this witness stays green. */
 const standIn = (phrase) => 'const assert = require("node:assert");\nconst inBrowser = async (t, body) => { const why = "no playwright browser on this box (a synthetic stand-in)"; if (process.env.' + SWITCH + ') assert.fail(' + JSON.stringify(phrase + ': ') + ' + why); t.skip(why); };\n';
 /** The roster rule's examples, each with its synthetic witness leg, in one table: RULE_WORDS takes each example's phrase from
  *  here, the homes pin holds each home's list after "examples, not the whole set:" to exactly these phrases, and the witness
@@ -768,8 +777,9 @@ test('each example the roster rule\'s homes name reads green, executed: the scri
   // node's record shows it (a passing test, and for the todo example a todo beside it), so a change to the script or the
   // reporter that reads one of these examples from node's record turns this red, and the homes' list and EXAMPLES move with it.
   // No witness loads playwright: a mechanism keyed on playwright's launch needs witnesses that launch, so the witness set is
-  // rewritten, not only re-read, when the follow-up lands. Each leg that stands for a failure writes a mark beside its bundle
-  // when the failure happens, so the green below is read over a run in which each of those failures happened
+  // rewritten, not only re-read, when the follow-up lands. The catch example's stand-in copies cannot() and nothing here reads
+  // cannot() (see standIn), so a change to cannot() rewrites the stand-in too. Each leg that stands for a failure writes a mark
+  // beside its bundle when the failure happens, so the green below is read over a run in which each of those failures happened
   const { run, root, ext } = syntheticTree(t);
   const phrase = scriptPhrase();
   const head = 'const { test } = require("node:test"); const fs = require("node:fs"); const { spawnSync } = require("node:child_process");\n';
