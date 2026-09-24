@@ -2137,7 +2137,8 @@ UNREAD_LAYOUTS = (
 # "first" opens the shell job's steps, "last" ends them, "job" is a job before the shell job, "start" and "end" open and
 # end the file, "+env" sets the switch in the shell job's env first. `alone`: nothing but the scan names a line (the
 # population check, the two censuses, the job-key check), so the refusal is what reds the plant. The pre-push lenses'
-# and the three verify passes' plants are named by their ids (the round-4 takes record); this build's own by AL-.
+# and the three verify passes' plants are named by their ids (the round-4 takes record); this build's own by AL-; the
+# allowlist's first verify pass's plants and mutants by that pass and their ids.
 RUN_OK = "        run: python -m pytest tests/test_a.py -q -p no:anyio\n"
 _SW_JOB = '    runs-on: ubuntu-latest\n    env:\n      %s: "1"\n' % SWITCH
 _TWO = "          python -m pytest -q tests/test_a.py\n          python -m pytest -q -p no:anyio tests/test_b.py\n"
@@ -2291,6 +2292,15 @@ YAML_REFUSED_ROWS = (
     ("the switch's value 1 then a no-break space, which str.strip drops and YAML keeps (AL-02)", "last",
      "      - name: Nbsp value (pytest)\n        env:\n          %s: 1\xa0\n" % SWITCH + RUN_OK,
      ((3, "a character outside ASCII outside a comment line ('\\xa0')"),), True),
+    # inside a literal block (the allowlist's first verify pass, M02: with the block's character refusal deleted every
+    # test stayed green, and a no-break space after the flag read as the flag, where bash hands pytest no:anyio with the
+    # character on it and no plugin is blocked)
+    ("a no-break space after the flag at the end of a literal run block's line, which str.strip drops and bash keeps",
+     "first+env", "      - name: Nbsp in block (pytest)\n        run: |\n          python -m pytest tests/test_a.py -q -p no:anyio\xa0\n",
+     ((3, "a character outside ASCII outside a comment line ('\\xa0')"),), True),
+    ("a CR after the flag at the end of a literal run block's line (YAML reads the CR and the newline as one line break)",
+     "first+env", "      - name: CR in block (pytest)\n        run: |\n          python -m pytest tests/test_a.py -q -p no:anyio\r\n",
+     ((3, "a tab or other control character ('\\r')"),), True),
 )
 # accepted: each shape a form the real file uses, spliced as the first step of the shell job; the scan refuses none
 YAML_ACCEPTED_ROWS = (
