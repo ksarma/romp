@@ -2732,7 +2732,11 @@ class PopulationCheckReds(unittest.TestCase):
         for label, block, named in (
                 ("a pip line ending in a backslash and a space", "        pip install foo \\ \n        python -m pytest tests/test_a.py -q\n", (8,)),
                 ("a pip line ending in an escaped backslash", "        pip install foo \\\\\n        python -m pytest tests/test_a.py -q\n", (8,)),
-                ("the pytest word split by a continuation", "        python -m py\\\n        test tests/test_a.py -q\n", (7, 8))):
+                ("the pytest word split by a continuation", "        python -m py\\\n        test tests/test_a.py -q\n", (7, 8)),
+                # the forward join (the fail-closed design's third verify pass, 2026-09-24: the join after the line
+                # returned to the old rule was a non-red mutant): a line that spells no pytest and ends in a backslash
+                # and a space joins nothing, so it is not counted; under the old rule it took the pytest line after it
+                ("a line spelling no pytest ending in a backslash and a space", "        echo a \\ \n        python -m pytest tests/test_a.py -q\n", (8,))):
             with self.subTest(form=label):
                 src, first = self._with_job_before_shell(head + block)
                 self.assertEqual(self._new(src), [], "%s: the parser does not read this layout" % label)
@@ -2772,6 +2776,14 @@ class PopulationCheckReds(unittest.TestCase):
         src, first = self._with_step_in_shell_job("      - name: Block switch (pytest)\n        env:\n          %s: |-\n            1\n" % SWITCH + run)
         self.assertEqual([(i["env"].get(SWITCH), verdict(i)) for i in self._new(src)], [("|-", "unlisted")])
         self.assertEqual(switch_line_census(src)[1], [(first + 2, "%s: |-" % SWITCH)])
+        # an empty block scalar (`>-` with no lines, "" to YAML) in a job with no pytest step: no invocation reads the
+        # value, so the switch census is the one check that sees it, and the block-scalar value alone makes the key
+        # unclean (the fail-closed design's third verify pass, 2026-09-24: E35, the one plant a mutant reading a
+        # block-scalar value as clean changed; the module stayed green under that mutant until this case)
+        src, first = self._with_job_before_shell("  nopy:\n    runs-on: ubuntu-latest\n    env:\n      %s: >-\n      OTHER: x\n"
+                                                 "    steps:\n      - run: echo hi\n" % SWITCH)
+        self.assertEqual(self._new(src), [], "the job runs no pytest")
+        self.assertEqual(switch_line_census(src)[1], [(first + 3, "%s: >-" % SWITCH)])
         # the controls: a real switch key at the block's key indent after another key's block scalar reads, and a `#`
         # line inside the block scalar is its text; the census names nothing
         src, first = self._with_step_in_shell_job("      - name: After a block (pytest)\n        env:\n          NOTES: |\n"
