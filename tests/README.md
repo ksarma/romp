@@ -203,8 +203,13 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   and shape, a total line per name and the split between `test_*.py` files and
   the others, and the number of files it parsed, which the census pin compares
   with an `os.walk` of the tree by equality; the census reads each file through
-  `tests/parse_cache.py` and derives once per set of paths per process, and its
-  docstring says which figures are compared and which are not. The per-test half,
+  `tests/parse_cache.py` (`source_and_tree`, which freezes nothing) and derives
+  once per set of paths per run of the module, which holds the derivation and
+  drops it in its `tearDownModule`. The module changes no collector state: its
+  `tearDownModule` asserts that `gc.get_freeze_count()` is not above what its
+  `setUpModule` read, since `parse_cache.derived()` freezes the heap and every
+  perf-snapshot reader after the module then pays per read. Its docstring says
+  which figures are compared and which are not. The per-test half,
   set in setUp and put back by a cleanup registered
   right after the write (`restore_env` from `tests/conftest.py`, or a method of the
   class; a tearDown restore is skipped when a subclass's setUp fails part-way, and

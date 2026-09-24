@@ -83,8 +83,11 @@ The census pin passes one floor write of a leak name, upstream's client-only "1"
 probe compares client-only with the value the floor modules left. `python -m tests.test_hermetic_kernel_postal
 --census` prints the counts by name and shape (fork PR #871's by-product figures, derived by ast), with the parsed
 module count, a total line per name and the split between test_*.py files and the others; the census reads each file
-through tests/parse_cache.py and derives once per path tuple per process, and module_level_env_census's docstring says
-which of its figures are compared and which are not (the reviewer's ruling of round 1 on fork PR #894). Beside it,
+through tests/parse_cache.py (source_and_tree, which freezes nothing) and derives once per path tuple per run of this
+module, the derivation held by the module and dropped by its tearDownModule, and the module changes no collector state
+(the reviewer's ruling of 2026-09-24 on round 2 of fork PR #894: parse_cache.derived() freezes the heap, and every
+perf-snapshot reader after this module in CI's serial order then pays per read); module_level_env_census's docstring
+says which of its figures are compared and which are not (the reviewer's ruling of round 1 on fork PR #894). Beside it,
 tests/conftest.py's run-end process check makes a run red that leaves any process holding its temp root
 (tests/test_run_end_leaked_processes.py). Every kernel a module loads in-process gets a dead BUS_PORT for each test,
 and every postal service loaded in-process a dead client BASE (conftest's _dead_bus_port: with ROMP_POSTAL_PORT popped,
@@ -125,7 +128,7 @@ import unittest
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 if __package__:                        # under pytest tests/ is a package: THE SAME parse_cache module object every census in
-    from . import parse_cache as PC    # the process shares (one parse per file, one derivation per key; its docstring)
+    from . import parse_cache as PC    # the process shares (one parse per file; its docstring); its derived() is not used here
 else:                                  # `python3 tests/test_hermetic_kernel_postal.py --census`: a script, the module by name
     if HERE not in sys.path:
         sys.path.insert(0, HERE)
@@ -999,7 +1002,8 @@ _Module = collections.namedtuple("_Module", "where tree names defs classes impor
 #   directory in the tests of the scan itself) and ROLES, {id(node): role} for each bare name or attribute Python calls
 #   where it stands (_call_roles), a side table keyed by id(node) since a parsed tree is read-only for every consumer
 
-_MODULE_CACHE = {}     # (path, root) -> (tree, _Module): the helper modules the resolver reads, each tree parse_cache's own
+_MODULE_CACHE = {}     # (path, root) -> (tree, _Module): the helper modules the resolver reads, each tree parse_cache's own;
+#   dropped with the census's derivations by tearDownModule (_CENSUS_HELD, the one owner's other slot)
 
 
 def _tests_module_path(modname, root, level=0):
@@ -1562,17 +1566,20 @@ def _module_level_records(tree, module, root=None):
     return [(w.key, _record(module, w, nested)) for w, nested in _module_level_env_write_records(tree, module, root)]
 
 
-CENSUS_KEY = ("tests/test_hermetic_kernel_postal.py", "module-level environment writes")
-#   parse_cache.derived's key for the census, with the tuple of paths appended (_census_key): one derivation per path
-#   tuple per process, the whole tree's and a synthetic one-path census's apart
+_CENSUS_HELD = {}
+#   THE ONE OWNER of the census's derivations (the reviewer's ruling of 2026-09-24 on round 2 of fork PR #894, which
+#   superseded round 1's parse_cache.derived shape): path tuple -> what _census_build returned for it, filled by the first
+#   read in this module's run (_census_derivation) and dropped by tearDownModule, with _MODULE_CACHE, the resolver's
+#   records of the helper modules the build read, beside it. No test keeps a reference of its own (each reads through
+#   _census_derivation and holds what it gets as a local), and neither slot's contents holds a reference cycle, so the
+#   drop frees them by reference count with no collection (a measurement, not a pin: the reviewer's ruling asks for one
+#   behavioural pin, the freeze count). A module slot rather than a class attribute: the class's tests land on several
+#   xdist workers, and a build in setUpClass would make each worker that runs any of its tests derive the whole tree; the
+#   first read builds instead.
 _CENSUS_BUILDS = collections.Counter()
-#   census key -> the number of times _census_build ran for it in this process, counted by the build itself: a derivation
-#   made outside parse_cache.derived, which the helper's builds_of does not see, is counted here, so the counter pins
-#   compare the two
-
-
-def _census_key(paths):
-    return CENSUS_KEY + (tuple(paths),)
+#   path tuple -> the number of times _census_build ran for it in this module's run, counted by the build itself and
+#   zeroed by setUpModule (under xdist a worker can set the module up more than once, each run dropping the held
+#   derivation at its teardown and building again): the built-once pins read it, red under a build per read or per test
 
 
 def _is_test_module(module):
@@ -1582,31 +1589,71 @@ def _is_test_module(module):
     return base.startswith("test_") and base.endswith(".py")
 
 
+def _walk_unit(tree, rel, walks):
+    """One walk of a parsed file for the census (_module_level_records), counted in `walks` under the file: the per-unit
+    walk count the census pin holds at 1 for every file, so a build that walks a file twice is red there. A walk made
+    outside this function (a second ast.walk of a file by another road inside the build) is outside the count; the
+    module's measured time at each head is the guard for that."""
+    walks[rel] += 1
+    return _module_level_records(tree, rel)
+
+
 def _census_build(paths):
-    """THE DERIVATION behind module_level_env_census (parse_cache.derived runs it once per path tuple per process):
-    (parsed, {name: {shape: count}}, {name: (_Record, ...)}), `parsed` the modules (relative to tests/) that parsed, in
-    order. Each file is read through tests/parse_cache.py (source_and_tree: one parse per file per process, shared with
-    every census in the process; the tree is read-only here, the cache's contract) and is added to `parsed` inside the
-    loop once it has parsed, so a path the loop skipped shows as a count short of the population (the census pin
-    compares len(parsed) with the os.walk population by equality); a file that does not parse fails the census naming
-    it. The build leaves no reference cycle behind when it returns (the rule for a build in tests/parse_cache.py's
-    docstring: derived() freezes what is tracked then, a dropped cycle included)."""
-    _CENSUS_BUILDS[_census_key(paths)] += 1
+    """THE DERIVATION behind module_level_env_census, run once per path tuple per run of this module (_census_derivation
+    holds what it returns): (parsed, {name: {shape: count}}, {name: (_Record, ...)}, {module: walks}), `parsed` the
+    modules (relative to tests/) that parsed, in order. Each file is read through tests/parse_cache.py (source_and_tree:
+    one parse per file per process, shared with every census in the process; the tree is read-only here, the cache's
+    contract) and is added to `parsed` inside the loop once it has parsed, so a path the loop skipped shows as a count
+    short of the population (the census pin compares len(parsed) with the os.walk population by equality); a file that
+    does not parse fails the census naming it; each parsed file is walked through _walk_unit, whose count per file the
+    census pin holds at 1. THE SINGLETON CHECK (tests/parse_cache.py's check_singletons, which parse_cache.derived ran
+    around the build before the reviewer's ruling of 2026-09-24 took derived() out of this module): before the build (a
+    writer that ran earlier; the build neither runs nor counts) and after it, on the returning road and on the raising
+    road (the build itself wrote on a node the parser shares with every tree: the build is counted and nothing is held,
+    so the next read builds again; a raising build's exception is the AssertionError's __cause__ when the singletons carry
+    attributes, else it propagates as it was). No collector state is touched: no gc.freeze, gc.disable or gc.collect here
+    or anywhere in the module (the same ruling; the freeze is process-global, and the other two walk every tracked
+    object). What the build returns holds only strings, numbers, tuples, dicts and _Record tuples, no node and no cycle."""
+    key = tuple(paths)
+    where = "the census build over %s (tests/test_hermetic_kernel_postal.py)" % ("1 path" if len(key) == 1 else "%d paths" % len(key))
+    PC.check_singletons("before %s: an earlier writer" % where)
+    _CENSUS_BUILDS[key] += 1
     counts = collections.defaultdict(lambda: collections.defaultdict(int))
     records = collections.defaultdict(list)
-    parsed = []
-    for path in paths:
-        rel = os.path.relpath(path, HERE)
-        try:
-            tree = PC.source_and_tree(path)[1]
-        except (SyntaxError, ValueError) as e:        # ValueError: a null byte before 3.12, and a file that is not UTF-8
-            raise AssertionError("the census could not parse %s (%s: %s): every file it is handed is read, or it fails "
-                                 "naming the file" % (rel, type(e).__name__, e)) from e
-        parsed.append(rel)
-        for name, rec in _module_level_records(tree, rel):
-            counts[name][rec.shape] += 1
-            records[name].append(rec)
-    return tuple(parsed), {k: dict(v) for k, v in counts.items()}, {k: tuple(v) for k, v in records.items()}
+    parsed, walks = [], collections.Counter()
+    try:
+        for path in key:
+            rel = os.path.relpath(path, HERE)
+            try:
+                tree = PC.source_and_tree(path)[1]
+            except (SyntaxError, ValueError) as e:        # ValueError: a null byte before 3.12, and a file that is not UTF-8
+                raise AssertionError("the census could not parse %s (%s: %s): every file it is handed is read, or it fails "
+                                     "naming the file" % (rel, type(e).__name__, e)) from e
+            parsed.append(rel)
+            for name, rec in _walk_unit(tree, rel, walks):
+                counts[name][rec.shape] += 1
+                records[name].append(rec)
+    except BaseException as exc:
+        found = PC.singleton_attributes()
+        if found:
+            raise AssertionError(PC.singleton_message("after %s raised %s: the build that just raised wrote them, or a thread "
+                                                      "beside it" % (where, type(exc).__name__), found)) from exc
+        raise
+    PC.check_singletons("after %s: the build itself wrote them, or a thread beside it" % where)
+    return tuple(parsed), {k: dict(v) for k, v in counts.items()}, {k: tuple(v) for k, v in records.items()}, dict(walks)
+
+
+def _census_derivation(paths=None):
+    """The census's derivation over `paths` (every .py under tests/ when None) as _census_build returned it: held in
+    _CENSUS_HELD, the one owner, from the first read in this module's run until tearDownModule drops it, so every later
+    read in the run is the same object and builds nothing. A build that raised is not held: the next read builds again.
+    The holder never re-reads a file: a path censused and then rewritten in the same run is served the first derivation
+    (no caller rewrites one; each plant is a fresh temporary directory)."""
+    key = tuple(_tests_tree_paths() if paths is None else paths)
+    held = _CENSUS_HELD.get(key)
+    if held is None:
+        held = _CENSUS_HELD[key] = _census_build(key)
+    return held
 
 
 def module_level_env_census(paths=None):
@@ -1616,13 +1663,22 @@ def module_level_env_census(paths=None):
     derivation; _census_parsed_modules reads the same derivation's list of those files. Run it as
     `python -m tests.test_hermetic_kernel_postal --census` for a table. A write the scan cannot read raises, as the pin
     does: a census that skipped a write would be a floor with silent slack.
-    ONE DERIVATION PER PATH TUPLE PER PROCESS (the reviewer's ruling of round 1 on fork PR #894, where the census pin and
-    the singleton pin each walked the whole tree with no cache): the derivation is behind parse_cache.derived under
-    _census_key(paths), the path tuple in the key, since a test censuses one synthetic path as well as the whole tree;
-    the census pin and the one-path census test each read their derivation twice and assert builds_of(their key) == 1,
-    the census's own build count for it 1, and parses_of(p) == 1 for the files read, whatever ran before them in the
-    process. The memo never re-reads: a path censused and then rewritten in the same process is served the
-    first derivation (no caller rewrites one; each plant is a fresh temporary directory).
+    ONE DERIVATION PER PATH TUPLE PER RUN OF THE MODULE, HELD BY THE MODULE (the reviewer's ruling of 2026-09-24 on round
+    2 of fork PR #894, which superseded round 1's shape, the derivation behind parse_cache.derived: derived() freezes
+    every object tracked after a build, and every later call of the kernel's _PerfStats.snapshot reads
+    gc.get_freeze_count(), which walks the frozen objects, so every snapshot reader that sorts after this module in CI's
+    serial order paid per read). The trees are read through parse_cache.source_and_tree, which freezes nothing, and they
+    stay in its cache, tracked and not frozen, for the rest of the process: tests/test_thread_stop_census.py reads the
+    same files there later in the serial order and would red its own parse-once pin if this module dropped them, and
+    until that census's derivation freezes them every full collection in the process walks them, which the collector
+    also does while the build allocates them (the cost the ruling asked to be measured; the figures are in the PR's
+    body, not here, since they move with the tree). The derivation is held by _CENSUS_HELD (_census_derivation) and
+    dropped by tearDownModule. THE PINS (the ruling's clauses 2 and 3): the census pin and a second test that reads the whole tree
+    each assert the whole tree was built once in the module's run (_CENSUS_BUILDS; red under a build per read or per
+    test), the census pin that each file was walked once in that build (_walk_unit's count; red under a file walked
+    twice) and that each file the census read was parsed once in the process (parse_cache.parses_of; red under a second
+    parse); the one-path census test asserts the same of its own path; and tearDownModule asserts that
+    gc.get_freeze_count() is not above what setUpModule read (red under a build restored behind parse_cache.derived).
     WHAT IS COMPARED, and with what: the parsed count, with the os.walk population (the census pin, equality); the set of
     names the test modules write, with LICENSED_MODULE_LEVEL_WRITES, and every write's value with its licence
     (_licence_faults); the writer modules of ROMP_SERVE_TOKEN and ROMP_KERNEL_NO_OPEN and of every floor-only name other
@@ -1630,16 +1686,14 @@ def module_level_env_census(paths=None):
     floor's client-only "1" (_leak_writers). WHAT IS NOT: the per-name, per-shape write and module counts, and the nested,
     by-call and test_*.py columns of the table. --census prints them; they move with every new test module, and a
     committed table would turn that churn red (the refuter's correction on round 1 of fork PR #894)."""
-    paths = tuple(_tests_tree_paths() if paths is None else paths)
-    parsed, counts, records = PC.derived(_census_key(paths), lambda: _census_build(paths))
+    parsed, counts, records, _walks = _census_derivation(paths)
     return len(parsed), {k: dict(v) for k, v in counts.items()}, {k: list(v) for k, v in records.items()}
 
 
 def _census_parsed_modules(paths=None):
-    """The modules (relative to tests/) the census over `paths` parsed, in order: the same derivation, a memo hit after
-    module_level_env_census."""
-    paths = tuple(_tests_tree_paths() if paths is None else paths)
-    return list(PC.derived(_census_key(paths), lambda: _census_build(paths))[0])
+    """The modules (relative to tests/) the census over `paths` parsed, in order: the same held derivation as
+    module_level_env_census's."""
+    return list(_census_derivation(paths)[0])
 
 
 def _census_table(paths=None):
@@ -1733,10 +1787,13 @@ def _is_mkdtemp(node):
     """`tempfile.mkdtemp()` bare, or with a string-literal `prefix` and nothing else: no positional argument (the third is
     dir) and no other keyword, so no `dir=`, which would put the directory under a real path while the licence's reason
     says the run's temp root (the third commit of 2026-09-22: the regex before accepted any argument list). The forms the
-    census finds over the tree, every one of them: `tempfile.mkdtemp()` (755 XDG_STATE_HOME writes, 6 CLAUDE_CONFIG_DIR,
-    the one ROMP_STATE_DIR join) and `tempfile.mkdtemp(prefix='romp-envnames-')` (one XDG_STATE_HOME write and the
+    census finds over the tree, every one of them: `tempfile.mkdtemp()` (XDG_STATE_HOME's and CLAUDE_CONFIG_DIR's writes,
+    and inside ROMP_STATE_DIR's join) and `tempfile.mkdtemp(prefix='romp-envnames-')` (an XDG_STATE_HOME write and the
     ROMP_SERVICE_ENV_FILE concatenation of the same module); the floor's are `prefix='romp-tests-state-'` and
-    `prefix='romp-tests-claude-'`."""
+    `prefix='romp-tests-claude-'`. No count is given here: the counts move with every new test module, --census prints
+    them, and what holds the forms is the value check on every write (_licence_faults), not a figure (the verifier's
+    finding on round 2 of fork PR #894: the XDG_STATE_HOME count this docstring gave was already one short at that
+    head)."""
     return (_call_of(node, "tempfile.mkdtemp") and not node.args
             and all(kw.arg == "prefix" and _str_literal(kw.value) for kw in node.keywords))
 
@@ -2040,16 +2097,20 @@ def _is_function_scoped_fixture(fn):
     return True
 
 
-def _holds_a_yield(stmt):
-    """True when `stmt` holds a yield of the fixture's own: anywhere in it but the body of a def, class or lambda (`stmt`
-    itself included), whose yield is its own; a def's decorators and defaults, a class's bases and a lambda's defaults run
-    where they stand, and are read."""
+def _holds_an_end(stmt):
+    """True when `stmt` holds a yield, a return or a raise of the fixture's own: anywhere in it (`stmt` itself included)
+    but the body of a def or a lambda, whose yield and return are its own; a def's decorators and defaults and a lambda's
+    defaults run where they stand, and are read, and so is a class body nested in the fixture, which runs where it stands
+    (a raise there ends the fixture; a yield or a return there does not parse). A return or a raise nested in a block
+    (`if os.environ.get("CI"): return`) ends the fixture on the runs where the block's test holds, so a statement after
+    it does not run on those (the verifier's finding on round 2 of fork PR #894: the reader stopped only at a return or a
+    raise that was itself a statement of the body, and counted the write after an `if ...: return`)."""
     todo = [stmt]
     while todo:             # loop-ok: bounded by the nodes under `stmt`
         n = todo.pop()
-        if isinstance(n, (ast.Yield, ast.YieldFrom)):
+        if isinstance(n, (ast.Yield, ast.YieldFrom, ast.Return, ast.Raise)):
             return True
-        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)):
             todo.extend(c for c in ast.iter_child_nodes(n) if not any(c is s for s in n.body))
         elif isinstance(n, ast.Lambda):
             todo.extend(c for c in ast.iter_child_nodes(n) if c is not n.body)
@@ -2059,11 +2120,12 @@ def _holds_a_yield(stmt):
 
 
 def _statements_before_the_yield(body):
-    """The statements of `body` that run before the test, in order: every statement up to the first that holds the
-    fixture's yield, or that ends the body (a return or a raise), neither of those included."""
+    """The statements of `body` that run before the test on every run, in order: every statement up to the first that holds
+    the fixture's yield, a return or a raise at any depth (_holds_an_end: a statement of the body, or nested in a block of
+    it), that one not included. A statement after a block that may return runs only on the runs where it does not."""
     out = []
     for st in body:
-        if isinstance(st, (ast.Return, ast.Raise)) or _holds_a_yield(st):
+        if _holds_an_end(st):
             break
         out.append(st)
     return out
@@ -2116,26 +2178,93 @@ def _literal_tuple_loop(st):
 _Reasserted = collections.namedtuple("_Reasserted", "writes removals")
 
 
+def _module_name_bindings(tree):
+    """(Counter {name: bindings}, star) for the names `tree`'s import-time code binds in the module's own namespace: a def
+    or class name, an import's name (`import a.b` binds a; an alias its alias), a name stored or deleted (an assignment,
+    augmented or annotated with a value, a for or with target, a walrus, a `type` statement, a del), an except name and a
+    match capture, in the module's body and its blocks however nested, the header parts of a def or class (decorators,
+    defaults, bases) included; and a `global` declaration of the name in any def at any depth, which lets the def rebind it
+    when called. Not a def's or a lambda's body (their names are their own) nor a class body (its names are the class's).
+    `star` is True when an import at import time is a star import, which binds names no text of the module spells. A name
+    stored in a comprehension at import time is counted though it binds in the comprehension's own scope (the safe side
+    for the reader that refuses a name bound more than once)."""
+    counts, star = collections.Counter(), False
+    todo = list(tree.body)
+    while todo:             # loop-ok: bounded by the nodes of the module's import-time code
+        n = todo.pop()
+        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            counts[n.name] += 1
+            todo.extend(c for c in ast.iter_child_nodes(n) if not any(c is s for s in n.body))
+            continue
+        if isinstance(n, ast.Lambda):
+            todo.extend(c for c in ast.iter_child_nodes(n) if c is not n.body)
+            continue
+        if isinstance(n, (ast.Import, ast.ImportFrom)):
+            for a in n.names:
+                if a.name == "*":
+                    star = True
+                else:
+                    counts[a.asname or (a.name.split(".")[0] if isinstance(n, ast.Import) else a.name)] += 1
+            continue
+        if isinstance(n, ast.Name) and isinstance(n.ctx, (ast.Store, ast.Del)):
+            counts[n.id] += 1
+        elif isinstance(n, ast.ExceptHandler) and n.name:
+            counts[n.name] += 1
+        elif isinstance(n, (ast.MatchAs, ast.MatchStar)) and n.name:
+            counts[n.name] += 1
+        elif isinstance(n, ast.MatchMapping) and n.rest:
+            counts[n.rest] += 1
+        todo.extend(ast.iter_child_nodes(n))
+    for n in ast.walk(tree):
+        if isinstance(n, ast.Global):
+            counts.update(n.names)
+    return counts, star
+
+
+def _registered_once(fn, bindings, star):
+    """True when the module-level fixture def `fn` is the one binding its name has at import (_module_name_bindings) and no
+    star import could bind it: pytest registers the fixtures it finds among the module's attributes after the import, so
+    a def whose name the module binds again afterwards (a later plain def, an assignment, an import, a del) is never
+    registered, and its body never runs (the verifier's finding on round 2 of fork PR #894: the reader counted a fixture
+    shadowed by a later `def _f(): yield` or `_f = None`, which a child pytest showed never ran). A binding before the def,
+    which the def replaces, is refused too (the safe side: bound once, not bound last)."""
+    return bindings[fn.name] == 1 and not star
+
+
 def _conftest_reasserted_names(src=None):
     """The environment names tests/conftest.py re-asserts before every test, as _Reasserted(writes, removals), two
     frozensets kept apart (a pin that reads a pop asks for the removals). A name counts only when a function-scoped autouse
-    fixture (_is_autouse_fixture, _is_function_scoped_fixture) sets it by a plain assignment, or pops it by a pop as a
-    statement, as one of the statements that run before its yield (_statements_before_the_yield), unconditionally: a
-    statement of the fixture's own body, or one of the body of a for over a non-empty tuple of string literals there
-    (_literal_tuple_loop; `for var in ("ROMP_SERVICE_ENV_FILE", "ROMP_SERVICE_ENV"): os.environ[var] = ...` re-asserts
-    both, and a rule without it reds the correct conftest). Refused, each read here as no re-assert (the reviewer's ruling
-    of round 1 on fork PR #894, where any write or pop anywhere in an autouse fixture counted): a setdefault or any
-    other write shape; a fixture scoped above function or by a scope that is not a literal; a statement after the yield
-    or after a return or raise; one under an if, while, with, try or match, or in a for over anything else; one in a def
-    or class nested in the fixture; and a del. Re-asserted so, a module-level write of the name cannot outlive
-    collection under pytest (the dead-port fixture's rule, 2026-08-27); the value conftest writes is not read (the
-    licence's property does not depend on it). What it does not read, each passing as no re-assert (the safe side, a
-    licence that rests on it faults): a write through a call the fixture makes, and a pop whose value is assigned."""
+    fixture (_is_autouse_fixture, _is_function_scoped_fixture) that pytest registers (_registered_once: its name bound once
+    at import, by the def) sets it by a plain assignment, or pops it by a pop as a statement, as one of the statements that
+    run before its yield on every run (_statements_before_the_yield), unconditionally: a statement of the fixture's own
+    body, or one of the body of a for over a non-empty tuple of string literals there (_literal_tuple_loop; `for var in
+    ("ROMP_SERVICE_ENV_FILE", "ROMP_SERVICE_ENV"): os.environ[var] = ...` re-asserts both, and a rule without it reds the
+    correct conftest). Refused, each read here as no re-assert (the reviewer's ruling of round 1 on fork PR #894, where
+    any write or pop anywhere in an autouse fixture counted): a setdefault or any other write shape; a fixture scoped above
+    function or by a scope that is not a literal; a statement after the yield, or after any statement that holds a return
+    or a raise at any depth (a return nested in an if, a try, a with, a loop or a match ends the fixture on the runs where
+    it is reached, and the verifier's finding on round 2 of fork PR #894 showed a test reading the name unasserted after an
+    `if ...: return`); one under an if, while, with, try or match, or in a for over anything else; one in a def or class
+    nested in the fixture; a del; and a fixture whose name the module binds again, before or after the def, or that a star
+    import could bind (the same verifier's finding: pytest never registers a def a later binding replaced). Re-asserted
+    so, a module-level write of the name cannot outlive collection under pytest (the dead-port fixture's rule,
+    2026-08-27); the value conftest writes is not read (the licence's property does not depend on it). What it does not
+    read, each passing as no re-assert (the safe side, a licence that rests on it faults): a write through a call the
+    fixture makes, and a pop whose value is assigned. Not read as an end, and harmless: an exception a call or an assert
+    raises before the statement (pytest.skip, pytest.fail, sys.exit, a failing assert), which errors or skips the test
+    before its body runs, so no test body reads the name unasserted. What it does not see, each read as a re-assert
+    although pytest may not run it for some test (the unsafe side; no pin reds on them): a rebinding of the fixture's name
+    through the module's namespace (globals(), vars(), setattr on the module, sys.modules), by a string exec or eval
+    runs, or by another module or a plugin; and a fixture of the same name defined closer to a test (in a test module, a
+    class or a conftest.py below tests/), which pytest resolves for that test in place of this one, since the reader
+    reads tests/conftest.py alone."""
     tree = ast.parse(open(os.path.join(HERE, "conftest.py"), encoding="utf-8", errors="replace").read() if src is None else src)
     names = _EnvNames(tree)
+    bindings, star = _module_name_bindings(tree)
     writes, removals = set(), set()
     for fn in tree.body:
-        if not (isinstance(fn, ast.FunctionDef) and _is_autouse_fixture(fn) and _is_function_scoped_fixture(fn)):
+        if not (isinstance(fn, ast.FunctionDef) and _is_autouse_fixture(fn) and _is_function_scoped_fixture(fn)
+                and _registered_once(fn, bindings, star)):
             continue
         scope = names.within(fn)
         before = _statements_before_the_yield(fn.body)
@@ -2149,19 +2278,46 @@ def _conftest_reasserted_names(src=None):
     return _Reasserted(frozenset(writes), frozenset(removals))
 
 
+def _conftest_autouse_fixtures(tree):
+    """Every def at the top of tests/conftest.py's body decorated `<x>.fixture(..., autouse=True, ...)`, whatever its scope
+    and whether or not pytest registers it (_is_autouse_fixture): the population the two wide reads below walk."""
+    return [fn for fn in tree.body if isinstance(fn, ast.FunctionDef) and _is_autouse_fixture(fn)]
+
+
+def _conftest_fixture_env_writes(src=None):
+    """Every environment name an autouse fixture of tests/conftest.py WRITES anywhere in its body, in any shape
+    _env_write_records reads, whatever the fixture's scope and wherever the statement stands (before or after the yield,
+    conditional, in any loop, a setdefault included): the wide read of the writes alone, for a pin that asserts a name is
+    NOT written, the ROMP_POSTAL_PORT pin (the verifier's finding on round 2 of fork PR #894: that pin's "not among the
+    writes" half read the narrow writes, _conftest_reasserted_names', which a conditional, late, setdefault or
+    session-scoped write of the port passes unread). What it does not read, each passing that pin unread: a write through
+    a call the fixture makes (a helper def: tests/conftest.py's restore_env writes computed keys, which the scan cannot
+    read); a fixture that is not autouse, which names its value only to the tests that request it by name; a fixture
+    decorated through a bare name or an alias (`from pytest import fixture`, `fx = pytest.fixture`) or by yield_fixture,
+    registered by a call rather than a decorator, defined inside a block, or an async def; and a write through the
+    module's namespace or a string exec or eval runs. The executed check beside the pin
+    (test_a_port_one_test_sets_is_gone_when_the_next_test_starts, a child pytest under the real conftest) reads the port
+    at run time whatever route set it, on the machine and environment the run has."""
+    tree = ast.parse(open(os.path.join(HERE, "conftest.py"), encoding="utf-8", errors="replace").read() if src is None else src)
+    names = _EnvNames(tree)
+    out = set()
+    for fn in _conftest_autouse_fixtures(tree):
+        out |= _env_writes(fn, names, "conftest.py")
+    return out
+
+
 def _conftest_fixture_env_names(src=None):
     """Every environment name an autouse fixture of tests/conftest.py writes or pops anywhere in its body, in any shape
     _env_write_records reads, whatever the fixture's scope and wherever the statement stands (before or after the yield,
     conditional, in a literal loop): the WIDE read, for a check that asks whether conftest touches a name per test at all
     (the module env fixture's watched list, where conftest's own write would read as the module's). The narrow read,
     _conftest_reasserted_names, would be the unsafe side there: a conditional or late write of a watched name would pass
-    it unread."""
+    it unread. The writes are _conftest_fixture_env_writes' (what it does not read is in its docstring)."""
     tree = ast.parse(open(os.path.join(HERE, "conftest.py"), encoding="utf-8", errors="replace").read() if src is None else src)
     names = _EnvNames(tree)
-    out = set()
-    for fn in tree.body:
-        if isinstance(fn, ast.FunctionDef) and _is_autouse_fixture(fn):
-            out |= _env_writes(fn, names, "conftest.py") | _env_removals(fn, names)
+    out = _conftest_fixture_env_writes(src)
+    for fn in _conftest_autouse_fixtures(tree):
+        out |= _env_removals(fn, names)
     return out
 
 
@@ -2971,6 +3127,78 @@ class _Link:
         self.tail = tail
 
 
+_COLLECTOR_READS = ("get_freeze_count",)
+#   the one attribute of gc this module may touch: the freeze-count pin's read (setUpModule, tearDownModule)
+
+
+def _collector_touches(tree):
+    """(line, spelling) for every place in `tree` that reaches the collector's state or parse_cache's memo: an attribute of
+    a name bound to the gc module (`import gc`, `import gc as g`) other than _COLLECTOR_READS, any name imported from gc
+    (`from gc import freeze`), and the attribute `derived` of a name bound to tests/parse_cache.py (`PC.derived`,
+    `parse_cache.derived`, or under any alias an import gives it). An attribute is read wherever it stands, called or not,
+    so `f = gc.freeze` counts as `gc.freeze`. What it does not read: a string that names one (getattr(gc, "freeze"),
+    importlib.import_module("gc"), exec or eval of a text), a module reached through another (sys.modules["gc"]), and a
+    helper module this one imports that touches them (tests/parse_cache.py itself calls gc.freeze inside derived(), which
+    this module does not call)."""
+    gc_names, pc_names, out = set(), set(), []
+    for n in ast.walk(tree):
+        if isinstance(n, ast.Import):
+            for a in n.names:
+                if a.name == "gc":
+                    gc_names.add(a.asname or "gc")
+                elif a.name.split(".")[-1] == "parse_cache":
+                    pc_names.add(a.asname or a.name)
+        elif isinstance(n, ast.ImportFrom):
+            if n.module == "gc":
+                out += [(n.lineno, "from gc import %s" % a.name) for a in n.names]
+            for a in n.names:
+                if a.name == "parse_cache":
+                    pc_names.add(a.asname or a.name)
+    for n in ast.walk(tree):
+        if isinstance(n, ast.Attribute):
+            base = ".".join(_dotted(n.value) or [])
+            if base in gc_names and n.attr not in _COLLECTOR_READS:
+                out.append((n.lineno, "%s.%s" % (base, n.attr)))
+            elif base in pc_names and n.attr == "derived":
+                out.append((n.lineno, "%s.derived" % base))
+    return sorted(out)
+
+
+_FREEZE_AT_START = []
+#   gc.get_freeze_count() as setUpModule read it, for tearDownModule's second read (THE BEHAVIOURAL PIN)
+
+
+def setUpModule():
+    """The start of this module's run: the built-once count is zeroed (a worker that sets the module up again builds again,
+    after tearDownModule dropped the held derivation), and gc.get_freeze_count() is read for THE BEHAVIOURAL PIN in
+    tearDownModule (the reviewer's ruling of 2026-09-24 on round 2 of fork PR #894, clause 3). Read here and not at import:
+    pytest imports every module at collection, before any test runs, and another module's freeze may run in between."""
+    _CENSUS_BUILDS.clear()
+    _FREEZE_AT_START[:] = [gc.get_freeze_count()]
+
+
+def tearDownModule():
+    """The end of this module's run. THE RELEASE: the census's derivations (_CENSUS_HELD) and the resolver's module records
+    (_MODULE_CACHE) are dropped, which frees them by reference count, neither holding a cycle (measured with the collector
+    off at round 2 of fork PR #894, not pinned: the ruling asks for one behavioural pin; no collection runs here). THE
+    BEHAVIOURAL PIN (the same ruling, clause 3): gc.get_freeze_count() is read again after the release and is not above
+    what setUpModule read, so the module froze nothing (a build behind
+    parse_cache.derived freezes every object tracked when it returns, and every later perf-snapshot read in the process
+    walks them). The count is live and falls when a frozen object dies, so an object frozen before this module can lower
+    it in between, while only a freeze in this module's run raises it; hence not above, rather than equal. Two reads only:
+    each walks the frozen objects. A red here is pytest's error at the teardown of the module's last test."""
+    _CENSUS_HELD.clear()
+    _MODULE_CACHE.clear()
+    after = gc.get_freeze_count()
+    before = _FREEZE_AT_START.pop() if _FREEZE_AT_START else None
+    if before is not None and after > before:
+        raise AssertionError("tests/test_hermetic_kernel_postal.py froze objects in its run: gc.get_freeze_count() read %d at "
+                             "setUpModule and %d at tearDownModule, after the census's derivations were dropped. The module "
+                             "changes no collector state (the reviewer's ruling of 2026-09-24 on round 2 of fork PR #894): its "
+                             "census reads trees through parse_cache.source_and_tree and never derives through parse_cache.derived, "
+                             "which calls gc.freeze() after a build" % (before, after))
+
+
 class HermeticKernelPostal(unittest.TestCase):
     def test_kernel_env_gives_every_lab_kernel_its_own_never_started_bus(self):
         env = _lab.kernel_env("/tmp/lab", "/tmp/lab/claude", "/tmp/lab/dist", 1, "tok")
@@ -3120,18 +3348,24 @@ class HermeticKernelPostal(unittest.TestCase):
         compared with the module's own os.walk population by EQUALITY (a path the census loop skipped reds here; the
         reviewer's ruling of round 1 on fork PR #894, where the count returned was the paths handed in), and the writer
         modules of the two dated names without a mandate and of the floor-only names equal their committed files
-        (_writer_set_faults). THE COUNTER PINS: the census runs twice here, and the helper's builds_of for its key is 1,
-        as is the census's own build count for it (so a derivation made outside parse_cache.derived is seen too), and
-        every file it read was parsed once in the process (parse_cache.parses_of), whatever ran before this test."""
+        (_writer_set_faults). THE MECHANISM PINS (the reviewer's ruling of 2026-09-24 on round 2 of fork PR #894, clause
+        2, which superseded round 1's builds_of pins with the derived() build): the census is read twice here and the
+        whole tree was built once in this module's run (_CENSUS_BUILDS, the count the build keeps; red under a build per
+        read, and, with test_the_whole_tree_census_is_built_once_in_the_modules_run_however_many_tests_read_it reading
+        it too, under a build per test), each file was walked once in that build (_walk_unit's count; red under a file
+        walked twice), and every file the census read was parsed once in the process (parse_cache.parses_of; red under
+        a second parse), whatever ran before this test."""
         walked = _tests_tree_walk()
         self.assertGreater(len(walked), 900, "the os.walk finds the tree, recursively, not an empty population: %d files" % len(walked))
         paths = _tests_tree_paths()
         n, counts, records = module_level_env_census(paths)
         self.assertEqual(n, len(walked), "the census parsed every file the os.walk finds, counted inside its loop")
-        self.assertEqual(module_level_env_census(paths)[0], n, "the second call reads the one derivation")
-        key = _census_key(paths)
-        self.assertEqual((PC.builds_of(key), _CENSUS_BUILDS[key]), (1, 1),
-                         "one derivation of the whole tree in this process, through parse_cache.derived (helper's count, census's count)")
+        self.assertEqual(module_level_env_census(paths)[0], n, "the second call reads the held derivation")
+        self.assertEqual(_CENSUS_BUILDS[tuple(paths)], 1, "the whole tree was built once in this module's run, however many "
+                                                          "reads (the count _census_build keeps; setUpModule zeroes it)")
+        parsed, walks = _census_parsed_modules(paths), _census_derivation(paths)[3]
+        self.assertEqual({m: k for m, k in walks.items() if k != 1}, {}, "each file was walked once in the build (_walk_unit)")
+        self.assertEqual(sorted(walks), sorted(parsed), "every file the build parsed was walked, and no other")
         self.assertEqual([os.path.relpath(p, HERE) for p in paths if PC.parses_of(p) != 1], [],
                          "every file the census read was parsed once in this process (parse_cache.source_and_tree)")
         self.assertEqual(_licence_table_faults(LICENSED_MODULE_LEVEL_WRITES), [], "every licence is checkable and a temporary one is dated")
@@ -3147,6 +3381,18 @@ class HermeticKernelPostal(unittest.TestCase):
             writers = _leak_writers(records, name)
             self.assertEqual(writers, [], "%s is written at module level by %r (a test module's write, or a floor module's "
                                           "other than the floor value FLOOR_LEAK_WRITES names)" % (name, writers))
+
+    def test_the_whole_tree_census_is_built_once_in_the_modules_run_however_many_tests_read_it(self):
+        """The built-once pin's second reader (the reviewer's ruling of 2026-09-24 on round 2 of fork PR #894, clause 2: the
+        count is red under a build per test). This test reads the whole-tree census as the census pin does, and each of
+        the two asserts, after its own reads, that the module's run built the whole tree once (_CENSUS_BUILDS). With the
+        derivation held by the module, the second of the two to run reads the held one, whichever it is; a build per
+        test makes that second one red, and a build per read makes the census pin red on its own. Under xdist the two
+        can run on different workers, each a process of its own that builds once and counts one."""
+        paths = _tests_tree_paths()
+        self.assertEqual(module_level_env_census(paths)[0], len(_tests_tree_walk()), "the census parsed the os.walk population")
+        self.assertEqual(_CENSUS_BUILDS[tuple(paths)], 1, "the whole tree was built once in this module's run, whichever of "
+                                                          "its readers ran first")
 
     def test_the_per_name_check_passes_the_floors_client_only_and_faults_every_other_leak_write(self):
         """The census pin's per-name check (_leak_writers) passes one floor write, upstream's client-only line
@@ -3391,16 +3637,36 @@ class HermeticKernelPostal(unittest.TestCase):
         refuter's other two probes, a plain assignment and a value other than the floor's, are planted and accepted with
         the forms today's conftest uses: the rule does not read the value. The two shapes the reader's docstring names as
         not read, a write through a call and a pop whose value is assigned, are planted as read as no re-assert, and so is
-        a literal loop that rebinds its own name."""
+        a literal loop that rebinds its own name. Since the verifier's findings on round 2 of fork PR #894 the port's "not
+        among the writes" half reads the WIDE writes (_conftest_fixture_env_writes), so a write of the port in an autouse
+        fixture beside the pop, conditional, after the yield, by setdefault or in a session-scoped fixture, is among them,
+        where the narrow writes the half read at round 2's sixteenth commit had none of the four; the two other classes of
+        those findings have tests of their own (a write after a block that may end the fixture, and a fixture pytest never
+        registers)."""
         got = _conftest_reasserted_names()
         names = got.writes | got.removals
         for name, lic in LICENSED_MODULE_LEVEL_WRITES.items():
             if lic.reasserted:
                 self.assertIn(name, names, "tests/conftest.py no longer re-asserts %s before every test (an unconditional plain "
                                            "assignment or pop before the yield of a function-scoped autouse fixture)" % name)
-        self.assertEqual(("ROMP_POSTAL_PORT" in got.removals, "ROMP_POSTAL_PORT" in got.writes), (True, False),
-                         "the dead-port fixture pops ROMP_POSTAL_PORT before every test and sets it nowhere (2026-09-22); the "
-                         "executed check is test_a_port_one_test_sets_is_gone_when_the_next_test_starts")
+        self.assertEqual(("ROMP_POSTAL_PORT" in got.removals, "ROMP_POSTAL_PORT" in _conftest_fixture_env_writes()), (True, False),
+                         "the dead-port fixture pops ROMP_POSTAL_PORT before every test, and no autouse fixture writes it anywhere "
+                         "in its body, in any shape or scope (2026-09-22); the executed check is "
+                         "test_a_port_one_test_sets_is_gone_when_the_next_test_starts")
+        pop = '    os.environ.pop("ROMP_POSTAL_PORT", None)\n'
+        for what, src in (("a conditional write", "@pytest.fixture(autouse=True)\ndef _p():\n" + pop +
+                           "    if os.environ.get('CI'):\n        os.environ['ROMP_POSTAL_PORT'] = '45678'\n    yield\n"),
+                          ("a write after the yield", "@pytest.fixture(autouse=True)\ndef _p():\n" + pop +
+                           "    yield\n    os.environ['ROMP_POSTAL_PORT'] = '45678'\n"),
+                          ("a setdefault", "@pytest.fixture(autouse=True)\ndef _p():\n" + pop +
+                           "    os.environ.setdefault('ROMP_POSTAL_PORT', '45678')\n    yield\n"),
+                          ("a session-scoped fixture's write", "@pytest.fixture(autouse=True)\ndef _p():\n" + pop + "    yield\n"
+                           "@pytest.fixture(autouse=True, scope='session')\ndef _s():\n    os.environ['ROMP_POSTAL_PORT'] = '45678'\n    yield\n")):
+            src = "import os, pytest\n" + src
+            self.assertEqual(("ROMP_POSTAL_PORT" in _conftest_reasserted_names(src).removals,
+                              "ROMP_POSTAL_PORT" in _conftest_fixture_env_writes(src),
+                              "ROMP_POSTAL_PORT" in _conftest_reasserted_names(src).writes), (True, True, False),
+                             "%s of the port beside the pop: among the wide writes, which the pin reads, and not the narrow ones: %s" % (what, src))
         for name in ("ROMP_SERVICE_ENV_FILE", "ROMP_SERVICE_ENV"):
             self.assertIn(name, got.writes, "the service-env pair is re-asserted by a for over a literal tuple")
         # the scan reads a fixture's pop and its assignment apart, and nothing outside an autouse fixture
@@ -3459,6 +3725,68 @@ class HermeticKernelPostal(unittest.TestCase):
                            '    os.environ[var] = "1"\nyield\n')
         self.assertEqual(_conftest_reasserted_names(rebound), _Reasserted(frozenset(), frozenset()),
                          "a literal loop that rebinds its own name writes something else: not read")
+
+    def test_a_write_after_a_block_that_may_end_the_fixture_is_no_re_assert(self):
+        """The verifier's finding on round 2 of fork PR #894 (the ruled clause: only an UNCONDITIONAL plain assignment or pop
+        before the yield counts): the reader stopped at a return or a raise only where it was itself a statement of the
+        fixture's body, so a write after `if os.environ.get("CI"): return` counted, and a child pytest showed the test after
+        a test that set the name reading it unasserted on the runs the condition held. Each plant was accepted at round 2's
+        sixteenth commit and is refused now: a write after an if, a try handler, a with, a for, a while or a match that
+        returns, after an if that raises, and after a class body that raises (a class body runs where it stands). A write
+        after a block with neither, after a nested def whose body returns (its return is its own) and after an assert (not
+        read as an end: the docstring of _conftest_reasserted_names says why) is accepted."""
+        def conftest(body):
+            return "import os, pytest\n@pytest.fixture(autouse=True)\ndef _f():\n%s" % textwrap.indent(body, "    ")
+        plain = 'os.environ["ROMP_MANAGER_PORT"] = "1"\n'
+        ends = (("a write after an if that returns", conftest("if os.environ.get('CI'):\n    return\n" + plain)),
+                ("a write after a try whose handler returns", conftest("try:\n    import planted_missing\nexcept ImportError:\n"
+                                                                        "    return\n" + plain)),
+                ("a write after a with that returns", conftest("with open(os.devnull):\n    if os.environ.get('CI'):\n"
+                                                                "        return\n" + plain)),
+                ("a write after a for that returns", conftest("for _x in ('a',):\n    if os.environ.get('CI'):\n        return\n" + plain)),
+                ("a write after a while that returns", conftest("while os.environ.get('CI'):\n    return\n" + plain)),
+                ("a write after a match that returns", conftest("match os.environ.get('CI'):\n    case '1':\n        return\n" + plain)),
+                ("a write after an if that raises", conftest("if os.environ.get('CI'):\n    raise RuntimeError('planted')\n" + plain)),
+                ("a write after a class body that raises", conftest("class _K:\n    if os.environ.get('CI'):\n"
+                                                                     "        raise RuntimeError('planted')\n" + plain)))
+        for what, src in ends:
+            got = _conftest_reasserted_names(src)
+            self.assertNotIn("ROMP_MANAGER_PORT", got.writes | got.removals, "%s: not re-asserted before every test: %s" % (what, src))
+        for what, src in (("a write after an if with no return or raise", conftest("if os.environ.get('CI'):\n    pass\n" + plain)),
+                          ("a write after a nested def whose body returns", conftest("def _g():\n    return 1\n" + plain)),
+                          ("a write after an assert", conftest("assert os.devnull\n" + plain))):
+            got = _conftest_reasserted_names(src)
+            self.assertIn("ROMP_MANAGER_PORT", got.writes | got.removals, "%s re-asserts the name: %s" % (what, src))
+
+    def test_a_fixture_whose_name_the_module_binds_again_re_asserts_nothing(self):
+        """The verifier's finding on round 2 of fork PR #894 (the ruled clause: a function-scoped autouse fixture): pytest
+        registers the fixtures it finds among the module's attributes after the import, so a fixture def whose name the
+        module binds again is never registered and its body never runs, and the reader counted it (a later `def _f():
+        yield` and a later `_f = None`, each shown by a child pytest to leave the fixture unrun). Each plant was accepted at
+        round 2's sixteenth commit and is refused now: the fixture's name bound by a later plain def, a later assignment,
+        an assignment before the def (the def replaces it, refused on the safe side), a later class, a later import, a del,
+        a global in a def, a for target, a with target, a walrus and an except name, and a star import, which could bind
+        any name. A local of the same name in another def binds nothing of the module's and is accepted."""
+        base = '@pytest.fixture(autouse=True)\ndef _f():\n    os.environ["ROMP_MANAGER_PORT"] = "1"\n    yield\n'
+        shadowed = (("a later plain def of the name", base + "def _f():\n    yield\n"),
+                    ("a later assignment of the name", base + "_f = None\n"),
+                    ("an assignment of the name before the def", "_f = None\n" + base),
+                    ("a later class of the name", base + "class _f:\n    pass\n"),
+                    ("a later import of the name", base + "from os import sep as _f\n"),
+                    ("a del of the name", base + "del _f\n"),
+                    ("a global of the name in a def", base + "def _g():\n    global _f\n    _f = None\n"),
+                    ("a for target of the name", base + "for _f in ():\n    pass\n"),
+                    ("a with target of the name", base + "with open(os.devnull) as _f:\n    pass\n"),
+                    ("a walrus of the name", base + "(_f := None)\n"),
+                    ("an except name of the name", base + "try:\n    pass\nexcept Exception as _f:\n    pass\n"),
+                    ("a star import", base + "from os.path import *\n"))
+        for what, text in shadowed:
+            src = "import os, pytest\n" + text
+            got = _conftest_reasserted_names(src)
+            self.assertNotIn("ROMP_MANAGER_PORT", got.writes | got.removals, "%s: pytest never registers the fixture: %s" % (what, src))
+        kept = "import os, pytest\n" + base + "def _g():\n    _f = 1\n    return _f\n"
+        self.assertEqual(_conftest_reasserted_names(kept), _Reasserted(frozenset({"ROMP_MANAGER_PORT"}), frozenset()),
+                         "a local of the name in another def binds nothing of the module's: %s" % kept)
 
     def test_every_licence_carries_a_checkable_condition_and_a_temporary_one_is_dated(self):
         """The licensed set is held to the reviewer's shape by _licence_table_faults (the fixup of 2026-09-22: the table
@@ -3554,11 +3882,12 @@ class HermeticKernelPostal(unittest.TestCase):
         real tree are the by-product fork PR #871's docstring recorded from a grep, re-derived by ast here and pasted at
         the head in the PR from --census; they are NOT pinned by equality, since they move with every new module (what
         is compared is listed in module_level_env_census's docstring). Since the reviewer's ruling of round 1 on fork PR
-        #894: this one-path census is a derivation of its own (the key carries the path tuple), read once by the census
-        and again by the table (builds_of 1, the file parsed once); a second tree of a test module and a helper prints
-        each name's total line and the split between test_*.py files and the others, the figures fork PR #871's
-        by-product counts are compared with; the parsed count is the files parsed, so a census handed a file that does
-        not parse fails naming it."""
+        #894: this one-path census is a derivation of its own (the holder's key is the path tuple), read once by the
+        census and again by the table (built once in the module's run, the file walked once and parsed once; the ruling of
+        2026-09-24 re-aimed these from parse_cache's builds_of to the module's own counts); a second tree of a test module
+        and a helper prints each name's total line and the split between test_*.py files and the others, the figures fork
+        PR #871's by-product counts are compared with; the parsed count is the files parsed, so a census handed a file
+        that does not parse fails naming it."""
         d = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, d, True)
         src = ("import os\nos.environ['A'] = '1'\nos.environ.setdefault('A', '2')\nos.environ.update({'B': '3'})\n"
@@ -3591,9 +3920,9 @@ class HermeticKernelPostal(unittest.TestCase):
                      row % ("D", "assignment", 1, 1, 0, 1, 1, 1, 0, 0), row % ("A", "augmented", 1, 1, 0, 0, 1, 1, 0, 0),
                      row % ("B", "target", 1, 1, 0, 0, 1, 1, 0, 0)):
             self.assertIn(want, lines)
-        key = _census_key([path])
-        self.assertEqual((PC.builds_of(key), _CENSUS_BUILDS[key], PC.parses_of(path)), (1, 1, 1),
-                         "the census and the table read one derivation of this path tuple, and the file was parsed once")
+        self.assertEqual((_CENSUS_BUILDS[(path,)], _census_derivation([path])[3], PC.parses_of(path)), (1, {rel: 1}, 1),
+                         "the census and the table read one held derivation of this path tuple, the file walked once in it "
+                         "and parsed once in the process")
         # the split and the total line: a test module and a helper, one name each writes, one only the helper writes
         with open(os.path.join(d, "test_split.py"), "w", encoding="utf-8") as f:
             f.write("import os\nos.environ['S'] = '1'\nos.environ.setdefault('S', '2')\n")
@@ -5707,19 +6036,20 @@ class HermeticKernelPostal(unittest.TestCase):
         records["XDG_STATE_HOME"] = [r for _name, r in tagged]
         self.assertEqual(_licence_faults(records), [], "the licence's value check reads the resolved value under the tag")
 
-    def test_a_census_walk_that_writes_on_a_parser_singleton_is_refused_by_its_derivation_and_memoised_as_nothing(self):
-        """The contract's read-only clause, for this walker, held by the derivation (the reviewer's ruling of round 1 on
-        fork PR #894: this pin walked the whole tree a second time and compared the parser's singletons before and after,
-        and once the census reads one derivation per process a before and after around a memo hit proves nothing). The
-        census derives behind parse_cache.derived, which checks the parser's shared singleton nodes (one object each for
-        the process; a write on one is on every tree parsed after it) before and after every build and refuses a build
-        that wrote on one, so the whole-tree derivation the census pin reads passed that check when it was built. THE
-        PLANT: the census's walker, wrapped to write the tag another census's walker once left on every node
-        (`_parent`, fork PR #891's census before the ruling) on the parser's Load singleton, derives a one-module tree:
-        the derivation raises AssertionError naming the census's key as the build that wrote it and the attribute, and
-        memoises nothing (after the tag is put back, the next call builds again: two builds of the key); unplanted, that
-        build derives the module's one write and leaves the singletons as it found them. A census that derived outside
-        parse_cache.derived would raise nothing here."""
+    def test_a_census_walk_that_writes_on_a_parser_singleton_is_refused_by_its_build_and_held_as_nothing(self):
+        """The contract's read-only clause, for this walker, held by the census's build (the reviewer's ruling of round 1
+        on fork PR #894: this pin walked the whole tree a second time and compared the parser's singletons before and
+        after, and once the census reads one held derivation a before and after around a held read proves nothing). The
+        build checks the parser's shared singleton nodes (one object each for the process; a write on one is on every
+        tree parsed after it) before and after it runs (tests/parse_cache.py's check_singletons, the check
+        parse_cache.derived ran around the build until the reviewer's ruling of 2026-09-24 took derived() out of this
+        module) and refuses a build that wrote on one, so the whole-tree derivation the census pin reads passed that check
+        when it was built. THE PLANT: the census's walker, wrapped to write the tag another census's walker once left on
+        every node (`_parent`, fork PR #891's census before the ruling) on the parser's Load singleton, derives a
+        one-module tree: the build raises AssertionError naming itself as the build that wrote it and the attribute, and
+        nothing is held (after the tag is put back, the next read builds again: two builds of the path tuple in the
+        module's run); unplanted, that build derives the module's one write and leaves the singletons as it found them. A
+        build without the check would raise nothing here."""
         load = _parser_singletons()["Load"]
         singletons = _parser_singletons()
         before = {kind: dict(vars(node)) for kind, node in singletons.items()}
@@ -5728,7 +6058,6 @@ class HermeticKernelPostal(unittest.TestCase):
         path = os.path.join(d, "test_singleton_plant.py")
         with open(path, "w", encoding="utf-8") as f:
             f.write('import os\nos.environ["ROMP_KERNEL_NO_OPEN"] = "1"\n')
-        key = _census_key([path])
         me = sys.modules[_census_build.__module__]
         walker = me._module_level_records
         saved = dict(vars(load))
@@ -5746,12 +6075,12 @@ class HermeticKernelPostal(unittest.TestCase):
             me._module_level_records = walker
             _restore_dict(load, saved)
         message = str(caught.exception)
-        self.assertIn("after the build of %r (parse_cache.derived)" % (key,), message)
+        self.assertIn("after the census build over 1 path (tests/test_hermetic_kernel_postal.py): the build itself wrote them", message)
         self.assertIn("Load carries _parent (Module)", message)
-        self.assertEqual((PC.builds_of(key), _CENSUS_BUILDS[key]), (1, 1), "the refused build was counted")
+        self.assertEqual(((path,) in _CENSUS_HELD, _CENSUS_BUILDS[(path,)]), (False, 1), "the refused build was counted and not held")
         n, counts, records = module_level_env_census([path])
         self.assertEqual((n, counts), (1, {"ROMP_KERNEL_NO_OPEN": {"assignment": 1}}))
-        self.assertEqual((PC.builds_of(key), _CENSUS_BUILDS[key]), (2, 2), "nothing was memoised: the next call built again")
+        self.assertEqual(_CENSUS_BUILDS[(path,)], 2, "nothing was held: the next read built again")
         after = {kind: dict(vars(node)) for kind, node in singletons.items()}
         self.assertEqual(after, before, "the unplanted walk writes no attribute on a node: per-node data belongs in a side "
                                         "table keyed by id(node)")
@@ -5776,52 +6105,6 @@ class HermeticKernelPostal(unittest.TestCase):
                       "the resolver's record of the imported module is built over parse_cache's tree for it")
         self.assertEqual(PC.parses_of(asm), 1, "the imported module was parsed once in this process")
 
-    def test_the_census_build_leaves_no_reference_cycle_behind_for_the_freeze(self):
-        """The rule for a build in tests/parse_cache.py's docstring, for this census: derived() runs a build with the
-        collector off and freezes everything tracked when it returns, so a cycle the build dropped would stay frozen
-        for the process. The census's build over a tree of a test module that calls a tests helper at import (the
-        resolver then reads the helper's module, test_asm_checkpoint.py), a class body and a module-level loop, and a
-        module with a def taking the mapping as a default, run with the collector off, leaves gc.collect() nothing to
-        reclaim; the same build with a walker planted to drop one self-referencing list per module leaves one per module,
-        so the check can fail. (The whole tree's build left none on 3.10 and 3.12 at round 2 of fork PR #894, measured by
-        the builder.)"""
-        d = tempfile.mkdtemp()
-        self.addCleanup(shutil.rmtree, d, True)
-        helper = os.path.join(d, "cycle_helper.py")
-        with open(helper, "w", encoding="utf-8") as f:
-            f.write("import os\n\ndef floor(env=os.environ):\n    env.setdefault('ROMP_KERNEL_NO_OPEN', '1')\n\nfloor()\n")
-        module = os.path.join(d, "test_cycle_plant.py")
-        with open(module, "w", encoding="utf-8") as f:
-            f.write("import os\nfrom test_asm_checkpoint import kernel_module\nkernel_module()\n\n"
-                    "class K:\n    os.environ['ROMP_MANAGER_PORT'] = '1'\n\nfor _v in ('A', 'B'):\n    os.environ[_v] = '1'\n")
-        paths = [helper, module]
-        me = sys.modules[_census_build.__module__]
-        walker = me._module_level_records
-        self.addCleanup(setattr, me, "_module_level_records", walker)
-
-        def dropping(tree, module, root=None):
-            cycle = []
-            cycle.append(cycle)                      # dropped at return, reclaimable by the collector alone
-            return walker(tree, module, root)
-
-        def found_after_build():
-            gc.collect()
-            enabled = gc.isenabled()
-            gc.disable()
-            try:
-                _census_build(paths)
-                return gc.collect()
-            finally:
-                if enabled:
-                    gc.enable()
-        self.assertEqual(found_after_build(), 0, "the census's build leaves no cycle for the freeze")
-        self.assertIn("kernel_module() at", _census_build(paths)[2]["ROMP_KERNEL_NO_OPEN"][-1].via, "the helper was followed")
-        me._module_level_records = dropping
-        try:
-            self.assertEqual(found_after_build(), len(paths), "the planted walker's dropped cycles are found, one per module")
-        finally:
-            me._module_level_records = walker
-
     def test_the_module_imports_no_copy_and_deep_copies_no_node(self):
         """The contract's no-deepcopy clause, held on this module's own tree rather than its text (a comment naming the
         call would not count): no import of copy, no call of copy.deepcopy, copy.copy or a bare deepcopy anywhere in
@@ -5836,6 +6119,28 @@ class HermeticKernelPostal(unittest.TestCase):
         self.assertEqual((imports, copies, "copy" in globals()), ([], [], False),
                          "the contract (the reviewer, 2026-09-22): no consumer deep-copies a parsed node; a substitution runs over a "
                          "fresh parse of the expression's text (_fresh)")
+
+    def test_the_module_touches_no_collector_state_and_derives_nothing_through_parse_cache(self):
+        """Clause 1 of the reviewer's ruling of 2026-09-24 on round 2 of fork PR #894, held on this module's own tree (a
+        comment or a string naming a call does not count): no gc.freeze, gc.disable, gc.collect, nor any other attribute
+        of gc but the freeze-count read the behavioural pin makes, and no parse_cache.derived, however the module is
+        imported (_collector_touches). Run over plants so the reader is known to see each spelling: each of those calls,
+        an attribute taken without a call, a name imported from gc, gc under an alias, and derived through each import
+        road of tests/parse_cache.py (the package road, the script road, a dotted import) is named with its line; the
+        freeze-count read and a string that spells a call are not. What the reader does not see is in its docstring."""
+        self.assertEqual(_collector_touches(ast.parse(open(__file__, encoding="utf-8").read(), filename=__file__)), [],
+                         "the module changes no collector state and never derives through parse_cache.derived")
+        head = "import gc\nfrom . import parse_cache as PC\n"
+        for body, want in (("gc.freeze()\n", "gc.freeze"), ("gc.disable()\n", "gc.disable"), ("gc.collect()\n", "gc.collect"),
+                           ("gc.enable()\n", "gc.enable"), ("gc.unfreeze()\n", "gc.unfreeze"), ("f = gc.freeze\n", "gc.freeze"),
+                           ("PC.derived(('k',), list)\n", "PC.derived")):
+            self.assertEqual(_collector_touches(ast.parse(head + body)), [(3, want)], body)
+        for src, want in (("from gc import freeze\n", "from gc import freeze"), ("import gc as g\ng.collect()\n", "g.collect"),
+                          ("import parse_cache as P\nP.derived(('k',), list)\n", "P.derived"),
+                          ("import tests.parse_cache\ntests.parse_cache.derived(('k',), list)\n", "tests.parse_cache.derived")):
+            self.assertEqual([w for _line, w in _collector_touches(ast.parse(src))], [want], src)
+        self.assertEqual(_collector_touches(ast.parse(head + "n = gc.get_freeze_count()\ns = 'gc.freeze()'\n")), [],
+                         "the freeze-count read and a string are not touches")
 
 
 def _all_licensed_once():
