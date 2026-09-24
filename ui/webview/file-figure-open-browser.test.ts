@@ -1753,7 +1753,9 @@ test("in a browser at a device scale of 2, under CDP touch emulation on the chat
 // view by PageDown, or by a table that scrolls on its own, opened it on Space.) The three requirements and their pins: no mouse
 // press focuses the web control, pins (a), (b) and (c) and the other-button pin; any focus it holds is painted, pin (e), with (c)'s
 // second branch; Enter or Space opens it only while it is in view at the key, the viewport and every ancestor that clips on that
-// axis, pins (d) and (f), each by Space and by Enter, and the key-release pin (Space clicks a button on its release, so a Space
+// axis, pins (d) and (f), each by Space, by Enter and by the numeric keypad's Enter (NumpadEnter, which Chromium sends as the key
+// Enter under a code of its own, so the key gate, which reads the key, reads it as Enter; each press's key and code are read back
+// at the window first, KEY_SENT), and the key-release pin (Space clicks a button on its release, so a Space
 // pressed in view and released out of view is read too), with (a)'s scroll. Four keep checks hold what must still work: Space held on a keyboard focus presses the
 // control and its release opens once, a control in view inside the scrolling table and one half in view each open on their key,
 // and a mouse press held on the control matches :active until its release opens once. The report: a remote picture of 300 by 200
@@ -1873,6 +1875,16 @@ async function tabToControl(page: any, alt: string): Promise<number> {
   }
   throw new Error("Tab never reached the " + alt + " picture's control");
 }
+/** What a press of each key pins (d) and (f) press sends, as a key and a code: Space and Enter as themselves, and the numeric keypad's
+ *  Enter as the key Enter under the code NumpadEnter, so the key gate, which reads the key, reads it as it reads Enter. */
+const KEY_SENT: Record<"Space" | "Enter" | "NumpadEnter", [string, string]> = { Space: [" ", "Space"], Enter: ["Enter", "Enter"], NumpadEnter: ["Enter", "NumpadEnter"] };
+/** `key` pressed on the keyboard's holder, its keydown read at the window before any listener of the page's; returns the key and the
+ *  code the keydown carried. */
+async function pressReadingKey(page: any, key: keyof typeof KEY_SENT): Promise<[string, string] | null> {
+  await page.evaluate(() => { const w = window as any; w.__keySent = null; window.addEventListener("keydown", (e) => { w.__keySent = [e.key, e.code]; }, { capture: true, once: true }); });
+  await page.keyboard.press(key);
+  return page.evaluate(() => (window as any).__keySent);
+}
 /** The web control after `alt`, focused or not, read as painted in both themes when it holds the keyboard: a read under 3:1, or a line
  *  paintedRatio refuses (a control at opacity 0 shows the picture alone, no dash and no ground), is pushed onto `fails`; each read is
  *  noted. Returns whether the control held the keyboard in each theme. */
@@ -1967,7 +1979,7 @@ for (const pointer of ["fine", "laptop"] as Pointer[]) for (const gesture of ["c
     });
   });
 }
-for (const surface of ["chat", "feed", "pane"] as Surface[]) for (const key of ["Space", "Enter"] as const) {
+for (const surface of ["chat", "feed", "pane"] as Surface[]) for (const key of ["Space", "Enter", "NumpadEnter"] as const) {
   test("in a browser " + onWhat("fine", surface) + ", the web control's focus, pin (d): Tab to the web control, PageDown until it is out of view, then " + key + ": no open (the file review's round 14, extra9-1: before the fixes " + key + " opened one from the control out of view)", { timeout: 120000 }, async (t) => {
     const rec: Record<string, unknown> = { pin: "d", key };
     await focusCase(t, "fine", surface, rec, async (page, cdp) => {
@@ -1981,10 +1993,12 @@ for (const surface of ["chat", "feed", "pane"] as Surface[]) for (const key of [
       rec.pageDowns = n;
       rec.afterPageDown = s;
       assert.ok(s.ctl.bottom <= s.body.top && s.active === "control", "the focused control is out of view above the body (a precondition): " + s.ctl.bottom + " vs " + s.body.top + ", the keyboard on " + s.active);
-      await page.keyboard.press(key);
+      const sent = await pressReadingKey(page, key);
+      rec.keySent = sent;
       await settleScroll(page);
       const a = await focusState(page, "big");
       rec.afterKey = a;
+      assert.deepEqual(sent, KEY_SENT[key], "the press sent the key and the code " + key + " sends (a precondition, KEY_SENT)");
       assert.equal(a.opened, 0, key + " on the keyboard-focused control out of view opens nothing (a property pin read off the page)");
     });
   });
@@ -2004,7 +2018,7 @@ for (const surface of ["chat", "feed", "pane"] as Surface[]) {
     });
   });
 }
-for (const key of ["Space", "Enter"] as const) test("in a browser (a fine pointer), the web control's focus, pin (f): a Tab-focused web control in a table wider than the Rendered box, the table scrolled sideways until the control is outside the table's own scrollport while the body still shows its row, then " + key + ": no open (the file review's round 14, extra9-1: before the fixes " + key + " opened one)", { timeout: 120000 }, async (t) => {
+for (const key of ["Space", "Enter", "NumpadEnter"] as const) test("in a browser (a fine pointer), the web control's focus, pin (f): a Tab-focused web control in a table wider than the Rendered box, the table scrolled sideways until the control is outside the table's own scrollport while the body still shows its row, then " + key + ": no open (the file review's round 14, extra9-1: before the fixes " + key + " opened one)", { timeout: 120000 }, async (t) => {
   const rec: Record<string, unknown> = { pin: "f", key };
   await focusCase(t, "fine", "chat", rec, async (page, cdp) => {
     await pressPlainText(page, cdp, "fine", "wide");
@@ -2022,10 +2036,12 @@ for (const key of ["Space", "Enter"] as const) test("in a browser (a fine pointe
     });
     rec.geometry = g;
     assert.deepEqual([g.outside, g.rowShown, g.active], [true, true, true], "the focused control is outside the table's scrollport while the body shows its row (a precondition): " + JSON.stringify(g));
-    await page.keyboard.press(key);
+    const sent = await pressReadingKey(page, key);
+    rec.keySent = sent;
     await frames(page, 4);
     const s = await focusState(page, "wide");
     rec.afterKey = s;
+    assert.deepEqual(sent, KEY_SENT[key], "the press sent the key and the code " + key + " sends (a precondition, KEY_SENT)");
     assert.equal(s.opened, 0, key + " on the control outside the table's scrollport opens nothing (a property pin read off the page)");
   });
 });
