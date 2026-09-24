@@ -35468,11 +35468,16 @@ _SUBAGENT_EVICT_LOCK = threading.Lock()   # the eviction table's lock, stated he
 #                                           end-to-end case drives to a removed tree's pair served. Under the lock each store's g
 #                                           exceeds every value stored before it, so the max equals g (the out-of-order case's
 #                                           docstring states what the mutants show)
-_TREE_UNREADABLE = "unreadable"     # a reader's answer for a subagents root whose own lstat failed for a reason other than absence
-#                                     (_SubagentTreeUnreadable, raised by _subagent_tree, whose docstring states the shape): the feed key's
-#                                     identity component and the chat build's dependency note carry it where a stat's key would go, a
-#                                     value no stat produces, so neither equals an absent tree's (None) or a read one's, and a frame
-#                                     keyed on it moves when the read succeeds
+_TREE_UNREADABLE = "unreadable"     # the key recorded where a stat's key would go for a path a reader needed and could not read
+#                                     for a reason other than absence: a value no stat produces, so it never equals an absent path's
+#                                     (None) or a read one's, a chat build that recorded it is rebuilt at the next cycle's signature,
+#                                     and a frame keyed on it moves when the read succeeds. Its recorders: _subagent_meta_map (the
+#                                     chat build's dependency note) and _subagent_dirs_ident (the feed key's identity component, when
+#                                     no entry stands) for a subagents root whose own lstat failed (_SubagentTreeUnreadable, raised by
+#                                     _subagent_tree, whose docstring states the shape), and _subagent_walk_unreadable (the chat
+#                                     build's note) for the first place the agent-file walk excluded; which places the walk excludes
+#                                     is stated once, in _subagent_file_walk's docstring (round 3 of #882, regression-1: this comment
+#                                     named the root alone after the walk had begun recording places below it)
 
 
 def _subagents_dir(path):
@@ -35960,8 +35965,8 @@ def _subagent_tree_memo_report():
         fold of the standing resolution's file, so 1 + 3 A_s lstats and A_s x (D_s + 2) stats per read, N times per
         cycle; plus each walk's project-directory part above (its stamp once per cycle, dirStats 1); the failed calls
         move no counter; and the
-        chat build is told the tree is unreadable (_TREE_UNREADABLE, which no re-stat equals), so its tab is rebuilt
-        every cycle while the fault lasts (tests/test_subagent_tree_memo.py FailClosedRoads, and
+        chat build is told the tree is unreadable (_TREE_UNREADABLE, which no re-stat equals: the comment at its
+        definition), so its tab is rebuilt every cycle while the fault lasts (tests/test_subagent_tree_memo.py FailClosedRoads, and
         FaultExcludesItsOwnTree's no-holder cases). Guards
         test_an_unreadable_session_directory_resolves_every_agent_again_on_every_read_and_its_failed_calls_move_no_counter
         ({lstat: N x (3A + 1), stat: N x A x (D + 2)} under the tree; hit, miss, served and evict 0, dirStats 1);
@@ -36240,6 +36245,11 @@ def _subagent_file(path, agent_id, faults=None, notes=None):
     build recorded: an agent whose file was nowhere when the build looked, landing under the new sibling's tree, leaves
     that tab showing the file missing until another recorded key moves, while the next lookup finds the file. Witnessed
     by DependencyKey test_a_sibling_directory_appearing_after_a_build_moves_no_key_that_build_recorded_on_any_road.
+    The same residual where the build found the file: a build that found the agent's file under a sibling's tree
+    records no key under a sibling session directory that appears after it, and none for the project directory, and
+    neither does any later build that looks the agent up, on any of the three roads (a walk that finds the file under
+    the first sibling never reaches a directory sorted after it). Witnessed by DependencyKey
+    test_a_sibling_directory_appearing_after_a_build_that_found_the_file_is_recorded_by_no_later_build_on_any_road.
     A second residual (round 3 of #882, group B): the walk notes the own place only when nothing is there, and a
     symlinked subagents/ is no tree the readers record (_subagent_tree_dep_note notes nothing for a live link), so when
     that link is replaced by a real directory holding the agent's file, no key a build recorded moves: the tab keeps
@@ -36354,8 +36364,9 @@ def _subagent_file_walk(path, agent_id, read=None, faults=None, notes=None, excl
     tree's first directory is its root), so the flat check before the own tree's read takes the file on an lstat that
     finds a regular file and excludes nothing on a fault: _find_agent_file's lstat of the same path excludes it once the
     own tree reads, and when the own tree cannot be read the own root's exclusion covers it, so the first exclusion is
-    the own root. Until round 3 of #882 (group A) the walk read a candidate through os.path.isfile and an entry through
-    Path.is_dir, which can answer False on an error, so such a fault was taken for absence and its miss memoized on
+    the own root. Until round 3 of #882 (group A) the walk read a candidate through os.path.isfile, which answers False
+    on any error, and an entry through Path.is_dir, which before 3.14 raised on any errno but ENOENT, ENOTDIR, EBADF and
+    ELOOP and from 3.14 answers False on every error, so such a fault was taken for absence and its miss memoized on
     stamps a chmod or a cleared EIO never moves (tests/test_subagent_tree_memo.py FaultOnTheWalksOwnRead)."""
     read = read if read is not None else []
     notes = notes if notes is not None else []
@@ -39447,8 +39458,9 @@ def _chat_dep_note_taskout(of, key):
     transcript, a sidecar directory) under `key`, the (mtime, size) it stat'd BEFORE the read (so a write
     landing after the stat pairs the old key with new content, and the next signature check misses,
     never a stale hit); None when the path was absent, so its appearance is a change too; _TREE_UNREADABLE
-    when a subagents tree could not be read (_subagent_tree's docstring), a key no stat equals, so the
-    build is redone next cycle and reads again. A path reported twice under two different keys is recorded
+    when the reader needed the path and could not read it for a reason other than absence (the comment at
+    _TREE_UNREADABLE: its rule and its recorders), a key no stat equals, so the build is redone next cycle
+    and reads again. A path reported twice under two different keys is recorded
     under _CHAT_DEP_KEYS_DIFFER (_chat_build_deps). Nothing to report outside a chat build."""
     d = getattr(_chat_dep_scope, "deps", None)
     if d is not None:
