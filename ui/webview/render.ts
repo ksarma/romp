@@ -1198,6 +1198,7 @@ let pendingAnchorIntent: string | null = null; // kind the uuid anchor must hono
 let pendingAnchorT: number | null = null; // time fallback (epoch s) when the uuid can't resolve
 let pendingAnchorKind: string | null = null; // intent for the time fallback: "user" = land on the user's own turn
 let anchorPendingOlder = false; // scrollToAnchor kicked off a loadOlder fetch for an anchor past the resident tail → don't toast "couldn't locate"; chatHead re-lands when the chunk arrives (the user 2026-06-27)
+let anchorPreJumped = false;    // scrollToAnchor's window ask jumped the reader into the gap where the anchor will be (preJumpIntoGap): landActive's missed land leaves that place standing while the fetch is armed
 // ── the SEEK (the user 2026-08-25): a card/summary click sometimes needed a second press ──
 // The give-up underneath: landActive runs ONE scrollToAnchor attempt per pass and then nulls
 // pendingAnchor unconditionally — the "stash for the next render pass" scrollToAnchor writes was
@@ -12886,6 +12887,7 @@ function cssEscape(s: string): string {
 // pendingAnchor for the next render pass to retry.
 function scrollToAnchor(uuid: string): boolean {
   anchorPendingOlder = false;            // fresh attempt; set true below only if we kick off an older-history fetch
+  anchorPreJumped = false;               // …and no pre-jump yet: preJumpIntoGap, reached only through this function's window ask, sets it
   if (!uuid) return false;
   const v = activeId ? views.get(activeId) : null;
   // Resolve BY ID against the rendered turns: the atom uuid (every turn) OR the postal message id (postal
@@ -15496,8 +15498,8 @@ function landActive(content: HTMLElement | null, v: View, scrollerHolds: boolean
   // observer parked since the last paint on every road but the nothing-armed re-show (`saved`), BEFORE its landing attempt: an anchor's or
   // a moment's land reads the target's live rect (scrollToAnchor, landOn) and a resident target rebuilds nothing, so a take after the
   // attempt would re-size the spacer under a row just placed; a seek, the reload restore and the bottom land put the reader over the
-  // result too. The take is decided on what is ARMED, not on the outcome: a land whose anchor misses (nowhere in the transcript, the wrong
-  // kind, a fetch armed) falls through to the saved-place restore below with the spacers re-sized, so the row the SAVED place held is
+  // result too. The take is decided on what is ARMED, not on the outcome: a land whose anchor misses with no fetch armed (nowhere in the
+  // transcript, the wrong kind) falls through to the saved-place restore below with the spacers re-sized, so the row the SAVED place held is
   // captured here, at that place (the scroller does not hold it yet on a switch: the leaving tab's position is still under the viewport; on a view
   // the scroller already holds, the record was synced to the scroller above),
   // and the fallback puts it back at its offset (anchor-restore). The raw land-saved write stands whenever that restore finds no row to
@@ -15505,7 +15507,9 @@ function landActive(content: HTMLElement | null, v: View, scrollerHolds: boolean
   // which showActive runs after this land with the reader's own row, or for the next tail paint); no row was at the saved place (inside
   // a spacer); or the captured row is gone, because the attempt's window build around the anchor's unit (scrollToAnchor's
   // pointer-not-rendered and pointer-wrong-kind roads) replaced the rows before its re-query missed, which leaves the reader in that
-  // window at the pre-resize scrollTop, the residual the body names beside keepPlaceAcrossWindow's double miss after a rebuild.
+  // window at the pre-resize scrollTop, the residual the body names beside keepPlaceAcrossWindow's double miss after a rebuild. A miss with
+  // a FETCH ARMED puts nothing back: a pre-jump's placement stands over the take it was measured in, and with no pre-jump the raw write
+  // lands the saved place with the take given back (the fallback below).
   // land-active-keep.test.ts executes the roads (PR E, the maintainer's round 1 addendum: a figure is taken only by a paint that anchors, and every
   // anchoring paint takes one; the maintainer's round 2 ruling: the missed land took and wrote raw, moving the reader by the spacer's delta, while this
   // comment said the road could not happen; the author's own verifiers after pass 3: the comment then named two raw roads where there are three)
@@ -15523,6 +15527,12 @@ function landActive(content: HTMLElement | null, v: View, scrollerHolds: boolean
   const att = { anchor: pendingAnchor, t: pendingAnchorT, kind: pendingAnchorKind, keep: pendingAnchorKeepY != null };   // this pass's landing attempt, for diagnostics
   if (att.anchor || att.t != null) landTrail = [];
   let scrolled = pendingAnchor ? scrollToAnchor(pendingAnchor) : false;
+  // A FETCH ARMED by this attempt: scrollToAnchor clears both flags on entry, arms the fetch on its four fetch roads (the same landing's window
+  // still on the wire, an older fetch in flight re-pointed at the anchor, a window asked, the index wire's older fetch), and its window ask's
+  // pre-jump marks the jump. A miss is then not final: the reply lands the anchor, or its dead end puts back the origin a pre-jump recorded
+  // (chatWindow), so the fallback below puts nothing back. Read from this attempt alone: a pass with no attempt by id (a moment) finds both
+  // flags as an earlier attempt left them, its fetch perhaps still on the wire
+  const fetchArmed = !!att.anchor && anchorPendingOlder, preJumped = fetchArmed && anchorPreJumped;
   // TIME-ONLY navigation (the user 2026-08-25, the fifth can't-locate shape): some producers — the
   // timeline's lane clicks, deep links, cards minted from segments with no anchorable atom — send
   // anchorT with NO uuid, and the by-id-only landing left the whole class dead-ending in the bare
@@ -15605,8 +15615,14 @@ function landActive(content: HTMLElement | null, v: View, scrollerHolds: boolean
     // place, or the captured row gone with the attempt's window build (the maintainer's round 2 ruling; the third road named by the
     // author's own verifiers after pass 3, executed in land-active-keep.test.ts). On the two roads after a take the take is undone first
     // (untakeMeasure), so the saved scrollTop lands in the layout it was saved in and the figures wait, as on the nothing-armed road (the
-    // maintainer's round 3 ruling B)
-    else if (!(held && restoreScrollAnchor(content, v, held))) { untakeMeasure(v, figures); writeScroll(content, v.scrollTop, "land-saved"); }
+    // maintainer's round 3 ruling B).
+    // A MISS WITH A FETCH ARMED puts nothing back: the navigation is under way, and returning the reader to where they started only to move
+    // them forward again when the reply lands is a jump nobody asked for. A pre-jump's placement stands (the raw write is of the place it
+    // synced, and moves nothing), and it was measured after the take, so the take stands under it: giving the take back would re-size the gap
+    // under the reader just placed. With no pre-jump the saved place is written raw, the take given back first. Before PR 861 this road wrote
+    // the synced place too; PR 861's restore of the row captured before the attempt reversed a deep pre-jump in the same pass
+    // (land-active-keep.test.ts executes both)
+    else if (!(held && !fetchArmed && restoreScrollAnchor(content, v, held))) { if (!preJumped) untakeMeasure(v, figures); writeScroll(content, v.scrollTop, "land-saved"); }
   }
   v.shown = true;
   scheduleRailSticky();
@@ -16382,6 +16398,7 @@ function preJumpIntoGap(sid: string, t: number | null | undefined, rec: WindowAs
     v.stick = false;   // a navigation's move ends follow mode (else the re-window the write provokes lands the reader back at the bottom)
     writeScroll(content, y, "land-guess");
     v.scrollTop = content.scrollTop;
+    anchorPreJumped = true;   // the placement stands if this pass's land misses with the fetch armed (landActive's fallback)
     landTrail.push("pre-jump");
     return;
   }

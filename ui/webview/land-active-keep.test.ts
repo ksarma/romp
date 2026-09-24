@@ -2,13 +2,15 @@
 // B). A land takes the figures the unit observer parked since the last paint (applyMeasure: the head spacer and the gap units re-sized) on
 // every road but the nothing-armed re-show, BEFORE its landing attempt, because the roads that land read the target's live rect
 // (scrollToAnchor, landOn) and a resident target rebuilds nothing, so a take after the attempt would re-size the spacer under a row just
-// placed. The take is decided on what is ARMED; the OUTCOME decides what stands. A land whose anchor MISSES (nowhere in the transcript,
-// the wrong kind, a fetch armed) puts the row the SAVED place held back at its offset over the take (captured at that place before the
+// placed. The take is decided on what is ARMED; the OUTCOME decides what stands. A land whose anchor MISSES with no fetch armed (nowhere in
+// the transcript, the wrong kind) puts the row the SAVED place held back at its offset over the take (captured at that place before the
 // take: the scroller does not hold the saved place yet on a switch, the leaving tab's position is still under the viewport); where that
 // restore has no row to put back (no row was capturable, the saved place inside a spacer; the captured row gone, because the attempt's
 // window build around the anchor's unit replaced the rows before its re-query missed) the take is UNDONE (untakeMeasure: the figures
 // parked again, the spacers back) and the raw land-saved write of the saved scrollTop lands in the layout it was saved in, as on the
-// nothing-armed road, where nothing was taken. Until the author's pass 3 the missed land took and wrote raw (the reader moved by the
+// nothing-armed road, where nothing was taken. A miss with a FETCH ARMED puts nothing back, because the reply is still coming: a pre-jump's
+// placement stands over the take it was measured in, and with no pre-jump the saved scrollTop is written raw with the take undone (the road on
+// the second behaviour PR 861 changed here, below). Until the author's pass 3 the missed land took and wrote raw (the reader moved by the
 // spacer's delta: the maintainer's round 1 ruling's HIGH 2 shape one road over, while the comment in the source said the road could not
 // happen); until this pass the two no-row roads took and wrote raw, disclosed (the third road named by the author's own verifiers after
 // pass 3, where the comment, the pin and the body had named two). The reload restore with no anchor row is the one raw write after a take
@@ -420,6 +422,18 @@ test("a deep link with a time whose pre-jump moves a reader who is not following
   m.land(m.content, m.v, true);
   assert.equal(m.rows[3].getBoundingClientRect().top, R3_OFFSET, "the moment's miss keeps the reader where they were (read as this pass's, the earlier pre-jump's mark would skip the take's give-back under the raw write, 300 px off): " + JSON.stringify(m.writes));
   assert.deepEqual(m.writes, [{ writer: "anchor-restore", top: 2350 + D, stick: false, from: undefined }], "the ordinary miss: the row put back over the take");
+});
+
+test("render.ts: the two marks the fallback reads describe this attempt: scrollToAnchor clears both before anything else, the pre-jump (reached only through scrollToAnchor's window ask) marks the jump right after its write and the record's sync, and landActive reads them straight after its attempt by id, never on a pass that made none. A source pin on where the marks are set and read, which the harness above stubs; the road above executes what landActive does with them, and the landing lab's roads 10 and 16 run the pre-jump in the browser", () => {
+  assert.match(RENDER, /function scrollToAnchor\(uuid: string\): boolean \{\n\s*anchorPendingOlder = false;[^\n]*\n\s*anchorPreJumped = false;/, "scrollToAnchor clears both marks on entry, so what they say is this attempt's");
+  assert.equal((RENDER.match(/\brequestAround\(/g) || []).length, 2, "requestAround is declared once and called once, inside scrollToAnchor");
+  assert.equal((RENDER.match(/\bpreJumpIntoGap\(/g) || []).length, 2, "preJumpIntoGap is declared once and called once, inside requestAround: the pre-jump runs only inside an attempt, after its marks were cleared");
+  const pj = RENDER.match(/^function preJumpIntoGap\([\s\S]*?\n\}/m);
+  assert.ok(pj, "preJumpIntoGap");
+  assert.match(pj![0], /writeScroll\(content, y, "land-guess"\);\n\s*v\.scrollTop = content\.scrollTop;\n\s*anchorPreJumped = true;/, "the pre-jump marks the jump right after it writes the reader's place and syncs the record, on the one road that places the reader");
+  assert.equal((RENDER.match(/anchorPreJumped = true;/g) || []).length, 1, "nothing else marks a pre-jump");
+  const land = RENDER.slice(RENDER.indexOf("function landActive("), RENDER.indexOf("\n}\n", RENDER.indexOf("function landActive(")));
+  assert.match(land, /let scrolled = pendingAnchor \? scrollToAnchor\(pendingAnchor\) : false;\n(?:\s*\/\/[^\n]*\n)*\s*const fetchArmed = !!att\.anchor && anchorPendingOlder, preJumped = fetchArmed && anchorPreJumped;/, "landActive reads both marks straight after its attempt, and only when the attempt was by id (a moment's pass finds them as an earlier attempt left them)");
 });
 
 test("render.ts: showActive decides whether the scroller holds the view's reader BEFORE the display flip (a switch's entering view is still display:none then) and hands the decision to the synchronous land alone; the deferred build's land and the hidden pane's retry pass nothing. A source pin, keyed on where the decision is read and what each land is handed. Executed: the landing lab's road 16 (tests/test_landing_notice_browser.py) runs the hand-off, a deep link on the displayed tab reaching landActive through showActive with every conjunct true, and the roads above run what the flag changes inside landActive. No executed road reaches five parts, which this pin alone guards: the display conjunct (a switch; the decision read after the flip drops it), the pane-height conjunct, the pending-build conjunct, the deferred land passing nothing and the hidden pane's retry passing nothing", () => {
