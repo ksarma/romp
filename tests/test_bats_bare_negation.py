@@ -363,9 +363,10 @@ polluted, extra8-1 of round 2). The rule keeps every one of them from bats (TMPD
 road is trusted for that not by this sentence but by two pins the job runs: the routes pin plants the three routes in the process
 and decides the candidates that read them, and the equality pin holds the built environment's keys to a literal, so a pass-through
 added to the rule reds there with no bats (the job was green while every local full-suite run was red, at the tenth commit). The
-five Python cells install pytest, pytest-timeout and cryptography and no bats (ci.yml's Install steps), so every bats-backed test
-of this module skips there, seventeen at this head (derived from a RUN and never typed: Counts runs every other class of this
-module in a child under a PATH holding every program but bats, and every skip is a bats skip; the `17 skipped` of the run line
+five Python cells install pytest, pytest-timeout, cryptography and the pinned Claude Agent SDK, and no bats (ci.yml's Install
+steps), so every bats-backed test of this module skips there, seventeen at this head (derived from a RUN and never typed: Counts
+runs every other class of this module in a child under a PATH holding every program but bats, and every skip is a bats skip; the
+`17 skipped` of the run line
 below; the wrapper runs sixteen of them, every one but the child pytest pin, which needs pytest importable by the runner's
 python3, so the two counts are two quantities, what skips and what the wrapper runs, and the pin reads both sentences against its
 derivation: before the fourteenth commit this sentence said thirteen, the wrapper's count, three lines from a run line saying 14,

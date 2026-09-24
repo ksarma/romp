@@ -73,11 +73,11 @@ jobs:
     # through 35518469298. An earlier version of this
     # comment priced the phases at 160 to 300 s (25 min = 300 + 600 + setup). That pricing was wrong;
     # the cap stands. At the measured phases the invariant above would need about 30 min, but on that
-    # pair of runs (35513531701 and 35516364698) the worst cell finished 4 to 5 minutes under 25, this
-    # fork's binding constraint is the runner queue, and a higher cap holds a runner that much longer
-    # on every stuck cell; a genuine slowdown is caught here first, and a stall that begins after
-    # minute 15 of a Linux cell is ended by this cap, named by the job's timeout rather than the test's (on
-    # that pair, the worst cell's last five minutes or so). The
+    # pair of runs (35513531701 and 35516364698) the worst cell finished 4 to 5 minutes under 25, on
+    # 2026-09-20 the brief found this fork's runner queue binding before the cap, and a higher cap holds
+    # a runner that much longer on every stuck cell; a genuine slowdown is caught here first, and a
+    # stall that begins after minute 15 of a Linux cell is ended by this cap, named by the job's timeout
+    # rather than the test's (on that pair, the worst cell's last five minutes or so). The
     # macOS cells (a manual dispatch) run the same suite in
     # 17 to 25 minutes on the image's slower runners: the 3.10 cell took 24 min 43 s on one dispatch
     # and was cancelled at 25 min 27 s on the next (2026-09-16), a one-minute margin that can kill the
@@ -153,27 +153,27 @@ jobs:
         # after the flag, PYTEST_PLUGINS, plugins= on pytest.main), which neither check reads: the flag is on
         # both of this file's pytest lines and on every pytest the suite starts in the cell's interpreter in a
         # form the launcher census reads (tests/test_ci_sdk_pin.py holds both populations, this file's by its population
-        # check and the suite's by its launcher census, which reads argv literals under tests/, the positional
-        # arguments of asyncio.create_subprocess_exec and of the os.exec and os.spawn l forms, and an in-process
-        # pytest.main, pytest.console_main or _pytest.config.main by name, alias or import: a pytest command in
-        # a constant string or f-string written at the call and handed to subprocess, os.system or os.popen,
-        # asyncio.create_subprocess_shell, shlex.split or a shell's -c is red until spelled as an argv, and so is
-        # a call through a name it cannot resolve (in a comprehension in a class body that binds the name, or,
-        # beside a star import from a module it does not read, one the module binds or no scope binds, or one a
-        # function binds from such a name by a plain or annotated assignment from a name or an attribute), and so
-        # is an argv it cannot read as a launcher, among them an interpreter option it does not take apart before
-        # pytest (-Bm pytest, -Impytest), -m pytest.__main__, and pytest after a wrapper such as env in an argv
-        # written at the call (its argv rule is _argv_command's docstring); a string anywhere else, or one held
-        # in a variable or built with %, + or .format, is outside the read, as is an argv assembled one element
-        # at a time, an option it does not take apart that no pytest follows, a wrapper-headed argv built away
-        # from the call, and any other call, string or in process, reached through a
-        # name the census does not resolve (tuple unpacking, a conditional expression, a parameter default, an
-        # import by name from a module that does not define the call, a relative one included, a class or
-        # instance attribute, getattr, importlib or runpy, a builtin or a module name such a star import
-        # rebinds, a function's binding from such a name made any other way, a class body's call before the
-        # class binds that name, among others), as is every
-        # module whose text spells neither pytest nor py.test and holds no star import, which the census
-        # does not parse). The two plugin sets are not equal, and this
+        # check and the suite's by its launcher census, whose read, refusals and residual _launchers_in's docstring
+        # there states in full; among them: it reads argv literals under tests/, the positional arguments of
+        # asyncio.create_subprocess_exec and of the os.exec and os.spawn l forms, and an in-process pytest.main,
+        # pytest.console_main or _pytest.config.main by name, alias or import; it refuses, red until rewritten, a pytest
+        # command in a constant string or f-string written at the call and handed to subprocess, os.system or os.popen,
+        # asyncio.create_subprocess_shell, shlex.split or a shell's -c, a call through a name it cannot resolve (in a
+        # comprehension in a class body that binds the name, or, beside a star import from a module it does not read,
+        # one the module binds or no scope binds, or one a function binds from such a name by a plain or annotated
+        # assignment from a name or an attribute), an argv it cannot read as a launcher (an interpreter option it does
+        # not take apart before pytest, as in -Bm pytest or -Impytest, -m pytest.__main__, and pytest after a wrapper
+        # such as env in an argv written at the call; its argv rule is _argv_command's docstring), and pytest.main held
+        # as a value rather than called where it is written (a Thread target, functools.partial, a parameter default, a
+        # tuple, a walrus or a conditional expression, among others); and outside its read are a string anywhere else,
+        # or one held in a variable or built with %, + or .format, an argv assembled one element at a time, an option it
+        # does not take apart that no pytest follows, a wrapper-headed argv built away from the call, a call reached
+        # through a name the census does not resolve (a string call through tuple unpacking, a conditional expression or
+        # a parameter default, an import by name from a module that does not define the call, a relative one included, a
+        # class or instance attribute, getattr, importlib or runpy, a builtin or a module name such a star import
+        # rebinds, a function's binding from such a name made any other way, a class body's call before the class binds
+        # that name, among others), and every module whose text spells neither pytest nor py.test and holds no star
+        # import, which the census does not parse). The two plugin sets are not equal, and this
         # comment does not say they are: the box's
         # default run loads pytest-xdist's two plugins, which no cell installs. Nothing under tests/ is marked
         # anyio or imports the one thing the plugin serves, the SDK's own pytest-marked conformance suite
@@ -243,11 +243,13 @@ jobs:
           # listing. The check does not run the shell: a step whose run block spells the switch other
           # than as that prefix (an unset, an export, an assignment), or whose job's other run blocks
           # spell it (a write to $GITHUB_ENV reaches the steps after), is red until read, and so is any
-          # other line here that spells the switch outside an env: key line it reads (an aliased or flow
-          # env:, a quoted or spaced key, a key-shaped line deeper than its block's keys, a step's shell:
-          # or a job's defaults). Any write of the switch that does not spell its name is outside it: in
-          # a run block (env -i, an indirect unset, a loop over the environment), in a shell: or defaults
-          # key, by a script or action a step calls, or to $GITHUB_ENV. It reads a run block as written,
+          # other line here that spells the switch outside an env: key line it reads (among them an aliased
+          # or flow env:, a quoted or spaced key, a key-shaped line deeper than its block's keys, a step's
+          # shell: or a job's defaults; switch_line_census there states the rule), and a value on an env:
+          # key's own line, which may set the switch without spelling it, is refused. Any write of the
+          # switch that does not spell its name is outside it, among them one in a run block (env -i, an
+          # indirect unset, a loop over the environment), in a shell: or defaults key, by a script or action
+          # a step calls, or to $GITHUB_ENV. It reads a run block as written,
           # and GitHub substitutes a ${{ }} expression into the block before the shell reads it, so a
           # step whose run block holds one and spells pytest anywhere in it, in a comment line or a
           # trailing comment too, is red until the value moves to an env: key the block reads as a shell

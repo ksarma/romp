@@ -73,16 +73,19 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   module does not read (the step's comment in
   `ci.yml` has the reasons and the measurement; the module holds the flag on
   both populations, the workflow's lines and the launchers under `tests/` in the
-  forms its launcher census reads, and its docstring names what that census
+  forms its launcher census reads, and `_launchers_in`'s docstring in it states
+  in full what that census reads, refuses and leaves unread; among what it
   leaves unread: a pytest command in a string held in a variable or built with
   `%`, `+` or `.format`, a string anywhere else, an argv assembled one element
   at a time, an argv whose interpreter options the census does not take apart
   and after which nothing spells pytest, a wrapper-headed argv such as
   `["env", "pytest"]` built away from the call that runs it (`_argv_command`'s
-  docstring states the argv rule), and any call, string or in process, reached
-  through a name the census does not resolve, through tuple unpacking, a
-  conditional expression, a parameter default, `getattr`, `importlib` or
-  `runpy` among others). The two
+  docstring states the argv rule), and a call reached through a name the census
+  does not resolve, such as a string call through tuple unpacking, a
+  conditional expression or a parameter default, or a call through `getattr`,
+  `importlib` or `runpy`; `pytest.main` held as a value rather than called
+  where it is written, as a parameter default or a thread's target among
+  others, is refused, not left unread). The two
   plugin sets are not equal: the box's default run loads pytest-xdist's two
   plugins, which no cell installs. To execute the gated
   tests from a plain venv, put romp's SDK venv on the path:
