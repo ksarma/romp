@@ -4282,7 +4282,8 @@ class SpyRoads(_World):
         open (test_open_road_pathlib_on_3_10), so there the census is {}. Red on 3.13 with the globber's patch removed."""
         root = Path(str(self.sub))
         with self._spy() as sp:
-            got = sorted(str(p) for p in root.rglob("*") if p.is_dir())
+            found = list(root.rglob("*"))
+        got = sorted(str(p) for p in found if p.is_dir())     # the premise's own stats outside the window, so the census is rglob's
         self.assertEqual(got, sorted(self.dirs[1:]), "premise: rglob found every directory below the root")
         c = sp.tree_calls()
         if getattr(sys.modules.get("pathlib"), "_NormalAccessor", None) is not None:
