@@ -4,43 +4,48 @@
 round 2 of fork PR #894's review). At the controller's session end tests/conftest.py joins its live non-daemon threads,
 then reads /proc for every live process whose environment carries one of the run's temp roots (or a path under one, a
 ':'-joined value counted per component), whose cwd is under one, one of whose open file descriptors points under one, or
-one of whose arguments is under one, each root compared by its spelling and by its realpath; it waits for the one event it
-can observe (each holder's exit) up to a bound, and if any still hold a root the run is red and each is named with its
-pid, parent, command line, what it holds the root through and the test PHASE current at its spawn (PYTEST_CURRENT_TEST in
-the environment it inherited), or, when that name is not in its environment, a sentence saying the phase is unknown and
-why. The phase is a pointer and not the culprit's name: a child a background thread spawns may carry a later phase,
-another test's, or none (the fork PR #813 reproduction's bus carried the guard test on 3.10 and no PYTEST_CURRENT_TEST at
-all on 3.12), so the witness is the pid and the command line. Keyed on that property, never on a binary's name. The case
-that wrote this: a real postal bus started from the peer-notify guard test's revive road with the environment of the test
-process, detached, so the test's end never reached it; it kept writing into a shared state root every 30 s and turned
-another module's snapshot test red in one CI cell; at the same commit the run ended green. The classes the check does not
-read are listed, each with its reason, in the comment above LEAK_EXIT_BOUND_S in tests/conftest.py.
+one of whose arguments is under one, each root compared by its folded spelling and by its realpath, each value and
+argument read folded and a relative one from the process's cwd; it waits for the one event it can observe (each holder's
+exit) up to a bound, and if any still hold a root the run is red and each is named with its pid, parent, command line,
+what it holds the root through and the test PHASE current at its spawn (PYTEST_CURRENT_TEST in the environment it
+inherited), or, when that name is not in its environment, a sentence saying the phase is unknown and why. The phase is a
+pointer and not the culprit's name: a child a background thread spawns may carry a later phase, another test's, or none
+(the fork PR #813 reproduction's bus carried the guard test on 3.10 and no PYTEST_CURRENT_TEST at all on 3.12), so the
+witness is the pid and the command line. Keyed on that property, never on a binary's name. The case that wrote this: a
+real postal bus started from the peer-notify guard test's revive road with the environment of the test process,
+detached, so the test's end never reached it; it kept writing into a shared state root every 30 s and turned another
+module's snapshot test red in one CI cell; at the same commit the run ended green. The classes the check does not read
+are listed, each with its reason, in the comment above LEAK_EXIT_BOUND_S in tests/conftest.py.
 
 Pinned by execution, each half where it lives. Scanner, over a stand-in root handed to the scan alone: a child holding
 the root through TMPDIR, through another name, through one component of a ':'-joined value, through its cwd, through an
 open file, through an argument; a root handed through a symlink met by its realpath at a cwd and at a descriptor, and a
 value spelled through a symlink outside the root not met (a named unread class); a value or argument spelled with a
 doubled separator, a '.' or '..' segment or a leading '//' met as the path it names, a '..' out of the root not met, and
-a '..' after a symlink named (the lexical fold's safe side); a path inside a longer argument not met (another); a
-sibling path with the root's name as a prefix is not the root; a child that exited is not reported; a child with no
-PYTEST_CURRENT_TEST is reported with an empty phase; the wait (a holder that exits ends it before the bound; one that
-never exits is reported at the bound; each timed over this test's own children, since the wait covers every listed
-process and a sibling test's may be listed); this user's unreadable process of the run listed as not judged, and one
-that started before the scanning process or sits in another cgroup counted instead, and one that exits during the wait
-not listed; the thread join (every non-daemon thread joined, one started during the join too, a daemon thread never
-waited on, one that outlives the bound returned); the bound the child runs name; the roots (the controller's and its
-recorded children's, the lineage a nested process records itself in, and a dead nested root that two lists name returned
-once when it resists removal). RunEnd, in child pytest processes (the procfs cases skip where there is no /proc): a test
-that leaves a detached child ends the run red with the process and the phase named and "1 passed" still in the summary,
-and a child in the root by its cwd alone is named beside it (the two controls); a child the test gave a built
-environment during its call phase is named by pid and command line with the phase stated as unknown; a process leaked
-two nested pytest runs down, and one leaked by a nested run a worker started (where pytest-xdist is installed), is the
-outermost run's finding; holders through an open file, an argument and a cwd under a symlinked TMPDIR are named; a
-process holding no path under a root is not (the residual's witness); a non-dumpable process of the run is listed as not
-judged and leaves the exit status; a process a non-daemon thread starts after its test returned is named, and a daemon
-thread still running is reported; an idle pool a test left is waited the whole bound and reported as still running (the
-join's named cost); without procfs the check says so once and leaves the exit status alone, and Scanner's roots test,
-which reads no /proc, runs there; a test that leaves nothing ends the run green. The child runs set
+a '..' after a symlink named (the lexical fold's safe side); a relative value or argument met as the path it names from
+the child's cwd when it carries the root's name (a root handed as a symlink by its own name and by its target's), not
+met where it folds out of the root or names a path elsewhere from that cwd, and one that carries no root's name not read
+(the cwd under the root is then the hold); a path inside a longer argument not met (another); a sibling path with the
+root's name as a prefix is not the root; a child that exited is not reported; a child with no PYTEST_CURRENT_TEST is
+reported with an empty phase; the wait (a holder that exits ends it before the bound; one that never exits is reported
+at the bound; each timed over this test's own children, since the wait covers every listed process and a sibling test's
+may be listed); this user's unreadable process of the run listed as not judged, and one that started before the scanning
+process or sits in another cgroup counted instead, and one that exits during the wait not listed; the thread join (every
+non-daemon thread joined, one started during the join too, a daemon thread never waited on, one that outlives the bound
+returned); the bound the child runs name; the roots (the controller's and its recorded children's, the lineage a nested
+process records itself in, and a dead nested root that two lists name returned once when it resists removal). RunEnd, in
+child pytest processes (the procfs cases skip where there is no /proc): a test that leaves a detached child ends the run
+red with the process and the phase named and "1 passed" still in the summary, and a child in the root by its cwd alone
+is named beside it (the two controls); a child the test gave a built environment during its call phase is named by pid
+and command line with the phase stated as unknown; a process leaked two nested pytest runs down, and one leaked by a
+nested run a worker started (where pytest-xdist is installed), is the outermost run's finding; holders through an open
+file, an argument and a cwd under a symlinked TMPDIR are named, and so is a child holding only values of a root spelled
+with a leading '//' through a symlink, met by the root's folded spelling alone; a process holding no path under a root
+is not (the residual's witness); a non-dumpable process of the run is listed as not judged and leaves the exit status; a
+process a non-daemon thread starts after its test returned is named, and a daemon thread still running is reported; an
+idle pool a test left is waited the whole bound and reported as still running (the join's named cost, timed up to the
+check's first read of /proc); without procfs the check says so once and leaves the exit status alone, and Scanner's
+roots test, which reads no /proc, runs there; a test that leaves nothing ends the run green. The child runs set
 ROMP_TESTS_LEAK_EXIT_BOUND_S so a holder that never exits costs a fraction of a second rather than the whole bound; one
 run keeps the default, and a holder that exits inside it ends that run green. Guard holds the pytest guard: Scanner
 skips under `python -m unittest` after tests.conftest was imported, and runs under pytest. Synthetic throughout: the
@@ -320,6 +325,71 @@ class Scanner(unittest.TestCase):
         self.assertIn(safe_side.pid, by, "a '..' after a symlink folds lexically, so the value is named (the safe side)")
 
     @procfs
+    def test_a_relative_path_is_read_from_the_process_cwd_when_it_carries_a_roots_name(self):
+        """Round 2 of fork PR #894's review: an environment value or an argument that is a RELATIVE path naming a path
+        under the root from the process's cwd is read as that path (conftest joins it to the cwd /proc reads, then folds
+        it): the root's name with a tail and alone, from the root's parent; with a '.' or a '..' segment; in a
+        ':'-joined component and after an option's '='; and a path relative to another directory that climbs out of it
+        with '..'. A root handed as a symlink is met through its own name and through its target's. Not met: a relative
+        value that folds out of the root, the same value read from a cwd from which it names a path elsewhere, and a
+        sibling whose name has the root's as a prefix. A relative value that carries no root's name is not read, so a
+        process whose cwd is under the root is named through its cwd alone. Each child has a built environment, so its
+        spelling is its only hold, the child whose cwd is under the root aside."""
+        parent, name = os.path.split(self.root)
+        sleeper = [sys.executable, "-c", "import time; time.sleep(120)"]
+
+        def env_child(value, cwd=parent, var="XDG_STATE_HOME"):
+            return self._sleeper(env=dict(_built_env(), **{var: value}), cwd=cwd)
+
+        def argv_child(arg, cwd=parent):
+            return self._sleeper(env=_built_env(), cwd=cwd, argv=sleeper + [arg])
+
+        met = {
+            "the root's name and a tail": env_child(name + "/x"),
+            "the root's name alone": env_child(name),
+            "a '.' segment first": env_child("./" + name + "/x"),
+            "a '..' segment back into the root": env_child("elsewhere/../" + name + "/x"),
+            "a ':'-joined component": env_child("/usr/share" + os.pathsep + name + "/share", var="XDG_DATA_DIRS"),
+            "an argument": argv_child(name + "/argv"),
+            "the part after an option's '='": argv_child("--state=" + name + "/s"),
+            "a path relative to another directory": argv_child(os.path.relpath(os.path.join(self.root, "argv"), ROOT),
+                                                               cwd=ROOT),
+        }
+        out_of_root = env_child(name + "/../outside-x")
+        elsewhere = env_child(name + "/x", cwd="/")
+        sib = self.root + "-sibling"
+        os.mkdir(sib)
+        self.addCleanup(shutil.rmtree, sib, True)
+        sibling = env_child(name + "-sibling/x")
+        sub = os.path.join(self.root, "sub")
+        os.mkdir(sub)
+        in_root = self._sleeper(env=dict(_built_env(), XDG_STATE_HOME="x", XDG_DATA_DIRS="../y"), cwd=sub,
+                                argv=sleeper + ["z"])
+        by = {h["pid"]: h for h in self._holders()}
+        for what, p in met.items():
+            self.assertIn(p.pid, by, "a relative path under the root from the cwd, spelled as %s, is a hold" % what)
+        self.assertEqual(by[met["the root's name and a tail"].pid]["via"], ["XDG_STATE_HOME"])
+        self.assertEqual(by[met["a ':'-joined component"].pid]["via"], ["XDG_DATA_DIRS"])
+        self.assertEqual(by[met["an argument"].pid]["via"], ["argv"])
+        self.assertEqual(by[met["a path relative to another directory"].pid]["via"], ["argv"])
+        self.assertNotIn(out_of_root.pid, by, "a relative '..' out of the root folds to a path outside it")
+        self.assertNotIn(elsewhere.pid, by, "read from the cwd /, the same value names /<root name>/x")
+        self.assertNotIn(sibling.pid, by, "a sibling whose name has the root's as a prefix is not the root")
+        self.assertEqual(by[in_root.pid]["via"], ["cwd"],
+                         "relative values and an argument that carry no root's name are not read: the cwd is the hold")
+        real = os.path.join(self.root, "real")
+        os.mkdir(real)
+        link = os.path.join(self.root, "link")
+        os.symlink(real, link)
+        link_named = env_child("link/x", cwd=self.root)
+        target_named = env_child("real/x", cwd=self.root)
+        by = {h["pid"]: h for h in self._holders([link])}
+        self.assertEqual(by.get(link_named.pid, {}).get("via"), ["XDG_STATE_HOME"],
+                         "a root handed as a symlink: a relative value naming the symlink is a hold")
+        self.assertEqual(by.get(target_named.pid, {}).get("via"), ["XDG_STATE_HOME"],
+                         "and one naming its target's directory")
+
+    @procfs
     def test_a_sibling_path_with_the_roots_name_as_a_prefix_and_the_roots_parent_are_not_the_root(self):
         sib = self.root + "-sibling"
         os.mkdir(sib)
@@ -348,10 +418,11 @@ class Scanner(unittest.TestCase):
     def test_a_holder_that_never_exits_is_reported_when_the_bound_ends(self):
         p = self._sleeper(TMPDIR=self.root)
         t0 = time.monotonic()
-        leaked, _unjudged, ok = self.conftest._leaked_run_processes([self.root], bound_s=0.3)
+        leaked, unjudged, ok = self.conftest._leaked_run_processes([self.root], bound_s=0.3, pids=[p.pid])
         took = time.monotonic() - t0
         self.assertTrue(ok)
         self.assertEqual([h["pid"] for h in leaked], [p.pid])
+        self.assertEqual(unjudged["listed"], [], "the wait read this test's own child alone")
         self.assertGreaterEqual(took, 0.3, "the bound was waited out for a holder that never exits")
 
     @procfs
@@ -538,10 +609,13 @@ def pytest_runtest_call(item):
 
 # An idle pool a test left, as a plugin of ONE child run (loaded the same way): in the test's call phase a one-worker
 # concurrent.futures pool runs one task and is kept, never shut down, so its worker is a live non-daemon thread that only
-# threading's exit hooks end. The plugin's sessionfinish, which runs before conftest's trylast one, and its unconfigure,
-# after it, record the seconds between them in the marker dir: the check's own time, the join included.
+# threading's exit hooks end. The plugin's sessionfinish, which runs before conftest's trylast one, notes the time and
+# wraps conftest's _processes_holding to note the time of its first call, the check's first read of /proc; its
+# unconfigure writes the seconds between the two to the marker dir: the join's time, and nothing the check does after
+# that read (the wait after it covers every process listed as not judged, and another run's in the cgroup may be
+# listed).
 IDLE_POOL_PLUGIN = '''\
-import concurrent.futures, os, time
+import concurrent.futures, os, sys, time
 
 _POOLS, _AT = [], {}
 
@@ -554,11 +628,18 @@ def pytest_runtest_call(item):
 
 def pytest_sessionfinish(session, exitstatus):
     _AT["finish"] = time.monotonic()
+    conftest = sys.modules["tests.conftest"]
+    scan = conftest._processes_holding
+
+    def first_read_noted(*a, **k):
+        _AT.setdefault("read", time.monotonic())
+        return scan(*a, **k)
+    conftest._processes_holding = first_read_noted
 
 
 def pytest_unconfigure(config):
-    with open(os.path.join(os.environ["ROMP_LEAK_CHECK_MARKER"], "check-seconds"), "w") as fh:
-        fh.write(repr(time.monotonic() - _AT["finish"]))
+    with open(os.path.join(os.environ["ROMP_LEAK_CHECK_MARKER"], "join-seconds"), "w") as fh:
+        fh.write(repr(_AT["read"] - _AT["finish"]) if "read" in _AT else "no read of /proc")
 '''
 
 # A platform without procfs, simulated for one child run: /proc is absent to os.path.isdir, os.listdir, os.readlink,
@@ -755,6 +836,31 @@ class RunEnd(unittest.TestCase):
         self.assertIn("| holds the root through cwd |", self._line(out, pids["cwd"]))
 
     @procfs
+    def test_a_root_spelled_with_a_leading_double_separator_through_a_symlink_is_read_by_its_folded_spelling(self):
+        """The root's folded spelling at a real run end (conftest's _spellings): the child run is handed a TMPDIR
+        spelled with a leading '//' through a symlink. tempfile keeps exactly two leading separators, so the child run's
+        root is spelled that way, and so is every value of it a detached child inherits. Those values are read folded
+        (one leading '/'); the root's raw spelling keeps two, and its realpath goes through the symlink's target, so
+        only the root's folded spelling meets them. The child's cwd and descriptors are outside the root: the values are
+        its only hold."""
+        scratch = tempfile.mkdtemp()
+        real = os.path.join(scratch, "real")
+        os.mkdir(real)
+        link = os.path.join(scratch, "link")
+        os.symlink(real, link)
+        r, pids, marker = self._child_run("test_leaves_a_detached_child_and_records_the_root",
+                                          env_over={"TMPDIR": "/" + link}, drop=("ROMP_TESTS_SYSTEM_TMPDIR",))
+        out = r.stdout + r.stderr
+        self.assertIn("child", pids, out)
+        root = Path(marker, "root").read_text()
+        self.assertEqual(os.path.dirname(root), "/" + link, "the child run's root keeps the leading '//': " + root)
+        self.assertEqual(os.path.dirname(os.path.realpath(root)), os.path.realpath(real), "its realpath: the target's")
+        self.assertEqual(r.returncode, 1, out)
+        line = self._line(out, pids["child"])
+        self.assertRegex(line, r"holds the root through [^|]*\bTMPDIR\b", "the inherited TMPDIR, read folded")
+        self.assertNotRegex(line, r"holds the root through [^|]*\b(cwd|fd|argv)\b", "the values are its only hold")
+
+    @procfs
     def test_a_process_holding_no_path_under_a_root_is_not_seen_the_residuals_witness(self):
         """The class the check names as unread, by execution: a detached child given a built environment, the cwd /, and
         nothing open in the root outlives the run, and the run ends green with no holder line and no line naming it. The
@@ -812,7 +918,9 @@ class RunEnd(unittest.TestCase):
         """The join's cost the comment above LEAK_EXIT_BOUND_S names, by execution: a plugin of the child run
         (IDLE_POOL_PLUGIN) leaves an idle concurrent.futures pool, whose worker is a non-daemon thread that only
         threading's exit hooks end, and those run at interpreter exit, after the check. The run leaves no process and
-        ends green, but the check's join waits the whole bound for the worker and names it as still running."""
+        ends green, but the check's join waits the whole bound for the worker and names it as still running. The time
+        is the join's alone: from the plugin's sessionfinish to the check's first read of /proc, so the wait after that
+        read, which another run's process listed as not judged would lengthen, is not in it."""
         plugdir = tempfile.mkdtemp()
         Path(plugdir, "romp_idle_pool_plugin.py").write_text(IDLE_POOL_PLUGIN)
         pythonpath = os.pathsep.join([plugdir] + [p for p in [os.environ.get("PYTHONPATH")] if p])
@@ -825,8 +933,11 @@ class RunEnd(unittest.TestCase):
         self.assertEqual(len(threads), 1, out)
         self.assertIn("read /proc: leaker-idle-pool_0. A process", threads[0],
                       "the idle worker, a non-daemon thread, alone")
-        took = float(Path(scratch, "check-seconds").read_text())
-        self.assertGreaterEqual(took, 0.45, "the join waited the whole 0.5 s bound for the idle worker: %.2f s" % took)
+        noted = Path(scratch, "join-seconds").read_text()
+        self.assertNotEqual(noted, "no read of /proc", out)
+        took = float(noted)
+        self.assertGreaterEqual(took, 0.45, "the join waited the whole 0.5 s bound for the idle worker before the "
+                                            "check read /proc: %.2f s" % took)
 
     def test_without_procfs_the_check_says_so_once_and_leaves_the_exit_status_alone(self):
         """tests-3's branch, the only one a platform without procfs runs: under a sitecustomize that hides /proc
@@ -882,6 +993,11 @@ class Leaker(unittest.TestCase):
 
     @child_mode
     def test_leaves_a_detached_child(self):
+        _record("child", _detached().pid)
+
+    @child_mode
+    def test_leaves_a_detached_child_and_records_the_root(self):
+        Path(os.environ[MARKER_ENV], "root").write_text(tempfile.gettempdir())
         _record("child", _detached().pid)
 
     @child_mode

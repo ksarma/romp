@@ -257,11 +257,16 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   path under one (a `:`-joined value counted per component), whose cwd is under
   one, one of whose open file descriptors points under one, or one of whose
   arguments is under one (whole, after an option's `=`, or as a `:`-joined
-  component), each root compared by its spelling and by its realpath, and each
-  environment value and argument read with a doubled separator and a `.` or `..`
-  segment folded as `os.path.normpath` folds them (lexically: a value whose `..`
-  follows a symlink is named when its folded spelling is under a root, the safe
-  side). The roots
+  component), each root compared by its spelling, folded as a value is (a TMPDIR
+  spelled with a leading `//` keeps that pair in the root's spelling), and by its
+  realpath, and each environment value and argument read with a doubled
+  separator and a `.` or `..` segment folded as `os.path.normpath` folds them
+  (lexically: a value whose `..` follows a symlink is named when its folded
+  spelling is under a root, the safe side). A relative value or argument is read
+  as the path it names from the process's cwd when it carries the name of a
+  root's directory (`<root name>/x` from the root's parent is `<root>/x`): from a
+  cwd outside every root a relative path reaches under one only through that
+  name, and a process whose cwd is under a root holds it through the cwd. The roots
   are the controller's and every root listed in its `romp-tests-children`: a
   nested process (an xdist worker, a nested pytest, any child of the run that
   imports the tests package handed a root as its TMPDIR together with the run's
@@ -295,8 +300,10 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
     root, as one handed a built environment with its cwd elsewhere and no file
     open in the root (the residual probe in the module below is its witness);
   - a path spelled through a symlink outside the root, in an environment value or
-    an argument (compared as spelled, folded lexically; a cwd and a descriptor
-    are resolved);
+    an argument, absolute or relative (compared as spelled, folded lexically; a
+    cwd and a descriptor are resolved);
+  - a relative value or argument as the process used it from an earlier cwd (it
+    is read from the cwd the process has at the scan);
   - a path inside a longer string (code text in an argument, an option inside an
     environment value), a Unix socket bound under a root (its descriptor reads
     `socket:[inode]`), a file mapped with no descriptor open, an environment
@@ -316,7 +323,9 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
     one. The threads of the first two kinds are reported by count and name, with
     the statement that a process they start after the scan is not seen.
   The added reads cost a clean run's single scan about 28 to 32 ms on the box,
-  and the fold 6 to 10 ms more on a busier box (the comment has both
+  and the fold 6 to 10 ms more on a busier box; reading a relative value from the
+  cwd made the scan 5 to 11 ms cheaper, since a relative component that carries
+  no root's name is no longer walked up its parents (the comment has the three
   measurements). A platform without procfs says so once, runs
   no check and leaves the exit status alone.
   `tests/test_run_end_leaked_processes.py` pins the scan, the wait, the join, the

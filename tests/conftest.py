@@ -81,13 +81,20 @@ atexit.register(_remove_run_dirs)
 # process and judges it by four reads: its environment (a value that is one of this run's roots or a path under one, a
 # ':'-joined value counted per component; the block the process was STARTED with, which is what a child inherits), its
 # cwd, the targets of its open file descriptors (/proc/<pid>/fd) and its argv (each argument, the part after an
-# argument's first '=', and each ':'-joined component of either). Each root is compared by its own spelling and by its
-# realpath: /proc resolves a cwd and a descriptor's target, so under a symlinked TMPDIR a cwd in the root reads as the
-# realpath (a trailing " (deleted)" the kernel adds once the target is removed is dropped). An environment value and an
-# argument are read folded (_lexical): a doubled separator and a '.' or '..' segment are folded as os.path.normpath folds
-# them, so <system>//<root name>/x and <root>/./x are read as the paths they name; the fold is lexical, so a '..' after a
-# symlink is folded as if the symlink were a directory, and such a value is named when its folded spelling is under a
-# root though its real path is not (the safe side). If any remain the run is RED
+# argument's first '=', and each ':'-joined component of either). Each root is compared by its spelling, folded as a
+# value is (below), and by its realpath: /proc resolves a cwd and a descriptor's target, so under a symlinked TMPDIR a
+# cwd in the root reads as the realpath (a trailing " (deleted)" the kernel adds once the target is removed is dropped);
+# a TMPDIR spelled with a leading '//' leaves it in the root's spelling (tempfile folds every other doubled separator
+# and dot segment, and keeps exactly two leading separators), and the values the run's processes inherit are spelled the
+# same way. An environment value and an argument are read folded (_lexical): a doubled separator and a '.' or '..'
+# segment are folded as os.path.normpath folds them, so <system>//<root name>/x and <root>/./x are read as the paths
+# they name; the fold is lexical, so a '..' after a symlink is folded as if the symlink were a directory, and such a
+# value is named when its folded spelling is under a root though its real path is not (the safe side). A relative value
+# or argument (one not starting with '/') is read as the path it names from the process's cwd as /proc reads it (joined
+# to the cwd, then folded) when it carries the name of a root's directory, so <root name>/x from the root's parent is
+# read as <root>/x: from a cwd outside every root a relative path reaches under one only by naming that root's
+# directory, and a process whose cwd is under a root holds it through the cwd (a relative value without a root's name is
+# then not among the names it is reported through; its cwd is). If any remain the run is RED
 # and each is named: pid, parent, command line, what it holds the root through (the environment names, "cwd", "fd",
 # "argv"), and the test PHASE current when it was spawned (PYTEST_CURRENT_TEST, inherited from the test process's
 # environment at the spawn). That phase is a pointer, not the culprit's name: a thread's spawn inherits the phase
@@ -129,9 +136,11 @@ atexit.register(_remove_run_dirs)
 #     environment with its cwd elsewhere and no file open in the root: the check keys on holding a root, and such a
 #     process holds none (a per-run cgroup, or a walk of the process tree from the controller, would see it);
 #     tests/test_run_end_leaked_processes.py's residual probe is the witness, unnamed at the run end;
-#   * a path spelled through a symlink outside the root, in an environment value or an argument: the spelling is
-#     compared, folded lexically and never resolved (the kernel resolves a cwd and a descriptor, so those two are read
-#     under a symlink);
+#   * a path spelled through a symlink outside the root, in an environment value or an argument, absolute or relative:
+#     the spelling is compared, folded lexically and never resolved (the kernel resolves a cwd and a descriptor, so
+#     those two are read under a symlink);
+#   * a relative value or argument as the process used it from an earlier cwd: it is read from the cwd the process has
+#     at the scan, so one that changed directory after it used the value is read from the later cwd;
 #   * a path inside a longer string, as code text in an argument (python -c "open('<root>/x')") or an option inside an
 #     environment value; a Unix socket bound under a root, whose descriptor reads socket:[inode]; a file mapped with no
 #     descriptor left open (/proc/<pid>/maps is not read); an environment the process changed after it started;
@@ -154,8 +163,12 @@ atexit.register(_remove_run_dirs)
 # ms of the difference. The fold of environment values and arguments (_lexical), measured later the same day on a busier
 # box (41 rounds, the median of each round's paired difference, about 910 processes at a load of 38 on 60 cores): the
 # scan took 104 ms on 3.12 and 109 ms on 3.10 against 951479a14's 51 and 50 ms, the fold 6 and 10 ms of that, for about
-# 330 values folded per scan, 311 of them a leading '//' that a ':' split leaves of a URL. A clean run scans once, and
-# its join waits for nothing when no non-daemon thread is running.
+# 330 values folded per scan, 311 of them a leading '//' that a ':' split leaves of a URL. The relative read, measured
+# later again (two runs of 41 rounds on each interpreter, the median of each round's paired difference against the scan
+# before it, which walked every relative component up its parents unjoined; 970 to 1,080 processes at a load of 27 to
+# 38): the scan took 5 to 11 ms less on 3.12 and on 3.10, at 143 to 251 ms, since a scan meets 19,000 to 23,000 relative
+# components, none of them carried a root's name, and one that carries none is now passed over without that walk. A
+# clean run scans once, and its join waits for nothing when no non-daemon thread is running.
 # A platform without procfs says so once, runs no check and leaves the exit status alone.
 # tests/test_run_end_leaked_processes.py pins the scan, the wait, the join, the roots and the red run end by execution.
 LEAK_EXIT_BOUND_S = 5.0
@@ -199,12 +212,14 @@ _DELETED = " (deleted)"
 
 
 def _spellings(roots):
-    """Each root by its own spelling (a trailing separator dropped), folded (_lexical) and by its realpath, as one set."""
+    """Each root by its spelling folded (_lexical; a trailing separator dropped) and by its realpath, as one set. The
+    folded spelling stands in for the raw one, which is the same string unless it has a doubled separator or a '.' or
+    '..' segment, and then matches nothing: every path compared with the set is folded (an environment value, an
+    argument) or read from /proc, which spells a cwd and a descriptor's target without either."""
     out = set()
     for r in roots:
         if r:
             r = r.rstrip(os.sep) or os.sep
-            out.add(r)
             out.add(_lexical(r))
             out.add(os.path.realpath(r))
     return out
@@ -264,12 +279,27 @@ def _proc_argv(pid):
     return [a.decode("utf-8", "replace") for a in (_proc_read(pid, "cmdline") or b"").split(b"\0") if a]
 
 
-def _argv_holds(argv, roots):
-    """Whether an argument, the part after an argument's first '=', or a ':'-joined component of either is under a root,
-    each read folded (_lexical)."""
+def _names_path(part, cwd, roots, names):
+    """Whether `part`, an environment value's or an argument's ':'-joined component, names a path under a root. An
+    absolute one is read folded (_lexical). A relative one is read as the path it names from `cwd`, the process's cwd as
+    /proc reads it (joined to it, then folded), and only when it carries one of `names`, the last component of each
+    spelling of a root: from a cwd outside every root a relative path reaches under one only by naming that root's own
+    directory (a '..' step from outside a root stays outside it, and a named step enters one only as the root itself),
+    and a process whose cwd is under a root holds it through its cwd. An unreadable cwd ("") leaves the part relative,
+    and a relative path is under no root."""
+    if part.startswith(os.sep):
+        return _under(_lexical(part), roots)
+    if not any(n in part for n in names):
+        return False
+    return _under(_lexical(os.path.join(cwd, part)), roots)
+
+
+def _argv_holds(argv, roots, cwd, names):
+    """Whether an argument, the part after an argument's first '=', or a ':'-joined component of either names a path
+    under a root (_names_path: an absolute one read folded, a relative one from the process's cwd)."""
     for arg in argv:
         for part in (arg, arg.partition("=")[2]):
-            if part and any(_under(_lexical(c), roots) for c in part.split(os.pathsep)):
+            if part and any(_names_path(c, cwd, roots, names) for c in part.split(os.pathsep)):
                 return True
     return False
 
@@ -288,10 +318,11 @@ def _processes_holding(roots, skip_pids=(), pids=None):
     """(holders, unjudged, procfs read): every live process (not this one, not a zombie, not in `skip_pids`) whose
     environment carries a value that is one of `roots` or a path under one (a ':'-joined value counted per component),
     whose cwd is under one, one of whose open file descriptors points under one, or one of whose arguments is under one
-    (_argv_holds); each root by its spelling and its realpath (_spellings), each environment value and argument read
-    folded (_lexical: a doubled separator and a '.' or '..' segment). Each holder is a dict: pid, ppid, cmd, via
-    (the environment names, then "cwd", "fd", "argv"), cwd, test (the PYTEST_CURRENT_TEST in its environment, the test
-    phase current at its spawn, or "" when it carries none). The environment read is the one the process was STARTED
+    (_argv_holds); each root by its folded spelling and its realpath (_spellings), each environment value and argument
+    read folded (_lexical: a doubled separator and a '.' or '..' segment), a relative one from the process's cwd when it
+    carries a root's directory name (_names_path). Each holder is a dict: pid, ppid, cmd, via (the environment names,
+    then "cwd", "fd", "argv"), cwd, test (the PYTEST_CURRENT_TEST in its environment, the test phase current at its
+    spawn, or "" when it carries none). The environment read is the one the process was STARTED
     with (/proc shows the initial block, not later putenv calls), which is what a child inherits.
     `unjudged` holds the processes whose environment could not be read, which are judged by nothing: "listed", this
     user's (the owner of /proc/<pid>, readable when the environment is not) that started after this process (the stat
@@ -300,6 +331,7 @@ def _processes_holding(roots, skip_pids=(), pids=None):
     procfs to read. `pids` stands in for the listing of /proc (tests/test_run_end_leaked_processes.py scans its own
     children alone, since the count of the rest moves with the box)."""
     spell = _spellings(roots)
+    names = {os.path.basename(s) for s in spell}
     me = os.getpid()
     holders, listed, other = [], [], 0
     try:
@@ -341,14 +373,15 @@ def _processes_holding(roots, skip_pids=(), pids=None):
             k, sep, v = item.partition(b"=")
             if sep:
                 env[k.decode("utf-8", "replace")] = v.decode("utf-8", "replace")
-        via = sorted(k for k, v in env.items() if any(_under(_lexical(part), spell) for part in v.split(os.pathsep)))
         cwd = _link("/proc/%d/cwd" % pid)
+        via = sorted(k for k, v in env.items()
+                     if any(_names_path(part, cwd, spell, names) for part in v.split(os.pathsep)))
         if _under(cwd, spell):
             via.append("cwd")
         if _fds_hold(pid, spell):
             via.append("fd")
         argv = _proc_argv(pid)
-        if _argv_holds(argv, spell):
+        if _argv_holds(argv, spell, cwd, names):
             via.append("argv")
         if not via:
             continue
