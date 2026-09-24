@@ -8570,7 +8570,7 @@ opened the tab again with nothing shown (the file review's round 14, ui-1 with e
 the file review's round 15, extra5-2, where a keyboard focus off a zoomed screen opened the tab), its focus ring stands 2px off its border so the dashed line shows under a keyboard
 focus, the button family's press cue is off on it since the release that opens the tab comes while it is held (under the cue the line spread over two
 pixel rows, a modal 1.59:1 dark and 1.39:1 light), the browser's tap highlight is off on it and on the mark, since in the pressed frames of
-a finger's tap, while the control matches :active, a phone's default highlight took the line to 2.578:1 dark and 2.531:1 light (the
+a finger's tap, while the control matches :active, a phone's default highlight took the line as low as 2.22:1 dark and 2.41:1 light in a screencast of every frame, 2.578:1 and 2.531:1 in the frames the leg samples (the
 mark takes none, nothing from it up to the root showing a hand cursor; the tap-highlight ruling of 2026-09-24), and a dead link holding either dress dims by colour and not by opacity, its words
 that take the link's colour dimmed and a child the sheet colours itself keeping its own ink, since an href-less dead link owns no click
 and a tap, a click or Enter opens the tab from inside it, so every state a gesture opens the tab from, the press held and each frame of a finger's tap included, paints

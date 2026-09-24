@@ -2044,9 +2044,10 @@ a.fileview-gh-note { border-style: dashed; }
    from a keyboard focus. The browser's tap highlight is off on the web control and on the mark (the tap rule below): a finger's tap
    that opens the tab paints pressed frames of its own, the control matching :active for up to about 170 ms after it, and in them the
    browser painted its default highlight over the control, on a phone a translucent blue (rgba(51, 181, 229, 0.4)) that took the line
-   to 2.578:1 dark and 2.531:1 light against the control's own ground, a pressed state a gesture opens the tab from; with the highlight
-   off those frames are the sheets' own transition from the rest dress to the hover dress, at 5.35:1 dark and 3.79:1 light at their
-   lowest. The browser highlights only an element that shows a hand cursor, and nothing from the mark up to the root shows one, so the
+   as low as 2.22:1 dark and 2.41:1 light against the control's own ground in a screencast of every frame (the leg's pin, which reads
+   a frame about every 33 ms, sampled 2.578:1 and 2.531:1), a pressed state a gesture opens the tab from; with the highlight off those
+   frames are the sheets' own transition from the rest dress to the hover dress, at 4.20:1 dark and 3.79:1 light at their lowest in
+   that screencast (5.35:1 and 3.79:1 in the pin's samples). The browser highlights only an element that shows a hand cursor, and nothing from the mark up to the root shows one, so the
    mark paints no highlight with the rule or without it and wears it so that a pointer cursor given it later brings none (the
    tap-highlight ruling of 2026-09-24). A dead link (a.fv-dead) holding the dress, the web control after a captioned picture or the mark on a picture
    under the floor, dims by colour and not by opacity, under `screen`, so a print keeps the opacity: the anchor's opacity 0.7 dimmed

@@ -94,10 +94,11 @@
 // tests-4: green before the round's fixes by design, red with figureFoldOf's loop replaced by `return s;`). A
 // finger's tap on the web control and on the mark is read frame by frame in cases of their own at the file's end (the tap-highlight
 // ruling of 2026-09-24): on a phone, under CDP touch emulation and on the touchscreen laptop, on the chat modal, the feed and the
-// Files pane, in both themes, each frame from the tap until the element settles, the tap's pressed frames while it matches :active
-// among them, paints the line at 3:1 or better, red on the phone over the sheets without their tap rule, where the browser's default tap
-// highlight painted the control's pressed frames down to 2.531:1, and the mark's cells and the other two devices' green there by
-// design. The control in right-to-left text is read in cases of their own after those (the file review's round 15, ui-2): a
+// Files pane, in both themes, each frame read from the tap until the element settles (a frame about every 33 ms, not every frame the
+// compositor paints), the tap's pressed frames while it matches :active among them, paints the line at 3:1 or better, red on the phone
+// over the sheets without their tap rule, where the browser's default tap highlight painted the control's pressed frames down to
+// 2.531:1 in the frames read (2.22:1 dark and 2.41:1 light in a screencast of every frame), and the mark's cells and the other two
+// devices' green there by design. The control in right-to-left text is read in cases of their own after those (the file review's round 15, ui-2): a
 // picture from the web in a block an author wrote dir="rtl" and a local one in such a paragraph have their control over the
 // picture's top-left corner, 6px in and inside the viewer's body, on the chat modal, the feed and the Files pane at 900px and
 // 360px, red over the sheets' physical margins, where it stood 6px outside the picture's left edge and at 360px on the chat and
@@ -1811,7 +1812,8 @@ test("in a browser at a device scale of 2, under CDP touch emulation on the chat
 // view by PageDown, or by a table that scrolls on its own, opened it on Space.) The three requirements and their pins: no mouse
 // press focuses the web control, pins (a), (b) and (c) and the other-button pin; any focus it holds is painted, pin (e), with (c)'s
 // second branch; Enter or Space opens it only while it is in view at the key, the viewport and every ancestor that clips on that
-// axis, pins (d) and (f), each by Space, by Enter and by the numeric keypad's Enter (NumpadEnter, which Chromium sends as the key
+// axis for pins (d) and (f), and since the file review's round 15 each same-origin frame above the viewer and the top window's
+// visual viewport too (the zoom and frame pins in the block below), pins (d) and (f) each by Space, by Enter and by the numeric keypad's Enter (NumpadEnter, which Chromium sends as the key
 // Enter under a code of its own, so the key gate, which reads the key, reads it as Enter; each press's key and code are read back
 // at the window first, KEY_SENT), each leaving the control unpressed, and pin (d)'s cells at the body's scrollport and pin (f) at the
 // table's, where the control stands inside the window, so the scrollport alone refuses the key (the file review's round 15,
@@ -2634,9 +2636,11 @@ test("in a browser (a fine pointer), a remote picture under the floor in a detai
 // and the browser paints its tap highlight over the element a tap reaches that shows a hand cursor, the web control among them, in
 // the computed -webkit-tap-highlight-color: rgba(51, 181, 229, 0.4) on a phone, rgba(0, 0, 0, 0.18) under CDP touch emulation and on
 // the touchscreen laptop. On the phone that highlight painted the control's line down to 2.578:1 dark and 2.531:1 light against its
-// own ground, a pressed state a gesture opens the tab from, under the 3:1 floor. The sheets take the highlight off the web control and
-// the mark (their tap rule), so the frames of the tap are the sheets' own, the transition from the rest dress to the hover dress, at
-// 5.351:1 dark and 3.791:1 light at their lowest on each device and surface. The mark shows no highlight with the rule or without it,
+// own ground in the frames this pin reads, which it reads one screenshot at a time, about 33 ms apart, so not every frame the
+// compositor paints (a screencast of every frame read 2.22:1 dark and 2.41:1 light), a pressed state a gesture opens the tab from,
+// under the 3:1 floor. The sheets take the highlight off the web control and the mark (their tap rule), so the frames of the tap are
+// the sheets' own, the transition from the rest dress to the hover dress, at 5.351:1 dark and 3.791:1 light at their lowest in the
+// frames read on each device and surface (4.201:1 dark and 3.789:1 light in the screencast of every frame). The mark shows no highlight with the rule or without it,
 // since nothing from it up to the root shows a hand cursor, so its reads here are keep cells, green without the rule by design; so
 // are the control's under CDP touch and on the laptop, where the 0.18 black darkens the line and its ground alike and the tap's
 // lowest read stays above 3:1 (4.211:1 dark, 3.416:1 light). Only the phone's highlight takes the line under 3:1, so the phone's
@@ -2723,13 +2727,13 @@ async function tapFrames(page: any, cdp: any, alt: string, kind: "control" | "ma
   assert.equal((await page.evaluate(() => (window as any).__opened.length)) - opens, 1, where + ": the tap on " + what + " opens the tab once");
   assert.ok(reads.some((r) => r.active), where + ": a frame of " + what + " is read while it matches :active, so the tap's pressed frames are read (the first read at " + reads[0].ms + " ms)");
   for (const r of reads) {
-    // FAILS BEFORE the sheets' tap rule, on the phone alone: the control's pressed frames at 2.578:1 dark and 2.531:1 light, the default highlight over the line
+    // FAILS BEFORE the sheets' tap rule, on the phone alone: the control's pressed frames at 2.578:1 dark and 2.531:1 light in the frames read, the default highlight over the line
     if (r.ratio === null) fails.push(where + ": " + what + " " + r.ms + " ms after the tap" + (r.active ? ", :active" : "") + ": its line as painted is refused, " + r.refused);
     else if (r.ratio < 3) fails.push(where + ": " + what + " " + r.ms + " ms after the tap" + (r.active ? ", :active" : "") + " paints " + r.dash + " over " + r.ground + ", " + r.ratio.toFixed(3) + ":1, under the 3:1 floor (tap highlight " + before.highlight + ")");
   }
 }
 for (const device of ["phone", "touch", "laptop"] as TapDevice[]) {
-  test("in a browser on " + TAP_ON[device] + ", a finger's tap on the web control and on the mark, on the chat modal, the feed and the Files pane in both themes: every frame from the tap until it settles, the tap's pressed frames while the element matches :active among them, paints the line at 3:1 or better, and the tap opens the tab once (the tap-highlight ruling of 2026-09-24: on the phone the browser's default tap highlight painted the control's pressed frames down to 2.578:1 dark and 2.531:1 light; the mark takes no highlight, and under CDP touch and on the laptop the default highlight stays above 3:1, keep cells green without the sheets' tap rule by design; a property pin read off the paint)", { timeout: 240000 }, async (t) => {
+  test("in a browser on " + TAP_ON[device] + ", a finger's tap on the web control and on the mark, on the chat modal, the feed and the Files pane in both themes: each frame read from the tap until it settles, one screenshot about every 33 ms, the tap's pressed frames while the element matches :active among them, paints the line at 3:1 or better, and the tap opens the tab once (the tap-highlight ruling of 2026-09-24: on the phone the browser's default tap highlight painted the control's pressed frames down to 2.578:1 dark and 2.531:1 light in the frames read; the mark takes no highlight, and under CDP touch and on the laptop the default highlight stays above 3:1, keep cells green without the sheets' tap rule by design; a property pin read off the paint)", { timeout: 240000 }, async (t) => {
     const fails: string[] = [];
     const note = (m: string) => t.diagnostic(m);
     const second = await secondServer([], TINY_SIZES);
@@ -2761,7 +2765,7 @@ for (const device of ["phone", "touch", "laptop"] as TapDevice[]) {
         }
       }, device === "laptop" ? { args: [LAPTOP] } : {});
     } finally { await second.close(); }
-    assert.deepEqual(fails, [], "every frame of a finger's tap on the outbound dress paints its line at 3:1 or better against the ground the sheet controls (a property pin read off the paint):\n" + fails.join("\n"));
+    assert.deepEqual(fails, [], "each frame read of a finger's tap on the outbound dress paints its line at 3:1 or better against the ground the sheet controls (a property pin read off the paint, one screenshot about every 33 ms):\n" + fails.join("\n"));
   });
 }
 
