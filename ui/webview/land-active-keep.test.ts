@@ -362,6 +362,19 @@ test("the raw land-saved write on a missed land with no row at the saved place, 
   assert.equal(j.content.scrollTop, 4000);
 });
 
+test("render.ts: showActive decides whether the scroller holds the view's reader BEFORE the display flip (a switch's entering view is still display:none then) and hands the decision to the synchronous land alone; the deferred build's land and the hidden pane's retry pass nothing. A source pin, keyed on where the decision is read: the executed proof of the composition is the landing lab's road 16 (tests/test_landing_notice_browser.py), where a deep link on the displayed tab reaches landActive through showActive; the switch's half and the pending-build conjunct have no executed road", () => {
+  const m = RENDER.match(/^function showActive\(keep\?: \{ uuid: string; y: number \} \| null\) \{([\s\S]*?)\n\}/m);
+  assert.ok(m, "showActive");
+  const body = m![1];
+  const decl = body.indexOf('const scrollerHolds = v.el.style.display !== "none" && content.clientHeight > 0 && pendingBuildRaf == null;');
+  const flip = body.indexOf('for (const [vid, vv] of views) vv.el.style.display = vid === activeId ? "" : "none";');
+  assert.ok(decl >= 0 && flip > decl, "the decision reads the view's display, the pane's height and the pending build before the loop that shows the entering view");
+  assert.equal((body.match(/landActive\(/g) || []).length, 2, "showActive lands on two paths");
+  assert.match(body, /syncView\(activeId!\); landActive\(content, v, scrollerHolds\);/, "the synchronous land is handed the decision");
+  assert.match(body, /syncView\(target\);[^\n]*\n\s*landActive\(cc, vv\);/, "the deferred land passes nothing: after a pending build the record is the truth");
+  assert.match(RENDER, /if \(c && vv\) landActive\(c, vv\); \}\);/, "the hidden pane's retry passes nothing");
+});
+
 test("an armed miss with no row at the saved place (the saved place inside a spacer): the take, then, with no row to put back, the take undone and the raw land-saved write exact in the layout the saved place was measured in (the maintainer's round 3 ruling B: until then the take stood and the raw write moved the reader by its delta, disclosed)", () => {
   // rows 0..1000 then a 5000 px bottom spacer; the saved place at 3000 has no row at or below the viewport top
   const w = world({ spacerH: 0, saved: 3000, bottomSpacerH: 5000 }, { anchor: "11111111-2222-4333-8444-000000000002", land: false });
