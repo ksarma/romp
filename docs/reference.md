@@ -3156,10 +3156,11 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   behind them, resident until they aged past the cap, about 1.2 GiB on a box
   whose LRU sat at its cap of a million entries, and live atoms
   evicted by stale ones were rebuilt. Until 2026-09-24 a freed list's
-  entries stayed until the cap reached them, which on a large machine never
-  happened: 6.15 million entries against a cap of 7.73 million after 73
-  hours, most of them for freed lists. On that machine, with nine sessions,
-  the live entries are at most about 1.0 million, so the cap sits about 7.7
+  entries stayed until the cap reached them or a new list registered the
+  same row under their list's id, and on a large machine the cap had not
+  come after 73 hours: 6.15 million entries against a cap of 7.73 million,
+  most of them for freed lists. On that machine, with nine sessions, the
+  live entries are at most about 1.0 million, so the cap sits about 7.7
   times above them: the cap is a backstop, and `evictions` counts the live
   entries it takes), `evictions` (a live entry past the cap: its slot's memo
   dropped, never a field in place), `collected` (entries the collection event

@@ -5065,15 +5065,16 @@ _MAT_LRU = collections.OrderedDict()  # (id(LazyAtoms), row) → (the list's _Li
 #                                       dropped assembly entry releases its index's entries at once (LazyIndex.release), and a freed list
 #                                       takes the rest with it (the collection event, 2026-09-24): a tree that outlived its entry could read
 #                                       a released slot again and register it against an index nothing releases again, and when that tree
-#                                       went its entries stood dead until the cap, which at MemTotal / 32 KiB never came (6.15 million
-#                                       entries against a 7.73 million cap after 73 hours on a nine-session machine, at least 83 percent of
-#                                       them for freed lists, by the live bound below: 1 - 1,005,102 / 6.15 million). Each list's _ListRef
-#                                       queues itself when the list is freed; its callback takes no lock, since it can fire at any decref,
-#                                       under this lock included, and the lock is not reentrant; the next registration or release drains
-#                                       the queue under the lock (_mat_drain). The cap is the backstop, counted in `evictions` for a live
-#                                       entry (a dead entry it drops counts `expired`): on that machine the live entries are at most
-#                                       1,005,102 (27 live indexes at the peak, times the largest document's 37,226 rows), so the cap sits
-#                                       about 7.7 times above them; a cap under the live entries rebuilds on every pass (above).
+#                                       went its entries stood dead until the cap or a new list registering the same row under their id, and
+#                                       on a nine-session machine the cap (MemTotal / 32 KiB) had not come after 73 hours (6.15 million
+#                                       entries against a 7.73 million cap, at least 83 percent of them for freed lists, by the live bound
+#                                       below: 1 - 1,005,102 / 6.15 million). Each list's _ListRef queues itself when the list is freed; its
+#                                       callback takes no lock, since it can fire at any decref, under this lock included, and the lock is
+#                                       not reentrant; the next registration or release drains the queue under the lock (_mat_drain). The
+#                                       cap is the backstop, counted in `evictions` for a live entry (a dead entry it drops counts
+#                                       `expired`): on that machine the live entries are at most 1,005,102 (27 live indexes at the peak,
+#                                       times the largest document's 37,226 rows), so the cap sits about 7.7 times above them; a cap under
+#                                       the live entries rebuilds on every pass (above).
 _MAT_LOCK = threading.Lock()
 _MAT_COLLECTED = collections.deque()  # the _ListRef of every LazyAtoms freed since the last drain, queued by _mat_collected and
 #                                       drained under _MAT_LOCK before each registration and at each release (_mat_drain)
@@ -5178,10 +5179,11 @@ def _mat_trim():
 def _mat_drain():
     """Under _MAT_LOCK: the entries of every list freed since the last drain leave the LRU, counted `expired` (entries of a
     collected list dropped) and `collected`. An entry is removed only when it holds the freed list's own reference, never by
-    id alone (a guard: an entry under a recycled id cannot precede the drain, and a dead entry the queue never held is left
-    for the trim); no slot is touched (the list is gone). The cost is one dict lookup per row of each freed list, the walk
-    release() pays for a live index. It runs before each registration and at each release, never in the /perf read
-    (asm_index_stats changes nothing)."""
+    id alone (a guard: a list's callback queues it before its id can be reused, and every registration drains first, so no
+    live list's entry sits under a queued list's key; a dead entry the queue never held is left for the trim); no slot is
+    touched (the list is gone). The cost is one dict lookup per row of each freed list, the walk release() pays for a live
+    index. It runs before each registration and at each release, never in the /perf read (asm_index_stats changes
+    nothing)."""
     q = _MAT_COLLECTED
     n = 0
     while q:
