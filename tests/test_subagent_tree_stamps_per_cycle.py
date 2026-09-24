@@ -61,46 +61,39 @@ cycle's validation waits for the next cycle; and the stamps' release at the cycl
 over the miss-path world re-takes the project directory's own stat (dirStats D, where a stamps map carried across cycles
 serves the stale stamp and pays D - 1); (3) two
 threads: a pusher cycle and a jobs pass running at once each validate once with their own scope object, never served
-by the other's; (4) the guards, each against the input it refuses and the input it accepts: a forget that evicts the
-root makes the next read in the same scope walk again while a forget that evicts nothing leaves the scope serving; a
+by the other's; (4) the guards, each against the input it refuses and the input it accepts: a
 stamp stat that raises is answered (dir, None) and not held while one that succeeds is held; a walk with a failed
 listing is not held while a clean one is (the store rule in which this branch differs from #1822), and a walk that stored a racy stamp (the real window, one directory written at
 the walk) is held for the cycle like a clean one, its pair and its stamps, and walked again by the next cycle's first read
 (round 1 of #882: every case closed the window, so the hold had no executed pin and the opposite policy stayed green); a
 launch fold that did not read the file is folded once per read (the call-local
 hold) and again by the next read (not held for the cycle) while one that read it is held for the cycle, with the fault's
-producer driven for real (the reader's fail path, a raising fold, a readable file); the generation is read before each disk
-read, the pair's two hold sites (the validated hit's and the clean walk's, both in _subagent_tree) under the one read before
-the root's lstat, so an eviction landing inside the root's lstat (the walk's hold), inside a validation lstat after the hit
-was read (the hit's hold), inside an own stat or inside a launch fold's resolution leaves that hold outdated and the next
-lookup validates, walks, stats or folds it once more (D lstats, D lstats, 1 stat, 1 fold) instead of serving it; a root gone mid-cycle whose entry stood
-moves the gen and records its own eviction, and a sibling tree the scope held is still served (the eviction is that root's,
-not the sibling's), while one with no entry moves nothing; the two pop paths, each found by a thread with no hold on the
-root while another thread's scope holds it (the tree removed, and the tree replaced by a regular file; round 1 of #882,
-where the replaced-root record had no case and its deletion left the module green): the pop moves the gen by one and names
-the root in the table, the holder's next read drops its pair and answers the pop's shape at one lstat of the root, its
-other held tree is still served, and a second read with no entry standing moves nothing; and the held-root lag,
-characterized: a root removed while the same thread's scope holds it is served, pair and stamps, at no stat until that
-scope ends (the served call precedes the root's lstat, so no pop runs and the gen stands), and the next scope's first read
-finds it gone; and the scoped counter at every edge of these, asserted: a served read of a held root, removed or not,
-lands in scoped, and a stale hold dropped at the lookup, a missing-root pop and a replaced-root pop move it by nothing (a
-stale hold dropped after the forget reads (hit, miss, scoped, evict) == (0, 1, 0, 1)), so hit + miss + scoped is the reads
-answered a tree; (5) the invalidation is scoped to what became stale (since 2026-09-21,
-round 1 of #882's ruling): an eviction of a root drops from every open scope that root's pair, the stamps indexed from it and the launch folds
-keyed on it (the transcript's own subagents root, whatever tree the agent's file resolved under: the rule and its bound
-are stated once, in _subagent_scope's docstring), and nothing else, so a held tree, a held stamp and held launch folds survive
-the eviction of a root they are not under (0 lstats, 0 stats, 0 folds on the next read), a cached agent-file path is not
-answered after another thread found its tree gone (the stamps of the removed tree are dropped, whether indexed from the held
-tree or taken as own stats by a lookup that preceded any tree read), a stamp the scope took itself, vouched by no root, is
-re-taken after any eviction (1 stat) where a tree-indexed one is served (0), held launch folds are
-re-read when their own root leaves the memo (the attribution changes), a fold of a file found under a sibling's tree (the
-/clear-fork shape) survives the sibling's eviction (0 folds, the attribution served, the sibling's pair dropped) and is
-dropped by the own root's (A + 1 folds), and once the sibling's tree is gone and popped by another thread the fold from the
-gone file is served until the cycle ends and re-read by the next cycle's first read (the command top-level there: the
-bound's edge), and the table of evicted roots at its cap is
-cleared with every held entry dropped once, each map by execution (the pair D lstats, an indexed stamp 1 stat, the launch
-folds A folds), not through the shared predicate alone. Before 2026-09-21 one process-wide generation emptied every scope's three maps on
-any root's eviction: every held tree paid its D lstats again, every held stamp its stat, every awaiting agent its fold.
+producer driven for real (the reader's fail path, a raising fold, a readable file); and the one-cycle lag at each road
+by which a root leaves the memo (round 4 of #882, D3: upstream's forget and pops record no eviction, so nothing an open
+scope holds is dropped before the scope ends): the forget, which for an owned root evicts nothing and leaves the scope
+serving, and which, evicting the root, leaves its held pair served for the rest of the scope, the next scope's first read
+walking; a root gone mid-cycle whose entry stood, popped by this thread's read, while a tree the scope holds is still
+served, and a missing root with no entry standing answered the same; the two pop paths, each found by a thread with no
+hold on the root while another thread's scope holds it (the tree removed, and the tree replaced by a regular file; round
+1 of #882 found the replaced-root road unarmed): the pop removes the cross-cycle entry and answers its shape, the holder
+is served its pair until its scope ends, its other held tree too, and the next scope's first read answers the pop's
+shape at one lstat of the root; and the held-root lag: a root removed while the same thread's scope holds it is served,
+pair and stamps, at no stat until that scope ends (the served call precedes the root's lstat, so no pop runs), and the
+next scope's first read finds it gone and stats its stamp afresh; and the scoped counter at every edge of these,
+asserted: a served read of a held root, removed, evicted or not, lands in scoped, and a missing-root pop and a
+replaced-root pop move it by nothing, so hit + miss + scoped is the reads answered a tree; (5) the lag across an
+eviction, for everything a scope holds (round 4 of #882, D3, which retired the per-root eviction table): no root's
+eviction drops anything from an open scope, so a held tree, a held stamp and held launch folds are served across the
+eviction of a root they are not under (0 lstats, 0 stats, 0 folds on the next read),
+and across their own root's eviction until the scope ends: a cached agent-file path is answered until the holder's scope
+ends after another thread found its tree gone, whether its stamps were indexed from the held tree or taken as own
+stamps by a lookup that preceded any tree read, and the next scope's lookup answers None; an own stamp is served across an
+unrelated root's eviction as a tree-indexed stamp is (0 stats); held launch folds stand across their own root's eviction
+and the next scope folds every agent again and nests the command; and a fold of a file found under a sibling's tree (the
+/clear-fork shape) is served past the sibling's eviction, the own root's and the sibling tree's removal until the cycle
+ends, the next cycle's first read resolving the gone file to nothing (the command top-level there: the bound's edge).
+Before 2026-09-21 one process-wide generation emptied every scope's three maps on any root's eviction: every held tree
+paid its D lstats again, every held stamp its stat, every awaiting agent its fold.
 (6) The dependency key (since 2026-09-21, round 1 of #882's ruling): the key a chat build records for a subagents tree the agent-file miss walk looked
 through is the served read's (mtime, size) per directory, so a file landing after the hold under a directory the served
 listing lacked leaves the recorded key behind the next signature's re-stat and the tab is rebuilt, whether the landing moved
@@ -109,11 +102,12 @@ every later re-stat, and the tab that showed the file missing was never rebuilt;
 answers in a later cycle, or the held launch fold answers after a reader with no record open walked, records the same keys,
 replayed from the walk's notes (round 2 of #882, group B: before it such a build recorded nothing for the sibling's tree),
 the held fold's from the notes stored in its own entry, since the agent-file memo's entry can by then have been replaced
-by a later lookup's walk or cleared (round 3 of #882, tests-2: one case for each, red under a kernel that replays the
-memo entry's notes);
-a path one build reported under two keys, a held fold's replayed key behind a fresh walk's among them, is recorded under a
-key no re-stat equals, so that tab is rebuilt too, where a record keeping the first key kept the walk's and never rebuilt
-it; and a sibling session directory appearing after a build moves no key it recorded on any of the three roads, the
+by a lookup on a thread that holds no scope, whose walk reads the disk afresh, or cleared (round 3 of #882, tests-2, and
+round 4, D3: one case for each, red under a kernel that replays the memo entry's notes, and the replaced case under one
+that does so only when the memo holds an entry);
+a path one build reported under two keys is recorded under a key no re-stat equals, a rule pinned at the unit level
+alone (round 4 of #882, D3: the road through a held fold's replayed key behind a fresh walk's went with the eviction
+table); and a sibling session directory appearing after a build moves no key it recorded on any of the three roads, the
 residual, witnessed. An agent's own place holding what the walk refuses (a symlinked agent file, or a symlinked
 subagents/ whose target holds the file) is in no record, so the tab its walk built is served with no rebuild, a write to
 the link's target included, beside the control of an absent place recorded None (round 3 of #882, group B: every build
@@ -131,11 +125,7 @@ Path.glob and rglob through 3.13's glob._StringGlobber, whose control's two call
 of the spy's patch: rglob('*') without the scandir half, a glob over a literal part without the lstat half) is
 counted, and each road it leaves open (a DirEntry from a listing of the root's parent, a path outside the tree, an os
 class outside CLASSES, a bare descriptor, a symlinked spelling, pathlib on 3.10; 3.11's pathlib is counted) has an
-executed witness whose census is {}. (9) The eviction table's
-lock (round 2 of #882, group E): the clear straddle, the wiped record and one root's out-of-order stores, each driven
-with real threads, answer vouched False under the lock where the unlocked table answered True, and the out-of-order
-store driven through the real forget, walk and pop serves no pair of a removed tree (the unlocked table served its 2
-directories), beside a control with no race. (10) The miss path's roads beside the bound, each a term of the cost home,
+executed witness whose census is {}. (9) The miss path's roads beside the bound, each a term of the cost home,
 _subagent_tree_memo_report's docstring (round 2 of #882, group D): an absent sibling root costs one failed os.stat per
 lookup of each agent whose file is nowhere, G x K x (1 + M) per cycle, cold or steady, and moves no counter (a boundary
 pin, red under a kernel that holds absence for the cycle), and since round 3 of #882 (extra5-2, extra6-2) so does every
@@ -155,7 +145,7 @@ validation's D - 1 in dirStats (Guards, round 3 of #882, extra6-1); an
 unreadable session directory resolves every agent again on every read, {lstat: CALLS x (3A + 1), stat: CALLS x A x
 (D + 2)} under the tree, with no counter moved but the project directory's one stamp stat (Guards); and the chat
 signature of a tab whose build walked S sibling trees re-stats its D + 1 + S x D + K recorded paths every cycle, and a
-directory created under any sibling directory rebuilds the tab (DependencyKey). (11) The walks that find the file, each
+directory created under any sibling directory rebuilds the tab (DependencyKey). (10) The walks that find the file, each
 priced per walk through the real _pusher_cycle (round 4 of #882, extra6-1), each walk's calls recorded apart and keyed
 on that walk alone: a nested file found at k, {lstat: W + 1 + (k + 1) + R} under the tree with no listing of the
 project directory and no entry stat, at two or more values of k, one landing in a workflow directory walking every
@@ -172,8 +162,8 @@ command, interpreter and head):
   and the launch folds at the appended-launch case;
 - a module-level slot, both loops bound to one shared map: (3), on the jobs thread's lstats for the samples and on each
   slot's identity for the stamp index and the launch folds;
-- the root checked on disk before the held pair is served: the bound's pusher case (its lstats) and the served-paths
-  census;
+- the root checked on disk before the held pair is served: the bound's pusher case (its lstats), the served-paths
+  census and Guards' held-root lag case (its read after the removal);
 - a held fault, a stamp whose stat raised held as (dir, None): Guards' raising-stamp case and MissPathRoads'
   absent-sibling case;
 - a held unclean walk (#1822's store rule, any answer with a directory held): Guards' failed-listing case;
@@ -187,7 +177,10 @@ command, interpreter and head):
 - a dependency note from a fresh stat, and a note of the root alone taken from the pair's stat: DependencyKey's
   listed-child case, each, and the fresh stat its sibling-root case too;
 - a memo hit that replays nothing, a held fold that replays nothing, a held fold that replays the agent-file memo entry's
-  notes (the cleared-memo case), and a path reported under two keys that keeps the first: DependencyKey, each;
+  notes (the cleared-memo case and the case where a lookup on a thread that holds no scope replaced the entry), and a
+  path reported under two keys that keeps the first: DependencyKey, each; and a held fold that replays the memo entry's
+  notes only when the memo holds an entry, else its own: the replaced-entry case, on its record and on the next cycle's
+  signature, with the cleared-memo case green;
 - under a symlinked subagents/, a fault on the own place read as absence, and the own flat place excluded at the flat
   check: DependencyKey's symlinked-subagents fault cases, each;
 - dirStats not counting _dir_stamp's stats: the outside-a-cycle case, the two-row case and MissPathRoads' command-row
@@ -202,9 +195,23 @@ command, interpreter and head):
 - each half of the spy's patch of glob._StringGlobber's held functions removed alone, mutants of this module: SpyRoads'
   test_closed_road_path_rglob on 3.13, on its rglob('*') call without the builtin test (the held scandir) and on its
   glob('workflows') call without the _romp_sig_counting test (the held lstat, the kernel's wrapper).
-The eviction table's mutants (no eviction record from the forget or from either pop, a stamp or a launch fold served
-without its root's vouch, a table clear that records no generation) have nothing to mutate at this head, which carries no
-eviction table.
+- a forget that empties the calling thread's three slots when it evicts a root (one process-wide generation, as before
+  2026-09-21, on one thread): Guards' forget case (the read after the evicting forget) and ScopedInvalidation's held-tree,
+  held-stamp and held-folds survival cases, its own-stamp case across an unrelated eviction, its own-root folds case and
+  its sibling-resolved fold case, each on the read after the forget;
+- a missing-root pop that empties the calling thread's three slots: Guards' gone-mid-cycle case, on the held tree's
+  lstats;
+- the missing-root pop deleted, and the replaced-root pop deleted: Guards' gone-mid-cycle case and the removed-root pop
+  case, and the replaced-root pop case, each on the entry left standing, the other pop case green;
+- a tree slot, a stamp index or a launch-fold slot kept past its scope (inside an open scope, _subagent_tree, _dir_stamp
+  or _awaiting_nest reads and fills one module-level map that no scope's end clears): the next scope's read in Guards'
+  forget case, both pop cases and the held-root lag case for the tree slot; the held-root lag case and
+  ScopedInvalidation's two cached-agent-file cases for the stamp index; ScopedInvalidation's own-root folds case and
+  sibling-resolved fold case for the launch folds;
+- an own stamp not held, beside the two-row case: ScopedInvalidation's own-stamps case, on its second lookup's stats.
+Retired by name with the eviction table (round 4 of #882, D3: the table they mutated is gone, upstream's one-cycle lag is
+the accepted model, and Guards' held-root lag case and forget case pin the lag): no eviction record from the forget or from
+either pop; a stamp or a launch fold served without its root's vouch; a table clear that records no generation.
 
 Every count is derived in the test from the world's sizes (D and A, and where a case adds them G, K, S, M, E and the
 interpreter's own realpath count, taken by running it), never written out. The cycle's jobs that read the tree through
@@ -228,10 +235,8 @@ import traceback
 import types
 import unittest
 from pathlib import Path
-from types import SimpleNamespace
 from unittest import mock
 from romp_load import load_source
-from tests.thread_ends import join_started
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 BIN = os.path.join(os.path.dirname(HERE), "bin")
@@ -706,14 +711,13 @@ class _World(unittest.TestCase):
     def _read_on_a_thread_with_no_scope(self, root):
         """`root` read once on a helper thread that holds no scope (_live_scope is thread-local): the read a thread holding
         the root never makes inside its cycle, since its served call precedes the root's lstat. Returns what the helper
-        saw: its scope (None), _subagent_tree's answer, and the generation right after."""
+        saw: its scope (None) and _subagent_tree's answer."""
         errs, seen = [], {}
 
         def helper():
             try:
                 seen["scope"] = _scope()
                 seen["answer"] = km._subagent_tree(str(root))
-                seen["gen"] = km._SUBAGENT_TREES_GEN[0]
             except Exception:
                 errs.append(traceback.format_exc())
         th = threading.Thread(target=helper, name="stamps-popper")
@@ -1201,7 +1205,7 @@ class BoundPerCycleAndPerPass(_World):
 
 
 class MissPathRoads(_World):
-    """(10) The agent-file lookup's roads the cost home names beside the bound, each derived here from the world's sizes
+    """(9) The agent-file lookup's roads the cost home names beside the bound, each derived here from the world's sizes
     and pinned through the real _pusher_cycle (round 2 of #882, group D: extra6-1, correctness-2, fresh-2; the home is
     _subagent_tree_memo_report's docstring, and each of its entries names the case that pins it): an absent sibling
     root, a sibling tree the agent-file walk reads, and a command row whose owner is read from the agents' transcripts
@@ -1213,8 +1217,8 @@ class MissPathRoads(_World):
     up M more times, as the chat build's Agent head (_stamp_agents) and an open viewer (_subagent_frame_cached,
     build_subagent) look an agent up. A ghost's first cycle is cold (its walk runs, memoizing its answer), the next
     steady (each lookup a memo hit re-checking the walk's stamps). Every count is derived in the case from D, A, CALLS,
-    G, K, S, M and the interpreter's realpath, counted by running it (the absent-or-dangling own-root case also runs
-    os.path.islink, whose one lstat equals the walk's lstat of the own root's type)."""
+    G, K, S, M and the interpreter's realpath, counted by running it (the absent-or-dangling own-root case also runs the
+    walk's one os.lstat of the own subagents directory's type, read in a try as the walk reads it)."""
 
     M = 2   # a ghost's lookups per cycle beyond the one _awaiting_nest makes (its held launch fold answers the rest)
 
@@ -1497,13 +1501,18 @@ class MissPathRoads(_World):
         session directory kept), or a dangling link in it, and G agents whose file is nowhere. Each walk stamps the place
         (place, None), so every lookup of each such agent, the walk's own and every memo hit's re-check, pays one failing
         os.stat of it by _dir_stamp: G x (1 + M) per cycle, cold and steady; each cold walk pays W + 1 lstats of the place
-        (islink's and realpath's, counted by running them, and the tree read's, never held), G x (W + 1), and 0 steady;
-        dirStats moves by the project directory's one stamp stat alone ((dirStats, hit, miss, served, evict) == (1, 0, 0,
-        0, 0)). Red under a kernel that holds an absent stamp for the cycle (1 stat per cycle)."""
+        (the walk's one os.lstat of the own subagents directory's type, whose error it reads, and realpath's, counted by
+        running them, and the tree read's, never held), G x (W + 1), and 0 steady; dirStats moves by the project directory's
+        one stamp stat alone ((dirStats, hit, miss, scoped, evict) == (1, 0, 0, 0, 0)). Red under a kernel that holds an
+        absent stamp for the cycle (1 stat per cycle)."""
         for n, shape in enumerate(("absent", "dangling")):
             own = self._no_tree_in_the_own_place(shape)
             with _PathCalls() as pc0:
-                os.path.islink(own); os.path.realpath(own)
+                try:                                      # the walk's read of the own subagents directory's type: one os.lstat
+                    os.lstat(own)
+                except OSError:                           # absent, or a dangling link's own lstat succeeds: either way one call
+                    pass
+                os.path.realpath(own)
             w = pc0.count("lstat", [own])
             for G in (1, 2, 3):
                 with self.subTest(shape=shape, G=G):
@@ -1516,16 +1525,17 @@ class MissPathRoads(_World):
                         want = (G * (1 + self.M), G * (w + 1) if phase == "cold" else 0, (1, 0, 0, 0, 0))
                         self.assertEqual(got, want,
                                          "(_dir_stamp's os.stat of the own root's place, the walk's os.lstat of it, (dirStats, hit, "
-                                         "miss, served, evict)) over %s: %r; keyed on (G x (1 + M), G x (W + 1) cold and 0 steady, "
+                                         "miss, scoped, evict)) over %s: %r; keyed on (G x (1 + M), G x (W + 1) cold and 0 steady, "
                                          "(1, 0, 0, 0, 0)) = %r: one failing stamp stat per lookup, never held (a kernel that holds "
-                                         "the absent stamp pays 1), the cold walks' islink, realpath and tree lstats, and only the "
-                                         "project directory's stamp in dirStats" % (what, got, want))
+                                         "the absent stamp pays 1), the cold walks' lstats of the own subagents directory's type, "
+                                         "realpath's and the tree read's, and only the project directory's stamp in dirStats"
+                                         % (what, got, want))
 
     def test_boundary_a_file_or_a_live_link_in_the_own_roots_place_is_stat_once_per_cycle_and_held(self):
         """The boundary of the own-place population (round 3 of #882, extra6-2, the refuter's narrowing): a file, or a link
         to a directory, in the own root's place is no tree, but its stamp's stat succeeds, so _dir_stamp holds it for the
         cycle as an own stat: 1 os.stat of the place by _dir_stamp per cycle, cold and steady, whatever G and M, and
-        dirStats moves by that stat and the project directory's ((dirStats, hit, miss, served, evict) == (2, 0, 0, 0,
+        dirStats moves by that stat and the project directory's ((dirStats, hit, miss, scoped, evict) == (2, 0, 0, 0,
         0)). A boundary guard, red under a kernel that holds no own stat."""
         for n, shape in enumerate(("file", "live")):
             own = self._no_tree_in_the_own_place(shape)
@@ -1537,7 +1547,7 @@ class MissPathRoads(_World):
                         pc, d = self._cycle(ghosts, what, count=1 + G, within=("_dir_stamp",))
                         got = (pc.count("stat", [own], within="_dir_stamp"), tuple(d[k] for k in ("dirStats", "hit", "miss", "scoped", "evict")))
                         self.assertEqual(got, (1, (2, 0, 0, 0, 0)),
-                                         "(_dir_stamp's os.stat of the own root's place, (dirStats, hit, miss, served, evict)) over %s: "
+                                         "(_dir_stamp's os.stat of the own root's place, (dirStats, hit, miss, scoped, evict)) over %s: "
                                          "%r; keyed on (1, (2, 0, 0, 0, 0)): its stat succeeds and is held once per cycle, beside the "
                                          "project directory's" % (what, got))
 
@@ -1653,7 +1663,7 @@ class MissPathRoads(_World):
 
 
 class FoundRoads(_World):
-    """(11) The agent-file walks that find the file, each a term of the cost home (_subagent_tree_memo_report's docstring;
+    """(10) The agent-file walks that find the file, each a term of the cost home (_subagent_tree_memo_report's docstring;
     round 4 of #882, extra6-1: the home priced a walk that finds the file as one that misses). Driven through the real
     _pusher_cycle with the stubbed job's CALLS reads. Each walk's own calls are recorded apart (_walks: the calls made
     while one _subagent_file_walk runs, by the spies' census under a tree and by path), so every count keys on one walk
@@ -2093,70 +2103,55 @@ class Guards(_World):
     """(4) What the scope refuses to hold, each beside what it accepts. These open the scope directly (the clearing
     point is pinned through the real cycles above)."""
 
-    def test_a_forget_that_evicts_the_root_makes_the_next_read_walk_again_while_one_that_evicts_nothing_leaves_it_served(self):
-        sc = self._open()
+    def test_a_forget_that_evicts_the_root_leaves_its_pair_served_until_the_scope_ends_and_the_next_scope_walks(self):
+        """Upstream's forget (_subagent_trees_forget) against an open scope, on the one-cycle lag (round 4 of #882, D3: no
+        eviction record, so nothing an open scope holds is dropped). Accept: a forget over a live set that owns the root
+        evicts nothing, and the scope keeps serving the held pair. The lag: a forget that evicts the root pops its
+        cross-cycle entry and leaves the held pair in the scope, served to the rest of the scope at no lstat and counted
+        scoped, and the next scope's first read walks (the entry gone: one miss, D lstats). Keys on the reads served the
+        pair by identity at 0 lstats on both sides of the evicting forget, and on the next scope's walk. Red under a forget
+        that empties the calling thread's scope when it evicts a root (the read after the evicting forget walks, D lstats
+        and a miss where 0 are owed) and under a tree slot kept past its scope (the next scope's read is served the pair,
+        0 lstats and no miss where a walk is owed)."""
+        root = str(self.sub)
+        self._open()
         b = self._stats()
         with self._spy() as sp:
-            km._subagent_tree(str(self.sub)); km._subagent_tree(str(self.sub))
+            held = km._subagent_tree(root)                # the validated pair, the one the scope holds (identity below)
+            second = km._subagent_tree(root)
         self.assertEqual(sp.total()["dir_lstat"], D, "two reads in one scope cost one validation")
+        self.assertIs(second, held, "the second read was answered the pair the first read left in the scope (served)")
         self.assertEqual((self._delta(b)["hit"], self._delta(b)["scoped"]), (1, 1),
                          "the first read validated and the second was served the held pair: %r" % (self._delta(b),))
-        # accept: a forget over a live set that owns the root evicts nothing, moves no gen, and the scope keeps serving
+        # accept: a forget over a live set that owns the root evicts nothing, and the scope keeps serving
         km._subagent_trees_forget([{"path": self.path}])
         self.assertEqual(self._delta(b)["evict"], 0)
-        held = sc["trees"][str(self.sub)]                 # the pair the scope holds, read before the call it should answer
-        with self._spy() as sp:
-            out = km._subagent_tree(str(self.sub))
-        self.assertEqual(sp.total()["dir_lstat"], 0, "os.lstat on the tree's directories on the read after the forget that evicted nothing: "
-                                                     "%d; keyed on 0 (the read reached no disk)" % sp.total()["dir_lstat"])
-        self.assertIs(out, held[0], "that read was answered the pair the scope held before it (served), keyed on identity")
-        served_before_eviction = self._delta(b)["scoped"]
-        self.assertEqual(served_before_eviction, 2, "memos.subagentTree scoped so far: %d; keyed on 2, the first pair's second read and "
-                                                    "the read after the forget that evicted nothing, both answered the held pair" % served_before_eviction)
-        # refuse: nobody alive evicts the root; the next read in the SAME scope walks again instead of being served the evicted pair
-        km._subagent_trees_forget([])
-        self.assertEqual(self._delta(b)["evict"], 1)
-        self.assertNotIn(str(self.sub), km._SUBAGENT_TREES)
-        with self._spy() as sp:
-            dirs, _stats = km._subagent_tree(str(self.sub))
-        d = self._delta(b)
-        self.assertEqual(d["miss"], 1, "the read after the forget walked (a miss), not the held pair: _subagent_trees_forget moved "
-                                       "_SUBAGENT_TREES_GEN and recorded the root's eviction, so the hold was dropped at this lookup "
-                                       "(_subagent_vouched against the root's record) and the disk read")
-        self.assertEqual(d["scoped"], served_before_eviction,
-                         "memos.subagentTree scoped after the read that dropped the stale hold and walked: %d; keyed on the %d served reads "
-                         "before the eviction alone (the early return is the one site that moves scoped; a hold dropped at the lookup lands "
-                         "in miss, or in hit when the entry still stands, never in scoped)" % (d["scoped"], served_before_eviction))
-        self.assertEqual(sp.total()["dir_lstat"], D, "a walk: the root and each child by lstat, D = %d" % D)
-        self.assertEqual(len(dirs), D)
-
-    def test_a_stale_hold_dropped_at_the_lookup_lands_in_miss_and_moves_served_by_nothing(self):
-        """The rule that a read answered a tree lands in exactly one of hit, miss and scoped, at the stale-hold edge (the
-        owner's pass before round 2 of #882: a kernel counting served on the dropped hold left the module green, the counter
-        being pinned only where reads are served). The scope holds the root; the forget evicts it (nobody alive); the next
-        read finds its hold stale at the lookup, drops it and reads the disk (the forget popped the entry, so a walk). Keys
-        on the (hit, miss, scoped, evict) delta over the forget and that read == (0, 1, 0, 1): the early return alone moves
-        served, so a hold dropped at the lookup is a validation or a walk and lands in hit or miss, here miss."""
-        root = str(self.sub)
-        sc = self._open()
-        km._subagent_tree(root)
-        self.assertIn(root, sc["trees"], "premise: the root is held")
-        b = self._stats()
-        km._subagent_trees_forget(set())
         with self._spy() as sp:
             out = km._subagent_tree(root)
-        d = self._delta(b)
-        got = (d["hit"], d["miss"], d["scoped"], d["evict"])
-        self.assertEqual(got, (0, 1, 0, 1),
-                         "(hit, miss, scoped, evict) over the forget and the read that dropped the stale hold: %r; keyed on (0, 1, 0, 1): one "
-                         "eviction, the read landing in miss alone (the entry left with the eviction, so it walked) and scoped moved by "
-                         "nothing (the early return alone moves it; a kernel that counts the dropped hold reads (0, 1, 1, 1))" % (got,))
-        self.assertEqual((len(out[0]), sp.total()["dir_lstat"]), (D, D), "the walk: D directories at D lstats")
-        self.assertEqual(sp.tree_calls(), {"lstat": D, "scandir": D},
-                         "filesystem calls under the tree on the walk, by class: %r; keyed on {lstat: D, scandir: D} = D = %d each, the "
-                         "root's lstat and one per child directory, and one listing per directory (an entry's type comes from the "
-                         "listing): the cost home's walk term (_subagent_tree_memo_report's docstring)" % (sp.tree_calls(), D))
-        self.assertIn(root, sc["trees"], "the walk re-holds the root")
+        self.assertEqual(sp.total()["dir_lstat"], 0, "os.lstat on the tree's directories on the read after the forget that evicted nothing: "
+                                                     "%d; keyed on 0 (the read reached no disk)" % sp.total()["dir_lstat"])
+        self.assertIs(out, held, "that read was answered the pair the scope held before it (served), keyed on identity")
+        # the lag: nobody alive owns the root, so the forget evicts its entry; the held pair stays in the scope until it ends
+        km._subagent_trees_forget([])
+        self.assertEqual(self._delta(b)["evict"], 1)
+        self.assertNotIn(root, km._SUBAGENT_TREES, "the forget popped the root's cross-cycle entry")
+        with self._spy() as sp:
+            out = km._subagent_tree(root)
+        got = (sp.total()["dir_lstat"], out is held, self._delta(b)["scoped"], self._delta(b)["miss"])
+        self.assertEqual(got, (0, True, 3, 0),
+                         "(os.lstat on the tree's directories, answered the held pair, scoped, miss) on the read after the forget that "
+                         "evicted the root: %r; keyed on (0, True, 3, 0): the held pair is served for the rest of the scope and counted "
+                         "scoped, the lag upstream's model accepts; a forget that empties this thread's scope walks here (D = %d lstats, "
+                         "a miss)" % (got, D))
+        _scope_close()                                    # the scope ends
+        self._open()                                      # the next scope
+        with self._spy() as sp:
+            dirs, _stats = km._subagent_tree(root)
+        got = (sp.total()["dir_lstat"], self._delta(b)["miss"], len(dirs))
+        self.assertEqual(got, (D, 1, D),
+                         "(os.lstat on the tree's directories, miss, directories) on the next scope's first read: %r; keyed on (D, 1, D) "
+                         "at D = %d: the entry left with the forget and the hold with the scope, so the read walks; a tree slot kept past "
+                         "its scope serves the pair here (0 lstats, no miss)" % (got, D))
 
     def test_a_walk_with_no_entry_standing_pays_d_lstats_and_d_listings_in_one_miss_and_is_held_with_its_stamps(self):
         """The walk entry of the cost home (_subagent_tree_memo_report's docstring): a read with no entry standing for the
@@ -2337,166 +2332,6 @@ class Guards(_World):
                              "the scope, so the new cycle reads the disk (a hold that outlived the scope would serve the pair for 0)"
                              % (cost3,))
 
-    def test_an_eviction_landing_inside_the_roots_read_outdates_the_pair_so_the_next_read_validates_again(self):
-        """The generation is read BEFORE the disk read at every hold site: the pair's two, both in _subagent_tree under the one
-        read before the root's lstat (_subagent_scope_hold after a clean walk, the site this case drives, since the forget
-        inside the root's lstat pops the entry and the read walks; and after a validated hit, the twin case below, which the
-        owner's pass before round 2 of #882 found unpinned), the own stat's before its stat and the launch fold's before its
-        file's resolution (the two cases after the twin), so an eviction that lands inside the read leaves the hold outdated
-        and the next lookup validates, walks, stats or folds once more instead of serving an entry under a value that already
-        counts the eviction: the safe side, one re-validation, as the ledger and the docstrings state. Fires the own root's
-        eviction (nobody alive owns it: _subagent_trees_forget) from inside os.lstat of the root, the read's first call, so the
-        read's walk re-inserts the root and the hold is under the generation from before the eviction. Keys on the second
-        read costing D lstats (a validation): a generation read after the root's lstat counts the eviction and serves the
-        pair (0)."""
-        root = str(self.sub)
-        sc = self._open()
-        real_lstat, fired = os.lstat, [0]
-
-        def racing(p, *a, **k):
-            st = real_lstat(p, *a, **k)
-            if str(p) == root and not fired[0]:
-                fired[0] = 1
-                km._subagent_trees_forget([])              # the eviction, inside the read
-            return st
-        with mock.patch.object(os, "lstat", racing):
-            dirs1, _s1 = km._subagent_tree(root)
-        self.assertEqual((fired[0], len(dirs1)), (1, D), "premise: the eviction ran inside the read and the read answered the tree")
-        self.assertIn(root, km._SUBAGENT_TREES, "the read re-inserted the root (its walk, after the forget popped the entry)")
-        with self._spy() as sp:
-            dirs2, _s2 = km._subagent_tree(root)
-        self.assertEqual((sp.total()["dir_lstat"], len(dirs2)), (D, D),
-                         "(os.lstat on the tree's directories, directories) on the read after one whose generation was read before an "
-                         "eviction inside it: %r; keyed on (D = %d, D): the hold is outdated by that eviction, so this read validates again; "
-                         "a generation read after the root's lstat counts the eviction and serves the pair (0, D)"
-                         % ((sp.total()["dir_lstat"], len(dirs2)), D))
-        held = sc["trees"][root]                          # the pair the second read's validation held, under the generation after the eviction
-        with self._spy() as sp:
-            out = km._subagent_tree(root)
-        self.assertEqual(sp.total()["dir_lstat"], 0, "os.lstat on the tree's directories on the third read: %d; keyed on 0 (held again, under a "
-                                                     "generation that counts the eviction)" % sp.total()["dir_lstat"])
-        self.assertIs(out, held[0], "the third read was answered the pair the scope held before it (served), keyed on identity")
-
-    def test_an_eviction_landing_inside_a_validation_lstat_after_the_hit_was_read_outdates_the_hit_paths_hold_too(self):
-        """The pair's other hold site, the validated hit's (the case above drives the clean walk's). _subagent_tree holds the
-        pair from two sites under the one generation read before the root's lstat, _subagent_scope_hold after a validated hit
-        and after a clean walk; a hit's hold under a generation read after the validation would count an eviction that landed
-        inside the validation and serve the pair past it (the owner's pass before round 2 of #882: that variant left the module
-        green, every ordering case popping the entry inside the root's lstat and so driving the walk). Fires the forget inside
-        os.lstat of the SECOND directory, a validation lstat after `hit` was read at the memo: the forget pops the entry, the
-        validation goes on and the pair is held through the hit path, under the older generation. Premise: the read took the
-        hit path (hit +1, miss 0) with the one eviction inside it, and the entry the forget popped was not re-inserted (a hit
-        stores nothing). Keys on the next read costing D lstats with miss +1, a walk: the hold is outdated by the eviction
-        inside its validation and the entry is gone; a hit-path hold under a generation read after the validation serves the
-        pair (0 lstats, scoped +1)."""
-        root, second = str(self.sub), self.dirs[1]
-        sc = self._open()
-        real_lstat, fired = os.lstat, [0]
-
-        def racing(p, *a, **k):
-            st = real_lstat(p, *a, **k)
-            if str(p) == second and not fired[0]:
-                fired[0] = 1
-                km._subagent_trees_forget([])              # the eviction, inside a validation lstat (hit already read at the memo)
-            return st
-        b = self._stats()
-        with mock.patch.object(os, "lstat", racing):
-            dirs1, _s1 = km._subagent_tree(root)
-        d1 = self._delta(b)
-        self.assertEqual((fired[0], len(dirs1)), (1, D), "premise: the eviction ran inside the read and the read answered the tree")
-        self.assertEqual((d1["hit"], d1["miss"], d1["evict"]), (1, 0, 1),
-                         "premise: the read took the HIT path (validated, no walk) with the one eviction inside its validation: %r" % (d1,))
-        self.assertNotIn(root, km._SUBAGENT_TREES, "premise: the entry the forget popped was not re-inserted (the hit path stores nothing)")
-        self.assertIn(root, sc["trees"], "premise: the hit path held the pair")
-        with self._spy() as sp:
-            dirs2, _s2 = km._subagent_tree(root)
-        d2 = self._delta(b)
-        self.assertEqual((sp.total()["dir_lstat"], len(dirs2)), (D, D),
-                         "(os.lstat on the tree's directories, directories) on the read after a HIT-path hold whose generation was read "
-                         "before an eviction inside its validation: %r; keyed on (D = %d, D): the hold is outdated, so this read reads the "
-                         "disk again (a walk, the entry being gone); a hit-path hold under a generation read after the validation counts "
-                         "the eviction and serves the pair (0, D)" % ((sp.total()["dir_lstat"], len(dirs2)), D))
-        self.assertEqual((d2["miss"] - d1["miss"], d2["scoped"] - d1["scoped"]), (1, 0),
-                         "that read is a walk and not a served read: (miss, served) moved %r; keyed on (1, 0)" % ((d2["miss"] - d1["miss"], d2["scoped"] - d1["scoped"]),))
-        self.assertIn(root, km._SUBAGENT_TREES, "the walk re-inserted the root")
-        held = sc["trees"][root]                          # the pair the second read's walk held, under the generation after the eviction
-        with self._spy() as sp:
-            out = km._subagent_tree(root)
-        self.assertEqual(sp.total()["dir_lstat"], 0, "os.lstat on the tree's directories on the third read: %d; keyed on 0 (held again, under a "
-                                                     "generation that counts the eviction)" % sp.total()["dir_lstat"])
-        self.assertIs(out, held[0], "the third read was answered the pair the scope held before it (served), keyed on identity")
-
-    def test_an_eviction_landing_inside_an_own_stat_outdates_the_stamp_so_it_is_re_taken(self):
-        """The own stat's site of the rule above: the eviction fires inside os.stat of the directory (no tree read this cycle,
-        so the stamp is an own stat, root None), and the next _dir_stamp re-takes it. Keys on 1 stat: a generation read after
-        the stat serves it (0)."""
-        sc = self._open()
-        target = self.dirs[3]
-        real_stat, fired = os.stat, [0]
-
-        def racing(p, *a, **k):
-            st = real_stat(p, *a, **k)
-            if str(p) == target and not fired[0]:
-                fired[0] = 1
-                km._subagent_trees_forget([])
-            return st
-        with mock.patch.object(os, "stat", racing):
-            r1 = km._dir_stamp(target)
-        self.assertEqual(fired[0], 1, "premise: the eviction ran inside the stat")
-        self.assertIsNotNone(r1[1])
-        self.assertIsNone(sc["stamps"][target][1], "premise: an own stat, root None")
-        with self._spy() as sp:
-            r2 = km._dir_stamp(target)
-        self.assertEqual(sp.total()["dir_stat"], 1,
-                         "os.stat for an own stamp on the read after one whose generation was read before an eviction inside the stat: %d; "
-                         "keyed on 1 (the hold is outdated, the stamp re-taken); a generation read after the stat serves it (0)"
-                         % sp.total()["dir_stat"])
-        self.assertEqual(r1, r2)
-        held = sc["stamps"][target]                       # the stamp the re-take held, read before the call it should answer
-        with self._spy() as sp:
-            r3 = km._dir_stamp(target)
-        self.assertEqual(sp.total()["dir_stat"], 0, "os.stat for the directory's stamp on the third call: %d; keyed on 0 (held again)"
-                         % sp.total()["dir_stat"])
-        self.assertIs(r3, held[0], "the third call was answered the stamp the scope held before it (served), keyed on identity")
-
-    def test_an_eviction_landing_inside_a_launch_folds_resolution_outdates_the_fold_so_it_is_redone(self):
-        """The launch fold's site of the rule above: the own root leaves the memo inside the FIRST fold's resolution of its
-        file (_subagent_file called from _awaiting_nest's launches(); the sidecar reader's earlier call for the same agent is
-        not the one), so that fold is held under the generation from before the eviction and the other A - 1 under the one
-        after. Keys on the read's folds: one per agent plus that one fold redone at its next lookup in the same read (a later
-        agent's owner lookup consults it again and finds its hold outdated), A + 1; and on the next read folding nothing,
-        every hold now under a generation that counts the eviction. A generation read after the resolution counts the
-        eviction at once and never redoes the fold (A folds in the read)."""
-        self._open()
-        real_file, real_fold, fired, folded = km._subagent_file, km._agent_launch_ids, [], []
-        names = sorted("agent-%s.jsonl" % a for a in self.aids)
-
-        def racing(path, aid, *a, **k):                      # `faults` passes through: the fold's fault plumbing under the stub
-            ap = real_file(path, aid, *a, **k)
-            if not fired and sys._getframe(1).f_code.co_name == "launches":
-                fired.append("agent-%s.jsonl" % aid)
-                km._subagent_trees_forget([])              # the own root leaves the memo inside the resolution
-            return ap
-
-        def counting(agent_path, *a, **k):
-            folded.append(os.path.basename(str(agent_path)))
-            return real_fold(agent_path, *a, **k)
-        with mock.patch.object(km, "_subagent_file", racing), mock.patch.object(km, "_agent_launch_ids", counting):
-            aw1 = km._session_awaiting(SID, self.path, True)
-        self.assertEqual(((aw1 or {}).get("count"), len(fired)), (A, 1),
-                         "premise: the read saw the A agents and the eviction fired inside one launches() resolution: %r" % (((aw1 or {}).get("count"), fired),))
-        self.assertEqual(sorted(folded), sorted(names + fired),
-                         "folds in the read whose first fold's resolution had the own root's eviction land inside it: %r; keyed on one fold "
-                         "per agent plus that fold, %r, redone at its next lookup in the same read (its generation was read before the "
-                         "eviction, so its hold is outdated once the eviction lands; the other A - 1 = %d were read after it and are held), "
-                         "A + 1 = %d folds; a generation read after the resolution counts the eviction at once and never redoes it (A = %d)"
-                         % (sorted(folded), fired, A - 1, A + 1, A))
-        del folded[:]
-        with mock.patch.object(km, "_agent_launch_ids", counting):
-            aw2 = km._session_awaiting(SID, self.path, True)
-        self.assertEqual(((aw2 or {}).get("count"), folded), (A, []),
-                         "the next read: every fold held under a generation that counts the eviction, served (0 folds): %r" % (folded,))
-
     def test_a_faulted_launch_fold_is_folded_once_per_call_and_not_held_across_calls(self):
         """Two lifetimes for a launch fold whose reader took its fail path (_awaiting_nest's `faulted`; round 1 of #882's extra9-2): the
         fault is held for the CALL that observed it, so the owner lookups of one _session_awaiting read fold each agent's file
@@ -2596,8 +2431,9 @@ class Guards(_World):
         the tree is held (a read that did not happen is never held), so every read pays again, derived from the code per
         read: _subagent_meta_map's root lstat (1 lstat), and per agent, whose launches the call consults once (the fault
         holds its fold for the call alone): the memo hit's re-check of its D stamps (D stats), the walk's own-root stamp
-        (1 stat), the flat place's lstat and islink's (2 lstats; the flat place was an os.stat, by os.path.isfile, until
-        round 3 of #882, group A), _subagent_tree's root lstat (1 lstat, the raise), and the fold of the standing
+        (1 stat), its one os.lstat of the own subagents directory's type and the flat place's lstat (2 lstats; the flat place
+        was an os.stat, by os.path.isfile, until round 3 of #882, group A), _subagent_tree's root lstat (1 lstat, the
+        raise), and the fold of the standing
         resolution's file (1 stat). So the census under the tree over one pusher cycle of CALLS reads is
         {lstat: CALLS x (3A + 1), stat: CALLS x A x (D + 2)}, every call failing. None of them moves a counter: hit, miss,
         scoped and evict stay at 0. dirStats moves by 1, and that 1 is one os.stat: _dir_stamp's stat of the project
@@ -2636,12 +2472,14 @@ class Guards(_World):
                          "tree move no counter, and dirStats moves by _dir_stamp's one os.stat of the project directory alone (the "
                          "cost home's unreadable-tree entry, its project-directory part)" % (got,))
 
-    def test_a_root_gone_mid_cycle_with_an_entry_moves_the_gen_and_records_its_eviction_while_a_held_sibling_stays_served(self):
-        """_subagent_tree's missing-root pop path (a session's tree removed while the walk memo held it): a pop that removed
-        an entry moves _SUBAGENT_TREES_GEN and records the root's eviction at the value it moved to, so what an open scope
-        holds for THAT root is dropped at its next lookup; a sibling tree the scope holds is still served (before 2026-09-21
-        one process-wide generation emptied every scope and the sibling paid its D lstats again); a missing root
-        with no entry answers (), () and moves nothing."""
+    def test_a_root_gone_mid_cycle_with_an_entry_is_popped_while_a_held_sibling_tree_stays_served(self):
+        """_subagent_tree's missing-root pop (a session's tree removed while the walk memo held it), read on this thread,
+        whose scope holds another session's tree: the pop removes the cross-cycle entry and answers (), (), and the held
+        tree is still served at 0 lstats, the same pair by identity (upstream's pop records no eviction, so it drops
+        nothing an open scope holds); a second read of the missing root, no entry standing, answers the same and the held
+        tree stays served. Red under a missing-root pop that empties this thread's scope (one process-wide generation, as
+        before 2026-09-21: the held tree validated again, D lstats where 0 are owed) and under the missing-root pop deleted
+        (the entry left standing)."""
         other_t = Path(self.td.name) / "other" / (OTHER_SID + ".jsonl")   # a second session's transcript, its tree beside it
         other_t.parent.mkdir()
         other_t.write_text("")
@@ -2651,47 +2489,33 @@ class Guards(_World):
         self.addCleanup(km._SUBAGENT_TREES.pop, str(other), None)
         km._subagent_tree(str(other))                     # walked into the cross-cycle memo: an entry stands
         self.assertIn(str(other), km._SUBAGENT_TREES)
-        sc = self._open()
+        self._open()
         b = self._stats()
         with self._spy() as sp:
-            first = km._subagent_tree(str(self.sub))
-            held = sc["trees"][str(self.sub)]
+            held = km._subagent_tree(str(self.sub))       # the validated pair, the one the scope holds
             second = km._subagent_tree(str(self.sub))
         self.assertEqual(sp.total()["dir_lstat"], D, "os.lstat on the tree's directories over two reads in the scope: %d; keyed on D = %d, one "
                                                      "validation (the second read reached no disk)" % (sp.total()["dir_lstat"], D))
-        self.assertIs(first, held[0], "the first read's validated pair is what the scope holds")
-        self.assertIs(second, held[0], "and the second read was answered it (served), keyed on identity")
-        self.assertIn(str(self.sub), sc["trees"])
+        self.assertIs(second, held, "the second read was answered the pair the first read left in the scope (served), keyed on identity")
         shutil.rmtree(other)
-        g0 = km._SUBAGENT_TREES_GEN[0]
-        # refuse: the entry stood, so the pop is an eviction: the gen moves, the root's eviction is recorded at the new value, and
-        # the held sibling is still served (its root did not leave the memo)
         self.assertEqual(km._subagent_tree(str(other)), ((), ()), "nothing at the root: (), () as ever")
-        self.assertNotIn(str(other), km._SUBAGENT_TREES)
-        self.assertEqual(km._SUBAGENT_TREES_GEN[0] - g0, 1, "the missing-root pop that removed an entry moved _SUBAGENT_TREES_GEN")
+        self.assertNotIn(str(other), km._SUBAGENT_TREES, "the missing-root pop removed the entry that stood")
         with self._spy() as sp:
             out = km._subagent_tree(str(self.sub))
-        dirs = out[0]
-        self.assertEqual(sp.total()["dir_lstat"], 0, "os.lstat on the held sibling's directories after the pop: %d; keyed on 0, since the "
-                                                     "eviction was the other root's and its pair is as fresh as before; one process-wide "
-                                                     "generation emptied the scope and cost D = %d lstats again"
-                         % (sp.total()["dir_lstat"], D))
-        self.assertIs(out, held[0], "and the read was answered the pair held before the pop (served), keyed on identity")
-        self.assertEqual(len(dirs), D)
-        self.assertEqual(km._SUBAGENT_ROOT_EVICTED.get(str(other)), km._SUBAGENT_TREES_GEN[0],
-                         "the pop recorded the removed root's eviction at the value the gen moved to: what a scope holds for it is dropped")
-        # accept: no entry stands now, so the same call moves nothing and the held tree stays served
-        g1 = km._SUBAGENT_TREES_GEN[0]
+        got = (sp.total()["dir_lstat"], out is held, len(out[0]))
+        self.assertEqual(got, (0, True, D),
+                         "(os.lstat on the held tree's directories, answered the held pair, directories) on the read after the other "
+                         "root's pop: %r; keyed on (0, True, D = %d): the pop drops nothing this scope holds; a pop that empties the scope "
+                         "validates the tree again (D lstats)" % (got, D))
+        # a missing root with no entry standing: the same answer, and the held tree stays served
         self.assertEqual(km._subagent_tree(str(other)), ((), ()))
-        self.assertEqual(km._SUBAGENT_TREES_GEN[0], g1, "a missing root with no entry moves no gen")
-        held = sc["trees"][str(self.sub)]
         with self._spy() as sp:
             out = km._subagent_tree(str(self.sub))
-        self.assertEqual(sp.total()["dir_lstat"], 0, "os.lstat on the held tree's directories after the second missing-root read: %d; keyed on 0 "
-                                                     "(nothing was evicted this time)" % sp.total()["dir_lstat"])
-        self.assertIs(out, held[0], "and the read was answered the held pair (served), keyed on identity")
-        self.assertEqual((self._delta(b)["hit"], self._delta(b)["miss"]), (1, 0), "one validated hit in the scope, before the eviction; "
-                                                                                   "none after (the sibling was served)")
+        got = (sp.total()["dir_lstat"], out is held)
+        self.assertEqual(got, (0, True), "(os.lstat on the held tree's directories, answered the held pair) after the second missing-root "
+                                         "read: %r; keyed on (0, True)" % (got,))
+        self.assertEqual((self._delta(b)["hit"], self._delta(b)["miss"]), (1, 0), "one validated hit in the scope, before the pop; "
+                                                                                   "none after (the held tree was served)")
 
     def _sibling_tree(self, tag="other"):
         """A second session's transcript under `tag` and beside it a subagents tree of D directories (the root, workflows/
@@ -2725,159 +2549,140 @@ class Guards(_World):
             self.assertEqual(len(stats), 1, "%s: %d stats; keyed on one, the root's own lstat" % (what, len(stats)))
             self.assertTrue(stat.S_ISREG(stats[0].st_mode), "%s: the one stat is the regular file's standing in the tree's place" % what)
 
-    def _holder_drops_its_pair_after_another_threads_pop(self, other, other_dirs, shape):
-        """The body the two pop-path guards share. This thread's scope holds the sibling's tree (D directories) and this
+    def _holder_is_served_its_pair_after_another_threads_pop(self, other, other_dirs, shape):
+        """The body the two pop-path cases share. This thread's scope holds the sibling's tree (D directories) and this
         session's; the sibling is removed on disk ("missing") or removed and a regular file written in its place
-        ("replaced"); a thread with no scope reads it, the pop. Keys, in order: the pop's answer; the eviction record (the
-        gen moved by exactly one, the table naming the root at that value); the holder's next read of the sibling, which
-        drops its pair at the lookup and answers the pop's shape at one lstat of the root (a pop that recorded no eviction
-        leaves the D directories served at 0 lstats for the rest of the cycle); this session's tree still served, 0
-        lstats, since the eviction is the sibling's; and the accept side, a second read of the same root with no entry
-        standing, which moves no gen and records nothing new."""
+        ("replaced"); a thread with no scope reads it, the pop. Keys, in order: the pop's answer and the cross-cycle entry
+        gone; the holder's next read of the sibling, served its held pair at 0 lstats (upstream's pop records no
+        eviction, so it drops nothing an open scope holds: the one-cycle lag), and this session's tree served too; a
+        second read on a thread with no scope, no entry standing, answering the same shape at the root's lstat alone; and
+        the next scope's first read of the sibling, which answers the pop's shape at one lstat of the root. The pop
+        deleted leaves the entry standing (the second key), and a tree slot kept past its scope serves the next scope the
+        D directories at 0 lstats (the last)."""
         oset = set(other_dirs)
-        sc = self._open()
+        self._open()
         b = self._stats()
         with self._spy() as sp, _Spy(oset, other) as osp:
-            km._subagent_tree(str(other)); km._subagent_tree(str(self.sub))
+            held_other = km._subagent_tree(str(other)); held_own = km._subagent_tree(str(self.sub))
         self.assertEqual((osp.total()["dir_lstat"], sp.total()["dir_lstat"]), (D, D), "the holds: each tree validated once, D lstats each")
         self.assertEqual((self._delta(b)["hit"], self._delta(b)["scoped"]), (2, 0), "the two holds are validated hits, not served reads")
-        self.assertIn(str(other), sc["trees"]); self.assertIn(str(self.sub), sc["trees"])
         shutil.rmtree(other)
         if shape == "replaced":
             Path(other).write_text("")                    # a regular file where the tree was
-        g0 = km._SUBAGENT_TREES_GEN[0]
         s_pop = self._stats()
         seen = self._read_on_a_thread_with_no_scope(other)
         self._assert_not_a_tree(seen.get("answer"), shape, "the helper's read, the %s-root pop" % shape)
-        self.assertNotIn(str(other), km._SUBAGENT_TREES, "the pop removed the cross-cycle entry")
+        self.assertNotIn(str(other), km._SUBAGENT_TREES, "the %s-root pop removed the cross-cycle entry" % shape)
         self.assertEqual(self._delta(s_pop)["scoped"], 0,
                          "memos.subagentTree scoped over the %s-root pop on the thread with no hold: %d; keyed on 0 (a pop answers no tree "
                          "and moves none of hit, miss and scoped; the early return alone moves scoped)" % (shape, self._delta(s_pop)["scoped"]))
-        s_drop = self._stats()
+        served_reads = 0                                  # the reads this scope answers from its held pairs below
         with _Spy(oset, other) as osp:
             got = km._subagent_tree(str(other))
-        moved, answered, lstats = km._SUBAGENT_TREES_GEN[0] - g0, len(got[0]), osp.total()["dir_lstat"]
-        self.assertEqual((moved, answered, lstats), (1, 0, 1),
-                         "(_SUBAGENT_TREES_GEN's move on the %s-root pop, directories the holding thread is answered for that root on its "
-                         "next read, its os.lstat of the root) %r; keyed on (1, 0, 1): one eviction event recorded (_subagent_root_evicted), "
-                         "the holder's pair dropped at the lookup since the vouch fails on that record, and the root's own lstat paid; a "
-                         "pop that recorded nothing is (0, D = %d, 0), the held pair served stale for the rest of the cycle"
-                         % (shape, (moved, answered, lstats), D))
-        # The scoped count over the same read, asserted after the key above and not before it (round 2 of #882, tests-2): a pop
-        # that recorded no eviction leaves the pair held and served, which moves scoped too, and a red on this message, which
-        # presents the read as one that dropped its pair, would name the opposite of that defect; the key above names it.
-        self.assertEqual(self._delta(s_drop)["scoped"], 0,
-                         "memos.subagentTree scoped over the holder's read that dropped its stale pair and lstat'd the %s root: %d; keyed on 0 "
-                         "(a hold dropped at the lookup is not a served read, and what the lstat found is no tree)" % (shape, self._delta(s_drop)["scoped"]))
-        self.assertEqual(km._SUBAGENT_ROOT_EVICTED.get(str(other)), seen.get("gen"),
-                         "the table names the %s root at the value the gen moved to: %r against %r; keyed on equality (the record that "
-                         "outdates every scope's hold on this root)" % (shape, km._SUBAGENT_ROOT_EVICTED.get(str(other)), seen.get("gen")))
-        self._assert_not_a_tree(got, shape, "the holder's read after the pop")
-        self.assertNotIn(str(other), sc["trees"], "the holder's scope no longer holds the popped root")
-        served_reads = 0                                  # this session's held tree, read twice below and answered the held pair each time
-        held = sc["trees"][str(self.sub)]
+        served_reads += 1
+        key = (osp.total()["dir_lstat"], got is held_other, len(got[0]))
+        self.assertEqual(key, (0, True, D),
+                         "(os.lstat of the %s root and its directories, answered the held pair, directories) on the holder's read after "
+                         "another thread's pop: %r; keyed on (0, True, D = %d): the holder is served its pair until its scope ends, the "
+                         "lag upstream's pop leaves" % (shape, key, D))
         with self._spy() as sp:
             out = km._subagent_tree(str(self.sub))
-        dirs = out[0]
         served_reads += 1
-        self.assertEqual((sp.total()["dir_lstat"], len(dirs)), (0, D),
-                         "this session's held tree on the read after the sibling's pop: (lstats, directories) %r; keyed on (0, D = %d), "
-                         "since the eviction recorded is the sibling's; one process-wide generation emptied this hold too"
-                         % ((sp.total()["dir_lstat"], len(dirs)), D))
-        self.assertIs(out, held[0], "and the read was answered the pair held before the pop (served), keyed on identity")
-        # accept: no entry stands, so a second read of the same root pops nothing, moves no gen and records nothing new
-        g1, rec1 = km._SUBAGENT_TREES_GEN[0], km._SUBAGENT_ROOT_EVICTED.get(str(other))
+        key = (sp.total()["dir_lstat"], out is held_own)
+        self.assertEqual(key, (0, True), "this session's held tree on the read after the sibling's pop: (lstats, answered the held pair) "
+                                         "%r; keyed on (0, True)" % (key,))
+        # a second read with no entry standing, on a thread with no scope: the same shape, the root's lstat alone
         with _Spy(oset, other) as osp:
-            again = km._subagent_tree(str(other))
-        self._assert_not_a_tree(again, shape, "a second read with no entry standing")
+            again = self._read_on_a_thread_with_no_scope(other)
+        self._assert_not_a_tree(again.get("answer"), shape, "a second read with no entry standing")
         self.assertEqual(osp.total()["dir_lstat"], 1, "the second read costs the root's lstat alone")
-        self.assertEqual((km._SUBAGENT_TREES_GEN[0], km._SUBAGENT_ROOT_EVICTED.get(str(other))), (g1, rec1),
-                         "a %s root with no entry standing moves no gen and records nothing new: (gen, record) %r against %r"
-                         % (shape, (km._SUBAGENT_TREES_GEN[0], km._SUBAGENT_ROOT_EVICTED.get(str(other))), (g1, rec1)))
-        held = sc["trees"][str(self.sub)]
-        with self._spy() as sp:
-            out = km._subagent_tree(str(self.sub))
-        served_reads += 1
-        self.assertEqual(sp.total()["dir_lstat"], 0, "os.lstat on this session's held tree after the second %s-root read: %d; keyed on 0"
-                         % (shape, sp.total()["dir_lstat"]))
-        self.assertIs(out, held[0], "this session's read was answered the pair the scope held before it (served), keyed on identity")
         d = self._delta(b)
         self.assertEqual((d["hit"], d["miss"], d["scoped"]), (2, 0, served_reads),
-                         "memos.subagentTree over the case: (hit, miss, scoped) %r; keyed on the two holds' validated hits, no walk, and served "
-                         "moved by the %d reads of this session's held tree the scope answered alone (the %s-root pop, the holder's drop and "
-                         "the second read with no entry standing count as none of the three)" % ((d["hit"], d["miss"], d["scoped"]), served_reads, shape))
+                         "memos.subagentTree over the scope: (hit, miss, scoped) %r; keyed on the two holds' validated hits, no walk, and "
+                         "scoped moved by the %d reads the scope answered from its held pairs (the %s-root pop and the second read with no "
+                         "entry standing count as none of the three)" % ((d["hit"], d["miss"], d["scoped"]), served_reads, shape))
+        _scope_close()                                    # the scope ends
+        self._open()                                      # the next scope
+        with _Spy(oset, other) as osp:
+            nxt = km._subagent_tree(str(other))
+        key = (len(nxt[0]), osp.total()["dir_lstat"])
+        self.assertEqual(key, (0, 1),
+                         "(directories, os.lstat of the %s root and its directories) on the next scope's first read: %r; keyed on (0, 1): "
+                         "the hold ended with the scope, so the root's lstat finds what the pop found; a tree slot kept past its scope "
+                         "serves the D = %d directories here at 0 lstats" % (shape, key, D))
+        self._assert_not_a_tree(nxt, shape, "the next scope's first read")
 
-    def test_a_root_replaced_by_a_file_mid_cycle_is_popped_by_a_thread_with_no_hold_and_the_holder_drops_its_pair(self):
-        """_subagent_tree's replaced-root pop path (correctness-2, tests-2, kernel-1, extra7-2, extra9-1 and extra10-1 of the
-        round-1 review: the one eviction record in the change with no case arming it, so a kernel whose replaced-root pop
-        recorded nothing left the module green and a held tree served for the rest of the cycle). A regular file where the
-        sibling's subagents tree was, found by a thread with no scope while this thread's scope holds the tree (a
-        same-thread read of a held root is served before the root's lstat and never pops: the lag case below). The pop
-        answers (), (the file's lstat,), moves the gen by one and names the root in the table; the holder's next read drops
-        its pair and answers the same at one lstat; the holder's other tree is still served; a second read moves nothing."""
+    def test_a_root_replaced_by_a_file_mid_cycle_is_popped_by_a_thread_with_no_hold_and_the_holder_is_served_its_pair_until_its_scope_ends(self):
+        """_subagent_tree's replaced-root pop (round 1 of #882's review found it unarmed), on the one-cycle lag: a regular
+        file where the sibling's subagents tree was, found by a thread with no scope while this thread's scope holds the
+        tree (a same-thread read of a held root is served before the root's lstat and never pops: the held-root lag case
+        below). The pop answers (), (the file's lstat,) and removes the entry; the holder is served its pair until its
+        scope ends, and its other held tree too; the next scope's first read answers the file's shape at one lstat. Red
+        under the replaced-root pop deleted (the entry left standing), which leaves the removed-root twin green, and under a
+        tree slot kept past its scope (the next scope served the D directories)."""
         other, dirs = self._sibling_tree()
-        self._holder_drops_its_pair_after_another_threads_pop(other, dirs, "replaced")
+        self._holder_is_served_its_pair_after_another_threads_pop(other, dirs, "replaced")
 
-    def test_a_root_removed_mid_cycle_is_popped_by_a_thread_with_no_hold_and_the_holder_drops_its_pair(self):
-        """The missing-root twin of the case above, the same shape through the other pop path, so the two records are told
-        apart: a kernel whose missing-root pop records nothing reds this case and leaves the replaced one green, and a
-        kernel whose replaced-root pop records nothing does the reverse. The pop answers (), ()."""
+    def test_a_root_removed_mid_cycle_is_popped_by_a_thread_with_no_hold_and_the_holder_is_served_its_pair_until_its_scope_ends(self):
+        """The missing-root twin of the case above, through the other pop path, so the two pops are told apart: the
+        missing-root pop deleted reds this case and leaves the replaced one green, and the replaced-root pop deleted does
+        the reverse. The pop answers (), ()."""
         other, dirs = self._sibling_tree()
-        self._holder_drops_its_pair_after_another_threads_pop(other, dirs, "missing")
+        self._holder_is_served_its_pair_after_another_threads_pop(other, dirs, "missing")
 
     def test_a_root_removed_while_this_thread_holds_it_is_served_until_its_scope_ends_and_found_gone_by_the_next(self):
-        """The held-root lag, characterized (fresh-1 of the round-1 review, as its refuters narrowed it: the contract the
-        change states, not a defect). The served call precedes the root's lstat, so a root this thread's scope holds is
-        served after its removal on disk, its pair and its stamps, at no stat and with no pop (the cross-cycle entry stands,
-        the gen does not move), until the scope ends; the next scope's first read lstats the root, pops the entry, records
-        the eviction and answers (), (). Keys on (D directories, 0 lstats, 0 stats) served after the removal, and on the next
-        scope's pop (one lstat, the gen moved by one, the table naming this root). A read that checked the root on disk
-        before serving the hold, the option the review measured and declined for its per-read cost, answers () at one
-        lstat per read there."""
-        root = str(self.sub)
-        sc = self._open()
+        """The held-root lag, upstream's model (round 1 of #882's review characterized it; round 4's D3 kept it as the
+        model). The served call precedes the root's lstat, so a root this thread's scope holds is served after its removal
+        on disk, its pair and its stamps, at no stat and with no pop (the cross-cycle entry stands), until the scope ends;
+        the next scope's first read lstats the root, pops the entry and answers (), (), and its stamp call stats the
+        removed directory afresh and answers None. Keys on (D directories, 0 lstats, 0 stats) served after the removal, and
+        on the next scope's (answer, lstats, stamp). Red under the root checked on disk before the held pair is served (the
+        option the review measured and declined for its per-read cost: () at one lstat per read there), under a tree slot
+        kept past its scope (the next scope served the pair) and under a stamp index kept past its scope (the next scope
+        served the held stamp)."""
+        root, target = str(self.sub), self.dirs[3]
+        self._open()
         b = self._stats()
         with self._spy() as sp:
-            km._subagent_tree(root)
+            held_pair = km._subagent_tree(root)           # the cycle's validation, the pair the scope holds
         self.assertEqual(sp.total()["dir_lstat"], D, "the hold: the cycle's one validation")
-        held_stamp = km._dir_stamp(self.dirs[3])
+        with self._spy() as sp:
+            held_stamp = km._dir_stamp(target)
+            again = km._dir_stamp(target)
+        self.assertEqual((sp.total()["dir_stat"], again is held_stamp), (0, True),
+                         "premise: the directory's stamp is served from the stamp index the held pair filled (0 stats, one object)")
         self.assertIsNotNone(held_stamp[1])
-        held_pair = sc["trees"][root]
-        self.assertIs(held_stamp, sc["stamps"][self.dirs[3]][0], "premise: the stamp answered before the removal is the one the scope holds")
         shutil.rmtree(self.sub)
-        g0 = km._SUBAGENT_TREES_GEN[0]
         with self._spy() as sp:
             out = km._subagent_tree(root)
-            stamp = km._dir_stamp(self.dirs[3])
-        dirs = out[0]
+            stamp = km._dir_stamp(target)
         t = sp.total()
-        self.assertEqual((len(dirs), t["dir_lstat"], t["dir_stat"]), (D, 0, 0),
+        self.assertEqual((len(out[0]), t["dir_lstat"], t["dir_stat"]), (D, 0, 0),
                          "(directories answered, os.lstat, os.stat) on this thread's read of a held root after its removal on disk: %r; "
                          "keyed on (D = %d, 0, 0): the reads reached no disk (the served call precedes the root's lstat: the lag the "
                          "design states, one cycle at most); a read that lstats the root before serving answers () at one lstat"
-                         % ((len(dirs), t["dir_lstat"], t["dir_stat"]), D))
-        self.assertIs(out, held_pair[0], "the read after the removal was answered the pair held before it (served), keyed on identity")
+                         % ((len(out[0]), t["dir_lstat"], t["dir_stat"]), D))
+        self.assertIs(out, held_pair, "the read after the removal was answered the pair held before it (served), keyed on identity")
         self.assertIs(stamp, held_stamp, "and the removed directory's stamp call the stamp held before it (served), keyed on identity: %r"
                       % (stamp,))
-        self.assertEqual(km._SUBAGENT_TREES_GEN[0], g0, "no pop ran on the served read: the gen stands")
         self.assertIn(root, km._SUBAGENT_TREES, "the cross-cycle entry stands: nothing has found the root gone")
-        self.assertIn(root, sc["trees"], "the scope still holds the pair")
         d = self._delta(b)
         self.assertEqual((d["hit"], d["miss"], d["scoped"]), (1, 0, 1),
                          "memos.subagentTree over the hold and the read after the removal: (hit, miss, scoped) %r; keyed on (1, 0, 1), the hold's "
                          "validated hit and the one read the scope answered from the held pair (a served read of a removed held root lands in "
-                         "served: the lag is visible there), the served stamp moving none of the three" % ((d["hit"], d["miss"], d["scoped"]),))
-        km._subagent_scope_close()                        # the cycle ends
+                         "scoped: the lag is visible there), the served stamp moving none of the three" % ((d["hit"], d["miss"], d["scoped"]),))
+        _scope_close()                                    # the cycle ends
         self._open()                                      # the next cycle
         with self._spy() as sp:
             got = km._subagent_tree(root)
-        self.assertEqual(got, ((), ()), "the next scope's first read finds nothing at the root: %r" % (got,))
-        self.assertEqual(sp.total()["dir_lstat"], 1, "one lstat, the root's (which raised); no held pair in the new scope")
-        self.assertEqual(km._SUBAGENT_TREES_GEN[0] - g0, 1,
-                         "_SUBAGENT_TREES_GEN moved by %d on the next scope's read; keyed on exactly one, the missing-root pop of the standing "
-                         "entry" % (km._SUBAGENT_TREES_GEN[0] - g0))
-        self.assertEqual(km._SUBAGENT_ROOT_EVICTED.get(root), km._SUBAGENT_TREES_GEN[0], "the table names this root at that value")
-        self.assertNotIn(root, km._SUBAGENT_TREES, "the entry left the cross-cycle memo")
+            stamp2 = km._dir_stamp(target)
+        key = (got, sp.total()["dir_lstat"], stamp2)
+        self.assertEqual(key, (((), ()), 1, (target, None)),
+                         "(the answer, os.lstat on the tree's directories, the removed directory's stamp) on the next scope's first reads: "
+                         "%r; keyed on (((), ()), 1, (directory, None)): the holds ended with the scope, so the root's lstat finds nothing "
+                         "and the stamp's stat fails; a tree slot kept past its scope serves the D directories at 0 lstats, and a stamp "
+                         "index kept past its scope serves the held stamp" % (key,))
+        self.assertNotIn(root, km._SUBAGENT_TREES, "the missing-root pop removed the entry")
         d2 = self._delta(b)
         self.assertEqual((d2["hit"], d2["miss"], d2["scoped"]), (d["hit"], d["miss"], d["scoped"]),
                          "(hit, miss, scoped) after the next scope's pop: %r against %r before it; keyed on equality, the missing-root pop "
@@ -2885,16 +2690,20 @@ class Guards(_World):
 
 
 class ScopedInvalidation(_World):
-    """(5) An eviction drops from every open scope what became stale and nothing else (since 2026-09-21): the evicted
-    root's pair, the stamps indexed from that tree and the launch folds keyed on it (a fold's root is the transcript's own
-    subagents root whatever tree the agent's file resolved under; the rule, its bound and the case here that executes both
-    are stated once, in _subagent_scope's docstring). Every other root's pair, stamps and launch folds are still served. Before 2026-09-21 one process-wide generation
-    (_SUBAGENT_TREES_GEN alone) emptied every scope's three maps on any root's eviction, so an ownership eviction of an
-    unrelated root (most often an unowned sibling a miss scan inserted, forgotten by the next jobs pass) cost every held
-    tree its D lstats again, every held stamp its stat and every awaiting agent its fold, once per forget rather than once
-    per cycle, and re-folded launches that neither read nor depend on that root. The eviction here comes from the forget
-    (nobody alive owns the other root) or, for the removed tree, from another thread's missing-root pop (a same-thread
-    read of a held root is served before its lstat, so it never pops)."""
+    """(5) Nothing an open scope holds is dropped before the scope ends, whatever root leaves the memo (round 4 of #882,
+    D3: no eviction record and no vouch, upstream's one-cycle lag): a held tree, a held stamp and held launch folds stand
+    across any root's eviction until the scope ends, and the next scope reads again. So a held tree, a held stamp and held
+    launch folds are served across the eviction of a root they are not under, and across their own root's eviction too:
+    a cached agent-file path is answered until the holder's scope ends after another thread found its tree gone, whether
+    its stamps were indexed from the held tree or taken as own stamps, and the next scope's lookup answers None; an own
+    stamp is served across an unrelated root's eviction as a tree-indexed stamp is; held launch folds stand across their
+    own root's eviction and the next scope folds every agent again; and a fold of a file found under a sibling's tree is
+    served past the sibling's eviction, the own root's and the sibling tree's removal until the cycle ends. Before
+    2026-09-21 one process-wide generation emptied every scope's three maps on any root's eviction (every held tree paid
+    its D lstats again, every held stamp its stat, every awaiting agent its fold, once per forget), the defect a forget
+    that empties the calling thread's scope reproduces here. The eviction comes from the forget (nobody alive owns the
+    root) or, for a removed tree, from another thread's missing-root pop (a same-thread read of a held root is served
+    before its lstat, so it never pops)."""
 
     def _other_root(self, tag="other"):
         """A second session's transcript and its tree beside it, walked into the cross-cycle memo and owned by nobody
@@ -2921,47 +2730,52 @@ class ScopedInvalidation(_World):
         self.assertIn(str(self.sub), km._SUBAGENT_TREES, "the alive session's root stays")
 
     def test_a_held_tree_survives_the_eviction_of_a_root_it_is_not(self):
+        """A held pair is served across another root's eviction: 0 lstats, the same pair by identity. Red under a forget
+        that empties the calling thread's scope (D lstats again, once per forget)."""
         _op, other = self._other_root()
-        sc = self._open()
+        self._open()
         b = self._stats()
         with self._spy() as sp:
-            km._subagent_tree(str(self.sub))
+            held = km._subagent_tree(str(self.sub))       # the cycle's one validation, the pair the scope holds
         self.assertEqual(sp.total()["dir_lstat"], D, "the hold: the cycle's one validation")
         self._evict([other], [])
-        held = sc["trees"][str(self.sub)]
         with self._spy() as sp:
             out = km._subagent_tree(str(self.sub))
-        dirs = out[0]
         self.assertEqual(sp.total()["dir_lstat"], 0,
-                         "os.lstat on the held tree's directories on the read after an unrelated root's eviction: %d; keyed on 0, since "
-                         "another root leaving the memo leaves this pair as fresh as it was; one process-wide generation emptied the scope "
-                         "and cost D = %d lstats again, once per forget" % (sp.total()["dir_lstat"], D))
-        self.assertIs(out, held[0], "and the read was answered the pair held before the eviction (served), keyed on identity")
-        self.assertEqual(len(dirs), D)
+                         "os.lstat on the held tree's directories on the read after an unrelated root's eviction: %d; keyed on 0: another "
+                         "root leaving the memo leaves this pair held; a forget that empties the scope costs D = %d lstats again, once per "
+                         "forget" % (sp.total()["dir_lstat"], D))
+        self.assertIs(out, held, "and the read was answered the pair held before the eviction (served), keyed on identity")
+        self.assertEqual(len(out[0]), D)
         self.assertEqual((self._delta(b)["hit"], self._delta(b)["miss"]), (1, 0), "one validation in the scope, none after the eviction")
 
     def test_a_held_stamp_survives_the_eviction_of_a_root_its_directory_is_not_under(self):
+        """A stamp the held tree's pair filled is served across another root's eviction: 0 stats, the same stamp by
+        identity. Red under a forget that empties the calling thread's scope (one stat per held stamp)."""
         _op, other = self._other_root()
-        sc = self._open()
+        self._open()
         km._subagent_tree(str(self.sub))                  # the D directories' stamps indexed from the held tree
         target = self.dirs[3]
-        held = sc["stamps"][target]
         with self._spy() as sp:
             r1 = km._dir_stamp(target)
-        self.assertEqual(sp.total()["dir_stat"], 0, "os.stat for the directory's stamp before the eviction: %d; keyed on 0" % sp.total()["dir_stat"])
-        self.assertIs(r1, held[0], "the call was answered the stamp indexed from the held tree (served), keyed on identity")
+            r1b = km._dir_stamp(target)
+        self.assertEqual((sp.total()["dir_stat"], r1b is r1), (0, True),
+                         "os.stat for the directory's stamp before the eviction, and the second call answered the first's object: %r; "
+                         "keyed on (0, True): served from the stamp index" % ((sp.total()["dir_stat"], r1b is r1),))
         self._evict([other], [])
         with self._spy() as sp:
             r2 = km._dir_stamp(target)
         self.assertEqual(sp.total()["dir_stat"], 0,
-                         "os.stat for a held stamp on the read after an unrelated root's eviction: %d; keyed on 0, since the stamp was "
-                         "indexed from a tree that did not leave the memo; one process-wide generation emptied the scope's stamps and "
-                         "cost one stat per held stamp" % sp.total()["dir_stat"])
-        self.assertIs(r2, held[0], "and the read after the eviction was answered the same held stamp (served), keyed on identity")
-        self.assertEqual(r1, r2)
+                         "os.stat for a held stamp on the read after an unrelated root's eviction: %d; keyed on 0: the stamp stays held; a "
+                         "forget that empties the scope costs one stat per held stamp" % sp.total()["dir_stat"])
+        self.assertIs(r2, r1, "and the read after the eviction was answered the same held stamp (served), keyed on identity")
         self.assertIsNotNone(r2[1])
 
     def test_held_launch_folds_survive_the_eviction_of_a_root_their_files_are_not_under(self):
+        """Held launch folds are served across another root's eviction (0 folds, 0 agent-file stats), beside the tree and
+        its stamps (0 lstats, 0 stats). The rule is the class's: held folds stand across any eviction until the scope ends
+        (the own root's too: the own-root case below). Red under a forget that empties the calling thread's scope (A folds
+        and the tree validated again)."""
         _op, other = self._other_root()
         self._open()
         folded = []
@@ -2977,22 +2791,22 @@ class ScopedInvalidation(_World):
         self.assertEqual((aw2 or {}).get("count"), A)
         self.assertEqual((len(folded), t["file_stat"], t["dir_lstat"], t["dir_stat"]), (0, 0, 0, 0),
                          "(folds, agent-file stats, tree lstats, stamp stats) on the read after an unrelated root's eviction: %r; keyed on "
-                         "every held launch fold being served (0 folds, 0 file stats), since the transcript's own root, the root every "
-                         "fold is keyed on, did not leave the memo, and on the tree and its stamps beside them (0, 0); one process-wide generation emptied "
-                         "the launches map with the rest, re-folded A = %d files and re-validated the tree (D = %d lstats)"
-                         % ((len(folded), t["file_stat"], t["dir_lstat"], t["dir_stat"]), A, D))
+                         "(0, 0, 0, 0): every held launch fold served, and the tree and its stamps beside them, since held folds stand "
+                         "across any eviction until the scope ends; a forget that empties the scope re-folds the A = %d files and "
+                         "re-validates the tree (D = %d lstats)" % ((len(folded), t["file_stat"], t["dir_lstat"], t["dir_stat"]), A, D))
 
-    def test_a_cached_agent_file_is_not_answered_after_another_thread_found_its_tree_gone(self):
-        """The stamps half, behavioural (fresh-2 of the round-1 review): a scope holds the tree and has resolved an agent's
-        file through _subagent_file (the memo's cached path, its stamp re-check served from the scope); the tree is removed
-        on disk and a thread with no scope (the jobs thread to the pusher's, say) reads the root, the missing-root pop. The
-        holding thread's next _subagent_file answers None: the removed tree's stamps are dropped at their lookup, the
-        re-check stats and mismatches, the walk finds nothing. Keys on None against the cached path: a scope whose stamps
-        survived their root's eviction (not vouched by their root, or vouched by another) answers the path of a file that
-        is gone, which build_subagent shows as an error pane."""
-        sc = self._open()
+    def test_a_cached_agent_file_is_answered_until_the_scope_ends_after_another_thread_found_its_tree_gone_and_not_by_the_next(self):
+        """The stamps half of the lag, behavioural (fresh-2 of the round-1 review, on the lag since round 4's D3): a scope
+        holds the tree and has resolved an agent's file through _subagent_file (the memo's cached path, its stamp re-check
+        served from the stamp index); the tree is removed on disk and a thread with no scope reads the root, the
+        missing-root pop. The holding thread's next _subagent_file answers the cached path, its stamps served until the
+        scope ends (the lag); the next scope's lookup re-checks against fresh stats, which mismatch, and the walk finds
+        nothing: None. Keys on the cached path within the scope and None in the next one. Red under a stamp index kept
+        past its scope (the next scope answers the cached path to a removed file, which build_subagent shows as an error
+        pane)."""
+        self._open()
         aid = self.aids[0]
-        km._subagent_tree(str(self.sub))                  # held: its D stamps indexed under this root
+        km._subagent_tree(str(self.sub))                  # held: its D stamps indexed from the pair
         with self._spy() as sp:
             p1 = km._subagent_file(self.path, aid)
         self.assertIsNotNone(p1)
@@ -3000,123 +2814,102 @@ class ScopedInvalidation(_World):
         self.assertEqual(sp.total()["dir_stat"], 0, "os.stat on the tree's directories for the hit's stamp re-check: %d; keyed on 0 (the re-check "
                                                     "reached no disk: the stamps are indexed from the held tree)" % sp.total()["dir_stat"])
         shutil.rmtree(self.sub)
-        errs, seen = [], {}
-
-        def helper():                                     # no scope on this thread (_live_scope is thread-local)
-            try:
-                seen["scope"] = _scope()
-                seen["pop"] = km._subagent_tree(str(self.sub))
-                seen["gen"] = km._SUBAGENT_TREES_GEN[0]
-            except Exception:
-                errs.append(traceback.format_exc())
-        th = threading.Thread(target=helper, name="stamps-helper")
-        th.start()
-        th.join(30)
-        self.assertFalse(th.is_alive(), "the helper returned")
-        self.assertEqual(errs, [])
-        self.assertIsNone(seen.get("scope"), "the helper thread holds no scope")
-        self.assertEqual(seen.get("pop"), ((), ()), "the missing-root pop answered (), ()")
+        seen = self._read_on_a_thread_with_no_scope(self.sub)
+        self.assertEqual(seen.get("answer"), ((), ()), "the missing-root pop answered (), ()")
         self.assertNotIn(str(self.sub), km._SUBAGENT_TREES)
         p2 = km._subagent_file(self.path, aid)
-        self.assertIsNone(p2, "the agent file answered by the holding thread after another thread found the tree gone: %r; keyed on None "
-                              "(the removed tree's held stamps are dropped at their lookup, the re-check stats and mismatches, the walk "
-                              "finds nothing); a scope whose stamps survived their root's eviction answered the cached path %r to a "
-                              "removed file" % (p2, p1))
-        self.assertEqual(km._SUBAGENT_ROOT_EVICTED.get(str(self.sub)), seen.get("gen"),
-                         "the pop recorded this root's eviction at the value the gen moved to")
-        self.assertNotIn(str(self.sub), sc["trees"], "the removed tree's held pair left the scope at its lookup")
+        self.assertEqual(p2, p1, "the agent file answered by the holding thread after another thread found the tree gone: %r; keyed on the "
+                                 "cached path %r, its stamps served until the scope ends (the lag)" % (p2, p1))
+        _scope_close()                                    # the scope ends
+        self._open()                                      # the next scope
+        p3 = km._subagent_file(self.path, aid)
+        self.assertIsNone(p3, "the next scope's lookup: %r; keyed on None (fresh stats of the removed directories mismatch the memo's "
+                              "stamps and the walk finds nothing); a stamp index kept past its scope serves the old stamps and answers "
+                              "the cached path %r to a removed file" % (p3, p1))
 
-    def test_own_stat_stamps_are_dropped_by_any_eviction_so_a_cached_agent_file_is_not_answered_after_its_tree_went(self):
-        """The stamps _dir_stamp took itself, vouched by no root: the owner-lookup-first order (a _subagent_file hit inside the
-        scope BEFORE any tree read this cycle, as a command row's owner lookup makes it) re-stats every directory the agent's
-        walk read and holds each as an own stat under root None, since no tree the scope could name was read. Held within the
-        cycle (a second lookup is served, 0 stats) and released at ANY eviction: the tree is removed on disk and popped by a
-        thread with no scope, and the holding thread's next _subagent_file answers None, the own stats dropped at their lookup
-        (the re-check stats and mismatches, the walk finds nothing). Keys on None against the cached path: a vouch that answers
-        True for root None serves the own stats past the tree's removal and answers the path of a file that is gone, which
-        build_subagent shows as an error pane; the case above pins the same for stamps indexed from a held tree, this one the
-        population that has no root to key on."""
+    def test_own_stamps_are_held_until_the_scope_ends_so_a_cached_agent_file_is_answered_until_then_and_not_by_the_next_scope(self):
+        """The stamps _dir_stamp took itself (D1.5 of #882's round 4): the owner-lookup-first order (a _subagent_file hit
+        inside the scope BEFORE any tree read this cycle, as a command row's owner lookup makes it) re-stats every directory
+        the agent's walk read and holds each as an own stamp, since no held pair lists it. Held for the rest of the scope,
+        across the tree's removal and another thread's pop: a second lookup is served (0 stats) and answers the cached
+        path; the next scope's lookup stats afresh, mismatches and answers None. Keys on the second lookup's stats and on
+        the answers either side of the scope's end. Red under an own stamp not held (the second lookup stats every
+        directory again) and under a stamp index kept past its scope (the next scope answers the cached path to a removed
+        file)."""
         sc = self._open()
         aid = self.aids[0]
         stamps0, p0 = km._SUBAGENT_FILE_CACHE[(self.path, aid)][:2]   # (stamps, resolution, the walk's noted keys)
         dirs_read = [sd for sd, _m in stamps0 if sd in self.dirset]
         self.assertTrue(dirs_read, "premise: the agent's walk read directories of the tree")
         with self._spy() as sp:
-            p1 = km._subagent_file(self.path, aid)         # the hit's re-check, no tree read this cycle: own stats
+            p1 = km._subagent_file(self.path, aid)         # the hit's re-check, no tree read this cycle: own stamps
         self.assertEqual(p1, p0)
         self.assertEqual(sp.total()["dir_stat"], len(dirs_read), "premise: the hit re-stat'd every directory its walk read, nothing served")
         self.assertNotIn(str(self.sub), sc["trees"], "premise: no tree read this cycle")
-        held = [sc["stamps"].get(sd) for sd in dirs_read]
-        self.assertTrue(all(h is not None and h[1] is None for h in held),
-                        "premise: each re-checked directory's stamp is held as an own stat, vouched by no root: %r" % (held[:2],))
         with self._spy() as sp:
             p1b = km._subagent_file(self.path, aid)
-        self.assertEqual((p1b, sp.total()["dir_stat"]), (p0, 0), "held within the cycle: the second lookup is served the own stats, 0 stats")
+        self.assertEqual((p1b, sp.total()["dir_stat"]), (p0, 0),
+                         "(answer, os.stat on the tree's directories) on the second lookup in the scope: %r; keyed on (the cached path, 0): "
+                         "each re-checked directory's stamp is held as an own stamp for the rest of the scope; an own stamp not held stats "
+                         "the %d directories again" % ((p1b, sp.total()["dir_stat"]), len(dirs_read)))
         shutil.rmtree(self.sub)
         seen = self._read_on_a_thread_with_no_scope(self.sub)
         self.assertEqual(seen.get("answer"), ((), ()), "the missing-root pop on the thread with no scope")
-        self.assertEqual(km._SUBAGENT_ROOT_EVICTED.get(str(self.sub)), seen.get("gen"), "the pop recorded this root's eviction")
         with self._spy() as sp:
             p2 = km._subagent_file(self.path, aid)
-        self.assertIsNone(p2, "the agent file answered after another thread found its tree gone, the stamps held as own stats: %r; keyed "
-                              "on None (an own stat is vouched by no root, so any eviction drops it at its lookup: the re-check stats and "
-                              "mismatches, the walk finds nothing); a vouch that answers True for root None serves the own stats and answers "
-                              "the cached path %r to a removed file" % (p2, p0))
-        self.assertGreater(sp.total()["dir_stat"], 0, "the own stats were dropped and re-taken (stat attempts on the removed directories), not served")
-        for sd in dirs_read:
-            self.assertNotIn(sd, sc["stamps"], "the dropped own stat left the scope at its lookup (a failed stat is never held)")
+        self.assertEqual((p2, sp.total()["dir_stat"]), (p0, 0),
+                         "(answer, os.stat on the tree's directories) on the lookup after another thread found the tree gone: %r; keyed on "
+                         "(the cached path, 0): the own stamps are served until the scope ends (the lag)" % ((p2, sp.total()["dir_stat"]),))
+        _scope_close()                                    # the scope ends
+        self._open()                                      # the next scope
+        with self._spy() as sp:
+            p3 = km._subagent_file(self.path, aid)
+        self.assertIsNone(p3, "the next scope's lookup: %r; keyed on None (fresh stats of the removed directories mismatch and the walk "
+                              "finds nothing); a stamp index kept past its scope serves the own stamps and answers the cached path %r to "
+                              "a removed file" % (p3, p0))
+        self.assertGreater(sp.total()["dir_stat"], 0, "the next scope's re-check stats the removed directories afresh (stat attempts), not served")
 
-    def test_an_own_stat_stamp_is_re_taken_after_an_unrelated_roots_eviction_where_a_tree_indexed_stamp_is_served(self):
-        """The cost face of the same rule, the one the reference and the ledger state per eviction event: an own stat (root
-        None) costs one stat after ANY eviction, an unrelated root's included, where a stamp indexed from a held tree costs 0
-        across the same eviction (the survival case above). Keys on 1 stat after the unrelated eviction while held as an own
-        stat, then 0 after the next such eviction once the tree's hold has re-indexed the same directory under its root: a
-        vouch that answers True for root None serves the own stat (0 where 1 is owed) and, by the same answer, serves it past
-        its own tree's removal (the case above)."""
+    def test_an_own_stamp_is_served_across_an_unrelated_roots_eviction_as_a_tree_indexed_stamp_is(self):
+        """The cost face of the same rule (D1.5 of #882's round 4): an own stamp (no tree read this cycle) costs its one stat
+        once per scope, and 0 after any eviction, an unrelated root's included, as a stamp indexed from a held tree does.
+        Keys on 0 stats and the same object after an unrelated eviction, first for the own stamp and then, once the tree's
+        read has filled the index for the same directory, for the indexed stamp after another unrelated eviction. Red
+        under a forget that empties the calling thread's scope (1 stat where 0 is owed)."""
         _op, other = self._other_root()
-        sc = self._open()
+        self._open()
         target = self.dirs[3]
         with self._spy() as sp:
-            r1 = km._dir_stamp(target)                    # no tree read this cycle: an own stat
-        self.assertEqual(sp.total()["dir_stat"], 1)
+            r1 = km._dir_stamp(target)                    # no tree read this cycle: an own stamp
+        self.assertEqual(sp.total()["dir_stat"], 1, "premise: the own stamp's one stat")
         self.assertIsNotNone(r1[1])
-        self.assertIsNone(sc["stamps"][target][1], "premise: held as an own stat, root None")
-        held = sc["stamps"][target]
-        with self._spy() as sp:
-            r1b = km._dir_stamp(target)
-        self.assertEqual(sp.total()["dir_stat"], 0, "os.stat for the own stat's directory on the second call in the cycle: %d; keyed on 0"
-                         % sp.total()["dir_stat"])
-        self.assertIs(r1b, held[0], "the second call was answered the own stat the scope held (served), keyed on identity")
         self._evict([other], [])
         with self._spy() as sp:
             r2 = km._dir_stamp(target)
-        self.assertEqual(sp.total()["dir_stat"], 1,
-                         "os.stat for an own stamp on the read after an UNRELATED root's eviction: %d; keyed on 1, re-taken (vouched by no "
-                         "root, so any eviction drops it: the one stat per own stamp per eviction event the reference states); a vouch that "
-                         "answers True for root None serves it (0) and serves it past its own tree's removal too" % sp.total()["dir_stat"])
-        self.assertEqual(r1, r2)
-        km._subagent_tree(str(self.sub))                  # the tree's hold re-indexes the same directory under its root
-        self.assertEqual(sc["stamps"][target][1], str(self.sub), "premise: now indexed from the held tree, vouched by its root")
-        _op2, other2 = self._other_root("other2")
-        self._evict([other2], [])
-        held = sc["stamps"][target]
+        self.assertEqual((sp.total()["dir_stat"], r2 is r1), (0, True),
+                         "(os.stat for the own stamp's directory, answered the held object) on the read after an unrelated root's eviction: "
+                         "%r; keyed on (0, True): the own stamp stays held for the rest of the scope; a forget that empties the scope "
+                         "re-takes it (1 stat)" % ((sp.total()["dir_stat"], r2 is r1),))
+        km._subagent_tree(str(self.sub))                  # the tree's hold fills the index for the same directory from its pair
         with self._spy() as sp:
             r3 = km._dir_stamp(target)
-        self.assertEqual(sp.total()["dir_stat"], 0,
-                         "os.stat for the same directory's stamp, indexed from the held tree, after another unrelated eviction: %d; keyed "
-                         "on 0 (its root did not leave the memo), the contrast with the own stat's 1" % sp.total()["dir_stat"])
-        self.assertIs(r3, held[0], "and the call was answered the stamp indexed from the held tree (served), keyed on identity")
-        self.assertEqual(r3, r1)
+        self.assertEqual((sp.total()["dir_stat"], r3), (0, r1), "premise: the directory's stamp now comes from the held pair, equal in value, 0 stats")
+        _op2, other2 = self._other_root("other2")
+        self._evict([other2], [])
+        with self._spy() as sp:
+            r4 = km._dir_stamp(target)
+        self.assertEqual((sp.total()["dir_stat"], r4 is r3), (0, True),
+                         "(os.stat for the indexed stamp's directory, answered the held object) after another unrelated eviction: %r; "
+                         "keyed on (0, True), as for the own stamp above" % ((sp.total()["dir_stat"], r4 is r3),))
 
-    def test_held_launch_folds_are_dropped_when_their_own_root_leaves_the_memo(self):
-        """The launches half, behavioural (extra7-1's refuters: a launch fold is keyed on the session's own subagents root,
-        the rule _subagent_scope's docstring states, so it is stale when THAT root leaves the memo and fresh across any other
-        root's eviction; a fold that survived its own root's eviction served a mixed-vintage attribution). A command row
-        the ledger does not attribute; agent 0's transcript gains its launch mid-cycle, and the held folds keep the
-        command top-level for the rest of the cycle (the lag the scope accepts). Then the own root leaves the memo (nobody
-        alive owns it): the folds keyed on it are dropped, the read after re-folds every agent's file and the command
-        nests under agent 0. Keys on the folds (A) and the nesting: a launches map not vouched by its own root served the
-        held folds (0 folds, the command still top-level)."""
+    def test_held_launch_folds_stand_across_their_own_roots_eviction_until_the_scope_ends_and_the_next_scope_folds_again(self):
+        """The launches half of the lag, behavioural (extra7-1's refuters, on the lag since round 4's D3). A command row the
+        ledger does not attribute; agent 0's transcript gains its launch mid-cycle, and the held folds keep the command
+        top-level for the rest of the cycle (the lag the scope accepts). Then the own root leaves the memo (nobody alive
+        owns it): the folds stand, so the read after folds nothing and the command stays top-level; the next scope folds
+        every agent's file again and the command nests under agent 0. Keys on the folds (0 in the scope, A in the next)
+        and the nesting. Red under a forget that empties the calling thread's scope (A folds and the command nested within
+        the scope) and under a launch-fold slot kept past its scope (the next scope folds nothing and the command stays
+        top-level)."""
         cmd = {"tid": "toolu_stamps_cmd1", "desc": "run the parser test chunk", "t": 130, "type": "local_bash"}
         km._bg_live_norm = lambda sid, path, live=None: [cmd]
         names = sorted("agent-%s.jsonl" % a for a in self.aids)
@@ -3141,12 +2934,21 @@ class ScopedInvalidation(_World):
         del folded[:]
         with self._counting_fold(folded):
             aw3 = km._session_awaiting(SID, self.path, True)
+        got = (len(folded), (aw3 or {}).get("count"))
+        self.assertEqual(got, (0, A + 1),
+                         "(folds, count) on the read after the own root's eviction, in the same scope: %r; keyed on (0, A + 1 = %d): the "
+                         "folds stand across the eviction until the scope ends, and the command stays top-level; a forget that empties "
+                         "the scope re-folds the A = %d files here and nests the command" % (got, A + 1, A))
+        _scope_close()                                    # the scope ends
+        self._open()                                      # the next scope
+        del folded[:]
+        with self._counting_fold(folded):
+            aw4 = km._session_awaiting(SID, self.path, True)
         self.assertEqual(sorted(folded), names,
-                         "folds on the read after the own root's eviction: %r; keyed on every agent's fold being redone (A = %d, one each), "
-                         "since the root that left the memo is the transcript's own, the root every fold is keyed on; a launches map not vouched by its own root "
-                         "served the held folds (0)" % (sorted(folded), A))
-        self.assertEqual((aw3 or {}).get("count"), A, "the command nests under agent 0, whose re-read fold names its launch: %r" % (aw3,))
-        agent0 = [it for it in (aw3 or {}).get("items", []) if it.get("agentId") == self.aids[0]]
+                         "folds on the next scope's first read: %r; keyed on every agent's fold redone (A = %d, one each); a launch-fold "
+                         "slot kept past its scope serves the held folds (0)" % (sorted(folded), A))
+        self.assertEqual((aw4 or {}).get("count"), A, "the command nests under agent 0, whose fresh fold names its launch: %r" % (aw4,))
+        agent0 = [it for it in (aw4 or {}).get("items", []) if it.get("agentId") == self.aids[0]]
         self.assertEqual([w["id"] for w in (agent0[0].get("waits", []) if agent0 else [])], [cmd["tid"]],
                          "the command row nested under agent 0: %r" % (agent0,))
 
@@ -3194,18 +2996,17 @@ class ScopedInvalidation(_World):
         rows = [it for it in (aw or {}).get("items", []) if it.get("agentId") == aid]
         return [w["id"] for w in (rows[0].get("waits", []) if rows else [])]
 
-    def test_a_fold_resolved_under_a_siblings_tree_is_keyed_on_the_own_root_and_served_past_the_siblings_removal_until_the_cycle_ends(self):
-        """The fold's root, executed at both edges (the rule and its bound are stated once, in _subagent_scope's docstring).
-        A launch fold is keyed on the transcript's OWN subagents root whatever tree the agent's file resolved under, so the
-        sibling root's eviction drops none of this session's folds (0 folds, the attribution still served) while it does
-        drop the sibling's held pair (its next read walks), and the own root's eviction drops all of them (A + 1 folds, the
-        agent whose file lies under the sibling's tree included). The bound: with the sibling's tree gone on disk and
-        popped by a thread with no hold on it, the fold from the gone file is served until the cycle ends (the command
-        still nests under an agent whose file no longer exists), and the next cycle's first read resolves the file again,
-        to nothing, so the command is top-level there and the own agents fold once more. S = 2 transcripts in one project
-        directory, A = 3 + 1 agents, R = 2 roots read, D = 8, D_sib = 3. A fold keyed on the root the file resolved under
-        re-folds the agent at the sibling's eviction (1 fold where 0); a launches map carried across cycles serves the gone
-        file's attribution in cycle two (the command still nested, 0 folds where A)."""
+    def test_a_fold_resolved_under_a_siblings_tree_is_served_past_both_roots_evictions_and_the_siblings_removal_until_the_cycle_ends(self):
+        """The fold's bound, executed at both edges (on the lag since round 4 of #882, D3). A launch fold, whatever tree the
+        agent's file resolved under, stands until the cycle ends: the sibling root's eviction drops none of this session's
+        folds (0 folds, the attribution still served) and leaves the sibling's held pair served; the own root's eviction
+        drops none either (0 folds); and with the sibling's tree gone on disk and found gone by a thread with no hold on
+        it, the fold from the gone file is still served (the command still nests under an agent whose file no longer exists).
+        The next cycle's first read resolves the file again, to nothing, so the command is top-level there and the own
+        agents fold once more. S = 2 transcripts in one project directory, A = 3 + 1 agents, R = 2 roots read, D = 8,
+        D_sib = 3. Red under a forget that empties the calling thread's scope (the sibling's eviction re-folds every agent,
+        A + 1 folds where 0) and under a launch-fold slot kept past its scope (the next cycle serves the gone file's
+        attribution: the command still nested, 0 folds where A)."""
         sib_t, sib, sibdirs, ap, aid, cmd = self._sibling_resolved_agent()
         names = sorted("agent-%s.jsonl" % a for a in self.aids + [aid])
         own_names = sorted("agent-%s.jsonl" % a for a in self.aids)
@@ -3216,8 +3017,7 @@ class ScopedInvalidation(_World):
         self.assertEqual(((aw1 or {}).get("count"), sorted(folded), self._nested_under(aw1, aid)), (A + 1, names, [cmd["tid"]]),
                          "the hold: one fold per agent, the command nested under the sibling-resolved agent: %r" % (aw1,))
         self.assertIn(sib, sc["trees"], "premise: the miss walk read the sibling's tree into the scope (R = 2)")
-        held = sc["launches"].get((self.path, aid))
-        self.assertIsNotNone(held, "premise: the sibling-resolved agent's fold is held")
+        held_sib = sc["trees"][sib]
         b = self._stats()
         km._subagent_trees_forget([{"path": self.path}])   # this session alive, the sibling's root owned by nobody: the sibling leaves
         self.assertEqual(self._delta(b)["evict"], 1)
@@ -3229,39 +3029,32 @@ class ScopedInvalidation(_World):
         got = (len(folded), self._nested_under(aw2, aid), sp.total()["file_stat"])
         self.assertEqual(got, (0, [cmd["tid"]], 0),
                          "(folds, the command's nesting, agent-file stats) on the read after the SIBLING root's eviction: %r; keyed on 0 "
-                         "folds with the attribution still served, since every fold of this session is keyed on the transcript's own root, "
-                         "which did not leave the memo, the agent whose file lies under the sibling's tree included; a fold keyed on the root "
-                         "its file resolved under is dropped here and folded again (1)" % (got,))
-        self.assertTrue(km._subagent_vouched(held[1], held[2]), "the held fold is still vouched after the sibling's eviction")
+                         "folds with the attribution still served, the agent whose file lies under the sibling's tree included, since a "
+                         "held fold stands until the cycle ends; a forget that empties the scope re-folds every agent here (A + 1)" % (got,))
         b = self._stats()
         with _Spy(set(sibdirs), sib) as ssp:
-            dirs, _stats = km._subagent_tree(sib)
+            out = km._subagent_tree(sib)
         d = self._delta(b)
-        got = (len(dirs), ssp.total()["dir_lstat"], d["scoped"], d["miss"])
-        self.assertEqual(got, (len(sibdirs), len(sibdirs), 0, 1),
-                         "(directories, os.lstat on the sibling's directories, served, miss) on the sibling tree's read after its eviction: "
-                         "%r; keyed on its held pair being dropped at the lookup and the read walking (D_sib = %d lstats, one miss, nothing "
-                         "served): what the sibling's eviction drops is the sibling's pair, not this session's folds" % (got, len(sibdirs)))
+        got = (out is held_sib, ssp.total()["dir_lstat"], d["scoped"], d["miss"])
+        self.assertEqual(got, (True, 0, 1, 0),
+                         "(answered the held pair, os.lstat on the sibling's directories, scoped, miss) on the sibling tree's read after its "
+                         "eviction: %r; keyed on (True, 0, 1, 0): the sibling's held pair is served for the rest of the scope too" % (got,))
         b = self._stats()
         km._subagent_trees_forget([{"path": sib_t}])      # the sibling's session alive, this session's root owned by nobody: the own root leaves
         self.assertEqual(self._delta(b)["evict"], 1)
         self.assertNotIn(str(self.sub), km._SUBAGENT_TREES)
-        self.assertIn(sib, km._SUBAGENT_TREES)
+        self.assertNotIn(sib, km._SUBAGENT_TREES, "the sibling's entry left with its eviction, and the scope's served read of it wrote none")
         del folded[:]
         with self._counting_fold(folded):
             aw3 = km._session_awaiting(SID, self.path, True)
-        got = (sorted(folded), self._nested_under(aw3, aid))
-        self.assertEqual(got, (names, [cmd["tid"]]),
-                         "(folds, the command's nesting) on the read after the OWN root's eviction: %r; keyed on every fold of the session "
-                         "being redone (A + 1 = %d, the agent whose file lies under the sibling's tree included, since its fold too is keyed "
-                         "on the own root) and the command nesting again under the fresh fold; a fold keyed on the root its file resolved "
-                         "under survives the own root's eviction here (A folds, not A + 1)" % (got, A + 1))
-        held3 = sc["launches"].get((self.path, aid))
-        self.assertIsNotNone(held3, "premise: the fold re-held after the own root's eviction")
+        got = (len(folded), self._nested_under(aw3, aid))
+        self.assertEqual(got, (0, [cmd["tid"]]),
+                         "(folds, the command's nesting) on the read after the OWN root's eviction: %r; keyed on 0 folds with the command "
+                         "still nested: the folds stand across their own root's eviction until the cycle ends" % (got,))
         shutil.rmtree(sib)                                # the bound's edge: the sibling's tree gone on disk...
-        seen = self._read_on_a_thread_with_no_scope(sib)  # ...and popped by a thread with no hold on it
-        self.assertEqual(seen.get("answer"), ((), ()), "the missing-root pop on the thread with no scope")
-        self.assertEqual(km._SUBAGENT_ROOT_EVICTED.get(sib), seen.get("gen"), "the pop recorded the sibling's eviction")
+        seen = self._read_on_a_thread_with_no_scope(sib)  # ...and found gone by a thread with no hold on it
+        self.assertEqual(seen.get("answer"), ((), ()), "the thread with no scope finds nothing at the sibling's root")
+        self.assertNotIn(sib, km._SUBAGENT_TREES, "no entry stands for the sibling")
         self.assertFalse(ap.exists(), "premise: the agent's file is gone with the sibling's tree")
         del folded[:]
         with self._counting_fold(folded):
@@ -3269,11 +3062,10 @@ class ScopedInvalidation(_World):
         got = (len(folded), self._nested_under(aw4, aid), (aw4 or {}).get("count"))
         self.assertEqual(got, (0, [cmd["tid"]], A + 1),
                          "(folds, the command's nesting, count) on the same cycle's read after the sibling's tree went and another thread "
-                         "popped it: %r; keyed on the fold from the gone file being served (0 folds, the command still nested under the agent "
-                         "whose file no longer exists): the bound the design accepts, a fold keyed on the own root stands until the cycle "
-                         "ends whatever became of the sibling's tree" % (got,))
-        self.assertTrue(km._subagent_vouched(held3[1], held3[2]), "the fold, keyed on the own root, is still vouched after the sibling's pop")
-        km._subagent_scope_close()                        # the cycle ends
+                         "found it gone: %r; keyed on the fold from the gone file being served (0 folds, the command still nested under the agent "
+                         "whose file no longer exists): the bound the design accepts, a held fold stands until the cycle ends whatever "
+                         "became of the tree its file resolved under" % (got,))
+        _scope_close()                                    # the cycle ends
         self._open()                                      # the next cycle
         del folded[:]
         with self._counting_fold(folded):
@@ -3282,387 +3074,8 @@ class ScopedInvalidation(_World):
         self.assertEqual(got, (own_names, [], A + 2),
                          "(folds, the command's nesting, count) on the next cycle's first read: %r; keyed on the bound's edge, the fold "
                          "re-read by the next cycle (the gone file resolves to nothing, so no fold for it and the command is top-level: "
-                         "A + 2 = %d rows) and the own agents folded once more (A = %d); a launches map carried across cycles serves the "
-                         "gone file's attribution in cycle two (0 folds, the command still nested)" % (got, A + 2, A))
-
-    def test_the_table_of_evicted_roots_at_its_cap_is_cleared_and_every_held_entry_dropped_once(self):
-        """The table is bounded: an eviction of a root not in it while it holds _SUBAGENT_ROOT_EVICTED_MAX roots clears it
-        and records the clear's generation, so every entry held under an older generation is dropped at its next lookup
-        (one re-validation) and entries held after it are vouched by the table again. Single-threaded: it shows the clear's
-        edge on one thread; that a clear serves nothing stale while evictions and vouches run on other threads is
-        EvictionTableLock's (the clear-straddle and wiped-record cases).
-        Keys on each of the three maps at the clear edge, by execution and not through the shared predicate alone: the held
-        pair costs D lstats once on the read after the clearing eviction (0 before it and after that), a stamp indexed from
-        the held tree costs 1 stat once, and the held launch folds are redone once (A folds), where a clear that recorded no
-        generation would leave every one of them vouched (0 where D, 1 and A are owed), a stamp or launch lookup blind to the
-        clear (a vouch inlined without the cleared-generation check) finds no eviction record for the root, which never left
-        the memo, and serves what was held before the clear (0), and a table that never cleared would grow by one entry per
-        root ever evicted."""
-        cap = 4
-        target = self.dirs[3]
-        names = sorted("agent-%s.jsonl" % a for a in self.aids)
-        with mock.patch.object(km, "_SUBAGENT_ROOT_EVICTED_MAX", cap), mock.patch.dict(km._SUBAGENT_ROOT_EVICTED, {}, clear=True), \
-                mock.patch.object(km, "_SUBAGENT_ROOTS_CLEARED_GEN", [0]):
-            others = [self._other_root("other%d" % i) for i in range(cap + 1)]   # cap + 1 unowned roots, one transcript each
-            sc = self._open()
-            with self._spy() as sp:
-                km._subagent_tree(str(self.sub))
-            self.assertEqual(sp.total()["dir_lstat"], D, "the hold")
-            folded = []
-            with self._counting_fold(folded), self._spy() as sp:
-                aw = km._session_awaiting(SID, self.path, True)   # the launch folds held, the stamps served from the held tree
-            self.assertEqual(((aw or {}).get("count"), sorted(folded), sp.total()["dir_lstat"], sp.total()["dir_stat"]), (A, names, 0, 0),
-                             "(count, folds, tree lstats, stamp stats) on the read after the hold: %r; keyed on (A = %d, one fold per agent, "
-                             "0, 0): the read reached the disk for the folds alone"
-                             % (((aw or {}).get("count"), sorted(folded), sp.total()["dir_lstat"], sp.total()["dir_stat"]), A))
-            for i in range(cap):                          # cap evictions of distinct roots fill the table; the held pair survives each
-                self._evict([others[i][1]], [p for p, _r in others[i + 1:]])
-                held = sc["trees"][str(self.sub)]
-                with self._spy() as sp:
-                    out = km._subagent_tree(str(self.sub))
-                self.assertEqual(sp.total()["dir_lstat"], 0, "os.lstat on the held tree's directories after eviction %d of %d distinct roots: %d; "
-                                                             "keyed on 0" % (i + 1, cap, sp.total()["dir_lstat"]))
-                self.assertIs(out, held[0], "and the read after eviction %d was answered the held pair (served), keyed on identity" % (i + 1,))
-            self.assertEqual(len(km._SUBAGENT_ROOT_EVICTED), cap, "the table holds one entry per evicted root, at its cap")
-            self._evict([others[cap][1]], [])             # one more distinct root: the table is cleared
-            self.assertEqual(sorted(km._SUBAGENT_ROOT_EVICTED), [str(others[cap][1])], "cleared, then the clearing root recorded")
-            self.assertEqual(km._SUBAGENT_ROOTS_CLEARED_GEN[0], km._SUBAGENT_TREES_GEN[0], "the clear recorded the generation it happened at")
-            self.assertNotIn(str(self.sub), km._SUBAGENT_ROOT_EVICTED, "premise: the held tree's root has no eviction record (it never left the memo)")
-            with self._spy() as sp:
-                km._dir_stamp(target)                     # BEFORE the tree's re-read, which would re-index it under the new generation
-            self.assertEqual(sp.total()["dir_stat"], 1,
-                             "os.stat for a stamp indexed from the held tree on the read after the clearing eviction: %d; keyed on 1, dropped "
-                             "once by the clear (the cleared generation outranks the hold's); a stamp lookup blind to the clear finds no "
-                             "eviction record for its root and serves what was held before the clear (0)" % sp.total()["dir_stat"])
-            with self._spy() as sp:
-                dirs, _stats = km._subagent_tree(str(self.sub))
-            self.assertEqual(sp.total()["dir_lstat"], D,
-                             "os.lstat on the held tree's directories on the read after the clearing eviction: %d; keyed on the held pair being "
-                             "dropped once (D = %d, a validation), since a cleared table can no longer vouch for what was held before the "
-                             "clear; a clear that recorded no generation leaves it served (0)" % (sp.total()["dir_lstat"], D))
-            self.assertEqual(len(dirs), D)
-            del folded[:]
-            with self._counting_fold(folded), self._spy() as sp:
-                aw = km._session_awaiting(SID, self.path, True)
-            self.assertEqual(sorted(folded), names,
-                             "folds on the read after the clearing eviction: %r; keyed on every held launch fold redone once (A = %d), since the "
-                             "folds were held before the clear; a launch lookup blind to the clear finds no eviction record for the own root "
-                             "and serves the folds held before it (0)" % (sorted(folded), A))
-            self.assertEqual(((aw or {}).get("count"), sp.total()["dir_lstat"], sp.total()["dir_stat"]), (A, 0, 0),
-                             "the read after the clear costs the tree nothing more: re-held by the read above, its stamps re-indexed")
-            held_pair, held_stamp = sc["trees"][str(self.sub)], sc["stamps"][target]
-            with self._spy() as sp:
-                out, r = km._subagent_tree(str(self.sub)), km._dir_stamp(target)
-            self.assertEqual((sp.total()["dir_lstat"], sp.total()["dir_stat"]), (0, 0),
-                             "(tree lstats, stamp stats) on the reads after the re-hold: %r; keyed on (0, 0), held again under the new generation"
-                             % ((sp.total()["dir_lstat"], sp.total()["dir_stat"]),))
-            self.assertIs(out, held_pair[0], "the tree read was answered the re-held pair (served), keyed on identity")
-            self.assertIs(r, held_stamp[0], "and the stamp call the re-indexed stamp (served), keyed on identity")
-
-
-class _PausingTable(dict):
-    """The eviction table (_SUBAGENT_ROOT_EVICTED) with one pause point, armed per case for one named thread: "store"
-    pauses that thread's store of `key` before it lands (its value already computed), "clear before" pauses its clear()
-    before the table is emptied, "clear after" once it has been. At the pause the thread sets `reached` and waits for
-    `go`; every other thread, and the armed thread after its one pause, runs through. The hook calls nothing of the
-    kernel's, so the thread paused in it, which holds _SUBAGENT_EVICT_LOCK at that point, never asks for the lock again
-    (the notes-dir probe's hooks called the kernel from inside the clear and the store on the same thread, which a lock
-    that admits no call under it cannot serve)."""
-
-    def __init__(self):
-        super().__init__()
-        self.phase = self.key = self.thread = None
-        self.reached, self.go = threading.Event(), threading.Event()
-
-    def arm(self, phase, thread, key=None):
-        self.phase, self.thread, self.key = phase, thread, key
-
-    def _at(self, phase, key=None):
-        if self.phase != phase or threading.current_thread().name != self.thread or (phase == "store" and key != self.key):
-            return
-        self.phase = None
-        self.reached.set()
-        if not self.go.wait(30):
-            raise AssertionError("the thread paused at %r was never released" % phase)
-
-    def __setitem__(self, k, v):
-        self._at("store", k)
-        super().__setitem__(k, v)
-
-    def clear(self):
-        self._at("clear before")
-        super().clear()
-        self._at("clear after")
-
-
-class _QueueWatch:
-    """_SUBAGENT_EVICT_LOCK behind a wrapper that marks the moment a thread finds the lock held by another thread and is
-    about to wait for it (its non-blocking try failed): it sets the thread's Event in `events` (keyed by thread name) and
-    records (thread, holder) in `queued`. A case waits on that Event, which the thread also sets when it ends, before it
-    releases the paused holder, so it knows the second thread has reached the lock, where a kernel with no lock runs the
-    same thread to its end, with no time window."""
-
-    def __init__(self, real, events):
-        self.real, self.events, self.holder, self.queued = real, events, None, []
-
-    def acquire(self, blocking=True, timeout=-1):
-        me = threading.current_thread().name
-        if self.real.acquire(False):
-            self.holder = me
-            return True
-        if not blocking:
-            return False
-        self.queued.append((me, self.holder))
-        ev = self.events.get(me)
-        if ev is not None:
-            ev.set()
-        if not self.real.acquire(True, timeout):
-            return False
-        self.holder = me
-        return True
-
-    def release(self):
-        self.holder = None
-        self.real.release()
-
-    def __enter__(self):
-        self.acquire()
-        return self
-
-    def __exit__(self, *exc):
-        self.release()
-        return False
-
-
-class EvictionTableLock(_World):
-    """(9) The eviction table's writes and the vouch's reads under one lock (round 2 of #882, group E; the lock's lifetime
-    and what it guards are stated once, at _SUBAGENT_EVICT_LOCK). Until then _subagent_root_evicted wrote the gen, the
-    table and the cleared generation unlocked and _subagent_vouched read them unlocked, which left three windows in which
-    a vouch answered True for an entry held before its root's latest eviction. Each window case drives its window with
-    real threads: the writing thread is paused inside the table (_PausingTable) at the window's line, the other thread
-    runs until it queues behind the lock (_QueueWatch) or, on a kernel with no lock, to its end, and then the paused
-    thread is released. Each window's vouch answers True with no lock and False with it; the end-to-end case drives the
-    out-of-order store through the real forget, walk and pop until a removed tree's pair is served (2 directories with no
-    lock, 0 with it), beside its control with no race (0 on both). Every wait is bounded at 30 s, so a lost wake fails
-    instead of hanging, and nothing waits on a time window."""
-
-    def _roots(self):
-        """Three root strings under the test's temp directory (the table cases never touch the disk)."""
-        return tuple(os.path.join(self.td.name, n, "subagents") for n in ("r", "s1", "s2"))
-
-    def _eviction_world(self, table, cap=None):
-        """The table swapped for `table`, the cleared generation for a fresh [0], the cap for `cap` when given and the lock,
-        on a kernel that has one, for a _QueueWatch over it; each put back by cleanup. The table's `go` is kept as the gate
-        _run's cleanups set: every thread a case starts goes through _run after this call, so its cleanup, registered later,
-        runs first (unittest runs cleanups last in, first out) and no paused thread writes into the restored globals.
-        Returns the watch (None on a kernel with no lock)."""
-        self.events, self.gate = {}, table.go
-        real = getattr(km, "_SUBAGENT_EVICT_LOCK", None)
-        watch = _QueueWatch(real, self.events) if real is not None else None
-        patches = [mock.patch.object(km, "_SUBAGENT_ROOT_EVICTED", table), mock.patch.object(km, "_SUBAGENT_ROOTS_CLEARED_GEN", [0])]
-        if cap is not None:
-            patches.append(mock.patch.object(km, "_SUBAGENT_ROOT_EVICTED_MAX", cap))
-        if watch is not None:
-            patches.append(mock.patch.object(km, "_SUBAGENT_EVICT_LOCK", watch))
-        for p in patches:
-            p.start()
-            self.addCleanup(p.stop)
-        return watch
-
-    def _run(self, name, fn):
-        """`fn` on a new thread named `name`: its thread, its result, its errors and the Event set when it queues behind
-        the lock or ends. The thread's stop is registered as a cleanup before its start (tests/thread_ends.py's
-        join_started: it sets the gate a paused thread waits on, then joins the thread if it started, bounded at 30 s; a
-        thread whose start never ran is skipped, not joined, which lets the registration come first), so a failed
-        assertion anywhere in the case still releases and joins it before the patches of _eviction_world stop."""
-        run = SimpleNamespace(out={}, errs=[], ev=self.events.setdefault(name, threading.Event()))
-
-        def body():
-            try:
-                run.out["value"] = fn()
-            except Exception:
-                run.errs.append(traceback.format_exc())
-            finally:
-                run.ev.set()
-        run.thread = threading.Thread(target=body, name=name, daemon=True)
-        self.addCleanup(join_started, self.gate, [run.thread], 30)
-        run.thread.start()
-        return run
-
-    def _wait(self, ev, what):
-        self.assertTrue(ev.wait(30), "%s, within 30 s" % what)
-
-    def _joined(self, run):
-        run.thread.join(30)
-        self.assertFalse(run.thread.is_alive(), "%s returned" % run.thread.name)
-        self.assertEqual(run.errs, [], "%s raised" % run.thread.name)
-        return run.out.get("value")
-
-    def test_a_vouch_made_while_another_thread_clears_the_table_answers_false_for_a_root_evicted_after_its_hold(self):
-        """The clear straddle. An entry for root r is held under g0, then r is evicted (its record g0 + 1, and the vouch
-        answers False); the table fills to its cap (2), and a third root's eviction clears it. A vouch of (r, g0) made on
-        another thread while the clearing thread stands after the clear and before the cleared generation's write read,
-        with no lock, an empty table and the old cleared generation: True, an entry held before r's eviction vouched.
-        Under the lock the vouch waits for the whole eviction and reads the cleared generation it wrote: False. Keys on
-        that one answer, with the premise (False before the clear) and the answer after the clear asserted beside it. Red
-        under the vouch's reads taken outside the lock and under the clear taken outside it."""
-        table = _PausingTable()
-        watch = self._eviction_world(table, cap=2)
-        r, s1, s2 = self._roots()
-        g0 = km._SUBAGENT_TREES_GEN[0]                    # an entry for r held under g0
-        km._subagent_root_evicted(r)                      # r leaves the memo after the hold
-        self.assertIs(km._subagent_vouched(r, g0), False, "premise: r's eviction outdates the hold")
-        km._subagent_root_evicted(s1)                     # the table at its cap
-        table.arm("clear after", "stamps-clearer")
-        clearer = self._run("stamps-clearer", lambda: km._subagent_root_evicted(s2))   # a root not in the full table: the clear
-        self._wait(table.reached, "the clearing thread reached the point after its clear")
-        reader = self._run("stamps-reader", lambda: km._subagent_vouched(r, g0))
-        self._wait(reader.ev, "the vouching thread queued behind the lock or returned")
-        table.go.set()
-        answer = self._joined(reader)
-        self._joined(clearer)
-        self.assertIs(answer, False,
-                      "_subagent_vouched(r, g0) on another thread while the clearing thread stood between its clear and its "
-                      "cleared generation's write: %r; keyed on False, r having been evicted after the hold (a vouch sees an "
-                      "eviction whole or not at all); True is the straddle, the table read after the clear and the cleared "
-                      "generation before its write" % (answer,))
-        self.assertEqual(km._SUBAGENT_ROOTS_CLEARED_GEN[0], km._SUBAGENT_TREES_GEN[0], "the clear recorded the generation it happened at")
-        self.assertIs(km._subagent_vouched(r, g0), False, "and a vouch after the clear answers False")
-        if watch is not None:
-            self.assertIn(("stamps-reader", "stamps-clearer"), watch.queued, "the vouch waited behind the clearing thread")
-
-    def test_an_eviction_recorded_while_another_thread_clears_the_table_is_not_wiped_by_that_clear(self):
-        """The wiped record. r is in the table (evicted once before) and the table is at its cap (2); a third root's
-        eviction passes the cap check and is paused before its clear. An entry for r is then held under the gen that
-        eviction made (g0: a read after its increment), and another thread evicts r again (g0 + 1, after the hold). With
-        no lock that record landed before the paused clear, which wiped it, and the cleared generation written was the
-        clearing thread's own g0, so no value above g0 named r's second eviction: vouched(r, g0) True, for as long as the
-        hold lasts. Under the lock the second eviction waits for the whole clearing eviction and is recorded after the
-        clear: False, the table holding both roots. Keys on that answer and on the table. Red under the clear taken outside
-        the lock; the vouch here runs after both threads end, so the vouch's own lock is not this case's subject."""
-        table = _PausingTable()
-        self._eviction_world(table, cap=2)
-        r, s1, s2 = self._roots()
-        km._subagent_root_evicted(r)                      # r evicted once before
-        km._subagent_root_evicted(s1)                     # the table at its cap
-        table.arm("clear before", "stamps-clearer")
-        clearer = self._run("stamps-clearer", lambda: km._subagent_root_evicted(s2))
-        self._wait(table.reached, "the clearing thread passed the cap check and reached its clear")
-        g0 = km._SUBAGENT_TREES_GEN[0]                    # an entry for r held under the clearing eviction's value
-        evictor = self._run("stamps-evictor", lambda: km._subagent_root_evicted(r))   # r leaves the memo again, after the hold
-        self._wait(evictor.ev, "the evicting thread queued behind the lock or returned")
-        table.go.set()
-        self._joined(evictor)
-        self._joined(clearer)
-        answer = km._subagent_vouched(r, g0)
-        self.assertIs(answer, False,
-                      "_subagent_vouched(r, g0) after r's second eviction (g0 + 1) ran while the clearing eviction (g0) stood "
-                      "between its cap check and its clear: %r; keyed on False; True is the wiped record: the clear erased r's "
-                      "g0 + 1 and the cleared generation written was g0; table %r, cleared generation %d, g0 %d"
-                      % (answer, dict(table), km._SUBAGENT_ROOTS_CLEARED_GEN[0], g0))
-        self.assertEqual(dict(table), {s2: g0, r: g0 + 1}, "the clearing root at g0 and r's second eviction at g0 + 1, recorded after the clear")
-
-    def test_two_evictions_of_one_root_leave_its_record_at_the_later_one(self):
-        """The out-of-order stores. A first eviction of r makes its increment (g0) and is paused before its store lands; an
-        entry for r is then held under g0 (a read after the first eviction's pop, which re-inserted r), and a second
-        eviction of r (g0 + 1, after the hold) runs on another thread. With no lock the second store landed first and the
-        first one's late store moved r's record back to g0: vouched(r, g0) True, an entry held before r's latest eviction
-        vouched. Under the lock the second eviction waits for the first to finish, so its store lands last: r's record
-        g0 + 1, and False. Keys on that answer and on the record.
-
-        The mutants, each applied alone to the locked kernel: the store taken outside the lock reds this case and the
-        end-to-end case below (the paused store's value was computed before the pause, so the earlier value overwrites the
-        later one, with max or without). The store without max, which round 2 of #882's group E listed among the mutants,
-        is equivalent under the one lock and cannot fail a case: the increment and the store run in one critical section,
-        _subagent_root_evicted is the table's one writer and holds the gen's one increment, so each store's g exceeds every
-        value stored before it and max(existing, g) is g on every call. So the out-of-order window is pinned by the store
-        taken outside the lock, not by the store without max; max stays in the kernel as ruled."""
-        table = _PausingTable()
-        watch = self._eviction_world(table)
-        r, _s1, _s2 = self._roots()
-        table.arm("store", "stamps-first", key=r)
-        first = self._run("stamps-first", lambda: km._subagent_root_evicted(r))
-        self._wait(table.reached, "the first eviction made its increment and reached its store")
-        g0 = km._SUBAGENT_TREES_GEN[0]                    # an entry for r held under the first eviction's value
-        second = self._run("stamps-second", lambda: km._subagent_root_evicted(r))   # r leaves the memo again, after the hold
-        self._wait(second.ev, "the second eviction queued behind the lock or returned")
-        table.go.set()
-        self._joined(second)
-        self._joined(first)
-        answer = km._subagent_vouched(r, g0)
-        self.assertIs(answer, False,
-                      "_subagent_vouched(r, g0) after a second eviction of r ran while the first eviction's store (g0) was "
-                      "paused: %r; keyed on False; True is the out-of-order store, r's record %r where g0 + 1 = %d is owed"
-                      % (answer, table.get(r), g0 + 1))
-        self.assertEqual(table.get(r), g0 + 1, "r's record is its later eviction's value")
-        if watch is not None:
-            self.assertIn(("stamps-second", "stamps-first"), watch.queued, "the second eviction waited behind the first")
-
-    def _two_directory_root(self, tag):
-        """A second session's transcript and beside it a subagents tree of two directories (the root and workflows/), aged
-        and walked into the cross-cycle memo outside any scope, owned by nobody alive: its root as a string."""
-        other_t = Path(self.td.name) / tag / (OTHER_SID + ".jsonl")
-        other_t.parent.mkdir()
-        other_t.write_text("")
-        other = km._subagents_dir(other_t)
-        (other / "workflows").mkdir(parents=True)
-        _age(other)
-        self.addCleanup(km._SUBAGENT_TREES.pop, str(other), None)
-        got, _st = km._subagent_tree(str(other))
-        self.assertEqual(len(got), 2, "the tree walked into the cross-cycle memo: its 2 directories")
-        return str(other)
-
-    def _end_to_end(self, race):
-        """The out-of-order store through the real functions (the round-2 review's end-to-end shape). A forget on a thread
-        with no scope evicts the unowned root: it pops the entry and makes its increment, and with `race` its store is
-        paused. This thread's scope then walks the root and holds its pair under the forget's value; the tree is removed
-        on disk, and a thread with no scope reads the root: the missing-root pop, a second eviction. Then the forget is
-        released. Returns what this thread's next read of the root answers: (directories, scoped moved, the root on
-        disk)."""
-        root = self._two_directory_root("e2e")
-        table = _PausingTable()
-        self._eviction_world(table)
-        sc = self._open()
-        if race:
-            table.arm("store", "stamps-forget", key=root)
-        forget = self._run("stamps-forget", lambda: km._subagent_trees_forget([{"path": self.path}]))
-        if race:
-            self._wait(table.reached, "the forget popped the root, made its increment and reached its store")
-        else:
-            self._joined(forget)
-        dirs, _st = km._subagent_tree(root)
-        self.assertEqual(len(dirs), 2, "this thread's scope walked the root again and holds its 2 directories")
-        self.assertIn(root, sc["trees"], "the pair is held")
-        shutil.rmtree(root)
-        popper = self._run("stamps-popper", lambda: km._subagent_tree(root))
-        self._wait(popper.ev, "the popping thread queued behind the lock or returned")
-        table.go.set()
-        self.assertEqual(self._joined(popper), ((), ()), "the pop found nothing at the root")
-        self._joined(forget)
-        b = self._stats()
-        got = km._subagent_tree(root)
-        return len(got[0]), self._delta(b)["scoped"], os.path.exists(root)
-
-    def test_a_removed_trees_pair_is_not_served_after_a_late_store_of_an_earlier_eviction_end_to_end(self):
-        """End to end: the forget's store paused, the walk and hold, the removal, the pop, then the forget's late store.
-        With no lock the pop's record (g0 + 1) landed first and the forget's late store moved the root's record back to the
-        hold's g0, so this thread's next read was served the removed tree's pair: 2 directories and served + 1. Under the
-        lock the pop waits for the forget's eviction and its record lands last, so the read drops the hold and finds
-        nothing at the root. Keys on (directories, scoped moved, on disk) == (0, 0, False); the control below runs the
-        same sequence with no race. Red under the store taken outside the lock."""
-        got = self._end_to_end(race=True)
-        self.assertEqual(got, (0, 0, False),
-                         "(directories, scoped moved, the root on disk) on this thread's read of a root it held under the forget's "
-                         "value, after the tree was removed and a thread with no scope popped it while the forget's store was "
-                         "paused: %r; keyed on (0, 0, False): the pop's eviction outdates the hold and the read finds nothing at "
-                         "the root; (2, 1, False) is the removed tree's pair served, the forget's late store having moved the "
-                         "root's record back to the hold's value" % (got,))
-
-    def test_control_the_same_sequence_with_no_race_serves_no_pair_of_the_removed_tree(self):
-        """The end-to-end case's control: the same forget, walk, removal and pop with the forget run to its end first.
-        (0, 0, False) with and without the lock."""
-        got = self._end_to_end(race=False)
-        self.assertEqual(got, (0, 0, False), "(directories, scoped moved, the root on disk) with no race: %r; keyed on (0, 0, False)" % (got,))
+                         "A + 2 = %d rows) and the own agents folded once more (A = %d); a launch-fold slot kept past its scope serves "
+                         "the gone file's attribution in cycle two (0 folds, the command still nested)" % (got, A + 2, A))
 
 
 class DependencyKey(_World):
@@ -3680,10 +3093,10 @@ class DependencyKey(_World):
     the landing moved the root's stamp or a listed child's. The same keys reach a build whose lookup the walk did not run
     (round 2 of #882, group B): the agent-file memo's hit and _awaiting_nest's held launch fold replay the pairs the walk
     noted (_subagent_file_notes_replay), where before they recorded nothing for the sibling's tree, the held fold from its
-    own entry's notes, which two cases pin against a memo entry replaced by a later lookup and one cleared whole (round 3
-    of #882, tests-2); a replayed key that
-    disagrees with a fresher key the same build reported for the path is recorded as the disagreement (_chat_build_deps),
-    which no re-stat equals; the project directory stays out of every record, the residual two cases here witness, one
+    own entry's notes, which two cases pin against a memo entry replaced by a lookup on a thread that holds no scope and
+    one cleared whole (round 3 of #882, tests-2; round 4, D3); a path one build reported under two keys is recorded as
+    their disagreement (_chat_build_deps), which no re-stat equals, a rule pinned at the unit level; the project
+    directory stays out of every record, the residual two cases here witness, one
     for a build that found the file nowhere and one for a build that found it. An own place holding what the walk
     refuses is noted nothing, so a tab over it is served from its first build on (round 3 of #882, group B), as is an
     own place whose lstat faults, so a tab over a file found past that fault is served once it clears; and a
@@ -3940,17 +3353,18 @@ class DependencyKey(_World):
         cycle. A reader with no chat record open resolves an agent whose file is nowhere: its walk reads the sibling's tree
         (held), noting the root under the served read's key, and _awaiting_nest holds the agent's launch fold with those
         notes. The agent's file then lands under the sibling's root in workflows/, a directory the held listing lacks (the
-        root's stamp moves), and `change` runs: "replaced", the sibling's root is evicted (owned by no alive session) and a
-        lookup of the agent walks again, reads the tree again, finds the file and replaces the memo entry with that walk's
-        notes; "cleared", the agent-file memo is cleared whole, as any thread's lookup past 1024 entries clears it. Then the
-        chat build's _session_awaiting consults the agent's launches, which the held fold answers. Asserts the premises
-        and returns (the root, what the job saw)."""
+        root's stamp moves), and `change` runs: "replaced", a thread that holds no scope looks the agent up (a viewer's
+        open on a handler thread, say), whose re-check stats afresh and finds the sibling root moved, so its walk reads the
+        disk, finds the file and replaces the memo entry with notes that carry the root under the post-landing key (round
+        4 of #882, D3: the road the thread-scoped slots leave open); "cleared", the agent-file memo is cleared whole, as any
+        thread's lookup past 1024 entries clears it. Then the chat build's _session_awaiting consults the agent's launches,
+        which the held fold answers. Asserts the premises and returns (the root, what the job saw)."""
         other = self._sibling(workflows=False)                     # the held listing will be the root alone
         root = str(other)
         aid = "a%016x" % (0x7cf8 if change == "replaced" else 0x7cf9)
         self.live_aids.append(aid)
         self.addCleanup(km._SUBAGENT_FILE_CACHE.pop, (self.path, aid), None)
-        rec = {}
+        rec = {"aid": aid}
 
         def job(now, live_map, **kw):
             walks = []
@@ -3968,9 +3382,19 @@ class DependencyKey(_World):
             rec["file"] = wf / ("agent-%s.jsonl" % aid)
             rec["fresh"] = km._chat_stat_key(root)
             if change == "replaced":
-                km._subagent_trees_forget([{"path": self.path}])    # the sibling's root, owned by no alive session, evicted
-                rec["evicted"] = root not in km._SUBAGENT_TREES
-                rec["relookup"] = km._subagent_file(self.path, aid)  # walks again, with no record open: the memo entry replaced
+                errs, seen = [], {}
+
+                def helper():                                       # no scope and no chat record on this thread (both thread-local)
+                    try:
+                        seen["scope"] = _scope()
+                        seen["found"] = km._subagent_file(self.path, aid)   # walks: the memo entry replaced
+                    except Exception:
+                        errs.append(traceback.format_exc())
+                th = threading.Thread(target=helper, name="stamps-relookup")
+                th.start()
+                th.join(30)
+                rec["helper"] = (th.is_alive(), errs, seen.get("scope", "unset"))
+                rec["relookup"] = seen.get("found")
                 rec["memo_notes"] = km._SUBAGENT_FILE_CACHE.get((self.path, aid), (None, None, "absent"))[2]
             else:
                 km._SUBAGENT_FILE_CACHE.clear()
@@ -3991,11 +3415,12 @@ class DependencyKey(_World):
         self.assertTrue(rec["held"], "premise: the fold is still held in the launch-fold slot when the chat build is made")
         self.assertNotEqual(rec["fresh"], rec["served"][root], "premise: the landing moved the root's (mtime, size)")
         if change == "replaced":
-            self.assertEqual((rec["evicted"], rec["relookup"]), (True, rec["file"]),
-                             "premise: the sibling's root was evicted and the replacing lookup found the file")
+            self.assertEqual(rec["helper"], (False, [], None), "premise: the relookup thread returned, raised nothing and held no scope: %r"
+                             % (rec["helper"],))
+            self.assertEqual(rec["relookup"], rec["file"], "premise: the lookup on the thread with no scope found the file")
             self.assertIn((root, rec["fresh"]), rec["memo_notes"],
-                          "premise: the memo entry now carries the later walk's notes, the root under the post-landing key, so it "
-                          "differs from the fold's: %r" % (rec["memo_notes"],))
+                          "premise: the memo entry now carries that walk's notes, the root under the post-landing key, so it differs "
+                          "from the fold's: %r" % (rec["memo_notes"],))
         else:
             self.assertEqual(rec["memo_notes"], "absent", "premise: the agent-file memo holds no entry for the agent")
         self.assertEqual(((rec["aw"] or {}).get("count"), rec["asked"]), (A + 1, []),
@@ -4015,17 +3440,39 @@ class DependencyKey(_World):
                             "the next signature's re-stat of the root, %r, against the recorded key %r: keyed on a difference, the tab "
                             "that shows the agent with no file is rebuilt" % (restat, recorded))
 
-    def test_a_held_fold_replays_its_own_walks_notes_after_a_later_lookup_replaced_the_agent_file_memos_entry(self):
+    def test_a_held_fold_replays_its_own_walks_notes_after_a_lookup_on_a_thread_with_no_scope_replaced_the_agent_file_memos_entry(self):
         """The first of the two reasons the held fold replays the notes stored in its own entry and not the agent-file
-        memo's (the comment at _awaiting_nest's fold map): a lookup after a landing replaces the memo entry with a later
-        walk's notes, which the fold's ids never reflected, so a build recording those would hold the post-landing key,
-        equal to every later re-stat, and never be rebuilt. The fold held, a landing, the sibling root's eviction, a lookup
-        that replaces the memo entry (premises asserted: the fold held and vouched after the eviction, the replacing
-        lookup found the file so the memo entry's notes differ from the fold's, the chat build made no lookup); then the
-        key the chat build recorded for the sibling's root equals the served read's, the fold's walk's, and differs from
-        the next signature's re-stat. Red under a kernel that replays the memo entry's notes at serve time."""
+        memo's (the comment at _awaiting_nest's fold map), on the road the thread-scoped slots leave open (round 4 of #882,
+        D3, which re-pinned it here from the eviction road the table's removal closed): a thread that holds no scope looks
+        the agent up mid-cycle after a landing, and its walk, reading the disk afresh, replaces the memo entry with notes
+        the fold's ids never reflected; a build recording those holds the post-landing key, equal to every later re-stat,
+        and is never rebuilt. The fold held, a landing, the relookup on that thread (premises asserted: the fold still held
+        when the chat build is made, the relookup found the file so the memo entry carries the root under the post-landing
+        key, the chat build made no lookup); then one more pusher cycle. Keys, in one assertion: the key the chat build
+        recorded for the sibling's root equals the served read's, the fold's own walk's; the next cycle's signature of that
+        build differs from its record, so the tab is rebuilt; and the next cycle's lookup finds the file. Red under a held
+        fold that replays the memo entry's notes, and under one that replays them only when the memo holds an entry (else
+        its own), each on the record (the post-landing key) and on the next cycle's signature (equal to the record, so the
+        error outlives the next cycle); the cleared case below stays green under the second."""
         root, rec = self._held_fold_behind_a_changed_memo("replaced")
-        self._assert_the_folds_own_key(root, rec, "a later lookup replaced the agent-file memo's entry")
+        nxt = {}
+
+        def job2(now, live_map, **kw):
+            nxt["sig"] = km._chat_sig_deps(SID, rec["deps"])        # the next cycle's signature of the failing cycle's build
+            nxt["found"] = km._subagent_file(self.path, rec["aid"])  # the rebuilt tab's lookup
+        km._turn_notify_tick = job2
+        km._pusher_cycle()
+        self.assertIn("sig", nxt, "the next cycle's job ran: %r" % (nxt,))
+        recorded = dict(rec["deps"]["task_outs"]).get(root, "unrecorded")
+        nsig = dict(nxt["sig"][0]).get(root, "unrecorded")
+        got = (recorded, nsig != recorded, nxt.get("found") == rec["file"])
+        want = (rec["served"][root], True, True)
+        self.assertEqual(got, want,
+                         "(the key the chat build recorded for the sibling's root, the next cycle's signature of that build differs from it, "
+                         "the next cycle's lookup found the file) %r; keyed on (the served read's key, True, True) = %r: the fold replays "
+                         "its own walk's notes, so the record is behind the disk and the next cycle rebuilds the tab; a replay of the memo "
+                         "entry's notes records the post-landing key %r, which the next cycle's signature %r equals, so the tab that shows "
+                         "the agent with no file is never rebuilt" % (got, want, rec["fresh"], nsig))
 
     def test_a_held_fold_replays_its_own_walks_notes_after_the_agent_file_memo_was_cleared(self):
         """The second reason (the comment at _awaiting_nest's fold map): the agent-file memo is cleared whole past 1024
@@ -4033,90 +3480,20 @@ class DependencyKey(_World):
         the memo cleared (premises asserted: the fold held in the launch-fold slot, no memo entry for the agent, the chat build made
         no lookup); then the key the chat build recorded for the sibling's root equals the served read's, the fold's
         walk's, and differs from the next signature's re-stat. Red under a kernel that replays the memo entry's notes at
-        serve time (it finds none and records nothing)."""
+        serve time (it finds none and records nothing); green under one that replays them only when the memo holds an
+        entry, which the replaced case above pins."""
         root, rec = self._held_fold_behind_a_changed_memo("cleared")
         self._assert_the_folds_own_key(root, rec, "the agent-file memo was cleared")
 
-    def test_a_held_folds_replayed_key_behind_a_fresh_walks_key_for_the_same_directory_re_arms_the_tab(self):
-        """The held-fold road when a fresh walk in the same build reports the directory first (the pass applying round 2
-        of #882's rulings found it; the case above has the fold report first). One cycle: a reader with no chat record open
-        holds the launch fold of a Workflow agent K2 whose file is nowhere, its walk having read the sibling's tree, and
-        looks up an agent K1 whose file lies at the sibling's root; the sibling's root is then evicted (owned by no alive
-        session: the jobs pass's forget or the feed build's belt), and K2's file lands under the sibling's workflows/. The
-        chat build then looks K1 up first (the Agent head: _stamp_agents runs before _session_awaiting in build_session):
-        K1's memo re-check sees workflows/ moved, its walk reads the tree again and reports workflows/ under the key after
-        the landing. The awaiting box's owner lookups then consult K2's launches, which the held fold answers from before
-        the landing, replaying the walk's older key for workflows/. Keyed on the property: the build answered K2 with no
-        file while K2's file exists, so its record for workflows/ must differ from the next signature's re-stat (the tab
-        is rebuilt). RED before _chat_build_deps recorded a disagreement, when it kept the first key, the walk's, equal
-        to every later re-stat, and dropped the fold's; red before group B too, when the held fold replayed nothing. Now
-        the path reported under two keys is recorded under a key no re-stat equals."""
-        other = self._sibling(workflows=True)                      # the sibling's tree: the root and workflows/
-        root, wfdir = str(other), str(other / "workflows")
-        k1, k2 = "a%016x" % 0x7cf6, "a%016x" % 0x7cf7
-        k1_file = other / ("agent-%s.jsonl" % k1)                  # K1: its file at the sibling's root, the Agent head's lookup
-        k1_file.write_text("")
-        _age(other)
-        self.live_aids.append(k2)                                  # K2: in the live row, its file nowhere yet
-        for aid in (k1, k2):
-            self.addCleanup(km._SUBAGENT_FILE_CACHE.pop, (self.path, aid), None)
-        rec = {}
-
-        def job(now, live_map, **kw):
-            rec["aw0"] = km._session_awaiting(SID, self.path, True)   # a reader with no record open: K2's fold held
-            rec["held"] = (self.path, k2) in _scope()["launches"]
-            rec["k1_0"] = km._subagent_file(self.path, k1)
-            km._subagent_trees_forget([{"path": self.path}])        # the sibling's root, owned by no alive session, evicted
-            rec["evicted"] = root in km._SUBAGENT_ROOT_EVICTED
-            wf = other / "workflows" / ("wf_%016x" % 0x7cf7)
-            wf.mkdir()                                              # K2's file lands: workflows/'s stamp moves
-            self._add_agent(wf, 244, k2)
-            rec["file"] = wf / ("agent-%s.jsonl" % k2)
-            rec["fresh"] = km._chat_stat_key(wfdir)
-            km._chat_dep_scope.deps = {"task_outs": [], "postal_any": False}   # build_session's record for the chat build
-            try:
-                asked = []
-                rec["k1"] = km._subagent_file(self.path, k1)           # the Agent head's lookup first
-                with self._counting("_subagent_file", k2, asked):
-                    rec["aw"] = km._session_awaiting(SID, self.path, True)
-                rec["asked"] = asked
-                rec["reports"] = [k for p, k in km._chat_dep_scope.deps["task_outs"] if p == wfdir]
-                rec["deps"] = km._chat_build_deps(SID, {"events": []})
-            finally:
-                km._chat_dep_scope.deps = None
-        km._turn_notify_tick = job
-        km._pusher_cycle()
-        self.assertIn("deps", rec, "the job ran to its end: %r" % (rec,))
-        self.assertEqual(((rec["aw0"] or {}).get("count"), rec["held"], rec["k1_0"], rec["evicted"]),
-                         (A + 1, True, k1_file, True),
-                         "premise: the first reader saw the A agents and K2, held K2's fold, found K1 at the sibling's root, and the "
-                         "sibling's eviction is recorded")
-        self.assertEqual((rec["k1"], (rec["aw"] or {}).get("count"), rec["asked"]), (k1_file, A + 1, []),
-                         "premise: the chat build found K1 and saw K2, whose launches the held fold answered without calling "
-                         "_subagent_file: %r" % (rec["asked"],))
-        self.assertTrue(rec["file"].exists(), "premise: K2's file exists under the sibling's workflows/")
-        self.assertEqual(rec["reports"][:1], [rec["fresh"]],
-                         "premise: the build's first report of workflows/ is K1's walk, under the key after the landing: %r" % (rec["reports"],))
-        recorded = dict(rec["deps"]["task_outs"]).get(wfdir, "unrecorded")
-        restat = dict(km._chat_sig_deps(SID, rec["deps"])[0]).get(wfdir, "unrecorded")
-        self.assertNotEqual(recorded, restat,
-                            "the chat build answered K2 from the fold held before the landing (no file) while K2's file exists, so its "
-                            "record for workflows/ must differ from the next signature's re-stat and the tab be rebuilt; recorded %r, "
-                            "re-stat %r: equal, the tab keeps showing K2's file missing (the build's reports of workflows/: %r; a "
-                            "record that keeps the first key drops the fold's older one)" % (recorded, restat, rec["reports"]))
-        self.assertEqual(len(set(rec["reports"])), 2,
-                         "and the fold replayed the walk's older key for workflows/ behind K1's: %r" % (rec["reports"],))
-        nxt = {}
-        km._turn_notify_tick = lambda now, live_map, **kw: nxt.setdefault("found", km._subagent_file(self.path, k2))
-        km._pusher_cycle()
-        self.assertEqual(nxt.get("found"), rec["file"], "the rebuilt tab's lookup of K2: the memo's stamps moved, the walk finds the file")
-
     def test_a_path_one_build_reported_under_two_keys_is_recorded_under_a_key_no_re_stat_equals_in_either_order(self):
-        """_chat_build_deps' rule for a path reported more than once (the case above drives it through the real readers):
-        under two different keys, in either order, the record's one entry for the path is a key the next signature's
-        re-stat never equals, so the tab is rebuilt; reported twice under one key, the entry is that key and equals the
-        re-stat, so a consistent build is not rebuilt for it. RED, in the order current key first and older key second,
-        before the rule, when the record kept the first key; the other order and the one-key control were green then."""
+        """_chat_build_deps' rule for a path reported more than once: under two different keys, in either order, the
+        record's one entry for the path is a key the next signature's re-stat never equals, so the tab is rebuilt; reported
+        twice under one key, the entry is that key and equals the re-stat, so a consistent build is not rebuilt for it.
+        Pinned here at the unit level alone (round 4 of #882, D3): the road through the readers this module drove, a held
+        fold's replayed key behind a fresh walk's key for the same directory, went with the eviction table, and under a
+        record that keeps the first key this case is the only red in the memo, stamps, cycle-scope and chat-build-signature
+        modules. RED, in the order current key first and older key second, before the rule, when the record kept the first
+        key; the other order and the one-key control were green then."""
         p = str(self.sub)
         now_key = km._chat_stat_key(p)
         older = (now_key[0] - 1.0, now_key[1])                     # the path's key before a change: an older read's
