@@ -26,8 +26,7 @@ newer than the listing it read (the refuter's amendment); (7) the dependency key
 for each tree it looked through, a sibling fsid's or its own, comes from the read that answered the lookup, every
 directory of that tree under the (st_mtime, st_size) of the read's own stat, so a file landing after the cycle's sample
 leaves the recorded key behind the next signature's re-stat (2026-09-24; red on the fresh root stat the walk noted
-before). Synthetic fixtures
-only: placeholder ids, the notes-api demo world (sessions web and api), a temp directory."""
+before). Synthetic fixtures only: placeholder ids, the notes-api demo world (sessions web and api), a temp directory."""
 import json
 import os
 import tempfile
