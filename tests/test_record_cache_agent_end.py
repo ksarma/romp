@@ -8,8 +8,9 @@ entry stayed until the count cap evicted it. On a long-lived kernel those entrie
 bytes. The SDK backend knows the end exactly: the agent leaves its session's live set on SubagentStop, its own task's end,
 its workflow slot's done or error state, a re-minted slot, the run's end, the CLI's reconnect teardown, or the CLI's end (a
 kill, a crash; not a detach, where the CLI lives on under its host). Each of those removals
-queues the agent; the pusher drains the queue at its next cycle's start and releases the agent's entry after writing the
-file's checkpoint document, so a later fold restores a zero-weight tail instead of reading the file whole.
+queues the agent; the pusher drains the queue at its next cycle's start and releases the agent's entry, writing the file's
+checkpoint document first when it lacks what the cache holds, so a later fold whose cursor the document records restores a
+zero-weight tail instead of reading the file whole. A file that no longer exists is released with nothing written.
 
 Synthetic data only: a notes-api project under a temp root, placeholder ids, a private sid, hostname TESTHOST.
 """

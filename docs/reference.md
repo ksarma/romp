@@ -1891,7 +1891,9 @@ fold cold for want of a state counts for the pass, which heals it, and not
 here, where it would only be written cold again), before the entry is popped,
 and on a hit or a restore at the witness the entry stays as it always has. The
 write is charged to the pusher cycle's byte budget, which the kernel begins at
-each cycle's start and the pass shares near its end; over the budget the write
+each cycle's start, where the drops an earlier cycle owed and then the releases
+at an agent's end charge it before the builds' drops do, and the pass shares
+near its end; over the budget the write
 and the drop wait with the entry held (`converge.dropDeferred`), the drop then
 owed and paid at the next cycle's start with the room that cycle has, oldest
 first, or by the next fold over the file, whichever comes first. A document
@@ -1905,8 +1907,10 @@ The knobs: `ROMP_CKPT_CONVERGE_MS=0` turns the pass off and the drop write with
 it (the drop then pops as it did before the write existed, except under the
 incident scan's memo, which keeps a walked file's records resident when the
 document write is off, since its memo cannot reach the disk); `ROMP_CKPT_CONVERGE_MB`
-is the cycle budget both charge, and `0` turns the drop write off the same way
-rather than deferring every drop; both are read where the drop lives, so they
+is the cycle budget all three charge, and `0` turns the drop write off the same
+way rather than deferring every drop (and gives up every release at an agent's
+end whose file is still on disk, counted in `recordCache.releaseLost`); both
+are read where the drop lives, so they
 hold from the first fold, before the first pusher cycle begins. The pass also
 writes the ASSEMBLY document of an idle leaf that has none (the assembly
 document is otherwise written only at a settle, which an idle session never
@@ -3079,24 +3083,29 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   quiescence drop); the release at an agent's end (the SDK backend queues
   each agent entering or leaving a session's live set, and the pusher, at
   each cycle's start, writes an ended agent's checkpoint document when it
-  lacks what the cache holds, then drops its records, so a later fold
-  restores a tail from the document; an agent that enters the live set again
-  before a deferred release is paid keeps its records):
+  lacks what the cache holds, then drops its records, so a later fold whose
+  cursor the document records restores a tail from it; a file that no
+  longer exists is dropped with nothing written; an agent that enters the
+  live set again before a deferred release is paid keeps its records):
   `released` (per reason, today `agentEnded`, with `count` and `bytes`),
   `releaseDeferred` (deferrals of a release to the next cycle, one per
   deferral, so a release refused on N cycles counts N and the figure is not
   the number owed now: its checkpoint budget refused the write, or a read
   replaced the entry before the drop or was still reading the file when the
   drop came),
-  `releaseLost` (releases given up, the entry left to the count cap: no
-  document could be written, as with `ROMP_CKPT_CONVERGE_MS=0` or when the
-  check whether a write was due raised, an agent end or an owed release was
-  dropped past its bound, or resolving or paying one raised; said once on
-  stderr per cause), `falseEnds` (agents released at their end that entered
-  the live set again) and `releasedReread` (`count` and `bytes` of whole
-  reads of a path whose last removal was a release: what releasing cost;
-  counted only for the most recent `countCap` releases, the count cap, so a
-  re-read of a path released before those is not counted); and
+  `releaseLost` (releases given up, the entry left to the cache's own
+  eviction, the count cap or the byte budget, or a later quiescent drop: no
+  document could be written, as with `ROMP_CKPT_CONVERGE_MS=0` or
+  `ROMP_CKPT_CONVERGE_MB=0` or when the check whether a write was due
+  raised, an agent end or an owed release was dropped past its bound, or
+  resolving or paying one raised; said once on stderr per cause),
+  `falseEnds` (agents released at their end that entered the live set
+  again) and `releasedReread` (`count` and `bytes` of the first whole read
+  of a path after a release popped it, when no other pop of the path came in
+  between: what releasing cost; at most `countCap` marks are outstanding,
+  the oldest dropped first, and a mark leaves when it is taken or cleared,
+  which frees its slot, so the bound is on outstanding marks, not on the
+  most recent releases); and
   `wholeReads`: every read that pulled a file whole, keyed `kind<-caller` (the reader's kind, one of `zero`, `rewrite`, `guard`,
   `shrunk` and `upgrade`, and the first calling function outside the event
   model and the parse family), with `count` and `bytes`; a tail read, an

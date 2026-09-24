@@ -511,9 +511,10 @@ class RecordCacheDefaultBudget(unittest.TestCase):
         measured by a deep size walk, a lower bound on what they take, per file byte, times the default budget, against the
         memory the fraction names. It does not check the factor's value: the synthetic records measure 1.73 to 2.25 per file
         byte across 3.10 to 3.14t (2026-09-24), so a factor cut to about 2.3 still passes, below the real 2.61 to 3.18. That
-        figure, RECORD_CACHE_RESIDENT_PER_FILE_BYTE's 3.2, comes from a kernel's 73-hour life (RSS fitted against the running
-        maximum of held bytes, 3.18) and the highest of nine main transcripts of 10 MB or more measured one by one (3.13
-        RssAnon per file byte), 2026-09-24. Red before by the assertion: the budget was half of MemTotal in FILE bytes, so a
+        figure, RECORD_CACHE_RESIDENT_PER_FILE_BYTE's 3.2, comes from a kernel's 73-hour life (3.18, from RSS fitted against
+        the running maximum of held bytes and the LRU's slot count, the two regressors collinear, R^2 0.995 over 73 hourly
+        rows) and the highest of nine main transcripts of 10 MB or more measured one by one (3.13 RssAnon per file byte),
+        2026-09-24. Red before by the assertion: the budget was half of MemTotal in FILE bytes, so a
         full one held 1.7 to 2.3 times the memory it named."""
         mem_kb = 268435456                                            # a synthetic 256 GiB machine
         budget = em._record_cache_default_budget_bytes("MemTotal: %d kB\n" % mem_kb)

@@ -664,13 +664,14 @@ _JSONL_CACHE_MAX = 1024           # bounds MEMORY only (384 → 1024 on 2026-09-
 RECORD_CACHE_BUDGET_FLOOR_BYTES = 4 * 1024 ** 3
 RECORD_CACHE_BUDGET_FRACTION = 0.5
 RECORD_CACHE_RESIDENT_PER_FILE_BYTE = 3.2   # resident bytes per held file byte: the largest measured figure, rounded up
-#                                   (2026-09-24). Sources: 3.18 from one kernel's 73-hour life, RSS fitted against the running
-#                                   maximum of held bytes over its hourly /perf rows (R^2 0.995); 3.13, the highest of nine main
-#                                   transcripts of 10 MB or more measured one by one through this reader (RssAnon per file byte; 2.54
-#                                   to 3.13, 2.81 over the nine); 2.61 for a full cache of real files. Every record carries its own
-#                                   copies of its key strings, and a string holding one character outside Latin-1 takes 2 or 4 bytes
-#                                   per character, which is why the factor is far above 1. The larger the factor, the smaller the
-#                                   budget in file bytes: this errs toward less memory.
+#                                   (2026-09-24). Sources: 3.18 from one kernel's 73-hour life: RSS fitted against the running
+#                                   maximum of held bytes and the LRU's slot count (0.41 MiB per 1000 slots) over its 73 hourly
+#                                   /perf rows, R^2 0.995, the two regressors collinear; 3.13, the highest of nine main
+#                                   transcripts of 10 MB or more measured one by one through this reader (RssAnon per file byte;
+#                                   2.54 to 3.13, 2.81 over the nine); 2.61 for a full cache of real files. Every record carries
+#                                   its own copies of its key strings, and a string holding one character outside Latin-1 takes 2
+#                                   or 4 bytes per character, which is why the factor is far above 1. The larger the factor, the
+#                                   smaller the budget in file bytes: this errs toward less memory.
 
 
 def _record_cache_default_budget_bytes(meminfo_text=None):
@@ -712,14 +713,18 @@ _RECORD_CACHE_STATS.update({   # the release at an agent's end (release_entry, 2
     #                             cycles counts N and the figure is not the number owed now: its checkpoint budget refused the
     #                             document write, or a read replaced the entry before the pop or was still pulling the file's bytes
     #                             when the pop came (paid by checkpoint_pay_owed_releases)
-    "releaseLost": 0,          #  releases given up, the entry left to the count cap: no document could be written (the drop writes
-    #                             off, no checkpoint directory, a write that wrote nothing, or the check whether a write was due
-    #                             raised), an agent end or an owed release was dropped past its queue's bound, or resolving or
-    #                             paying one raised
+    "releaseLost": 0,          #  releases given up, the entry left to the cache's own eviction (the count cap or the byte budget,
+    #                             or a later quiescent drop): no document could be written (the drop writes off, no checkpoint
+    #                             directory, a write that wrote nothing, or the check whether a write was due raised), an agent
+    #                             end or an owed release was dropped past its queue's bound, or resolving or paying one raised
     "falseEnds": 0,            #  agents released at their end that entered their session's live set again (a resumed agent, or an
     #                             end reported early): note_false_end, counted by the kernel
-    "releasedReread": {"count": 0, "bytes": 0}})   # whole reads of a path whose last removal was a release: what releasing cost;
-#                                                    only for the last _JSONL_CACHE_MAX releases (the marks' bound)
+    "releasedReread": {"count": 0, "bytes": 0}})   # the first whole read of a path after a release popped it, when no other pop
+#                                                    of the path came in between: what releasing cost. At most _JSONL_CACHE_MAX
+#                                                    marks are outstanding, the oldest dropped first; a mark leaves when it is
+#                                                    taken or cleared, which frees its slot, so the bound is on outstanding
+#                                                    marks, not on the most recent releases. Re-releasing a marked path
+#                                                    refreshes its mark
 _RELEASED_MARKS = {}              # path -> True for the paths a release popped, under _JSONL_CACHE_LOCK: taken by the path's next whole
 #                                   read (releasedReread), cleared by any other pop of it, kept by a same-path replace (a restored tail
 #                                   growing); at most _JSONL_CACHE_MAX, oldest first
@@ -820,7 +825,8 @@ _RELEASE_LOST_SAID = set()        # the causes of a lost release already said on
 
 
 def note_release_lost(n=1, cause="overflow"):
-    """`n` releases given up (recordCache.releaseLost), their entries left to the count cap; each cause is said once on stderr."""
+    """`n` releases given up (recordCache.releaseLost), their entries left to the cache's own eviction (the count cap or the byte
+    budget) or a later quiescent drop; each cause is said once on stderr."""
     with _JSONL_CACHE_LOCK:
         _RECORD_CACHE_STATS["releaseLost"] = int(_RECORD_CACHE_STATS.get("releaseLost") or 0) + int(n)
         if cause in _RELEASE_LOST_SAID:
@@ -832,8 +838,9 @@ def note_release_lost(n=1, cause="overflow"):
                          "whole at its next fold",
            "overflow": "a bounded queue of agent ends or owed releases passed its bound"}.get(cause, cause)
     try:
-        sys.stderr.write("record cache: a finished agent's records stay in memory until the count cap evicts them: %s "
-                         "(counted as recordCache.releaseLost; said once)\n" % why)
+        sys.stderr.write("record cache: a finished agent's records stay in memory until the cache evicts them (the count cap or "
+                         "the byte budget) or a quiescent fold drops them: %s (counted as recordCache.releaseLost; said once)\n"
+                         % why)
     except Exception:
         pass
 
@@ -2425,9 +2432,9 @@ def _drop_write(key, ent, why=None):
     with neither lock held, charged to the pusher cycle's checkpoint budget. Returns "clean" (nothing to write, or the drop
     writes off), "wrote", "failed" (a write was due and wrote nothing, or the check whether one was due raised: the name of
     its exception is appended to the list `why` when one is given) or "refused" (the budget had no room for the previous
-    document's read and about as much written, taken in one step: nothing charged, the caller defers). A check that raised
-    was "clean" before 2026-09-24, which let the release pop without a document; the quiescent drop pops on "failed" as it
-    did on "clean"."""
+    document's read and about as much written, taken in one step: nothing charged, the caller defers). The quiescent drop
+    pops on "failed" as on "clean" (its earlier inline check read a raise as nothing to write); the release keeps its entry
+    on "failed"."""
     try:
         if not checkpoint_drop_writes_on():
             return "clean"
