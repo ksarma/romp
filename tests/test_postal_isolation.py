@@ -230,51 +230,48 @@ class ThreadOwnSendRefused(unittest.TestCase):
     FLAG_ROUTES = {("_state_write_route", "/flag"), ("Handler._dispatch_ws", "setSessionFlag")}
     # The net's exemption rows (round 4 of fork PR #897, the reviewer's ruling on section G): each function the net refuses
     # in kernel/kernel.py, with the reason the refusal is false and each refusal it lifts there, as (clause, token, what the
-    # value is handed to), at its count. A row lifts only what it lists: a mention beyond it, or handed elsewhere, is refused,
-    # and an entry the net does not refuse at its count raises.
+    # value is handed to after its one hop), at its count. A row lifts only what it lists: a mention beyond it, or handed
+    # elsewhere, is refused, and an entry the net does not refuse at its count raises.
     NET_EXEMPT = {
         "_state_quarantine": ("moves an unparseable state file aside to a .corrupt name, and compares its name with the "
                               "store's to word its log line; it sets no flag",
                               {("the store's name", "session-flags.json", "Compare"): 2}),
-        "_edit_tag": ("its parameter rename holds a tag's new name, compared and turned into a string; it holds no door call",
-                      {("a door", "rename", "arg"): 1, ("a door", "rename", "Compare"): 1, ("a door", "rename", "str"): 1}),
-        "_session_flags_proved": ("the mutation snapshot's reader: hands the store's path to the display cache's key (str), "
-                                  "_read_state_json (which moves torn bytes aside), the quarantine check, the refusal it raises "
-                                  "and its exit text, and its docstring names the two writers that call it; it writes no flag",
-                                  {("a writer", "_set_notify_session", "Expr"): 1, ("a writer", "_set_session_flag", "Expr"): 1,
-                                   ("a name bound to the path", "p", "str"): 1,
+        "_edit_tag": ("its parameter rename holds a tag's new name, compared, and turned into a string that is sliced "
+                      "(Subscript); it holds no door call",
+                      {("a door", "rename", "arg"): 1, ("a door", "rename", "Compare"): 1, ("a door", "rename", "Subscript"): 1}),
+        "_session_flags_proved": ("the mutation snapshot's reader: hands the store's path, as a string, to the display cache's "
+                                  "lookup (.get), and hands it to _read_state_json (which moves torn bytes aside), the "
+                                  "quarantine check, the refusal it raises and its exit text; it writes no flag",
+                                  {("a name bound to the path", "p", ".get"): 1,
                                    ("a name bound to the path", "p", "_read_state_json"): 1,
                                    ("a name bound to the path", "p", "_flags_quarantined"): 1,
                                    ("a name bound to the path", "p", "_StateUnreadable"): 1,
                                    ("a name bound to the path", "p", "_flags_exit_text"): 1}),
-        "_retire_flags_quarantine": ("its docstring names the quarantine sidecars beside the store, which it renames; it sets no "
-                                     "flag", {("the store's name", "session-flags.json", "Expr"): 1}),
-        "_session_flags": ("the display reader: hands the store's path to the display cache's key (str), its stat, the "
-                           "quarantine check, the fault notices (_StateUnreadable, _clear_state_fault), _read_state_json "
-                           "(which moves torn bytes aside) and _retire_flags_quarantine, which renames the quarantine sidecars "
-                           "beside the store; it writes no flag",
-                           {("a name bound to the path", "p", "str"): 2, ("a name bound to the path", "p", ".stat"): 1,
+        "_session_flags": ("the display reader: hands the store's path, as a string, to the display cache's lookup (.get) and "
+                           "store (Subscript), and hands it to its stat, the quarantine check, the fault notices "
+                           "(_StateUnreadable, _clear_state_fault), _read_state_json (which moves torn bytes aside) and "
+                           "_retire_flags_quarantine, which renames the quarantine sidecars beside the store; it writes no flag",
+                           {("a name bound to the path", "p", ".get"): 1, ("a name bound to the path", "p", "Subscript"): 1,
+                            ("a name bound to the path", "p", ".stat"): 1,
                             ("a name bound to the path", "p", "_flags_quarantined"): 1,
                             ("a name bound to the path", "p", "_StateUnreadable"): 3,
                             ("a name bound to the path", "p", "_clear_state_fault"): 3,
                             ("a name bound to the path", "p", "_read_state_json"): 1,
                             ("a name bound to the path", "p", "_retire_flags_quarantine"): 1}),
-        "_set_notify_session": ("a writer, whose docstring names the other writer, _set_session_flag, to say why it is not that "
-                                "setter", {("a writer", "_set_session_flag", "Expr"): 1}),
         "_thread_rows_key": ("stats the store for the thread rows' cache key",
                              {("the store's name", "session-flags.json", ".stat"): 1}),
-        "_flags_unknown_cold": ("looks the store's path up, as a string, among the noted read faults and in the display cache",
-                                {("the store's name", "session-flags.json", "str"): 1}),
-        "_chat_sig_shared": ("hands the store's path to _chat_ident, which stats it for the chat-build signature, and its "
-                             "docstring names the store", {("the store's name", "session-flags.json", "_chat_ident"): 1,
-                                                           ("the store's name", "session-flags.json", "Expr"): 1}),
+        "_flags_unknown_cold": ("binds the store's path, as a string, to p (Assign), and looks p up among the noted read "
+                                "faults (Compare) and in the display cache (.get)",
+                                {("the store's name", "session-flags.json", "Assign"): 1,
+                                 ("a name bound to the path", "p", "Compare"): 1, ("a name bound to the path", "p", ".get"): 1}),
+        "_chat_sig_shared": ("hands the store's path to _chat_ident, which stats it for the chat-build signature",
+                             {("the store's name", "session-flags.json", "_chat_ident"): 1}),
         "_dead_lane_key": ("hands the store's path to _stat_key, which stats it for a dead lane's cache key",
                            {("the store's name", "session-flags.json", "_stat_key"): 1}),
-        "_fleet_view_sig": ("stats the store among the files whose change busts the view cache, each held in a tuple with its "
-                            "key", {("the store's name", "session-flags.json", "Tuple"): 1}),
-        "_state_write_route": ("the POST routes: its docstring names the store and the flag writer that POST /flag calls (the "
-                               "call is a reference the census records)",
-                               {("a writer", "_set_session_flag", "Expr"): 1, ("the store's name", "session-flags.json", "Expr"): 1}),
+        "_fleet_view_sig": ("stats the store among the files whose change busts the view cache: the loop (For) unpacks each "
+                            "path and its key into p, which it stats, and k, the signature's key",
+                            {("the store's name", "session-flags.json", "For"): 1,
+                             ("a name bound to the path", "p", ".stat"): 1, ("a name bound to the path", "k", "Subscript"): 1}),
     }
 
     @staticmethod
@@ -282,11 +279,12 @@ class ThreadOwnSendRefused(unittest.TestCase):
         """The kernel's routes that write a session flag, DERIVED from the source, behind a NET that refuses by name
         each mention of a derived name that the derivation does not follow (fork PR #897, each under the reviewer's
         ruling on section G: derived in round 3, to a fixpoint at round 4's thirty-sixth commit, the net at its
-        forty-first, the net per mention at its forty-second, its folds, rows and limit at its forty-third). Returns
-        (writers, references), and raises, naming each mention the net refuses by its function, clause, token, line and
-        what its value is handed to, unless a row of `exempt` lifts it; with refusals=True it returns the refused
-        mentions as a third element instead, each as (function, clause, token, line). Each rule below names its plant, a
-        subtest of test_the_flag_route_census_finds_a_new_route_and_a_writer_of_each_shape (the derivation) or of
+        forty-first, the net per mention at its forty-second, its folds, rows and limit at its forty-third, its one
+        hop, the class body and the folds restored at its forty-fourth). Returns (writers, references), and raises,
+        naming each mention the net refuses by its function, clause, token, line and what its value is handed to,
+        unless a row of `exempt` lifts it; with refusals=True it returns the refused mentions as a third element
+        instead, each as (function, clause, token, line). Each rule below names its plant, a subtest of
+        test_the_flag_route_census_finds_a_new_route_and_a_writer_of_each_shape (the derivation) or of
         test_the_net_refuses_what_the_derivation_leaves_unclassified (the net), by its label.
         THE DERIVATION. A WRITER is a function holding a call of a door one of whose arguments, positional or keyword,
         or whose receiver, carries the flags path ("the path in a door's keyword argument", "open called as a method"),
@@ -325,9 +323,8 @@ class ThreadOwnSendRefused(unittest.TestCase):
         THE NET. A pre-scan of every name the source holds (every identifier field of every node of its tree: a
         variable, an attribute, the name of a def, a class or a parameter, a keyword's label, an import, a global or
         nonlocal statement's names; checked against Python's tokenizer, so a name token the scan does not read raises)
-        and every string it holds (a constant, bytes, a piece of an f-string, a docstring, whose text __doc__ hands back
-        at run time: "a docstring holding the store's name, read back through __doc__ and inspect.getdoc"), keyed on
-        the derivation's own sets and on the nodes it reads, so the two agree by construction. Seven clauses, each
+        and every string it holds (a constant, bytes, a piece of an f-string), keyed on the derivation's own sets and on
+        the nodes it reads, so the two agree by construction. Seven clauses, each
         refusing a mention (its function by dotted name, "<module>" outside every function, with the token, its line and
         what its value is handed to): THE STORE'S NAME, a string holding
         "session-flags.json" anywhere in it ("an f-string holding the store's name in a longer piece", "a string joined
@@ -336,10 +333,11 @@ class ThreadOwnSendRefused(unittest.TestCase):
         globals()"); A PATH FUNCTION of the fixpoint's, the same two ways ("a path function's call handed on by
         unpacking", "a path function reached through getattr and a string", "a path function called in a string handed
         to eval", "a path function called in a bytes string handed to eval"); A NAME BOUND TO THE PATH in a function, in
-        the functions of its outermost function, as any name the scan reads there, an attribute and a keyword's label
-        included, or as a word of a string ("a name bound to the path handed to a helper", "a name bound to the path in
-        a class body, read as the class's attribute", "a keyword labelled like a name bound to the path, read back
-        through eval", "a name bound to the path reached through locals() and a string"); A
+        the functions of its outermost function, as any name the scan reads there, an attribute included, or as a word
+        of a string ("a name bound to the path handed to a helper", "a name bound to the path in a class body, read as
+        the class's attribute", "a class's attribute bound to the path, read through self in a method", "a name bound
+        to the path reached through locals() and a string"), and a name a refused mention's value lands in (THE ONE
+        HOP, below); A
         DOOR's name, as a name alone, since the kernel uses open, replace and rename as words ("a door handed on as a
         value", "a door imported under another name"); A WRITER's name, as a name or as a word of a string ("a writer
         imported under another name in a route", "a writer reached through getattr and a string in a route"); and A
@@ -347,15 +345,33 @@ class ThreadOwnSendRefused(unittest.TestCase):
         follows a division) or a path function's whose name begins and ends with two underscores, as a name, a def's and
         a name being bound included, or as a word of a string ("a class defining a division", "a class defining a
         division by assignment", "a path function the language calls unnamed").
-        A mention is FOLDED, and counts for no clause, when it is a door's name as the name of a def or a class, as a
-        keyword's label ("a def named like a door, and a keyword labelled like one"; a parameter's name is not: "a
-        parameter named like a door") or naming a call the derivation reads as a door ("each writer shape"); a writer's
-        or a path function's name as the name of that function's own def, when the def has no decorator (each plant of a
-        writer or a path function; a decorator is handed the function: "a writer's own def, decorated", "a path
-        function's own def, decorated"), every other def's or class's name and every other keyword's label being keyed,
-        since __name__ and a dict's keys hand it back as text at run time ("a def named like a writer, read back through
-        __name__", "a def named like a path function that is not one", "a keyword labelled like a writer, read back as a
-        key"); a path function's call, a module-level name or a bound name, when its truth alone decides the test of an
+        THE ONE HOP: the net follows a keyed value exactly ONE hop, to its consumer or to the name it lands in. A value
+        that leaves the function through a return, a container, an attribute or a store, and is read back elsewhere, is
+        inside the stated limit, with witnesses. The hop climbs from the mention (from a path function's call, for its
+        name) each step that hands the value on as it is: a division, a keyword argument, a conversion (a call named str,
+        bytes, fspath, fsencode, fsdecode, Path, PurePath, abspath, realpath, normpath, expanduser, resolve, absolute or
+        as_posix, by bare name or as a method, the value an argument or the receiver; each planted in the three forms,
+        this list asserted equal to the list planted), a tuple, a list, a set or a dict display, a starred item, a
+        comprehension's element, an operand of and or or, a conditional expression's branch, and an assignment
+        expression, whose target the value lands in on its way ("a refused mention's value lands in a name through each
+        step"). Its CONSUMER is the node holding it at the end of the hop (the rows' key, below). The names it LANDS IN
+        are the names that node binds: among the targets of an assignment, plain, chained, annotated or augmented,
+        unpacked, a starred or a list target included, or of a for loop or a comprehension, and the parameter whose
+        default it is; an attribute or a subscript is none, holding the value outside the function's names ("a lifted
+        mention's value landing in a name, written through it", "a refused mention's value lands in a name by each kind
+        of target", "a name bound by unpacking into a tuple", "a name bound by a for loop's target", "a name bound by an
+        assignment expression", "a name bound by a parameter's default", "a name bound by a comprehension's target"). A
+        name the value of a mention the net refuses, before any row lifts it, lands in is keyed as a name bound to the
+        path throughout the outermost function around it ("a name a value landed in, read by a nested function"), a
+        name the module binds everywhere ("a name the module binds, a value landed in, read in a function"), and its own
+        refused uses land in turn, to a fixpoint ("a use of a name a value landed in, landing in another").
+        A mention is FOLDED, and counts for no clause, when it is the name of a def or a class, or a keyword's label ("a
+        def named like a door, and a keyword labelled like one"; a parameter's name is not: "a parameter named like a
+        door"), except the name of a def with a decorator, which is handed the function: that name is keyed, but for a
+        door's ("a writer's own def, decorated", "a path function's own def, decorated"); a door's name, when it names a call
+        the derivation reads as a door ("each writer shape"); a string, when it is a whole statement, as a docstring is
+        (a witness of the limit: "a docstring holding the store's name, read back through __doc__ and inspect.getdoc");
+        a path function's call, a module-level name or a bound name, when its truth alone decides the test of an
         if, a while or a conditional expression, through and, or and not (not as a conditional expression's body, nor as
         an operand of and or or whose value is handed on: "a name bound to the path in a conditional expression's body,
         handed to a helper", "a name bound to the path under an and, handed to a helper"), or when it is an operand of a
@@ -363,7 +379,8 @@ class ThreadOwnSendRefused(unittest.TestCase):
         alone decides a test", "a name bound to the
         path compared by identity, and one whose truth alone decides a test"; a comparison by == hands the value on, and
         so does a call: "a module-level name compared in a test", "a path function's call handed to a call in a test");
-        a name being bound or deleted ("a path function returning a name bound in it"); and a nonlocal statement's name
+        a name being bound or deleted ("a path function returning a name bound in it"), and a parameter's name for the
+        bound clause ("a name bound by a parameter's default"); and a nonlocal statement's name
         that the derivation counts in the function around it ("a write through a name a nested function binds through a
         nonlocal statement"; a global statement's is not: "a name bound in another outermost function through a global
         statement", "a nested function's global statement naming a name its enclosing function binds").
@@ -375,20 +392,27 @@ class ThreadOwnSendRefused(unittest.TestCase):
         writes the path through unpacking"), a mention it reads (the constant, a bound name, a path function's call)
         whose value reaches, through divisions alone, the value of one of the function's own return statements, the
         function being a path function, or of an assignment all of whose targets are names it binds ("a path function
-        returning a name bound in it"). Handed anywhere else, the mention is refused: to a helper ("a name bound to the
-        path handed to a helper", "a path function handing its path to a helper that writes its parameter", "a route
-        returning a path function's call that hands the path to a helper"), to getattr ("a path function writing its
-        path through getattr and a string"), or on from a binding whose name the derivation reads nowhere else ("a name
-        bound in another outermost function", "a name bound in a function, written outside every function", "a name
-        bound in another method of the same class"). A door's name it does not read as a call, and a method the language
-        calls unnamed, it classifies nowhere ("a writer that also hands a door on as a value").
+        returning a name bound in it"), outside a class body: a binding in a class body, at any depth of it, it does
+        not follow, so the mention there is refused where it stands ("a name bound to the path in a class body, read
+        as the class's attribute", "a class's attribute bound to the path, the class returned and read in another
+        function", "a class's attribute bound to the path inside an if in its body"). Handed anywhere else, the
+        mention is refused: to a helper ("a name bound to the path handed to a helper", "a path function handing its
+        path to a helper that writes its parameter", "a route returning a path function's call that hands the path to
+        a helper"), to getattr ("a path function writing its path through getattr and a string"), or on from a binding
+        whose name the derivation reads nowhere else ("a name bound in another outermost function", "a name bound in a
+        function, written outside every function", "a name bound in another method of the same class"). A door's name
+        it does not read as a call, and a method the language calls unnamed, it classifies nowhere ("a writer that
+        also hands a door on as a value").
         THE ROWS. A mention the net refuses on the real kernel.py is lifted by a row of NET_EXEMPT: the function, the
         reason the refusal is false, and each refusal it lifts there as (clause, token, what the value is handed to), at
-        its count. What a value is handed to is read through divisions, and from a keyword argument to its call: the
-        function a call names, as .name for a method, or Call for a function with no name; the attribute read on it, as
-        .name; or else the kind of node holding it (Compare, Tuple, Expr for a string that is a whole statement); and for
-        the name of a def, a parameter, an import or a global statement, its own kind (the real kernel.py's rows, and the
-        plants of "a row lifts a refused mention"). A row lifts only its refusals, each at its count; one beyond its
+        its count. What a value is handed to is its consumer, read at the end of its one hop: the function a call names,
+        as .name for a method, or Call for a function with no name; the attribute read on it, as .name; or else the kind
+        of node holding it (Compare, Subscript, Assign, For, Return); and for the name of a def, a parameter, an import
+        or a global statement, its own kind (the real kernel.py's rows, and the plants of "a row lifts a refused
+        mention"); so a lifted str() handed on to another call no longer matches its row ("a lifted mention handed on
+        through a conversion to another call is refused"), and an edit that keeps each consumer keeps its row ("a lifted
+        mention edited with its consumer unchanged stays lifted", "a use of a landed name by the consumer its row lists
+        stays lifted"). A row lifts only its refusals, each at its count; one beyond its
         count, or one the row does not list, the same clause and token handed to something else among them, is refused
         at every line of it, the function's row notwithstanding ("a mention beyond its row is refused", "a lifted
         mention handed elsewhere is refused"); a refusal the net makes fewer times than its row lists raises, so a lifted
@@ -403,13 +427,24 @@ class ThreadOwnSendRefused(unittest.TestCase):
         and to an attribute at once ("a path bound to a name and to an attribute in one assignment"), in an attribute
         and written in another method, or through a global statement.
         THE NET'S LIMIT, with its witnesses asserted neither found nor refused: the net reads the text of
-        kernel/kernel.py alone, so a writer passes it when the path or the writer reaches it with no mention the net keys
-        where it is read (a bound name is keyed in its own outermost function alone): a path or a name reached at run
-        time rather than written, whether a path built at run time, so that no string holds the store's name and no
-        derived name carries it ("a path built by string concatenation"), or a local read back by reflection without its
+        kernel/kernel.py alone, and the net follows a keyed value exactly ONE hop, to its consumer or to the name it
+        lands in. A value that leaves the function through a return, a container, an attribute or a store, and is read
+        back elsewhere, is inside the stated limit, with witnesses. Those witnesses, each source's refusal lifted by a
+        row as on the real kernel.py: "a path returned as a string and written by the caller", "a path appended to a
+        module-level list and written from it", "a path held in an attribute as a string and written in another
+        method" and "a path stored as a cache's key and read back elsewhere". Inside it too, a path or a name reached
+        at run time rather than written: a path built at run time, so that no string holds the store's name and no
+        derived name carries it ("a path built by string concatenation"); a local read back by reflection without its
         name, a caller's through its frame or a function's own through locals() ("a caller's local read through its
-        frame", "a local read back through locals() without its name"); and a path or a writer defined in a module the
-        kernel loads, as judge.py is loaded as jd ("a writer defined in a module the kernel loads")."""
+        frame", "a local read back through locals() without its name"); a name read back at run time through
+        reflection (a docstring through __doc__ or inspect, a def's or class's __name__, a keyword label made a key)
+        ("a docstring holding the store's name, read back through __doc__ and inspect.getdoc", "the store's name cut
+        from a docstring's words, read back through __doc__", "a def named like a writer, read back through __name__",
+        "a class named like a writer, read back through __name__", "a def named like a path function that is not one",
+        "a keyword labelled like a writer, read back as a key", "a keyword labelled like a name bound to the path,
+        read back through eval", "a writer picked by its parameters' names through __code__"); and a path or a writer
+        defined in a module the kernel loads, as judge.py is loaded as jd ("a writer defined in a module the kernel
+        loads")."""
         import ast
         import io
         import keyword
@@ -473,7 +508,6 @@ class ThreadOwnSendRefused(unittest.TestCase):
             if not grown:
                 break
             path_funcs |= grown
-        path_defs = {fn for fn in functions if any(carries(r, names_in(fn)) for r in returns[fn])}   # each path function's own def
         writers, writing = set(), set()                # the writers' names, and the functions holding a write (None outside all)
         for node in ast.walk(tree):
             if not door_call(node):
@@ -515,18 +549,16 @@ class ThreadOwnSendRefused(unittest.TestCase):
             if clause == unnamed:
                 return False                           # folded nowhere, a def's name included
             if isinstance(node, defs + (ast.ClassDef,)) and field == "name" or isinstance(node, ast.keyword):
-                if clause == "a door":                 # a door's name as the name of a def or a class, or a keyword's label
-                    return True
-                return (isinstance(node, defs) and not node.decorator_list   # a writer's or a path function's own def,
-                        and node in (writing if clause == "a writer" else path_defs if clause == "a path function" else ()))
+                return clause == "a door" or not (isinstance(node, defs) and node.decorator_list)   # the name of a def or a
+                #                                        class, or a keyword's label; a decorated def's is handed to its decorator
             call = parent[node] if isinstance(parent.get(node), ast.Call) and parent[node].func is node else None
             if clause == "a door":
                 return call is not None and door_call(call)
             value = call if clause == "a path function" else node if isinstance(node, ast.Name) else None
             if value is not None and (deciding(value) or identity(value)):
                 return True                            # its truth alone decides a test, or an identity comparison reads it
-            if isinstance(node, ast.Name) and not isinstance(node.ctx, ast.Load):
-                return True                            # a name being bound or deleted
+            if isinstance(node, ast.Name) and not isinstance(node.ctx, ast.Load) or isinstance(node, ast.arg) and clause == bound:
+                return True                            # a name being bound or deleted, and a parameter's for the bound clause
             if isinstance(node, ast.Nonlocal):         # a binding the derivation counts in the function around this one
                 outer = function_of(function_of(node))
                 return outer is not None and key in names_in(outer)
@@ -542,18 +574,21 @@ class ThreadOwnSendRefused(unittest.TestCase):
             if isinstance(stmt, ast.Return) and stmt.value is n:
                 return fn is not None and fn.name in path_funcs                    # the value that makes fn a path function
             if isinstance(stmt, (ast.Assign, ast.AnnAssign, ast.AugAssign)) and stmt.value is n:
-                return all(isinstance(t, ast.Name) and t.id in names_in(fn)       # a binding of names the derivation binds
-                           for t in (stmt.targets if isinstance(stmt, ast.Assign) else [stmt.target]))
+                return (not isinstance(next(a for a in up(stmt) if isinstance(a, defs + (ast.ClassDef, ast.Module))), ast.ClassDef)
+                        and all(isinstance(t, ast.Name) and t.id in names_in(fn)   # a binding of names the derivation binds,
+                                for t in (stmt.targets if isinstance(stmt, ast.Assign) else [stmt.target])))   # not in a class body
             return False
 
         bound, unnamed = "a name bound to the path", "a method the language calls unnamed"
         keyed = {"a module-level name": module_names, "a path function": path_funcs, "a door": set(doors), "a writer": writers,
                  unnamed: {"__truediv__", "__rtruediv__", "__itruediv__"} | {f for f in path_funcs if f[:2] == f[-2:] == "__"}}
         local_names = set().union(*(names_in(fn) for fn in functions)) - module_names   # a name bound in some function
-        mentions, scanned = [], Counter()              # (function, clause, key, line, node) unfolded; every name the scan reads
-        for node in ast.walk(tree):
+        mentions, scanned, spots = [], Counter(), {}   # (function, clause, key, line, node) unfolded; every name the scan reads;
+        for node in ast.walk(tree):                    # and where each name and each word of a string stands, as (node, field, line)
             line = getattr(node, "lineno", None) or next((n.lineno for n in up(node) if getattr(n, "lineno", None)), 0)
-            if isinstance(node, ast.Constant):         # every string, a docstring included: __doc__ hands its text back
+            if isinstance(node, ast.Constant):
+                if isinstance(parent.get(node), ast.Expr):
+                    continue                           # a whole statement, as a docstring is
                 v = node.value
                 if isinstance(v, str) and flags in v or isinstance(v, bytes) and flags.encode() in v:
                     mentions.append((function_of(node), "the store's name", flags, line, node))
@@ -561,8 +596,8 @@ class ThreadOwnSendRefused(unittest.TestCase):
                                    if isinstance(v, bytes) else "")                    # a name reached through a string
                 mentions += [(function_of(node), clause, w, line, node) for w in words
                              for clause in ("a module-level name", "a path function", "a writer", unnamed) if w in keyed[clause]]
-                fn = function_of(node) if local_names.intersection(words) else None
-                mentions += [(fn, bound, w, line, node) for w in words if fn is not None and w in names_in(fn) - module_names]
+                for w in words:
+                    spots.setdefault(w, []).append((node, None, line))
                 continue
             for field, value in ast.iter_fields(node):
                 for word in [value] if isinstance(value, str) else value if isinstance(value, list) else ():
@@ -570,9 +605,7 @@ class ThreadOwnSendRefused(unittest.TestCase):
                         scanned[key] += 1
                         mentions += [(function_of(node), clause, key, line, node) for clause, keys in keyed.items()
                                      if key in keys and not folded(clause, node, field, key)]
-                        fn = function_of(node) if key in local_names else None   # every name the scan reads, as for each clause
-                        if fn is not None and key in names_in(fn) - module_names and not folded(bound, node, field, key):
-                            mentions.append((fn, bound, key, line, node))
+                        spots.setdefault(key, []).append((node, field, line))
         kinds, tokens, previous = set(keyword.kwlist) | set(getattr(keyword, "softkwlist", ())), Counter(), None
         for tok in tokenize.generate_tokens(io.StringIO(source).readline):
             if tok.type == tokenize.NAME and tok.string not in kinds and getattr(previous, "string", None) != "!":
@@ -596,19 +629,74 @@ class ThreadOwnSendRefused(unittest.TestCase):
             around = [n.name for n in [fn, *up(fn)] if isinstance(n, defs + (ast.ClassDef,))] if fn is not None else []
             return ".".join(reversed(around)) or "<module>"
 
-        def consumer(clause, node):                    # what the mention's value is handed to, through divisions (the rows' key)
+        conversions = ("str", "bytes", "fspath", "fsencode", "fsdecode", "Path", "PurePath", "abspath", "realpath", "normpath",
+                       "expanduser", "resolve", "absolute", "as_posix")
+
+        def hop(clause, node):                         # ONE hop: the value climbed through the steps that hand it on as it is (the
+            call = parent.get(node)                    # docstring's pass-through), to the node holding it, with the names an
+            n = call if clause == "a path function" and isinstance(call, ast.Call) and call.func is node else node   # assignment
+            names = set()                                                                                            # expression binds
+            while True:
+                h = parent.get(n)
+                if isinstance(h, ast.Attribute) and h.attr in conversions and isinstance(parent.get(h), ast.Call) and parent[h].func is h:
+                    n = parent[h]                      # a conversion called on the value, as a method
+                elif (isinstance(h, ast.BinOp) and isinstance(h.op, ast.Div)
+                      or isinstance(h, (ast.keyword, ast.Tuple, ast.List, ast.Set, ast.Dict, ast.Starred, ast.BoolOp))
+                      or isinstance(h, (ast.ListComp, ast.SetComp, ast.GeneratorExp)) and h.elt is n
+                      or isinstance(h, ast.DictComp) and n in (h.key, h.value) or isinstance(h, ast.IfExp) and h.test is not n
+                      or isinstance(h, ast.Call) and h.func is not n and (getattr(h.func, "id", None) or getattr(h.func, "attr", None))
+                      in conversions):
+                    n = h                              # a division, a keyword argument, a container, an and or an or, a
+                elif isinstance(h, ast.NamedExpr) and h.value is n:   # conditional expression's branch, a conversion it is
+                    names.add(h.target.id)             # handed to; an assignment expression, whose value goes on
+                    n = h
+                else:
+                    return n, h, names
+
+        def consumer(clause, node):                    # what the mention's value is handed to after its hop (the rows' key)
             if not isinstance(node, (ast.expr, ast.keyword)):
                 return type(node).__name__             # a def, a parameter, an import or a global statement: its own kind
-            call = parent.get(node)
-            n = call if clause == "a path function" and isinstance(call, ast.Call) and call.func is node else node
-            while isinstance(parent.get(n), ast.BinOp) and isinstance(parent[n].op, ast.Div) or isinstance(parent.get(n), ast.keyword):
-                n = parent[n]                          # through divisions, and from a keyword argument to its call
-            holder = parent.get(n)
+            n, holder, _ = hop(clause, node)
             if isinstance(holder, ast.Call) and holder.func is not n:  # a call: the function it names, else Call
                 f = holder.func
                 return getattr(f, "id", None) or ("." + f.attr if isinstance(f, ast.Attribute) else "Call")
             return "." + holder.attr if isinstance(holder, ast.Attribute) else type(holder).__name__   # an attribute; else its holder
 
+        def lands(clause, node):                       # the names the mention's value lands in at the end of its hop
+            if not isinstance(node, ast.expr):
+                return set()                           # a def, a parameter, an import, a global statement, a keyword's label
+            n, h, names = hop(clause, node)
+            if isinstance(h, (ast.Assign, ast.AnnAssign, ast.AugAssign)) and h.value is n:
+                targets = h.targets if isinstance(h, ast.Assign) else [h.target]
+            elif isinstance(h, (ast.For, ast.AsyncFor, ast.comprehension)) and h.iter is n:
+                targets = [h.target]
+            elif isinstance(h, ast.arguments):         # a parameter's default lands in the parameter
+                positional = h.posonlyargs + h.args
+                return names | {a.arg for a, d in list(zip(positional[len(positional) - len(h.defaults):], h.defaults))
+                                + list(zip(h.kwonlyargs, h.kw_defaults)) if d is n}
+            else:
+                targets = []
+            while any(isinstance(t, (ast.Tuple, ast.List, ast.Starred)) for t in targets):   # unpacked, a starred target included;
+                targets = [e for t in targets for e in (t.elts if isinstance(t, (ast.Tuple, ast.List))   # an attribute or a subscript
+                                                        else [t.value] if isinstance(t, ast.Starred) else [t])]   # holds it outside
+            return names | {t.id for t in targets if isinstance(t, ast.Name)}               # the function's names: the limit
+
+        landed = {}                                    # the unit (None: the module) -> the names a refused mention's value lands in
+
+        def keyed_bound(fn):                           # the names the bound clause keys in fn
+            return (names_in(fn) - module_names if fn is not None else set()) | landed.get(unit(fn), set()) | landed.get(None, set())
+
+        while True:                                    # to a fixpoint: a refused use of a name a value landed in can land in another
+            bound_mentions = [(function_of(node), bound, key, line, node)
+                              for key in local_names.union(*landed.values()) for node, field, line in spots.get(key, ())
+                              if key in keyed_bound(function_of(node)) and (field is None or not folded(bound, node, field, key))]
+            grown = {(unit(fn), name) for fn, clause, key, line, node in mentions + bound_mentions if not classified(fn, clause, node)
+                     for name in lands(clause, node) - keyed_bound(fn) - module_names}
+            if not grown:
+                break
+            for u, name in grown:
+                landed.setdefault(u, set()).add(name)
+        mentions += bound_mentions
         refused = sorted(((dotted(fn), clause, key, consumer(clause, node), line) for fn, clause, key, line, node in mentions
                           if not classified(fn, clause, node)), key=lambda r: (r[4], r[0], r[1], r[2], r[3]))
         # THE ROWS: each names a function, the reason its refusal is false, and each refusal it lifts as (clause, token, what the
@@ -969,9 +1057,10 @@ class ThreadOwnSendRefused(unittest.TestCase):
         name and string the source holds, keyed on the derivation's own sets and on the nodes it reads, refusing by name,
         with the token and its line, each mention the derivation does not follow. Planted, each in a subtest whose label
         the census's docstring names beside the rule it pins: a refusal by each of the seven clauses; each fold and where
-        it stops; what the derivation accounts for; the exemption rows, each refusal keyed by what its value is handed
-        to, at its count; each shape the derivation does not see, not found and refused; and the witnesses of the net's
-        limit, neither found nor refused."""
+        it stops; what the derivation accounts for, a class body's binding not among it; the one hop, each step and each
+        kind of target; the exemption rows, each refusal keyed by what its value is handed to after its hop, at its
+        count, with the controls an edit keeping each consumer passes; each shape the derivation does not see, not found
+        and refused; and the witnesses of the net's limit, neither found nor refused."""
         census = self._flag_writing_routes
         setter = ('def _set_flag(sid):\n'
                   '    _write_state_json(jd.STATE / "session-flags.json", "{}")\n')
@@ -983,14 +1072,14 @@ class ThreadOwnSendRefused(unittest.TestCase):
                     'def _by_module_unpacking(cur):\n'
                     '    base, p = jd.STATE, FLAGS_PATH\n'
                     '    p.write_text(cur)\n',
-                    (set(), [], [("_by_module_unpacking", "a module-level name", "FLAGS_PATH", 3)])),
+                    (set(), [], [("_by_module_unpacking", "a module-level name", "FLAGS_PATH", 3), ("_by_module_unpacking", bound, "p", 4)])),
                    ("a path function's call handed on by unpacking",
                     'def _flags_path():\n'
                     '    return jd.STATE / "session-flags.json"\n'
                     'def _by_call_unpacking(cur):\n'
                     '    base, p = jd.STATE, _flags_path()\n'
                     '    p.write_text(cur)\n',
-                    (set(), [], [("_by_call_unpacking", "a path function", "_flags_path", 4)])),
+                    (set(), [], [("_by_call_unpacking", "a path function", "_flags_path", 4), ("_by_call_unpacking", bound, "p", 5)])),
                    ("a door handed on as a value",
                     'def _save(write, cur):\n'
                     '    write(cur)\n'
@@ -1069,28 +1158,6 @@ class ThreadOwnSendRefused(unittest.TestCase):
                     'def _edit(rename=None):\n'
                     '    return str(rename)\n',
                     (set(), [], [("_edit", "a door", "rename", 1), ("_edit", "a door", "rename", 2)])),
-                   ("a docstring holding the store's name, read back through __doc__ and inspect.getdoc",
-                    'def _store():\n'
-                    '    """session-flags.json"""\n'
-                    'def _note():\n'
-                    '    """The flags live in session-flags.json, beside the views."""\n'
-                    'def _by_doc(cur):\n'
-                    '    _atomic_write(jd.STATE / _store.__doc__, cur)\n'
-                    '    _atomic_write(jd.STATE / inspect.getdoc(_note).split()[4].rstrip(","), cur)\n',
-                    (set(), [], [("_store", name, "session-flags.json", 2), ("_note", name, "session-flags.json", 4)])),
-                   ("a keyword labelled like a writer, read back as a key",
-                    setter + 'def _route(b):\n'
-                             '    globals()[next(iter(dict(_set_flag=0)))](b["id"])\n',
-                    ({"_set_flag"}, [], [("_route", "a writer", "_set_flag", 4)])),
-                   ("a def named like a writer, read back through __name__",
-                    setter + 'class _Ops:\n'
-                             '    def _set_flag(self):\n'
-                             '        pass\n'
-                             'def _route(b):\n'
-                             '    for f in vars(_Ops).values():\n'
-                             '        if callable(f):\n'
-                             '            globals()[f.__name__](b["id"])\n',
-                    ({"_set_flag"}, [], [("<module>", "a writer", "_set_flag", 4)])),
                    ("a writer's own def, decorated",
                     '_OPS = {}\n'
                     'def _register(f):\n'
@@ -1102,17 +1169,6 @@ class ThreadOwnSendRefused(unittest.TestCase):
                     'def _route(b):\n'
                     '    _OPS[b["op"]](b["id"])\n',
                     ({"_set_flag"}, [], [("<module>", "a writer", "_set_flag", 6)])),
-                   ("a def named like a path function that is not one",
-                    'def _flags_path():\n'
-                    '    return jd.STATE / "session-flags.json"\n'
-                    'class _Names:\n'
-                    '    def _flags_path(self):\n'
-                    '        return None\n'
-                    'def _by_def_name(cur):\n'
-                    '    for f in vars(_Names).values():\n'
-                    '        if callable(f):\n'
-                    '            _atomic_write(globals()[f.__name__](), cur)\n',
-                    (set(), [], [("<module>", "a path function", "_flags_path", 4)])),
                    ("a path function's own def, decorated",
                     'def _on_boot(f):\n'
                     '    _atomic_write(f(), "{}")\n'
@@ -1170,7 +1226,8 @@ class ThreadOwnSendRefused(unittest.TestCase):
                     '    base, p = jd.STATE, jd.STATE / "session-flags.json"\n'
                     '    p.write_text("{}")\n'
                     '    return jd.STATE / "session-flags.json"\n',
-                    (set(), [], [("_flags_path", name, "session-flags.json", 2), ("_flags_path", name, "session-flags.json", 4)])),
+                    (set(), [], [("_flags_path", name, "session-flags.json", 2), ("_flags_path", bound, "p", 3),
+                                 ("_flags_path", name, "session-flags.json", 4)])),
                    ("a name bound to the path handed to a helper",
                     save + 'def _by_bound_name(cur):\n'
                            '    p = jd.STATE / "session-flags.json"\n'
@@ -1186,12 +1243,32 @@ class ThreadOwnSendRefused(unittest.TestCase):
                            '    class _Where:\n'
                            '        p = jd.STATE / "session-flags.json"\n'
                            '    _save(_Where.p, cur)\n',
-                    (set(), [], [("_by_class_attribute", bound, "p", 6)])),
-                   ("a keyword labelled like a name bound to the path, read back through eval",
-                    save + 'def _by_label(cur):\n'
-                           '    p = jd.STATE / "session-flags.json"\n'
-                           '    _save(eval(next(iter(dict(p=0)))), cur)\n',
-                    (set(), [], [("_by_label", bound, "p", 5)])),
+                    (set(), [], [("_by_class_attribute", name, "session-flags.json", 5), ("_by_class_attribute", bound, "p", 6)])),
+                   ("a class's attribute bound to the path, the class returned and read in another function",
+                    save + 'def _make():\n'
+                           '    class _Where:\n'
+                           '        p = jd.STATE / "session-flags.json"\n'
+                           '    return _Where\n'
+                           'def _by_returned_class(cur):\n'
+                           '    _save(_make().p, cur)\n',
+                    (set(), [], [("_make", name, "session-flags.json", 5)])),
+                   ("a class's attribute bound to the path inside an if in its body",
+                    save + 'def _make(c):\n'
+                           '    class _Where:\n'
+                           '        if c:\n'
+                           '            p = jd.STATE / "session-flags.json"\n'
+                           '    return _Where\n'
+                           'def _by_returned_class(cur):\n'
+                           '    _save(_make(1).p, cur)\n',
+                    (set(), [], [("_make", name, "session-flags.json", 6)])),
+                   ("a class's attribute bound to the path, read through self in a method",
+                    save + 'def _by_method_attr(cur):\n'
+                           '    class _Where:\n'
+                           '        p = jd.STATE / "session-flags.json"\n'
+                           '        def go(self):\n'
+                           '            _save(self.p, cur)\n'
+                           '    _Where().go()\n',
+                    (set(), [], [("_by_method_attr", name, "session-flags.json", 5), ("_by_method_attr._Where.go", bound, "p", 7)])),
                    ("a name bound in another outermost function",
                     'def _where():\n'
                     '    p = jd.STATE / "session-flags.json"\n'
@@ -1267,25 +1344,25 @@ class ThreadOwnSendRefused(unittest.TestCase):
                     'def _by_unpacking(cur):\n'
                     '    base, p = jd.STATE, jd.STATE / "session-flags.json"\n'
                     '    p.write_text(cur)\n',
-                    (set(), [], [("_by_unpacking", name, "session-flags.json", 2)])),
+                    (set(), [], [("_by_unpacking", name, "session-flags.json", 2), ("_by_unpacking", bound, "p", 3)])),
                    ("a name bound by a for loop's target",
                     'def _by_loop(cur):\n'
                     '    for p in (jd.STATE / "session-flags.json",):\n'
                     '        p.write_text(cur)\n',
-                    (set(), [], [("_by_loop", name, "session-flags.json", 2)])),
+                    (set(), [], [("_by_loop", name, "session-flags.json", 2), ("_by_loop", bound, "p", 3)])),
                    ("a name bound by an assignment expression",
                     'def _by_walrus(cur):\n'
                     '    if (p := jd.STATE / "session-flags.json"):\n'
                     '        p.write_text(cur)\n',
-                    (set(), [], [("_by_walrus", name, "session-flags.json", 2)])),
+                    (set(), [], [("_by_walrus", name, "session-flags.json", 2), ("_by_walrus", bound, "p", 3)])),
                    ("a name bound by a parameter's default",
                     'def _by_default(cur, p=jd.STATE / "session-flags.json"):\n'
                     '    p.write_text(cur)\n',
-                    (set(), [], [("_by_default", name, "session-flags.json", 1)])),
+                    (set(), [], [("_by_default", name, "session-flags.json", 1), ("_by_default", bound, "p", 2)])),
                    ("a name bound by a comprehension's target",
                     'def _by_comprehension(cur):\n'
                     '    [p.write_text(cur) for p in (jd.STATE / "session-flags.json",)]\n',
-                    (set(), [], [("_by_comprehension", name, "session-flags.json", 2)])),
+                    (set(), [], [("_by_comprehension", bound, "p", 2), ("_by_comprehension", name, "session-flags.json", 2)])),
                    ("a name bound by a with statement's as",
                     'def _by_with(cur):\n'
                     '    with _held(jd.STATE / "session-flags.json") as p:\n'
@@ -1382,6 +1459,67 @@ class ThreadOwnSendRefused(unittest.TestCase):
                            '    p = jd.STATE / "session-flags.json"\n'
                            '    _save(list(locals().values())[-1], cur)\n',
                     (set(), [], [])),
+                   ("a docstring holding the store's name, read back through __doc__ and inspect.getdoc",
+                    'def _store():\n'
+                    '    """session-flags.json"""\n'
+                    'def _note():\n'
+                    '    """The flags live in session-flags.json, beside the views."""\n'
+                    'def _by_doc(cur):\n'
+                    '    _atomic_write(jd.STATE / _store.__doc__, cur)\n'
+                    '    _atomic_write(jd.STATE / inspect.getdoc(_note).split()[4].rstrip(","), cur)\n',
+                    (set(), [], [])),
+                   ("the store's name cut from a docstring's words, read back through __doc__",
+                    'def _retire():\n'
+                    '    """Renames the sidecars beside session-flags.json and moves them aside."""\n'
+                    'def _by_doc_word(cur):\n'
+                    '    _atomic_write(jd.STATE / next(w for w in _retire.__doc__.split() if w.endswith(".json")), cur)\n',
+                    (set(), [], [])),
+                   ("a def named like a writer, read back through __name__",
+                    setter + 'class _Ops:\n'
+                             '    def _set_flag(self):\n'
+                             '        pass\n'
+                             'def _route(b):\n'
+                             '    for f in vars(_Ops).values():\n'
+                             '        if callable(f):\n'
+                             '            globals()[f.__name__](b["id"])\n',
+                    ({"_set_flag"}, [], [])),
+                   ("a class named like a writer, read back through __name__",
+                    setter + 'class _Ops:\n'
+                             '    class _set_flag:\n'
+                             '        pass\n'
+                             'def _route(b):\n'
+                             '    for c in vars(_Ops).values():\n'
+                             '        if isinstance(c, type):\n'
+                             '            globals()[c.__name__](b["id"])\n',
+                    ({"_set_flag"}, [], [])),
+                   ("a def named like a path function that is not one",
+                    'def _flags_path():\n'
+                    '    return jd.STATE / "session-flags.json"\n'
+                    'class _Names:\n'
+                    '    def _flags_path(self):\n'
+                    '        return None\n'
+                    'def _by_def_name(cur):\n'
+                    '    for f in vars(_Names).values():\n'
+                    '        if callable(f):\n'
+                    '            _atomic_write(globals()[f.__name__](), cur)\n',
+                    (set(), [], [])),
+                   ("a keyword labelled like a writer, read back as a key",
+                    setter + 'def _route(b):\n'
+                             '    globals()[next(iter(dict(_set_flag=0)))](b["id"])\n',
+                    ({"_set_flag"}, [], [])),
+                   ("a keyword labelled like a name bound to the path, read back through eval",
+                    save + 'def _by_label(cur):\n'
+                           '    p = jd.STATE / "session-flags.json"\n'
+                           '    _save(eval(next(iter(dict(p=0)))), cur)\n',
+                    (set(), [], [])),
+                   ("a writer picked by its parameters' names through __code__",
+                    'def _set_flag(sid, flag, value):\n'
+                    '    _write_state_json(jd.STATE / "session-flags.json", "{}")\n'
+                    'def _route(b):\n'
+                    '    fn = next(f for f in list(globals().values())\n'
+                    '              if getattr(getattr(f, "__code__", None), "co_varnames", ())[:3] == ("sid", "flag", "value"))\n'
+                    '    fn(b["id"], b["flag"], True)\n',
+                    ({"_set_flag"}, [], [])),
                    ("a writer defined in a module the kernel loads",
                     'class Handler:\n'
                     '    def _dispatch_ws(self, msg, client):\n'
@@ -1394,6 +1532,126 @@ class ThreadOwnSendRefused(unittest.TestCase):
                                  "THE NET (round 4 of fork PR #897, the reviewer's ruling on section G): %s. The census's "
                                  "docstring names this plant beside the rule it pins; the third element is what the net "
                                  "refuses, each as (function, clause, token, line)" % label)
+        # THE ONE HOP (the census docstring's rule): a refused mention's value, followed through the steps that hand it on as
+        # it is, lands in the name it is bound to, which the net then keys as a name bound to the path
+        import re
+        value, path = 'str(jd.STATE / "session-flags.json")', 'jd.STATE / "session-flags.json"'
+        conversions = ("str", "bytes", "fspath", "fsencode", "fsdecode", "Path", "PurePath", "abspath", "realpath", "normpath",
+                       "expanduser", "resolve", "absolute", "as_posix")
+        listed = re.search(r"a conversion \(a call named (.+?), by bare name or as a method", " ".join((census.__doc__ or "").split()))
+        self.assertEqual(tuple(re.split(r", | or ", listed.group(1))) if listed else None, conversions,
+                         "the conversions the census docstring names are the conversions planted below, each in three forms")
+        steps = [(label % c, form % ((c, path) if "%s(%s)" in form else (path, c))) for c in conversions
+                 for label, form in (("the conversion %s by bare name", "%s(%s)"), ("the conversion %s as a method", "store.%s(%s)"),
+                                     ("the conversion %s called on the value", "(%s).%s()"))]
+        steps += [("a keyword argument of a conversion", "str(object=%s)" % path), ("a tuple", "(0, %s)" % value),
+                  ("a list", "[0, %s]" % value), ("a set", "{0, %s}" % value), ("a dict's value", "{0: %s}" % value),
+                  ("a dict's key", "{%s: 0}" % value), ("a starred item", "(*(%s,),)" % value),
+                  ("a list comprehension's element", "[%s for _ in (0,)]" % value),
+                  ("a set comprehension's element", "{%s for _ in (0,)}" % value),
+                  ("a generator's element", "(%s for _ in (0,))" % value),
+                  ("a dict comprehension's key", "{%s: 0 for _ in (0,)}" % value),
+                  ("a dict comprehension's value", "{0: %s for _ in (0,)}" % value),
+                  ("an operand of or", "cur or %s" % value), ("an operand of and", "cur and %s" % value),
+                  ("a conditional expression's body", "%s if cur else None" % value),
+                  ("a conditional expression's orelse", "None if cur else %s" % value),
+                  ("an assignment expression on the way", "(r := %s)" % value)]
+        for label, expr in steps:
+            with self.subTest(net="a refused mention's value lands in a name through each step", step=label):
+                self.assertEqual(census(save + 'def _by_step(cur):\n    q = %s\n    _save(q, cur)\n' % expr, refusals=True),
+                                 (set(), [], [("_by_step", name, "session-flags.json", 4), ("_by_step", bound, "q", 5)]),
+                                 "THE ONE HOP (round 4 of fork PR #897, the reviewer's ruling on the pass-through): the store's "
+                                 "name reaches q through %s, so q is keyed as a name bound to the path and its use is refused; a "
+                                 "net that stops at this step lets q hand the path on unrefused" % label)
+        targets = (("a chained assignment", 'def _by_target(cur):\n    q = r = %s\n    _save(q, cur)\n', 4, 5),
+                   ("an annotated assignment", 'def _by_target(cur):\n    q: str = %s\n    _save(q, cur)\n', 4, 5),
+                   ("an augmented assignment", 'def _by_target(cur):\n    q = ""; q += %s\n    _save(q, cur)\n', 4, 5),
+                   ("a starred target", 'def _by_target(cur):\n    first, *q = 0, %s\n    _save(q, cur)\n', 4, 5),
+                   ("a list target", 'def _by_target(cur):\n    [q] = [%s]\n    _save(q, cur)\n', 4, 5),
+                   ("an async for loop's target", 'async def _by_target(cur):\n    async for q in (%s,):\n        _save(q, cur)\n', 4, 5),
+                   ("a keyword-only parameter's default", 'def _by_target(cur, *, q=%s):\n    _save(q, cur)\n', 3, 4),
+                   ("a positional-only parameter's default", 'def _by_target(q=%s, /):\n    _save(q, None)\n', 3, 4))
+        for label, body, at, use in targets:
+            with self.subTest(net="a refused mention's value lands in a name by each kind of target", target=label):
+                self.assertEqual(census(save + body % value, refusals=True),
+                                 (set(), [], [("_by_target", name, "session-flags.json", at), ("_by_target", bound, "q", use)]),
+                                 "THE ONE HOP: the store's name lands in q, %s, so q's use is refused" % label)
+        with self.subTest(net="a use of a name a value landed in, landing in another"):
+            self.assertEqual(census(save + 'def _by_two(cur):\n    p = %s\n    q = p\n    _save(q, cur)\n' % value, refusals=True),
+                             (set(), [], [("_by_two", name, "session-flags.json", 4), ("_by_two", bound, "p", 5),
+                                          ("_by_two", bound, "q", 6)]),
+                             "to a fixpoint: p's refused use lands in q, which is keyed in its turn")
+        with self.subTest(net="a name a value landed in, read by a nested function"):
+            self.assertEqual(census(save + 'def _by_closure(cur):\n    p = %s\n    def _later():\n        _save(p, cur)\n'
+                                           '    _locked(_later)\n' % value, refusals=True),
+                             (set(), [], [("_by_closure", name, "session-flags.json", 4), ("_by_closure._later", bound, "p", 6)]),
+                             "a landed name is keyed throughout the outermost function around it, a nested function included")
+        with self.subTest(net="a name the module binds, a value landed in, read in a function"):
+            self.assertEqual(census(save + 'P = %s\ndef _by_module_landed(cur):\n    _save(P, cur)\n' % value, refusals=True),
+                             (set(), [], [("<module>", name, "session-flags.json", 3), ("_by_module_landed", bound, "P", 5)]),
+                             "a name the module binds, a value landed in, is keyed everywhere")
+        cold = 'def _cold():\n    p = str(jd.STATE / "session-flags.json")\n    return p in SEEN and CACHE.get(p) is None\n'
+        cold_row = {"_cold": ("a planted reason", {(name, "session-flags.json", "Assign"): 1, (bound, "p", "Compare"): 1,
+                                                    (bound, "p", ".get"): 1})}
+        sig = ('def _sig(sig):\n    for p, k in ((jd.STATE / "colormap", "__cmap__"), (jd.STATE / "session-flags.json", "__flags__")):\n'
+               '        sig[k] = os.stat(p).st_mtime\n')
+        sig_row = {"_sig": ("a planted reason", {(name, "session-flags.json", "For"): 1, (bound, "p", ".stat"): 1,
+                                                  (bound, "k", "Subscript"): 1})}
+        with self.subTest(net="a lifted mention's value landing in a name, written through it"):
+            self.assertEqual(census(cold, exempt=cold_row), (set(), []), "the row lifts the store's name, bound as a string to p, "
+                             "and p's two uses, each by its consumer (the shape of the real kernel.py's _flags_unknown_cold)")
+            self.assertEqual(census(sig, exempt=sig_row), (set(), []), "the row lifts the store's name, unpacked by the loop into "
+                             "p and k, and their two uses, each by its consumer (the shape of the real kernel.py's view-cache signature)")
+            for shape, src, row, said in (
+                    ("C1, a write through p", cold.replace("    return", '    if PENDING:\n        _write_state_json(p, "{}")\n    return'),
+                     cold_row, "_cold mentions a name bound to the path 'p' at line 4, handed to _write_state_json"),
+                    ("C1h, p handed to a helper that writes its parameter",
+                     'def _flush(q):\n    _write_state_json(q, "{}")\n' + cold.replace("    return", "    _flush(p)\n    return"),
+                     cold_row, "_cold mentions a name bound to the path 'p' at line 5, handed to _flush"),
+                    ("C2, a write through the loop's p",
+                     sig.replace("        sig[k]", '        if k == "__flags__":\n            _write_state_json(p, "{}")\n        sig[k]'),
+                     sig_row, "_sig mentions a name bound to the path 'p' at line 4, handed to _write_state_json")):
+                with self.assertRaises(AssertionError) as landed:
+                    census(src, exempt=row)
+                self.assertIn(said, str(landed.exception),
+                              "THE NAME A LIFTED MENTION'S VALUE LANDS IN IS KEYED (the verifier's %s, driven through the real "
+                              "kernel in round 4 of fork PR #897): the row still lifts the mention at its consumer, and the new "
+                              "use of the name it landed in is refused" % shape)
+        with self.subTest(net="a use of a landed name by the consumer its row lists stays lifted"):
+            edited = cold.replace("return p in SEEN and CACHE.get(p) is None", "return CACHE.get(p, None) is None and (\n        p in SEEN)")
+            self.assertEqual(census(edited, exempt=cold_row), (set(), []),
+                             "the CONTROL: p's uses edited, each still handed to the consumer its row lists, stay lifted")
+        with self.subTest(net="a lifted mention handed on through a conversion to another call is refused"):
+            hit = 'def _hit():\n    p = jd.STATE / "session-flags.json"\n    return CACHE.get(str(p))\n'
+            hit_row = {"_hit": ("a planted reason", {(bound, "p", ".get"): 1})}
+            self.assertEqual(census(hit, exempt=hit_row), (set(), []),
+                             "the row lifts p handed, as a string, to the display cache's lookup: its consumer is read past str")
+            with self.assertRaises(AssertionError) as onward:
+                census(hit.replace("CACHE.get(str(p))", "_rv_write(str(p))"), exempt=hit_row)
+            self.assertIn("_hit lists a name bound to the path 'p' handed to .get 1 time(s), and the net refuses it 0 time(s)",
+                          str(onward.exception), "THE CONSUMER IS READ AFTER THE HOP: the same str(p) handed to a helper that "
+                          "writes the store leaves its row unmatched, which raises (a key read at str would still match)")
+        for label, src, row in (
+                ("a path returned as a string and written by the caller",
+                 save + 'def _key():\n    return str(jd.STATE / "session-flags.json")\ndef _by_return(cur):\n    _save(_key(), cur)\n',
+                 {"_key": ("a planted reason", {(name, "session-flags.json", "Return"): 1})}),
+                ("a path appended to a module-level list and written from it",
+                 save + '_SEEN = []\ndef _note():\n    _SEEN.append(str(jd.STATE / "session-flags.json"))\n'
+                        'def _by_container(cur):\n    _save(_SEEN[0], cur)\n',
+                 {"_note": ("a planted reason", {(name, "session-flags.json", ".append"): 1})}),
+                ("a path held in an attribute as a string and written in another method",
+                 save + 'class Store:\n    def __init__(self):\n        self.where = str(jd.STATE / "session-flags.json")\n'
+                        '    def _by_attribute(self, cur):\n        _save(self.where, cur)\n',
+                 {"Store.__init__": ("a planted reason", {(name, "session-flags.json", "Assign"): 1})}),
+                ("a path stored as a cache's key and read back elsewhere",
+                 '_cache = {}\ndef _read():\n    p = jd.STATE / "session-flags.json"\n    _cache[str(p)] = p.read_text()\n'
+                 'def _by_cache_key(cur):\n    _atomic_write(next(k for k in _cache if k.endswith("-flags.json")), cur)\n',
+                 {"_read": ("a planted reason", {(bound, "p", "Subscript"): 1, (bound, "p", ".read_text"): 1})})):
+            with self.subTest(net=label):
+                self.assertEqual(census(src, exempt=row), (set(), []),
+                                 "THE ONE-HOP LIMIT'S WITNESS (round 4 of fork PR #897, the reviewer's ruling): the value leaves "
+                                 "the function beyond its one hop, and the writer that reads it back is neither found nor "
+                                 "refused, its source's refusal lifted by a row as on the real kernel.py: %s" % label)
         shutil_src = planted[[p[0] for p in planted].index("shutil.copy")][1]
         row = {"_by_library": ("a planted reason", {(name, "session-flags.json", ".copy"): 1})}
         with self.subTest(net="a row lifts a refused mention"):
@@ -1444,6 +1702,11 @@ class ThreadOwnSendRefused(unittest.TestCase):
             self.assertIn("_key mentions the store's name 'session-flags.json' at line 3, handed to _stat", str(elsewhere.exception),
                           "the same clause and token handed to something the row does not list is refused, the row's own "
                           "refusal beside it notwithstanding")
+        with self.subTest(net="a lifted mention edited with its consumer unchanged stays lifted"):
+            self.assertEqual(census('def _key():\n    return (jd.STATE /\n            "session-flags.json").stat(\n        follow_symlinks=True)\n',
+                                    exempt=stat_row), (set(), []),
+                             "the CONTROL: the lifted stat split across lines and given a keyword argument keeps its consumer, "
+                             "so its row still lifts it")
         with self.subTest(net="a row entry the net refuses fewer times"):
             with self.assertRaises(AssertionError) as stale:
                 census(shutil_src, exempt={"_by_library": ("a planted reason", {(name, "session-flags.json", ".copy"): 2})})
@@ -1463,13 +1726,13 @@ class ThreadOwnSendRefused(unittest.TestCase):
                           "net refuses it 0 time(s) (_set_flag is now a WRITER the derivation finds", str(writer.exception),
                           "a row gone stale because its function became a writer says so and names the writers, so the red "
                           "points at the set pin and not at the row")
-            two = ('def _set_flag(sid):\n    """Not _set_other."""\n    _write_state_json(jd.STATE / "session-flags.json", "{}")\n'
+            two = ('def _set_flag(sid):\n    log("not _set_other")\n    _write_state_json(jd.STATE / "session-flags.json", "{}")\n'
                    'def _set_other(sid):\n    _write_state_json(jd.STATE / "session-flags.json", "{}")\n')
-            self.assertEqual(census(two, exempt={"_set_flag": ("a planted reason", {("a writer", "_set_other", "Expr"): 1})}),
-                             ({"_set_flag", "_set_other"}, []), "a row in a writer lifts a writer's name in its docstring")
+            self.assertEqual(census(two, exempt={"_set_flag": ("a planted reason", {("a writer", "_set_other", "log"): 1})}),
+                             ({"_set_flag", "_set_other"}, []), "a row in a writer lifts a writer's name in a string")
             with self.assertRaises(AssertionError) as named:
-                census(two, exempt={"_set_flag": ("a planted reason", {("a writer", "_set_other", "Expr"): 2})})
-            self.assertIn("_set_flag lists a writer '_set_other' handed to Expr 2 time(s), and the net refuses it 1 time(s)",
+                census(two, exempt={"_set_flag": ("a planted reason", {("a writer", "_set_other", "log"): 2})})
+            self.assertIn("_set_flag lists a writer '_set_other' handed to log 2 time(s), and the net refuses it 1 time(s)",
                           str(named.exception), "the row entry the net refuses fewer times raises")
             self.assertNotIn("is now a WRITER", str(named.exception),
                              "a stale entry of a clause the writer rule does not classify (a writer's name in a string) carries "
@@ -1542,9 +1805,10 @@ class ThreadOwnSendRefused(unittest.TestCase):
         This pins the current truth as a set. The kernel's routes that write a session flag, derived from kernel/kernel.py
         by the census above (_flag_writing_routes, behind its net and NET_EXEMPT's rows), are exactly POST /flag and the
         WebSocket arm, so a new route fails the set pin, and a mention the net refuses there fails it by name, but for the
-        net's stated limit: a writer reached with no mention the net keys where it is read (a path or a name reached at
-        run time, built or read back by reflection, and a path or a writer in a module the kernel loads). Executed over the
-        real handlers: the listing with thread rows has the thread and the roster omits it; a
+        net's stated limit: the net follows a keyed value one hop, to its consumer or to the name it lands in, so a value
+        that leaves the function through a return, a container, an attribute or a store and is read back elsewhere passes
+        it, as do a path built at run time, a local or a name read back at run time through reflection, and a path or a
+        writer in a module the kernel loads. Executed over the real handlers: the listing with thread rows has the thread and the roster omits it; a
         send to a session on a peer host, a relay destination for any session whose mail is on, is refused and nothing is
         parked in the peer's outbox; POST /flag refuses the key and the send is still refused; the key written through
         the kernel's real WebSocket arm, into the file the bus reads, lets the same send be parked (the disclosed road,
