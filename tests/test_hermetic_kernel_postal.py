@@ -1785,7 +1785,7 @@ _Derivation = collections.namedtuple("_Derivation", "parsed counts records walks
 #   before the build, sorted (a tree held before is not born in it); PARTS_OUTLIVED, for a build over a
 #   synthetic tree (_census_build's `root` given), the modules some node of whose tree was still alive right after the
 #   loop dropped its own reference to it, in order, read through a weak reference to every leaf of the tree taken just
-#   before the drop (_leaf_refs): the trees of which something keeps any part, the tree itself or one node; None for a
+#   before the drop (_leaf_refs): the trees of which something keeps any node, the tree itself or one of its nodes; None for a
 #   build over tests/ itself
 
 
@@ -1876,10 +1876,10 @@ def _census_build(paths, root=None):
     after it (_born), before the build returns and long before teardown: `born`, the ast objects made in the build and
     still alive, whatever holds them. The census pin holds `born` EQUAL, by class, to the nodes of the trees of the
     files its own reader derives (_import_line_named_files, _tree_classes; the resolver targets derived, not the
-    holder's list and not a figure), so a road that keeps any part of a dropped tree (its statement list on a list of
-    its own, one statement, a node inside one), which leaves the tree object to die and the weak reference with nothing
-    to see, is red there, and so is a tree the holder keeps beyond the derived ones (the verifier's findings at round
-    2's thirty-first commit of fork PR #894, and the reviewer's ruling, which replaced the count of nodes beyond the
+    holder's list and not a figure), so a road that keeps any ast object of a dropped tree (its statement list on a
+    list of its own, one statement, a node inside one), whatever holds it, which leaves the tree object to die and the
+    weak reference with nothing to see, is red there, and so is a tree the holder keeps beyond the derived ones (the
+    verifier's findings at round 2's thirty-first commit of fork PR #894, and the reviewer's ruling, which replaced the count of nodes beyond the
     holder's trees with this equality). A thread that makes ast objects while the loop runs and keeps them would count
     in `born` too; no thread of a test process does. A build that drops no tree reads nothing (None).
     EACH DROP, BY EVERY LEAF, for a build over a synthetic tree (`root` given): just before the loop drops its reference
@@ -1896,8 +1896,14 @@ def _census_build(paths, root=None):
     and 15.1 to 15.5 s on 3.10; 1.23 million leaves under tests/, a weak reference to each, and the collections their
     allocation starts), where the build over a synthetic tree runs the same loop in milliseconds; a node the walk
     makes itself (a fresh parse of an expression's text, _fresh) kept past its file's walk and let go before the loop
-    ends, which is no part of the dropped tree (the count after the loop sees one kept past it); and what _leaf_refs
-    does not read.
+    ends, which is no part of the dropped tree (the count after the loop sees one kept past it); what _leaf_refs
+    does not read; and, in every build, a piece of a node kept with no ast object of the tree: a node's attribute dict,
+    a list of strings it holds, a field's string or number (the verifier's finding at round 2's thirty-fourth commit of
+    fork PR #894: a road that kept each Name node's attribute dict in the build over tests/ left the module green). The
+    count reads ast objects, the ruling's measure, and the weak references are to nodes, so neither sees such a piece;
+    and what the build returns is made of the same kinds of object, dicts, strings and numbers, so a count of those
+    would not tell a node's piece from the derivation's (planted as a witness: a walk that keeps each Name node's
+    attribute dict to the build's end reads as nothing kept, in the drop's test).
     THE SINGLETON CHECK (tests/parse_cache.py's check_singletons, which parse_cache.derived ran around the build before
     the reviewer's ruling of 2026-09-24 took derived() out of this module): before the build (a writer that ran earlier;
     the build neither runs nor counts) and after it, on the returning road and on the raising road (the build itself
@@ -2018,8 +2024,9 @@ def module_level_env_census(paths=None):
     _resolver_targets returning every file under tests/ or reading every identifier, a tree kept alive by another road,
     and a drop only when the next file's tree replaces it), and the ast objects made in the build and alive after its
     loop, by class, equal the nodes of the trees of that set the build took (_Derivation's `born`, read through
-    gc.get_objects() by identity; red under a road that keeps part of a dropped tree, which the weak references do not
-    see; the verifier's finding at the thirty-first commit, and the reviewer's ruling of 2026-09-24 21:09Z, (2)); the
+    gc.get_objects() by identity; red under a road that keeps an ast object of a dropped tree, which the weak references
+    do not see, and blind, as they are, to a piece of a node kept with no ast object, _census_build's docstring says
+    why; the verifier's finding at the thirty-first commit, and the reviewer's ruling of 2026-09-24 21:09Z, (2)); the
     drop's read has a test of its own, one planted road at a time, which also runs the build over a synthetic tree
     and holds the files some leaf of whose tree outlived its drop (_Derivation's `parts_outlived`, a weak reference to
     every leaf) equal to the file the build keeps (red under a loop that keeps each dropped tree's statement list until
@@ -2104,7 +2111,8 @@ def _census_table(paths=None):
 # A licence is PER NAME and CHECKABLE: `value` names the one literal the writers may set (the dead port, the off
 # switch); `value_ok` is a predicate over the value expression; `reasserted` requires tests/conftest.py to set or pop
 # the name before every test (an unconditional plain assignment or pop before the yield of a function-scoped autouse
-# fixture, which a child pytest over a copy of the conftest sees run, _conftest_reasserts_proved), so the module-level
+# fixture, which a child pytest over a copy of the conftest sees run for its probe's tests, _conftest_reasserts_proved,
+# whose docstring names what that does not read), so the module-level
 # value cannot outlive collection under pytest (the dead-port fixture's rule); `until` DATES a licence that waits on an item, naming it: a
 # licence with no date and no owner is how a temporary exemption becomes permanent. A date bounds no writer (it is read
 # for its form alone): the writer modules of the two dated names whose population nothing mandates are committed and
@@ -2236,8 +2244,8 @@ class _Licence:
     """One licensed module-level write, per name (the comment above): `reason` says why a child may inherit the write;
     the CHECKABLE conditions are `value` (the one literal the writers may set), `value_ok` (a predicate over the written
     value's text, resolved through the names bound once at import, so `_ROOT = tempfile.mkdtemp()` is read as the
-    mkdtemp), `reasserted` (tests/conftest.py sets or pops the name before every test, proved by a child pytest:
-    _conftest_reasserts_proved) and,
+    mkdtemp), `reasserted` (tests/conftest.py sets or pops the name before every test, proved by a child pytest for
+    its probe's tests: _conftest_reasserts_proved, and what that does not read, _proof_unread_roads) and,
     for a licence that waits on an item, `since` (the ISO date it was granted) with `until` (the item, named with the
     date it was filed).
     _licence_table_faults holds every licence to that shape: since the fixup of 2026-09-22 (the verifier's finding
@@ -2685,12 +2693,14 @@ def _import_roots(where):
 
 def _shadowed(top, dirs):
     """The first of `dirs` that holds an entry named `top` or one whose name begins `top.`, or that os.listdir refuses,
-    else None, each part with its plant (the registration test): an entry that is the name (planted directly by a bare
-    directory, heapq/, and in a child run by a package directory, wave/, taken ahead of the standard library's), an
-    entry beginning `top.` (planted directly by sched.py in the last directory, and in child runs by sched.py and by
-    colorsys.py), the directories read in order past the first (the same sched.py, two directories down), and a
-    directory os.listdir refuses (planted directly by a regular file and by a missing path). Nothing else about the
-    entry is read: its kind, and whether the import system would take it, are not."""
+    else None, each part with its plant (the registration test): the first of them, the directories read in order
+    (planted directly: a regular file named bisect in the first directory and bisect.py in the last name the first), an
+    entry that is the name (planted directly by a bare directory, heapq/, and by that regular file, and in a child run
+    by a package directory, wave/, taken ahead of the standard library's), an entry beginning `top.` (planted directly
+    by sched.py in the last directory, and in child runs by sched.py and by colorsys.py), the directories past the first
+    (the same sched.py, two directories down), and a directory os.listdir refuses (planted directly by a regular file
+    and by a missing path). Nothing else about the entry is read: its kind, and whether the import system would take
+    it, are not (planted: the regular file named bisect, which no import takes)."""
     for d in dirs:
         try:
             entries = os.listdir(d)
@@ -3394,13 +3404,19 @@ def _conftest_reasserted_names(src=None, where=None):
     THIS IS THE FILTER, REFUSE-ONLY (the reviewer's ruling of 2026-09-24 21:09Z on round 2 of fork PR #894, (1)): a
     name it counts is a candidate, and no licence rests on it alone. The licence's condition is
     _conftest_reasserts_proved, which grants a name only where a child pytest over a copy of the conftest observes the
-    counted fixture's own re-assert (_reassert_proof), so a road in the conftest's own code, in the code that runs
-    before it or in pytest that keeps pytest from running that re-assert refuses by construction, named above or not
-    (the module road's residuals and every facet of _proof_facets among them). WHAT THE PROOF DOES NOT READ, each
-    granted where the filter counts it (the unsafe side, as above): what a real test module, a class or a conftest.py
-    below tests/ does for its own tests (a fixture of the same name, a parametrization of it, a hook), since the child
-    runs the conftest beside a probe module of its own; a plugin a run loads by -p on its command line, which the child
-    is not given; and an attribute of tests.conftest a test changes in the test process after pytest registered it."""
+    counted fixture's own re-assert (_reassert_proof) for the probe's tests: three plain function tests with no mark,
+    in a module of the child's own, the one module under its conftest in a directory of its own, run serially with -q
+    -s. A road in the conftest's own code, in the code that runs before it or in pytest that keeps pytest from running
+    that re-assert for those tests is refused, named above or not (the module road's residuals and every facet of
+    _proof_facets among them). WHAT THE PROOF DOES NOT READ, each granted where the filter counts it (the unsafe side,
+    as above): a road keyed on a property of a test or of the run that the probe's tests do not share, since the child
+    observes the re-assert for those tests alone (planted: _proof_unread_roads, U1 to U6, a conftest hook that takes
+    the fixture out of a test in a directory named tests, of a test with a mark, of a test past the third, of a test in
+    a class, of each test of a run with capture on and of each test of an xdist worker, each granted; a child run
+    shows U1 to U5 never re-assert for such a test); what a real test module, a class or a conftest.py below tests/
+    does for its own tests (a fixture of the same name, a parametrization of it, a hook), since the child runs the
+    conftest beside a probe module of its own; a plugin a run loads by -p on its command line, which the child is not
+    given; and an attribute of tests.conftest a test changes in the test process after pytest registered it."""
     sites, refused = _reassert_sites(src, where)
     return _Reasserted(frozenset(n for n, s in sites.items() if any(op == "write" for _f, _l, op in s)),
                        frozenset(n for n, s in sites.items() if any(op == "pop" for _f, _l, op in s)), refused)
@@ -3455,13 +3471,14 @@ _REASSERT_PROBE = textwrap.dedent('''\
         """One recorder per process, a second probe module reusing it: each write and pop of a str key of the
         environment (os._Environ's __setitem__ and __delitem__, which an assignment, a del, a pop, a setdefault and an
         update reach) as [key, "write" or "pop", the code that made it (file, def name, first line of the first frame
-        outside os and _collections_abc, whose code carries the file name their own functions carry, a frozen
-        module's included), PYTEST_CURRENT_TEST at the time]."""
+        outside _collections_abc, whose code carries the file name MutableMapping's own functions carry, a frozen
+        module's included: os.environ.pop runs MutableMapping.pop there, which deletes the key), PYTEST_CURRENT_TEST at
+        the time]."""
         setitem, delitem = os._Environ.__setitem__, os._Environ.__delitem__
         if hasattr(setitem, "reassert_events"):
             return setitem.reassert_events
         events = []
-        own = {os.getenv.__code__.co_filename, _collections_abc.MutableMapping.pop.__code__.co_filename}
+        own = {_collections_abc.MutableMapping.pop.__code__.co_filename}
 
         def code():
             f = sys._getframe(2)
@@ -3511,7 +3528,11 @@ _REASSERT_PROBE = textwrap.dedent('''\
 #   import, the licensed shape, and installs the recorder; its first test reads each name, its second sets each and
 #   leaves it, as a test or a module can, and its third reads each again, and prints what both reads saw. The
 #   recorder's skip of the mapping's own frames is planted by every pop (os.environ.pop runs in _collections_abc, so a
-#   recorder that skipped nothing would name that frame, and the control and tests/conftest.py's pops would be refused)
+#   recorder that skipped nothing would name that frame, and the control and tests/conftest.py's pops would be refused),
+#   and its reading of a frozen module's file name by every pop on Python 3.11 and later, where _collections_abc is
+#   frozen and its code's file name is not the module's __file__. It skips no frame of os's (the verifier's finding at
+#   round 2's thirty-fourth commit of fork PR #894: that skip had no plant, and no write or pop the filter counts runs
+#   through os's own code, so it is cut)
 
 
 def _proof_verdicts(sites, seen, conftest, rc=0):
@@ -3559,7 +3580,8 @@ def _proof_verdicts(sites, seen, conftest, rc=0):
 
 def _reassert_proof(cases, real=False):
     """THE EXECUTION PROOF (the reviewer's ruling of 2026-09-24 21:09Z on round 2 of fork PR #894, (1): a static reader
-    with no closed boundary is replaced by the property, run). ONE child pytest over a scratch root holding a directory
+    with no closed boundary is replaced by the property, run; run here for the probe's own tests, and what that does
+    not read is named at the end of _conftest_reasserted_names' docstring). ONE child pytest over a scratch root holding a directory
     per case of `cases` ((label, conftest text, or None for a copy of tests/conftest.py, {helper file: text}, sites in
     _reassert_sites' form)): each directory has its conftest.py, its helpers (a name may carry a directory) and the
     probe module (_REASSERT_PROBE) over the names of its sites. With `real`, tests/credential_patterns.py is copied beside
@@ -3615,7 +3637,8 @@ def _conftest_reasserts_proved(src=None, where=None, helpers=None, real=None):
     that follows the module-level write of it and of a test that follows a test that set it. REFUSED: the filter's
     refusals, and one line per name the proof refused, `NAME: why`. The filter may refuse early and never grants: a
     shape it does not model, which it counts, is refused by the run wherever it keeps pytest from running the
-    re-assert. `real` (default: `src` is None) runs the child as tests/conftest.py's copy runs, beside
+    re-assert for the probe's tests, and granted where it keys on a property of a test or of the run those tests do
+    not share (_proof_unread_roads). `real` (default: `src` is None) runs the child as tests/conftest.py's copy runs, beside
     tests/credential_patterns.py with the checkout on PYTHONPATH. For tests/conftest.py itself the result is read once
     per run of this module and held by the _Census ("proofs") until tearDownModule's release. What the proof does not
     read is named at the end of _conftest_reasserted_names' docstring."""
@@ -4859,8 +4882,8 @@ class HermeticKernelPostal(unittest.TestCase):
                          "THE DROP, BY LIVE OBJECTS: the ast objects made in the build and alive right after its loop (read "
                          "through gc.get_objects(), by identity against the list held from before the loop, by class; None: "
                          "the build dropped no tree) are exactly the nodes of the trees of the files the pin's own reader "
-                         "derives (_import_line_named_files), by class: beyond them %s, short of them %s. A road keeps part of "
-                         "a tree the loop dropped (its statement list on a list of its own, one statement, a node inside one), "
+                         "derives (_import_line_named_files), by class: beyond them %s, short of them %s. A road keeps an ast "
+                         "object of a tree the loop dropped (its statement list on a list of its own, one statement, a node inside one), "
                          "which the weak reference to the tree itself does not see, or the holder keeps a tree the reader "
                          "does not derive"
                          % (dict(collections.Counter(build.born or {}) - collections.Counter(want)),
@@ -4916,7 +4939,10 @@ class HermeticKernelPostal(unittest.TestCase):
         part of each tree until the next file's walk, ([kept], {}, every file) for its statement list and for one leaf,
         which only the read by every leaf sees, and (every file, {}, every file) for the tree itself. The census loop is
         the same code in every build, so a road put in it is red here (the round's notes record the loop's mutant); what
-        the build over tests/ itself does not read is in _census_build's docstring."""
+        the build over tests/ itself does not read is in _census_build's docstring. WHAT NO READ SEES, planted as a
+        witness (the verifier's finding at round 2's thirty-fourth commit of fork PR #894): a walk that keeps each Name
+        node's attribute dict until the build ends, no ast object among what it keeps but the parser's shared ones,
+        gives ([kept], {}, [kept]), as nothing kept does."""
         from unittest import mock
         text = "import os\n\n\ndef f(a, b=2):\n    return [a + b, {'k': a}]\n\n\nclass C:\n    x = f(1)\n"
         roads = (("the tree", lambda t: [t]), ("its statement list", lambda t: t.body), ("one statement", lambda t: [t.body[1]]),
@@ -5013,14 +5039,26 @@ class HermeticKernelPostal(unittest.TestCase):
                  ("one leaf", lambda t: [n for n in ast.walk(t) if not isinstance(n, _SHARED_NODE_TYPES)][-1]),
                  ("the tree", lambda t: t))
         got = dict([("nothing", build_over(walk))] + [(what, build_over(until_the_next_walk(part))) for what, part in roads])
+        dicts = []
+
+        def keeps_attribute_dicts(tree, rel, walks):
+            dicts.extend(n.__dict__ for n in ast.walk(tree) if isinstance(n, ast.Name))
+            return walk(tree, rel, walks)
+        got["each Name node's attribute dict, to the build's end"] = build_over(keeps_attribute_dicts)
+        values = [v for d in dicts for v in d.values()]
+        dicts = None
+        self.assertEqual((len(values) > 0, [v for v in values if isinstance(v, ast.AST) and not isinstance(v, _SHARED_NODE_TYPES)]),
+                         (True, []), "the witness keeps a piece of each Name node and no ast object but the parser's shared ones")
+        values = None
         kept, every = ["zz_kept.py"], list(order)
         self.assertEqual(got, {"nothing": (kept, {}, kept), "its statement list": (kept, {}, every), "one leaf": (kept, {}, every),
-                               "the tree": (every, {}, every)},
+                               "the tree": (every, {}, every), "each Name node's attribute dict, to the build's end": (kept, {}, kept)},
                          "EACH DROP, BY EVERY LEAF, as (outlived, born beyond the kept file's nodes, parts_outlived): with "
                          "nothing kept the build names the one file it keeps; a walk that keeps each tree's statement list, "
                          "or one leaf of it, until the next file's walk leaves the weak reference to the tree and the read "
                          "after the loop nothing to see, and the read by every leaf names both dropped files; one that keeps "
-                         "the tree itself is seen by the weak reference too")
+                         "the tree itself is seen by the weak reference too; one that keeps each Name node's attribute dict, no "
+                         "ast object, reads as nothing kept (the witness of what no read sees)")
 
     def test_the_per_name_check_passes_the_floors_client_only_and_faults_every_other_leak_write(self):
         """The census pin's per-name check (_leak_writers) passes one floor write, upstream's client-only line
@@ -5772,7 +5810,8 @@ class HermeticKernelPostal(unittest.TestCase):
         __all__, an annotation, a class body, pytest's fixture, mark and hookimpl decorators, and imports of the module's own package, the standard library and pytest's own)
         passes. THE IMPORT ROOTS, planted directly: _import_roots names a package's directory and each parent up to the
         first with no __init__.py, and _shadowed finds an entry in the last of them, an entry that is the name itself (a
-        bare directory), and a path it cannot list. THE REAL tests/conftest.py is read on
+        bare directory), and a path it cannot list, and names the first of the directories that holds an entry of the
+        name, whatever its kind (a regular file named bisect in the first and bisect.py in the last). THE REAL tests/conftest.py is read on
         the module road, where the conftest pin asserts no refusal; the text road would refuse every one of its fixtures,
         on the statements printed here if this test fails (values of the tests package, and calls of defs of its own and
         of the standard library at import and in its fixtures and hooks), which is why it is not read that way."""
@@ -5929,6 +5968,14 @@ class HermeticKernelPostal(unittest.TestCase):
         self.assertEqual((_shadowed("heapq", [inner, outer, root]), [_shadowed("colorsys", [u, root]) for u in unlistable]),
                          (outer, list(unlistable)), "an entry that is the name itself shadows, and a directory that cannot "
                                                     "be listed is taken as one that may")
+        # the first of the directories, and an entry's kind not read (the verifier's finding at round 2's thirty-fourth
+        # commit of fork PR #894: a shadow check that read the directories last first left the module green): a regular
+        # file named bisect in the first directory, which no import takes, and bisect.py in the last
+        for name in (os.path.join(inner, "bisect"), os.path.join(root, "bisect.py")):
+            with open(name, "w", encoding="utf-8"):
+                pass
+        self.assertEqual(_shadowed("bisect", [inner, outer, root]), inner,
+                         "the first of the directories holding an entry of the name is named, whatever the entry's kind")
         real = ast.parse(open(os.path.join(HERE, "conftest.py"), encoding="utf-8").read())
         unproven = _unproven_statements(real)
         self.assertTrue(any("_TMP_ROOT = _tests.TMP_ROOT" in what for _l, what in unproven)
@@ -6318,6 +6365,60 @@ class HermeticKernelPostal(unittest.TestCase):
         self.assertEqual({n for n, why in got["planted"].items() if why}, stopped,
                          "the copy of tests/conftest.py whose hook takes _dead_manager_port out of each test: the proof "
                          "refuses the four names it re-asserts and licenses the rest: %s" % got["planted"])
+
+    def test_the_proof_grants_a_re_assert_keyed_on_a_property_the_probes_tests_do_not_share(self):
+        """WHAT THE EXECUTION PROOF DOES NOT READ, each road with its witness (the verifier's finding at round 2's
+        thirty-fourth commit of fork PR #894: the texts said anything that stops the fixture from running is refused by
+        the run, and a conftest that keeps its fixture from a real test while it runs for the probe's was granted). The
+        child observes the re-assert for the probe's own tests alone, so a road keyed on a property of a test or of the
+        run that those tests do not share is granted (_proof_unread_roads, U1 to U6: the test's directory, its marks,
+        its place in the run, a test in a class, the run's options, an xdist worker). THE PROOF'S HALF: each road's
+        conftest, `_f` popping a name and a listed pytest_collectreport taking `_f` out of each test the road names, is
+        granted, `_f`'s pop licensed. THE WITNESS RUN, U1 to U5 (U6 needs pytest-xdist, which CI does not install): one
+        child pytest, capture on as in a plain run, holds each road's conftest beside a reader module with the property,
+        and a control, the same reader beside `_f` alone. Each reader reads the value its module wrote at import, the
+        name never popped before it, and each control reads the name popped."""
+        popper = lambda p: "import os, pytest\n\n\n@pytest.fixture(autouse=True)\ndef _f():\n    os.environ.pop(%r, None)\n    yield\n" % p
+        roads = [(label, "ROMP_PROBE_UNREAD_%02d" % i, condition, reader, sub, witnessed)
+                 for i, (label, condition, reader, sub, witnessed) in enumerate(_proof_unread_roads())]
+        texts = {label: popper(p) + _UNREAD_ROAD_HOOK.replace("__CONDITION__", condition) for label, p, condition, *_r in roads}
+        got, rc, out = _reassert_proof([(label, texts[label], {}, {p: frozenset({("_f", 4, "pop")})}) for label, p, *_r in roads])
+        self.assertEqual(rc, 0, out[-3000:])
+        self.assertEqual({label: got[label][p] for label, p, *_r in roads}, dict.fromkeys(texts),
+                         "THE PROOF GRANTS each road it does not read: `_f` re-asserts the name for each of the probe's tests")
+        root = os.path.realpath(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, root, True)
+        where = {}
+        for i, (label, p, _c, reader, sub, witnessed) in enumerate(roads):
+            if not witnessed:
+                continue
+            # the control's name is its own: every module is imported before any test runs, so a control's pop of the
+            # road's name would clear the road module's import-time write before its reader runs
+            for kind, name, conftest in (("road", p, texts[label]), ("control", p + "_CONTROL", popper(p + "_CONTROL"))):
+                d = os.path.join(root, "%s%02d" % (kind[0], i))
+                os.makedirs(os.path.join(d, sub))
+                with open(os.path.join(d, "conftest.py"), "w", encoding="utf-8") as f:
+                    f.write(conftest)
+                with open(os.path.join(d, sub, "test_reads_%s%02d.py" % (kind[0], i)), "w", encoding="utf-8") as f:
+                    f.write(reader.replace("__NAME__", repr(name)))
+                where[(label, kind)] = os.path.join(d, sub, "read.json")
+        probed = {n for _l, p, *_r in roads for n in (p, p + "_CONTROL")}
+        child = {k: v for k, v in os.environ.items() if k != "PYTEST_CURRENT_TEST" and k not in probed}
+        child["TMPDIR"] = root
+        r = subprocess.run([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "--rootdir", root, root],
+                           cwd=root, env=child, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=180)
+        self.assertEqual(r.returncode, 0, (r.stdout + r.stderr)[-3000:])
+        reads = {}
+        for key, path in where.items():
+            try:
+                with open(path, encoding="utf-8") as f:
+                    reads[key] = json.load(f)
+            except OSError:
+                reads[key] = "no read"
+        self.assertEqual(reads, {(label, kind): _REASSERT_SENTINEL if kind == "road" else None for label, kind in where},
+                         "THE WITNESS RUN: a reader with the road's property reads its module's import-time value, the fixture "
+                         "the proof granted never run before it, and the same reader beside `_f` alone reads the name popped")
+        self.assertEqual(len(where), 10, "U1 to U5, each a road and a control")
 
     def test_a_fixture_that_is_not_autouse_writes_for_the_tests_after_it(self):
         """The verifier's finding at round 2's seventeenth commit of fork PR #894: the wide read of conftest's fixture writes
@@ -9500,6 +9601,53 @@ def _proof_facets():
                         (fn.decorator_list[0] if fn.decorator_list else fn).lineno, licensed))
         groups.append(out)
     return groups
+
+
+_UNREAD_ROAD_HOOK = textwrap.dedent('''\
+
+
+    _SEEN = []
+
+
+    def pytest_collectreport(report):
+        for item in report.result:
+            if not hasattr(item, "fixturenames"):
+                continue
+            _SEEN.append(item.nodeid)
+            if (__CONDITION__) and "_f" in item.fixturenames:
+                item.fixturenames.remove("_f")
+''')
+#   the hook of each road the execution proof does not read (_proof_unread_roads): pytest_collectreport, a hook on
+#   _LISTED_HOOKS, whose body the module road takes on trust, takes `_f` out of each test the road's condition names
+
+
+def _proof_unread_roads():
+    """THE ROADS THE EXECUTION PROOF DOES NOT READ, planted (the verifier's finding at round 2's thirty-fourth commit of
+    fork PR #894: the proof granted a conftest that keeps its fixture from running for a real test while it runs for the
+    probe's). Each road is keyed on a property of a test or of the run that the probe's tests do not share: the child
+    runs a module of its own, three plain function tests with no mark in a directory of its own, one module under its
+    conftest, serially, with -q -s. Each case (label, the condition on `item` the hook keys on, the reader module's
+    text, the reader's directory under the case's, whether the witness run can run it): U1, the test's directory (one
+    named tests); U2, its marks (a filterwarnings mark); U3, its place in the run (past the third test collected under
+    the conftest); U4, a test in a class (a unittest case); U5, the run's options (capture on, which the child's -s
+    turns off); U6, an xdist worker, whose witness run needs pytest-xdist, which CI does not install, so only the
+    proof's half runs. Each reader module writes the name at its import, the licensed shape, and its reader records
+    what it reads in read.json beside it; U3's third test sets the name, as a test can, before the fourth reads it."""
+    record = ("import json, os, pytest, unittest\n\nP = __NAME__\nos.environ[P] = '45678'\n\n\n"
+              "def _record():\n    with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'read.json'), 'w') as f:\n"
+              "        json.dump(os.environ.get(P), f)\n\n\n")
+    plain = record + "def test_reads():\n    _record()\n"
+    return (
+        ("U1: the test's directory", "os.path.basename(os.path.dirname(str(item.path))) == 'tests'", plain, "tests", True),
+        ("U2: the test's marks", "item.get_closest_marker('filterwarnings') is not None",
+         record + "@pytest.mark.filterwarnings('default')\ndef test_reads():\n    _record()\n", "", True),
+        ("U3: the test's place in the run", "len(_SEEN) > 3",
+         record + "def test_1():\n    pass\n\n\ndef test_2():\n    pass\n\n\ndef test_3_sets_it():\n    os.environ[P] = '45678'\n"
+                  "\n\ndef test_4_reads():\n    _record()\n", "", True),
+        ("U4: a test in a class", "getattr(item, 'cls', None) is not None",
+         record + "class ReadsIt(unittest.TestCase):\n    def test_reads(self):\n        _record()\n", "", True),
+        ("U5: the run's options", "item.config.getoption('capture') != 'no'", plain, "", True),
+        ("U6: an xdist worker", "hasattr(item.config, 'workerinput')", plain, "", False))
 
 
 if __name__ == "__main__":

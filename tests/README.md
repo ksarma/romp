@@ -172,7 +172,14 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   the conftest writes the name at a probe module's import, sets it again in a
   test, and sees the counted fixture's own code set or pop it in the setup of the
   test after each write, with the value re-asserted there. Anything that stops
-  the fixture from running, named or not, is then refused by the run. And
+  the fixture from running for the probe's tests, named or not, is then refused
+  by the run. The run does not read a road keyed on a property of a test or of
+  the run that the probe's three plain function tests, in a module and directory
+  of their own and run serially with `-q -s`, do not share: code in the conftest
+  that keeps the fixture from a test in a directory named `tests`, a marked test,
+  a test past the third or a test in a class, or from every test of a run with
+  capture on or of an xdist worker, is granted the licence (each planted, with a
+  real run of the first five). And
   `ROMP_MODELS_URL` (read at kernel import,
   port 9 of 127.0.0.1 and no other); a check over the table itself holds every
   licence to a per-write condition and every temporary one to a since date and a
