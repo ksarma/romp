@@ -239,7 +239,10 @@ const ledger = read('upstream', '2026-09-18-track-guard-non-literal-targets.md')
 // verifier found those forms unread by boundaries that also stopped at a digit or an underscore; the boundary witness in the pin below runs
 // every name in lower case beside every UTF-16 code unit, the unit the pattern reads, and each name in each of the six spellings
 // SIGNAL_SPELLINGS makes beside each printable ASCII character that is not a letter: the forty-first commit, after the verifier found the
-// fortieth commit's witness, printable ASCII alone, green with U+2026, U+2019 or the tab read as a letter). SIGNAL_UPPER reads a name in upper case, or SIG and an upper-case run (a
+// fortieth commit's witness, printable ASCII alone, green with U+2026, U+2019 or the tab read as a letter; and the premise pin there holds
+// that the pattern reads a unit outside its match through those two boundaries alone, so a form read beside a space is read beside every unit
+// that is not a letter: the forty-second commit, after the verifier found a SIG spelling, an inflected form and a boundary reading two units,
+// each conditioned on a unit the witnesses never put beside that form). SIGNAL_UPPER reads a name in upper case, or SIG and an upper-case run (a
 // name another system's list adds), anywhere in a word (nonINT, INThandlers, unSIGTHR). A name in lower or mixed case glued to letters beyond
 // an inflection is not read, since in lower case a name opens or ends many English words (print, still, interrupt, terminal, pipeline): the
 // third boundary the README pin states.
@@ -320,15 +323,64 @@ test('the install guide, the hook\'s README row and the ledger entry say a name 
   // found the fortieth commit's, the printable ASCII characters that are not letters, green with U+2026, the one character outside ASCII the
   // row holds, U+2019 or the tab read as a letter). The rule: a letter is [A-Za-z], and any other character beside a name is a boundary.
   // SIGNAL_WORD has no u or v flag, so it reads a string as UTF-16 code units and each boundary looks at the one unit beside the match, whatever
-  // the spelling (the i flag folds no unit outside ASCII into [A-Za-z]); so the population is every unit from 0x0000 to 0xFFFF, split by the
+  // the spelling (the i flag folds no unit outside ASCII into [A-Za-z]; the premise pin after the flag assertion holds that nothing else in
+  // either pattern looks outside the match); so the population is every unit from 0x0000 to 0xFFFF, split by the
   // rule into JOINERS, the 65484 units that are not ASCII letters (the controls, a tab and a newline among them, every character outside ASCII
   // up to U+FFFF, and each half of a surrogate pair, which is how a character above U+FFFF stands beside a name), and the 52 letters. Every name
   // in lower case, a spelling SIGNAL_UPPER cannot read, is read with each joiner on both sides (a boundary that stops at that unit on either
   // side leaves it unread) and is not read with a letter before it or after it (the third boundary, each side on its own); and every name in
   // each of the six spellings SIGNAL_SPELLINGS makes, with each printable joiner (a space, a digit, an underscore, punctuation) before it, after
   // it and on both sides, is read as that spelling (on_exit, sigint_handler, sigint2, SigInt_handler). A boundary class that stops at any unit
-  // that is not an ASCII letter, or reads a name in lower case glued to one, reds here even while the committed row holds no such word
+  // that is not an ASCII letter, or reads a name in lower case glued to one, reds here even while the committed row holds no such word, and a
+  // condition on a unit outside the match placed anywhere else in either pattern reds the premise pin
   assert.ok(!SIGNAL_WORD.unicode && !SIGNAL_WORD.unicodeSets, 'the boundary witness runs every UTF-16 code unit, the units SIGNAL_WORD reads while it has no u or v flag; with either flag it reads a character above U+FFFF as one unit, and the witness must run those');
+  // THE PREMISE the witnesses rely on for every form but the lower-case name (the forty-second commit, after the reviewer's verifier found
+  // the forty-first commit's witnesses green under three mutants that each leave a README word unread: a SIG spelling unread after U+00A0, an
+  // inflected form unread before U+2026, and a lookahead that reads two units. The six spellings run beside printable ASCII alone and the
+  // inflected, offset, mixed-case and glued forms beside a space alone, and no set of flanks closes a condition on two units). A pattern
+  // reads a unit outside its match only through an assertion, and ECMAScript's Assertion production has eight: ^, $, \b, \B, (?=, (?!, (?<=
+  // and (?<!. SIGNAL_WORD holds a leading (?<! and a trailing (?!, each over one character class, which with neither u nor v reads the one
+  // unit beside the match; inside the match it holds the E-dropped stems' (?=ing), whose three units only the inflection's ing can then
+  // consume, and the inflection's (?<=([A-Za-z])), which looks back at the name's last unit; SIGNAL_UPPER holds none. While that holds, a
+  // form read beside a space is read beside any unit the two classes answer for as they answer for a space, since the path that matched it
+  // reads nothing else outside it, and any match over one of its units makes the pin's reading non-empty. So each form a witness runs beside
+  // a space is read beside each joiner, and the full-unit witness below fixes what the two classes admit, unit by unit, on each side. The pin
+  // keys on the spelling of the assertions inside the match (a new or reworded one reds it until the argument is made here) and on the ends'
+  // shape, one class each, not on the classes' contents, which the witness holds by execution. The reader's own fixture holds each of the
+  // eight forms and the places one is not (a character class, an escaped parenthesis, a named group, an escaped backslash)
+  const assertionsIn = (src) => {
+    const found = [];
+    for (let i = 0, inClass = false; i < src.length; i++) {
+      const ch = src[i];
+      if (ch === '\\') { if (!inClass && (src[i + 1] === 'b' || src[i + 1] === 'B')) found.push({ at: i, text: src.slice(i, i + 2) }); i++; }
+      else if (inClass) inClass = ch !== ']';
+      else if (ch === '[') inClass = true;
+      else if (ch === '^' || ch === '$') found.push({ at: i, text: ch });
+      else if (/^\(\?<?[=!]/.test(src.slice(i, i + 4))) {
+        let j = i;
+        for (let depth = 0, cls = false; j < src.length; j++) {
+          if (src[j] === '\\') j++;
+          else if (cls) cls = src[j] !== ']';
+          else if (src[j] === '[') cls = true;
+          else if (src[j] === '(') depth++;
+          else if (src[j] === ')' && --depth === 0) break;
+        }
+        found.push({ at: i, text: src.slice(i, j + 1) });
+      }
+    }
+    return found;
+  };
+  const READER_FIXTURE = '^a$\\bb\\B(?=c)(?!d)(?<=e)(?<!f)[\\b^$(?=]\\(?=g\\)(?<n>h)(?:i)\\\\b';
+  assert.ok(new RegExp(READER_FIXTURE), 'the reader\'s fixture is a pattern');
+  assert.deepEqual(assertionsIn(READER_FIXTURE).map((a) => a.text), ['^', '$', '\\b', '\\B', '(?=c)', '(?!d)', '(?<=e)', '(?<!f)'], 'the assertion reader finds each of the eight assertions ECMAScript has, and none in a character class, after an escaped parenthesis, in a named or non-capturing group, or after an escaped backslash');
+  const wordAssertions = assertionsIn(SIGNAL_WORD.source);
+  const [lead, trail] = [wordAssertions[0], wordAssertions[wordAssertions.length - 1]];
+  const endsHold = wordAssertions.length >= 2 && lead.at === 0 && /^\(\?<!\[(?:[^\\\]]|\\.)*\]\)$/.test(lead.text)
+    && trail.at + trail.text.length === SIGNAL_WORD.source.length && /^\(\?!\[(?:[^\\\]]|\\.)*\]\)$/.test(trail.text);
+  const ENDS = 'a (?<! at the start and a (?! at the end, each over one character class';
+  assert.deepEqual({ ends: endsHold ? ENDS : [lead, trail], inside: wordAssertions.slice(1, -1).map((a) => a.text), upper: assertionsIn(SIGNAL_UPPER.source).map((a) => a.text) },
+    { ends: ENDS, inside: [...SIGNAL_NAMES.filter((n) => n.endsWith('E')).map(() => '(?=ing)'), '(?<=([A-Za-z]))'], upper: [] },
+    'THE PREMISE: SIGNAL_WORD reads a unit outside its match only through its leading (?<! and trailing (?!, each over one character class whose units the full-unit witness holds, and SIGNAL_UPPER through none; every other assertion in either source (^, $, \\b, \\B or a lookaround) looks inside the match, the E-dropped stems\' (?=ing) and the inflection\'s (?<=([A-Za-z])), as the comment argues; a form the witnesses run beside a space or printable ASCII alone is read beside every joiner only while this holds');
   const UNITS = Array.from({ length: 0x10000 }, (_, u) => String.fromCharCode(u));
   const JOINERS = UNITS.filter((c) => !/[A-Za-z]/.test(c));
   const LETTERS = UNITS.filter((c) => /[A-Za-z]/.test(c));
