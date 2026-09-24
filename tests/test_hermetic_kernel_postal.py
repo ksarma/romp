@@ -633,16 +633,16 @@ class _SpawnScan:
             return self._resolve(node, scope, seen, read) or self._element(node, scope, seen | {("container", id(node))}, read)
         if isinstance(node, ast.Starred):
             return self.holds_kernel_path(node.value, scope, seen)
-        if isinstance(node, ast.JoinedStr):   # the tail read: the last piece alone, which in a string the shell reads
-            # catches a launch whose whole text shlex cannot split while its last constant piece splits (row A50: bash's
-            # ANSI-C quote earlier in a bash -c program); f"{BIN}/romp-kernel" (A5) and f"{KERNEL}" are the whole-word read's
+        if isinstance(node, ast.JoinedStr):   # the tail read, the last piece alone: in a string the shell reads, it catches
+            # a launch whose whole text shlex cannot split while the last constant piece splits (row A50, bash's ANSI-C
+            # quote earlier in a bash -c program); the whole-word read above takes f"{BIN}/romp-kernel" (A5) and f"{KERNEL}"
             last = node.values[-1] if node.values else None
             if isinstance(last, ast.FormattedValue):
                 return self.is_kernel_path(last.value, scope, seen, cli, shell)
             return last is not None and self.is_kernel_path(last, scope, seen, cli, shell)
         if isinstance(node, ast.BinOp):
-            if isinstance(node.op, ast.Mod):   # a % template the whole-word read above did not take ("%s/romp-kernel --serve"
-                return False                   # % BIN, "%s --serve" % KERNEL and row B28 are its); never its right operand
+            if isinstance(node.op, ast.Mod):   # the whole-word read above reads a % template ("%s/romp-kernel --serve" % BIN,
+                return False                   # "%s --serve" % KERNEL, row B28); what it did not take is no path
             if isinstance(node.op, ast.Add):   # BIN + "/romp-kernel", KERNEL + " --serve": either operand
                 return self.is_kernel_path(node.right, scope, seen, cli, shell) or self.is_kernel_path(node.left, scope, seen, cli, shell)
             return self.is_kernel_path(node.right, scope, seen, cli, shell)   # BIN / "romp-kernel": the tail
@@ -693,7 +693,7 @@ class _SpawnScan:
     def _call_is_kernel_path(self, call, scope, seen, cli, shell=False):
         """A call's value is the path when its callee resolves by binding to a path-building function (PATH_FUNCTIONS)
         whose last positional argument is the path, or is a path-preserving method (by the method's NAME) on the path;
-        a template's .format is the whole-word read's (is_kernel_path), and a .format call that read did not take is not
+        a template's .format is read by the whole-word read (is_kernel_path), and a .format call it did not take is not
         the path. A bare-name callee the scan reads no function for (a helper defined in the module, a parameter, a name
         bound to a call's value, an unbound name that is no builtin) is listed under the residual with its kind; a
         builtin or an imported function other than the path builders is a consumer, and is not."""
@@ -1720,12 +1720,13 @@ def _bin_romp_text():
 
 
 # THE HAND LISTING (PR #850's tenth review round): lines the round-8 regex census matches at a call that the scan does
-# not read as a site, each listed with the reason it starts no kernel, since the comparison names every other such match
-# (_regex_scan_comparison). An entry is (module, line, kind, reason): the module's path under tests/, the text of the
-# line holding the match with its surrounding whitespace stripped, a kind, and the reason. --roads prints each under
-# `# unresolved:` with its kind and reason, the comparison reads it as covering every match on that line of that module,
-# and an entry that covers no match reds the comparison case, naming the entry (_hand_entries_covering_nothing), so the
-# listing holds only lines that exist. Empty: the tree needs no entry.
+# not read as a site, or at no call in a module with no site, each listed with the reason it starts no kernel, since the
+# comparison names every other such match (_regex_scan_comparison). An entry is (module, line, kind, reason): the
+# module's path under tests/, the text of the line holding the match with its surrounding whitespace stripped, a kind,
+# and the reason. --roads prints each under `# unresolved:` with its kind and reason, the comparison reads it as
+# covering every match on that line of that module, and an entry that covers no match reds the comparison case, naming
+# the entry (_hand_entries_covering_nothing), so the listing holds only lines that exist. Empty: the tree needs no
+# entry.
 LISTED_BY_HAND = ()
 
 _Comparison = collections.namedtuple("_Comparison", "dropped missed not_calls flagged by_hand")
@@ -3067,14 +3068,14 @@ class HermeticKernelPostal(unittest.TestCase):
         match reds the case, naming the module or row, the line and the match, over the tree as over the rows, except in
         the rows whose label says the comparison names them, and each of those must carry at least one (a launch, or a
         clean shape the scan neither reads as a site nor lists: the cost of failing closed the module docstring states).
-        The rows whose regex match lies at no call are held the same way: a comment and a docstring (N11, N12) and a
-        program held in a string that is exec'd or written to a script file a test runs (N116, N117) are named, at labels
-        that say so, while B71, B74, A35 and A45 (each module has a site) and N89 (its listed program contains the hit)
-        name nothing. A hand entry that covers no match reds the case, naming the entry. A row whose label says the regex
-        missed it too carries no call the regex flags. Reported and asserting nothing: the rows and the modules whose
-        sites the regex missed (B1 and the rest of round 8's silent half). The tree half is read from the roads
-        table (_roads_table), whose one read compared each module with the scan it ran for the roads, so this case scans
-        no module of the tree again. Then plants the comparison must name: consumer calls the regex flags
+        The rows with a regex hit at no call are held the same way, among them a comment and a docstring (N11, N12) and
+        a program held in a string that is exec'd or written to a script file a test runs (N116, N117), named at labels
+        that say so, and B71, B74, A35 and A45 (each module has a site) and N89 (its listed program contains the hit),
+        which name nothing. A hand entry that covers no match reds the case, naming the entry. A row whose label says
+        the regex missed it too carries no call the regex flags. Reported and asserting nothing: the rows and the
+        modules whose sites the regex missed (B1 and the rest of round 8's silent half). The tree half is read from the
+        roads table (_roads_table), whose one read compared each module with the scan it ran for the roads, so this case
+        scans no module of the tree again. Then plants the comparison must name: consumer calls the regex flags
         (os.path.relpath of a name bound to the path, beside a listed sys.executable that does not cover it, and of the
         path spelled inline); names bound on one line that reach the binding the regex read (through .replace, which the
         scan does not read, and through os.path.relpath, whose arguments it does); the CLI in a shell string handed a
