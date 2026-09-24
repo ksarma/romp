@@ -3105,10 +3105,14 @@ _REPEATS = (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)
 
 
 def _repeats(node):
-    """The comprehensions and generator expressions inside `node`, a lambda's body included (_REPEATS: a list, set or dict
-    comprehension, a generator expression). Each runs its element once per item, so a call written once in one runs as
+    """The comprehensions and generator expressions inside `node` (_REPEATS: a list, set or dict comprehension, a
+    generator expression), read by ast.walk. Each runs its element once per item, so a call written once in one runs as
     many times as its iterable has items (the re-verifier's notify run twice by a list comprehension, on round 2's
-    twenty-fifth commit of fork PR #894, passed a rule that counted the call nodes of the notify statement)."""
+    twenty-fifth commit of fork PR #894, passed a rule that counted the call nodes of the notify statement). ast.walk
+    reads a lambda's body too, and no pin rests on that part (with it skipped, every pin passes, and no plant can tell):
+    a notify call inside a lambda's body is no call of the statement's own (_own_calls), so the tries rule of
+    _guard_shape finds the try by another statement that makes the notify call, and when both statements are notify
+    statements the second is stray, since the window rule exempts the first notify statement alone."""
     return [n for n in ast.walk(node) if isinstance(n, _REPEATS)]
 
 
@@ -5340,12 +5344,14 @@ class HermeticKernelPostal(unittest.TestCase):
         body of a try that has an except clause, or after a statement that can end the run (a return, a raise, a skip or an
         exit: _ends_the_run) satisfies nothing here; and the test is undecorated and no generator, since a skip decorator,
         or a yield anywhere in it, passes a run in which none of its statements ran.
-        The wrapper's body is that try alone, the real revive's call in its body and the Event's set in its finally. The
+        The wrapper's body is that try alone, the real revive's call in its body and the Event's set in its finally; the
+        wrapper, the fake and each road carry no decorator, which would bind the def's name to whatever it returns. The
         window, every statement that runs in the test's frame from the first of the rebind and the install to the wait
         (in the finally, each statement before the wait that runs, a statement of a try there included: _executed),
         holds the parts alone: the install and the rebind, the saved mapping, the trio, one notify statement (a
-        self.assert... call whose one other call, a lambda's body included, is km._notify_bus_peer, and which holds no
-        comprehension or generator expression, whose element runs once per item: _repeats), a self.assert... statement
+        self.assert... call that makes one other call, a lambda's body included, and holds no comprehension or
+        generator expression, whose element runs once per item: _repeats; that the call is km._notify_bus_peer follows
+        from the tries rule, as the comment at the window rule says), a self.assert... statement
         that calls nothing else (fork PR #875's, inside the try where upstream's text has it), km.BUS_PORT put back from
         a name, and the wait, a statement that calls nothing else. A second notify, another kernel call, a process or a
         thread started in the window or the wrapper kicks a revive, a notify or an ensure that the one wait does not
@@ -5376,7 +5382,9 @@ class HermeticKernelPostal(unittest.TestCase):
         (_name_binds), and each but self is read only where the parts read it (_name_loads: the real run in the unfake
         and in a road's call, the real revive in the unwrap and the wrapper's call, the Event in the wrapper's set and
         the wait, and so on); the road's list is made by an empty list literal. The plant test holds each rule of this
-        pin, each binding form _name_binds reads, each half of each of those names' reads but self's (the kept real
+        pin (a decorator on each of the parts' defs, and a statement at each end of each stretch of the window and in
+        each argument place the window reads, among them), each binding form _name_binds reads, each half of each of
+        those names' reads but self's (the kept real
         run's calls in the road and the kept real revive's in the wrapper among them, and each name bound to another
         name after the try), each kind of comprehension _REPEATS lists, and each identifier the
         reflection and environment readers list, in each reference form its reader reads, to a plant of its own that the
@@ -5398,24 +5406,30 @@ class HermeticKernelPostal(unittest.TestCase):
         wait, a statement that kicks a revive, a notify or an ensure passes this pin and the guard test (the
         re-verifier's three on round 2's fifth commit: the real revive started on a thread through km.threading before
         the rebind, a second notify after the try, and km._ensure_postal_bus() called after the try). The executed pin
-        sees each: a real ensure child is recorded at its exit, and one forked after the restore dials the fixed port,
-        which the spy refuses and records. The fake answered the first one's ensure on none of the runs made, at the
-        test's own pace or with the ensure's run delayed by 0.02 s or 0.05 s in a scratch kernel, which puts the install
-        before that thread reaches subprocess.run: its revive holds the revive's single-flight flag, so the notify's kick
-        joins it, the wrapper sets the Event at once, and the put-back comes before the delayed thread reaches the run;
-        its child then forks after the test, with the restored environment, and dials the fixed port (six of six of the
-        re-verifier's delayed runs on round 2's twenty-fifth commit, and four of four of the twenty-sixth commit's). The
+        sees each that starts an ensure child, by the child's spawn: its spy records a Popen of the postal service in the process that makes it,
+        whichever thread makes it, before the fork, and the pin has read that record since round 2's twenty-seventh
+        commit. Before it the pin read a child's exit and its dial of the fixed port alone, which can come after the
+        run's end for a child a thread forks as the run ends. The fake answered the first one's ensure on none of the
+        runs made, at the test's own pace or with the ensure's run delayed by 0.02 s or 0.05 s in a scratch kernel,
+        which puts the install before that thread reaches subprocess.run: its revive holds the revive's single-flight
+        flag, so the notify's kick joins it, the wrapper sets the Event at once, and the put-back comes before the delayed
+        thread reaches the run; its child then forks after the restore, with the restored environment, and dials the
+        fixed port (on each of the re-verifier's six delayed runs on the twenty-fifth commit, read three seconds after the
+        run's end; at the run's end, where the executed pin reads, two of the three delayed by 0.05 s held the spawn
+        alone, a record the pin did not then read). The
         fake's and the road's bodies, which run in the revive's thread inside the window, are not read for a kick
         either: the pin on the fake runs them over its argv shapes with the kernel as a namespace that holds the
         subprocess module alone, so a kick through any other name of the kernel raises there, and the executed pin runs
-        them in the guard test's window, where a real ensure child a kick starts is recorded at its exit. Nor is code
+        them in the guard test's window, where a real ensure child a kick starts is recorded at its spawn. Nor is code
         that a part of the window runs without a call of its own: a callable handed to an assertion method that calls it
         (self.assertRaises(Exception, km._ensure_postal_bus) in the try), and a method (a truth test, a comparison) of an
-        object the test made before the window and handed to the notify or to an assertion there. The executed pin
+        object the test made before the window and handed to the notify or to an assertion there, or to the wait as its
+        timeout (Event.wait compares a timeout with 0 while the Event is not set). The executed pin
         records a real ensure child such code starts, and sees a second revive it kicks on a thread only on a run where
         that revive reaches the real run after the put-back (the verifier's second notify inside the try, which kicks the
         same second revive, passed the executed pin on each of eight runs). The plant test holds a plant of each kind named here (the three, a kick in the fake's body, the
-        kernel's ensure handed to assertRaises, and such an object) as one this pin passes.
+        kernel's ensure handed to assertRaises, and two such objects, one handed to the notify and one to the wait) as
+        one this pin passes.
         Returns what the pin on the fake's behaviour and the plants need."""
         fn = self._guard_test(src)
         self.assertEqual(fn.decorator_list, [], "the guard test carries no decorator: a skip or an expected failure passes a run that never reached its statements")
@@ -5534,6 +5548,14 @@ class HermeticKernelPostal(unittest.TestCase):
         # and read only where the parts read it (the verifier's five one-line plants on round 2's fourth commit of fork PR
         # #894 rebound a kept name, cleared the saved mapping, and set the Event early or rebound it, and every pin passed)
         fake_def, wrapper_def = before[defs[fake.id]], before[defs[wrapper.id]]
+        # the parts' defs carry no decorator: the rules above read the wrapper, the fake and each road by the body and the
+        # signature of the def, and a decorator binds the def's name to whatever it returns (the re-verifier's
+        # decorators on round 2's twenty-sixth commit of fork PR #894, among them a second notify run after the wrapper
+        # and the fake replaced by the real run, passed every pin)
+        self.assertEqual([(d.name, d.decorator_list[0].lineno) for d in [wrapper_def, fake_def] + [r for r in roads if r is not fake_def]
+                          if d.decorator_list], [],
+                         "the wrapper, the fake and each road carry no decorator: the pin reads each by its def's body and signature, and a "
+                         "decorator binds the name to whatever it returns")
         wrapper_tries = [t for t in _executed(wrapper_def.body) if isinstance(t, ast.Try) and not t.handlers]
         list_made = [(s, n) for s in before if isinstance(s, ast.Assign) for n in ast.walk(s.targets[0])
                      if isinstance(n, ast.Name) and n.id == reached[0] and isinstance(n.ctx, ast.Store)]
@@ -5580,35 +5602,40 @@ class HermeticKernelPostal(unittest.TestCase):
         # a second notify in the wait statement's own argument, and one in a try of the finally that holds the wait): the
         # finally's statements that run before the wait, a nested try's among them (_executed), the wait statement's own
         # calls, and a comprehension or generator expression in the notify statement, whose element runs once per item.
-        # The count's lower bound and the notify statement's "the one call is the notify" restate the tries rule above,
-        # which found the try by a notify call among its statements that run: with either dropped, that call is in a
-        # statement of the try that is no notify statement (one that is no assertion, a try among them, or an assertion
-        # that makes another call beside its own), and that statement is stray.
+        # In the try, every statement that makes a call is stray but the first notify statement (an assertion that makes
+        # one call beside its own and holds no comprehension). No count of the notify statements and no check that the
+        # one call is the notify is read beside this: on the twenty-sixth commit both were conjuncts no plant could red,
+        # and the argument this comment gave for them was inexact (the re-verifier: with the check dropped, an assertion
+        # on another kernel call counted as a notify statement, and the count reddened, not a stray statement). The
+        # tries rule above found the try by a notify call among its statements that run, so when nothing is stray the
+        # statement that makes that call is the first notify statement, whose one call is then the notify (a try in the
+        # try that holds the call is no assertion, and stray), and a second notify statement, whatever its one call, is
+        # stray.
 
         def beside(s):             # the calls an assertion statement makes beside its own, a lambda's body included; None: no assertion
             f = _dotted(s.value.func) if isinstance(s, ast.Expr) and isinstance(s.value, ast.Call) else None
             if not (f and len(f) == 2 and f[0] == "self" and f[1].startswith("assert")):
                 return None
             return [c for c in ast.walk(s) if isinstance(c, ast.Call) and c is not s.value]
-        notify_stmts = [s for s in top[tries[0]].body if beside(s) is not None and len(beside(s)) == 1
-                        and _dotted(beside(s)[0].func) == ["km", "_notify_bus_peer"] and not _repeats(s)]
+        notify_stmts = [s for s in top[tries[0]].body if beside(s) is not None and len(beside(s)) == 1 and not _repeats(s)]
         beside_wait = [c for c in ast.walk(final[wait]) if isinstance(c, ast.Call) and c is not final[wait].value]
         parts_before = (before[install[0]], before[rebind[0]], before[made[0]], before[trio_at[0]])
         stray = ([s.lineno for s in before[min(rebind[0], install[0]) + 1:] if not any(s is p for p in parts_before)]
-                 + [s.lineno for s in top[tries[0]].body if not any(s is n for n in notify_stmts) and beside(s) != []]
+                 + [s.lineno for s in top[tries[0]].body if not any(s is n for n in notify_stmts[:1]) and beside(s) != []]
                  + [s.lineno for s in final[:wait] if not (_assign_to(s, ["km", "BUS_PORT"]) and isinstance(s.value, ast.Name))]
                  + ([final[wait].lineno] if beside_wait else []))
-        self.assertTrue(len(notify_stmts) == 1 and not stray,
+        self.assertTrue(not stray,
                         "from the first of the rebind and the install to the wait nothing runs in the test's frame but the parts: the install, "
                         "the rebind, the saved mapping, the trio, one notify statement that calls nothing beside its assertion but the notify, "
                         "once (no comprehension or generator expression), an assertion that calls nothing else, km.BUS_PORT put back from a "
                         "name, and the wait, calling nothing else (notify statements: %d; other statements at lines %s): a second notify, "
                         "another kernel call, a process or a thread started there kicks what the one wait does not cover" % (len(notify_stmts), stray))
+        notify = notify_stmts[0] if notify_stmts else None    # there when nothing is stray (the comment above); None only under a cut reading
         return {"fn": fn, "fake": fake.id, "real_run": kept_run[0][1], "reached": reached[0], "event": event, "ended": ended,
                 "real_revive": kept_revive[0][1], "try": top[tries[0]], "install": before[install[0]], "wait": final[wait],
                 "after": after, "wrapper": wrapper_def, "fake_def": fake_def, "saved_env": env_saved, "restore": loop,
                 "saved_made": before[made[0]], "list_made": list_made[0][0], "trio_stmt": before[trio_at[0]],
-                "roads": [r for r in roads if r is not fake_def], "rebind": before[rebind[0]], "notify": notify_stmts[0],
+                "roads": [r for r in roads if r is not fake_def], "rebind": before[rebind[0]], "notify": notify,
                 "kept_revive": before[kept_revive[0][0]], "kept_run": before[kept_run[0][0]], "event_made": before[events[0][0]],
                 "unfake": final[unfake[0]], "unwrap": final[unwrap[0]],
                 "held": sorted((role, name) for role, name, _, reads in held if reads is not None)}
@@ -5627,7 +5654,8 @@ class HermeticKernelPostal(unittest.TestCase):
         fake to the real run appends to, the postal-service calls that reached the real run (another list asserted empty
         beside it, as fork PR #875's assertion will be once the two texts meet, is not what this reads). The environment
         goes back in one for statement over the mapping saved before the trio from os.environ.get of the trio's three
-        names. No other statement of the test, run or not, binds or deletes an attribute on any object in any binding form
+        names. The wrapper, the fake and the road carry no decorator. No other statement of the test, run or not, binds or
+        deletes an attribute on any object in any binding form
         (km.BUS_PORT aside), binds km or os, names reflection in any reference form, or names the environment outside
         os.environ.get reads, the trio and the restore; from the first of the rebind and the install to the wait nothing
         runs in the test's frame but the parts, one notify statement among them; and every name the parts are read by
@@ -5727,7 +5755,17 @@ class HermeticKernelPostal(unittest.TestCase):
         try, and every name the parts are read by, self aside, bound to another name after the try. The kinds and the
         names are written out in the test and held equal to _REPEATS and to the names _guard_shape reads after their
         loops. The kernel's ensure handed to assertRaises in the try, a kick that runs without a call node of its own, is
-        held among the plants the pin passes, as its NOT READ list names it."""
+        held among the plants the pin passes, as its NOT READ list names it.
+        Since round 2's twenty-seventh commit (the re-verifier's findings on the twenty-sixth: a decorator on the wrapper,
+        the fake or the road passed every pin, and with a stretch of the window cut by one statement at one end, the
+        wait's calls read from its positional arguments alone, or the notify statement's comprehension read from its
+        first argument alone, every pin passed), a plant for each: a decorator on the wrapper that runs a second notify
+        after it, one on the fake that replaces it with the real run, and one on the road that makes another kernel
+        call; a kernel call right before the try, in the try before the notify statement, and as the finally's first
+        statement; a second notify in the wait's timeout keyword; and the notify run twice by a comprehension in the
+        notify statement's second argument and in a keyword argument. An object made before the window and handed to
+        the wait as its timeout, whose comparison with 0 runs a second notify, is held among the plants the pin
+        passes, as its NOT READ list names it."""
         cls_src = self._guard_class_source()
         shape = self._guard_shape(cls_src)
         stubbed = sorted({c.func.value.id for c in ast.walk(shape["fake_def"]) if isinstance(c, ast.Call) and isinstance(c.func, ast.Attribute)
@@ -5759,13 +5797,17 @@ class HermeticKernelPostal(unittest.TestCase):
                    "the Event made": (shape["event_made"], "replace"), "the rebind": (shape["rebind"], "replace"),
                    "the kept run": (shape["kept_run"], "replace"), "the install": (shape["install"], "replace"),
                    "the unwrap": (shape["unwrap"], "replace"), "the notify": (shape["notify"], "replace"),
-                   "in the wrapper's try": (wrapper_try.body[0], "after")}
+                   "in the wrapper's try": (wrapper_try.body[0], "after"),
+                   "the wrapper def": (shape["wrapper"], "before"), "the fake def": (shape["fake_def"], "before"),
+                   "the road def": (shape["roads"][0], "before"), "before the notify": (shape["try"].body[0], "before"),
+                   "the finally's first": (shape["try"].finalbody[0], "before")}
         after_try, finally_run, one_try, wait_msg = ("after the try the wait's result", "the finally puts the real run back",
                                                     "the notify call runs in one try", "the finally waits on the Event")
         reflect, binds, rebinds, env = ("names reflection, in any reference form", "binds or deletes an attribute",
                                         "binds the names km or os", "names the environment only in")
         held = "holds one value"
         window = "nothing runs in the test's frame but the parts"
+        undecorated = "the wrapper, the fake and each road carry no decorator"
 
         def under_if(node):                # a part of the test under an if, so it never runs
             return ("if saved:\n" + textwrap.indent(ast.unparse(node), "    ")).replace("%", "%%")
@@ -5986,7 +6028,27 @@ class HermeticKernelPostal(unittest.TestCase):
             ("an assertion inside the try whose lambda runs a kernel call and raises", "in the try",
              'self.assertRaises(ZeroDivisionError, lambda: km._notify_bus_origin_trust("TESTHOST", "directed") / 0)', window),
             ("the saved mapping's items read after the try", "after the try", "_planted = %(saved_env)s.items()",
-             read_at("the saved environment", names["saved_env"])))
+             read_at("the saved environment", names["saved_env"])),
+            # round 2's twenty-seventh commit on fork PR #894 (the re-verifier's findings on the twenty-sixth): a decorator
+            # on each of the parts' defs (each passed every pin), and a statement at each end of each stretch of the window,
+            # and in each argument place the window reads, that no plant above reached (with a stretch cut by one statement
+            # at that end, the wait's calls read from its positional arguments alone, or the notify statement's
+            # comprehension from its first argument alone, every pin passed)
+            ("a decorator on the wrapper that runs a second notify after it", "the wrapper def",
+             '@(lambda f: lambda: (f(), km._notify_bus_peer("TESTHOST", 50003, True)))', undecorated),
+            ("a decorator on the fake that replaces it with the real run", "the fake def", "@(lambda f: km.subprocess.run)", undecorated),
+            ("a decorator on the road that makes another kernel call", "the road def",
+             '@(lambda f: lambda *a: (km._notify_bus_origin_trust("TESTHOST", "directed"), f(*a))[1])', undecorated),
+            ("a kernel call right before the try", "before the try", 'km._notify_bus_origin_trust("TESTHOST", "directed")', window),
+            ("a kernel call in the try before the notify statement", "before the notify", 'km._notify_bus_origin_trust("TESTHOST", "directed")',
+             window),
+            ("a kernel call as the finally's first statement", "the finally's first", 'km._notify_bus_origin_trust("TESTHOST", "directed")', window),
+            ("a second notify in the wait's timeout keyword", "the wait",
+             '%(ended)s = %(event)s.wait(timeout=km._notify_bus_peer("TESTHOST", 50003, True) or 60)', window),
+            ("the notify run twice by a comprehension in the notify statement's second argument", "the notify",
+             'self.assertEqual([False, False], [km._notify_bus_peer("TESTHOST", p, True) for p in (50002, 50003)], "planted")', window),
+            ("the notify run twice by a comprehension in a keyword argument of the notify statement", "the notify",
+             'self.assertEqual([False, False], second=[km._notify_bus_peer("TESTHOST", p, True) for p in (50002, 50003)])', window))
         lines = cls_src.splitlines(keepends=True)
 
         def with_args(fn, args):           # the one-line header of a def of the test, its parameters replaced
@@ -6054,12 +6116,16 @@ class HermeticKernelPostal(unittest.TestCase):
                              "fork PR #875's assertion kept %s: the pin passes and reads the road's list" % label)
         # the kicks _guard_shape's NOT READ list names as unread, with what sees each, held here as plants the pin passes, so
         # a change that reads one shows here and moves it among the plants above: the re-verifier's three outside the
-        # window, a kick in the fake's body, the kernel's ensure handed to assertRaises in the try, and an object made
-        # before the window whose truth test the notify runs
+        # window, a kick in the fake's body, the kernel's ensure handed to assertRaises in the try, an object made before
+        # the window whose truth test the notify runs, and one whose comparison with 0 the wait runs (the re-verifier's
+        # on round 2's twenty-sixth commit: Event.wait compares its timeout with 0 while the Event is not set)
         notify_call = 'km._notify_bus_peer("TESTHOST", 50002, True)'
         self.assertEqual(cls_src.count(notify_call), 1, "the guard test's notify call is written once as %s" % notify_call)
         truth = _plant_at(cls_src, shape["rebind"], "class _K:\n    def __bool__(_s):\n        km._ensure_postal_bus()\n"
                           "        return True\n_k = _K()", "before").replace(notify_call, notify_call.replace("True", "_k"))
+        timeout = _plant_at(_plant_at(cls_src, shape["wait"], "%(ended)s = %(event)s.wait(_t)" % names, "replace"), shape["rebind"],
+                            'class _T:\n    def __gt__(_s, o):\n        km._notify_bus_peer("TESTHOST", 50003, True)\n        return True\n\n'
+                            "    def __float__(_s):\n        return 60.0\n_t = _T()", "before")
         for label, planted in (("the real revive on a thread through km.threading before the rebind",
                                 _plant_at(cls_src, shape["rebind"], "km.threading.Thread(target=km._revive_postal_bus, daemon=True).start()", "before")),
                                ("a second notify after the try", _plant_at(cls_src, shape["after"][0], notify_call, "before")),
@@ -6068,7 +6134,9 @@ class HermeticKernelPostal(unittest.TestCase):
                                 _plant_at(cls_src, shape["fake_def"].body[0], 'km._notify_bus_origin_trust("TESTHOST", "directed")', "before")),
                                ("the kernel's ensure handed to an assertion method that calls it, in the try",
                                 _plant_at(cls_src, shape["notify"], "self.assertRaises(Exception, km._ensure_postal_bus)", "after")),
-                               ("an object made before the window whose truth test the notify runs", truth)):
+                               ("an object made before the window whose truth test the notify runs", truth),
+                               ("an object made before the window, handed to the wait as its timeout, whose comparison runs a second notify",
+                                timeout)):
             try:
                 self._guard_shape(planted)
             except AssertionError as e:
@@ -6152,16 +6220,26 @@ class HermeticKernelPostal(unittest.TestCase):
     def test_the_peer_notify_guard_test_starts_no_ensure_child_and_dials_no_fixed_port(self):
         """Executed: a child pytest runs tests/test_kernel.py's PostalPeerTunnels.test_notify_bus_peer_is_guarded with a
         sitecustomize (_DIAL_SPY) on its PYTHONPATH, so every Python process of that run records each socket connect by
-        port and its argv at exit, and refuses a connect to the machine's fixed bus port (the postal service's default
+        port, each subprocess.Popen whose command names romp-postal-service, and its argv at exit, and refuses a connect to the machine's fixed bus port (the postal service's default
         port, read from bin/romp-postal-service) before it reaches the network. No process of the run dials the fixed
-        port, and no romp-postal-service process starts: the test's fake answers the revive's ensure. The spy is shown
+        port, and no romp-postal-service process is started or exits: the test's fake answers the revive's ensure. The
+        start is read from the spy's spawn record, which the process that runs subprocess.Popen on the postal service
+        writes before the fork, from whichever thread runs it, so a child a thread forks as the run ends is seen though
+        its dial and its exit come after the run (since round 2's twenty-seventh commit on fork PR #894: before it this
+        pin read the exit and the dial alone, and on two of the re-verifier's runs of a real revive started on a thread
+        before the guard test's rebind, with the ensure's run delayed by 0.05 s, the spawn was the only record at the
+        run's end; and with a scratch postal service whose ensure waits two seconds and ends by os._exit, leaving no
+        exit record, as a kill does, this pin at the twenty-sixth commit passed that plant, and now reds on its spawn).
+        The spy is shown
         live where it must be: in the test process it records the notify's refused dial to BUS_PORT 1, and at that dial
         the test process's PYTHONPATH still names the spy, so an ensure child forked in the window (it inherits that
         environment) would load it and be recorded. What it does not read, and why that leaves the revive's ensure read:
         a process that is not Python, one started with -S or -I, or one handed an environment without the PYTHONPATH
         (none of them loads the sitecustomize; the ensure is Python, started with neither flag, and inherits the test
-        process's environment), and a connect made below socket.socket (a C extension's own socket; the postal service's
-        ping goes through urllib.request, which connects through socket.socket). With the test at its base text (round
+        process's environment), a connect made below socket.socket (a C extension's own socket; the postal service's
+        ping goes through urllib.request, which connects through socket.socket), and a postal service started other than
+        through subprocess.Popen (os.system, os.posix_spawn, a fork and exec: the kernel's ensure runs subprocess.run,
+        which starts it through Popen), which this reads only by its exit or its dial before the run ends. With the test at its base text (round
         2's first commit on fork PR #894) this run's ensure child, forked after the test's restore, dialled the fixed
         port in every run (the verifier's plant), which on a box whose own bus listens there reached that bus."""
         m = re.findall(r'^PORT = int\(os\.environ\.get\("ROMP_POSTAL_PORT", "(\d+)"\)\)', open(os.path.join(os.path.dirname(HERE), "bin", "romp-postal-service"), encoding="utf-8").read(), re.M)
@@ -6194,8 +6272,10 @@ class HermeticKernelPostal(unittest.TestCase):
         self.assertTrue(all(r["spy_on_path"] for r in notify),
                         "...and the test process's PYTHONPATH names the spy at that dial, so a child forked in the window loads it: %r" % notify)
         self.assertEqual([r for r in dials if r["port"] == fixed], [], "no process of the run dials the machine's fixed bus port %d" % fixed)
-        self.assertEqual([r for r in recs if r["kind"] == "exit" and any(a.endswith("romp-postal-service") for a in r["argv"])], [],
-                         "no romp-postal-service process starts: the test's fake answers the revive's ensure")
+        self.assertEqual([r for r in recs if r["kind"] == "spawn"
+                          or (r["kind"] == "exit" and any(a.endswith("romp-postal-service") for a in r["argv"]))], [],
+                         "no romp-postal-service process is started (the spawn, recorded before the fork) or exits: the test's fake answers "
+                         "the revive's ensure")
 
     def _spied_pytest(self, targets, fixed):
         """A child pytest over `targets` from the checkout with _DIAL_SPY as its sitecustomize, refusing and recording every
