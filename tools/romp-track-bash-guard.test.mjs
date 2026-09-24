@@ -7688,8 +7688,9 @@ test("round 6, second commit, THE ALIAS ROAD and THE HEAD SPLICE: an alias the c
       ['EV-eval-var', 'nad', "c='cp ../base/report.md report.md'; eval \"$c\"", A, 'name'],   // was the residual (a script held in a variable); since round 6's fourth commit the value is a candidate text of `$c` (THE HEAD CANDIDATES) and eval's script is read
       ['EV-trap', 'nad', "trap 'cp ../base/report.md report.md' EXIT", A, ['text', 'through `trap`']],
       // round 7 of fork PR #780 review, thirty-eighth commit: trap's action is read whatever words name its signal, so a handler set on a
-      // signal spelled any way is refused where its text names a tracked file: a name bare or with SIG, in lower case, a number, and each name
-      // a trap takes that is not a signal (the README pin in tools/file-review-plan-bash-guard.test.mjs points here)
+      // signal spelled any way is refused where its text names a tracked file: a name bare or with SIG, in lower case, a number, each name
+      // a trap takes that is not a signal, and (the thirty-ninth commit) a name a trap takes that no shell's list prints (the README pin in
+      // tools/file-review-plan-bash-guard.test.mjs points here; its signal census holds the hook to every spelling a present shell's trap takes)
       ['EV-trap-INT', 'nad', "trap 'cp ../base/report.md report.md' INT; kill -INT $$", A, ['text', 'through `trap`']],
       ['EV-trap-SIGTERM', 'nad', "trap 'cp ../base/report.md report.md' SIGTERM; kill -TERM $$", BZ, ['text', 'through `trap`']],   // dash takes no SIG prefix: its trap fails and the signal ends it
       ['EV-trap-lower', 'nad', "trap 'cp ../base/report.md report.md' int; kill -INT $$", BD, ['text', 'through `trap`']],   // zsh takes no lower-case name
@@ -7701,6 +7702,7 @@ test("round 6, second commit, THE ALIAS ROAD and THE HEAD SPLICE: an alias the c
       ['EV-trap-DEBUG', 'nad', "trap 'cp ../base/report.md report.md' DEBUG; true", BZ, ['text', 'through `trap`']],
       ['EV-trap-RETURN', 'nad', "trap 'cp ../base/report.md report.md' RETURN; . /dev/null", B, ['text', 'through `trap`']],   // bash runs a RETURN trap when a sourced file ends
       ['EV-trap-SIGEXIT', 'nad', "trap 'cp ../base/report.md report.md' SIGEXIT", Z, ['text', 'through `trap`']],   // zsh alone takes EXIT with the SIG prefix
+      ['EV-trap-CLD', 'nad', "trap 'cp ../base/report.md report.md' CLD; /bin/true & wait", Z, ['text', 'through `trap`']],   // zsh's trap takes CLD, the System V name for CHLD, which neither its `$signals` nor its `kill -l` prints, and the background job's end fires it; bash and dash reject the name and run on
       ['EV-trap-reset', 'nad', 'trap - EXIT; trap EXIT', N, 'allow'],
       ['EV-source-stdin', 'nad', "source /dev/stdin <<'EOF'\ncp ../base/report.md report.md\nEOF", BZ, ['text', 'through `source /dev/stdin`']],   // dash has no `source`
       ['EV-dot-herestring', 'nad', ". /dev/stdin <<< 'cp ../base/report.md report.md'", BZ, ['text', 'through `. /dev/stdin`']],
@@ -7723,7 +7725,7 @@ test("round 6, second commit, THE ALIAS ROAD and THE HEAD SPLICE: an alias the c
         assert.equal(r.changed, writers.includes(shell), `${id}: run unguarded, ${shell} ${writers.includes(shell) ? 'writes' : 'leaves'} the tracked subset: ${cmd}: ${r.stderr}`);
       }
     }
-    assert.equal(n, 64);
+    assert.equal(n, 65);
   } finally { process.env.HOME = savedHome; w.rm(); }
 });
 
