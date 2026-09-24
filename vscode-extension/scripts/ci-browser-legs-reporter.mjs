@@ -1,8 +1,9 @@
 // The browser-legs step's reporter for node --test. scripts/ci-browser-legs.sh passes it beside the spec reporter
 // (--test-reporter=./scripts/ci-browser-legs-reporter.mjs --test-reporter-destination=<file>) and reads its stream after the
-// run, so every result is attributed to its bundle by node's own record of the file: node's TAP record, in a run over many
-// files, reports every test at the top level with no file name (a pass carries no location; only a failure does), so a TAP
-// reader cannot say which rostered leg a pass belongs to. One line per test:pass or test:fail event, eight tab-separated fields:
+// run, so each result is attributed to its bundle by node's own record of the file (data.file; a result that carries none
+// is written with - and matches no roster line): node's TAP record, in a run over many files, reports every test at the top
+// level with no file name (a pass carries no location; only a failure does), so a TAP reader cannot say which rostered leg a
+// pass belongs to. One line per test:pass or test:fail event, eight tab-separated fields:
 //   1 the bundle's absolute path (node's data.file, resolved from the process's physical working directory);
 //   2 pass or fail;
 //   3 test or suite (a describe() reports as a suite; a suite's own pass is never a test of the leg);
@@ -11,8 +12,10 @@
 //   5 file-level or test: node enqueues one test per FILE (nesting 0, line 1, column 1, named by the path argument as node
 //     received it) and reports it as a pass only when the file registered no test of its own, and as a fail by node's rule for
 //     failing a file as a whole: the file's process exits non-zero or is cut at --test-timeout outside any one test's result,
-//     whatever the cause (the spec output carries it); so a file-level pass is a leg that ran nothing, and a file-level fail
-//     names the file that failed as a whole;
+//     whatever the cause (the spec output carries it); so node's own file-level pass is a leg that ran nothing, and its file-level fail
+//     names the file that failed as a whole. The mark reads an enqueue at nesting 0, line 1, column 1 whose name, a leading
+//     ./ dropped, ends the file's path, so a test of the file's own at line 1, column 1 named by such an ending ("js") is
+//     marked file-level too, a loud over-read: its pass does not count, and its failure is read as the file's;
 //   6 the test's name; 7 the skip or todo reason of a pass, or the failure's message (the cause's, when node wrapped it);
 //   8 the failure type (testCodeFailure, testTimeoutFailure, ...) or -.
 // A backslash, tab, newline or carriage return inside a name or a message is written \\ \t \n \r, so a line is one result.

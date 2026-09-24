@@ -8,7 +8,8 @@
 #   - the roster file is not in vscode-extension/: restore it;
 #   - a malformed line (a bundle path is out-tests/<dir>/<name>.test.js and canonical, no empty, . or .. segment, since node
 #     resolves a bundle to its canonical spelling and a line spelled otherwise matches no result of the run; a trailing space,
-#     tab or carriage return counts), printed with its whitespace visible, as bash's %q spells it: fix the line;
+#     tab or carriage return counts; the check reads out-tests/, a run with no whitespace and .test.js, so a bundle straight
+#     under out-tests/ passes it too), printed with its whitespace visible, as bash's %q spells it: fix the line;
 #   - a duplicate line: remove one;
 #   - a line whose source (ui/webview/<name>.test.ts for out-tests/ui/webview/<name>.test.js) is not in the tree, because
 #     the source moved or was deleted: fix the line;
@@ -35,14 +36,15 @@
 # After node --test it reads the run's record from scripts/ci-browser-legs-reporter.mjs (one line per result, attributed to
 # its bundle by node's own record of the file; node's TAP record names no file for a pass, so it cannot say which leg a pass
 # belongs to) and derives, per rostered leg, that A TEST OF ITS BUNDLE PASSED: at least one result attributed to it is a pass
-# that carries no skip or todo, is a test and not a suite, and is not node's file-level result (node reports a file that
-# registered nothing as one pass named by its path). That is the whole of what the record can prove: node's events carry no
-# launch, so a bundle that mixes source pins with its browser tests satisfies the property by a pin's pass alone, and a
-# browser test behind an unmet condition, which registers nothing and emits no event, leaves no line to read; for a leg that
-# follows the roster rule, the skip and lost-browser reads below see inBrowser's own skip and failure by name when the
-# launch is reached, and nothing here proves it was reached. A leg with no pass at all is red naming the leg and what the
-# record held instead (skips, todos, suites, the file-level result), since the step would otherwise claim coverage it did
-# not run; a leg whose results all fail is node's red, passed through. Beside that property: a test skipped is red naming
+# that carries no skip or todo, is a test and not a suite, and is not marked as node's file-level result (node reports a file
+# that registered nothing as one pass named by its path; the reporter's header states what its mark reads). That is the
+# whole of what the record can prove: node's events carry no launch, so a bundle that mixes source pins with its browser
+# tests satisfies the property by a pin's pass alone, and a browser test behind an unmet condition, which registers nothing
+# and emits no event, leaves no line to read; for a leg that follows the roster rule, the skip and lost-browser reads below
+# see inBrowser's own skip and failure by name when the launch is reached, and nothing here proves it was reached. A leg
+# with no such pass and no failure outside a todo is red naming the leg and what the record held instead (skips, todos,
+# suites, the file-level result), since the step would otherwise claim coverage it did not run; a leg with a failure
+# outside a todo and no such pass is node's red, passed through. Beside that property: a test skipped is red naming
 # the test, its reason and the switch's state in the run (with the switch unset, as a local run may have it, the remedy is
 # to run with it set); a failure inside a todo is red (node discards it: # fail 0, exit 0); a file that failed as a whole
 # (node's file-level result failing: node fails a file as a whole when its process exits non-zero or is cut at the run's
@@ -71,7 +73,8 @@ fail=0
 red() { echo "ci-browser-legs: $*" >&2; fail=1; }
 source_of() { local rel=${1#out-tests/}; printf '%s/%s.test.ts' "$ROOT" "${rel%.test.js}"; }
 # a bundle path: out-tests/<dir>/<name>.test.js with no whitespace, and canonical, every segment after out-tests/ non-empty
-# and neither . nor .., the spelling normalizing leaves unchanged. Node resolves a bundle to that spelling and the post-run
+# and neither . nor .., the spelling normalizing leaves unchanged (the pattern reads out-tests/, a run with no whitespace and
+# .test.js, so a bundle straight under out-tests/ passes too). Node resolves a bundle to that spelling and the post-run
 # read keys a line by it; the duplicate check below reads only the lines that pass here, so it compares canonical paths.
 well_formed() {
   [[ "$1" =~ ^out-tests/[^[:space:]]+\.test\.js$ ]] || return 1
@@ -116,8 +119,10 @@ status=0
 # --test-timeout bounds each FILE's whole run (node cancels that file and ends its process at the bound, naming it, and runs
 # the other files on; a leg's own { timeout } names its test and leaves the process alive on a live browser handle), so a
 # hung leg fails by name inside the step's own timeout-minutes (.github/workflows/ci.yml) instead of the job being cancelled
-# nameless. The value sits above the largest { timeout } a rostered leg passes and under the step's bound;
-# tools/ci-browser-legs.test.mjs holds both edges. The roster array is node's argument list directly (no xargs, whose
+# nameless. The value sits above every timeout: value the tree test's bound pin reads in a rostered source and under the
+# step's bound, and tools/ci-browser-legs.test.mjs holds both edges; its bound pin states the spellings it reads, and a leg
+# whose timeout is spelled outside them and whose file outlasts this bound is cut here and named as a file that failed as a
+# whole, testTimeoutFailure, not by its test. The roster array is node's argument list directly (no xargs, whose
 # mapping of a failed command's status differs by platform: 123 on GNU, 1 on BSD and macOS), so the status below is node's
 # own everywhere.
 node --test --test-timeout=240000 --test-reporter=spec --test-reporter-destination=stdout --test-reporter="$REPORTER" --test-reporter-destination="$rep" "${legs[@]}" || status=$?
