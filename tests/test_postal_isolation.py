@@ -228,96 +228,125 @@ class ThreadOwnSendRefused(unittest.TestCase):
     KERNEL_SRC = os.path.realpath(os.path.join(BIN, "romp-kernel"))   # the file km was loaded from (kernel/kernel.py)
     FLAG_WRITERS = {"_set_session_flag", "_set_notify_session"}
     FLAG_ROUTES = {("_state_write_route", "/flag"), ("Handler._dispatch_ws", "setSessionFlag")}
+    # The net's exemption rows (round 4 of fork PR #897, the reviewer's ruling on section G): each function the net refuses
+    # in kernel/kernel.py, with the reason the refusal is false. A row naming a function the net does not refuse raises.
+    NET_EXEMPT = {
+        "_state_quarantine": "moves an unparseable state file aside to a .corrupt name, and compares its name with the store's to "
+                             "word its log line; it sets no flag",
+        "_edit_tag": "its parameter rename holds a tag's new name; it holds no door call",
+        "_set_notify_card": "writes notify-cards.json (its one door call names that file) and reads the session's flags through "
+                            "_session_flags_proved",
+        "_comments_frame": "holds no door call; builds a comment thread's frame from _thread_events and _mail_off_why_k",
+        "_thread_rows": "holds no door call; spreads _mail_off_fields into each thread's row",
+        "_push_subagents": "holds no door call; pushes the frame _subagent_frame_cached returns",
+        "_chat_push_scopes_open": "holds no door call; keeps the signature _chat_sig_shared returns on the push scope",
+        "_chat_build_sig": "holds no door call; reads that signature, or _chat_sig_shared's, into the chat's own",
+        "build_feed": "holds no door call; keys each card's cache on _feed_session_key",
+        "build_timeline": "holds no door call; puts each lane's flag values and _dead_lane_key's cache key in the timeline",
+        "_history_pages": "holds no door call; collects the pages _chat_history_page returns",
+        "_warm_history_pages": "holds no door call; warms the pages _chat_history_page returns and their _page_sig signatures",
+        "_push": "holds no door call; pushes the rows build_session, _provisional_row and _mail_off_fields return",
+        "_push_session_now": "holds no door call; pushes the row build_session returns",
+        "_fleet_view_sig": "holds no door call; stats the store among the files whose change busts the view cache",
+        "Handler.do_POST": "the HTTP POST handler: its one door call is a str.replace on an error message, and it hands a POST "
+                           "to _state_write_route, a route in the set pin, and answers with the pair that returns",
+        "Handler._dispatch_ws": "the WebSocket dispatcher: its door calls append to card-opens.jsonl and locate-audit.jsonl, and "
+                                "it sends the readers' values to its clients; it writes a flag through _set_session_flag and "
+                                "_set_notify_session, the references in the set pin",
+    }
 
     @staticmethod
-    def _flag_writing_routes(source):
-        """The kernel's routes that write a session flag, DERIVED from the source (fork PR #897, round 3, the reviewer's
-        ruling on section D: the witness pins the population as a set, so a new route turns it red). Returns (writers,
-        references). A WRITER is a function holding a call of a write door one of whose arguments, or whose receiver,
-        carries the flags path ("<module>" for a call outside every function, a class body too). The doors: a call named
-        _write_state_json, _atomic_write, open, replace, rename, write_text or write_bytes, by bare name or as a method
-        whatever its receiver (Path.open, os.open and io.open alike, and so a method named _atomic_write or a replace
-        imported from os). An expression CARRIES the flags path when it holds the constant "session-flags.json"; a name
-        bound to the path; or a call, by bare name or as a method, of a PATH FUNCTION: a function one of whose own
-        return statements returns an expression that carries the path. A name is BOUND to the path by an assignment
-        (plain, annotated, or augmented as in p /= "session-flags.json") to a plain name whose value carries the path,
-        in any order. A binding outside every function (at module level or in a class body, inside an if or a try there
-        included) counts everywhere. A binding in a function, however deeply nested, counts throughout the outermost
-        function around it, and so in every function nested in that one at any depth (a closure reading its enclosing
-        function's name, the function around a nested one that binds it, and a function beside the binding inside that
-        outermost function), and nowhere outside it: not in another function, another method of the same class included
-        (a class body is not a function), and not outside every function. Path functions and module-level names are
-        derived together to a FIXPOINT (round 4 of fork PR #897, the reviewer's ruling on its round-3 refuters' finding,
-        the thirty-sixth commit), since a path function's call can bind a module-level name that another function
-        returns, and so on: a function returning a module-level name bound to the constant (the kernel's own idiom of a
-        _X_FILE name beside an _x_path() function), a path function calling another at any depth, and a module-level
-        name bound to such a call are all found. Until that commit a path function was one whose return statement held
-        the constant itself, and open was a door by bare name alone, so a writer through any of those three shapes,
-        through a path function returning a name bound in it, or through p.open, os.open or io.open was missed; the
-        plant of each in test_the_flag_route_census_finds_a_new_route_and_a_writer_of_each_shape is red under the census
-        as it stood at the round-3 head. The refuter drove two of these through the real WebSocket arm, a path function
-        returning a module-level name and a write through p.open: each arm wrote the key while the set pin passed. The
-        door list and the binding rule err wide (a read through open, a str.replace on the path, or a name a nested
-        function binds, read outside it with no nonlocal statement, counts too), so a miss is what they guard against
-        and a surplus fails the pin loudly. A REFERENCE is every other mention of a writer's name in the file, a call or
-        not, in a function, in a class body or outside both, as (the dotted name of the classes and
-        functions around it, outermost first, a function nested in another included, "<module>" outside
-        all of them; the selectors; the writer). The SELECTORS are, outermost first, the string constants
-        among the operands of each comparison whose operators are all == (either side, every operand of a chain
-        such as "/flag" == path == "/flags"), anywhere in the test at any depth (every comparison the test holds:
-        an operand of an and, an or or a not, an argument of a call, nested ones included), of each if
-        statement whose body, not its else, holds the mention, between the mention and the function around it (up to the
-        module for a mention outside every function). The route's own selector leads: POST /flag's path in
-        _state_write_route, the WebSocket op's type in Handler._dispatch_ws.
-        A text census cannot be complete, and this one covers the shapes above and no other. Each of those shapes has a
-        plant in that test that a census dropping or changing it turns red, each door name by bare name and as a method
-        included, and so does each rule that narrows one, under a census widening it: a function's OWN return statements
-        count, not a nested function's; a binding in a function counts nowhere outside the outermost function
-        around it, in another function (another method of its class included) or outside every function; a
-        binding is an assignment of the three kinds above to a plain name; a selector is a string constant in a
-        comparison whose operators are all ==, each of the nine other comparison operators planted; and
-        selectors come from if statements alone (a while, a conditional expression and a match's case give
-        none), from those whose body holds the mention, and from those inside the function around it. A plant
-        may carry several shapes, as the test's first two do. The thirty-seventh commit said each had a
-        plant of its own while a census could drop, change or widen six of them and pass every plant in that test: a
-        path function with a return that does not carry the path beside one that does, a mention of a writer through an
-        attribute, a selector on the left of its comparison, the selectors of nested ifs outermost first, a name bound
-        in another function not counting, and a binding being an assignment to a plain name (the fourth and fifth turned
-        only the real kernel's set pin red, the others nothing). The thirty-eighth commit planted each, and made each
-        door name a door by bare name and as a method alike: until then two were doors by bare name alone and four as
-        methods alone (open was a door both ways), so a write through a method named _atomic_write or through a replace
-        imported from os was missed, and the plant of each is red under the census as it stood at the thirty-seventh
-        commit. That commit left without a plant four of the fourteen door cells (_write_state_json as a method, rename,
-        write_text and write_bytes by bare name), a mention outside every function, five rules of the selectors (no !=
-        and no is, no while, no if outside the function around the mention, every comparison of a test) and three kinds
-        of binding (an augmented assignment, a with statement's as, a comprehension's target), and it said a name counts
-        in the function that binds it and not in another function while its census counted a nested function's binding
-        in the function around it and read no enclosing function's binding in a nested one. The thirty-ninth commit
-        plants each door cell and each of the rest and states the binding rule above, and the census now reads a binding
-        in an augmented assignment and throughout the outermost function around it, so a write through a name an
-        augmented assignment binds, a closure's write through its enclosing function's name, a write in a function
-        beside the binding in one outermost function, and a write through a path function returning its enclosing
-        function's name are found; the plant of each is red under the census as it stood at the thirty-eighth
-        commit. The thirty-ninth commit left six claims above without a plant, and a census breaking any one of
-        them passed every plant in that test: every operand of a chain (a census reading a chain's left operand
-        and first comparator alone), a comparison anywhere in the test (one reading the operands of an and, an or
-        and a not alone, all the text then named, while the census reads every comparison the test holds, one
-        inside a call included), a binding counting at any depth (one counting it in the function a level or two
-        up alone; no plant was more than two functions deep), two methods of one class being two functions (one
-        whose unit is the outermost class or function, which turned only the real kernel's set pin red), the
-        dotted name of a mention in a nested function (one naming the innermost function and its classes alone),
-        and a door call in a class body named "<module>" (one naming it by its class). The fortieth commit plants
-        each and states the selectors' rule as the census follows it; the census's code is unchanged. Among what
-        it does not see, each planted there and asserted NOT found, so this text moves if the census ever
-        reaches one: a path built by string concatenation (no constant equals the name), a write through a library
-        function outside the doors (shutil.copy), a write by another process (a subprocess), a path handed as an
-        argument to a function that writes its parameter (the census follows no argument into its callee), a name bound
-        other than by such an assignment (planted as unpacking into a tuple, an assignment to an attribute, a for loop's
-        target, a comprehension's target, a with statement's as, an assignment expression and a parameter's default), a
-        path held in an attribute and written in another method (self.p), and a name bound in another outermost function
-        through a global statement."""
+    def _flag_writing_routes(source, exempt=None, refusals=False):
+        """The kernel's routes that write a session flag, DERIVED from the source, behind a NET that refuses by name
+        what the derivation leaves unclassified (fork PR #897, each under the reviewer's ruling on section G: derived in
+        round 3, to a fixpoint at round 4's thirty-sixth commit, the net at its forty-first). Returns (writers,
+        references), and raises, naming each function the net refuses, unless `exempt` maps it to the reason the refusal
+        is false; with refusals=True it returns the refused rows as a third element instead. Each rule below names its
+        plant, a subtest of test_the_flag_route_census_finds_a_new_route_and_a_writer_of_each_shape (the derivation) or
+        of test_the_net_refuses_what_the_derivation_leaves_unclassified (the net), by its label.
+        THE DERIVATION. A WRITER is a function holding a call of a door one of whose arguments, positional or keyword,
+        or whose receiver, carries the flags path ("the path in a door's keyword argument", "open called as a method"),
+        named "<module>" for a call outside every function, a class body included ("each writer shape", "a door call in
+        a class body is the writer <module>"). The doors: a call named _write_state_json, _atomic_write, open, replace,
+        rename, write_text or write_bytes, by bare name or as a method whatever its receiver (each door planted in both
+        forms, this list asserted equal to the list planted). An expression CARRIES the path when it holds the constant
+        "session-flags.json", a name bound to the path, or a call, by bare name or as a method, of a PATH FUNCTION: a
+        function one of whose own return statements returns an expression that carries the path ("a path function called
+        as a method", "a path function with a return that does not carry the path beside one that does", "a path
+        function returning a name bound in it"). A name is BOUND to the path by an assignment, plain, annotated or
+        augmented, to a plain name whose value carries the path, in any order ("a module-level name bound by an
+        annotated assignment", "a name bound by an augmented assignment", "a module-level name bound inside a try, and a
+        name bound to one the walk reaches later"). A binding outside every function counts everywhere, inside an if or
+        a try there included ("a module-level name bound inside an if"); a binding in a function counts throughout the
+        outermost function around it, in every function nested in it at any depth ("a closure's write through a name its
+        enclosing function binds", "a write through a name a nested function binds through a nonlocal statement", "a
+        write in a function beside the binding in one outermost function", "a path function returning a name its
+        enclosing function binds", and the two plants four functions deep). Path functions and module-level names grow
+        together to a FIXPOINT ("a path function returning a module-level name", "a two-level chain of path functions,
+        and a module-level name bound to a path function's call"). A REFERENCE is every other mention of a writer's name
+        in the file, a call or not ("a mention of a writer that is not a call", "a mention of a writer through an
+        attribute", "a mention of a writer outside every function", "a mention of a writer in a class body"), as (the
+        dotted name of the classes and functions around it, outermost first, "<module>" outside all of them ("a mention
+        of a writer inside a nested function", "a mention of a writer in a method of a class defined in a function");
+        the selectors; the writer). The SELECTORS are, outermost first ("the selectors of nested ifs, outermost first"),
+        the string constants among the operands of each comparison whose operators are all ==, either side and every
+        operand of a chain ("a selector is a string constant compared for equality", "a selector on the left of its
+        comparison", the two chain plants), every such comparison the test holds at any depth ("every comparison of a
+        test, under an or, an and and a not", "a comparison inside a call in the test"), of each if statement whose body
+        holds the mention, between the mention and the function around it, up to the module outside every function ("the
+        selectors of a mention outside every function"). Widenings are not planted: the census's precision is pinned
+        only by the exact set pin on the real kernel.py, where a census that finds more fails loudly.
+        THE NET. A pre-scan of every name the source holds (every identifier field of every node of its tree: a
+        variable, an attribute, the name of a def, a class or a parameter, a keyword's label, an import, a global
+        statement's names; checked against Python's tokenizer, so a name token the scan does not read raises) and every
+        string it holds (a constant, bytes, a piece of an f-string), keyed on the derivation's own sets, so the two
+        agree by construction. Five clauses, each refusing a function (by its dotted name, "<module>" outside every
+        function) with the token and its line: THE STORE'S NAME, a string holding "session-flags.json" (each plant of
+        what the derivation does not see, below); A MODULE-LEVEL NAME of the fixpoint's, as a name or as a string equal
+        to it, a name reached through globals(), getattr or a table ("a module-level name handed on by unpacking", "a
+        module-level name reached through globals()"); A PATH FUNCTION of the fixpoint's, the same two ways ("a path
+        function's call handed on by unpacking", "a path function reached through getattr and a string"); A DOOR's name,
+        as a name alone, since the kernel uses open, replace and rename as words ("a door handed on as a value", "a door
+        imported under another name"); and A WRITER's name, as a name or a string ("a writer imported under another name
+        in a route", "a writer reached through getattr and a string in a route"). A mention is FOLDED, and counts for no
+        clause, when it is the name of a def or a class, or a keyword's label ("a def named like a door, and a keyword
+        labelled like one"; a parameter's name is not: "a parameter named like a door"); a door's name, when it names a
+        call the derivation reads as a door ("each writer shape"); a string, when it is a whole statement, as a
+        docstring is ("a docstring naming the store"); a path function's call or a module-level name, when its truth
+        alone decides the test of an if, a while or a conditional expression, through and, or and not ("a path
+        function's call and a module-level name whose truth alone decides a test"; a comparison hands the value on, and
+        so does a call: "a module-level name compared in a test", "a path function's call handed to a call in a test").
+        The derivation CLASSIFIES the rest, function by function: a writer's name in a function holding a reference ("a
+        mention of a writer that is not a call"); the store's name, a module-level name or a path function in a writer,
+        and in a function holding no door call the derivation reads when it is a path function or holds a binding whose
+        outermost function holds a writer or a path function ("a path function that also writes the path through
+        unpacking", "a name bound in another outermost function", "a name bound in a function, written outside every
+        function", "a name bound in another method of the same class", "a name bound in another outermost function
+        through a global statement"), and outside every function when a binding is there, its name then a module-level
+        name, every mention of which the net reads ("a module-level name bound inside an if"). A door's name it does not
+        read as a call it classifies nowhere ("a writer that also hands a door on as a value"). A function the net
+        refuses on the real kernel.py is named in NET_EXEMPT with its reason, and a row naming a function the net does
+        not refuse raises, so the rows stay exact ("an exemption row names a refused function", "an exemption row that
+        names no refused function"). What the derivation does not see, each planted, asserted not found and refused:
+        shutil.copy, a subprocess, a path handed to a helper that writes its parameter, a door reached through getattr
+        and a string, and a name bound by unpacking into a tuple, by a for loop's target, by an assignment expression,
+        by a parameter's default, by a comprehension's target, by a with statement's as, by an assignment to an
+        attribute, in an attribute and written in another method, or through a global statement.
+        THE NET'S LIMITS, each with a witness asserted neither found nor refused. The net folds every door call the
+        derivation reads, whatever it writes, so a write the derivation misses is refused only through a path token, in
+        its own function or in the function the path comes from: (a) a path built at run time, so that no string holds
+        the store's name and no derived name carries it ("a path built by string concatenation"); (b) the net is
+        function-level, so a function the derivation classifies is refused for none of its mentions, and a path such a
+        function writes through a door reached by a string, or hands on through a channel the derivation does not follow
+        to a function whose door call the derivation reads, passes both ("a path function writing its path through
+        getattr and a string", "a path function handing its path to a helper that writes its parameter")."""
         import ast
+        import io
+        import keyword
+        import tokenize
+        from collections import Counter
         flags = "session-flags.json"
+        doors = ("_write_state_json", "_atomic_write", "open", "replace", "rename", "write_text", "write_bytes")
         tree = ast.parse(source)
         parent = {c: n for n in ast.walk(tree) for c in ast.iter_child_nodes(n)}
         defs = (ast.FunctionDef, ast.AsyncFunctionDef)
@@ -359,6 +388,9 @@ class ThreadOwnSendRefused(unittest.TestCase):
                     return names
                 names |= grown
 
+        def door_call(node):                           # a call the derivation reads as a door: named a door, bare or as a method
+            return isinstance(node, ast.Call) and (getattr(node.func, "id", None) or getattr(node.func, "attr", None)) in doors
+
         outside = [n for n in ast.walk(tree) if function_of(n) is None]   # every node outside every function
         functions = [n for n in ast.walk(tree) if isinstance(n, defs)]
         returns = {fn: [n.value for n in ast.walk(fn) if isinstance(n, ast.Return) and n.value is not None and function_of(n) is fn]
@@ -370,19 +402,17 @@ class ThreadOwnSendRefused(unittest.TestCase):
             if not grown:
                 break
             path_funcs |= grown
-        writers = set()
+        writers, writing = set(), set()                # the writers' names, and the functions holding a write (None outside all)
         for node in ast.walk(tree):
-            if not isinstance(node, ast.Call):
+            if not door_call(node):
                 continue
             f = node.func
-            if (getattr(f, "id", None) or getattr(f, "attr", None)) not in (
-                    "_write_state_json", "_atomic_write", "open", "replace", "rename", "write_text", "write_bytes"):
-                continue
             fn = function_of(node)
             parts = list(node.args) + [k.value for k in node.keywords] + ([f.value] if isinstance(f, ast.Attribute) else [])
             if any(carries(p, names_in(fn)) for p in parts):
                 writers.add("<module>" if fn is None else fn.name)
-        refs = []
+                writing.add(fn)
+        refs, referring = [], set()                    # the references, and the functions holding one
         for node in ast.walk(tree):
             name = node.id if isinstance(node, ast.Name) else node.attr if isinstance(node, ast.Attribute) else None
             if name not in writers:
@@ -397,51 +427,101 @@ class ThreadOwnSendRefused(unittest.TestCase):
                 child = n
             where = ".".join(reversed([n.name for n in up(node) if isinstance(n, defs + (ast.ClassDef,))])) or "<module>"
             refs.append((where, tuple(selectors), name))
+            referring.add(fn)
+
+        # THE NET, keyed on the derivation's own sets (the docstring's second part)
+        def deciding(node):                            # its truth alone decides the test of an if, a while or a conditional
+            while (isinstance(parent.get(node), ast.BoolOp)                        # expression, through and, or and not
+                   or isinstance(parent.get(node), ast.UnaryOp) and isinstance(parent[node].op, ast.Not)):
+                node = parent[node]
+            return isinstance(parent.get(node), (ast.If, ast.While, ast.IfExp)) and parent[node].test is node
+
+        def folded(clause, node, field):
+            if isinstance(node, defs + (ast.ClassDef,)) and field == "name" or isinstance(node, ast.keyword):
+                return True                            # the name of a def or a class, a keyword's label
+            call = parent[node] if isinstance(parent.get(node), ast.Call) and parent[node].func is node else None
+            if clause == "a door":
+                return call is not None and door_call(call)
+            if clause == "a path function":
+                return call is not None and deciding(call)
+            if clause == "a module-level name":
+                return isinstance(node, ast.Name) and deciding(node)
+            return False
+
+        keyed = {"a module-level name": module_names, "a path function": path_funcs, "a door": set(doors), "a writer": writers}
+        mentions, scanned = [], Counter()              # (function, clause, key, line) unfolded; every name the scan reads
+        for node in ast.walk(tree):
+            line = getattr(node, "lineno", None) or next((n.lineno for n in up(node) if getattr(n, "lineno", None)), 0)
+            if isinstance(node, ast.Constant):
+                v = node.value
+                if not isinstance(parent.get(node), ast.Expr):                     # a whole statement, as a docstring is
+                    if isinstance(v, str) and flags in v or isinstance(v, bytes) and flags.encode() in v:
+                        mentions.append((function_of(node), "the store's name", flags, line))
+                    mentions += [(function_of(node), clause, v, line)           # a name reached through a string
+                                 for clause in ("a module-level name", "a path function", "a writer")
+                                 if isinstance(v, str) and v in keyed[clause]]
+                continue
+            for field, value in ast.iter_fields(node):
+                for word in [value] if isinstance(value, str) else value if isinstance(value, list) else ():
+                    for key in word.split(".") if isinstance(word, str) else ():
+                        scanned[key] += 1
+                        mentions += [(function_of(node), clause, key, line) for clause, keys in keyed.items()
+                                     if key in keys and not folded(clause, node, field)]
+        kinds, tokens, previous = set(keyword.kwlist) | set(getattr(keyword, "softkwlist", ())), Counter(), None
+        for tok in tokenize.generate_tokens(io.StringIO(source).readline):
+            if tok.type == tokenize.NAME and tok.string not in kinds and getattr(previous, "string", None) != "!":
+                tokens[tok.string] += 1                # (a name after "!" is an f-string's conversion, which no node holds)
+            if tok.type not in (tokenize.NL, tokenize.COMMENT):
+                previous = tok
+        missed = tokens - scanned                      # raised, never asserted: python -O strips an assert, and the net with it
+        if missed:
+            raise AssertionError("THE NET'S SCAN READS EVERY NAME TOKEN: the tokenizer reads %s, which the scan does not"
+                                 % sorted(missed))
+        door_holders = {function_of(n) for n in ast.walk(tree) if door_call(n)}
+        path_nodes = {fn for fn in functions if any(carries(r, names_in(fn)) for r in returns[fn])}
+        binding = {function_of(n) for n in ast.walk(tree)                  # the functions holding a binding the derivation reads
+                   if isinstance(n, (ast.Assign, ast.AnnAssign, ast.AugAssign)) and n.value is not None
+                   and any(isinstance(t, ast.Name) for t in (n.targets if isinstance(n, ast.Assign) else [n.target]))
+                   and carries(n.value, names_in(function_of(n)))}
+
+        def reaching(fn):                              # the outermost function around fn holds a writer or a path function
+            u = unit(fn)
+            return any(r is not None and (r is u or u in set(up(r))) for r in writing | path_nodes)
+
+        def classified(fn, clause):                    # the derivation accounts for the clause's mentions in fn
+            if clause == "a door":
+                return False                           # a door's name it does not read as a call: a door it does not follow
+            if clause == "a writer":
+                return fn in referring
+            return fn in writing or fn not in door_holders and (fn in path_nodes or fn in binding and (fn is None or reaching(fn)))
+
+        def dotted(fn):
+            around = [n.name for n in [fn, *up(fn)] if isinstance(n, defs + (ast.ClassDef,))] if fn is not None else []
+            return ".".join(reversed(around)) or "<module>"
+
+        refused = sorted({(dotted(fn), clause, key, line) for fn, clause, key, line in mentions if not classified(fn, clause)},
+                         key=lambda r: (r[3], r[0], r[1], r[2]))
+        exempt = dict(exempt or {})
+        stale = sorted(set(exempt) - {r[0] for r in refused})
+        if stale:
+            raise AssertionError("THE NET'S EXEMPTION ROWS NAME ONLY WHAT IT REFUSES: %s is refused by nothing" % stale)
+        refused = [r for r in refused if r[0] not in exempt]
+        if refusals:
+            return writers, sorted(refs), refused
+        if refused:
+            raise AssertionError("THE NET REFUSES a function that mentions a name the census derives and that the derivation "
+                                 "leaves unclassified (fork PR #897, round 4, the reviewer's ruling on section G): %s. Classify "
+                                 "it by a rule of the derivation, or name it in an exemption row with its reason"
+                                 % "; ".join("%s mentions %s %r at line %d" % r for r in refused))
         return writers, sorted(refs)
 
     def test_the_flag_route_census_finds_a_new_route_and_a_writer_of_each_shape(self):
-        """The census the witness below pins (fork PR #897, round 3), run against what it must catch, on planted
-        sources: a third WebSocket arm calling the setter; writers through a module-level path name, through a function
-        that returns the path and through a local name bound to that call, reached by a new POST route directly and
-        through a helper; and a write at module level. Each lands in the population, so the witness's set equality turns
-        red on it. Since round 4 (the thirty-sixth commit, the census derived to a fixpoint) four more plants, each of
-        shapes the census missed before that commit, each in its own subtest: a path function returning a module-level
-        name bound to the constant, reached by a new WebSocket arm; a path function calling another, two levels, beside
-        a module-level name bound to a call of a path function that returns a module-level name; open called as a
-        method, on a Path, on os and on io; and a module-level name bound inside a try beside a name bound to one the
-        walk reaches later (a branch's body). The thirty-seventh commit added a plant in its own subtest for ten shapes
-        and narrowing rules the census docstring lists (a census dropping any one of them passed every plant before): a
-        path function called as a method, a module-level name bound by an annotated assignment, the path in a door's
-        keyword argument, a path function returning a name bound in it, the rename and write_bytes doors, a module-level
-        name bound inside an if, a mention of a writer that is not a call, a selector as a string constant compared for
-        equality alone, and a nested function's return being its own. It said that left none of them unplanted, and six
-        were; the thirty-eighth commit planted those, five here, each in its own subtest: a path function with a return
-        that does not carry the path beside one that does, a mention of a writer through an attribute, a selector on the
-        left of its comparison, the selectors of nested ifs outermost first, and a name bound in another function not
-        counting (the sixth, a binding being an assignment to a plain name, is planted with what the census does not
-        see, below); and the two door forms that commit added, a door name called as a method and one called by bare
-        name. The thirty-ninth commit replaced those two with a plant for each of the fourteen door cells, each door
-        name by bare name and as a method, the docstring's list of doors asserted equal to the list planted; and added,
-        each in its own subtest: a name bound in a function not counting outside every function; a mention of a writer
-        outside every function, one in a class body, and the selectors of a mention outside every function; every
-        comparison of a test, under an or, an and and a not; a comparison whose operators are not all ==, and each of
-        the nine other comparison operators; an if outside the function around the mention; a while, a conditional
-        expression and a match's case, none giving a selector; a name bound by an augmented assignment; and four writes
-        through the binding rule the census now follows, a closure's through a name its enclosing function binds, one
-        through a name a nested function binds through a nonlocal statement, one in a function beside the binding in one
-        outermost function, and one through a path function returning a name its enclosing function binds. The
-        fortieth commit added, each in its own subtest: every operand of a chain of ==, in two chains (the
-        constants first and last of three operands, and second and fourth of four); two comparisons inside a call's
-        argument in the test; a write four functions deep through a name the outermost function binds, and a write
-        in the outermost function through a name bound four functions deep; a name bound in another method of the
-        same class not counting; a mention of a writer inside a nested function, and one in a method of a class
-        defined in a function; and a door call in a class body, the writer "<module>". Then what the census does
-        NOT see, one plant of each class its docstring names, each asserted not found, so the docstring
-        moves if the census ever reaches one: a path built by concatenation, shutil.copy, a subprocess, a path handed to
-        a helper that writes its parameter, a name bound by unpacking into a tuple, by an assignment to an attribute, by
-        a for loop's target, by a comprehension's target, by a with statement's as, by an assignment expression and by a
-        parameter's default, a path held in an attribute and written in another method, and a name bound in another
-        outermost function through a global statement."""
+        """The census the witness below pins (fork PR #897, rounds 3 and 4), run against what its derivation must find, on
+        planted sources, each plant in a subtest whose label the census's docstring names beside the rule it pins: a third
+        WebSocket arm calling the setter; each writer shape and a helper between a route and a writer; the fixpoint's
+        shapes; open called as a method; the bindings in a try and in walk order; one plant for each shape and rule the
+        docstring lists; and each door name, by bare name and as a method. Each lands in the population, so the witness's
+        set equality turns red on it. A plant here pins what the census finds; widenings are not planted."""
         census = self._flag_writing_routes
         third_arm = ('def _set_session_flag(sid, flag, value):\n'
                      '    _write_state_json(jd.STATE / "session-flags.json", "{}")\n'
@@ -451,10 +531,11 @@ class ThreadOwnSendRefused(unittest.TestCase):
                      '            _set_session_flag(msg["id"], msg["flag"], True)\n'
                      '        elif msg.get("type") == "setSessionFlagAny":\n'
                      '            _set_session_flag(msg["id"], msg["flag"], True)\n')
-        self.assertEqual(census(third_arm), ({"_set_session_flag"},
-                                             [("Handler._dispatch_ws", ("setSessionFlag",), "_set_session_flag"),
-                                              ("Handler._dispatch_ws", ("setSessionFlagAny",), "_set_session_flag")]),
-                         "a third WebSocket arm is a route of its own")
+        with self.subTest(shape="a third WebSocket arm"):
+            self.assertEqual(census(third_arm), ({"_set_session_flag"},
+                                                 [("Handler._dispatch_ws", ("setSessionFlag",), "_set_session_flag"),
+                                                  ("Handler._dispatch_ws", ("setSessionFlagAny",), "_set_session_flag")]),
+                             "a third WebSocket arm is a route of its own")
         shapes = ('FLAGS_PATH = STATE / "session-flags.json"\n'
                   'def _flags_path():\n'
                   '    return STATE / "session-flags.json"\n'
@@ -473,10 +554,11 @@ class ThreadOwnSendRefused(unittest.TestCase):
                   '        _helper(b)\n'
                   '        _by_local(b)\n'
                   'open(STATE / "session-flags.json", "w").write("{}")\n')
-        self.assertEqual(census(shapes), ({"_by_name", "_by_function", "_by_local", "<module>"},
-                                          [("_helper", (), "_by_function"), ("_route", ("/mute",), "_by_local"),
-                                           ("_route", ("/mute",), "_by_name")]),
-                         "each writer shape is found, and a helper between a route and a writer is a reference of its own")
+        with self.subTest(shape="each writer shape"):
+            self.assertEqual(census(shapes), ({"_by_name", "_by_function", "_by_local", "<module>"},
+                                              [("_helper", (), "_by_function"), ("_route", ("/mute",), "_by_local"),
+                                               ("_route", ("/mute",), "_by_name")]),
+                             "each writer shape is found, and a helper between a route and a writer is a reference of its own")
         by_module_name = ('_FLAGS_FILE = "session-flags.json"\n'
                           'def _flags_file():\n'
                           '    return jd.STATE / _FLAGS_FILE\n'
@@ -590,19 +672,11 @@ class ThreadOwnSendRefused(unittest.TestCase):
                             '        if msg.get("type") == "setFlagLater":\n'
                             '            client["then"] = _set_flag\n',
                    ({"_set_flag"}, [("Handler._dispatch_ws", ("setFlagLater",), "_set_flag")])),
-                  ("a selector is a string constant compared for equality, and no other",
+                  ("a selector is a string constant compared for equality",
                    setter + 'def _route(path, b):\n'
                             '    if path == "/flag" and "id" in b and len(b) == 2:\n'
                             '        _set_flag(b["id"])\n',
                    ({"_set_flag"}, [("_route", ("/flag",), "_set_flag")])),
-                  ("a nested function's return is its own",
-                   'def _outer(cur):\n'
-                   '    def _inner():\n'
-                   '        return jd.STATE / "session-flags.json"\n'
-                   '    return cur\n'
-                   'def _by_outer(cur):\n'
-                   '    _atomic_write(_outer(cur), cur)\n',
-                   (set(), [])),
                   ("a path function with a return that does not carry the path beside one that does",
                    'def _flags_path():\n'
                    '    if jd.STATE is None:\n'
@@ -630,19 +704,6 @@ class ThreadOwnSendRefused(unittest.TestCase):
                             '        if b.get("op") == "set":\n'
                             '            _set_flag(b["id"])\n',
                    ({"_set_flag"}, [("_route", ("/flag", "set"), "_set_flag")])),
-                  ("a name bound in another outermost function does not count",
-                   'def _where():\n'
-                   '    p = jd.STATE / "session-flags.json"\n'
-                   '    log(p)\n'
-                   'def _by_parameter(p, cur):\n'
-                   '    p.write_text(cur)\n',
-                   (set(), [])),
-                  ("a name bound in a function does not count outside every function",
-                   'def _where():\n'
-                   '    p = jd.STATE / "session-flags.json"\n'
-                   '    log(p)\n'
-                   'p.write_text("{}")\n',
-                   (set(), [])),
                   ("a mention of a writer outside every function",
                    setter + '_WS_OPS = {"setAnyFlag": _set_flag}\n',
                    ({"_set_flag"}, [("<module>", (), "_set_flag")])),
@@ -659,31 +720,6 @@ class ThreadOwnSendRefused(unittest.TestCase):
                             '    if path == "/flag" or (b.get("op") == "set" and not b.get("dry") == "yes"):\n'
                             '        _set_flag(b["id"])\n',
                    ({"_set_flag"}, [("_route", ("/flag", "set", "yes"), "_set_flag")])),
-                  ("a comparison whose operators are not all ==",
-                   setter + 'def _route(path, b):\n'
-                            '    if "/flag" == path != "/other":\n'
-                            '        _set_flag(b["id"])\n',
-                   ({"_set_flag"}, [("_route", (), "_set_flag")])),
-                  ("an if outside the function around the mention",
-                   setter + 'if MODE == "legacy":\n'
-                            '    def _route(b):\n'
-                            '        _set_flag(b["id"])\n',
-                   ({"_set_flag"}, [("_route", (), "_set_flag")])),
-                  ("a while gives no selector",
-                   setter + 'def _route(op, b):\n'
-                            '    while op == "retry":\n'
-                            '        _set_flag(b["id"])\n',
-                   ({"_set_flag"}, [("_route", (), "_set_flag")])),
-                  ("a conditional expression gives no selector",
-                   setter + 'def _route(path, b):\n'
-                            '    return _set_flag(b["id"]) if path == "/flag" else None\n',
-                   ({"_set_flag"}, [("_route", (), "_set_flag")])),
-                  ("a match's case gives no selector",
-                   setter + 'def _route(path, b):\n'
-                            '    match path:\n'
-                            '        case "/flag":\n'
-                            '            _set_flag(b["id"])\n',
-                   ({"_set_flag"}, [("_route", (), "_set_flag")])),
                   ("a name bound by an augmented assignment",
                    'def _by_augmented(cur):\n'
                    '    p = jd.STATE\n'
@@ -760,14 +796,6 @@ class ThreadOwnSendRefused(unittest.TestCase):
                    '    _a()\n'
                    '    p.write_text(cur)\n',
                    ({"_by_deep_nonlocal"}, [])),
-                  ("a name bound in another method of the same class does not count",
-                   'class Store:\n'
-                   '    def _where(self):\n'
-                   '        p = jd.STATE / "session-flags.json"\n'
-                   '        log(p)\n'
-                   '    def _by_sibling_method(self, p, cur):\n'
-                   '        p.write_text(cur)\n',
-                   (set(), [])),
                   ("a mention of a writer inside a nested function",
                    setter + 'def _route(b):\n'
                             '    def _later():\n'
@@ -786,18 +814,11 @@ class ThreadOwnSendRefused(unittest.TestCase):
                    'class Boot:\n'
                    '    open(jd.STATE / "session-flags.json", "w").write("{}")\n',
                    ({"<module>"}, [])))
-        listed += tuple(("the comparison operator %s gives no selector" % op,
-                         setter + 'def _route(path, b):\n'
-                                  '    if path %s "/other":\n'
-                                  '        _set_flag(b["id"])\n' % op,
-                         ({"_set_flag"}, [("_route", (), "_set_flag")]))
-                        for op in ("!=", "<", "<=", ">", ">=", "is", "is not", "in", "not in"))
         for label, src, expected in listed:
             with self.subTest(listed=label):
                 self.assertEqual(census(src), expected,
-                                 "EVERY SHAPE AND NARROWING RULE THE CENSUS DOCSTRING LISTS HAS A PLANT (round 4 of fork "
-                                 "PR #897, the thirty-seventh to fortieth commits): %s. A census that drops or changes "
-                                 "the shape, or widens the rule, turns this plant red" % label)
+                                 "EACH SHAPE AND RULE THE CENSUS DOCSTRING LISTS HAS A PLANT (round 4 of fork PR #897): %s. "
+                                 "A census that drops or changes the shape turns this plant red" % label)
         import re
         doors = ("_write_state_json", "_atomic_write", "open", "replace", "rename", "write_text", "write_bytes")
         named = re.search(r"The doors: a call named (.+?), by bare name or as a method", " ".join((census.__doc__ or "").split()))
@@ -812,64 +833,241 @@ class ThreadOwnSendRefused(unittest.TestCase):
                                      "EVERY DOOR NAME IS A DOOR BY BARE NAME AND AS A METHOD (round 4 of fork PR #897, the "
                                      "thirty-ninth commit): %s called %s. A census that drops this cell turns it red"
                                      % (door, "by bare name" if form == "bare" else "as a method"))
-        unseen = (("a path built by string concatenation",
-                   'def _by_concatenation(cur):\n'
-                   '    _atomic_write(jd.STATE / ("session-" + "flags.json"), cur)\n'),
-                  ("a library function outside the doors, shutil.copy",
-                   'def _by_library(tmp):\n'
-                   '    shutil.copy(tmp, jd.STATE / "session-flags.json")\n'),
-                  ("another process, a subprocess",
-                   'def _by_subprocess(tmp):\n'
-                   '    subprocess.run(["cp", tmp, str(jd.STATE / "session-flags.json")], check=True)\n'),
-                  ("a path handed to a helper that writes its parameter",
-                   'def _save(p, cur):\n'
-                   '    _atomic_write(p, cur)\n'
-                   'def _by_argument(cur):\n'
-                   '    _save(jd.STATE / "session-flags.json", cur)\n'),
-                  ("a name bound by unpacking into a tuple",
-                   'def _by_unpacking(cur):\n'
-                   '    base, p = jd.STATE, jd.STATE / "session-flags.json"\n'
-                   '    p.write_text(cur)\n'),
-                  ("a name bound by a for loop's target",
-                   'def _by_loop(cur):\n'
-                   '    for p in (jd.STATE / "session-flags.json",):\n'
-                   '        p.write_text(cur)\n'),
-                  ("a name bound by an assignment expression",
-                   'def _by_walrus(cur):\n'
-                   '    if (p := jd.STATE / "session-flags.json"):\n'
-                   '        p.write_text(cur)\n'),
-                  ("a name bound by a parameter's default",
-                   'def _by_default(cur, p=jd.STATE / "session-flags.json"):\n'
-                   '    p.write_text(cur)\n'),
-                  ("a name bound by a comprehension's target",
-                   'def _by_comprehension(cur):\n'
-                   '    [p.write_text(cur) for p in (jd.STATE / "session-flags.json",)]\n'),
-                  ("a name bound by a with statement's as",
-                   'def _by_with(cur):\n'
-                   '    with _held(jd.STATE / "session-flags.json") as p:\n'
-                   '        p.write_text(cur)\n'),
-                  ("a name bound by an assignment to an attribute",
-                   'def _by_attribute_target(cur):\n'
-                   '    store.p = jd.STATE / "session-flags.json"\n'
-                   '    store.p.write_text(cur)\n'),
-                  ("a path held in an attribute and written in another method",
-                   'class Store:\n'
-                   '    def __init__(self):\n'
-                   '        self.p = jd.STATE / "session-flags.json"\n'
-                   '    def _by_attribute(self, cur):\n'
-                   '        self.p.write_text(cur)\n'),
-                  ("a name bound in another outermost function through a global statement",
-                   'def _init():\n'
-                   '    global FLAGS_PATH\n'
-                   '    FLAGS_PATH = jd.STATE / "session-flags.json"\n'
-                   'def _by_global(cur):\n'
-                   '    _atomic_write(FLAGS_PATH, cur)\n'))
-        for label, src in unseen:
-            with self.subTest(unseen=label):
-                self.assertEqual(census(src), (set(), []),
-                                 "WHAT THE CENSUS DOES NOT SEE, as its docstring discloses: %s writes the flags file and is not "
-                                 "found. A census that reaches it turns this red, and the docstring's disclosure moves with it"
-                                 % label)
+
+    def test_the_net_refuses_what_the_derivation_leaves_unclassified(self):
+        """THE NET behind the census (round 4 of fork PR #897, the reviewer's ruling on section G): a pre-scan of every
+        name and string the source holds, keyed on the derivation's own sets, refusing by name, with the token and its
+        line, a function that mentions one and that the derivation leaves unclassified. Planted, each in a subtest whose
+        label the census's docstring names beside the rule it pins: a refusal by each of the five clauses; each fold and
+        where it stops; what the derivation accounts for; the exemption rows, applied and exact; each shape the derivation
+        does not see, not found and refused; and a witness of each of the net's two limits, neither found nor refused."""
+        census = self._flag_writing_routes
+        setter = ('def _set_flag(sid):\n'
+                  '    _write_state_json(jd.STATE / "session-flags.json", "{}")\n')
+        name = "the store's name"
+        planted = (("a module-level name handed on by unpacking",
+                    'FLAGS_PATH = jd.STATE / "session-flags.json"\n'
+                    'def _by_module_unpacking(cur):\n'
+                    '    base, p = jd.STATE, FLAGS_PATH\n'
+                    '    p.write_text(cur)\n',
+                    (set(), [], [("_by_module_unpacking", "a module-level name", "FLAGS_PATH", 3)])),
+                   ("a path function's call handed on by unpacking",
+                    'def _flags_path():\n'
+                    '    return jd.STATE / "session-flags.json"\n'
+                    'def _by_call_unpacking(cur):\n'
+                    '    base, p = jd.STATE, _flags_path()\n'
+                    '    p.write_text(cur)\n',
+                    (set(), [], [("_by_call_unpacking", "a path function", "_flags_path", 4)])),
+                   ("a door handed on as a value",
+                    'def _save(write, cur):\n'
+                    '    write(cur)\n'
+                    'def _by_door_value(p, cur):\n'
+                    '    _save(p.write_text, cur)\n',
+                    (set(), [], [("_by_door_value", "a door", "write_text", 4)])),
+                   ("a writer that also hands a door on as a value",
+                    'def _by_writer_and_door(cur):\n'
+                    '    _atomic_write(jd.STATE / "session-flags.json", cur)\n'
+                    '    _later(open)\n',
+                    ({"_by_writer_and_door"}, [], [("_by_writer_and_door", "a door", "open", 3)])),
+                   ("a door imported under another name",
+                    'from os import replace as _move\n'
+                    'def _by_imported_door(tmp):\n'
+                    '    _move(tmp, jd.STATE / "session-flags.json")\n',
+                    (set(), [], [("<module>", "a door", "replace", 1), ("_by_imported_door", name, "session-flags.json", 3)])),
+                   ("a module-level name reached through globals()",
+                    'FLAGS_PATH = jd.STATE / "session-flags.json"\n'
+                    'def _by_globals(cur):\n'
+                    '    globals()["FLAGS_PATH"].write_text(cur)\n',
+                    (set(), [], [("_by_globals", "a module-level name", "FLAGS_PATH", 3)])),
+                   ("a path function reached through getattr and a string",
+                    'def _flags_path():\n'
+                    '    return jd.STATE / "session-flags.json"\n'
+                    'def _by_path_by_string(cur):\n'
+                    '    getattr(sys.modules[__name__], "_flags_path")().write_text(cur)\n',
+                    (set(), [], [("_by_path_by_string", "a path function", "_flags_path", 4)])),
+                   ("a writer reached through getattr and a string in a route",
+                    'class Handler:\n'
+                    '    def _set_flag(self, sid):\n'
+                    '        _write_state_json(jd.STATE / "session-flags.json", "{}")\n'
+                    '    def _dispatch_ws(self, msg, client):\n'
+                    '        if msg.get("type") == "setFlagByName":\n'
+                    '            getattr(self, "_set_flag")(msg["id"])\n',
+                    ({"_set_flag"}, [], [("Handler._dispatch_ws", "a writer", "_set_flag", 6)])),
+                   ("a writer imported under another name in a route",
+                    setter + 'def _route(b):\n'
+                             '    from kernel import _set_flag as set_flag\n'
+                             '    set_flag(b["id"])\n',
+                    ({"_set_flag"}, [], [("_route", "a writer", "_set_flag", 4)])),
+                   ("a def named like a door, and a keyword labelled like one",
+                    'class Store:\n'
+                    '    def rename(self, sid, name):\n'
+                    '        return self.edit(sid, rename=name)\n',
+                    (set(), [], [])),
+                   ("a parameter named like a door",
+                    'def _edit(rename=None):\n'
+                    '    return str(rename)\n',
+                    (set(), [], [("_edit", "a door", "rename", 1), ("_edit", "a door", "rename", 2)])),
+                   ("a docstring naming the store",
+                    'def _retire(side):\n'
+                    '    """Renames a session-flags.json.corrupt sidecar aside."""\n'
+                    '    os.replace(side, side.with_name("retired"))\n',
+                    (set(), [], [])),
+                   ("a path function's call and a module-level name whose truth alone decides a test",
+                    'FLAGS_PATH = jd.STATE / "session-flags.json"\n'
+                    'def _flags_path():\n'
+                    '    return FLAGS_PATH\n'
+                    'def _gate(sid, out):\n'
+                    '    if not (_flags_path() and FLAGS_PATH):\n'
+                    '        return None\n'
+                    '    while FLAGS_PATH or _flags_path():\n'
+                    '        out.append(1 if _flags_path() else 0)\n'
+                    '        break\n'
+                    '    return sid\n',
+                    (set(), [], [])),
+                   ("a module-level name compared in a test",
+                    'FLAGS_PATH = jd.STATE / "session-flags.json"\n'
+                    'def _gate(p):\n'
+                    '    if p == FLAGS_PATH:\n'
+                    '        return None\n'
+                    '    return p\n',
+                    (set(), [], [("_gate", "a module-level name", "FLAGS_PATH", 3)])),
+                   ("a path function's call handed to a call in a test",
+                    'def _flags_path():\n'
+                    '    return jd.STATE / "session-flags.json"\n'
+                    'def _gate(sid):\n'
+                    '    if _seen(_flags_path()):\n'
+                    '        return None\n'
+                    '    return sid\n',
+                    (set(), [], [("_gate", "a path function", "_flags_path", 4)])),
+                   ("a path function that also writes the path through unpacking",
+                    'def _flags_path():\n'
+                    '    base, p = jd.STATE, jd.STATE / "session-flags.json"\n'
+                    '    p.write_text("{}")\n'
+                    '    return jd.STATE / "session-flags.json"\n',
+                    (set(), [], [("_flags_path", name, "session-flags.json", 2), ("_flags_path", name, "session-flags.json", 4)])),
+                   ("a name bound in another outermost function",
+                    'def _where():\n'
+                    '    p = jd.STATE / "session-flags.json"\n'
+                    '    log(p)\n'
+                    'def _by_parameter(p, cur):\n'
+                    '    p.write_text(cur)\n',
+                    (set(), [], [("_where", name, "session-flags.json", 2)])),
+                   ("a name bound in a function, written outside every function",
+                    'def _where():\n'
+                    '    p = jd.STATE / "session-flags.json"\n'
+                    '    log(p)\n'
+                    'p.write_text("{}")\n',
+                    (set(), [], [("_where", name, "session-flags.json", 2)])),
+                   ("a name bound in another method of the same class",
+                    'class Store:\n'
+                    '    def _where(self):\n'
+                    '        p = jd.STATE / "session-flags.json"\n'
+                    '        log(p)\n'
+                    '    def _by_sibling_method(self, p, cur):\n'
+                    '        p.write_text(cur)\n',
+                    (set(), [], [("Store._where", name, "session-flags.json", 3)])),
+                   ("a name bound in another outermost function through a global statement",
+                    'def _init():\n'
+                    '    global FLAGS_PATH\n'
+                    '    FLAGS_PATH = jd.STATE / "session-flags.json"\n'
+                    'def _by_global(cur):\n'
+                    '    _atomic_write(FLAGS_PATH, cur)\n',
+                    (set(), [], [("_init", name, "session-flags.json", 3)])),
+                   ("shutil.copy",
+                    'def _by_library(tmp):\n'
+                    '    shutil.copy(tmp, jd.STATE / "session-flags.json")\n',
+                    (set(), [], [("_by_library", name, "session-flags.json", 2)])),
+                   ("a subprocess",
+                    'def _by_subprocess(tmp):\n'
+                    '    subprocess.run(["cp", tmp, str(jd.STATE / "session-flags.json")], check=True)\n',
+                    (set(), [], [("_by_subprocess", name, "session-flags.json", 2)])),
+                   ("a path handed to a helper that writes its parameter",
+                    'def _save(p, cur):\n'
+                    '    _atomic_write(p, cur)\n'
+                    'def _by_argument(cur):\n'
+                    '    _save(jd.STATE / "session-flags.json", cur)\n',
+                    (set(), [], [("_by_argument", name, "session-flags.json", 4)])),
+                   ("a door reached through getattr and a string",
+                    'def _by_getattr(cur):\n'
+                    '    getattr(jd.STATE / "session-flags.json", "write_text")(cur)\n',
+                    (set(), [], [("_by_getattr", name, "session-flags.json", 2)])),
+                   ("a name bound by unpacking into a tuple",
+                    'def _by_unpacking(cur):\n'
+                    '    base, p = jd.STATE, jd.STATE / "session-flags.json"\n'
+                    '    p.write_text(cur)\n',
+                    (set(), [], [("_by_unpacking", name, "session-flags.json", 2)])),
+                   ("a name bound by a for loop's target",
+                    'def _by_loop(cur):\n'
+                    '    for p in (jd.STATE / "session-flags.json",):\n'
+                    '        p.write_text(cur)\n',
+                    (set(), [], [("_by_loop", name, "session-flags.json", 2)])),
+                   ("a name bound by an assignment expression",
+                    'def _by_walrus(cur):\n'
+                    '    if (p := jd.STATE / "session-flags.json"):\n'
+                    '        p.write_text(cur)\n',
+                    (set(), [], [("_by_walrus", name, "session-flags.json", 2)])),
+                   ("a name bound by a parameter's default",
+                    'def _by_default(cur, p=jd.STATE / "session-flags.json"):\n'
+                    '    p.write_text(cur)\n',
+                    (set(), [], [("_by_default", name, "session-flags.json", 1)])),
+                   ("a name bound by a comprehension's target",
+                    'def _by_comprehension(cur):\n'
+                    '    [p.write_text(cur) for p in (jd.STATE / "session-flags.json",)]\n',
+                    (set(), [], [("_by_comprehension", name, "session-flags.json", 2)])),
+                   ("a name bound by a with statement's as",
+                    'def _by_with(cur):\n'
+                    '    with _held(jd.STATE / "session-flags.json") as p:\n'
+                    '        p.write_text(cur)\n',
+                    (set(), [], [("_by_with", name, "session-flags.json", 2)])),
+                   ("a name bound by an assignment to an attribute",
+                    'def _by_attribute_target(cur):\n'
+                    '    store.p = jd.STATE / "session-flags.json"\n'
+                    '    store.p.write_text(cur)\n',
+                    (set(), [], [("_by_attribute_target", name, "session-flags.json", 2)])),
+                   ("a path held in an attribute and written in another method",
+                    'class Store:\n'
+                    '    def __init__(self):\n'
+                    '        self.p = jd.STATE / "session-flags.json"\n'
+                    '    def _by_attribute(self, cur):\n'
+                    '        self.p.write_text(cur)\n',
+                    (set(), [], [("Store.__init__", name, "session-flags.json", 3)])),
+                   ("a path built by string concatenation",
+                    'def _by_concatenation(cur):\n'
+                    '    _atomic_write(jd.STATE / ("session-" + "flags.json"), cur)\n',
+                    (set(), [], [])),
+                   ("a path function writing its path through getattr and a string",
+                    'def _flags_path():\n'
+                    '    p = jd.STATE / "session-flags.json"\n'
+                    '    getattr(p, "write_text")("{}")\n'
+                    '    return p\n',
+                    (set(), [], [])),
+                   ("a path function handing its path to a helper that writes its parameter",
+                    'def _flags_path():\n'
+                    '    p = jd.STATE / "session-flags.json"\n'
+                    '    _keep(p)\n'
+                    '    return p\n'
+                    'def _keep(q):\n'
+                    '    q.write_text("{}")\n',
+                    (set(), [], [])))
+        for label, src, expected in planted:
+            with self.subTest(net=label):
+                self.assertEqual(census(src, refusals=True), expected,
+                                 "THE NET (round 4 of fork PR #897, the reviewer's ruling on section G): %s. The census's "
+                                 "docstring names this plant beside the rule it pins; the third element is what the net "
+                                 "refuses, each as (function, clause, token, line)" % label)
+        shutil_src = planted[[p[0] for p in planted].index("shutil.copy")][1]
+        with self.subTest(net="an exemption row names a refused function"):
+            self.assertEqual(census(shutil_src, exempt={"_by_library": "a planted reason"}), (set(), []),
+                             "an exemption row lifts the net's refusal of the function it names")
+            with self.assertRaises(AssertionError) as refusal:
+                census(shutil_src)
+            self.assertIn("_by_library mentions the store's name 'session-flags.json' at line 2", str(refusal.exception),
+                          "with no row, the census raises, naming the function, the clause, the token and its line")
+        with self.subTest(net="an exemption row that names no refused function"):
+            with self.assertRaises(AssertionError) as stale:
+                census(setter, exempt={"_set_flag": "a planted reason"})
+            self.assertIn("THE NET'S EXEMPTION ROWS NAME ONLY WHAT IT REFUSES: ['_set_flag']", str(stale.exception),
+                          "a row naming a function the net does not refuse raises, so the rows stay exact")
 
     @classmethod
     def setUpClass(cls):
@@ -936,8 +1134,8 @@ class ThreadOwnSendRefused(unittest.TestCase):
         the same whitelist as POST /flag (the seventeenth commit said no route writes the key and the eighteenth named the
         arm; the reviewer's ruling of round 3 asked for this text and the set below).
         This pins the current truth as a set. The kernel's routes that write a session flag, derived from kernel/kernel.py
-        by the census above (_flag_writing_routes), are exactly POST /flag and the WebSocket arm, so a new route fails the
-        set pin. Executed over the real handlers: the listing with thread rows has the thread and the roster omits it; a
+        by the census above (_flag_writing_routes, behind its net and NET_EXEMPT's rows), are exactly POST /flag and the
+        WebSocket arm, so a new route fails the set pin, and a function the net refuses there fails it by name. Executed over the real handlers: the listing with thread rows has the thread and the roster omits it; a
         send to a session on a peer host, a relay destination for any session whose mail is on, is refused and nothing is
         parked in the peer's outbox; POST /flag refuses the key and the send is still refused; the key written through
         the kernel's real WebSocket arm, into the file the bus reads, lets the same send be parked (the disclosed road,
@@ -965,7 +1163,7 @@ class ThreadOwnSendRefused(unittest.TestCase):
                          "REFUSED BEFORE THE RELAY: nothing is parked for the peer, so the thread's sid never reaches a far host as a "
                          "sender (a gate that opened parks the message here)")
         with open(self.KERNEL_SRC, encoding="utf-8") as f:
-            writers, refs = self._flag_writing_routes(f.read())
+            writers, refs = self._flag_writing_routes(f.read(), exempt=self.NET_EXEMPT)
         self.assertEqual(writers, self.FLAG_WRITERS, "the kernel functions that write session-flags.json")
         self.assertEqual({(where, selectors[0] if selectors else "") for where, selectors, _ in refs}, self.FLAG_ROUTES,
                          "THE ROUTES THAT WRITE A SESSION FLAG, as a set: POST /flag and the WebSocket setSessionFlag arm, both "
