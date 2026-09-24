@@ -15,9 +15,11 @@
 //     received it) and reports it as a pass only when the file registered no test of its own, and as a fail by node's rule for
 //     failing a file as a whole: the file's process exits non-zero or is cut at --test-timeout outside any one test's result,
 //     whatever the cause (the spec output carries it); so node's own file-level pass is a leg that ran nothing, and its file-level fail
-//     names the file that failed as a whole. The mark reads an enqueue at nesting 0, line 1, column 1 whose name, a leading
-//     ./ dropped, ends the file's path, so a test of the file's own at line 1, column 1 named by such an ending ("js") is
-//     marked file-level too, a loud over-read: its pass does not count, and its failure is read as the file's;
+//     names the file that failed as a whole. The mark keeps each enqueue at nesting 0, line 1, column 1 whose name, a
+//     leading ./ dropped, ends the file's path (node's own for each file among them), and marks each result at nesting 0
+//     whose file and name equal one it kept. So a test of the file's own is marked file-level too, a loud over-read, when
+//     it is named exactly as node's path argument for its file, wherever it stands, or when node places it at line 1,
+//     column 1 and it is named by such an ending ("js"): its pass does not count, and its failure is read as the file's;
 //   6 the test's name; 7 the skip or todo reason of a pass, or the failure's message (the cause's, when node wrapped it);
 //   8 the failure type (testCodeFailure, testTimeoutFailure, ...) or -.
 // A backslash, tab, newline or carriage return inside a name or a message is written \\ \t \n \r, so a line is one result.

@@ -42,7 +42,8 @@
 # rostered bundle's file: a test registered in any other file, such as one a leg loads at run time outside its bundle,
 # is read through node's status alone, so its pass does not count for the leg, its skip or its failure inside a todo
 # reads green beside a passing test of the bundle's own, and its failure, a failed launch included, is red by node's
-# status without the script's lost-browser remedy.
+# status without the script's lost-browser remedy. A leg whose bundle has neither a passing test of its own nor a
+# failure outside a todo is red as unrun, and the red's tally counts none of that file's results.
 #
 # The switch test below spawns three child node --test runs of its own first test (the switch set to "1", to another
 # non-empty value, and unset) with PLAYWRIGHT_BROWSERS_PATH pointed at an empty directory, and asserts that the two

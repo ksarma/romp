@@ -83,6 +83,9 @@ source_of() { local rel=${1#out-tests/}; printf '%s/%s.test.ts' "$ROOT" "${rel%.
 # and neither . nor .., the spelling normalizing leaves unchanged (the pattern reads out-tests/, a run with no whitespace and
 # .test.js, so a bundle straight under out-tests/ passes too). Node resolves a bundle to that spelling and the post-run
 # read keys a line by it; the duplicate check below reads only the lines that pass here, so it compares canonical paths.
+# Whitespace here, and in the loop's test for a blank or # line, is bash's [[:space:]] in the runner's locale, not the
+# tree test's \s: a no-break space inside a line passes here under C.UTF-8 and is refused there, and a line holding a
+# byte-order mark or a no-break space before its # is refused here as malformed and dropped there, a red on one side.
 well_formed() {
   [[ "$1" =~ ^out-tests/[^[:space:]]+\.test\.js$ ]] || return 1
   local seg rest="${1#out-tests/}/"
