@@ -10083,7 +10083,8 @@ test("round 7, seventeenth commit, the rows: a brace list beside a spliced print
     assert.equal(guard.renderWords(words('X="a" cp a b')), "X='a' cp a b", 'an assignment-shaped word keeps its name outside the quotes (behaviour: S17-hs-declare-dq)');
     assert.equal(guard.renderWords(words(`X+="a" X="" Y='b c' cp a "it's"`)), `X+='a' X='' Y='b c' cp a 'it'\\''s'`, '`+=`, an empty value, a blank in the value, a quote in a plain word (behaviour: S17-hs-declare-append, -empty, -two)');
     assert.equal(guard.renderWords(words(`X"="a 'X=a' "X"=a cp a b`)), `'X=a' 'X=a' 'X=a' cp a b`, 'quoted marks on the name or the `=` keep the word the command name it is (behaviour: S17-hs-ctl-quoted-*)');
-    assert.equal(guard.renderWords(words('A={1,2} echo x')), "A='1' A='2' echo x", 'a brace-valued prefix stays an assignment per alternative (behaviour: S17-sp-ctl-assign-brace-prefix)');
+    assert.equal(guard.renderWords(words('A={1,2} echo x')), "A='{1,2}' echo x", 'a brace-valued prefix assignment is one word, its braces text, since the twenty-eighth commit (the reviewer\'s correctness-4: no shell brace-expands it), and stays the assignment in the NAME= form (behaviour: S17-sp-ctl-assign-brace-prefix, S17-hs-assign-brace)');
+    assert.equal(guard.renderWords(words('declare A={1,2}')), "declare A='1' A='2'", 'a declaration\'s operand, which bash brace-expands, stays an assignment per alternative');
     assert.equal(guard.renderWords(words('$c "$@" x ../base/*.md')), '$c "$@" x ../base/*.md', 'a word that is not literal (an expansion, a glob) renders by its raw');
     assert.equal(guard.renderWords(words('c=cp')), "c='cp'", 'an assignment whose raw is its text renders in the same NAME= form, the value the shell reads');
     assert.equal(guard.renderWord({ text: 'X=a', literal: true, raw: '"$1"', marks: 'qqq' }), "'X=a'", 'a word the walk resolved carries quoted marks: a command name (behaviour: S17-hs-ctl-positional-value)');
@@ -12676,4 +12677,317 @@ test("round 7, twenty-seventh commit, the rows: a `..` after a /proc-magic compo
     assert.ok(hook.includes('if (folded.unresolvable) return { unresolvable: folded.unresolvable, proc: folded.proc };'), 'extra6-3: resolveLiteral carries the proc mark, so the readers that only check `unresolvable` refuse it on the safe side (behaviour: E63d-digits-cp, E63d-selfroot-cp)');
     assert.ok(hook.includes("if (p.proc) { cannotRead(word(w.raw, false, w.raw), how, { kind: 'procTarget', text: p.proc }); return; }"), 'extra6-3: add refuses the proc-`..` target as the same procTarget class (no marks, so inPlayFor asks the cwd\'s project) before the plain unresolvable branch (behaviour: every E63d row, the reason naming the process)');
   } finally { process.env.HOME = savedHome; w.rm(); }
+});
+
+// ── round 7 of fork PR #780 review, twenty-eighth commit (2026-09-24): the reviewer's correctness-3 and correctness-4 (section E of the round-6
+// rulings), and the subscripted assignment the seventeenth commit's verifier carried to this group ──
+//
+// correctness-3, THE EXIT: THE OUTPUT MODEL read `exit` as a command that prints nothing and lets the list go on, so `(exit; echo 'cp ..') | bash`
+// was refused by name as a copy no shell performs (the list ends at the exit). As ruled, a printer after an unwrapped `exit` is UNRESOLVABLE naming
+// the exit (a trap the list set before it runs its text there: the EXIT-trap row copies in every shell), the exit ending only the subshell it
+// stands in; `return`, `break` and `continue` stay silent (misused in a subshell, bash runs the printer after each and dash after `break` and
+// `continue`, so the copy is refused by name with those writers). The EXIT-trap variant without a later printer, `(trap "echo 'cp ..'" EXIT; exit)
+// | bash`, was allowed at the round-5 head and the round-6 head while every shell copied (the round-6 refuter named it a member of 'a producer
+// outside the output model' with no table row): THE TRAP'S TEXT makes a list whose trap text prints by the model, or is filled in by the shell,
+// UNRESOLVABLE naming the trap. correctness-4, THE PLAIN ASSIGNMENT: no shell brace-expands an assignment word in a command's prefix, so
+// `A={x,report.md}; echo y > $A` (refused by name while no shell wrote report.md) is allowed, the word one with its braces as text; the operands
+// of export, declare, typeset, local and readonly keep the expansion (bash expands them and writes), as does a word after a wrapper. The
+// splice-road twin `declare c=cp; A={1,2} $c ..` is the seventeenth commit's renderer's (S17-hs-assign-brace pins the plain `c=cp` form there;
+// its renderer pin moves with this change, a prefix `A={1,2}` now one word); the declare form is pinned here too. THE SUBSCRIPTED ASSIGNMENT
+// (carried): bash, and zsh for a subscript in range, read `NAME[subscript]=value` before a command as an assignment and run the command, where
+// the guard read the word as the command name; alone the word writes an element of NAME (bash's `$X` is `${X[0]}`); and bash reads a subscript
+// holding blanks or operators as one word (THE SPLIT SUBSCRIPT). Each row runs through the hook as a process from its cwd, then unguarded in
+// bash, zsh and dash over a fresh world, the writers pinned (r7-e28-measure-*.log in the notes).
+// the rows, in five groups (THE EXIT, THE TRAP'S TEXT, THE PLAIN ASSIGNMENT, THE SUBSCRIPTED ASSIGNMENT with THE SPLIT SUBSCRIPT): [id, cwd, command,
+// the shells that write (measured), the verdict ('name', 'allow', or ['text', a substring]), the verdict from a cwd in no project ('allow'
+// unless given; null: the row's cwd is that cwd)]; each group is a test of its own, so a red names its group
+const E28_ROWS = (() => {
+  const A = ['bash', 'zsh', 'dash'];
+  const BZ = ['bash', 'zsh'];
+  const BD = ['bash', 'dash'];
+  const B = ['bash'];
+  const Z = ['zsh'];
+  const D = ['dash'];
+  const N = [];
+  const ECHO = "echo 'cp ../base/report.md report.md'";
+  const EXIT = ['text', 'stands after `exit`'];
+  const TRAP = ['text', 'a `trap` in the list runs'];
+  const SPLIT = ['text', 'as one word, the blanks and operators inside its brackets included'];
+  const ELEMENT = ['text', 'writes an element of `X`'];
+  const OUTSIDE_MODEL = ['text', 'a command whose output I do not read'];
+  const NOT_LITERAL = ['text', 'not a literal path'];
+  // [id, cwd, command, the shells that write (measured), the verdict ('name', 'allow', or ['text', a substring]), the verdict from a cwd in no
+  // project ('allow' unless given; null: the row's cwd is that cwd)]
+  return [
+    // THE EXIT: the ruled pin and its population, every road a printed list reaches a shell by, every spelling of the exit, the three cwds
+    ['E28-exit-sub-pipe', 'nad', `(exit; ${ECHO}) | bash`, N, EXIT],
+    ['E28-exit-operand-0', 'nad', `(exit 0; ${ECHO}) | bash`, N, ['text', 'stands after `exit 0`']],
+    ['E28-exit-operand-1', 'nad', `(exit 1; ${ECHO}) | bash`, N, ['text', 'stands after `exit 1`']],
+    ['E28-exit-operand-status', 'nad', `(exit $?; ${ECHO}) | bash`, N, ['text', 'stands after `exit $?`']],
+    ['E28-exit-quoted', 'nad', `('exit'; ${ECHO}) | bash`, N, EXIT],
+    ['E28-exit-escaped', 'nad', `(\\exit; ${ECHO}) | bash`, N, EXIT],
+    ['E28-exit-newline', 'nad', `(exit\n${ECHO}) | bash`, N, EXIT],
+    ['E28-exit-group', 'nad', `{ exit; ${ECHO}; } | bash`, N, EXIT],
+    ['E28-exit-group-in-sub', 'nad', `( { exit; }; ${ECHO}) | bash`, N, EXIT],
+    ['E28-exit-sh', 'nad', `(exit; ${ECHO}) | sh`, N, EXIT],
+    ['E28-exit-zsh', 'nad', `(exit; ${ECHO}) | zsh`, N, EXIT],
+    ['E28-exit-dash', 'nad', `(exit; ${ECHO}) | dash`, N, EXIT],
+    ['E28-exit-cmdsub-c', 'nad', `bash -c "$(exit; ${ECHO})"`, N, EXIT],
+    ['E28-exit-backtick-c', 'nad', `bash -c "\`exit; ${ECHO}\`"`, N, EXIT],
+    ['E28-exit-procsub', 'nad', `bash <(exit; ${ECHO})`, N, EXIT],
+    ['E28-exit-procsub-stdin', 'nad', `bash < <(exit; ${ECHO})`, N, EXIT],
+    ['E28-exit-eval', 'nad', `eval "$(exit; ${ECHO})"`, N, EXIT],
+    ['E28-exit-herestring', 'nad', `bash <<< "$(exit; ${ECHO})"`, N, EXIT],
+    ['E28-exit-source-procsub', 'nad', `source <(exit; ${ECHO})`, N, EXIT],
+    ['E28-exit-dot-procsub', 'nad', `. <(exit; ${ECHO})`, N, EXIT],
+    ['E28-exit-printf', 'nad', "(exit; printf 'cp ../base/report.md report.md') | bash", N, ['text', 'the printf stands after `exit`']],
+    ['E28-exit-cat-heredoc', 'nad', "(exit; cat <<'EOF'\ncp ../base/report.md report.md\nEOF\n) | bash", N, ['text', 'the cat stands after `exit`']],
+    ['E28-exit-spliced-printer', 'nad', `e=echo; (exit; $e 'cp ../base/report.md report.md') | bash`, N, EXIT],
+    ['E28-exit-root', 'na', "(exit; echo 'cp base/report.md docs/report.md') | bash", N, EXIT],
+    ['E28-exit-notes', 'nan', "(exit; echo 'cp ../base/report.md n1.md') | bash", N, EXIT],
+    ['E28-exit-out-abs', 'out', "(exit; echo 'cp {NA}/base/report.md {NA}/docs/report.md') | bash", N, 'allow', null],   // from a cwd in no project the unresolvable script names no project in play (the boundary every such script has)
+    ['E28-exit-text-target', 'nad', 'cp ../base/report.md $(exit; echo report.md)', N, NOT_LITERAL],
+    ['E28-exit-text-redirect', 'nad', 'echo x > $(exit; echo report.md)', N, NOT_LITERAL],
+    // the costs the ruling's shape carries: a printer after an exit is refused even where what it would print writes nothing
+    ['E28-exit-cost-harmless', 'nad', '(exit; echo ls) | bash', N, EXIT],
+    ['E28-exit-cost-ls-first', 'nad', `(echo ls; exit; ${ECHO}) | bash`, N, EXIT],
+    // a printer before the exit prints: refused by name alone, UNRESOLVABLE beside a later one
+    ['E28-exit-ctl-echo-then-exit', 'nad', `(${ECHO}; exit) | bash`, A, 'name'],
+    ['E28-exit-ctl-echo-exit-echo', 'nad', `(${ECHO}; exit; echo ls) | bash`, A, EXIT],
+    // the exit ends the subshell it stands in, and no other
+    ['E28-exit-ctl-nested', 'nad', `( (exit); ${ECHO}) | bash`, A, 'name'],
+    ['E28-exit-ctl-nested-harmless', 'nad', '( (exit); echo ls) | bash', N, 'allow'],
+    // an exit inside a compound or after an `&&` in the list is an exit before the printer all the same
+    ['E28-exit-in-if', 'nad', `(if true; then exit; fi; ${ECHO}) | bash`, N, EXIT],
+    ['E28-exit-after-and', 'nad', `(true && exit; ${ECHO}) | bash`, N, EXIT],
+    // the EXIT-trap variant (the ruling's pin): refused, the exit named, while every shell copies through the trap
+    ['E28-exit-trap-then-echo', 'nad', `(trap "${ECHO}" EXIT; exit; ${ECHO}) | bash`, A, EXIT],
+    ['E28-exit-trap-then-harmless', 'nad', `(trap "${ECHO}" EXIT; exit; echo ls) | bash`, A, EXIT],
+    ['E28-exit-trap-harmless-then-echo', 'nad', `(trap 'echo ls' EXIT; exit; ${ECHO}) | bash`, N, EXIT],
+    // an exit the model does not read as one (a wrapper, a pipeline element): a command outside the model beside the printer, as before
+    ['E28-exit-ctl-command-exit', 'nad', `(command exit; ${ECHO}) | bash`, Z, OUTSIDE_MODEL],   // zsh looks `exit` up as an external command and runs on
+    ['E28-exit-ctl-builtin-exit', 'nad', `(builtin exit; ${ECHO}) | bash`, D, OUTSIDE_MODEL],   // dash has no `builtin`
+    ['E28-exit-ctl-in-pipeline', 'nad', `(exit | true; ${ECHO}) | bash`, A, OUTSIDE_MODEL],
+    // return, break and continue stay silent (the ruling): the printer after each runs where the shell goes on, and the copy is refused by name
+    ['E28-silent-return-sub', 'nad', `(return; ${ECHO}) | bash`, B, 'name'],
+    ['E28-silent-return-group', 'nad', `{ return; ${ECHO}; } | bash`, B, 'name'],
+    ['E28-silent-return-cmdsub', 'nad', `bash -c "$(return; ${ECHO})"`, B, 'name'],
+    ['E28-silent-break-sub', 'nad', `(break; ${ECHO}) | bash`, BD, 'name'],
+    ['E28-silent-break-group', 'nad', `{ break; ${ECHO}; } | bash`, BD, 'name'],
+    ['E28-silent-break-cmdsub', 'nad', `bash -c "$(break; ${ECHO})"`, BD, 'name'],
+    ['E28-silent-continue-sub', 'nad', `(continue; ${ECHO}) | bash`, BD, 'name'],
+    ['E28-silent-continue-group', 'nad', `{ continue; ${ECHO}; } | bash`, BD, 'name'],
+    ['E28-silent-continue-cmdsub', 'nad', `bash -c "$(continue; ${ECHO})"`, BD, 'name'],
+    ['E28-silent-false-sub', 'nad', `(false; ${ECHO}) | bash`, A, 'name'],
+    ['E28-silent-colon-sub', 'nad', `(:; ${ECHO}) | bash`, A, 'name'],
+    ['E28-silent-true-sub', 'nad', `(true; ${ECHO}) | bash`, A, 'name'],
+    // THE TRAP'S TEXT: a trap whose text prints by the model, or is filled in by the shell, makes the list UNRESOLVABLE (allowed at the
+    // round-5 and round-6 heads while every shell copied); one whose text prints nothing stays a command outside the model beside a printer
+    ['E28-trap-exit-alone', 'nad', `(trap "${ECHO}" EXIT; exit) | bash`, A, TRAP],
+    ['E28-trap-no-exit', 'nad', `(trap "${ECHO}" EXIT) | bash`, A, TRAP],
+    ['E28-trap-group', 'nad', `{ trap "${ECHO}" EXIT; exit; } | bash`, A, TRAP],
+    ['E28-trap-dashdash', 'nad', `(trap -- "${ECHO}" EXIT; exit) | bash`, A, TRAP],
+    ['E28-trap-printf', 'nad', "(trap \"printf 'cp ../base/report.md report.md'\" EXIT) | bash", A, TRAP],
+    ['E28-trap-filled-in', 'nad', `t="${ECHO}"; (trap "$t" EXIT) | bash`, A, ['text', 'a text the shell fills in']],
+    ['E28-trap-root', 'na', "(trap \"echo 'cp base/report.md docs/report.md'\" EXIT) | bash", A, TRAP],
+    ['E28-trap-sh', 'nad', `(trap "${ECHO}" EXIT) | sh`, A, TRAP],
+    ['E28-trap-cost-harmless', 'nad', "(trap 'echo ls' EXIT) | bash", N, TRAP],
+    ['E28-trap-ctl-silent-text', 'nad', "(trap 'rm -f ../scratch/zz' EXIT; echo ls) | bash", N, OUTSIDE_MODEL],
+    ['E28-trap-ctl-reset', 'nad', '(trap - EXIT; echo ls) | bash', N, OUTSIDE_MODEL],
+    ['E28-trap-ctl-text-road', 'nad', "cp ../base/report.md $(trap 'echo report.md' EXIT)", A, NOT_LITERAL],
+    // THE PLAIN ASSIGNMENT (correctness-4): the fixlist's pin and its population, allowed where no shell writes (refused by name at the round-6 head)
+    ['E28-assign-redir', 'nad', 'A={x,report.md}; echo y > $A', N, 'allow'],
+    ['E28-assign-redir-quoted', 'nad', 'A={x,report.md}; echo y > "$A"', N, 'allow'],
+    ['E28-assign-cp', 'nad', 'A={x,report.md}; cp ../base/report.md $A', N, 'allow'],
+    ['E28-assign-mv', 'nad', 'A={x,report.md}; mv ../base/report.md $A', N, 'allow'],
+    ['E28-assign-two', 'nad', 'B=1 A={x,report.md}; echo y > $A', N, 'allow'],
+    ['E28-assign-bang', 'nad', '! A={x,report.md}; echo y > $A', N, 'allow'],
+    ['E28-assign-group', 'nad', '{ A={x,report.md}; }; echo y > $A', N, 'allow'],
+    ['E28-assign-head', 'nad', 'A={x,cp}; $A ../base/report.md report.md', N, 'allow'],
+    ['E28-assign-root', 'na', 'A={x,docs/report.md}; echo y > $A', N, 'allow'],
+    ['E28-assign-out-abs', 'out', 'A={x,{NA}/docs/report.md}; echo y > $A', N, 'allow', null],
+    ['E28-assign-in-c', 'nad', "bash -c 'A={x,report.md}; echo y > $A'", N, 'allow'],
+    ['E28-assign-piped', 'nad', "echo 'A={x,report.md}; echo y > $A' | bash", N, 'allow'],
+    ['E28-assign-eval-sq', 'nad', "eval 'A={x,report.md}; echo y > $A'", N, 'allow'],
+    ['E28-assign-eval-cp', 'nad', 'A={x,report.md}; eval "cp ../base/report.md $A"', N, 'allow'],
+    // the braces stay text in the value, so where the value is re-read as code they expand there, and a new file in the tracked folder is a write
+    ['E28-assign-ctl-eval-redir', 'nad', 'A={x,report.md}; eval "echo y > $A"', Z, 'name'],   // zsh opens both targets (MULTIOS)
+    ['E28-assign-ctl-notes', 'nan', 'A={x,n1.md}; echo y > $A', A, 'name'],
+    ['E28-assign-ctl-literal-target', 'nad', 'echo y > {x,report.md}', Z, 'name'],   // the fixlist's `as before`
+    // a declaration's operand is brace-expanded by bash, which writes: refused as at the round-6 head (the ruling's never)
+    ['E28-decl-export-redir', 'nad', 'export A={x,report.md}; echo y > $A', B, 'name'],
+    ['E28-decl-export-cp', 'nad', 'export A={x,report.md}; cp ../base/report.md $A', B, 'name'],
+    ['E28-decl-declare-redir', 'nad', 'declare A={x,report.md}; echo y > $A', B, NOT_LITERAL],
+    ['E28-decl-typeset-redir', 'nad', 'typeset A={x,report.md}; echo y > $A', B, NOT_LITERAL],
+    ['E28-decl-local-redir', 'nad', 'f() { local A={x,report.md}; echo y > $A; }; f', B, NOT_LITERAL],
+    ['E28-decl-readonly-first-wins', 'nad', 'readonly A={report.md,x}; echo y > $A', B, 'name'],   // bash keeps the first value: the second assignment fails
+    ['E28-decl-export-n', 'nad', 'export -n A={x,report.md}; echo y > $A', B, NOT_LITERAL],
+    ['E28-decl-declare-g', 'nad', 'declare -g A={x,report.md}; echo y > $A', B, NOT_LITERAL],
+    ['E28-decl-typeset-x', 'nad', 'typeset -x A={x,report.md}; echo y > $A', B, NOT_LITERAL],
+    ['E28-decl-command-export', 'nad', 'command export A={x,report.md}; echo y > $A', B, NOT_LITERAL],
+    ['E28-decl-root', 'na', 'export A={x,docs/report.md}; echo y > $A', B, 'name'],
+    ['E28-decl-out-abs', 'out', 'export A={x,{NA}/docs/report.md}; echo y > $A', B, 'name', null],
+    ['E28-decl-in-c', 'nad', "bash -c 'export A={x,report.md}; echo y > $A'", A, 'name'],   // the -c shell is bash whichever shell runs the line
+    ['E28-decl-env-arg', 'nad', "env A={x,report.md} sh -c 'echo y > $A'", BZ, NOT_LITERAL],   // an operand after a wrapper: bash and zsh expand it
+    // the splice-road twin (the seventeenth commit's renderer; S17-hs-assign-brace pins the `c=cp` form)
+    ['E28-splice-declare-twin', 'nad', 'declare c=cp; A={1,2} $c ../base/report.md report.md', BZ, 'name'],
+    ['E28-splice-plain-twin', 'nad', 'c=cp; A={1,2} $c ../base/report.md report.md', A, 'name'],
+    // THE SUBSCRIPTED ASSIGNMENT (carried): the verifier's five rows (allowed at the round-5 and round-6 heads while bash copied; zsh rejects the
+    // subscript 0 and runs nothing), then the subscript zsh takes, every road and cwd
+    ['E28-sub-note-plain', 'nad', 'X[0]=a cp ../base/report.md report.md', B, 'name'],
+    ['E28-sub-note-quoted', 'nad', 'X[0]="a" cp ../base/report.md report.md', B, 'name'],
+    ['E28-sub-note-readable', 'nad', 'c=cp; X[0]=a $c ../base/report.md report.md', B, 'name'],
+    ['E28-sub-note-declare-dq', 'nad', 'declare c=cp; X[0]="a" $c ../base/report.md report.md', B, 'name'],
+    ['E28-sub-note-declare-plain', 'nad', 'declare c=cp; X[0]=a $c ../base/report.md report.md', B, 'name'],
+    ['E28-sub-one', 'nad', 'X[1]=a cp ../base/report.md report.md', BZ, 'name'],
+    ['E28-sub-one-dq', 'nad', 'X[1]="a" cp ../base/report.md report.md', BZ, 'name'],
+    ['E28-sub-one-sq', 'nad', "X[1]='a' cp ../base/report.md report.md", BZ, 'name'],
+    ['E28-sub-append', 'nad', 'X[1]+=a cp ../base/report.md report.md', BZ, 'name'],
+    ['E28-sub-key', 'nad', 'X[k]=a cp ../base/report.md report.md', B, 'name'],
+    ['E28-sub-quoted-key', 'nad', 'X["k"]=a cp ../base/report.md report.md', B, 'name'],
+    ['E28-sub-expanded-key', 'nad', 'X[$i]=a cp ../base/report.md report.md', B, 'name'],
+    ['E28-sub-after-plain', 'nad', 'Y=b X[1]=a cp ../base/report.md report.md', BZ, 'name'],
+    ['E28-sub-before-plain', 'nad', 'X[1]=a Y=b cp ../base/report.md report.md', BZ, 'name'],
+    ['E28-sub-mv', 'nad', 'X[1]=a mv ../base/report.md report.md', BZ, 'name'],
+    ['E28-sub-readable', 'nad', 'c=cp; X[1]=a $c ../base/report.md report.md', BZ, 'name'],
+    ['E28-sub-readable-dq', 'nad', 'c=cp; X[1]="a" $c ../base/report.md report.md', BZ, 'name'],
+    ['E28-sub-value-no-split', 'nad', 'c=cp; X[1]=$(echo a b) $c ../base/report.md report.md', BZ, 'name'],
+    ['E28-sub-command', 'nad', 'X[1]=a command cp ../base/report.md report.md', BZ, 'name'],
+    ['E28-sub-env', 'nad', 'X[1]=a env cp ../base/report.md report.md', BZ, 'name'],
+    ['E28-sub-bash-c', 'nad', "X[1]=a bash -c 'cp ../base/report.md report.md'", BZ, 'name'],
+    ['E28-sub-eval', 'nad', "X[1]=a eval 'cp ../base/report.md report.md'", BZ, 'name'],
+    ['E28-sub-in-bash-c', 'nad', "bash -c 'X[1]=a cp ../base/report.md report.md'", A, 'name'],
+    ['E28-sub-in-eval', 'nad', "eval 'X[1]=a cp ../base/report.md report.md'", BZ, 'name'],
+    ['E28-sub-printer', 'nad', `(X[1]=a ${ECHO}) | bash`, BZ, 'name'],
+    ['E28-sub-piped-script', 'nad', "echo 'X[1]=a cp ../base/report.md report.md' | bash", A, 'name'],
+    ['E28-sub-cd', 'nas', 'X[1]=a cd ../docs; cp ../base/report.md report.md', BZ, 'name'],
+    ['E28-sub-root', 'na', 'X[1]=a cp base/report.md docs/report.md', BZ, 'name'],
+    ['E28-sub-notes', 'nan', 'X[1]=a cp ../base/report.md n1.md', BZ, 'name'],
+    ['E28-sub-out-abs', 'out', 'X[1]=a cp {NA}/base/report.md {NA}/docs/report.md', BZ, 'name', null],
+    ['E28-sub-substitution', 'nad', 'X[$(echo 1)]=a cp ../base/report.md report.md', BZ, 'name'],
+    ['E28-sub-substitution-blank', 'nad', 'X[$(echo 1 2)]=a cp ../base/report.md report.md', B, 'name'],   // bash reads the text inside the subscript unsplit (the text road had cut the word at the blank)
+    ['E28-sub-nested-brackets', 'nad', 'X[a[1]]=a cp ../base/report.md report.md', B, 'name'],
+    // alone, the word writes an element: bash's `$X` is `${X[0]}`, so the value `$X` stands for after it is not read
+    ['E28-sub-element-head', 'nad', 'X=ls; X[0]=cp; $X ../base/report.md report.md', B, ELEMENT],
+    ['E28-sub-element-head-braced', 'nad', 'X=ls; X[0]=cp; ${X} ../base/report.md report.md', B, ELEMENT],
+    ['E28-sub-element-eval', 'nad', 'X=ls; X[0]=cp; eval "$X ../base/report.md report.md"', B, ELEMENT],
+    ['E28-sub-element-target', 'nad', 'X=other.md; X[0]=report.md; cp ../base/report.md $X', B, ['text', 'a subscript']],
+    // THE SPLIT SUBSCRIPT: bash reads a subscript holding a blank or an operator as one word; zsh and dash split it and run nothing of it
+    ['E28-split-blank', 'nad', 'X[a b]=a cp ../base/report.md report.md', B, SPLIT],
+    ['E28-split-semicolon', 'nad', 'X[a;b]=a cp ../base/report.md report.md', B, SPLIT],
+    ['E28-split-pipe', 'nad', 'X[a|b]=a cp ../base/report.md report.md', B, SPLIT],
+    ['E28-split-after-plain', 'nad', 'Y=1 X[a b]=a cp ../base/report.md report.md', B, SPLIT],
+    ['E28-split-if', 'nad', 'if X[a b]=a cp ../base/report.md report.md; then :; fi', B, SPLIT],
+    ['E28-split-root', 'na', 'X[a b]=a cp base/report.md docs/report.md', B, SPLIT],
+    ['E28-split-newline', 'nad', 'X[a\nb]=a cp ../base/report.md report.md', B, SPLIT],
+    ['E28-split-bang', 'nad', '! X[a b]=a cp ../base/report.md report.md', B, SPLIT],
+    ['E28-split-group', 'nad', '{ X[a b]=a cp ../base/report.md report.md; }', B, SPLIT],
+    ['E28-split-in-bash-c', 'nad', "bash -c 'X[a b]=a cp ../base/report.md report.md'", A, SPLIT],
+    ['E28-split-printer', 'nad', `(X[a b]=a ${ECHO}) | bash`, B, SPLIT],
+    ['E28-split-out-abs', 'out', 'X[a b]=a cp {NA}/base/report.md {NA}/docs/report.md', B, SPLIT, null],
+    ['E28-split-cost-no-equals', 'nad', 'X[a b] cp ../base/report.md report.md', N, SPLIT],   // bash runs a command named `X[a b]`: nothing written, refused all the same
+    ['E28-split-ctl-redirect', 'nad', 'X[a b]=a echo y > report.md', BD, 'name'],   // the redirection is judged as written (dash truncates before the lookup fails)
+    ['E28-split-ctl-out-rel', 'out', 'X[a b]=a cp ../scratch/keep.md x.md', N, 'allow', null],
+    // controls: a quoted subscript is one word the lexer reads (the remedy), a subscripted assignment alone writes no file, a word after a wrapper
+    // or an operand is no assignment
+    ['E28-sub-ctl-quoted-split', 'nad', "X['a b']=a cp ../base/report.md report.md", B, 'name'],
+    ['E28-sub-ctl-alone', 'nad', 'X[1]=a; cp ../base/report.md other.md', N, 'allow'],
+    ['E28-sub-ctl-harmless', 'nad', 'X[1]=a ls report.md', N, 'allow'],
+    ['E28-sub-ctl-operand', 'nad', 'echo X[a b]=a > ../scratch/o.md', N, 'allow'],
+  ];
+})();
+const e28Judge = (w, [id, cwd, raw, writers, expect, outside = 'allow']) => {
+  const cmd = w.fill(raw);
+  const at = w.cwds[cwd];
+  w.build();
+  const h = w.hook(cmd, at);
+  assert.ok(!h.reason.includes('an error of my own'), `${id}: no internal error: ${h.reason.split('\n')[0]}`);
+  if (expect === 'allow') assert.equal(h.status, 0, `${id}: allowed: ${cmd}: ${h.reason}`);
+  else {
+    assert.equal(h.status, 2, `${id}: refused: ${cmd}: ${h.reason}`);
+    assert.ok(!h.reason.includes(String.fromCharCode(0x2014)) && !ROMP_NOUNS.test(h.reason.split(w.W).join('<w>')), `${id}: no em dash, no romp noun`);
+    if (expect === 'name') assert.match(h.reason, BY_NAME_RE, `${id}: by name: ${h.reason.split('\n')[0]}`);
+    else assert.ok(h.reason.includes(expect[1]), `${id}: refused, the reason including (${expect[1]}): ${h.reason.split('\n')[0]}`);
+  }
+  if (outside != null) {
+    w.build();
+    const o = w.hook(cmd, w.cwds.out);
+    assert.equal(o.status, 0, `${id}: from a cwd in no project the relative write reaches no tracked file: ${cmd}: ${o.reason}`);
+  }
+  if (namedPresent(cmd, `${id}, whose command names it: ${cmd}`)) for (const shell of shellsFor(['bash', 'zsh', 'dash'], id)) {
+    const r = w.run(cmd, at, shell);
+    assert.equal(r.changed, writers.includes(shell), `${id}: run unguarded, ${shell} ${writers.includes(shell) ? 'writes' : 'leaves'} the tracked subset: ${cmd}: ${r.stderr}`);
+  }
+  };
+test("round 7, twenty-eighth commit, the rows, THE EXIT (the reviewer's correctness-3): a printer after an unwrapped `exit` is UNRESOLVABLE naming the exit, on every road a printed list reaches a shell by and in every spelling, the exit ending only the subshell it stands in, the EXIT-trap row named by the exit; `return`, `break` and `continue` stay silent, the copy after each refused by name with the shells that run it; each with the shells that write", () => {
+  const w = sixthPassWorld();
+  const savedHome = process.env.HOME;
+  process.env.HOME = w.HOME;
+  try {
+    const rows = E28_ROWS.filter((r) => r[0].startsWith('E28-exit-') || r[0].startsWith('E28-silent-'));
+    assert.ok(rows.length > 0, 'the group has rows');
+    for (const row of rows) e28Judge(w, row);
+  } finally { process.env.HOME = savedHome; w.rm(); }
+});
+test("round 7, twenty-eighth commit, the rows, THE TRAP'S TEXT: a trap whose text prints by the model, or is filled in by the shell, makes the list UNRESOLVABLE naming the trap (the EXIT-trap producer allowed at the round-5 and round-6 heads while every shell copied), and one whose text prints nothing stays a command outside the model; each with the shells that write", () => {
+  const w = sixthPassWorld();
+  const savedHome = process.env.HOME;
+  process.env.HOME = w.HOME;
+  try {
+    const rows = E28_ROWS.filter((r) => r[0].startsWith('E28-trap-'));
+    assert.ok(rows.length > 0, 'the group has rows');
+    for (const row of rows) e28Judge(w, row);
+  } finally { process.env.HOME = savedHome; w.rm(); }
+});
+test("round 7, twenty-eighth commit, the rows, THE PLAIN ASSIGNMENT (the reviewer's correctness-4): a plain prefix assignment keeps its braces as text, allowed where no shell writes, while a declaration's operand and a word after a wrapper stay brace-expanded as bash expands them and refused with bash writing; the splice-road twins; each with the shells that write", () => {
+  const w = sixthPassWorld();
+  const savedHome = process.env.HOME;
+  process.env.HOME = w.HOME;
+  try {
+    const rows = E28_ROWS.filter((r) => r[0].startsWith('E28-assign-') || r[0].startsWith('E28-decl-') || r[0].startsWith('E28-splice-'));
+    assert.ok(rows.length > 0, 'the group has rows');
+    for (const row of rows) e28Judge(w, row);
+  } finally { process.env.HOME = savedHome; w.rm(); }
+});
+test("round 7, twenty-eighth commit, the rows, THE SUBSCRIPTED ASSIGNMENT (carried from the seventeenth commit's verifier): `NAME[subscript]=` before a command is an assignment and the command after it is judged, on every road and cwd, alone it writes an element of the name, and a subscript bash reads as one word across a blank or an operator is a command the guard does not read (THE SPLIT SUBSCRIPT); each with the shells that write", () => {
+  const w = sixthPassWorld();
+  const savedHome = process.env.HOME;
+  process.env.HOME = w.HOME;
+  try {
+    const rows = E28_ROWS.filter((r) => r[0].startsWith('E28-sub-') || r[0].startsWith('E28-split-'));
+    assert.ok(rows.length > 0, 'the group has rows');
+    for (const row of rows) e28Judge(w, row);
+  } finally { process.env.HOME = savedHome; w.rm(); }
+});
+test("round 7, twenty-eighth commit: the population by group and where the code lives (the rows above prove what it does; each pin names the rows that red without it)", () => {
+  const count = (p) => E28_ROWS.filter((r) => r[0].startsWith(p)).length;
+  assert.deepEqual({ exit: count('E28-exit-'), silent: count('E28-silent-'), trap: count('E28-trap-'), assign: count('E28-assign-'), decl: count('E28-decl-'), splice: count('E28-splice-'), sub: count('E28-sub-'), split: count('E28-split-'), all: E28_ROWS.length },
+    { exit: 42, silent: 12, trap: 12, assign: 17, decl: 14, splice: 2, sub: 41, split: 15, all: 155 }, 'the population by group, as measured (r7-e28-measure-*.log)');
+  // the mechanisms in-process: the words the lexer makes, the renderer over them
+  const words = (s) => lex(s).segments[0].words;
+  assert.deepEqual(words('A={x,report.md} true').map((x) => x.text), ['A={x,report.md}', 'true'], 'THE PLAIN ASSIGNMENT: a prefix assignment is one word, its braces text (behaviour: E28-assign-redir)');
+  assert.deepEqual(words('B=1 A={x,y} c').map((x) => x.text), ['B=1', 'A={x,y}', 'c'], 'after another assignment too (behaviour: E28-assign-two)');
+  assert.deepEqual(words('! A={x,y}').map((x) => x.text), ['!', 'A={x,y}'], 'after a reserved word too (behaviour: E28-assign-bang)');
+  assert.deepEqual(words('export A={x,y}').map((x) => x.text), ['export', 'A=x', 'A=y'], 'a declaration\'s operand is brace-expanded, as bash expands it (behaviour: E28-decl-export-redir)');
+  assert.deepEqual(words('env A={x,y} sh').map((x) => x.text), ['env', 'A=x', 'A=y', 'sh'], 'an operand after a wrapper too (behaviour: E28-decl-env-arg)');
+  assert.deepEqual(words('echo A={x,y}').map((x) => x.text), ['echo', 'A=x', 'A=y'], 'an assignment-shaped operand of a command is brace-expanded');
+  assert.deepEqual(words('"A"={x,y}').map((x) => x.text), ['A=x', 'A=y'], 'a quoted name is no assignment: brace-expanded');
+  assert.deepEqual(words('X[1]={x,y} true').map((x) => x.text), ['X[1]={x,y}', 'true'], 'a subscripted prefix assignment keeps its braces too (bash and zsh, measured)');
+  assert.equal(guard.renderWords(words('A={1,2} echo x')), "A='{1,2}' echo x", 'the seventeenth commit\'s renderer over the one prefix word (behaviour: E28-splice-declare-twin, S17-hs-assign-brace)');
+  assert.equal(guard.renderWords(words('X[1]="a" cp a b')), 'X[1]="a" cp a b', 'THE SUBSCRIPTED ASSIGNMENT renders by its raw, the assignment it is: its brackets make it a word that is not literal (a glob), which the renderer never quotes whole (behaviour: E28-sub-readable-dq)');
+  const closer = (cmd) => { const segs = lex(cmd).segments; return segs[segs.length - 2]; };
+  assert.ok(closer('(X[a b]=a echo a) | bash').printed && /as one word, blanks and operators inside it included/.test(closer('(X[a b]=a echo a) | bash').printed.unresolvableReading.why), 'THE SPLIT SUBSCRIPT in THE OUTPUT MODEL: the list is UNRESOLVABLE, where its split words had read as commands outside the model and the list as no reading at all (behaviour: E28-split-printer; the walk refuses the words too)');
+  assert.equal(lex('X[a b]=a cp x y').segments[0].subscriptSplit, 'X[a b]', 'THE SPLIT SUBSCRIPT marks the segment with the bracketed text (behaviour: E28-split-blank)');
+  assert.equal(lex("X['a b']=a cp x y").segments[0].subscriptSplit, undefined, 'a quoted blank is inside the one word the lexer reads (behaviour: E28-sub-ctl-quoted-split)');
+  assert.equal(lex('echo X[a b]=a').segments[0].subscriptSplit, undefined, 'an operand is not in command position (behaviour: E28-sub-ctl-operand)');
+  // where the code lives (the rows above prove what it does; each pin names the rows that red without it)
+  const hook = fs.readFileSync(HOOK, 'utf8');
+  assert.ok(hook.includes("const SILENT_COMMANDS = new Set(['true', ':', 'false', 'test', '[', 'sleep', 'shift', 'break', 'continue', 'return', 'wait']);"), 'correctness-3 as ruled: `exit` leaves SILENT_COMMANDS and `return`, `break` and `continue` stay (behaviour: E28-exit-sub-pipe, E28-silent-*)');
+  assert.ok(hook.includes("if (cmd.name === 'exit' && !cmd.wrapped) { if (!exited) exited = { depth, spelling:"), 'THE EXIT: an unwrapped exit is recorded with its depth (behaviour: E28-exit-*)');
+  assert.ok(hook.includes('else if (!s.pattern) { if (exited && exited.depth >= depth) exited = null; depth--; }'), 'THE EXIT: the subshell it ended closes at its `)` (behaviour: E28-exit-ctl-nested-harmless)');
+  assert.ok(hook.includes("const alts = !oneWord && plainPrefixAssignment() ? [[buf, marks]] : braceExpand(buf, marks);"), 'correctness-4 as ruled: endWord skips braceExpand for a plain prefix assignment (behaviour: E28-assign-*)');
+  assert.ok(/const plainPrefixAssignment = \(\) => [^\n]*seg\.words\.every\(\(w\) => isAssignmentWord\(w\) \|\| \(plainWord\(w\) && RESERVED\.has\(w\.text\)\)\);/.test(hook) && !/const plainPrefixAssignment = [^\n]*VAR_ASSIGNERS/.test(hook), 'and never for a declaration\'s operand (behaviour: E28-decl-*)');
+  assert.ok(hook.includes("if (cmd.name === 'trap' && !cmd.wrapped) {"), 'THE TRAP\'S TEXT in listOutput (behaviour: E28-trap-*)');
+  assert.ok(hook.includes('const isAssignmentWord = (w) => /^[A-Za-z_][A-Za-z0-9_]*\\+?=/.test(w.raw) || subscriptAssignmentLen(w.raw) > 0;') && hook.includes('while (k < words.length && (isAssignmentWord(words[k]) ||'), 'THE SUBSCRIPTED ASSIGNMENT: commandOf skips it as an assignment (behaviour: E28-sub-note-*, E28-sub-one)');
+  assert.ok(hook.includes("if (!inWord && !expect && !oneWord && !seg.subscriptSplit && /[A-Za-z_]/.test(c)") && hook.includes('if (splitSubscript) for (const w of seg.words) cannotRead(w, \'command\', splitSubscript);'), 'THE SPLIT SUBSCRIPT: the lexer marks the segment and the walk reads every word from it on as one it cannot read (behaviour: E28-split-*)');
 });

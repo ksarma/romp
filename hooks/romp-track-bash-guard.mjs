@@ -1682,7 +1682,14 @@ export function lex(command, shell = null, opts = {}) {
       // read a comparison)
       if (testGrammar && raw === '[[' && seg.words.every((w) => plainWord(w) && RESERVED.has(w.text))) { inTest = true; testStart = i; }
       else if (raw === ']]' && inTest) closeTest(i - 2, true);
-      const alts = braceExpand(buf, marks);
+      // THE PLAIN ASSIGNMENT (round 7 of fork PR #780 review, twenty-eighth commit, 2026-09-24; the reviewer's correctness-4 as ruled in section E
+      // of the round-6 rulings): no shell brace-expands an assignment word in the prefix of a simple command (`A={x,report.md}; echo "$A"` printed
+      // `{x,report.md}` in bash, zsh and dash, measured), so a plain prefix assignment stays one word with its braces as text, where the guard had
+      // read `A=x A=report.md` and refused `A={x,report.md}; echo y > $A` by name while no shell wrote report.md. A declaration's operand is NOT
+      // a plain prefix and keeps the expansion: bash brace-expands the operands of export, declare, typeset, local and readonly (`export
+      // A={x,report.md}` gave A=report.md in bash and wrote the file, zsh and dash kept the braces), and so is a word after a wrapper (`env
+      // A={x,..}`); the ${...} word (oneWord) keeps its own brace rule (zsh expands a brace list there)
+      const alts = !oneWord && plainPrefixAssignment() ? [[buf, marks]] : braceExpand(buf, marks);
       if (!alts) seg.words.push(word(buf, false, raw, { marks }));
       else { const group = alts.length > 1 ? ++braceSerial : null; for (const [t, m] of alts) { const bw = mk(t, m); if (alts.length > 1 && t === '') bw.braceEmpty = true; if (group != null) bw.braceGroup = group; seg.words.push(bw); } }   // THE EMPTY ALTERNATIVE (round 6's sixth commit): an empty alternative of a brace list is a word bash drops and zsh keeps (extract judges both readings); THE BRACE GROUP (round 7's seventeenth commit): the alternatives of one list share an id
       const rd = readingsOf();
@@ -2019,8 +2026,24 @@ export function lex(command, shell = null, opts = {}) {
   // Parameters; dash(1): Word Expansions, "field splitting is not performed on assignments"; zsh splits no expansion), the words before
   // it being assignment words alone or a declaration command (`export`, `declare`, `typeset`, `local`, `readonly`, whose operands bash
   // and zsh read as assignments; dash splits an `export` operand, and the whole text is the reading that runs the copy in bash and zsh,
-  // the safe side, while a value holding a blank never resolves into a target)
-  const assignmentValue = () => /^[A-Za-z_][A-Za-z0-9_]*\+?=/.test(buf) && /^u+$/.test(marks.slice(0, buf.indexOf('=') + 1)) && seg.words.every((w, k) => isAssignmentWord(w) || (plainWord(w) && RESERVED.has(w.text)) || (k === 0 && plainWord(w) && (VAR_ASSIGNERS.has(w.text) || w.text === 'local')));
+  // the safe side, while a value holding a blank never resolves into a target); a `NAME[subscript]=` word's value is one too (THE SUBSCRIPTED
+  // ASSIGNMENT: bash and zsh split none of it, so `X[1]=$(echo a b) $c ..` runs `$c`)
+  const assignmentValue = () => ((/^[A-Za-z_][A-Za-z0-9_]*\+?=/.test(buf) && /^u+$/.test(marks.slice(0, buf.indexOf('=') + 1))) || subscriptShapeLen(buf, marks) > 0) && seg.words.every((w, k) => isAssignmentWord(w) || (plainWord(w) && RESERVED.has(w.text)) || (k === 0 && plainWord(w) && (VAR_ASSIGNERS.has(w.text) || w.text === 'local')));
+  // THE PLAIN ASSIGNMENT (endWord says why): the word under way is `NAME=` or `NAME+=` under plain marks and every word before it in the segment
+  // is an assignment word or a reserved word, so it is an assignment in the prefix of a simple command; a declaration command's operand
+  // (assignmentValue's `export`, `declare`, `typeset`, `local`, `readonly` clause) is not one: bash brace-expands those
+  // THE SUBSCRIPTED ASSIGNMENT inside its subscript: the word under way opens `NAME[` in command position and its brackets are not closed yet, so
+  // bash reads a substitution's text there as part of the one assignment word, never split (`X[$(echo 1 2)]=a cp ../base/report.md report.md`
+  // copied in bash while the text road split the word at the blank and the guard read `X[1` as the command name)
+  const prefixSubscript = () => {
+    const m = buf.match(/^[A-Za-z_][A-Za-z0-9_]*\[/);
+    if (!m || !/^u+$/.test(marks.slice(0, m[0].length)) || !seg.words.every((w) => isAssignmentWord(w) || (plainWord(w) && RESERVED.has(w.text)))) return false;
+    let depth = 0;
+    for (let k = m[0].length - 1; k < buf.length; k++) if (marks[k] === 'u') { if (buf[k] === '[') depth++; else if (buf[k] === ']') depth--; }
+    return depth > 0;
+  };
+  // (a `NAME[subscript]=` word too: bash and zsh keep its braces, measured; THE SUBSCRIPTED ASSIGNMENT)
+  const plainPrefixAssignment = () => ((/^[A-Za-z_][A-Za-z0-9_]*\+?=/.test(buf) && /^u+$/.test(marks.slice(0, buf.indexOf('=') + 1))) || subscriptShapeLen(buf, marks) > 0) && seg.words.every((w) => isAssignmentWord(w) || (plainWord(w) && RESERVED.has(w.text)));
   const placeReading = (r, spelling, mode, target = seg) => {
     if (r == null) return false;
     const printed = (props) => Object.assign(word('\0', false, spelling, { marks: 'x' }), props);   // `target`: the segment the producer's printed text is placed on (the producer itself, or the closer of the subshell or group holding it: THE OUTPUT MODEL, round 6's second commit)
@@ -2044,7 +2067,7 @@ export function lex(command, shell = null, opts = {}) {
     // result and split at blanks among unquoted operands (bash and dash; zsh splits nothing, and its reading, the whole text, is
     // the default word's)
     const text = trimmed[0];
-    if (dqInner || hdInner || inDq || noSplitOpt || oneWord || (expect && expect.kind === 'herestring') || assignmentValue()) { quoted(text); return true; }
+    if (dqInner || hdInner || inDq || noSplitOpt || oneWord || (expect && expect.kind === 'herestring') || assignmentValue() || prefixSubscript()) { quoted(text); return true; }
     if (ifsNamed) return false;   // among unquoted operands, and at a redirection target (round 6's fourth commit: `IFS=:; echo x > $(echo 'report.md:x')` opened report.md in zsh while the text was judged whole), while the command names IFS the result splits by a rule the guard does not read: not resolved, the expansion stays (a target the hook cannot read) and its command is read
     if (expect) { buf += text; marks += 'e'.repeat(text.length); return true; }   // a redirection target, or a `<`: the whole text, globbed; at a write target endWord adds each blank-separated field beside it (THE SPLIT TARGET)
     const parts = text.split(/[ \t\n]+/);   // '' at an end when the text begins or ends with a blank: the word under way ends there
@@ -2210,6 +2233,12 @@ export function lex(command, shell = null, opts = {}) {
       inWord = true; buf += c; marks += 'u'; raw += c; i++;
       continue;
     }
+    // THE SPLIT SUBSCRIPT (THE SUBSCRIPTED ASSIGNMENT's lexer side, round 7 of fork PR #780 review, twenty-eighth commit): a word in command
+    // position that opens `NAME[` is read by bash to the matching `]` as ONE word, blanks and operators inside it included (`X[a b]=a cp
+    // ../base/report.md report.md`, `X[a;b]=a cp ..` and `X[a|b]=a cp ..` copied in bash, where zsh and dash split the word and ran nothing of
+    // it, measured), while this lexer splits it; the segment is marked with the bracketed text, and extract reads every word from it on as one
+    // it cannot read (listOutput as UNRESOLVABLE), since the command bash runs after the word is not the one read here
+    if (!inWord && !expect && !oneWord && !seg.subscriptSplit && /[A-Za-z_]/.test(c) && seg.words.every((w) => isAssignmentWord(w) || (plainWord(w) && RESERVED.has(w.text)))) { const e = splitSubscriptEnd(src, i); if (e > 0) seg.subscriptSplit = src.slice(i, e); }
     if (c === ' ' || c === '\t') { endWord(); i++; continue; }
     if (c === '\n') {
       endWord();
@@ -2894,7 +2923,7 @@ function commandOf(words) {
   for (;;) {
     while (k < words.length && plainWord(words[k]) && RESERVED.has(words[k].text)) k++;   // unquoted: `"{" cd ../scratch` runs a command named `{`, and the cd is its operand (round 5's fourth addendum)
     const first = k;
-    while (k < words.length && (/^[A-Za-z_][A-Za-z0-9_]*\+?=/.test(words[k].raw) || (wrappers[wrappers.length - 1] === 'env' && words[k].literal && words[k].text.includes('=')))) k++;   // after env an operand holding a `=`, however quoted and whatever its name, is env's (round 6's fourth commit: `env 'X=a b' cp a b` copied in every shell while the quoted word was read as the command name and the cp as its operand; the fifth: env(1) sets any NAME=VALUE operand, so `env 'BASH_FUNC_c%%=() { cp "$@"; }' bash -c '..'`, whose name is no identifier, was read as a command named so)
+    while (k < words.length && (isAssignmentWord(words[k]) || (wrappers[wrappers.length - 1] === 'env' && words[k].literal && words[k].text.includes('=')))) k++;   // a `NAME[subscript]=` word too (THE SUBSCRIPTED ASSIGNMENT: bash and zsh run the command after it)   // after env an operand holding a `=`, however quoted and whatever its name, is env's (round 6's fourth commit: `env 'X=a b' cp a b` copied in every shell while the quoted word was read as the command name and the cp as its operand; the fifth: env(1) sets any NAME=VALUE operand, so `env 'BASH_FUNC_c%%=() { cp "$@"; }' bash -c '..'`, whose name is no identifier, was read as a command named so)
     // The readability rule (the sixth pass's attacker, C5c, 2026-09-19): after a wrapper an assignment-shaped word is the
     // wrapper's ARGUMENT, not an assignment (bash looks `command x=b` up as a command; env sets it for a command that is not
     // there; `time x=b` assigns in bash alone), so the segment is not assignment-only: the words come back as the arguments
@@ -3226,7 +3255,63 @@ function setsKeywordMode(name, args) {
   }
   return false;
 }
-const isAssignmentWord = (w) => /^[A-Za-z_][A-Za-z0-9_]*\+?=/.test(w.raw);
+// THE SUBSCRIPTED ASSIGNMENT (round 7 of fork PR #780 review, twenty-eighth commit, 2026-09-24; the seventeenth commit's verifier, carried to the
+// lexer group): bash, and zsh for a subscript in range, read `NAME[subscript]=value` (and `+=`) in the prefix of a simple command as an assignment
+// and run the command after it (`X[1]=a cp ../base/report.md report.md` copied the file in bash and zsh, measured, while the guard read `X[1]=a` as
+// the command name and the copy as its operands); alone, it writes an element of NAME, so `$NAME` may stand for another text after it (bash's
+// `$X` is `${X[0]}`: `X=ls; X[0]=cp; $X ../base/report.md report.md` copied in bash). The length of the `NAME[...]=` (or `+=`) a raw spelling
+// opens with, the subscript read to its matching `]` past quotes, escapes and nested brackets as bash reads it; 0 for any other raw.
+const subscriptAssignmentLen = (raw) => {
+  const m = raw.match(/^[A-Za-z_][A-Za-z0-9_]*\[/);
+  if (!m) return 0;
+  let depth = 0;
+  for (let i = m[0].length - 1; i < raw.length; i++) {
+    const c = raw[i];
+    if (c === '\\') { i++; continue; }
+    if (c === "'") { const e = raw.indexOf("'", i + 1); if (e < 0) return 0; i = e; continue; }
+    if (c === '"') { i++; while (i < raw.length && raw[i] !== '"') { if (raw[i] === '\\') i++; i++; } continue; }
+    if (c === '[') depth++;
+    else if (c === ']' && --depth === 0) { const eq = raw.slice(i + 1).match(/^\+?=/); return eq ? i + 1 + eq[0].length : 0; }
+  }
+  return 0;
+};
+// the same shape over a word's text and marks (the lexer's word under way): the name, the brackets and the `=` unquoted, the subscript any text
+const subscriptShapeLen = (text, marks) => {
+  const m = text.match(/^[A-Za-z_][A-Za-z0-9_]*\[/);
+  if (!m || !/^u+$/.test(marks.slice(0, m[0].length))) return 0;
+  let depth = 0;
+  for (let i = m[0].length - 1; i < text.length; i++) {
+    if (marks[i] !== 'u') continue;
+    if (text[i] === '[') depth++;
+    else if (text[i] === ']' && --depth === 0) { const eq = text.slice(i + 1).match(/^\+?=/); return eq && /^u+$/.test(marks.slice(i + 1, i + 1 + eq[0].length)) ? i + 1 + eq[0].length : 0; }
+  }
+  return 0;
+};
+const isAssignmentWord = (w) => /^[A-Za-z_][A-Za-z0-9_]*\+?=/.test(w.raw) || subscriptAssignmentLen(w.raw) > 0;
+// THE SPLIT SUBSCRIPT (lex says why): where `src` at `i` opens `NAME[` and the subscript, read to its matching `]` past quotes, escapes, `$(..)`,
+// `${..}` and backticks, holds an unquoted blank or operator character (where this lexer ends the word and bash does not), the index after the
+// `]`; else 0 (no such character, or no matching `]`: then bash reads no word either, and the text is a syntax error it runs nothing of)
+const NAME_BRACKET = /[A-Za-z_][A-Za-z0-9_]*\[/y;
+function splitSubscriptEnd(src, i) {
+  NAME_BRACKET.lastIndex = i;
+  const m = NAME_BRACKET.exec(src);
+  if (!m) return 0;
+  let depth = 0;
+  let split = false;
+  for (let j = i + m[0].length - 1; j < src.length; j++) {
+    const c = src[j];
+    if (c === '\\') { j++; continue; }
+    if (c === "'") { const e = src.indexOf("'", j + 1); if (e < 0) return 0; j = e; continue; }
+    if (c === '"') { j++; while (j < src.length && src[j] !== '"') { if (src[j] === '\\') j++; j++; } continue; }
+    if (c === '`') { const e = src.indexOf('`', j + 1); if (e < 0) return 0; j = e; continue; }
+    if (c === '$' && src[j + 1] === '(') { const e = parenCloseAt(src.slice(j + 1)); if (e < 0) return 0; j += 1 + e; continue; }
+    if (c === '$' && src[j + 1] === '{') { const e = src.indexOf('}', j + 2); if (e < 0) return 0; j = e; continue; }
+    if (' \t\n;&|<>()'.includes(c)) split = true;
+    else if (c === '[') depth++;
+    else if (c === ']' && --depth === 0) return split ? j + 1 : 0;
+  }
+  return 0;
+}
 // The reason a `set`/`shopt`/`setopt`/`unsetopt` leaves the directory unknown, or null when every option it names is
 // inert (or it only prints or queries). Positional parameters after `set` are not options (`set -- a b`, `set x y`).
 function shellOptionChange(name, args) {
@@ -4266,7 +4351,14 @@ function literalOutput(inner, shell, depth = 0) {
 // establish), null when nothing in the list prints by the model (`(cat f) | bash`, as `cat f | bash`: the producer outside the output
 // model, the residual the surfaces name). One printer alone is its own reading unchanged (plain stays plain: the text road is open to
 // `$(echo cp)` as before); several are joined, the union capped at 64 texts (past it, UNRESOLVABLE).
-const SILENT_COMMANDS = new Set(['true', ':', 'false', 'test', '[', 'sleep', 'shift', 'break', 'continue', 'exit', 'return', 'wait']);
+// THE EXIT (round 7 of fork PR #780 review, twenty-eighth commit, 2026-09-24; the reviewer's correctness-3 as ruled in section E of the round-6
+// rulings): an unwrapped `exit` ends the list it stands in, so nothing after it in that list prints (`(exit; echo 'cp ..') | bash` wrote nothing
+// in bash, zsh or dash while the guard, reading the exit as silent, refused the copy by name), and a trap the list set before it runs its
+// text there (`(trap "echo 'cp ..'" EXIT; exit; echo ..) | bash` copied in every shell). A printer after an exit is UNRESOLVABLE naming the
+// exit; the exit ends only the subshell it stands in, so one inside a nested `( )` of the list stops mattering at that subshell's `)`
+// (`( (exit); echo ..)` prints). `return`, `break` and `continue` stay silent: misused in a subshell they end nothing in every shell (bash ran
+// the printer after each, dash after `break` and `continue`, measured), so a printer after one prints and is read as before.
+const SILENT_COMMANDS = new Set(['true', ':', 'false', 'test', '[', 'sleep', 'shift', 'break', 'continue', 'return', 'wait']);
 const catOfHeredoc = (s) => {
   if (!s.heredocs.length || s.redirects.length || (s.stdin && s.stdin.length) || s.subs.length || s.viaSubs.length || s.arith.length || (s.closerTail && s.closerTail.length)) return null;
   const cmd = commandOf(s.words);
@@ -4278,9 +4370,18 @@ function listOutput(segs) {
   const parts = [];
   let outside = false;
   let compound = null;   // the head of a keyword compound in the list (THE COMPOUND PRODUCER): the refusal names it
+  let exited = null;   // THE EXIT: { depth, spelling } of the first unwrapped `exit` in a subshell still open, or null
+  let trapped = null;   // THE TRAP'S TEXT: why the first trap whose text prints makes the list's text unknown, read at the end
+  let depth = 0;   // the `( )` nesting inside the list, so an exit ends the subshell it stands in and no other
+  const afterExit = (name) => unresolvable(`the ${name} stands after \`${exited.spelling}\` in the list, which ends the list there: nothing after it prints, and a trap the list set before it may print a text I do not read, so the text printed is not known`);
   for (let k = 0; k < segs.length; k++) {
     const s = segs[k];
-    if (s.paren) continue;
+    if (s.paren) {
+      if (s.paren === '(') depth++;
+      else if (!s.pattern) { if (exited && exited.depth >= depth) exited = null; depth--; }   // THE EXIT: the subshell it ended closes here (a `)` ending a case pattern closes none: THE PAREN RULE)
+      continue;
+    }
+    if (s.subscriptSplit) return unresolvable(`bash reads \`${s.subscriptSplit}\` as one word, blanks and operators inside it included, and what it runs after it is a command I do not read, so the text printed is not known`);   // THE SPLIT SUBSCRIPT
     if (s.words.length && s.words.every((w) => plainWord(w) && (w.text === '{' || w.text === '}'))) continue;
     // THE COMPOUND PRODUCER (round 6's fourth commit, 2026-09-21): a keyword compound's head runs its body a number of times the model does
     // not count (a loop), or not at all (a condition), so it is a command the model does not read, and a printer inside it makes the list
@@ -4294,29 +4395,46 @@ function listOutput(segs) {
     if (printer && s.op && s.op !== ';' && s.op !== '\n' && s.op !== ')') return unresolvable(`the ${printer.name} is followed by \`${s.op}\`, an operator outside the model (whether and when its text reaches the stream depends on it), so the text printed is not known`);
     if (s.op && s.op !== ';' && s.op !== '\n' && s.op !== ')') { outside = true; continue; }
     const cat = catOfHeredoc(s);
-    if (cat) { parts.push({ texts: cat, plain: false, newline: false }); continue; }
+    if (cat) { if (exited) return afterExit('cat'); parts.push({ texts: cat, plain: false, newline: false }); continue; }
     if (s.redirects.length || s.heredocs.length || (s.stdin && s.stdin.length) || s.subs.length || s.viaSubs.length || s.arith.length || (s.closerTail && s.closerTail.length)) {
       if (printer) return unresolvable(shapeOnPrinter({ ...s, op: '' }, printer.name));
       outside = true;
       continue;
     }
     // THE SPLICED PRINTER: a command name that is an expansion, one of whose texts makes it a printer, prints the union over its texts
-    if (printer && printer.spliced) { const r = splicedOutput(printerOf({ ...s, op: '' })); if (r.unresolvableReading) return r; parts.push({ texts: r.texts, plain: false, newline: printer.name === 'echo', echo: printer }); continue; }   // spliced again with the list's own operator cleared, as segmentOutput is called below
+    if (printer && printer.spliced) { if (exited) return afterExit(printer.name); const r = splicedOutput(printerOf({ ...s, op: '' })); if (r.unresolvableReading) return r; parts.push({ texts: r.texts, plain: false, newline: printer.name === 'echo', echo: printer }); continue; }   // spliced again with the list's own operator cleared, as segmentOutput is called below
     const cmd = commandOf(s.words);
     if (!cmd) { if (s.words.every((w) => isAssignmentWord(w) || (plainWord(w) && RESERVED.has(w.text)))) continue; outside = true; continue; }
     if (cmd.unknown || cmd.opaque || 'script' in cmd || cmd.chdirs.length || cmd.writes.length) { outside = true; continue; }
+    if (cmd.name === 'exit' && !cmd.wrapped) { if (!exited) exited = { depth, spelling: ['exit', ...cmd.args.map((w) => w.raw)].join(' ') }; continue; }   // THE EXIT (a wrapped one is a command the model does not read: `command exit` ran the printer after it in zsh, `builtin exit` in dash)
     if (SILENT_COMMANDS.has(cmd.name) && !cmd.wrapped) continue;
     // a `cat` of the standard input with nothing in the list feeding it prints what the CALLER feeds the command, a text this reading cannot
     // see (round 6's third commit, 2026-09-21: `echo 'cp a b' | { bash -c "$(cat)"; }` and `| bash -c 'eval "$(cat)"'` ran the piped text in
     // every shell while the substitution was outside the model and the script went unread): UNRESOLVABLE, refused where a script or a
     // target is built from it; a cat after a `|` inside the list reads that pipe and stays outside the model with it (the residual)
     if (cmd.name === 'cat' && !cmd.wrapped && !(k > 0 && segs[k - 1].op === '|') && cmd.args.every((w) => w.literal && (w.text === '-' || w.text === '-u' || isStdinName(w.text)))) return unresolvable('a cat of the standard input stands in the list, and what the command feeds it is a text I do not read here, so the text printed is not known');
+    // THE TRAP'S TEXT (with THE EXIT, round 7 of fork PR #780 review, twenty-eighth commit; the round-6 refuter's EXIT-trap row): a trap the list
+    // sets runs its text on the list's stream when its signal comes, an EXIT trap as the subshell ends (`(trap "echo 'cp ..'" EXIT; exit) | bash`
+    // and `(trap "echo 'cp ..'" EXIT) | bash` copied in bash, zsh and dash while nothing in the list printed by the model and the producer was
+    // allowed as one outside it), at a moment the model does not place among the other printers; a trap whose text prints by the model makes the
+    // list UNRESOLVABLE, the trap named, as does one whose text the shell fills in (`t="echo 'cp ..'"; (trap "$t" EXIT) | bash` copied in every
+    // shell: the text may print anything), and one whose literal text prints nothing by the model stays a command outside it as before
+    if (cmd.name === 'trap' && !cmd.wrapped) {
+      const ops = cmd.args.length && cmd.args[0].literal && cmd.args[0].text === '--' ? cmd.args.slice(1) : cmd.args;
+      const action = ops.length > 1 && ops[0].literal && !/^-/.test(ops[0].text) ? ops[0].text : null;
+      if (!trapped && ops.length > 1 && !ops[0].literal) trapped = `a \`trap\` in the list runs \`${ops[0].raw}\`, a text the shell fills in, when its signal comes, so what it prints then is not known`;
+      else if (!trapped && action != null && literalOutput(action, s.shell) != null) trapped = `a \`trap\` in the list runs \`${action}\` when its signal comes, and what that text prints then is not placed among the list's other output, so the text printed is not known`;
+      outside = true;   // the refusal is read at the list's end, so a printer after an exit names the exit (the ruling's EXIT-trap row)
+      continue;
+    }
     if (cmd.name !== 'echo' && cmd.name !== 'printf') { outside = true; continue; }
+    if (exited) return afterExit(cmd.name);   // THE EXIT
     const r = segmentOutput({ ...s, op: '' });
     if (r == null) { outside = true; continue; }
     if (r.unresolvableReading) return r;
     parts.push({ texts: r.texts, plain: !!r.plain, newline: cmd.name === 'echo', echo: cmd });
   }
+  if (trapped) return unresolvable(trapped);   // THE TRAP'S TEXT
   if (!parts.length) return null;
   if (outside) return unresolvable(compound ? `a \`${compound}\` runs the echo, printf or cat inside it a number of times I do not count, so the text printed is not known` : 'a command whose output I do not read stands in the list beside an echo, a printf or a cat of a here-document, so the text printed is not known');
   if (parts.length === 1) return parts[0].plain ? plain(parts[0].texts) : sound(parts[0].texts);
@@ -4836,7 +4954,7 @@ const IDENTIFIER = /^[A-Za-z_][A-Za-z0-9_]*$/;
 // before any wrapper is peeled (-1 for assignments alone). A `NAME=value` before it is a prefix assignment on the command.
 function rawHeadIndexOf(words) {
   let k = 0;
-  while (k < words.length && ((plainWord(words[k]) && RESERVED.has(words[k].text)) || /^[A-Za-z_][A-Za-z0-9_]*\+?=/.test(words[k].raw))) k++;   // a quoted reserved word is the command (round 5's fourth addendum)
+  while (k < words.length && ((plainWord(words[k]) && RESERVED.has(words[k].text)) || isAssignmentWord(words[k]))) k++;   // a quoted reserved word is the command (round 5's fourth addendum); a `NAME[subscript]=` word is an assignment (THE SUBSCRIPTED ASSIGNMENT)
   return k < words.length ? k : -1;
 }
 // The tokens of a word's text that are identifiers and came from the command's own text (not from an expansion, mark 'x',
@@ -5111,6 +5229,10 @@ function extractIn(command, ctx) {
   const unreadValueWhy = ctx.unreadValueWhy || new Map();   // why a name of unreadValues holds a value not read, where the reading said (round 7's twenty-fifth commit: a value composed from a positional parameter of a list rebound to values not read)
   const unreadValues = ctx.unreadValues || new Set();   // the names a value the resolver looked at and could not establish is given (round 6's fifth commit): a command name or script formed from such a name is UNRESOLVABLE
   const noteCandidate = (w) => {
+    // THE SUBSCRIPTED ASSIGNMENT: `NAME[subscript]=value` writes an element of NAME, and which text `$NAME` stands for after it (bash's element 0,
+    // zsh's characters of a scalar) is not a value the candidates read, so the name is marked, refused where it is a command name or a script
+    const sub = subscriptAssignmentLen(w.raw) ? w.raw.match(/^([A-Za-z_][A-Za-z0-9_]*)\[/) : null;
+    if (sub) { unreadValues.add(sub[1]); if (!unreadValueWhy.has(sub[1])) unreadValueWhy.set(sub[1], `\`${w.raw}\` writes an element of \`${sub[1]}\`, and which text \`$${sub[1]}\` stands for after it is not a value I read`); return; }
     const m = w.text.match(/^([A-Za-z_][A-Za-z0-9_]*)(\+?=)([^]*)$/);
     if (!m || (w.marks && /x/.test(w.marks.slice(0, m[1].length)))) return;   // the name itself an expansion: no candidate (the NUL a substitution stands as is in the value of a word whose readings scriptTexts answers below)
     if (!candidates.has(m[1])) candidates.set(m[1], new Set());
@@ -5714,6 +5836,10 @@ function extractIn(command, ctx) {
   };
   // the readable form: a word of a segment holding assignment words alone (commandOf gave null), resolved by the caller
   const recordPlainWord = (w, seg, idx, seq) => {
+    // THE SUBSCRIPTED ASSIGNMENT: an element of the name is written, a write the rule does not follow (taintWord's `a subscript`, which read
+    // the word while it fell to recordSegment as a command)
+    const sub = subscriptAssignmentLen(w.raw) ? w.raw.match(/^([A-Za-z_][A-Za-z0-9_]*)\[/) : null;
+    if (sub) { noteGroupName(sub[1]); if (!readonlyNames.has(sub[1])) taint(sub[1], wroteThrough(sub[1], 'a subscript', w.raw)); return; }
     const m = w.raw.match(/^([A-Za-z_][A-Za-z0-9_]*)(\+?=)/);
     if (!m) return;   // a reserved word (`{`, `}`, `then`, `!`)
     const name = m[1];
@@ -7030,7 +7156,7 @@ function extractIn(command, ctx) {
   // list, which the guard does not read, holds the empty text beside a value not read, vanishedValues), so a name composed from a positional holds the
   // value the shell gives it (`set -- x; eval 'set -- cp'; c=$1; $c ../base/report.md report.md` is refused by name, where the pre-walk read gave c `x`
   // alone while every shell copied), and a name composed from such a name does too (`d=$1; c=$d`); the candidates stay a union, so a value is only added
-  const noteAtWalk = (w) => { if (w && /^[A-Za-z_][A-Za-z0-9_]*\+?=/.test(w.text)) noteCandidate(w); };
+  const noteAtWalk = (w) => { if (w && (/^[A-Za-z_][A-Za-z0-9_]*\+?=/.test(w.text) || subscriptAssignmentLen(w.raw))) noteCandidate(w); };   // THE SUBSCRIPTED ASSIGNMENT: noteCandidate marks its name
   const countCandidates = () => { let n = 0; for (const set of candidates.values()) n += set.size; return n; };
   let knownCandidates = countCandidates();
   noteCandidates();   // THE HEAD CANDIDATES, over the words as lexed, before the walk (scriptTexts exists by now)
@@ -7049,11 +7175,17 @@ function extractIn(command, ctx) {
     opaque = lexed.opaque;
     noteCandidates();
   }
+  let splitSubscript = null;   // THE SPLIT SUBSCRIPT: the why of the first segment the lexer marked, for it and every later segment of this text
   for (let idx = 0; idx < segments.length; idx++) {
     const seg = segments[idx];
     walkIdx = idx;
     viaSeg = seg.dashPiece ? pieceVia(seg.dashPiece) : '';
     closeOneSegment();   // a one-segment body read on the previous segment closes here (round 5's addendum)
+    // THE SPLIT SUBSCRIPT (lex says why): from the marked segment on, bash reads the words as other words than the ones read here, so each is a
+    // word the hook cannot read (refused where a project is in play, a literal path in a project from any cwd, as rule (b) records a wrapper's
+    // rest); the segments are still read as written, so a write they make by name (the reading zsh and dash run) is judged as before
+    if (seg.subscriptSplit && !splitSubscript) { splitSubscript = { kind: 'subscriptSplit', text: seg.subscriptSplit }; poison(`bash reads \`${seg.subscriptSplit}\` as one word, blanks and operators inside it included, and what it runs after it is a command I do not read`); }
+    if (splitSubscript) for (const w of seg.words) cannotRead(w, 'command', splitSubscript);
     if (seg.paren === '(') {
       const next = segments[idx + 1];
       const prev = segments[idx - 1];
@@ -8990,6 +9122,14 @@ function judge(command, cwd) {
         + `lands on, and ${where} tracks files whose changes are recorded for me to accept or reject. Spell the target as its real `
         + `path: outside that project the command then runs as usual, and a tracked file takes its change through track-edit `
         + `instead:\n${TRACK_EDIT}`;
+    }
+    if (u.why && u.why.kind === 'subscriptSplit') {
+      // THE SPLIT SUBSCRIPT (round 7 of fork PR #780 review, twenty-eighth commit): bash reads the bracketed text as one word, so the command it
+      // runs after that word is not the one the words read here show
+      return `This command is blocked here: bash reads \`${u.why.text}\` as one word, the blanks and operators inside its brackets included, so `
+        + `the command it runs after that word is not the one I read, and I cannot tell what it would write, and ${where} tracks files whose `
+        + `changes are recorded for me to accept or reject. Quote the subscript, or run the assignment in a command of its own: outside that `
+        + `project the command then runs as usual, and a tracked file takes its change through track-edit instead:\n${TRACK_EDIT}`;
     }
     if (u.why && u.why.kind === 'unresolvable') {
       return `This command is blocked here: its ${u.how} names ${u.raw}, and ${u.why.text}, a directory on that path, is one I cannot `
