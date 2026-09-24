@@ -4953,28 +4953,45 @@ CENSUS_TOOLS='git|grep|egrep|fgrep|awk|gawk|mawk|sed|tr|wc|od|cat|cut|sort|uniq|
 # command word is taken past the keywords (coproc among them), the command prefixes and their option words (a word
 # starting with -, and the operand of nice -n and env -u: env -i git, nice -n 19 git and command -p git run git), the
 # assignments and the redirections, a redirection operator standing alone with its operand (< /dev/null git runs git),
-# and is read back from the RAW text at its offset in the masked text (masking keeps every byte's place), unquoted,
-# then by its basename: "git", 'git', \git and /usr/bin/git run git. A command word the census knows is a keyword, a
-# prefix, a builtin (the declarations local, export, readonly, declare and typeset among them: their words are names),
-# a lookup that runs nothing (command -v and -V, type, which), a function of the hook, judged_read or a reading tool;
-# any other command word counts as a read of a reading tool's word later in its simple command (fail-closed, since a
-# wrapper such as timeout, nohup, stdbuf, ionice or setsid runs its operand and no list of wrappers has an end; a case
-# pattern, arithmetic and an array literal's elements run nothing). Its run over the hook at round 9b found no such
-# command line, so no exception is kept for it. Code inside a $( ) or a backtick substitution is read wherever bash
+# and is read back from the RAW text at its offset in the masked text (masking keeps every byte's place), unquoted
+# (its quote and backslash characters removed, $'' and $"" read as quotes), then by its basename: "git", 'git', \git,
+# /usr/bin/git and a word whose quoting or escaping splits the name (gi\t, g''it, "g"it) run git. census_records
+# keeps a simple command for this reading when one of its words, with its quote and backslash characters removed,
+# holds a reading tool's name (round 9bc: until then it tested the raw word, and the split spellings passed). A
+# command word the census knows is a keyword, a prefix, a builtin (the declarations local, export, readonly, declare
+# and typeset among them: their words are names), a lookup that runs nothing (command -v and -V, type, which), a
+# function of the hook, judged_read or a reading tool; any other command word counts as a read of a reading tool's
+# word later in its simple command (fail-closed, since a wrapper such as timeout, nohup, stdbuf, ionice or setsid runs
+# its operand and no list of wrappers has an end; a case pattern, arithmetic and an array literal's elements run
+# nothing). Its run over the hook found no such command line (round 9b; round 9bc's unquoted test added no record
+# over the hook), so no exception is kept for it. Code inside a $( ) or a backtick substitution is read wherever bash
 # runs it, inside double quotes too, and so is the text after a judged_read call's -- past its first simple command,
-# the tagged read the tags judge. What the census cannot read, census_unread_shapes pins ABSENT from the hook's
-# comment-stripped RAW text (the masked text hides what quotes hold), each shape listed once per line: a command word
-# that begins with a parameter expansion or a substitution, other than the three the hook's own reads use (the tagged
-# command judged_read runs, "$@"; its -d rider, "$detail", which prints and reads nothing; and the scanner, "$gl",
-# above); a variable assigned a reading tool's name or path, and a default naming one by a path or not (${GIT:-git},
-# ${GIT:-/usr/bin/git}); a lookup answering a reading tool's path (command -v or -V, type or which, in a
-# substitution), the scanner's own lookup excepted by its exact text, gl="${ROMP_GITLEAKS:-$(command -v gitleaks ||
-# true)}" (on one line in the hook), whose answer runs only as "$gl"; an eval; a here-doc (a << that is not <<<, whose
-# body the masker would read as code or as an open quote); a trap action holding a reading tool's word; source or . of
-# a substitution; and bash -c or sh -c. The hook holds none of these. Until round 9b this comment said two shapes stay
-# unread: a lone redirection, a quoted command word, a command after a lone & or |&, a wrapper outside the prefixes,
-# and a command word held in a variable by a path or a lookup each passed the census and its pins then (the round 8
-# refuters, 2026-09-24).
+# the tagged read the tags judge.
+# What is PINNED ABSENT: census_unread_shapes lists these shapes in the hook's comment-stripped RAW text (the masked
+# text hides what quotes hold), each once per line: a command word that BEGINS with a parameter expansion or a
+# substitution, other than the three the hook's own reads use (the tagged command judged_read runs, "$@"; its -d
+# rider, "$detail", which prints and reads nothing; and the scanner, "$gl", above); a variable assigned a reading
+# tool's name or path, and a default naming one by a path or not (${GIT:-git}, ${GIT:-/usr/bin/git}); a substitution
+# whose first word is a lookup (command -v or -V, type or which) naming a reading tool, the scanner's own lookup
+# excepted by its exact text, gl="${ROMP_GITLEAKS:-$(command -v gitleaks || true)}" (on one line in the hook), whose
+# answer runs only as "$gl"; an eval; a here-doc (a << that is not <<<, whose body the masker would read as code or as
+# an open quote); a trap action holding a reading tool's word; source or . of a substitution; and bash -c or sh -c.
+# The hook holds none of these.
+# What is DISCLOSED: a shape neither read above nor pinned here passes both, and five such shapes are known. Case 203
+# plants a witness of each that passes the census and the pins unflagged, so this list states what goes unseen, shown
+# true by execution, and claims no coverage: a variable command word under a wrapper the census does not know
+# (timeout 5 "$1" rev-parse HEAD: the pin reads only a command word that begins with an expansion, and the fail-closed
+# rule looks only for a reading tool's word); a command word holding an expansion that does not begin it
+# (/usr/bin/$t rev-parse HEAD); a command after a string continued from the line before (x="a on one line, then
+# b" git rev-parse HEAD: a word that starts inside such a string is no command word); an ANSI-C quoted word, whose
+# escapes are not decoded ($'\x67it' rev-parse HEAD); and env -S with a command string (env -S "git rev-parse HEAD":
+# the quoted string is read as one command word, which equals no reading tool's name). The hook holds none of these
+# either (the round 9b audit, 2026-09-24).
+# Until round 9b this comment said two shapes stay unread: a lone redirection, a quoted command word, a command after
+# a lone & or |&, a wrapper outside the prefixes, and a command word held in a variable by a path or a lookup each
+# passed the census and its pins then (the round 8 refuters, 2026-09-24). Until round 9bc it said that what the census
+# cannot read is pinned absent, while the five disclosed shapes and a command word split by its quoting passed both
+# (the round 9b audit).
 CENSUS_PREFIX='^(if|then|else|elif|fi|while|until|do|done|case|esac|in|for|select|function|!|time|coproc|exec|env|nice|command|builtin)$'
 CENSUS_BUILTIN='^(read|printf|echo|eval|trap|wait|true|false|:|return|exit|break|continue|shift|set|unset|test|\[|\[\[|local|export|readonly|declare|typeset|shopt|mapfile|readarray|cd|pwd|let|type|hash|getopts|kill|ulimit|umask|alias|unalias|caller|jobs|disown|times|dirs|pushd|popd|help|history)$'
 CENSUS_LOOKUP='^(which)$'
@@ -5032,9 +5049,10 @@ census_records() {   # <bash file> <mode: tools, vars or calls> [<word regex, fo
 # first " -- ", and prints one record per simple command: the line number, the start, the flags (P a case pattern, A
 # arithmetic, R an array literal's elements, T the tagged command after a call's --), the token that ends it, whether its
 # last word touches that token, then each word masked and RAW, read back from the raw text at the same offset (masking
-# keeps every byte's place), unit-separated. mode tools keeps a record with a reading tool's word in its raw words, not
-# T; vars one with a $ in its raw words or ending at a substitution, not P, A, R or T; calls one with a tool's word or a
-# word matching names.
+# keeps every byte's place), unit-separated. mode tools keeps a record with a reading tool's word in its raw words, each
+# word tested unquoted (a copy with its quote and backslash characters removed, so a word whose quoting or escaping
+# splits the tool's name, gi\t, g''it or "g"it, is kept), not T; vars one with a $ in its raw words or ending at a
+# substitution, not P, A, R or T; calls one with a tool's word (tested the same way) or a word matching names.
 BEGIN { US = sprintf("%c", 31); toolre = "(^|[^A-Za-z0-9_.-])(" tools ")([^A-Za-z0-9_.-]|$)" }
 function top() { return sp > 0 ? stk[sp] : "" }
 function ctxflag(   t) { t = top(); return (t == "A" || t == "a") ? "A" : (t == "R" ? "R" : "") }
@@ -5042,7 +5060,7 @@ function endseg(pos, tok,   k) {
     ns++; sst[ns] = start; slen[ns] = pos - start; stok[ns] = tok; sfl[ns] = cur
     if (tok == "pat") { sfl[ns] = sfl[ns] "P"; for (k = ns - 1; k >= 1 && stok[k] == "|"; k--) sfl[k] = sfl[k] "P" }
 }
-function emit(k,   s, L, ms, rs, j, ws, w, x, out, tool, dol, fn, touch) {
+function emit(k,   s, L, ms, rs, j, ws, w, x, y, out, tool, dol, fn, touch) {
     s = sst[k]; L = slen[k]; ms = substr(m, s, L); rs = substr(r, s, L)
     touch = (L > 0 && substr(ms, L, 1) !~ /[ \t]/) ? 1 : 0
     out = ""; tool = 0; dol = 0; fn = 0; j = 1
@@ -5052,7 +5070,7 @@ function emit(k,   s, L, ms, rs, j, ws, w, x, out, tool, dol, fn, touch) {
         ws = j; while (j <= L && substr(ms, j, 1) !~ /[ \t]/) j++
         w = substr(ms, ws, j - ws); x = substr(rs, ws, j - ws)
         out = out US w US x
-        if (x ~ toolre) tool = 1
+        y = x; gsub(/["'\\]/, "", y); if (y ~ toolre) tool = 1   # the word unquoted: gi\t, g''it and "g"it run git
         if (x ~ /\$/) dol = 1
         if (names != "" && x ~ names) fn = 1
     }
@@ -5359,6 +5377,13 @@ census_unread_shapes() {   # <bash file>: prints "<line>:<text>" once for each l
         'stdbuf -o0 git rev-parse HEAD'
         'ionice -c3 git rev-parse HEAD'
         'setsid git rev-parse HEAD'
+        # round 9bc (F.1 (2), the round 9b audit): a command word whose quoting or escaping splits the tool's name, alone
+        # and under a wrapper, read since census_records tests each word with its quote and backslash characters
+        # removed; each passed the census and its pins at ce33ff8f4 and at cad898dd2, where the raw word was tested
+        'gi\t rev-parse HEAD'
+        "g''it rev-parse HEAD"
+        '"g"it rev-parse HEAD'
+        'timeout 5 gi\t rev-parse HEAD'
     )
     k=0
     for plant in "${census_plants[@]}"; do
@@ -5377,6 +5402,10 @@ census_unread_shapes() {   # <bash file>: prints "<line>:<text>" once for each l
         'x=$(type -P git)'
         '$(which git) rev-parse HEAD'
         '"$(command -v git)" rev-parse HEAD'
+        # F.2 names ${GIT:-/usr/bin/git} as a command word. Bare, that spelling was flagged already at cad898dd2 (the
+        # census's brace split leaves ${GIT:-/usr/bin/git, whose basename is git) and is flagged by both instruments
+        # now, so it owes no red; quoted, it passed both at cad898dd2 and is flagged once, by the pin, so the quoted
+        # spelling is the plant (round 9bc, the round 9b audit)
         '"${GIT:-/usr/bin/git}" rev-parse HEAD'
         "trap 'git rev-parse HEAD' EXIT"
         "source <(printf '%s\n' 'git rev-parse HEAD')"
@@ -5411,6 +5440,33 @@ census_unread_shapes() {   # <bash file>: prints "<line>:<text>" once for each l
     { sed -n '1p' "$HOOK"; printf '%s\n' 'gx="${ROMP_GITLEAKS:-$(command -v gitleaks || true)}"'; sed -n '2,$p' "$HOOK"; } > "$TEST_DIR/plant-r9b-l.sh"
     run census_unread_shapes "$TEST_DIR/plant-r9b-l.sh"
     [ "$output" = '2:gx="${ROMP_GITLEAKS:-$(command -v gitleaks || true)}"' ]
+    # round 9bc (F.1 (7), the round 9b audit): the five shapes the bound DISCLOSES, neither read by the census nor
+    # pinned absent, each planted alone and passing both unflagged, the census's counts over the copy equal to its
+    # counts over the hook, so the disclosure is shown true by execution and no reader takes it for coverage: a
+    # variable command word under a wrapper the census does not know, a command word holding an expansion that does
+    # not begin it, a command after a string continued from the line before, an ANSI-C quoted word, and env -S with a
+    # command string. A change that reads or pins one of them turns its witness red; the witness then moves out of
+    # this list, and the shape out of the bound's disclosed list, in the same change.
+    local -a disclosed_plants=(
+        'timeout 5 "$1" rev-parse HEAD'
+        '/usr/bin/$t rev-parse HEAD'
+        $'x="a\nb" git rev-parse HEAD'
+        "\$'\\x67it' rev-parse HEAD"
+        'env -S "git rev-parse HEAD"'
+    )
+    k=0
+    for plant in "${disclosed_plants[@]}"; do
+        k=$((k + 1))
+        { sed -n '1p' "$HOOK"; printf '%s\n' "$plant"; sed -n '2,$p' "$HOOK"; } > "$TEST_DIR/plant-r9bc-w$k.sh"
+        [ "$(sed -n '2p' "$TEST_DIR/plant-r9bc-w$k.sh")" = "${plant%%$'\n'*}" ]
+        run undeclared_reads "$TEST_DIR/plant-r9bc-w$k.sh"
+        [ "$status" -eq 0 ]
+        [ "$(grep -c '^undeclared: ' <<< "$output")" -eq 0 ]
+        [ "${output##*$'\n'}" = "$census" ]
+        run census_unread_shapes "$TEST_DIR/plant-r9bc-w$k.sh"
+        [ "$status" -eq 0 ]
+        [ -z "$output" ]
+    done
 }
 
 @test "the join's fourth arm prints a recorded path holding an ampersand, a backslash-ampersand and the text {rc} byte for byte: {rc} is substituted first and the -d rider's answer is spliced by a QUOTED replacement, so patsub_replacement rewrites no & and the answer is not re-scanned for the status (the round 7 text printed a{detail}b&1.txt)" {
