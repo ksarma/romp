@@ -16,7 +16,7 @@ and a sidecar landing in a nested directory reaches the map; (3) a nested direct
 does not raise over its missing stat; (4) a removed root returns [] and forgets its entry, and its absence is noted to a
 running chat build as None; (5) a symlinked root is [] and lists nothing, and is noted under the key the chat signature
 re-evaluates (None for a missing or dangling root, nothing for a live link, as before the memo), and its reads move none
-of hit, miss and served; (6) eviction drops a
+of hit, miss and scoped; (6) eviction drops a
 root no alive session owns and keeps the owned ones: from the jobs pass (_interrupt_block_tick, its home, with no feed
 frame built at all), from the helper, and from the tracking-off frame, where a failed alive read evicts nothing; (7)
 /perf's memos.subagentTree reports the hits and misses; (8) a tree written within the racy window is re-listed until it
@@ -261,7 +261,7 @@ class MovedTrees(_Tree):
         outside.mkdir(parents=True)
         (outside / ("agent-%s.meta.json" % AID)).write_text(json.dumps({"toolUseId": TU, "agentType": "x"}))
         km._subagent_dirs(str(self.subdir))                         # the real tree, memoized (a miss, before the snapshot)
-        counters = ("hit", "miss", "served")
+        counters = ("hit", "miss", "scoped")
         before = {k: km._SUBAGENT_TREE_STATS[k] for k in counters}
         shutil.rmtree(self.subdir)
         os.symlink(str(outside), str(self.subdir))                  # a live link in its place: not this session's tree
@@ -297,10 +297,10 @@ class MovedTrees(_Tree):
             km._chat_dep_scope.deps = None
         self.assertEqual(deps["task_outs"], [(str(self.subdir), None)])
         # The counter rule (kernel/kernel.py, the comment at _SUBAGENT_TREE_STATS): a read answered no tree moves none of hit, miss
-        # and served, and a symlink in the root's place, live or dangling, is such a read (round 2 of #882, extra6-3).
+        # and scoped, and a symlink in the root's place, live or dangling, is such a read (round 2 of #882, extra6-3).
         moved = tuple(km._SUBAGENT_TREE_STATS[k] - before[k] for k in counters)
         self.assertEqual(moved, (0, 0, 0),
-                         "memos.subagentTree (hit, miss, served) over every read of the root while a live and then a dangling link "
+                         "memos.subagentTree (hit, miss, scoped) over every read of the root while a live and then a dangling link "
                          "stood in its place: %r; keyed on (0, 0, 0), since a read answered no tree lands in none of the three" % (moved,))
 
 
@@ -444,10 +444,7 @@ class Reported(_Tree):
         km._subagent_dirs(str(self.subdir))                         # a miss: the walk
         km._subagent_dirs(str(self.subdir))                         # a hit: one lstat per known directory
         rep = km._PERF_STATS.snapshot()["memos"]["subagentTree"]
-        self.assertEqual(set(rep), {"hit", "miss", "served", "evict", "dirStats", "walkMs", "validateMs", "roots", "dirs"},
-                         "the report's keys; served (reads a cycle scope answered from its held pair) since 2026-09-21 (round 1 of "
-                         "#882's fresh-3 asked for the absorbed reads to be counted), its moving edge pinned in "
-                         "tests/test_subagent_tree_stamps_per_cycle.py")
+        self.assertEqual(set(rep), {"hit", "miss", "scoped", "evict", "dirStats", "walkMs", "validateMs", "roots", "dirs"})
         self.assertEqual((rep["miss"] - base["miss"], rep["hit"] - base["hit"]), (1, 1))
         self.assertGreaterEqual(rep["dirStats"] - base["dirStats"], 2, "the hit paid a stat per directory beyond the root")
         self.assertGreaterEqual(rep["roots"], 1)
@@ -456,6 +453,21 @@ class Reported(_Tree):
         self.assertGreaterEqual(rep["validateMs"], 0.0)
         self.assertEqual(rep, km._subagent_tree_memo_report())
         json.dumps(rep)
+        # under an open cycle scope (2026-09-18) the first call is the cycle's sample (a hit: one lstat per known directory)
+        # and the second is served from it: `scoped` moves, `dirStats` does not
+        km._live_scope.subagent_trees = {}
+        try:
+            km._subagent_dirs(str(self.subdir))
+            mid = km._subagent_tree_memo_report()
+            self.assertEqual((mid["hit"] - rep["hit"], mid["dirStats"] - rep["dirStats"]), (1, 2), "the sample: a validation")
+            km._subagent_dirs(str(self.subdir))
+            served = km._subagent_tree_memo_report()
+            self.assertEqual(served["scoped"] - mid["scoped"], 1, "served from the cycle's sample")
+            self.assertEqual(served["dirStats"] - mid["dirStats"], 0, "...with no stat at all")
+            self.assertEqual((served["hit"], served["miss"]), (mid["hit"], mid["miss"]))
+        finally:
+            km._live_scope.subagent_trees = None
+        rep = km._subagent_tree_memo_report()
         (self.wf / "wf_inner").mkdir()                              # the tree moved: the call validates, mismatches and walks
         km._subagent_dirs(str(self.subdir))
         after = km._subagent_tree_memo_report()
@@ -518,8 +530,8 @@ class UnreadableRoot(_Tree):
         self.assertEqual(deps["task_outs"], [(root, km._TREE_UNREADABLE)],
                          "it is noted unreadable, under a key no stat equals, so the tab is rebuilt next cycle and reads again")
         self.assertIs(meta, m, "the standing map is answered, unheld (its cache entry neither popped nor re-keyed)")
-        self.assertEqual({k: km._SUBAGENT_TREE_STATS[k] - before[k] for k in ("hit", "miss", "served", "evict", "dirStats")},
-                         {"hit": 0, "miss": 0, "served": 0, "evict": 0, "dirStats": 0}, "no counter moves: the read answered no tree")
+        self.assertEqual({k: km._SUBAGENT_TREE_STATS[k] - before[k] for k in ("hit", "miss", "scoped", "evict", "dirStats")},
+                         {"hit": 0, "miss": 0, "scoped": 0, "evict": 0, "dirStats": 0}, "no counter moves: the read answered no tree")
         self.assertEqual(km._subagent_scope(), self.EMPTY,
                          "nothing is held in the cycle scope, in any of its three maps (trees, stamps, launches): the fail-closed read "
                          "records no scope entry, so the next call retries (keyed on the whole scope by equality; a pin over the trees "

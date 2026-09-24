@@ -3665,81 +3665,43 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   walk order and each one's identity (inode, mtime, size, ctime) taken before
   it was listed, served while every identity stands because a directory
   entry's creation, removal or renaming moves its parent's stamps and every
-  parent is in the list, and validated at most once per pusher cycle and
-  once per jobs pass (since 2026-09-19: the thread's cycle scope holds the
-  validated pair and each directory's stamp for the rest of the cycle, so
-  every later reader of the tree on that thread is served it, the
-  agent-file lookup's re-check of its directories included; a change on
-  disk after the
-  validation is seen by the next cycle's first reader, one cycle later at
-  most (the tree's own removal or replacement included: the served read
-  precedes the root's lstat, so a root held earlier in the cycle is served
-  until the cycle ends unless a read with no hold on it, the other loop's
-  first read of it in its own cycle or a handler thread's, finds it missing
-  or replaced first, after which the holder's next lookup drops the pair),
-  and the key a chat build records for a subagents tree the
-  agent-file miss walk looked through (recorded by every build that
-  looks the agent up: the walk's own, and a lookup the agent-file memo
-  or the cycle's held launch fold answers replays the walk's noted keys;
-  the project directory the walk lists is no build's dependency: the
-  scope and that residual are stated once in `_subagent_file`'s
-  docstring in `kernel/kernel.py`) is the served read's stamp per
-  directory, never a stat taken after it, so a file landing after the
-  hold under a directory the served listing lacked leaves the recorded
-  key behind the next signature's re-stat and the tab is rebuilt (since
-  2026-09-21; round 1 of #882 found a fresh stat there recording the
-  post-landing key of the root alone, so the tab that showed the file
-  missing was never rebuilt; what the signature pays for those keys every
-  cycle: the cost home named under `dirStats` below); a
-  root that leaves the memo mid-cycle (an ownership eviction, most
-  often of an unowned sibling root an agent-file miss scan inserted; a tree
-  found missing or replaced; a session departing is one such root) drops
-  from every open scope that root's pair, the stamps indexed from it, the
-  launch folds keyed on it (the fold's root and its bound:
-  `_subagent_scope`'s docstring in `kernel/kernel.py`) and, since no root
-  vouches for them, the stamps the scope took itself (an agent-file
-  lookup's re-check before the tree was read that cycle, the project
-  directory on a miss), and nothing else (since 2026-09-21; before it one
-  process-wide generation emptied every scope on any eviction; what an
-  eviction costs is a term of the cost home named under `dirStats` below); a
-  thread outside a cycle, a WS or HTTP handler's build or the act-now nudge
-  pass, reads per call as before), with `hit` and `miss`
-  (trees vouched for by one stat per known directory against trees walked;
-  what each counts, a failed validation before a walk included: the comment
-  at `_SUBAGENT_TREE_STATS`), `served` (reads a cycle
-  scope answered from the pair it held with no stat: how many reads the
-  scope absorbed; a read answered a tree, validated, walked or served,
-  lands in exactly one of the three and a read answered no tree (a missing
-  root, a file or a symlink in its place, a root that cannot be read) moves
-  none, so `hit` plus `miss` plus `served` is the reads answered a tree
-  (the rule, its edges and the tests that execute it: the comment at
-  `_SUBAGENT_TREE_STATS` in `kernel/kernel.py`); since
-  2026-09-21, before which the scope's reads moved no counter, so the figure
-  has no earlier series),
-  `evict` (roots dropped because no alive session's transcript names them,
-  on every jobs pass and, as a belt, after each feed build and from the
-  tracking-off frame), `dirStats` (the directory stats both validators
-  paid: the tree validation's lstat per known directory below the root and
-  the agent-file lookup's stat per directory its stamp re-check takes;
-  before 2026-09-19 it counted the lstat half alone, so a figure from
-  before that change and one from after are not one series; the cost the
-  memo's reads pay, road by road with the case that pins each term:
-  `_subagent_tree_memo_report`'s docstring in `kernel/kernel.py`), `walkMs`
-  and `validateMs` (the time in each, every thread), and the gauges `roots`
-  (entries) and `dirs` (directories held); a directory stamped within the
-  last two seconds, or one whose listing failed, is stored unvouched and
-  walked again until it is quiet and lists cleanly, the racy-stamp rule,
-  since a filesystem stamps with a coarser clock than the wall clock and a
-  failure moves no stamp (a tree with a racy stamp is stored unvouched
-  across cycles and walked again at the next cycle's first read, but held
-  for the rest of the cycle it was walked in like any clean walk; a walk
-  with a failed listing or child lstat, a missing root and a stamp whose
-  stat fails are not held for the cycle: nothing failed is served, and a
-  root whose lstat fails for a reason other than absence (EACCES from a
-  parent, EIO) is not read as absent either: its readers answer their
-  standing entries unheld or an unreadable marker (the feed key's
-  component; the chat build is told to read again), except that with no
-  entry standing the sidecar map answers `{}` and the agent-file lookup
+  parent is in the list, with `hit` and `miss` (trees vouched for by one stat
+  per known directory against trees walked; what each counts, a failed
+  validation before a walk included: the comment at `_SUBAGENT_TREE_STATS`
+  in `kernel/kernel.py`), `scoped` (reads served from the
+  cycle's one sample with no stat at all: one sample per subagents root per
+  pusher cycle, jobs pass or connect push since 2026-09-18, the first reader
+  validating or walking and every later reader of the cycle served it, so
+  scoped over hit plus miss plus scoped is the share of reads that re-sampled
+  a root another reader took in the same cycle), `evict` (roots dropped because
+  no alive session's transcript names them, on every jobs pass and, as a
+  belt, after each feed build and from the tracking-off frame), `dirStats`
+  (the directory stats both validators paid: the tree validation's lstat per
+  known directory below the root and the agent-file lookup's stat per
+  directory its stamp re-check takes; before 2026-09-19 it counted the lstat
+  half alone, so a figure from before that change and one from after are not
+  one series; the cost the memo's reads pay, road by road with the case that
+  pins each term: `_subagent_tree_memo_report`'s docstring in
+  `kernel/kernel.py`), `walkMs` and `validateMs` (the time in each,
+  every thread), and the gauges `roots` (entries) and `dirs` (directories
+  held); a directory stamped within the last two seconds, or one whose
+  listing failed, is stored unvouched and walked again until it is quiet and
+  lists cleanly, the racy-stamp rule, since a filesystem stamps with a
+  coarser clock than the wall clock and a failure moves no stamp; the key a
+  chat build records for a subagents tree the agent-file miss walk looked
+  through (recorded by every build that looks the agent up: the walk's own,
+  and a lookup the agent-file memo or a held launch fold answers replays the
+  walk's noted keys; the project directory the walk lists is no build's
+  dependency: the scope of that record and that residual are stated once in
+  `_subagent_file`'s docstring in `kernel/kernel.py`) is the stamp per
+  directory of the read that answered the walk, never a stat taken after it,
+  so a file landing after the cycle's sample under a directory the sampled
+  listing lacked leaves the recorded key behind the next signature's re-stat
+  and the tab is rebuilt; a root whose lstat fails for a reason other than
+  absence (EACCES from a parent, EIO) is not read as absent: its readers
+  answer their standing entries unheld or an unreadable marker (the feed
+  key's component; the chat build is told to read again), except that with
+  no entry standing the sidecar map answers `{}` and the agent-file lookup
   answers a caller that passes no faults list `None`, so while the fault
   lasts the viewer says the agent's transcript is missing and the Agent
   card shows no steps (`ViewerUnderAnUnreadableTree` in
@@ -3750,12 +3712,10 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   stated once in `_subagent_tree`'s docstring in `kernel/kernel.py`, and
   a fault on any other read the walk makes of a place, a candidate
   file's among them, excludes that place alone (the places:
-  `_subagent_file_walk`'s docstring; `FaultOnTheWalksOwnRead`); the
-  scope also holds each awaiting agent's launch fold, and a fold that did
-  not read the file, the reader's fail path, is held for the one read
-  that observed it and never for the cycle, so that read folds it once,
-  not once per agent whose owner it was consulted for, and the next read
-  folds it again);
+  `_subagent_file_walk`'s docstring; `FaultOnTheWalksOwnRead`); a launch
+  fold that did not read the file, the reader's fail path, is held for the
+  one read that observed it, so that read folds it once, not once per agent
+  whose owner it was consulted for, and the next read folds it again;
   `nudgeGate` is the auto-nudge walk's
   planner-placement gate, derived once per (parse, store) and served while
   both stand, and on this fork while `cleared.jsonl` stands too, its stat a

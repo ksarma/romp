@@ -1028,14 +1028,13 @@ class _PerfStats:
                                    _subagent_tree_memo_report) -> hit / miss (trees vouched for by
                                    their directories' stats vs walked; what each counts, a failed
                                    validation included, is stated at _SUBAGENT_TREE_STATS)
-                                   / served (reads a cycle scope answered from its held pair
-                                   with no stat: the reads the scope absorbed; a read answered a
-                                   tree lands in exactly one of the three, a read answered no tree
-                                   in none: the comment at _SUBAGENT_TREE_STATS), evict (roots dropped as
-                                   unowned), dirStats (the directory stats both validators paid:
-                                   the tree validation's lstats and the agent-file lookup's stamp
-                                   re-check; the lstat half alone before 2026-09-19, when a tree's
-                                   validation became once per pusher cycle and once per jobs pass),
+                                   / scoped (reads served from the cycle's sample with no stat;
+                                   a read answered a tree lands in exactly one of the three, a
+                                   read answered no tree in none: the comment at
+                                   _SUBAGENT_TREE_STATS), evict (roots dropped as unowned),
+                                   dirStats (the directory stats both validators paid: the tree
+                                   validation's lstats and the agent-file lookup's stamp
+                                   re-check; the lstat half alone before 2026-09-19),
                                    walkMs / validateMs and the gauges roots / dirs; judgingBand (the timeline's judging band memo,
                                    _judging_band_report) -> builds / ms, rows_skipped /
                                    rows_visited, entries_reused / entries_minted, resets (a rotated
@@ -2207,7 +2206,7 @@ class _PerfStats:
                           ("lanes", _lanes_memo_report),   # the timeline's per-lane segment memo, live lanes; the dead lanes beside
                           ("judgingBand", _judging_band_report),   # the judging band's per-row memo and horizon cursor (2026-09-16)
                           ("spendTree", _spend_tree_memo_report),   # the spend guard's subagent-tree memos: bytes against their bound
-                          ("subagentTree", _subagent_tree_memo_report),   # the subagents directory walk memo (2026-09-16): its counters, the _SUBAGENT_TREE_STATS comment
+                          ("subagentTree", _subagent_tree_memo_report),   # the subagents directory walk memo (2026-09-16): served vs walked, scoped
                           ("summaryAnchor", _summary_anchor_memo_report),   # the brief line's text-atom landings (T388): bytes against their bound
                           # the chat build's fixed-cost memos (2026-09-09): the live merge's transcript-side
                           # sets, the fold's sealed postal cards, the ledger's goal-tree walk, the task fold
@@ -34112,54 +34111,31 @@ def _awaiting_nest(agents, commands, cmd_owner, path):
             by_agent[aid] = it
     if not by_agent:
         return agents, commands
-    sc = _subagent_scope()
-    # (transcript, agentId) → the launch tool_use ids in that agent's own transcript, read lazily, once per call; inside a
-    # pusher cycle or a jobs pass the cycle scope's map (2026-09-19), so the up-to-five _session_awaiting calls per session
-    # per cycle share one resolution and fold per agent (each re-folded every agent's file, a stat and a checkpoint realpath
-    # per agent per call). The attribution then sees an agent's file as it stood at the cycle's first fold; a launch appended
-    # mid-cycle nests on the next cycle. A fold that did not read the file (the reader's fail path, or a raise), or whose
-    # resolution could not be made (the file found under no tree the walk could read while one could not be: _subagent_file's
-    # faults, since 2026-09-21; a file found past such a tree is resolved, and faults nothing), answers set()
-    # and has TWO lifetimes, both shorter than the cycle's: it is held in `faulted`, this call's own map, so the call's other
-    # owner lookups are served it (each of the A agents' lookups consults every other agent's launches, so a fault re-folded
-    # per lookup cost A x (A - 1) folds per call where the parent's call-local memo cost A: round 1 of #882's extra9-2), and it is not
-    # held beyond the call, so the next call in the cycle reads again and a file that became readable is seen then (a fault
-    # held for the cycle would attribute nothing to that agent all cycle; what a faulting fold and an unreadable tree cost
-    # per read: their entries in _subagent_tree_memo_report's docstring). A file that resolved to nothing (ap None) is a
-    # state, held. The cycle map's entry is (ids, the transcript's own subagents root, the generation read before the file
-    # was resolved) and is served while _subagent_vouched says that root has not left the walk memo since (2026-09-21, round 1 of #882's ruling;
-    # before it every eviction emptied the map and re-folded every awaiting agent's file on both threads for the rest of the
-    # cycle). The root is the transcript's own whatever tree the file was found under: the rule, its bound for a file found
-    # under a sibling's tree and the test that executes both: _subagent_scope's docstring. The entry's
-    # fourth element is the (path, key) pairs the resolution reported to its build (_subagent_file's `notes`: the walk's
-    # dependency notes), replayed to the build a held fold answers, once per call (round 2 of #882, group B: a held fold
-    # answers without calling _subagent_file, and for a Workflow agent with no Agent tool event it is the only lookup a chat
-    # build makes, so that build recorded no key for the trees the walk read). They are stored here and not read from the
-    # agent-file memo's entry because that entry can be gone or newer when the fold is served: the memo is cleared whole
-    # past 1024 entries by any thread's lookup (tests/test_subagent_tree_stamps_per_cycle.py DependencyKey
-    # test_a_held_fold_replays_its_own_walks_notes_after_the_agent_file_memo_was_cleared), and a lookup after a landing
-    # replaces the entry with a later walk's pairs, which the held ids never reflected, so a build recording those would
-    # hold the post-landing keys and never be rebuilt (DependencyKey
-    # test_a_held_fold_replays_its_own_walks_notes_after_a_later_lookup_replaced_the_agent_file_memos_entry).
-    launch_sets = sc["launches"] if sc is not None else {}
+    # (transcript, agentId) → (the launch tool_use ids in that agent's own transcript, the (path, key) pairs its resolution
+    # reported to its build: _subagent_file's `notes`, the walk's dependency notes), read lazily, once per call. A fold that
+    # did not read the file (the reader's fail path, or a raise), or whose resolution could not be made (the file found
+    # under no tree the walk could read while one could not be: _subagent_file's faults, since 2026-09-21; a file found
+    # past such a tree is resolved, and faults nothing), answers set() and is held in `faulted`, so the call's other owner
+    # lookups are served it (each of the A agents' lookups consults every other agent's launches, so a fault re-folded per
+    # lookup cost A x (A - 1) folds per call where the parent's call-local memo cost A: round 1 of #882's extra9-2). A
+    # file that resolved to nothing (ap None) is a state, held. A held fold answers without calling _subagent_file, so it
+    # replays the pairs its entry stores to the build it answers, once per call (round 2 of #882, group B), never the
+    # agent-file memo's entry, which can be gone or newer by then.
+    launch_sets = {}
     faulted = {}
     reported = set()                                      # agents whose resolution's keys this call's build holds (one call, one build)
     pkey = str(path or "")
-    own_root = str(_subagents_dir(path)) if path else None
 
     def launches(aid):
         k = (pkey, aid)
         held = launch_sets.get(k)
         if held is not None:
-            if _subagent_vouched(held[1], held[2]):
-                if k not in reported:                     # the held fold answers without _subagent_file: its build records the
-                    reported.add(k)                       #  keys of the walk behind the fold, replayed from the fold entry
-                    _subagent_file_notes_replay(held[3])
-                return held[0]
-            del launch_sets[k]                            # its own root left the memo since the fold: resolve and fold again
+            if k not in reported:                         # the held fold answers without _subagent_file: its build records the
+                reported.add(k)                           #  keys of the walk behind the fold, replayed from the fold entry
+                _subagent_file_notes_replay(held[1])
+            return held[0]
         if k in faulted:
             return faulted[k]
-        g0 = _SUBAGENT_TREES_GEN[0]                       # before the resolution reads the tree
         faults, noted = [], []
         ap = _subagent_file(path, aid, faults, notes=noted) if path else None   # a resolution that could not be made faults too
         ids = _agent_launch_ids(ap, faults) if ap else set()      # (an unreadable tree, the file under no other): held for this call alone
@@ -34167,7 +34143,7 @@ def _awaiting_nest(agents, commands, cmd_owner, path):
         if faults:
             faulted[k] = ids
         else:
-            launch_sets[k] = (ids, own_root, g0, tuple(noted))
+            launch_sets[k] = (ids, tuple(noted))
         return ids
 
     def owner_by_transcript(tuid, exclude=None):
@@ -35388,11 +35364,11 @@ SUBAGENT_STEPS_CAP = 200        # tool calls shipped on the Agent head (agentSte
 # per build from the feed, timeline and chat builds and the nudge walk, and a pusher stack sample put a tenth of its push-stage
 # samples inside that walk. Bounded by ownership, not by a count: _subagent_trees_forget drops every root no alive session's
 # transcript names, on every jobs pass (_interrupt_block_tick, audience-independent) and, as a belt, after each feed build
-# and from the tracking-off frame. Validated at most once per pusher cycle and once per jobs pass since 2026-09-19 (plus once
-# more for a root that itself left the memo in the cycle, at its next lookup): the thread's cycle scope (_subagent_scope_open,
-# below _subagent_tree_charge) holds the validated pair for the cycle.
+# and from the tracking-off frame. And, since 2026-09-18, one sample per cycle on `_live_scope.subagent_trees`: the first
+# reader of a root in a pusher cycle (a jobs pass, a handler thread's connect push) validates or walks, and every later
+# reader of that cycle is served the same (directories, stats) with no lstat (_subagent_tree, THE CYCLE SCOPE).
 _SUBAGENT_TREES = {}
-_SUBAGENT_TREE_STATS = {"hit": 0, "miss": 0, "served": 0, "evict": 0, "dirStats": 0, "walkMs": 0.0, "validateMs": 0.0}   # /perf memos.subagentTree;
+_SUBAGENT_TREE_STATS = {"hit": 0, "miss": 0, "scoped": 0, "evict": 0, "dirStats": 0, "walkMs": 0.0, "validateMs": 0.0}   # /perf memos.subagentTree;
 #                          advisory tallies, incremented without a lock as the neighbouring memos' are (a lost count under a race
 #                          is tolerated; the memo's own writes are single dict stores of immutable tuples). WHICH COUNTER A READ
 #                          LANDS IN, stated here once (_subagent_tree_memo_report's docstring, the /perf table's comment and
@@ -35400,74 +35376,21 @@ _SUBAGENT_TREE_STATS = {"hit": 0, "miss": 0, "served": 0, "evict": 0, "dirStats"
 #                          exactly one of hit (validated: one lstat per known directory), miss (walked; when an entry stood
 #                          and its validation failed first, that validation lands in miss too, one miss for the validation
 #                          and the walk, its lstats in dirStats and its time in validateMs beside the walk's walkMs: round 3
-#                          of #882, extra6-1) and served (answered
-#                          from the cycle scope's held pair, no stat; the scope's early return alone moves it, not _dir_stamp's
-#                          served stamps, a distinct population left uncounted; 2026-09-21, round 1 of #882's fresh-3, before
-#                          which the scope's reads moved no counter), the held-root lag included (a root removed on disk while
-#                          this thread's scope holds it is answered the held pair, and counted served, until the scope ends);
-#                          a read answered no tree moves none of the three: a missing root, a file or a symlink in its place
-#                          (the two pop paths, which record an eviction when an entry stood) and a root whose lstat fails for
-#                          another reason (the raise, _SubagentTreeUnreadable). So hit + miss is the reads that reached the disk
-#                          and answered a tree (a hit one validation; a miss one walk, with the failed validation before it
-#                          when an entry stood, so it is not the count of validations paid), served is the reads the scope
-#                          absorbed, and hit + miss + served is the reads answered a tree, not every call. Executed in
-#                          tests/test_subagent_tree_stamps_per_cycle.py Guards: the held-root lag case ((hit, miss, served) ==
-#                          (1, 0, 1) over the hold and the read after the removal,
-#                          and the next scope's missing-root pop moving none), the two pop-path cases (the missing-root and
-#                          the replaced-root pop on a thread with no hold, then the holder's drop: served 0 at each, and the
-#                          case's (hit, miss, served) the held reads alone) and the stale-hold case ((hit, miss, served, evict)
-#                          == (0, 1, 0, 1)); in tests/test_subagent_tree_memo.py UnreadableRoot (no counter moves on the
-#                          raise) and MovedTrees' symlinked-root case (the symlink shape, which shares the file shape's branch,
-#                          not S_ISDIR: (hit, miss, served) unmoved over the live and the dangling link's reads). Until the
-#                          owner's pass before round 2 of #882 this clause read "a root that is a directory", the report
-#                          docstring's "a standing root" and the reference's "a root that is there", the last two counting a
-#                          served read of a removed root out and a file in the root's place in. dirStats counts the
+#                          of #882, extra6-1) and scoped (answered from the cycle scope's sample, `_live_scope.subagent_trees`,
+#                          with no stat; _subagent_tree's early return alone moves it), the held-root lag included (a root
+#                          removed on disk after this thread's scope sampled it is answered the sample, and counted scoped,
+#                          until the scope ends); a read answered no tree moves none of the three: a missing root, a file or a
+#                          symlink in its place (the two pop paths) and a root whose lstat fails for another reason (the raise,
+#                          _SubagentTreeUnreadable). So hit + miss is the reads that reached the disk and answered a tree (a hit
+#                          one validation; a miss one walk, with the failed validation before it when an entry stood, so it is
+#                          not the count of validations paid), scoped is the reads the scope absorbed, and hit + miss + scoped
+#                          is the reads answered a tree, not every call. Executed in tests/test_subagent_tree_memo.py
+#                          UnreadableRoot (no counter moves on the raise) and MovedTrees' symlinked-root case (the symlink
+#                          shape, which shares the file shape's branch, not S_ISDIR: (hit, miss, scoped) unmoved over the live
+#                          and the dangling link's reads). dirStats counts the
 #                          directory stats BOTH validators pay (2026-09-19): _subagent_tree's lstat per known directory below
 #                          the root and _dir_stamp's os.stat per directory an agent-file lookup re-checks; before that day it counted the
 #                          lstat half alone, so the figure across that deploy is not one series
-_SUBAGENT_TREES_GEN = [0]       # the count of roots that have left _SUBAGENT_TREES (_subagent_trees_forget, per root; _subagent_tree's
-#                                 missing or replaced root), moved by _subagent_root_evicted alone, so every value names one eviction.
-#                                 A cycle scope's entry carries the value read BEFORE the disk read it holds (its g0), and is served
-#                                 while _subagent_vouched says no eviction of the root it depends on has happened since: the table below
-#                                 says which root each value evicted, so an eviction drops from every open scope what depended on that
-#                                 root and nothing else (2026-09-21, round 1 of #882's ruling; until then one process-wide value emptied every scope's
-#                                 three maps on any eviction). Incremented at one site, _subagent_root_evicted, under
-#                                 _SUBAGENT_EVICT_LOCK, so no increment is lost (written without a lock until round 2 of #882, when
-#                                 a lost increment could let a thread serve one cycle's entry past a concurrent eviction of its
-#                                 root); a hold site reads it unlocked, one load before its disk read: a value read while an
-#                                 eviction is being recorded is either the one before it, which that eviction's store outdates, or
-#                                 its own, and the disk read that follows postdates the eviction
-_SUBAGENT_ROOT_EVICTED = {}     # root -> the _SUBAGENT_TREES_GEN value its latest eviction moved to (_subagent_root_evicted); an entry
-#                                 held under g0 for that root is vouched while the value is at or below g0. One int per root ever
-#                                 evicted, bounded at _SUBAGENT_ROOT_EVICTED_MAX: an eviction of a root not in a full table clears it
-#                                 and records the value in _SUBAGENT_ROOTS_CLEARED_GEN, which drops every entry held before the clear
-#                                 once (the safe side: one re-validation, never a stale serve, with evictions and vouches running
-#                                 on other threads too: tests/test_subagent_tree_stamps_per_cycle.py EvictionTableLock's
-#                                 clear-straddle and wiped-record cases). Written and read under _SUBAGENT_EVICT_LOCK
-_SUBAGENT_ROOT_EVICTED_MAX = 1024
-_SUBAGENT_ROOTS_CLEARED_GEN = [0]   # the gen value at the table's latest clear (0: never): no scope entry held under an older g0 is vouched
-_SUBAGENT_EVICT_LOCK = threading.Lock()   # the eviction table's lock, stated here once (round 2 of #882, group E; the other
-#                                           texts point here). Lifetime: the process's, made at import and never replaced; each
-#                                           holder takes and releases it inside one call. It guards _subagent_root_evicted whole
-#                                           (the increment of _SUBAGENT_TREES_GEN, the cap check, the clear, the write of
-#                                           _SUBAGENT_ROOTS_CLEARED_GEN and the root's store as max(its value, g)) and every read
-#                                           _subagent_vouched makes (the root's table value, then the cleared generation, then
-#                                           the gen), so a vouch sees an eviction whole or not at all and the order of the writes
-#                                           inside it does not matter. Nothing is called under it (dict and list operations
-#                                           only: no I/O, no kernel function), so a holder never waits on anything else. Only the
-#                                           pusher and jobs threads vouch (a handler thread holds no scope), and a vouch waits
-#                                           only while another thread is recording an eviction. Written unlocked until round 2
-#                                           of #882, the table had three windows in which a vouch answered True for an entry held
-#                                           before its root's latest eviction, each executed with real threads in
-#                                           tests/test_subagent_tree_stamps_per_cycle.py EvictionTableLock (True unlocked, False
-#                                           under the lock): the clear straddle (a vouch reading the table after a clear and the
-#                                           cleared generation before its write), the wiped record (another root's eviction
-#                                           recorded between the clearing thread's cap check and its clear, erased while the
-#                                           cleared generation written was the clearing thread's older value), and one root's
-#                                           out-of-order stores (the earlier eviction's store landing last), which the class's
-#                                           end-to-end case drives to a removed tree's pair served. Under the lock each store's g
-#                                           exceeds every value stored before it, so the max equals g (the out-of-order case's
-#                                           docstring states what the mutants show)
 _TREE_UNREADABLE = "unreadable"     # the key recorded where a stat's key would go for a path a reader needed and could not read
 #                                     for a reason other than absence: a value no stat produces, so it never equals an absent path's
 #                                     (None) or a read one's, a chat build that recorded it is rebuilt at the next cycle's signature,
@@ -35506,132 +35429,6 @@ def _subagent_tree_charge(kind, t0):
     _SUBAGENT_TREE_STATS[kind] += (time.monotonic() - t0) * 1000.0
 
 
-# THE CYCLE SCOPE (2026-09-19): a tree is validated at most once per pusher cycle and once per jobs pass, plus once more when
-# the root itself left _SUBAGENT_TREES inside the cycle (an ownership eviction by _subagent_trees_forget, most often of an
-# unowned sibling root a _subagent_file miss scan inserted, or _subagent_tree's missing or replaced root; a session departing
-# is one such root). An eviction of root r drops, from every open scope that held r, r's pair (read again at its next lookup
-# in the cycle: a walk, or a validation when a read on another thread has re-inserted it since, which re-indexes the stamps
-# of r's directories with no extra stat), the stamps indexed from r and the launch folds of the awaiting agents of the
-# transcripts whose OWN subagents root is r (none for an unowned sibling root whatever files were found under it; the
-# fold's root and its bound: _subagent_scope's docstring), and nothing else; every
-# other root's pair, stamps and launch folds are served on (until 2026-09-21, round 1 of #882's ruling, one process-wide
-# generation emptied every scope on any eviction). A stamp the
-# scope took itself for a directory of no held tree (the project directory on an agent-file miss) is vouched by no root and is
-# re-taken after any eviction; a table clear (_SUBAGENT_ROOT_EVICTED at its cap) drops every held entry once. The walk memo
-# made a call cost one lstat per known directory instead of a
-# listing, and _subagent_file's hit path re-stats every directory its walk read, which for a nested or missing agent's file is
-# the whole tree, for each agent whose launches() a _session_awaiting consults, on every such read of the session in a cycle
-# (the chat, feed and timeline builds and the chips) and in a jobs pass (the nudge look). The cost before the scope and with
-# it, road by road with the case that pins each term: _subagent_tree_memo_report's docstring. Motivation, a
-# dated reading and not the law's evidence: on two deployed kernels (2026-09-19), on one _dir_stamp's one os.stat was the top
-# self frame of a 20 s py-spy profile, 28% of the samples by that profile's reading, and on the other the memo's own counters
-# showed 24.5 million validation lstats in 6.8 hours over 1,294 directories (the user 2026-09-05, who wanted the one-core
-# kernel investigated). The cycle and the pass
-# are the events a time window would have stood in for (the repo's design rule): the thread's slot opens at the cycle's start
-# and closes in its finally, the first reader of a tree in the cycle validates or walks it, and every later reader on that
-# thread in the cycle is served the pair, stat for stat what the first reader saw. A change on disk after that validation (a
-# workflow directory created, a sidecar or agent file landing, a tree removed) is seen by the NEXT cycle's first reader: one
-# cycle later at most, and the racy-stamp rule still decides what the cross-cycle memo may vouch for (a directory written
-# within the window is re-walked at the next cycle's first read, once per cycle instead of once per call). Thread-confined
-# like _live_scope's other slots, so the pusher's and the jobs thread's memos never meet; a handler thread (a WS or HTTP
-# build, the act-now nudge pass) holds no slot and reads per call as before. Nothing failed is held: a missing or replaced
-# root, a walk with a failed listing or child lstat and a failed _dir_stamp stat are answered as before and leave no entry;
-# a root whose lstat fails for a reason other than absence is not absent either (_subagent_tree's docstring: the shape).
-def _subagent_scope_open():
-    """Open this thread's cycle scope for the tree memos (see _subagent_scope): the pusher cycle's and the jobs pass's
-    prelude, beside the other per-cycle slots."""
-    _live_scope.subtrees = {"trees": {}, "stamps": {}, "launches": {}}
-
-
-def _subagent_scope_close():
-    """Close it: the cycle's finally, beside the other slots."""
-    _live_scope.subtrees = None
-
-
-def _subagent_scope():
-    """This thread's open cycle scope, or None outside a cycle. Three maps, each entry carrying the root it depends on and
-    the _SUBAGENT_TREES_GEN value read before the disk read it holds (its g0), and served only while _subagent_vouched says
-    no eviction of that root has happened since: `trees` (subagents root -> ((directories, stats), g0), the pair
-    _subagent_tree validated or cleanly walked this cycle, vouched by the root itself), `stamps` (directory -> ((dir,
-    mtime_ns), root, g0), the shape _dir_stamp answers, indexed from every held tree under that tree's root and by
-    _dir_stamp's own successful stats under root None, which no root vouches for) and `launches` ((transcript, agentId) ->
-    (launch ids, the transcript's own subagents root, g0, the resolution's noted dependency pairs), _awaiting_nest's
-    per-agent fold, vouched by that own root). An
-    eviction is honoured by the evicting thread at its next lookup of an entry that depended on the evicted root and by the
-    other thread at its next such lookup; every other entry is served on (before 2026-09-21 one process-wide value emptied
-    all three maps on any eviction).
-
-    The fold's root, stated here once (every other home points here). A launch fold is keyed on the transcript's OWN
-    subagents root whatever tree the agent's file resolved under (_awaiting_nest: own_root = _subagents_dir(path), named
-    from the transcript and never derived from the resolved path; the key was chosen for the file under the own tree,
-    whose fold kept past that root's eviction attributed from a file the re-read tree no longer names), so the own root's
-    eviction drops every fold of that transcript's agents, a file found under a sibling's tree (the /clear-fork miss path)
-    included, and a sibling root's eviction drops none of them and costs no fold. The bound that follows: a fold whose file
-    lies under a sibling root that left the memo, the tree removed on disk and popped by a thread with no hold on it
-    included, is served until the cycle ends (or until the own root's own eviction), so the attribution from the gone file
-    stands for the rest of the cycle; the next cycle's first read resolves the file again (to nothing, when it is gone) and
-    folds it again. Executed at both edges by tests/test_subagent_tree_stamps_per_cycle.py ScopedInvalidation
-    test_a_fold_resolved_under_a_siblings_tree_is_keyed_on_the_own_root_and_served_past_the_siblings_removal_until_the_cycle_ends:
-    0 folds after the sibling's eviction with the attribution served and the sibling's pair dropped, A + 1 folds after the
-    own root's, the command still nested under the gone file's agent in the same cycle, and top-level in the next."""
-    return getattr(_live_scope, "subtrees", None)
-
-
-def _subagent_vouched(root, g0):
-    """Does a cycle-scope entry held under generation `g0` and depending on `root` still stand: the table has not been
-    cleared since (_SUBAGENT_ROOTS_CLEARED_GEN at or below g0), and that root has not been evicted since (its
-    _SUBAGENT_ROOT_EVICTED value at or below g0; a root never evicted reads 0). An entry that depends on no known root
-    (`root` None: a stamp _dir_stamp took itself, whose tree the scope cannot name) is vouched only while the generation
-    itself has not moved, the rule every entry had before 2026-09-21, kept for the one population that has no root
-    to key on. The reads are taken under _SUBAGENT_EVICT_LOCK (its comment), so no eviction is seen half made; the gen
-    and a root's value only rise, and a clear writes a cleared generation above every value it erases, so the larger of
-    a root's value and the cleared generation, which decides the answer, never falls. So once an eviction of its root is
-    recorded a vouch answers False at every later lookup: the safe side, executed by
-    tests/test_subagent_tree_stamps_per_cycle.py EvictionTableLock's three window cases."""
-    with _SUBAGENT_EVICT_LOCK:
-        evicted = _SUBAGENT_ROOT_EVICTED.get(root, 0)   # the table before the cleared generation, the order round 2 of #882 ruled
-        cleared = _SUBAGENT_ROOTS_CLEARED_GEN[0]
-        gen = _SUBAGENT_TREES_GEN[0]
-    if cleared > g0:
-        return False
-    if root is None:
-        return gen == g0
-    return evicted <= g0
-
-
-def _subagent_root_evicted(d):
-    """Record that root `d` left _SUBAGENT_TREES (the three leave sites: _subagent_trees_forget per evicted root, and
-    _subagent_tree's missing-root and replaced-root pops when they removed an entry): _SUBAGENT_TREES_GEN moves by one and
-    the root's table entry takes the new value, so every scope entry that depends on `d` and was held under an older value
-    is dropped at its next lookup (_subagent_vouched), and nothing held for any other root moves. At the table's cap
-    (_SUBAGENT_ROOT_EVICTED_MAX roots, `d` not among them) the table is cleared first and _SUBAGENT_ROOTS_CLEARED_GEN takes
-    the value, which drops every entry held before the clear once. The whole body runs under _SUBAGENT_EVICT_LOCK (its
-    comment: what it guards and why)."""
-    with _SUBAGENT_EVICT_LOCK:
-        _SUBAGENT_TREES_GEN[0] += 1
-        g = _SUBAGENT_TREES_GEN[0]
-        if d not in _SUBAGENT_ROOT_EVICTED and len(_SUBAGENT_ROOT_EVICTED) >= _SUBAGENT_ROOT_EVICTED_MAX:
-            _SUBAGENT_ROOT_EVICTED.clear()
-            _SUBAGENT_ROOTS_CLEARED_GEN[0] = g
-        _SUBAGENT_ROOT_EVICTED[d] = max(_SUBAGENT_ROOT_EVICTED.get(d, 0), g)
-
-
-def _subagent_scope_hold(sc, d, dirs, stats, g0):
-    """Hold a validated or cleanly walked tree in the cycle scope `sc` (None: no scope open, nothing held) under `g0`, the
-    generation read before the read that produced it: the pair under its root `d` and each directory's stamp under its
-    path, the shape _dir_stamp answers, both vouched by `d`. The tree holds real directories only (the root by lstat, each
-    child by is_dir(follow_symlinks=False)), so a directory's os.stat and os.lstat agree and the stamp _dir_stamp would
-    take is the one indexed here. Returns the pair held (the object a later call this cycle is served)."""
-    pair = (dirs, stats)
-    if sc is None:
-        return pair
-    sc["trees"][d] = (pair, g0)
-    stamps = sc["stamps"]
-    for sd, st in zip(dirs, stats):
-        stamps[sd] = ((sd, st.st_mtime_ns), d, g0)
-    return pair
-
-
 class _SubagentTreeUnreadable(Exception):
     """_subagent_tree's answer for a root whose own lstat failed for a reason other than absence (its docstring states the
     shape): `root`, `error` (the OSError) and `entry`, the memo's standing (directories, identities) for the root, or
@@ -35658,16 +35455,16 @@ def _subagent_tree(d, faults=None):
     is there is not a directory (a symlink, a file in its place: not this session's tree, never listed). Raises
     _SubagentTreeUnreadable, carrying the memo's standing entry for `d` when one stands, when the root's own lstat fails for
     any reason but absence (ENOENT and ENOTDIR are the (), () above; EACCES on a parent, EIO and ELOOP in a path component
-    are not): a read that did not happen says nothing about what is there, so nothing is popped, no eviction is recorded,
-    nothing is held and the next call reads the disk again, and each reader answers its own standing entry unheld
+    are not): a read that did not happen says nothing about what is there, so nothing is popped, nothing is held and the
+    next call reads the disk again, and each reader answers its own standing entry unheld
     (_subagent_dirs_ident the entry's (directories, identities), _subagent_meta_map its cached map, _subagent_file its
     cached resolution when that lies under what the walk could not read) or, with none standing, an answer no readable
     and no absent tree produces where the reader can carry one (_subagent_dirs_ident (d,), (_TREE_UNREADABLE,);
     _subagent_file None with a fault, to a caller that passes a faults list, which gives it the call's lifetime
     (_awaiting_nest)), and tells a running chat build the tree is
     unreadable (_chat_dep_note_taskout under _TREE_UNREADABLE, a key no stat equals, so the tab is rebuilt next cycle and
-    reads again) (2026-09-21; until then the branch took every OSError for absence, and an EIO popped the entry, recorded
-    an eviction, answered (), () and noted the tree absent, which the tab showed as no subagents until the fault cleared;
+    reads again) (2026-09-21; until then the branch took every OSError for absence, and an EIO popped the entry,
+    answered (), () and noted the tree absent, which the tab showed as no subagents until the fault cleared;
     tests/test_subagent_tree_memo.py UnreadableRoot executes an EIO by mock and a real EACCES at both edges). Either
     None _subagent_file answers stands only for a file under no tree the walk could read, since a fault excludes its own
     tree from the agent-file walk and nothing else (_subagent_walk_unreadable). Two answers with none standing are
@@ -35687,10 +35484,10 @@ def _subagent_tree(d, faults=None):
     `faults`, a list when given, receives (directory, OSError) for each place below the root the walk could not read: a
     directory whose listing failed, an entry whose type could not be read and a child whose lstat failed, each for a
     reason other than absence (ENOENT and ENOTDIR say the place is gone since its parent was listed, and its parent's
-    stamp moved with it). Only a walk can report one: a validated hit and a served read answer a tree whose every
-    listing succeeded, and a walk that reports one is never held, so the next call walks again and reports it again.
-    The agent-file walk passes it and excludes those places, as it excludes a tree whose root could not be read, so a
-    file it did not find there is not memoized as missing (the pass applying round 2 of #882's rulings; until then such
+    stamp moved with it). Only a walk can report one: a validated hit answers a tree whose every listing succeeded (a
+    failed listing is never vouched, below). The agent-file walk passes it and excludes those places, as it excludes a
+    tree whose root could not be read, so a file it did not find there is not memoized as missing (the pass applying
+    round 2 of #882's rulings; until then such
     a walk's miss was memoized on stamps a chmod or a transient EIO does not move, and served after the fault cleared,
     tests/test_subagent_tree_memo.py FaultBelowTheRoot). The other readers pass none.
 
@@ -35723,42 +35520,60 @@ def _subagent_tree(d, faults=None):
     _subagent_meta_map's listing of it fails and is skipped, the feed key folds one more identity, and the agent-file
     walk, told through `faults`, excludes it from the lookup.
 
-    Inside a pusher cycle or a jobs pass (this thread's cycle scope, _subagent_scope; 2026-09-19) the validation itself
-    happens at most once per cycle, plus once more when this root left _SUBAGENT_TREES in the cycle (its scope entry is
-    dropped at the next lookup, _subagent_vouched; another root's eviction leaves it served): the pair a validated hit or a
-    clean walk returned is held in the scope under the generation read before the lstat and every later call for the root
-    on that thread in the cycle is served it with no stat, and a change on disk after that validation is seen by the next
-    cycle's first call, one cycle later at most (the comment block above _subagent_scope_open). The root's own removal or
-    replacement is inside that lag, not an exception to it: the served call precedes the root's lstat, so a root held
-    earlier in the cycle is served until the cycle ends, and the two pop paths below run only on a call the scope does not
-    serve, the next cycle's first call on this thread or a call on a thread with no hold on the root (the other loop's
-    first call for it in its own cycle, a handler thread's), whose pop records the eviction so that this thread's next
-    lookup drops the hold and finds what the pop found (tests/test_subagent_tree_stamps_per_cycle.py pins both pops through
-    such a thread and the same-thread hold beside them; round 1 of #882 found the replaced-root pop unpinned). Not held:
-    a missing or replaced root (the two pop paths, which also record the root's eviction when they removed an entry,
-    _subagent_root_evicted, so every open scope drops what it holds for THAT root) and a walk with a failed listing or
-    child lstat, which cost what they cost today per call and never serve a failure."""
+    THE CYCLE SCOPE (2026-09-18). The event is one pusher cycle (or one jobs pass, or one connect push's chat loop on a
+    handler thread), which opens `_live_scope.subagent_trees`: {root path: (directories, stats)}, exactly what this
+    function returns. The first reader of a root in the cycle validates or walks (_subagent_tree_sample, the body) and
+    its answer is stored on the scope; every later reader of the cycle is served that sample with no lstat, counted as
+    `scoped`. Before it each reader took its own sample within the one cycle: the chat build's sidecar-map reads
+    (_stamp_agents, _awaiting_live_rows, _awaiting_nest, through _subagent_meta_map), the feed key's
+    _subagent_dirs_ident, the derivation's _session_awaiting, and a viewer frame's agent-file re-walk on a cache miss
+    (its first open, or after a file landed in a directory the walk read), which samples the root through
+    _find_agent_file (the frame's hit-path re-stats through _dir_stamps are a separate route, a follow-up); 63k
+    validations and 5.2M lstats over 3.9k cycles live, of which the ~39,500 outside the feed key are the candidates,
+    an estimated 30-50% of all validations being re-samples of a root another reader had taken in the same cycle, the
+    `scoped` tally measuring the realized share. A
+    directory change landing after the sample is invisible to the rest of the cycle and seen by the next cycle's fresh
+    sample, the one-cycle lag _sessions' mtime and _live_scope.snapshot already accept. Exact across the boundary because
+    every scoped sample carries a stamp per directory it listed (the stats), so a reader that folds those stamps into its
+    own memo (_subagent_meta_map's key, _subagent_file's stamps, the feed key's identities, the chat build's taskout notes)
+    mismatches next cycle when the tree moved and re-derives, never a stale hit; an EMPTY answer (nothing at the root, or
+    not a directory) carries no stamp and is therefore NOT scoped: _subagent_file_walk stamps the root itself with a fresh
+    _dir_stamp and reads its listing through _find_agent_file, and served an older empty sample it would memoize a nested
+    agent's miss under a stamp newer than the listing it read, a stale miss that outlives the cycle because
+    _subagent_file's hit path re-stats and never re-walks; so such a root costs each caller its one lstat, as before. The
+    `stats` list is shared by every reader of the cycle and read-only by contract, as _sessions' rows are (the readers
+    zip, iterate or copy it). Outside a scope every call samples afresh, as _live_map, _sessions, _path_of and
+    _auth_avail_status behave (a WS viewer handler, GET /feed.json read fresh)."""
     d = str(d)
-    sc = _subagent_scope()
-    if sc is not None:
-        held = sc["trees"].get(d)
-        if held is not None:
-            if _subagent_vouched(d, held[1]):            # validated or walked earlier this cycle on this thread, and the root
-                _SUBAGENT_TREE_STATS["served"] += 1       #  has not left the memo since: no stat; the one site that moves served
-                return held[0]
-            del sc["trees"][d]                            # it left (an eviction on this thread or another): the hold is stale
-    g0 = _SUBAGENT_TREES_GEN[0]                           # read BEFORE the disk read: an eviction that races the read outdates the hold
+    scope = getattr(_live_scope, "subagent_trees", None)
+    if scope is not None:
+        got = scope.get(d)
+        if got is not None:
+            _SUBAGENT_TREE_STATS["scoped"] += 1
+            return got
+    out = _subagent_tree_sample(d, faults)
+    if scope is not None and out[0]:
+        # only an answer with at least one directory is scoped (2026-09-18): it carries a stamp per directory it listed,
+        # so a reader folding those stamps into its own memo re-derives next cycle; the two zero-directory answers carry
+        # none, and a scoped empty answer would let _subagent_file_walk memoize a nested agent's miss under the root's
+        # fresh stamp for good (its hit path re-stats and never re-walks)
+        scope[d] = out
+    return out
+
+
+def _subagent_tree_sample(d, faults=None):
+    """One fresh sample of the tree at `d`: the memo's validation or walk, with no cycle scope (2026-09-18: _subagent_tree's
+    body before the scope; the memo's rules, `faults` and the raise for a root that cannot be read are documented there)."""
+    d = str(d)
     try:
         st = os.lstat(d)
     except (FileNotFoundError, NotADirectoryError):       # nothing at the root (ENOENT, ENOTDIR): [] as ever, and the entry is forgotten
-        if _SUBAGENT_TREES.pop(d, None) is not None:
-            _subagent_root_evicted(d)                     # an eviction: what any open scope holds for this root drops at its lookup
+        _SUBAGENT_TREES.pop(d, None)
         return (), ()
     except OSError as e:                                  # any other errno (EACCES on a parent, EIO, ELOOP): the root could not be READ,
-        raise _SubagentTreeUnreadable(d, e, _SUBAGENT_TREES.get(d))   # which is not absence: nothing popped, recorded or held (the docstring)
+        raise _SubagentTreeUnreadable(d, e, _SUBAGENT_TREES.get(d))   # which is not absence: nothing popped or held (the docstring)
     if not stat.S_ISDIR(st.st_mode):                      # a symlink (live or dangling) or a file in its place: not a tree
-        if _SUBAGENT_TREES.pop(d, None) is not None:
-            _subagent_root_evicted(d)
+        _SUBAGENT_TREES.pop(d, None)
         return (), (st,)
     hit = _SUBAGENT_TREES.get(d)
     if hit is not None and None not in hit[1]:
@@ -35772,7 +35587,7 @@ def _subagent_tree(d, faults=None):
         _subagent_tree_charge("validateMs", t0)
         if fresh == hit[1]:
             _SUBAGENT_TREE_STATS["hit"] += 1
-            return _subagent_scope_hold(sc, d, hit[0], stats, g0)   # the cycle's one validation of this tree
+            return hit[0], stats
     _SUBAGENT_TREE_STATS["miss"] += 1
     t0 = time.monotonic()
     racy_from = time.time_ns() - _SUBAGENT_DIR_RACY_NS    # a stamp at or past this may still be the tick an entry lands in
@@ -35813,10 +35628,7 @@ def _subagent_tree(d, faults=None):
                    for s, ok in zip(stats, clean))
     _SUBAGENT_TREES[d] = (tuple(dirs), idents)
     _subagent_tree_charge("walkMs", t0)
-    dirs = tuple(dirs)
-    if all(clean):                                        # a walk that listed and stat'd everything: the cycle's pair; a failed
-        return _subagent_scope_hold(sc, d, dirs, stats, g0)   #  listing or lstat is never held, so the next call this cycle re-walks
-    return dirs, stats
+    return tuple(dirs), stats
 
 
 def _subagent_dirs(d):
@@ -35842,21 +35654,18 @@ def _subagent_trees_forget(alive):
     for d in list(_SUBAGENT_TREES):
         if d not in owned and _SUBAGENT_TREES.pop(d, None) is not None:
             _SUBAGENT_TREE_STATS["evict"] += 1
-            _subagent_root_evicted(d)                     # per root: every open cycle scope (this thread's, the pusher's) drops what
-            #                                               it holds FOR THIS ROOT at its next lookup and keeps every other root's
 
 
 def _subagent_tree_memo_report():
-    """/perf memos.subagentTree: hit and miss (trees vouched for by validation against trees walked), served (reads a cycle
-    scope answered from the pair it held, no stat: how many reads the scope absorbed; _subagent_tree's early return alone
-    moves it; a read answered a tree, validated, walked or served, lands in exactly one of the three and a read answered no
-    tree moves none; what each counts, a failed validation before a walk included, the rule, its edges and the tests that
-    execute it: stated once at _SUBAGENT_TREE_STATS; served since 2026-09-21, round 1 of #882's fresh-3, before which those
-    reads moved no counter), evict (roots dropped as
-    unowned), dirStats (the directory stats both validators paid: the tree validation's lstat per known directory below the
-    root and the agent-file lookup's os.stat per directory it re-checks, _dir_stamp; the lstat half alone before 2026-09-19), walkMs and
-    validateMs (the time in each, every thread), and the gauges roots (entries) and dirs (directories held). A validation
-    happens at most once per pusher cycle and once per jobs pass since 2026-09-19 (_subagent_scope).
+    """/perf memos.subagentTree: hit and miss (trees vouched for by validation against trees walked), scoped (served from the
+    cycle's sample with no stat at all, 2026-09-18: scoped / (hit + miss + scoped) is the share of reads that were
+    re-samples of a root another reader took in the same cycle; a read answered a tree, validated, walked or scoped, lands
+    in exactly one of the three and a read answered no tree moves none; what each counts, a failed validation before a
+    walk included: stated once at _SUBAGENT_TREE_STATS), evict (roots dropped as unowned), dirStats (the directory stats
+    both validators paid: the tree validation's lstat per known directory below the root and the agent-file lookup's
+    os.stat per directory it re-checks, _dir_stamp; the lstat half alone before 2026-09-19), walkMs and validateMs (the
+    time in each, every thread), and the gauges roots (entries) and dirs (directories held). A tree is sampled once per
+    cycle scope (_subagent_tree, THE CYCLE SCOPE).
 
     THE COST, derived road by road from the code, stated here once: docs/reference.md's memos paragraph, the ledger
     entry and the other kernel texts that speak of it name this docstring (a test's docstring states what its own case
@@ -35882,8 +35691,7 @@ def _subagent_tree_memo_report():
       - the walk with no entry, or with an entry holding an unvouched directory (which never validates): D_r lstats and
         D_r listings, an entry's type coming from the listing; once per root per change, held for the cycle when every
         listing and child lstat succeeded and paid again at the next read when one failed; miss 1 and walkMs, no
-        dirStats. Guards test_a_stale_hold_dropped_at_the_lookup_lands_in_miss_and_moves_served_by_nothing ({lstat: D,
-        scandir: D});
+        dirStats;
       - a failed validation, then the walk (an entry whose identities no longer stand: a directory added, removed or
         written; D_old the entry's directories, D_new the tree's now): the validation's D_old lstats, then the walk's
         lstat of each directory below the root (the root's one lstat serves both), D_old + D_new - 1 lstats, and D_new
@@ -35891,8 +35699,8 @@ def _subagent_tree_memo_report():
         comment), dirStats D_old - 1, validateMs and walkMs. Guards
         test_a_failed_validation_then_the_walk_pays_both_in_one_miss_with_the_validations_lstats_in_dirstats ({lstat:
         2D, scandir: D + 1} and (hit, miss, dirStats) (0, 1, D - 1) for one workflow directory added, D_old = D);
-      - the served read (the held pair, or a held stamp at _dir_stamp): no call; every read of a held root after its
-        first on that thread in the cycle; served 1 for a tree (_subagent_tree's early return alone), no counter for a
+      - the scoped read (the held pair, or a held stamp at _dir_stamp): no call; every read of a held root after its
+        first on that thread in the cycle; scoped 1 for a tree (_subagent_tree's early return alone), no counter for a
         stamp. BoundPerCycleAndPerPass
         test_the_served_tree_read_the_served_stamp_and_the_agent_file_hit_make_no_filesystem_call_of_any_class_the_census_wraps_under_the_tree
         (no call on each served path) and the asks every bound case asserts (_assert_asks);
@@ -35952,7 +35760,7 @@ def _subagent_tree_memo_report():
         test_boundary_an_eio_on_a_sibling_roots_lstat_alone_leaves_its_stamp_held_once_per_cycle);
       - a read of a place with no tree (_subagent_tree on an absent root, or a dangling or live link or a file in its
         place): one lstat per call, whichever reader makes it, answered ((), ()) or ((), (the lstat,)); never held, no
-        counter (hit, miss, served and evict unmoved); and with a link or a file in the place, each dependency note of
+        counter (hit, miss, scoped and evict unmoved); and with a link or a file in the place, each dependency note of
         it (_subagent_tree_dep_note: _subagent_meta_map's per read, the walk's per walk) asks _chat_stat_key whether the
         place dangles, one os.stat per note, never held and counted nowhere. MissPathRoads
         test_a_place_with_no_tree_costs_one_lstat_per_read_and_is_never_held (the own root's place: each
@@ -35969,7 +35777,7 @@ def _subagent_tree_memo_report():
         definition), so its tab is rebuilt every cycle while the fault lasts (tests/test_subagent_tree_memo.py FailClosedRoads, and
         FaultExcludesItsOwnTree's no-holder cases). Guards
         test_an_unreadable_session_directory_resolves_every_agent_again_on_every_read_and_its_failed_calls_move_no_counter
-        ({lstat: N x (3A + 1), stat: N x A x (D + 2)} under the tree; hit, miss, served and evict 0, dirStats 1);
+        ({lstat: N x (3A + 1), stat: N x A x (D + 2)} under the tree; hit, miss, scoped and evict 0, dirStats 1);
       - a place below a tree's root that cannot be read (a directory whose listing fails, an entry whose type or a child
         whose lstat cannot be taken, for a reason other than absence), or a candidate file whose lstat fails for such a
         reason (in a directory that can be listed but not searched, or an EIO; the own place is the own root's
@@ -35981,20 +35789,6 @@ def _subagent_tree_memo_report():
         applying round 2 of #882's rulings, and for a candidate round 3's group A; until then that walk's miss was
         memoized and served after the fault cleared). tests/test_subagent_tree_memo.py FaultBelowTheRoot and
         FaultOnTheWalksOwnRead (two lookups, two walks, nothing memoized);
-      - a root that left the memo in the cycle (an ownership eviction, a missing or replaced root): one read of that
-        root at its next lookup (a walk, or D_r lstats when a read on another thread re-inserted it since; for a root
-        now absent, or a link or a file in its place, one lstat at that read and at every read after it, since nothing
-        is held: the no-tree entry above), one fold per
-        awaiting agent of the transcripts whose own root it is, A_r (0 for an unowned sibling root; the fold's root and
-        its bound: _subagent_scope's docstring), and one stat per own stat the scope held, which no root vouches for and
-        every eviction drops; every other root's pair, stamps and folds untouched. Guards
-        test_a_forget_that_evicts_the_root_makes_the_next_read_walk_again_while_one_that_evicts_nothing_leaves_it_served
-        (the walk, D lstats); ScopedInvalidation
-        test_held_launch_folds_survive_the_eviction_of_a_root_their_files_are_not_under (0 folds and 0 stats),
-        test_an_own_stat_stamp_is_re_taken_after_an_unrelated_roots_eviction_where_a_tree_indexed_stamp_is_served (1
-        stat) and
-        test_a_fold_resolved_under_a_siblings_tree_is_keyed_on_the_own_root_and_served_past_the_siblings_removal_until_the_cycle_ends
-        (0 folds after the sibling's eviction, A + 1 after the own root's);
       - a fold that faults (the reader's fail path, or a resolution that could not be made): A_s folds per read, the
         fault held for the one call that observed it (_awaiting_nest). Guards
         test_a_faulted_launch_fold_is_folded_once_per_call_and_not_held_across_calls;
@@ -36010,7 +35804,7 @@ def _subagent_tree_memo_report():
         ruling asked for. DependencyKey
         test_the_chat_signature_re_stats_every_directory_the_walk_recorded_so_a_change_in_any_sibling_directory_rebuilds_the_tab
         (D + 1 + S x D + K; one key per sibling root, the base's form, is D + 1 + S + K).
-    Outside a scope (a handler thread's build, the act-now nudge pass) nothing is held and every read pays per call what
+    Outside a scope (a reader on a thread with no cycle scope open) nothing is held and every read pays per call what
     every read paid before the scope: D_s lstats, A_s x D_s re-check stats and A_s folds. BoundPerCycleAndPerPass
     test_outside_a_cycle_every_reader_validates_for_itself_and_dirstats_counts_both_validators (D lstats, A x D stats,
     dirStats (D - 1) + A x D). Before the scope the two loops' own reads paid that per read too: per cycle, N x sum_s
@@ -36024,9 +35818,8 @@ def _subagent_tree_memo_report():
     tree's per-read resolution and the signature's per-directory stats), and ruled it derived road by road, a case per
     term.
 
-    The reads a handler thread makes (per call, as before) and the re-read of a root that left the memo mid-cycle land in
-    the same counter, so dirStats over an interval is bounded per scoped reader set, not per interval. Written from several
-    threads; a resize under the sum is read again."""
+    The reads made outside a scope (per call) land in the same counter, so dirStats over an interval is bounded per scoped
+    reader set, not per interval. Written from several threads; a resize under the sum is read again."""
     for _ in range(3):
         try:
             dirs = sum(len(v[0]) for v in list(_SUBAGENT_TREES.values()))
@@ -36049,8 +35842,9 @@ def _subagent_tree_dep_note(d, dirs, stats, notes=None):
     re-evaluates to, so its appearance is a change too); a LIVE link (not this session's tree, never listed) notes
     nothing, since a None note could never match its re-stat and the target's key would rebuild the tab on changes the
     readers never show. The key comes from the pair the reader was answered and never from a stat taken after it: inside a
-    pusher cycle or a jobs pass the pair may be the cycle scope's held read (_subagent_scope), and a fresh stat would
-    post-date the listing it vouches for, so a file landing after the hold under a directory the listing lacked would be
+    cycle scope (_live_scope.subagent_trees: a pusher cycle, a jobs pass, a connect push's chat loop) the pair may be the
+    sample another reader took earlier in the cycle, and a fresh stat would post-date the listing it vouches for, so a
+    file landing after the sample under a directory the listing lacked would be
     recorded under its own post-landing key, equal to every later re-stat, and the tab that showed the file missing would
     never be rebuilt (round 1 of #882's correctness-1 and extra5-1, at _subagent_file_walk). Nothing is recorded outside a chat build.
     `notes`, a list when given, receives the (path, key) pairs instead, and nothing is reported here: the agent-file walk
@@ -36074,7 +35868,10 @@ def _subagent_meta_map(path):
     workflows/wf_<id>/, and a flat listing missed it, so its Agent card never learned its id), cached on the
     directories' mtimes (a sidecar landing changes its directory's — a stat, never a timer). {} when the directory does
     not exist (older CLIs wrote no subagent files); under a root that cannot be read, the cached map when one stands, else
-    {}, with the running chat build told either way (_subagent_tree's docstring: the shape)."""
+    {}, with the running chat build told either way (_subagent_tree's docstring: the shape). The directories and their
+    stats come from the shared walk memo (_subagent_tree), one sample per cycle across every reader since 2026-09-18: the
+    three reads a chat build makes of this map (_stamp_agents, _awaiting_live_rows, _awaiting_nest) and the feed key's
+    read share the cycle's stamps."""
     d = str(_subagents_dir(path))
     try:
         dirs, stats = _subagent_tree(d)                   # the shared walk memo (2026-09-16): the directories and the stat each
@@ -36120,31 +35917,15 @@ def _subagent_meta_map(path):
 
 
 def _dir_stamp(sd):
-    """(dir, mtime_ns) for one directory, a stat (None when missing). Inside a cycle scope (_subagent_scope, 2026-09-19) the
-    stamp is served from the scope when held and still vouched (indexed from a tree validated this cycle, vouched by that
-    tree's root, or taken by an earlier call on this thread, vouched by no root and so only while no root has left the memo
-    since: _subagent_vouched), else taken once and held under the generation read before the stat, keyed by directory, so
-    a second agent's lookup that re-checks the same directory in the cycle (the project directory, on every miss) is served
-    it (what the re-check costs: _subagent_tree_memo_report's docstring); a stat that raises is answered (sd, None) and
-    never held, so the next call stats again. Each os.stat that succeeds counts under
-    memos.subagentTree dirStats beside _subagent_tree's validation lstats (a stat that raises is answered and not counted)."""
-    sc = _subagent_scope()
-    if sc is not None:
-        held = sc["stamps"].get(sd)
-        if held is not None:
-            if _subagent_vouched(held[1], held[2]):
-                return held[0]
-            del sc["stamps"][sd]                          # its tree left the memo since the hold (or any root did, for an own stat)
-    g0 = _SUBAGENT_TREES_GEN[0]
+    """(dir, mtime_ns) for one directory, a stat (None when missing). Each os.stat that succeeds counts under
+    memos.subagentTree dirStats beside _subagent_tree's validation lstats (a stat that raises is answered (sd, None) and
+    not counted)."""
     try:
         out = (sd, os.stat(sd).st_mtime_ns)
     except OSError:
-        return (sd, None)                                 # not held (a held entry would have been served above, so none stands)
+        return (sd, None)
     _SUBAGENT_TREE_STATS["dirStats"] += 1
-    if sc is not None:
-        sc["stamps"][sd] = (out, None, g0)                # no root the scope can name: re-taken after any eviction
     return out
-
 
 def _dir_stamps(dirs):
     """(dir, mtime_ns) for each directory, once each, stats only: the resolver's memo key as a hit re-takes it. A file
@@ -39421,12 +39202,24 @@ def _chat_sig_shared():
 def _chat_push_scopes_open():
     """Open what the chat loop reads once per push and would otherwise read once per TAB on a thread with
     no pusher-cycle scope (a connect push on a handler thread): the shared signature components
-    (_chat_sig_shared), the caption-map slot (_msg_summaries_scoped) and the names snapshot (a registry
-    scan per outgoing postal card without it). A pusher cycle already holds the last two, so only the
-    absent ones are opened, and the record says which; _chat_push_scopes_close clears exactly what was
-    opened here, so a cycle's own scopes are never touched. A names snapshot on a handler thread makes
-    that push's postal values one read (the fold's `_scoped`), which is the condition the recorded values
-    rest on, and gives the signature's names digest the same content the pusher's has."""
+    (_chat_sig_shared), the caption-map slot (_msg_summaries_scoped), the names snapshot (a registry
+    scan per outgoing postal card without it) and the subagents-tree samples (`subagent_trees`,
+    2026-09-18: a rebuilt tab reads its sidecar map two to four times, each a validation of its own
+    without the slot, and a viewer frame's agent-file re-walk on a cache miss (its first open, or after
+    a file landed in a directory the walk read) samples the root once more; a handler thread's push
+    shares one sample per root across its chat loop and those re-walks, exactly as a pusher cycle does.
+    The frame's hit-path re-stats through _dir_stamps are a separate route, a follow-up). A pusher cycle
+    already holds the last three, so only the absent ones are opened, and the record says which;
+    _chat_push_scopes_close clears exactly what was opened here, so a cycle's own scopes are never
+    touched. The ownership record is written BEFORE the shared components are read (2026-09-18, the
+    review's finding): _chat_sig_shared reads the flags and cards files, the colormap, the login label
+    and the billing availability, and a raise there used to leave the slots just opened set on the
+    handler thread with no record of them, so the push's except branch and the next push's opening
+    close cleared nothing, and every later push and viewer frame on that connection's thread was served
+    the stale snapshot for the connection's life (the open skips a slot that is already set, so the leak
+    was adopted, never replaced). A names snapshot on a handler thread makes that push's postal values
+    one read (the fold's `_scoped`), which is the condition the recorded values rest on, and gives the
+    signature's names digest the same content the pusher's has."""
     owned = ["chat_shared"]
     if getattr(_live_scope, "msgsum", None) is None:
         _live_scope.msgsum = [_MSGSUM_UNSET]
@@ -39434,8 +39227,11 @@ def _chat_push_scopes_open():
     if getattr(_live_scope, "names", None) is None:
         _live_scope.names = _names_snapshot()
         owned.append("names")
-    _live_scope.chat_shared = _chat_sig_shared()
-    _live_scope.chat_push_owned = owned
+    if getattr(_live_scope, "subagent_trees", None) is None:
+        _live_scope.subagent_trees = {}                   # one sample per subagents root across this push's chat loop and its
+        owned.append("subagent_trees")                    #  viewer frames' agent-file re-walks (_push_subagents runs before the close), 2026-09-18
+    _live_scope.chat_push_owned = owned                   # recorded before the read below can raise (2026-09-18): the close must
+    _live_scope.chat_shared = _chat_sig_shared()          #  find every slot this open set, on the except path too
 
 
 def _chat_push_scopes_close():
@@ -47237,7 +47033,9 @@ def _subagent_dirs_ident(sid, d):
     """(the directories under the subagents root `d`, their identities) for the feed key's subagents component, from the
     shared walk memo (_subagent_tree, 2026-09-16; before it this key held a sid-keyed memo of its own over the same walk,
     the T368 review's profile having put the walk at a third of the key's cost, while every other reader still walked):
-    an unchanged tree costs one lstat per known directory. A root that does not exist is the tree (d,) with identity None,
+    an unchanged tree costs one lstat per known directory, once per cycle across every reader (the cycle scope,
+    2026-09-18: the chat build's sidecar-map reads earlier in the same cycle sampled this root, and the key is served that
+    sample). A root that does not exist is the tree (d,) with identity None,
     and its appearance moves the component; a symlink or file in its place is (d,) with the LINK's own lstat identity
     (before the shared memo, the target's os.stat identity: one component miss at deploy for such a session, no output
     change).
@@ -47439,7 +47237,8 @@ def _feed_session_key(s, tm, ctx, prev_entry):
         under it, from the shared walk memo (_subagent_dirs_ident over _subagent_tree, 2026-09-16: the directories are
         listed once per change, vouched for by one lstat each while they stand). _subagent_meta_map. A sidecar rewritten
         in place under its own name moves no directory's mtime and is invisible here as it is to the map's own cache
-        (pre-existing).
+        (pre-existing). Sampled once per pusher cycle across every reader (2026-09-18), so the key's identities are the
+        same sample the derivation's map read.
       usage: _chat_ident(STATE/usage.json) when the previous entry recorded reading it (an api error's cap offer,
         _cap_switch_offer), else None. A deps component.
       offer: the login-account usage window sitting at its cap with its reset still ahead of the build's clock, as
@@ -62158,7 +61957,8 @@ def _push(targets, connect=False, live_map=None):
             # start-keyed dirty watermark for the in-memory stamps neither key named; every stamp is a
             # component now, so a bare _mark_views_dirty rebuilds no chat tab (it still busts the feed and the
             # timeline). The shared components, the caption map and the names snapshot are opened once per
-            # push (_chat_push_scopes_open; a pusher cycle already holds the last two).
+            # push (_chat_push_scopes_open; a pusher cycle already holds the last three, 2026-09-18: the caption
+            # map, the names snapshot and the subagents-tree samples).
             _chat_push_scopes_open()
             _nd = len(_CHAT_SIG_DEPS)
             # the render floor (T323 stage 4b): a proto-1 client needs today's index frames over the whole
@@ -66236,12 +66036,19 @@ def _pusher_cycle():
     try:
         _live_scope.paths = {}                  # …and the cycle's sid→path memo (_path_of): the parked-op drain
         #                                         otherwise resolves a held sid's path once per gate per cycle
-        _subagent_scope_open()                  # …and the cycle's subagents-tree scope (_subagent_scope): a tree is
-        #                                         validated once per cycle, not once per reader (2026-09-19)
         _live_scope.sessions = {}               # …and the cycle's discover rows (_sessions, keyed (window,
         #                                         forks); the wide walk under ("wide", window)): ~35 sweeps
         #                                         per cycle became one
         _live_scope.auth = {}                   # …and the cycle's billing-availability memo (_auth_avail_status)
+        _live_scope.subagent_trees = {}         # …and the cycle's subagents-tree samples (_subagent_tree): one sample per
+        #                                       root per cycle for every tree that exists, validated or walked by the
+        #                                       first reader and served to every reader after it: the chat builds'
+        #                                       sidecar maps and awaiting rows, the feed key and its derivations, a
+        #                                       viewer frame's agent-file re-walk on a cache miss (2026-09-18: each
+        #                                       reader took its own sample, 63k validations and 5.2M lstats over 3.9k
+        #                                       cycles live, an estimated 30-50% of them re-samples, the `scoped` tally
+        #                                       measures the realized share; an absent root stays one lstat per caller,
+        #                                       never a validation)
         _live_scope.msgsum = [_MSGSUM_UNSET]    # …and the cycle's caption-map slot (_msg_summaries_scoped): the
         #                                       first chat build that needs the map fetches it, the rest read it
         _live_scope.names = _names_snapshot()   # …and the cycle's NAMES snapshot, same idiom: the name/
@@ -66256,8 +66063,8 @@ def _pusher_cycle():
         _live_scope.snapshot = None
         _live_scope.names = None
         _live_scope.paths = None
-        _subagent_scope_close()
         _live_scope.sessions = None
+        _live_scope.subagent_trees = None
         _live_scope.msgsum = None
         _live_scope.auth = None
         _PERF_STATS.cycle(time.monotonic() - _t_cycle, time.thread_time() - _c_cycle,
@@ -66518,10 +66325,9 @@ JOBS_PASS_S = 0.5                                  # the jobs thread's pace betw
 
 def _jobs_cycle():
     """ONE pass of the jobs thread: the pass's liveness snapshot and scopes opened exactly as _pusher_cycle opens the pusher's
-    (thread-confined, so the two loops never share a snapshot, and the subagents-tree scope of 2026-09-19 makes the pass the
-    event a tree is validated once per, as the cycle is on the pusher), _jobs_pass inside them, the scopes closed in the
-    finally, the pass counted under /perf `jobs`, and the boot's first pass sampled and reported to the boot row like the
-    pusher's first cycle."""
+    (thread-confined, so the two loops never share a snapshot), _jobs_pass inside them, the scopes closed in the finally, the
+    pass counted under /perf `jobs`, and the boot's first pass sampled and reported to the boot row like the pusher's first
+    cycle."""
     _t = time.monotonic()
     first = not _BOOT_HEALTH_DONE[0] and _BOOT_FIRST["jobs"] is None
     if first:
@@ -66533,11 +66339,10 @@ def _jobs_cycle():
     _live_scope.snapshot = live_map
     try:
         _live_scope.paths = {}
-        _subagent_scope_open()                  # the pass's subagents-tree scope (_subagent_scope): the nudge look's reads of a
-        #                                         tree validate it once per pass, and the interrupt tick's forget moves the gen
-        #                                         when it evicts a root
         _live_scope.sessions = {}
         _live_scope.auth = {}
+        _live_scope.subagent_trees = {}         # the pass's subagents-tree samples (2026-09-18): the reminder walk's
+        #                                       _session_awaiting readers and _mark_nudge_failed read the same roots per pass
         _live_scope.msgsum = [_MSGSUM_UNSET]
         _live_scope.names = _names_snapshot()
         _PERF_STATS.stage("jobs.prelude", time.monotonic() - _t)
@@ -66547,9 +66352,9 @@ def _jobs_cycle():
         _live_scope.snapshot = None
         _live_scope.names = None
         _live_scope.paths = None
-        _subagent_scope_close()
         _live_scope.sessions = None
         _live_scope.auth = None
+        _live_scope.subagent_trees = None
         _live_scope.msgsum = None
         _live_scope.files_stat = None
         _live_scope.files_dirty = None
