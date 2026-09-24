@@ -181,8 +181,8 @@ This module holds five things, and it never skips: a pin that skips reports gree
    that argv. And a call of pytest.main or pytest.console_main, or of _pytest.config's main or console_main, by a name
    the census resolves for it (an import, an alias, a star import from a module whose calls the census reads, a name
    assigned from one; looked up by scope, as Python looks it up: the call's own scope, the functions around it with
-   class bodies skipped, the module; a binding under a global declaration counted at the module and one under a
-   nonlocal declaration in the enclosing function that binds the name): a pytest session in the calling process,
+   class bodies skipped, their global declarations with them, the module; a binding under a global declaration counted
+   at the module and one under a nonlocal declaration in the enclosing function that binds the name): a pytest session in the calling process,
    where plugin autoload runs again whatever flag the outer run was given, so its argv, the first positional argument
    or args=, carries the flag itself. The flag check keys on the argv's constant elements (`-p` then `no:anyio`,
    or `-pno:anyio`), so a flag carried by a variable reads as absent, the safe side, and the message says so. The
@@ -196,8 +196,8 @@ This module holds five things, and it never skips: a pin that skips reports gree
    right before `pytest`, after an interpreter head), an in-process call whose argv is not a literal (a name, or no
    argument, which reads sys.argv), and a module that does not parse under the running interpreter. Unparsed the same
    way (the owner's fail-closed design, 2026-09-23), a call whose callee's name the resolution cannot resolve: one
-   inside a comprehension or generator expression in a class body that binds the name (Python looks it up past the class
-   there, a scope the census does not model); and, in a module with a star import from a module whose calls the census
+   inside a comprehension or generator expression in a class body that binds the name or declares it global (Python
+   looks it up past the class there, a scope the census does not model); and, in a module with a star import from a module whose calls the census
    does not read, one through a name the lookup takes to the module, since the census takes only a function scope that
    binds the name as proof that the star import cannot reach it: a name the module binds (the star import may rebind
    it, and the census follows no order; the first verify pass, 2026-09-23, found such a binding read as the module's
@@ -3176,12 +3176,13 @@ def _launchers_in(src, filename):
     or annotated assignment from such a name, each binding placed where Python places it (home: in its own scope, at
     the module under a global declaration, in the enclosing function that binds the name under a nonlocal one) and
     looked up in the scopes Python looks it up in (chain: the call's own scope, the functions around it with class
-    bodies skipped, the module; straight to the module under a global declaration), a name bound more than once there
+    bodies skipped, their global declarations with them, the module; straight to the module under a global declaration
+    of the call's own scope or a function around it), a name bound more than once there
     standing for every path it is bound to; a module name that no scope on that chain binds (a star import may have
     brought it) reads as itself. Unparsed, and red in ChildPytestLaunchers until spelled as an argv or rewritten: a call
     whose callee's name this resolution cannot resolve (the owner's fail-closed design, 2026-09-23; unresolved): one
-    inside a comprehension or generator expression, outside its first iterable, in a class body that binds the name,
-    where Python looks the name up past the class and the census does not model that scope; and, in a module with a
+    inside a comprehension or generator expression, outside its first iterable, in a class body that binds the name
+    or declares it global, where Python looks the name up past the class and the census does not model that scope; and, in a module with a
     star import from a module outside CENSUS_STAR_MODULES (or a relative one), whose names the census does not read,
     one through a name the lookup takes to the module: a name the module binds, which the star import may rebind, or a
     name no scope binds and no builtin names, which it may bring; and one through a name a function binds by a plain
@@ -3326,13 +3327,19 @@ def _launchers_in(src, filename):
     def chain(name, scope, first=True):
         """The scopes Python looks `name` up in from `scope`, in order: `scope` itself (a class body only when `first`,
         the use sitting in it), each function around it with class bodies skipped, then the module (None); a scope that
-        declares the name global sends the lookup straight to the module, past the functions around it. (A scope that
-        declares it nonlocal holds no binding of it, since home moves each one out, so the lookup passes it by.)"""
+        declares the name global sends the lookup straight to the module, past the functions around it. A class body the
+        use does not sit in is passed before its declarations are read, since a class body's global statement governs
+        that body alone, as Python applies it (the fail-closed design's third verify pass, 2026-09-24: read first, `global
+        m` in a class body sent a method's lookup to the module, past the enclosing function's `m = pytest.main`, and the
+        call gave no row). (A scope that declares it nonlocal holds no binding of it, since home moves each one out, so
+        the lookup passes it by.)"""
         while scope is not None:
+            if not first and isinstance(scope, ast.ClassDef):
+                scope = scope_of(scope)
+                continue
             if declared.get(scope, {}).get(name) == "global":
                 break
-            if first or not isinstance(scope, ast.ClassDef):
-                yield scope
+            yield scope
             scope, first = scope_of(scope), False
         yield None
 
@@ -3490,9 +3497,9 @@ def _launchers_in(src, filename):
             return None
         if isinstance(scope_of(root), ast.ClassDef) and in_class_comprehension(root) and resolve(root) != resolve(
                 root, skip_class=True):          # a comprehension's scope_of is the class around it: the cheap test first
-            return ("a call through %r inside a comprehension or generator expression in a class body that binds the name: "
-                    "Python looks the name up past the class there, and the census does not resolve that scope, so it is "
-                    "not read as a launcher until the call moves out of the comprehension" % root.id)
+            return ("a call through %r inside a comprehension or generator expression in a class body that binds the name "
+                    "or declares it global: Python looks the name up past the class there, and the census does not resolve "
+                    "that scope, so it is not read as a launcher until the call moves out of the comprehension" % root.id)
         if unread_stars:
             # a star import binds at the module, so only a function scope on the lookup that binds the name proves the
             # call does not reach the star import's names; a class body's binding does not, since the body reads the
@@ -3875,6 +3882,15 @@ class ChildPytestLaunchers(unittest.TestCase):
         ("a global assignment of pytest.main, the call in a nested function",
          'import pytest\ndef setup():\n    global go\n    go = pytest.main\ndef outer():\n    def inner():\n        return go(["-q"])\n',
          False, "pytest.main (in process)"),
+        # a class body's global declaration governs that body alone: a method of the class looks the name up in the
+        # function around the class (the fail-closed design's third verify pass, 2026-09-24: LG1, which had a row before
+        # the scoped lookup and none after it until chain passed the class before reading its declarations)
+        ("a method's call through a name its class declares global reads the enclosing function's binding (LG1)",
+         'import pytest\ndef outer():\n    m = pytest.main\n    class C:\n        global m\n        def go(self):\n'
+         '            return m(["-q"])\n    return C().go()\n', False, "pytest.main (in process)"),
+        ("a class body's own call under its global declaration reads the module's binding, past the function's",
+         'import pytest\nm = pytest.main\ndef outer():\n    from json import loads as m\n'
+         '    class C:\n        global m\n        r = m(["-q"])\n    return C.r\n', False, "pytest.main (in process)"),
         # the refusals: a name in a call's callee position the resolution cannot resolve is named, never passed (the
         # pre-push lenses' L07, L14 and L09, each silent until then)
         ("a comprehension in a class body that binds the name (L07)",
@@ -3886,6 +3902,13 @@ class ChildPytestLaunchers(unittest.TestCase):
         ("a class body binding pytest.main, called in its comprehension",
          'import pytest\nclass T:\n    m = pytest.main\n    out = {k: m([k]) for k in ("-q",)}\n',
          "unparsed", "inside a comprehension or generator expression in a class body that binds the name"),
+        # the class body's own lookup goes to the module under its global declaration, and its comprehension's goes to
+        # the function around the class, which binds pytest.main (found closing the third verify pass, 2026-09-24: with
+        # the declaration read on the lookup past the class, both read the module's json.loads and the call gave no row)
+        ("a comprehension in a class body that declares the name global, the function around the class binding it (LG3)",
+         'import pytest\nfrom json import loads as m\ndef outer():\n    m = pytest.main\n    class C:\n        global m\n'
+         '        r = [m(["-q"]) for _ in (1,)]\n    return C.r\n',
+         "unparsed", "inside a comprehension or generator expression in a class body that binds the name or declares it global"),
         ("a name no scope binds beside a star import from a module the census does not read (L09)",
          'from helpers_x import *\ndef go():\n    return main(["-q"])\n',
          "unparsed", "a name no scope here binds, in a module with a star import from helpers_x"),
@@ -4086,7 +4109,11 @@ class ChildPytestLaunchers(unittest.TestCase):
                 ("a star import from a module the census reads refuses nothing",
                  'from subprocess import *\ndef go():\n    return helper()\n', []),
                 ("a name declared global and bound nowhere else is unbound, with no star import to refuse it",
-                 'def go():\n    global main\n    return main(["-q"])\n', [])):
+                 'def go():\n    global main\n    return main(["-q"])\n', []),
+                ("a class body's own call under its global declaration reads the module's json.loads, past the function's "
+                 "pytest.main (LG2)",
+                 'import pytest\nfrom json import loads as m\ndef outer():\n    m = pytest.main\n    class C:\n        global m\n'
+                 '        r = m("[1]")\n    return C.r\n', [])):
             with self.subTest(form=label):
                 got = _launchers_in(src, "test_synthetic_launcher.py")
                 self.assertEqual([r["kind"] for r in got], rows, [_describe_launcher(r) for r in got])
