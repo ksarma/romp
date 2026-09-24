@@ -3916,6 +3916,18 @@ class ChildPytestLaunchers(unittest.TestCase):
         ("a class body's call before its own binding, beside such a star import (K5)",
          'from helpers_x import *\nclass T:\n    out = main(["-q"])\n    main = None\n',
          "unparsed", "a name no scope here binds, in a module with a star import from helpers_x"),
+        # the fail-closed design's second verify pass (2026-09-23) found two refusals no case held: a module binding made
+        # by a method under a global declaration, the method called through a subscript at module level before the star
+        # import (the lookup finds the module's binding only where homes_of moves it there), and a relative star import
+        # from a module named like one the census reads, which is not that module and whose names the census does not
+        # read (under each mutant the module stayed green and the case gave no row)
+        ("a module binding made under a global declaration in a method, before such a star import (X-L11d)",
+         'class K:\n    def arm(self):\n        global run\n        from subprocess import run\n[K][0]().arm()\n'
+         'from helpers_x import *\ndef go():\n    return run(["-q"])\n',
+         "unparsed", "a name the module binds, in a module with a star import from helpers_x"),
+        ("a relative star import from a module named subprocess (X-L10a)",
+         'from .subprocess import *\ndef go():\n    return run("python -m pytest -q", shell=True)\n',
+         "unparsed", "a name no scope here binds, in a module with a star import from .subprocess"),
         # nor does a function's binding made from a name the star import may bring or rebind: `run = main` in a
         # function, main from the star import, gave no row where pytest.main ran (the fail-closed design's second verify
         # pass, 2026-09-23: LA1 to LA4 and LA17). A plain or annotated assignment from a name or an attribute is followed
