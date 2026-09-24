@@ -863,8 +863,10 @@ const OTHER_FORMS = [
 const NAME_KEY_FORM = "a subscript or a .get whose key is a bare name (a constant, a variable, a parameter; a generic annotation such as list[str] shares the bracket): which key it reads is not known here";
 // Python's keywords (3.12's keyword.kwlist) and the two soft keywords that precede a bracket in their keyword role
 // (keyword.softkwlist's match and case: `match [c]:` a subject, `case [c]:` a sequence pattern): a bracket directly behind
-// one of these as a STANDALONE token is a list display or a pattern and is not listed; after a dot, spaced or tight, the
-// same spelling is an identifier (`self.match[k]`), read by the arm below. The other two soft keywords, _ and type, are
+// one of these as a STANDALONE token is a list display or a pattern and is not listed; after a dot, spaced or tight,
+// match and case alone are identifiers (`self.match[k]`), read by the arm below, since of this set only those two can
+// follow an attribute's dot (a hard keyword after a dot, as in `1. in [k]`, is still the keyword; review round 9,
+// 2026-09-24). The other two soft keywords, _ and type, are
 // not here: neither ever precedes a bracket in its keyword role (a type alias is `type Name = ...`, a wildcard pattern
 // `_` stands alone), so `type[int]` and `_[k]` are subscripts and are listed. The residual, disclosed here, in
 // federation.ts's PANE_CHANNELS comment and in the ledger entry: a bare variable named match or case, subscripted
@@ -955,25 +957,39 @@ function pushAudiences(kernel: string): Audiences {
   // only: whatever can end a subscriptable primary in Python's grammar, a name, a closing parenthesis, a closing bracket,
   // a closing brace (a dict or set display, a comprehension) or a closing quote, double or single (a string literal); the
   // statement's text before the bracket is read from its line start, and pyNormalise folds a newline inside brackets to
-  // one space, so a newline never lets one statement's tail become the next bare bracket's receiver. A name in
-  // PY_KEYWORDS is no receiver as a STANDALONE token only (`case [k]:`, `in [k]`, `return [c]`): the text before it is
-  // read for a dot followed by spaces or tabs, so after a dot, tight or spaced (`self.match[k]`, `c . case[k]`), the
-  // same spelling is an identifier and its bracket a subscript, listed. So a one-element list display (`xs = [c]`,
-  // `return [c]`, `f([c], 1)`) and a sequence pattern are not listed, and a generic annotation such as `list[str]`,
-  // `pick(c)[k]`, `targets[0][k]`, `{**c}[k]` and `"abc"[k]` are: subscripts with a bare-name key, whose remedy is not the
-  // literal (review round 7, 2026-09-23: the arm listed every one-name bracket, so a list display in the body turned the
-  // census red with a cause and a remedy that did not apply; round 8: the receiver class derived from the grammar after
-  // a name-paren-bracket class fitted to the examples left a dict display and a string literal unlisted). Deliberately
-  // unlisted, and disclosed here, in federation.ts's PANE_CHANNELS comment and in the ledger entry: a number, an
-  // Ellipsis or a keyword constant (None, True, False) before a bracket, a subscript in the grammar that no client record
-  // can stand behind, and a bare variable named match or case, subscripted, which reads as the keyword (PY_KEYWORDS).
+  // one space, so a newline never lets one statement's tail become the next bare bracket's receiver. The derived set,
+  // in the same words here, in federation.ts's PANE_CHANNELS comment and in the ledger entry: a name is a whole
+  // identifier token, ASCII or not; a number of any spelling, an Ellipsis or a keyword constant (None, True, False)
+  // before a bracket is unlisted; a name after a dot is an identifier only where Python allows one there (match and
+  // case). So the name alternative's characters are an identifier's, \w or any code unit past ASCII (outside a string or
+  // a comment, valid Python holds one only in an identifier), and it starts only where a name can start: never behind an
+  // identifier character, so `1j[k]`, `0x1f[k]`, `0xff[k]` and `1e5[k]` are not listed through their tails and a
+  // name with a character past ASCII is listed whole, and never directly behind a number's trailing dot (a digit run
+  // that starts a token, then the dot), so `1.e5[k]` and `1_0.j[k]`, one number token each, are not listed either, while
+  // `v5.e5[k]` and `1.5.e5[k]`, attributes, are. Both lookbehinds sit inside the name alternative alone, so a closing
+  // parenthesis still ends `f(x)[k]`'s receiver. A name in PY_KEYWORDS is no receiver as a STANDALONE token only
+  // (`case [k]:`, `in [k]`, `return [c]`), and of that set only match and case can follow an attribute's dot: for those
+  // two alone the text before the name is read for a dot followed by spaces or tabs, so after a dot, tight or spaced
+  // (`self.match[k]`, `c . case[k]`), the spelling is an identifier and its bracket a subscript, listed, while a hard
+  // keyword after a dot (`1. in [k]` behind a float's trailing dot, `... in [k]` behind an Ellipsis) is the keyword and
+  // its bracket a list display. So a one-element list display (`xs = [c]`, `return [c]`, `f([c], 1)`) and a sequence
+  // pattern are not listed, and a generic annotation such as `list[str]`, `pick(c)[k]`, `targets[0][k]`, `{**c}[k]`,
+  // `"abc"[k]` and `'abc'[k]` are: subscripts with a bare-name key, whose remedy is not the literal (review round 7,
+  // 2026-09-23: the arm listed every one-name bracket, so a list display in the body turned the census red with a cause
+  // and a remedy that did not apply; round 8: the receiver class derived from the grammar after a name-paren-bracket
+  // class fitted to the examples left a dict display and a string literal unlisted; round 9, 2026-09-24: the name
+  // alternative matched a run of ASCII characters, so a number was listed through its letter tail and a name with a
+  // character past ASCII was not, and the dot test read any dot before a keyword as an attribute's). Deliberately
+  // unlisted, and disclosed in the same three homes: a number, an Ellipsis or a keyword constant before a bracket, a
+  // subscript in the grammar that no client record can stand behind, and a bare variable named match or case,
+  // subscripted, which reads as the keyword (PY_KEYWORDS).
   for (const m of text.matchAll(/\[\s*[A-Za-z_]\w*\s*\]|\.\s*get\s*\(\s*[A-Za-z_]\w*\s*[,)]/g)) {
     const p = m.index!;
     if (inStr[p]) continue;
     if (m[0].endsWith("]")) {   // the bracket arm: the receiver, if any, ends the statement's text before the bracket
       const before = text.slice(text.lastIndexOf("\n", p) + 1, p);
-      const rcv = /([A-Za-z_]\w*|[)\]}"'])[ \t]*$/.exec(before);
-      if (!rcv || (PY_KEYWORDS.has(rcv[1]) && !/\.[ \t]*$/.test(before.slice(0, rcv.index)))) continue;   // no receiver (a list display), or a standalone keyword before the bracket (after a dot it is an identifier)
+      const rcv = /((?<![\w\u0080-\uFFFF])(?<!(?<![\w\u0080-\uFFFF.])\d[\d_]*\.)[A-Za-z_\u0080-\uFFFF][\w\u0080-\uFFFF]*|[)\]}"'])[ \t]*$/.exec(before);
+      if (!rcv || (PY_KEYWORDS.has(rcv[1]) && !((rcv[1] === "match" || rcv[1] === "case") && /\.[ \t]*$/.test(before.slice(0, rcv.index))))) continue;   // no receiver (a list display, a number), or a standalone keyword before the bracket (after a dot, match and case alone are identifiers)
     }
     a.byName.push(whereAt(p));
   }
@@ -1065,10 +1081,11 @@ test("every app the kernel's _push addresses is a pushed-channel pane here, on t
   }
 });
 
-test("the census's premise, shown to hold for a reason: on a planted _push every named form the census cannot read fires exactly where planted, the roster reads the wrapped, unspaced, hyphenated, digit-carrying and continued spellings, a tuple with no space after its in, and the key spaced inside its subscript or its .get call, around the call's dot, name and paren, or wrapped over a line, a formatted value and a docstring's prose read as text, a subscript by a bare name behind each receiver the grammar allows (a name, a call, a subscript, a dict display, a string literal, an attribute named by a soft keyword with the dot tight or spaced, the builtin type and the variable _) and a generic annotation are listed where planted, and a one-element list display and a sequence pattern behind the soft keyword case are not, no app literal is listed as unread, and every read of the key lands in exactly one form (review rounds 3, 5 and 6, 2026-09-21; rounds 7 and 8, 2026-09-23)", () => {
+test("the census's premise, shown to hold for a reason: on a planted _push every named form the census cannot read fires exactly where planted, the roster reads the wrapped, unspaced, hyphenated, digit-carrying and continued spellings, a tuple with no space after its in, and the key spaced inside its subscript or its .get call, around the call's dot, name and paren, or wrapped over a line, a formatted value and a docstring's prose read as text, a subscript by a bare name behind each receiver the grammar allows (a name, ASCII or not, a call, a subscript, a dict display, a string literal, double- or single-quoted, an attribute named by a soft keyword with the dot tight or spaced, an attribute after a name ending in a digit or after a float, the builtin type and the variable _) and a generic annotation are listed where planted, and a one-element list display, a sequence pattern behind the soft keyword case, a number of each spelling before a bracket and a list display behind a hard keyword after a float's trailing dot or an Ellipsis are not, no app literal is listed as unread, and every read of the key lands in exactly one form (review rounds 3, 5 and 6, 2026-09-21; rounds 7 and 8, 2026-09-23; round 9, 2026-09-24)", () => {
   // the synthetic body, one read per tagged line: T a tuple the roster reads, S a singleton, X text, a number the
   // OTHER_FORMS index that must fire there, null a line with no read of its own (a wrapped tuple's continuation lines, a
-  // one-element list display, a match statement and its sequence pattern)
+  // one-element list display, a match statement and its sequence pattern, a number before a bracket, a list display
+  // behind a hard keyword)
   const T = READ_TUPLE, S = READ_SINGLE, X = READ_TEXT, N = NAME_KEY_FORM;
   const plant: [string, string | number | null][] = [
     ["def _push(targets, connect=False, live_map=None):", null],
@@ -1118,15 +1135,31 @@ test("the census's premise, shown to hold for a reason: on a planted _push every
     ["    seen: list[str] = []", N],                               // a generic annotation shares the bracket: a subscript with a bare-name key, listed (review round 7)
     ["    xs = [c]", null],                                        // a one-element list display: no receiver before its bracket, not listed (review round 7)
     ["    dd = {**c}[APP_KEY]", N],                                // a dict display subscripted: a closing brace is a receiver (review round 8, 2026-09-23)
-    ['    ss = "feedchat"[i]', N],                                 // a string literal subscripted: a closing quote is a receiver (review round 8)
+    ['    ss = "feedchat"[i]', N],                                 // a string literal subscripted: a closing double quote is a receiver (review round 8)
+    ["    qs = 'feedchat'[i]", N],                                 // the same single-quoted: a closing single quote is a receiver (red where the class drops the single quote; review round 9, 2026-09-24)
     ["    vv = self.type[APP_KEY]", N],                            // an attribute named by a soft keyword outside PY_KEYWORDS: listed as a name (review round 8)
     ["    ww = self . type[APP_KEY]", N],                          // the same with the dot spaced (review round 8)
-    ["    mm = self.match[APP_KEY]", N],                           // an attribute named by a soft keyword IN PY_KEYWORDS: a name after a dot is an identifier, the dot read, listed (review round 8)
+    ["    mm = self.match[APP_KEY]", N],                           // an attribute named by a soft keyword IN PY_KEYWORDS: match after a dot is an identifier, the dot read, listed (review round 8)
     ["    cc = c . case[APP_KEY]", N],                             // the same with the dot spaced, the tolerance the .get read has (review round 8)
     ["    tt = type[int]", N],                                     // the builtin type subscripted: type is not in PY_KEYWORDS, it never precedes a keyword-role bracket (review round 8)
     ["    uu = _[k]", N],                                          // the variable _ subscripted: _ is not in PY_KEYWORDS either (review round 8)
     ["    nn = targets[0][APP_KEY]", N],                           // a subscript subscripted: a closing bracket is a receiver, and [0] holds no bare name (review round 8)
     ["    pp = pick(c)[APP_KEY]", N],                              // a call subscripted: a closing parenthesis is a receiver (review round 8)
+    ["    n7 = 7[APP_KEY]", null],                                 // a letter-free number before a bracket: no name ends the text, not listed (the control, unlisted before round 9 and after)
+    ["    cj = 1j[APP_KEY]", null],                                // an imaginary number: its j is the number's tail, not a name, not listed (red where the name arm matched a run of letters inside a token and listed j; review round 9)
+    ["    hx = 0x1f[APP_KEY]", null],                              // a hex number ending in a digit: not listed (red where the name arm listed x1f)
+    ["    hf = 0xff[APP_KEY]", null],                              // a hex number ending in a letter: not listed (red where the name arm listed xff)
+    ["    ex = 1e5[APP_KEY]", null],                               // an exponent: not listed (red where the name arm listed e5)
+    ["    fe = 1.e5[APP_KEY]", null],                              // a float with a bare trailing dot before its exponent, one number token: not listed (red where a name directly after a number's trailing dot was a name, e5 listed)
+    ["    fj = 1_0.j[APP_KEY]", null],                             // the same with an underscore-grouped digit run before an imaginary j: not listed (red where j was listed, or where the run before the dot was read as one digit)
+    ["    q1 = v5.e5[APP_KEY]", N],                                // an attribute after a name ending in a digit: the digit run is the name's, so no number ends at the dot, listed (red where any digit run before the dot counted as a number)
+    ["    r5 = 1.5.e5[APP_KEY]", N],                               // an attribute of a float: the digit run before the dot follows the fraction's dot, so no number ends at this dot, listed (red where a digit run after a dot counted as a number)
+    ["    e1 = \u00e95.e5[APP_KEY]", N],                           // the same after a name whose first character is past ASCII and whose last is a digit: listed (red where a digit run after such a character counted as a number)
+    ["    cf = caf\u00e9[APP_KEY]", N],                            // a name whose last character is past ASCII (the e accented): a whole identifier token, listed (red where the name arm was a run of ASCII characters and left it unlisted)
+    ["    ea = \u00e9a[APP_KEY]", N],                              // a name whose first character is past ASCII: listed (red where the name arm's first character was ASCII only, which leaves the a behind that character no start)
+    ["    if 1. in [k]:", null],                                   // a list display behind the hard keyword in after a float's trailing dot: only match and case follow an attribute's dot, so in is the keyword, not listed (red where the dot test read any dot before a keyword as an attribute's; review round 9)
+    ["        pass", null],
+    ["    el = ... in [k]", null],                                 // the same after an Ellipsis: not listed (red where the Ellipsis's last dot was read as an attribute's)
     ["    match c:", null],                                        // a match statement: no bracket of its own
     ["        case [k]:", null],                                   // a sequence pattern behind the standalone soft keyword case: not listed (review round 8)
     ["            pass", null],
