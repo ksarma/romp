@@ -4063,8 +4063,9 @@ class ChildPytestLaunchers(unittest.TestCase):
         # a header expression (a decorator, a default, an annotation, a return annotation, a class's bases and keywords,
         # a type parameter) is looked up in the scope around its def, lambda or class, where Python evaluates it, not in
         # the def's own scope (the fail-closed design's third verify pass, 2026-09-24: LD1 to LD5 and LS5, each beside a
-        # binding of the name in the def or class itself, gave no row where pytest.main ran; LD7 to LD13, found closing
-        # that pass, were silent the same way). An annotation deferred from 3.14 is read too: a row where it may never
+        # binding of the name in the def or class itself, gave no row where pytest.main ran; found closing that pass,
+        # LD7, LD8, LD9, LD10 and LD13 were silent the same way, and LD11 had its row through a lookup that skipped the
+        # class its default is evaluated in). An annotation deferred from 3.14 is read too: a row where it may never
         # run, the safe side
         ("a function default beside the function's own import of the name (LD1)",
          'from pytest import main\ndef test_a(rc=main(["-q"])):\n    from json import loads as main\n    return rc\n',
