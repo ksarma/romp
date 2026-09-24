@@ -261,11 +261,14 @@ jobs:
           # another python earlier on PATH; a write to $GITHUB_PATH that does not spell the name stays
           # outside.
           # The check reads this file's text, in the YAML forms this file uses and no others: every line
-          # here is in one of them (block mappings and sequences two columns per level, one-line plain
-          # and quoted scalars without escapes, one-line flow sequences of them, a literal block as a
-          # step's run, comments), or the check refuses it by name, valid YAML included (an anchor, an
-          # alias, a folded block, a quoted scalar over two lines, among others): a form the check does
-          # not accept is refused by name; reword the step in an accepted form. Every line here that
+          # here is in one of them (YAML_FORMS_ACCEPTED in tests/test_ci_sdk_pin.py, which
+          # test_the_forms_the_allowlist_accepts_are_the_forms_ci_yml_uses holds equal to the forms this
+          # file uses: block mappings and sequences two columns per level, one-line plain and quoted
+          # scalars without escapes, one-line flow sequences of them, a literal block as a step's run,
+          # comments; on a name: or working-directory: key a non-null plain scalar with no comment, and
+          # no value on an env: key's line), or the check refuses it by name, valid YAML included (an
+          # anchor, an alias, a folded block, a quoted scalar over two lines, among others): a form the
+          # check does not accept is refused by name; reword the step in an accepted form. Every line here that
           # spells pytest, outside a comment or a name: key's own line and other than a pip install, is
           # read as a command or is red until it is read (its line census), and so is a job key it does
           # not read; a run line that never spells pytest, a pytest run by a script or action a step
