@@ -33,21 +33,25 @@ SENTENCE = ("A session that tries to write a tracked file any other way, with it
 SENTENCE_2 = ("In a project that tracks files, a shell write whose target Romp cannot read (a substitution, a name the "
               "command never sets to a plain string, or a glob it cannot expand) is refused too, and the session is asked "
               "for the literal path.")
-# The sentence after those two, since round 7 of fork PR #780's review (the reviewer's regression-2 with extra7-3): round 6 had put
-# the hook header's whole residual paragraph into the guide under a heading of its own, the mechanism's words and the review's
-# provenance included, against the guide's voice (the behaviour, not the mechanism). The paragraph and its heading left the guide;
-# this one sentence, in the same voice, points the reader at docs/install.md, where the full statement stands in the installer's
-# section on the tooling it puts in ~/.claude/. It stays clear of the two words CONTEXT.md avoids for the comments log, and of
-# the verbs its About entry avoids in this paragraph (the thirty-fifth commit's "links" turned the vocabulary module red; the
-# thirty-sixth names the section without it).
+# The sentence after SENTENCE and SENTENCE_2, since round 7 of fork PR #780's review (the reviewer's regression-2 with extra7-3):
+# round 6 had put the hook header's whole residual paragraph into the guide under a heading of its own, the mechanism's words and
+# the review's provenance included, against the guide's voice (the behaviour, not the mechanism). The paragraph and its heading left
+# the guide; this sentence, in the same voice, points the reader at docs/install.md, where the full statement stands in the
+# installer's section on the tooling it puts in ~/.claude/. It stays clear of the words CONTEXT.md avoids for the comments log
+# (LOG_WORDS), and of the verbs its About entry avoids in this paragraph (the thirty-fifth commit's "links" turned the vocabulary
+# module red; the thirty-sixth names the section without it).
 POINTER = ("What a shell command can still do to a tracked file is set out in full in [Install](install.md), in its section "
            "on the tooling the installer puts in `~/.claude/`.")
 # the names CONTEXT.md's About entry avoids for a comment about a change, as they show up in prose (the Files section's paragraphs
 # are held to them by tests/test_guide_files_about_vocabulary.py, which reads the entry; held here too, so a pointer that
 # uses one reds beside its own pin)
 AVOIDED = r"\b(bound|binds?|binding|links?|linked|linking|threads?)\b"
-# the words a user-facing sentence here never carries: the mechanism (the first five) and the review's provenance (the last three)
-BARRED = ("hook", "PreToolUse", "matcher", "ROMP_SID", "guard", "round", "commit", "as ruled")
+# the words a user-facing sentence here never carries: the mechanism's (MECHANISM) and the review's provenance (PROVENANCE)
+MECHANISM = ("hook", "PreToolUse", "matcher", "ROMP_SID", "guard")
+PROVENANCE = ("round", "commit", "as ruled")
+BARRED = MECHANISM + PROVENANCE
+# the words CONTEXT.md avoids for the comments log, held off the pointer
+LOG_WORDS = ("history", "ledger")
 
 
 def _read(*parts):
@@ -81,7 +85,7 @@ class TrackChangesParagraphNamesTheRefusal(unittest.TestCase):
         self.assertIn("Spell the path out", self.hook)
 
     def test_the_pointer_follows_them_and_install_md_carries_the_statement_it_points_at(self):
-        # the pointer sits right after the two sentences, and the section it names in docs/install.md holds the full statement
+        # the pointer sits right after SENTENCE and SENTENCE_2, and the section it names in docs/install.md holds the full statement
         self.assertIn(SENTENCE + " " + SENTENCE_2 + " " + POINTER, self.files)
         install = _section(_read("docs", "install.md"), "What the installer links into `~/.claude/`")
         self.assertIn("THE RESIDUAL PROPERTY. The guard refuses a write only when", install)
@@ -140,12 +144,12 @@ class TrackChangesParagraphNamesTheRefusal(unittest.TestCase):
     def test_the_sentence_speaks_to_the_person_and_names_no_hook(self):
         # the guide describes the behavior, not the mechanism, and not the review that shaped it: no hook, guard, matcher or
         # PreToolUse, and no round, commit or ruling (matched at a word's start, case aside, so "hooks" and "Commits" count too);
-        # the pointer is held to the same words, and to the two CONTEXT.md avoids in the Files section
+        # the pointer is held to the same words, and to LOG_WORDS
         for sentence in (SENTENCE, SENTENCE_2, POINTER):
             for word in BARRED:
                 self.assertNotRegex(sentence, re.compile(r"\b" + re.escape(word), re.I), "%r in %r" % (word, sentence))
             self.assertNotIn("\u2014", sentence)
-        for word in ("history", "ledger"):
+        for word in LOG_WORDS:
             self.assertNotRegex(POINTER, re.compile(r"\b" + word, re.I))
         # the prose of each sentence (code spans and bold control names set aside, as the vocabulary module reads it)
         for sentence in (SENTENCE, SENTENCE_2, POINTER):

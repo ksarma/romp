@@ -894,7 +894,7 @@
 // rows over 8 classes, a figure that test asserts from the table's own length and class count on this header, decision 47 and the ledger
 // entry. The vendored SKILL.md states the classes in its reader's words, held to RESIDUAL_CLASSES by name, and docs/guide.md points
 // at docs/install.md for the statement (round 7 of fork PR #780 review, thirty-fifth commit, the reviewer's regression-2, extra7-3 and
-// extra6-4; the two user-facing surfaces had carried the developer paragraph, review provenance and the hook's internal names included).
+// extra6-4; each had carried the developer paragraph, review provenance and the hook's internal names included).
 // ROUND 6, SEVENTH COMMIT (2026-09-21; the round's three verifiers on the sixth commit's head): a regression, an unsound reading and the round's
 // pre-existing allows, the mechanism fixed and the rest disclosed as residual rows. THE SPLICED PRINTER (printerOf, splicedPrinter, splicedOutput):
 // a command name that is an expansion THE HEAD CANDIDATES resolve to a printer is spliced BEFORE printer-ness is decided (the same order the writer,
@@ -1156,7 +1156,7 @@
 // and the skill's statement that a name the guard cannot read, handed a literal operand naming a tracked file, is refused was false for a nameref,
 // and a tracked file in an option's value went unread. THE NAMEREF (extract's namerefKind, noteReference, noteDeclaration, referenceOf): a nameref
 // declaration's operand had been taken as the name's value, a text no shell gives it, so `c=cp; declare -n r=c; $r ../base/report.md report.md`
-// read as the command `c` and was allowed while bash copied (RT-nameref-head, and 14 more of the verifier's rows); the operand gives the name no
+// read as the command `c` and was allowed while bash copied (RT-nameref-head, and more of the verifier's rows); the operand gives the name no
 // value, a word over a reference stands for its targets' values and a word over a target for its references' (a write through the reference
 // lands on the target), each beside a text not read, so the head takes THE UNREAD OPERAND and is refused by name. THE OPERAND'S VALUE
 // (unreadOperands): a literal word is read as a path after each `=` in it and, where it opens with one `-` and a letter, at each place after that
@@ -5379,7 +5379,7 @@ function extractIn(command, ctx) {
   const unreadValues = ctx.unreadValues || new Set();   // the names a value the resolver looked at and could not establish is given (round 6's fifth commit): a command name or script formed from such a name is UNRESOLVABLE
   // THE NAMEREF (round 7 of fork PR #780 review, thirty-sixth commit, 2026-09-24; the reviewer's verifier on the thirty-fifth commit: `c=cp; declare -n
   // r=c; $r ../base/report.md report.md` was allowed from docs/ while bash copied, and so were typeset -n, declare -rn, `declare -n r; r=c`, "$r", ${r},
-  // an eval of "$r", mv, tee, cp -f, the project root and a cwd in no project, 15 of 19 rows, while `declare -n r=cp; cp=ls; $r ..` was refused for a
+  // an eval of "$r", mv, tee, cp -f, the project root and a cwd in no project, while `declare -n r=cp; cp=ls; $r ..` was refused for a
   // cp bash does not run): noteCandidate took a nameref declaration's operand as the name's value, a text no shell gives it (bash reads `$r` as the
   // value of the name the operand names; zsh 5.9 and dash reject the declaration and assign nothing: measured). A declare, typeset or local whose
   // option words, before its first operand, hold -n in any cluster (`-n`, `-rn`, `-r -n`) makes each NAME=WORD operand a reference, and one whose
@@ -6790,7 +6790,7 @@ function extractIn(command, ctx) {
     // THE OPERAND'S VALUE (round 7 of fork PR #780 review, thirty-sixth commit, 2026-09-24; the reviewer's verifier on the thirty-fifth commit: `read c
     // <<< dd; $c if=../base/report.md of=report.md status=none` and `read c <<< sort; $c ../base/report.md -oreport.md` were allowed from docs/, the
     // project root and a cwd in no project while bash and zsh wrote, where `--output=report.md` and `-o report.md` were refused by name): a program
-    // takes a file from one word in three shapes, a long option's value after `=` (`--output=FILE`), a key's value after `=` (dd's `of=FILE`) and a
+    // takes a file from one word in each of these shapes: a long option's value after `=` (`--output=FILE`), a key's value after `=` (dd's `of=FILE`) and a
     // short option's value glued on (`-oFILE`, the cluster `-uoFILE`), and which letter takes a value is the program's, so a literal word is read
     // as a path after each `=` in it and, where it opens with one `-` and a letter, at each place after that letter; bash also expands a `~` after the
     // `=` of an assignment-shaped word (dd's reading, round 7's twenty-sixth commit), read beside the literal reading. The same read on every road

@@ -273,7 +273,7 @@ test('P9 the skill says a shell write whose target is not a literal path is refu
   // round 7 of fork PR #780 review, thirty-sixth commit (the reviewer's verifier): the writers named are examples (the guard knows dd, truncate and sort -o
   // too, and a list with no 'such as' read as the whole set), and a piped script stands beside a name and a script among the texts it cannot read
   const flatReader = section.replace(/\s+/g, ' ');
-  assert.ok(flatReader.includes('as a writer it knows (such as a copy, a move,') && flatReader.includes('a command whose name, script or piped script it cannot read names a tracked file as a literal operand'), "the reader's statement names its writers as examples and the three texts the guard may not read");
+  assert.ok(flatReader.includes('as a writer it knows (such as a copy, a move,') && flatReader.includes('a command whose name, script or piped script it cannot read names a tracked file as a literal operand'), "the reader's statement names its writers as examples and the texts the guard may not read (a name, a script, a piped script)");
   // the walk-around lens third pass (2026-09-19): the six rules re-keyed on what the guard can see, each named so a
   // session knows the refusal it meets, and the contract paragraph's two sentences the other surfaces carry
   const flat = section.replace(/\s+/g, ' ');   // the skill hard-wraps its paragraphs

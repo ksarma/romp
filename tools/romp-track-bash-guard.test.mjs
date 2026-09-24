@@ -8308,13 +8308,13 @@ test("round 6, second commit, THE RESIDUAL TABLE: every shape the round could na
   } finally { process.env.HOME = savedHome; w.rm(); }
 });
 
-// Round 7 of fork PR #780 review, thirty-fifth commit (the reviewer's extra7-3 and extra6-4): two pins keyed on the table's own values.
+// Round 7 of fork PR #780 review, thirty-fifth commit (the reviewer's extra7-3 and extra6-4): pins keyed on the table's own values.
 // THE READER'S STATEMENT: the vendored SKILL.md had carried the developer paragraph of THE RESIDUAL PROPERTY verbatim, the review's provenance
 // and the hook's internal names included, to an agent that has no referent for either; it states the classes in the reader's words now, one
 // bullet per class under the class's own name, and this test holds that list of names to RESIDUAL_CLASSES exactly (a class added to or
 // dropped from the table's classes without the skill reds here by name). THE TABLE'S FIGURE: the size of the table stood hand-typed on the hook
-// header, decision 47 and the ledger entry and was pinned as a spelled phrase on two of them, so a row added under any class left every test
-// green while all three were wrong; each surface now states the figure once, and it is read here against RESIDUAL_TABLE.length and
+// header, decision 47 and the ledger entry and the pins on it held a spelled phrase, so a row added under any class left every test green
+// while every surface was wrong; each surface now states the figure once, and it is read here against RESIDUAL_TABLE.length and
 // Object.keys(RESIDUAL_CLASSES).length.
 const repoText = (...parts) => fs.readFileSync(fileURLToPath(new URL(`../${parts.join('/')}`, import.meta.url)), 'utf8');
 test("round 7, thirty-fifth commit, the reader's statement: the vendored SKILL.md states exactly RESIDUAL_CLASSES's classes by name in the reader's words, with no review provenance and none of the hook's internal names", () => {
@@ -14775,7 +14775,7 @@ test("round 7, twenty-ninth commit: the population by group and where the code l
 
 // Round 7 of fork PR #780 review, thirty-sixth commit (2026-09-24; the reviewer's verifier on the thirty-fifth commit). THE NAMEREF: a nameref
 // declaration's operand was taken as the name's value, so `c=cp; declare -n r=c; $r ../base/report.md report.md` read as the command `c` and was
-// allowed from docs/ while bash copied (RT-nameref-head stood in THE RESIDUAL TABLE), with 14 more of the verifier's 19 rows (typeset -n, declare
+// allowed from docs/ while bash copied (RT-nameref-head stood in THE RESIDUAL TABLE), with more of the verifier's rows (typeset -n, declare
 // -rn, `declare -n r; r=c`, "$r", ${r}, an eval of "$r", a script in the target, mv, tee, cp -f, the project root, a cwd in no project, a `read`
 // of the target), and `declare -n r=cp; cp=ls; $r ..` was refused for a cp bash does not run. The class, derived: the target written through the
 // reference (a plain write, a `read`, a `printf -v`, a body's `local -n`), a reference an eval or a called body declares, an assignment before the
@@ -14793,7 +14793,7 @@ const E36_ROWS = (() => {
   const N = [];
   const Q1_R = ['refuse', 'its command name is filled in from `$r`, a text I do not read'];
   return [
-    // THE NAMEREF: the verifier's fifteen rows allowed at the thirty-fifth commit with bash writing (N2 was RT-nameref-head)
+    // THE NAMEREF: the verifier's rows allowed at the thirty-fifth commit with bash writing (N2 was RT-nameref-head)
     ['E36-ref-head', 'nad', 'c=cp; declare -n r=c; $r ../base/report.md report.md', B, 'name'],
     ['E36-ref-before-assign', 'nad', 'declare -n r=c; c=cp; $r ../base/report.md report.md', B, 'name'],
     ['E36-ref-typeset', 'nad', 'c=cp; typeset -n r=c; $r ../base/report.md report.md', B, 'name'],

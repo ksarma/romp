@@ -231,11 +231,14 @@ test('the install guide, the hook\'s README row and the ledger entry say a name 
   const CLAUSE = 'A read passes; a command whose text it cannot read (a script held in a name it cannot read, an eval of such a name, xargs) passes, except that such a name or eval whose literal operand names a tracked file is refused (THE RESIDUAL PROPERTY, later in this row);';
   assert.ok(row.includes(CLAUSE), 'hooks/README.md: the clause on a command whose text the guard cannot read states the residual property (its executed rows: EV-eval, EV-eval-var and EV-trap refused, RT-read-var-head and RT-xargs allowed, in tools/romp-track-bash-guard.test.mjs)');
   assert.ok(!row.includes('(eval, xargs, a script held in a variable)'), 'hooks/README.md: the round-5 parenthetical is gone');
-  // keyed on the property, not on a spelling (round 7 of fork PR #780 review, thirty-sixth commit; the reviewer's verifier appended ' a trap or an
-  // eval whose text it does not read passes;' to the row and the two spelling patterns this pin held stayed green): with THE RESIDUAL PROPERTY's
-  // statement (whose classes name eval as a script the class holds and as a producer's consumer) and CLAUSE set aside, the row names eval in two
-  // phrases alone, neither a claim that a command passes (the B2 clause's names set by an eval, which keep the working directory's verdict, and
-  // node's `--eval=` option), each present exactly once, and trap nowhere; any other eval or trap reds here, whatever it is spelled beside
+  // keyed on the names' stems, not on whole words (round 7 of fork PR #780 review, thirty-seventh commit; the reviewer's verifier appended
+  // ' a text set by traps passes;' and ' evals of such a text pass;' after CLAUSE, and the thirty-sixth commit's patterns, which matched eval and
+  // trap as whole words only, stayed green): with THE RESIDUAL PROPERTY's statement (whose classes name eval as a script the class holds and as a
+  // producer's consumer; the developer-surface pin below holds it identical) and CLAUSE set aside, and each phrase below set aside where it stands
+  // exactly once (the B2 clause's names set by an eval, which keep the working directory's verdict, and node's `--eval=` option, neither a claim
+  // that a command passes), the row holds neither stem, eval or trap, in any case, at a word's start or inside a word, and no signal, the thing a
+  // trap is set on; an inflected form (evals, evaled, traps, trapped), a prefixed form (untrapped, reevaluated) or a signal's handler named as
+  // passing reds here. A paraphrase that uses none of these words is beyond a pin on words; the executed rows the message names hold the behaviour
   const propStart = row.indexOf('THE RESIDUAL PROPERTY. The guard refuses a write only when');
   const propEndText = 'A shape outside these classes that reaches a tracked file is a rule to state, not a residual.';
   const propEnd = row.indexOf(propEndText, propStart);
@@ -247,7 +250,7 @@ test('the install guide, the hook\'s README row and the ledger entry say a name 
     assert.equal(rest.split(phrase).length, 2, `hooks/README.md: the phrase set aside stands exactly once: ${phrase}`);
     rest = rest.split(phrase).join(' ');
   }
-  assert.deepEqual([rest.match(/\beval\b/gi) || [], rest.match(/\btrap\b/gi) || []], [[], []], 'hooks/README.md: outside THE RESIDUAL PROPERTY and CLAUSE no clause names eval or trap (a text the guard reads in either is refused where it names a tracked file: EV-eval, EV-eval-var, EV-trap; a text it cannot read passes only as CLAUSE says: RT-read-var-head, RT-xargs)');
+  assert.deepEqual(rest.match(/[a-z]*(?:eval|trap|signal)[a-z]*/gi) || [], [], 'hooks/README.md: outside THE RESIDUAL PROPERTY and CLAUSE no clause names eval, trap or a signal in any spelling, an inflected or prefixed form included (a text the guard reads in either is refused where it names a tracked file: EV-eval, EV-eval-var, EV-trap; a text it cannot read passes only as CLAUSE says: RT-read-var-head, RT-xargs)');
   const guardTestSrc = read('tools', 'romp-track-bash-guard.test.mjs');
   for (const id of ['EV-eval', 'EV-eval-var', 'EV-trap']) assert.ok(guardTestSrc.includes(`['${id}', 'nad', `), `the executed row ${id} the clause's message points at stands in the guard's test`);
   for (const id of ['RT-read-var-head', 'RT-xargs']) assert.ok(guardTestSrc.includes(`['${id}', '`), `the residual row ${id} the clause's message points at stands in THE RESIDUAL TABLE`);
