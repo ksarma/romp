@@ -3805,17 +3805,19 @@ class TheCountersOneSite(unittest.TestCase):
         second verifier of those fixes: an exec of a statement naming the counter, in the kernel or in the judge against the
         kernel's globals, a globals() key sliced from a longer constant and a write from another kernel module each passed again,
         since the census compared a constant's whole text alone and read two files named by hand. The limit that stays, the
-        counter's copy of the assembled class of _LIMITS: a name completed at run time, by any transform _door_text does not
+        counter's copy of the assembled class of _LIMITS, among them: a name completed at run time, by any transform _door_text does not
         undo, from constants none of which reads as it whole or carries it whole into a subscript key, a listed lookup or a dict
         read (among them '_NUDGE' + '_WALK_STATS', a join, an interpolating f-string, a %-format, the result handed to getattr, setattr,
         operator.attrgetter, vars() or a module's __dict__); a constant that carries the name whole, a statement naming the
         counter say, to a callee the clause does not list, as the doors' needle-keeping constant at an unlisted callable is of
         that class (among them exec bound to another name, functools.partial(exec, ...), code.InteractiveInterpreter(...).runsource,
         builtins.__dict__['exec']; a verifier of the contained-name clause planted each in the kernel or the judge, a real write
-        with this case green); a spelling in escape sequences alone, in a kernel/*.py file whose text holds the name in no letter
-        case; and a write that reaches the dict with no spelling of its name at all (among them a function in another kernel module that finds
+        with this case green); a spelling in a kernel/*.py file whose text holds the name in no letter case (among them escape
+        sequences alone, and an identifier in fullwidth letters, which the parser folds to the name); and a write that reaches the
+        dict with no spelling of its name at all (among them a function in another kernel module that finds
         the dict through sys.modules by its keys, a scan of globals().values() for a dict holding the counter's keys) are outside
-        this census, and the last outside any static census. So is a module in a file that glob does not match, whatever its text
+        this census, whose population is stated above and in the list's item on the counter census's population, and the last
+        outside any static census. So is a module in a file that glob does not match, whatever its text
         spells: in cli/, postal/ or any other directory, in a subdirectory of kernel/, or in a file of kernel/ not named *.py, which
         load_source loads just as well (review round 9, extra5-1: the refuters' helper as cli/c7x.py and as kernel/c7sub/c7x.py,
         loaded by a load_source line in the kernel and called first in _nudge_fire_list, moved the counter on a direct call with the
@@ -3916,11 +3918,13 @@ class TheCountersOneSite(unittest.TestCase):
         one by the gate, by the pass loop or by the look calling itself, which leaves the load a statement of the look's own body and so satisfies the
         site census, that fires only on a raise or a fault no case drives (among them a TypeError, a KeyError, an EMFILE or EIO
         fault), caught by nothing in the module (the raise and fault cases); the fault case's mode-000 road, skipped under root, and goals.loads_shared,
-        asserted nowhere in the raise case (the fault and raise cases); the counter's name completed at run time, by a transform
-        _door_text does not undo, from constants none
+        asserted nowhere in the raise case (the fault and raise cases); among them the counter's name completed at run time, by a
+        transform _door_text does not undo, from constants none
         of which reads as it whole or carries it whole into a subscript key, a listed lookup or a dict read, a constant carrying the
         name whole to a callee the contained-name clause does not list (among them exec bound to another name, a partial of exec), and a spelling
-        in escape sequences alone, in a kernel/*.py file whose text holds the name in no letter case, each outside the counter census, and a write
+        in a kernel/*.py file whose text holds the name in no letter case (among them escape sequences alone, and an identifier in
+        fullwidth letters, which the parser folds to the name), each outside the counter census (the census's population: the item
+        below), and a write
         that reaches the counter with no spelling of its name, outside any static census, all of them caught only by execution, on a
         road a case drives and asserts memos.nudgeWalk.loads on, so a write on a road no such case drives is caught by nothing, a driven
         road among them: the wake sweep's skip branch for a failed or moot record, reached on those rows of the case whose records the
