@@ -66,23 +66,24 @@ process: that is the in-process shape in a child, met by the bus belt below like
 point below). A Python -c child's program (the interpreter found for the flag names no shell) is read as Python as well,
 its text assembled from the templates, joins and names that build it, a %r placeholder a string literal ending in the
 path the scan reads its value as; a spawn site in that program is a site of the call that starts the child.
-The scan replaced a regex pair on 2026-09-21, in the author's pass applying the ruling of PR #850's eighth review
-round: the old KERNEL_NAME pattern took any name bound on ONE line that spelled romp-kernel as a name bound to the
-kernel's path and looked for it as a whole WORD in every subprocess call span, so a local `p` bound to TEXT that
-spelled the path collided with the "-p" of a nested pytest argv (a false offender at a commit of that PR's eighth round
-that was never pushed, fixed at its ruled head; the loud half), while a path bound across two lines, through a constant
-holding the script's name, to a tuple target or to self.kernel never entered the pattern and a spawn through it would
-have passed this rule vacuously (the silent half; a plant showed the miss, the tree had no such spawn); at that head
-most of the names the pattern bound were the `km` of an in-process load, a module object and no path (the author's pass
-measured it before the rewrite). PLANT_TABLE below runs both halves, every row labelled with what the scan must do; the
-guard test's report carries the row count. The rewrite then read less than the regex pair in places (a command string
-with the path after its first word, a placeholder template, an env-override default, Popen's executable=, a
-comprehension argv, a subclass's override of a base attribute, `romp up`) with every check green, since the tree held
-no instance of those shapes and the table was written from what the scan read (PR #850's ninth review round). So the
-comparison case runs the regex pair, copied verbatim (_round8_regex_census), beside the scan over every module the trio
-test reads and every row, under one rule: for each call the regex flags, the scan gives a site at the call's line, or a
-listed entry at that line whose expression contains the match, or refuses the module (UnreadableSpawn, red in the trio
-test); any other match at a call is named. No proof inside a reader excuses a match, and no reader carries an exemption
+The scan replaced a regex pair on 2026-09-21, in the author's pass applying the ruling of PR #850's eighth review round:
+the old KERNEL_NAME pattern took any name bound on ONE line that spelled romp-kernel as a name bound to the kernel's
+path and looked for it as a whole WORD in every subprocess call span, so a local `p` bound to TEXT that spelled the path
+collided with the "-p" of a nested pytest argv (a false offender at a commit of that PR's eighth round that was never
+pushed, fixed at its ruled head; the loud half), while a path bound across two lines, through a constant holding the
+script's name, to a tuple target or to self.kernel never entered the pattern and a spawn through it would have passed
+this rule vacuously (the silent half; a plant showed the miss, the tree had no such spawn); at that head most of the
+names the pattern bound were the `km` of an in-process load, a module object and no path (the author's pass measured it
+before the rewrite). PLANT_TABLE below runs both halves, every row labelled with what the scan must do; the guard test's
+report carries the row count. The rewrite then read less than the regex pair in places (a command string with the path
+after its first word, a placeholder template, an env-override default, Popen's executable=, a comprehension argv, a
+subclass's override of a base attribute, `romp up`) with every check green, since the tree held no instance of those
+shapes and the table was written from what the scan read (PR #850's ninth review round). So the comparison case runs the
+regex pair, copied verbatim (_round8_regex_census), beside the scan over every module the trio test reads and every row,
+under one rule: for each call the regex flags, the scan gives a site at the call's line, or a listed entry at that line
+whose expression contains the match, or refuses the module (UnreadableSpawn, red in the trio test); any other match at a
+call is named; a regex hit at no call is accounted for when the module has a site, is refused, or has a listed entry
+containing it, and is named otherwise. No proof inside a reader excuses a match, and no reader carries an exemption
 keyed on a spelling (PR #850's tenth review round, after each proof that a call launches nothing had grown into a list
 the next round extended). The one visible listing is the one --roads prints under `# unresolved:`: the scan's derived
 entries, each with its kind, and the entries listed by hand in LISTED_BY_HAND, each naming the module, the line's text,
@@ -91,7 +92,7 @@ covers no match reds the comparison case, naming the entry, so the listing holds
 failing closed is stated and intended: a clean line the regex matches that the scan does not read as a site is named,
 and its author lists it by hand with its reason. The rows hold examples of the clean shapes that cost, among them the
 CLI with refresh or --help (N26, N43, N96, N97, N104), a -c child that load_sources the kernel (N9, N10, N44, N98, N99,
-N100) and a word collision (N1, N94, N95).
+N100), a word collision (N1, N94, N95), and a comment or a docstring (N11, N12).
 
 Roads and residual, derived by one command (`python tests/test_hermetic_kernel_postal.py --roads [directory]`, one
 line per module the trio test reads, then the unresolved names, then a summary line with every count): a module's
@@ -127,13 +128,15 @@ import's), a passthrough's splatted argv, and a keywords splat a spawn is handed
 or a dynamic road (a child that runs the kernel as __main__ through runpy or an exec of its source among them; N79 to
 N91, N93, N103), and a text in the argv or executable=, outside such a program, that spells a name one of whose
 declarations holds romp-kernel as text (what globals()[...], a %-mapping over locals(), eval, getattr or a shell's
-environment variable reads by name; N67 to N78, N101, N102). What it does not list, in the classes found so far, each
-held by a PLANT_TABLE row: a program handed on the child's stdin (input=, stdin=, communicate(); N92); an argv mutated
-by append, extend or insert (N29); a spawn function reached through functools.partial or getattr (N30); a spawn function
-outside the subprocess module (os.execv, os.posix_spawn, asyncio.create_subprocess_exec; N31), and the subprocess
-module's getoutput and getstatusoutput (N47); a star import's spawn functions other than Popen, which the scan reads by
-their spelling (N48); a program that starts a kernel other than romp-kernel and the CLI at bin/romp (bin/romp-serve,
-which execs romp-kernel; romp-manager up, which romp up execs; romp up found on PATH; N45); the CLI composed from its
+environment variable reads by name; N67 to N78, N101, N102). A listed entry requires no trio, and those two kinds hold
+real launches, among them exec of a constant program (N89), __import__ (N80), getattr (N87), globals()[...] (N70) and
+runpy.run_path with run_name '__main__' (N82). What it does not list, in the classes found so far, each held by a
+PLANT_TABLE row: a program handed on the child's stdin (input=, stdin=, communicate(); N92); an argv mutated by append,
+extend or insert (N29); a spawn function reached through functools.partial or getattr (N30); a spawn function outside
+the subprocess module (os.execv, os.posix_spawn, asyncio.create_subprocess_exec; N31), and the subprocess module's
+getoutput and getstatusoutput (N47); a star import's spawn functions other than Popen, which the scan reads by their
+spelling (N48); a program that starts a kernel other than romp-kernel and the CLI at bin/romp (bin/romp-serve, which
+execs romp-kernel; romp-manager up, which romp up execs; romp up found on PATH; N45); the CLI composed from its
 directory other than by a path function's arguments (an f-string, +, a Path division held in a name), or joined to its
 verb by + (N46); a comprehension flattening nested literal lists (N49); a mapping a %-template reads whole when the scan
 cannot read its values (a dict filled by subscript, locals(); N50); a class attribute bound outside the module's class
@@ -142,12 +145,14 @@ target (N52); and a consumer call's arguments (a builtin, a function imported fr
 module included, or any method but the path-preserving ones: `os.path.relpath(K)`, `shutil.which(K)`, `K.replace(...)`;
 N32). A shape in none of these classes is unread by the same rule. The comparison case measures the split with the regex
 pair: the rows whose label says the regex missed them too carry no call it flags, and that is held; every other match at
-a call the regex flags is a site, a listed entry containing it, or named (a refused module is red in the trio test).
-The rows whose label says the comparison names them hold the named ones, among them launches the scan neither reads nor
-lists (a name that reaches a one-line binding the scan cannot read, the CLI's verb handed by xargs, parallel or the
-shell's positional parameters, the CLI launched in a word beside a clean CLI word, a -c child that starts the kernel
-through a process starter handed over as a value or reached through a dunder) and the clean shapes above, as do the
-consumer plants of the comparison case (N32 binds its path across two lines, which the regex misses too).
+a call the regex flags is a site, a listed entry containing it, or named (a refused module is red in the trio test), and
+a regex hit at no call is accounted for when the module has a site, is refused, or has a listed entry containing it, and
+is named otherwise. The rows whose label says the comparison names them hold the named ones, among them launches the
+scan neither reads nor lists (a name that reaches a one-line binding the scan cannot read, the CLI's verb handed by
+xargs, parallel or the shell's positional parameters, the CLI launched in a word beside a clean CLI word, a -c child
+that starts the kernel through a process starter handed over as a value or reached through a dunder, a program held in a
+string that a test runs by exec or writes to a script file it starts) and the clean shapes above, as do the consumer
+plants of the comparison case (N32 binds its path across two lines, which the regex misses too).
 
 Ruling point, the maintainers' to decide (2026-09-21): a child interpreter that load_sources the kernel
 (`[sys.executable, "-c", <program>]`) is read here as NOT a kernel process. It is the in-process shape one process
@@ -425,7 +430,9 @@ class _SpawnScan:
         executable= (an f-string whole), outside a Python child's program, that spells, as a whole word, a name a
         declaration of which, in any scope of the module, holds the kernel's name as text (_kernel_named): the scan
         reads it as text and a run-time lookup reads it as that name (globals()[...], a %-mapping over locals(), eval,
-        getattr, string.Template)."""
+        getattr, string.Template). A listed entry requires no trio, and both kinds hold real launches, among them exec
+        of a constant program (row N89), __import__ (N80), getattr (N87), globals()[...] (N70) and runpy.run_path with
+        run_name '__main__' (N82)."""
         start, end = (call.lineno, call.col_offset), (call.end_lineno, call.end_col_offset)
         for e in self._unproven:
             inside = start <= (e.lineno, e.col_offset) and (e.end_lineno, e.end_col_offset) <= end
@@ -1742,14 +1749,22 @@ def _regex_scan_comparison(src, name, scan_all=False, scanned=None, hand=()):
     same source under one rule: for each call the regex flags, the scan gives a site at the call's line (the module then
     owes the trio), or a listed entry at that line whose expression contains the match (a listing requires no trio, so
     an unrelated one at the same call, sys.executable most often, explains nothing), or refuses the module
-    (UnreadableSpawn, red in the trio test); any other match at a call is named. The listed entries are the scan's
-    (`unresolved`) and `hand`, the module's entries of the hand listing (LISTED_BY_HAND), each covering every match on
-    the line whose text, its surrounding whitespace stripped, is the entry's. No proof excuses a match. Returns
-    (dropped, missed, not_calls, flagged, by_hand): `dropped` the (line, matched text, call text) of every match named;
-    `missed` the lines of the sites the regex census did not flag, reported and asserting nothing; `not_calls` the lines
-    of regex matches at no call of the module's ast (a comment, a docstring, a string holding a snippet), reported and
-    asserting nothing; `flagged` the number of calls of the ast the regex flags; `by_hand` the entries of `hand` that
-    cover a match. A source the regex flags nowhere is not scanned unless `scan_all`, so its `missed` is empty.
+    (UnreadableSpawn, red in the trio test); any other match at a call is named; a regex hit at no call is accounted
+    for when the module has a site, is refused, or has a listed entry containing it, and is named otherwise (PR #850's
+    tenth review round: a program held in a string that a test runs by exec, or writes to a script file it starts, has
+    its hit at no call, and the round-8 census flagged the module and required the trio). A site anywhere in the module
+    accounts for a hit at no call because such a hit has no call line to hold a site against, and the round-8 census's
+    verdict was per module: a module with a site owes the trio, all that verdict required. A comment or a docstring gets
+    no exemption, since that would be a proof that a hit launches nothing. The listed entries are the scan's
+    (`unresolved`, each covering a match inside its expression: at a call, an entry at the call's line; at no call, an
+    entry at any line) and `hand`, the module's entries of the hand listing (LISTED_BY_HAND), each covering every match
+    on the line whose text, its surrounding whitespace stripped, is the entry's. No proof excuses a match. Returns
+    (dropped, missed, not_calls, flagged, by_hand): `dropped` the (line, matched text, call text) of every match named
+    (for a hit at no call, the line of the regex's call parenthesis and that line's text); `missed` the lines of the
+    sites the regex census did not flag, reported and asserting nothing; `not_calls` the lines of every regex hit at no
+    call of the module's ast (a comment, a docstring, a string holding a program), each accounted for or named as above;
+    `flagged` the number of calls of the ast the regex flags; `by_hand` the entries of `hand` that cover a match. A
+    source the regex flags nowhere is not scanned unless `scan_all`, so its `missed` is empty.
     `scanned` is (tree, scan, sites, refused) from a scan of `src` its caller already ran (_roads_row, so the tree is
     scanned once), else the source is parsed and scanned here (a planted row's text)."""
     census = _round8_regex_census(src)
@@ -1774,20 +1789,24 @@ def _regex_scan_comparison(src, name, scan_all=False, scanned=None, hand=()):
     site_lines = {line for line, _, _ in sites}
     flagged, dropped, not_calls, by_hand = set(), [], [], []   # flagged: the lines of the calls the regex flags
     for call, paren_line, matches in hits:
-        if call is None:
+        if call is None:   # a hit at no call: no call line to hold a site against, so a site anywhere in the module
             not_calls.append(paren_line)
-            continue
-        flagged.add(call.lineno)
-        if refused or call.lineno in site_lines:
-            continue
+            if refused or site_lines:
+                continue
+        else:
+            flagged.add(call.lineno)
+            if refused or call.lineno in site_lines:
+                continue
         for offset, text in matches:
-            if any(start <= offset < end for line, node in listed if line == call.lineno for start, end in [extent(node)]):
+            if any(start <= offset < end for line, node in listed if call is None or line == call.lineno
+                   for start, end in [extent(node)]):
                 continue
             entries = [e for e in hand if e[1] == lines[src.count("\n", 0, offset)].strip()]
             if entries:
                 by_hand += [e for e in entries if e not in by_hand]
                 continue
-            dropped.append((call.lineno, text, ast.unparse(call)))
+            dropped.append((paren_line, text, "at no call of the ast: " + lines[paren_line - 1].strip()) if call is None
+                           else (call.lineno, text, ast.unparse(call)))
     return _Comparison(dropped, sorted(site_lines - flagged), not_calls, len(hits) - len(not_calls), by_hand)
 
 
@@ -2180,21 +2199,23 @@ def _method_chain(cls, name, classes):
 
 
 # The plant table the guard test runs (test_the_guard_itself_sees_the_spawn_sites): one synthetic module per row, each
-# labelled with what the scan must do with it. caught-by-argv: one site, at the planted call's line, an argv element
-# (or the executable=) that is the path as written; caught-by-binding: one site, at the planted call's line, read
-# through a name or a self.X target resolved to a declaration bound to the path; no-spawn: no site (the word-collision
-# class of the regex census, a -c child that loads the kernel, the CLI with another verb, the other bin/ scripts, an
-# in-process load, a parameter, and each class of the residual the module docstring states); refused-loud:
-# UnreadableSpawn naming the call's line and both declarations, (call line, path line, other line). Every row is
-# synthetic (an unbound BIN, no real path). The row labelled B1 is the case the ruling of 2026-09-21 required: a kernel
-# path bound across two lines, missed by the regex census because its KERNEL_NAME pattern read one line. The comparison
-# case (test_the_scan_covers_every_call_the_regex_census_it_replaced_flagged) runs that census over every row as well,
-# and every shape PR #850's ninth review round probed has a row here at the class that round's ruling gave it; a row
-# whose label says the regex missed it too is held to that by the comparison case, and every shape class PR #850's
-# tenth review round found a removed exclusion excusing has a row labelled named. The comparison case holds each row to
-# the account its label claims as well: a row whose label says the comparison names it carries a match at a call that no
-# site, listed entry or refusal takes (a launch, or a clean shape the scan neither reads as a site nor lists: the cost of
-# failing closed the module docstring states), and every match at a call of every other row is taken by one of them.
+# labelled with what the scan must do with it. caught-by-argv: one site, at the planted call's line, an argv element (or
+# the executable=) that is the path as written; caught-by-binding: one site, at the planted call's line, read through a
+# name or a self.X target resolved to a declaration bound to the path; no-spawn: no site (the word-collision class of
+# the regex census, a -c child that loads the kernel, the CLI with another verb, the other bin/ scripts, an in-process
+# load, a parameter, and each class of the residual the module docstring states); refused-loud: UnreadableSpawn naming
+# the call's line and both declarations, (call line, path line, other line). Every row is synthetic (an unbound BIN, no
+# real path). The row labelled B1 is the case the ruling of 2026-09-21 required: a kernel path bound across two lines,
+# missed by the regex census because its KERNEL_NAME pattern read one line. The comparison case
+# (test_the_scan_covers_every_call_the_regex_census_it_replaced_flagged) runs that census over every row as well, and
+# every shape PR #850's ninth review round probed has a row here at the class that round's ruling gave it; a row whose
+# label says the regex missed it too is held to that by the comparison case, and every shape class PR #850's tenth
+# review round found a removed exclusion excusing has a row labelled named. The comparison case holds each row to the
+# account its label claims as well: a row whose label says the comparison names it carries a match that no site, listed
+# entry or refusal takes (a launch, or a clean shape the scan neither reads as a site nor lists: the cost of failing
+# closed the module docstring states), and every match of every other row is taken by one of them, a match at a call by
+# a site at the call's line or a listed entry there containing it, and a regex hit at no call by a site anywhere in its
+# module or a listed entry containing it; a refused row's refusal takes every match it has.
 PLANT_TABLE = (
     ("B1 two-line binding (the ruling's required case)", 'caught-by-binding', 3,
      'KERNEL = os.path.join(\n    BIN, "romp-kernel")\nsubprocess.Popen([KERNEL])'),
@@ -2502,9 +2523,9 @@ PLANT_TABLE = (
      'subprocess.run([sys.executable, "-c", "load_source(\'k\', os.path.join(%r, \'romp-kernel\'))" % BIN])'),
     ('N10 a -c child that loads the kernel, the program held in a name (the comparison names it)', 'no-spawn', None,
      'CODE = "km = load_source(\'k\', os.path.join(BIN, \'romp-kernel\'))\\n"\nsubprocess.run([sys.executable, "-c", CODE])'),
-    ('N11 a comment spelling a launch', 'no-spawn', None,
+    ('N11 a comment spelling a launch (the comparison names it)', 'no-spawn', None,
      'x = 1  # subprocess.Popen([os.path.join(BIN, "romp-kernel")])\nsubprocess.run(["true"])'),
-    ('N12 a docstring spelling a launch', 'no-spawn', None,
+    ('N12 a docstring spelling a launch (the comparison names it)', 'no-spawn', None,
      '"""subprocess.Popen([os.path.join(BIN, "romp-kernel")])"""\nsubprocess.run(["true"])'),
     ('N13 the CLI with another verb', 'no-spawn', None,
      'ROMP = os.path.join(BIN, "romp")\nsubprocess.run(["bash", ROMP, "--help"])'),
@@ -2788,6 +2809,12 @@ PLANT_TABLE = (
     ('N115 a Python -c program that reads an opaque placeholder as code beside a dynamic road (the comparison names it)',
      'no-spawn', None,
      'subprocess.run([sys.executable, "-c", "%s; exec(SRC)  # romp-kernel.real" % STMT])'),
+    ('N116 a program held in a string, written to a script file that a test starts with sys.executable (the comparison '
+     'names it)', 'no-spawn', None,
+     'PROG = "import subprocess; subprocess.run([\'bin/romp-kernel\', \'--serve\'])"\nwith open(SCRIPT, "w") as f:\n'
+     '    f.write(PROG)\nsubprocess.run([sys.executable, SCRIPT])'),
+    ('N117 a program held in a string that a test runs by exec (the comparison names it)', 'no-spawn', None,
+     'PROG = "import subprocess; subprocess.run([\'bin/romp-kernel\', \'--serve\'])"\nexec(PROG)'),
     ('R1 a rebinding in one function', 'refused-loud', (4, 2, 3),
      'def t():\n    k = os.path.join(BIN, "romp-kernel")\n    k = [sys.executable, "-m", "pytest", "-k", "boot"]\n    subprocess.run(k)'),
     ('R2 two module-level bindings that disagree', 'refused-loud', (3, 1, 2),
@@ -3021,13 +3048,17 @@ class HermeticKernelPostal(unittest.TestCase):
         PLANT_TABLE row, under one rule (_regex_scan_comparison): for each call the regex flags, the scan gives a site at
         the call's line, or a listed entry at that line whose expression contains the match (the scan's own entries, and
         the entries of the hand listing, LISTED_BY_HAND, each covering a match on its line), or refuses the module
-        (UnreadableSpawn, red in the trio test); any other match at a call is named. A named match reds the case, naming
-        the module or row, the line and the match, except in the rows whose label says the comparison names them, and
-        each of those must carry at least one (a launch, or a clean shape the scan neither reads as a site nor lists:
-        the cost of failing closed the module docstring states). A hand entry that covers no match reds the case, naming
-        the entry. A row whose label says the regex missed it too carries no call the regex flags. Reported and
-        asserting nothing: the rows and the modules whose sites the regex missed (B1 and the rest of round 8's silent
-        half) and the rows whose regex match lies at no call of the ast (N11, N12). The tree half is read from the roads
+        (UnreadableSpawn, red in the trio test); any other match at a call is named; a regex hit at no call is accounted
+        for when the module has a site, is refused, or has a listed entry containing it, and is named otherwise. A named
+        match reds the case, naming the module or row, the line and the match, over the tree as over the rows, except in
+        the rows whose label says the comparison names them, and each of those must carry at least one (a launch, or a
+        clean shape the scan neither reads as a site nor lists: the cost of failing closed the module docstring states).
+        The rows whose regex match lies at no call are held the same way: a comment and a docstring (N11, N12) and a
+        program held in a string that is exec'd or written to a script file a test runs (N116, N117) are named, at labels
+        that say so, while B71, B74, A35 and A45 (each module has a site) and N89 (its listed program contains the hit)
+        name nothing. A hand entry that covers no match reds the case, naming the entry. A row whose label says the regex
+        missed it too carries no call the regex flags. Reported and asserting nothing: the rows and the modules whose
+        sites the regex missed (B1 and the rest of round 8's silent half). The tree half is read from the roads
         table (_roads_table), whose one read compared each module with the scan it ran for the roads, so this case scans
         no module of the tree again. Then plants the comparison must name: consumer calls the regex flags
         (os.path.relpath of a name bound to the path, beside a listed sys.executable that does not cover it, and of the
@@ -3037,11 +3068,12 @@ class HermeticKernelPostal(unittest.TestCase):
         loads the kernel and starts another process, one that starts a process through os.system, a %s placeholder read
         as code, a program that does not parse as Python, a shell's program that Python would parse)."""
         table = _roads_table(HERE, TREE_SKIP)
-        dropped, tree_flagged, rows_flagged, missed, not_calls, tree_missed = [], 0, 0, [], [], []
-        for name, (d, rm, _, flagged, _) in sorted(table.compared.items()):
-            dropped += [(name,) + x for x in d]
+        dropped, tree_flagged, rows_flagged, missed, not_calls, tree_missed, tree_not_calls = [], 0, 0, [], [], [], []
+        for name, (d, rm, nc, flagged, _) in sorted(table.compared.items()):
+            dropped += [(name,) + x for x in d]   # a named hit at no call among them
             tree_flagged += flagged
             tree_missed += ["%s:%s" % (name, ",".join(map(str, rm)))] if rm else []
+            tree_not_calls += [name] if nc else []
         named, also_missed = {}, {}
         for label, _, _, src in PLANT_TABLE:
             row = label.split()[0]
@@ -3066,11 +3098,13 @@ class HermeticKernelPostal(unittest.TestCase):
         self.assertEqual(_hand_entries_covering_nothing(table.compared.values(), LISTED_BY_HAND), [], "entries of the hand "
                          "listing (LISTED_BY_HAND) that cover no match of the round-8 regex census over the tree: the "
                          "listing holds only lines that exist ((module, line, kind, reason))")
-        self.assertEqual(dropped, [], "calls the round-8 regex census flagged that the scan neither reads as a site nor lists, "
-                         "and that no entry of the hand listing covers, each match named ((module or row, line, match, call)): "
-                         "%r. Over %d flagged calls of the tree and %d of the rows; the rows whose sites the regex missed: %s; "
-                         "the modules whose sites it missed (module:lines): %s; the rows whose regex match lies at no call: %s"
-                         % (dropped, tree_flagged, rows_flagged, missed, tree_missed, not_calls))
+        self.assertEqual(dropped, [], "matches of the round-8 regex census that the scan neither reads as a site nor lists, "
+                         "and that no entry of the hand listing covers, each named ((module or row, line, match, call)): at a "
+                         "call the regex flags, or at no call in a module with no site that no refusal and no listed entry "
+                         "accounts for: %r. Over %d flagged calls of the tree and %d of the rows; the rows whose sites the "
+                         "regex missed: %s; the modules whose sites it missed (module:lines): %s; the modules and the rows "
+                         "with a regex hit at no call, each accounted for or named: %s, %s"
+                         % (dropped, tree_flagged, rows_flagged, missed, tree_missed, tree_not_calls, not_calls))
         consumer = 'KERNEL = os.path.join(BIN, "romp-kernel")\nsubprocess.run([sys.executable, os.path.relpath(KERNEL)])'
         scan = _SpawnScan(_parse_text(consumer), "planted.py")
         self.assertEqual((scan.sites(), [text for line, text, _ in scan.unresolved if line == 2]), ([], ["sys.executable"]),
