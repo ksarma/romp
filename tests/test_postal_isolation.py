@@ -234,7 +234,7 @@ class ThreadOwnSendRefused(unittest.TestCase):
         """The kernel's routes that write a session flag, DERIVED from the source (fork PR #897, round 3, the reviewer's
         ruling on section D: the witness pins the population as a set, so a new route turns it red). Returns (writers,
         references). A WRITER is a function holding a call of a write door one of whose arguments, or whose receiver,
-        carries the flags path ("<module>" for a call outside every function). The doors: a call named
+        carries the flags path ("<module>" for a call outside every function, a class body too). The doors: a call named
         _write_state_json, _atomic_write, open, replace, rename, write_text or write_bytes, by bare name or as a method
         whatever its receiver (Path.open, os.open and io.open alike, and so a method named _atomic_write or a replace
         imported from os). An expression CARRIES the flags path when it holds the constant "session-flags.json"; a name
@@ -242,10 +242,11 @@ class ThreadOwnSendRefused(unittest.TestCase):
         return statements returns an expression that carries the path. A name is BOUND to the path by an assignment
         (plain, annotated, or augmented as in p /= "session-flags.json") to a plain name whose value carries the path,
         in any order. A binding outside every function (at module level or in a class body, inside an if or a try there
-        included) counts everywhere. A binding in a function counts throughout the outermost function around it, and so
-        in every function nested in that one at any depth (a closure reading its enclosing function's name, the function
-        around a nested one that binds it, and a function beside the binding inside that outermost function), and
-        nowhere outside it, in another function or outside every function. Path functions and module-level names are
+        included) counts everywhere. A binding in a function, however deeply nested, counts throughout the outermost
+        function around it, and so in every function nested in that one at any depth (a closure reading its enclosing
+        function's name, the function around a nested one that binds it, and a function beside the binding inside that
+        outermost function), and nowhere outside it: not in another function, another method of the same class included
+        (a class body is not a function), and not outside every function. Path functions and module-level names are
         derived together to a FIXPOINT (round 4 of fork PR #897, the reviewer's ruling on its round-3 refuters' finding,
         the thirty-sixth commit), since a path function's call can bind a module-level name that another function
         returns, and so on: a function returning a module-level name bound to the constant (the kernel's own idiom of a
@@ -259,22 +260,25 @@ class ThreadOwnSendRefused(unittest.TestCase):
         door list and the binding rule err wide (a read through open, a str.replace on the path, or a name a nested
         function binds, read outside it with no nonlocal statement, counts too), so a miss is what they guard against
         and a surplus fails the pin loudly. A REFERENCE is every other mention of a writer's name in the file, a call or
-        not, in a function, in a class body or outside both, as (the dotted name of the classes and functions around it,
-        "<module>" outside all of them; the selectors; the writer). The SELECTORS are, outermost first, the string
-        constants among the operands of each comparison whose operators are all == (either side, every operand of a
-        chain), anywhere in the test (every operand of an and, an or or a not, nested ones included), of each if
+        not, in a function, in a class body or outside both, as (the dotted name of the classes and
+        functions around it, outermost first, a function nested in another included, "<module>" outside
+        all of them; the selectors; the writer). The SELECTORS are, outermost first, the string constants
+        among the operands of each comparison whose operators are all == (either side, every operand of a chain
+        such as "/flag" == path == "/flags"), anywhere in the test at any depth (every comparison the test holds:
+        an operand of an and, an or or a not, an argument of a call, nested ones included), of each if
         statement whose body, not its else, holds the mention, between the mention and the function around it (up to the
         module for a mention outside every function). The route's own selector leads: POST /flag's path in
         _state_write_route, the WebSocket op's type in Handler._dispatch_ws.
         A text census cannot be complete, and this one covers the shapes above and no other. Each of those shapes has a
         plant in that test that a census dropping or changing it turns red, each door name by bare name and as a method
         included, and so does each rule that narrows one, under a census widening it: a function's OWN return statements
-        count, not a nested function's; a binding in a function counts nowhere outside the outermost function around it,
-        in another function or outside every function; a binding is an assignment of the three kinds above to a plain
-        name; a selector is a string constant in a comparison whose operators are all ==, each of the nine other
-        comparison operators planted; and selectors come from if statements alone (a while, a conditional expression and
-        a match's case give none), from those whose body holds the mention, and from those inside the function around
-        it. A plant may carry several shapes, as the test's first two do. The thirty-seventh commit said each had a
+        count, not a nested function's; a binding in a function counts nowhere outside the outermost function
+        around it, in another function (another method of its class included) or outside every function; a
+        binding is an assignment of the three kinds above to a plain name; a selector is a string constant in a
+        comparison whose operators are all ==, each of the nine other comparison operators planted; and
+        selectors come from if statements alone (a while, a conditional expression and a match's case give
+        none), from those whose body holds the mention, and from those inside the function around it. A plant
+        may carry several shapes, as the test's first two do. The thirty-seventh commit said each had a
         plant of its own while a census could drop, change or widen six of them and pass every plant in that test: a
         path function with a return that does not carry the path beside one that does, a mention of a writer through an
         attribute, a selector on the left of its comparison, the selectors of nested ifs outermost first, a name bound
@@ -293,8 +297,18 @@ class ThreadOwnSendRefused(unittest.TestCase):
         in an augmented assignment and throughout the outermost function around it, so a write through a name an
         augmented assignment binds, a closure's write through its enclosing function's name, a write in a function
         beside the binding in one outermost function, and a write through a path function returning its enclosing
-        function's name are found; the plant of each is red under the census as it stood at the thirty-eighth commit.
-        Among what it does not see, each planted there and asserted NOT found, so this text moves if the census ever
+        function's name are found; the plant of each is red under the census as it stood at the thirty-eighth
+        commit. The thirty-ninth commit left six claims above without a plant, and a census breaking any one of
+        them passed every plant in that test: every operand of a chain (a census reading a chain's left operand
+        and first comparator alone), a comparison anywhere in the test (one reading the operands of an and, an or
+        and a not alone, all the text then named, while the census reads every comparison the test holds, one
+        inside a call included), a binding counting at any depth (one counting it in the function a level or two
+        up alone; no plant was more than two functions deep), two methods of one class being two functions (one
+        whose unit is the outermost class or function, which turned only the real kernel's set pin red), the
+        dotted name of a mention in a nested function (one naming the innermost function and its classes alone),
+        and a door call in a class body named "<module>" (one naming it by its class). The fortieth commit plants
+        each and states the selectors' rule as the census follows it; the census's code is unchanged. Among what
+        it does not see, each planted there and asserted NOT found, so this text moves if the census ever
         reaches one: a path built by string concatenation (no constant equals the name), a write through a library
         function outside the doors (shutil.copy), a write by another process (a subprocess), a path handed as an
         argument to a function that writes its parameter (the census follows no argument into its callee), a name bound
@@ -415,8 +429,14 @@ class ThreadOwnSendRefused(unittest.TestCase):
         expression and a match's case, none giving a selector; a name bound by an augmented assignment; and four writes
         through the binding rule the census now follows, a closure's through a name its enclosing function binds, one
         through a name a nested function binds through a nonlocal statement, one in a function beside the binding in one
-        outermost function, and one through a path function returning a name its enclosing function binds. Then what the
-        census does NOT see, one plant of each class its docstring names, each asserted not found, so the docstring
+        outermost function, and one through a path function returning a name its enclosing function binds. The
+        fortieth commit added, each in its own subtest: every operand of a chain of ==, in two chains (the
+        constants first and last of three operands, and second and fourth of four); two comparisons inside a call's
+        argument in the test; a write four functions deep through a name the outermost function binds, and a write
+        in the outermost function through a name bound four functions deep; a name bound in another method of the
+        same class not counting; a mention of a writer inside a nested function, and one in a method of a class
+        defined in a function; and a door call in a class body, the writer "<module>". Then what the census does
+        NOT see, one plant of each class its docstring names, each asserted not found, so the docstring
         moves if the census ever reaches one: a path built by concatenation, shutil.copy, a subprocess, a path handed to
         a helper that writes its parameter, a name bound by unpacking into a tuple, by an assignment to an attribute, by
         a for loop's target, by a comprehension's target, by a with statement's as, by an assignment expression and by a
@@ -700,7 +720,72 @@ class ThreadOwnSendRefused(unittest.TestCase):
                    '    def _path():\n'
                    '        return p\n'
                    '    _atomic_write(_path(), cur)\n',
-                   ({"_by_closure_path"}, [])))
+                   ({"_by_closure_path"}, [])),
+                  ("every operand of a chain of ==, the left one included",
+                   setter + 'def _route(path, b):\n'
+                            '    if "/flag" == path == "/flags":\n'
+                            '        _set_flag(b["id"])\n',
+                   ({"_set_flag"}, [("_route", ("/flag", "/flags"), "_set_flag")])),
+                  ("every operand of a chain of == four operands long",
+                   setter + 'def _route(path, route, b):\n'
+                            '    if path == "/flag" == route == "/flags":\n'
+                            '        _set_flag(b["id"])\n',
+                   ({"_set_flag"}, [("_route", ("/flag", "/flags"), "_set_flag")])),
+                  ("a comparison inside a call in the test",
+                   setter + 'def _route(path, b):\n'
+                            '    if any((path == "/flag", path == "/flags")):\n'
+                            '        _set_flag(b["id"])\n',
+                   ({"_set_flag"}, [("_route", ("/flag", "/flags"), "_set_flag")])),
+                  ("a write four functions deep through a name the outermost function binds",
+                   'def _outer(cur):\n'
+                   '    p = jd.STATE / "session-flags.json"\n'
+                   '    def _a():\n'
+                   '        def _b():\n'
+                   '            def _c():\n'
+                   '                p.write_text(cur)\n'
+                   '            _locked(_c)\n'
+                   '        _b()\n'
+                   '    _a()\n',
+                   ({"_c"}, [("_outer._a._b", (), "_c")])),
+                  ("a write in the outermost function through a name bound four functions deep",
+                   'def _by_deep_nonlocal(cur):\n'
+                   '    p = None\n'
+                   '    def _a():\n'
+                   '        def _b():\n'
+                   '            def _c():\n'
+                   '                nonlocal p\n'
+                   '                p = jd.STATE / "session-flags.json"\n'
+                   '            _c()\n'
+                   '        _b()\n'
+                   '    _a()\n'
+                   '    p.write_text(cur)\n',
+                   ({"_by_deep_nonlocal"}, [])),
+                  ("a name bound in another method of the same class does not count",
+                   'class Store:\n'
+                   '    def _where(self):\n'
+                   '        p = jd.STATE / "session-flags.json"\n'
+                   '        log(p)\n'
+                   '    def _by_sibling_method(self, p, cur):\n'
+                   '        p.write_text(cur)\n',
+                   (set(), [])),
+                  ("a mention of a writer inside a nested function",
+                   setter + 'def _route(b):\n'
+                            '    def _later():\n'
+                            '        _set_flag(b["id"])\n'
+                            '    return _later\n',
+                   ({"_set_flag"}, [("_route._later", (), "_set_flag")])),
+                  ("a mention of a writer in a method of a class defined in a function",
+                   setter + 'def _make():\n'
+                            '    class Handler:\n'
+                            '        def _dispatch_ws(self, msg, client):\n'
+                            '            if msg.get("type") == "setFlagMade":\n'
+                            '                _set_flag(msg["id"])\n'
+                            '    return Handler\n',
+                   ({"_set_flag"}, [("_make.Handler._dispatch_ws", ("setFlagMade",), "_set_flag")])),
+                  ("a door call in a class body is the writer <module>",
+                   'class Boot:\n'
+                   '    open(jd.STATE / "session-flags.json", "w").write("{}")\n',
+                   ({"<module>"}, [])))
         listed += tuple(("the comparison operator %s gives no selector" % op,
                          setter + 'def _route(path, b):\n'
                                   '    if path %s "/other":\n'
@@ -711,7 +796,7 @@ class ThreadOwnSendRefused(unittest.TestCase):
             with self.subTest(listed=label):
                 self.assertEqual(census(src), expected,
                                  "EVERY SHAPE AND NARROWING RULE THE CENSUS DOCSTRING LISTS HAS A PLANT (round 4 of fork "
-                                 "PR #897, the thirty-seventh to thirty-ninth commits): %s. A census that drops or changes "
+                                 "PR #897, the thirty-seventh to fortieth commits): %s. A census that drops or changes "
                                  "the shape, or widens the rule, turns this plant red" % label)
         import re
         doors = ("_write_state_json", "_atomic_write", "open", "replace", "rename", "write_text", "write_bytes")
