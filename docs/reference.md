@@ -3676,10 +3676,9 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   a root another reader took in the same cycle), `evict` (roots dropped because
   no alive session's transcript names them, on every jobs pass and, as a
   belt, after each feed build and from the tracking-off frame), `dirStats`
-  (the directory stats both validators paid: the tree validation's lstat per
-  known directory below the root and the agent-file lookup's stat per
-  directory its stamp re-check takes; before 2026-09-19 it counted the lstat
-  half alone, so a figure from before that change and one from after are not
+  (what it counts: the comment at `_SUBAGENT_TREE_STATS` in
+  `kernel/kernel.py`; the agent-file lookup's directory stats joined it on
+  2026-09-19, so a figure from before that change and one from after are not
   one series; the cost the memo's reads pay, road by road with the case that
   pins each term: `_subagent_tree_memo_report`'s docstring in
   `kernel/kernel.py`), `walkMs` and `validateMs` (the time in each,

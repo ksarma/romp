@@ -1032,9 +1032,8 @@ class _PerfStats:
                                    a read answered a tree lands in exactly one of the three, a
                                    read answered no tree in none: the comment at
                                    _SUBAGENT_TREE_STATS), evict (roots dropped as unowned),
-                                   dirStats (the directory stats both validators paid: the tree
-                                   validation's lstats and the agent-file lookup's stamp
-                                   re-check; the lstat half alone before 2026-09-19),
+                                   dirStats (what it counts, and the day its meaning changed: the
+                                   comment at _SUBAGENT_TREE_STATS),
                                    walkMs / validateMs and the gauges roots / dirs; judgingBand (the timeline's judging band memo,
                                    _judging_band_report) -> builds / ms, rows_skipped /
                                    rows_visited, entries_reused / entries_minted, resets (a rotated
@@ -35384,27 +35383,31 @@ SUBAGENT_STEPS_CAP = 200        # tool calls shipped on the Agent head (agentSte
 _SUBAGENT_TREES = {}
 _SUBAGENT_TREE_STATS = {"hit": 0, "miss": 0, "scoped": 0, "evict": 0, "dirStats": 0, "walkMs": 0.0, "validateMs": 0.0}   # /perf memos.subagentTree;
 #                          advisory tallies, incremented without a lock as the neighbouring memos' are (a lost count under a race
-#                          is tolerated; the memo's own writes are single dict stores of immutable tuples). WHICH COUNTER A READ
-#                          LANDS IN, stated here once (_subagent_tree_memo_report's docstring, the /perf table's comment and
-#                          docs/reference.md's memos paragraph point here): a _subagent_tree read answered a tree lands in
-#                          exactly one of hit (validated: one lstat per known directory), miss (walked; when an entry stood
-#                          and its validation failed first, that validation lands in miss too, one miss for the validation
-#                          and the walk, its lstats in dirStats and its time in validateMs beside the walk's walkMs: round 3
-#                          of #882, extra6-1) and scoped (answered from the cycle scope's sample, `_live_scope.subagent_trees`,
-#                          with no stat; _subagent_tree's early return alone moves it), the held-root lag included (a root
-#                          removed on disk after this thread's scope sampled it is answered the sample, and counted scoped,
-#                          until the scope ends); a read answered no tree moves none of the three: a missing root, a file or a
-#                          symlink in its place (the two pop paths) and a root whose lstat fails for another reason (the raise,
-#                          _SubagentTreeUnreadable). So hit + miss is the reads that reached the disk and answered a tree (a hit
-#                          one validation; a miss one walk, with the failed validation before it when an entry stood, so it is
-#                          not the count of validations paid), scoped is the reads the scope absorbed, and hit + miss + scoped
-#                          is the reads answered a tree, not every call. Executed in tests/test_subagent_tree_memo.py
+#                          is tolerated; the memo's own writes are single dict stores of immutable tuples). Stated here once:
+#                          _subagent_tree_memo_report's docstring, the /perf table's comment and docs/reference.md's memos
+#                          paragraph point here.
+#                          WHICH COUNTER A READ LANDS IN: a _subagent_tree read answered a tree lands in exactly one of hit
+#                          (validated: one lstat per known directory), miss (walked; when an entry stood and its validation
+#                          failed first, that validation lands in miss too, one miss for the validation and the walk, its
+#                          lstats in dirStats and its time in validateMs beside the walk's walkMs) and scoped (answered from
+#                          the tree scope's held pair, `_live_scope.subagent_trees`, with no stat; _subagent_tree's early
+#                          return alone moves it), the held-root lag included (a root removed on disk after this thread's
+#                          scope sampled it is answered the held pair, and counted scoped, until the scope ends). A read
+#                          answered no tree moves none of the three: a missing root, a file or a symlink in its place (the two
+#                          pop paths) and a root whose lstat fails for another reason (the raise, _SubagentTreeUnreadable). So
+#                          hit + miss is the reads that reached the disk and answered a tree (not the count of validations
+#                          paid, since a miss may carry a failed one), scoped is the reads the scope absorbed, and hit + miss +
+#                          scoped is the reads answered a tree, not every call. Executed in tests/test_subagent_tree_memo.py
 #                          UnreadableRoot (no counter moves on the raise) and MovedTrees' symlinked-root case (the symlink
 #                          shape, which shares the file shape's branch, not S_ISDIR: (hit, miss, scoped) unmoved over the live
-#                          and the dangling link's reads). dirStats counts the
-#                          directory stats BOTH validators pay (2026-09-19): _subagent_tree's lstat per known directory below
-#                          the root and _dir_stamp's os.stat per directory an agent-file lookup re-checks; before that day it counted the
-#                          lstat half alone, so the figure across that deploy is not one series
+#                          and the dangling link's reads).
+#                          WHAT dirStats COUNTS: _subagent_tree's lstat per known directory below the root on a validation,
+#                          whether or not it succeeds (the root's own lstat and a walk's lstats are not counted), plus every
+#                          os.stat _dir_stamp takes that succeeds and is not served from the stamp index: the agent-file
+#                          walk's stamps of the own root, the project directory and each sibling root, and the memo hit's
+#                          re-check (_dir_stamps). A _dir_stamp stat that raises is not counted. _dir_stamp's stats joined on
+#                          2026-09-19; before that day dirStats counted the validation's lstats alone, so a figure across that
+#                          deploy is not one series
 _TREE_UNREADABLE = "unreadable"     # the key recorded where a stat's key would go for a path a reader needed and could not read
 #                                     for a reason other than absence: a value no stat produces, so it never equals an absent path's
 #                                     (None) or a read one's, a chat build that recorded it is rebuilt at the next cycle's signature,
@@ -35700,15 +35703,12 @@ def _subagent_trees_forget(alive):
 
 
 def _subagent_tree_memo_report():
-    """/perf memos.subagentTree: hit and miss (trees vouched for by validation against trees walked), scoped (served from the
-    cycle's sample with no stat at all, 2026-09-18: scoped / (hit + miss + scoped) is the share of reads that were
-    re-samples of a root another reader took in the same cycle; a read answered a tree, validated, walked or scoped, lands
-    in exactly one of the three and a read answered no tree moves none; what each counts, a failed validation before a
-    walk included: stated once at _SUBAGENT_TREE_STATS), evict (roots dropped as unowned), dirStats (the directory stats
-    both validators paid: the tree validation's lstat per known directory below the root and the agent-file lookup's
-    os.stat per directory it re-checks, _dir_stamp; the lstat half alone before 2026-09-19), walkMs and validateMs (the
-    time in each, every thread), and the gauges roots (entries) and dirs (directories held). A tree is sampled once per
-    cycle scope (_subagent_tree, THE CYCLE SCOPE).
+    """/perf memos.subagentTree: hit, miss and scoped (scoped / (hit + miss + scoped) is the share of the reads answered a
+    tree that the tree scope served from a pair another reader took in the same scope), evict (roots dropped as unowned),
+    dirStats, walkMs and validateMs (the time in each, every thread), and the gauges roots (entries) and dirs
+    (directories held). Which of hit, miss and scoped a read lands in, and what dirStats counts: the comment at
+    _SUBAGENT_TREE_STATS. dirStats has counted _dir_stamp's stats beside the validation's lstats since 2026-09-19, so a
+    figure across that deploy is not one series. A tree is sampled once per scope (_subagent_tree, THE CYCLE SCOPE).
 
     THE COST, derived road by road from the code, stated here once: docs/reference.md's memos paragraph, the ledger
     entry and the other kernel texts that speak of it name this docstring (a test's docstring states what its own case
