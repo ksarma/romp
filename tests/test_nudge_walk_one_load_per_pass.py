@@ -1536,11 +1536,18 @@ def _loader_births(path, judge):
     was that class's until the round-4 fixes and is the string class's now: the constant spells the door whole where it is bound,
     and the rule reads it there. `called` counts each spelling called and `defs` each def named like a loader, so a caller can
     check the population it read is the doors' and not empty. Derives: every birth, every called spelling, every loader def and
-    every hand-off from the whole AST of the file at `path`, with one parent map over the walk. `path` is the one file a call
-    reads. On 3.14t, where ast.unparse imports the standard library's _ast_unparse on its first call in a process, the kernel
-    call's match of _JD_LOAD, when it is that first call, also has the import system open that module's file under
-    sys.base_prefix, which no rule here reads; on 3.10 through 3.13 a call opens `path` alone (the limits census before round
-    10, an audit hook on the open event across each call). Bounds: _DOOR_SPELLINGS, the
+    every hand-off from the whole AST of the file at `path`, with one parent map over the walk. `path` is the one source file a
+    call reads. A call with `judge` false, once its walk has yielded the whole tree, runs ast.unparse over each statement of the
+    module's top-level body that is a plain assignment (ast.Assign) whose one target is the name jd, in order, until one reads as
+    _JD_LOAD (among them the kernel's load and the copy _FORM_PRE gives each of the enumeration's form files); among the
+    statements it does not unparse are an annotated or augmented assignment and one nested in a module-level if, try or with
+    block. On 3.14t, where ast.unparse imports the standard library's _ast_unparse on its first call in a process, whichever
+    judge-false call makes the process's first ast.unparse (among them the birth case's kernel call and the enumeration's calls
+    over its form files) also has the import system open that module's file under sys.base_prefix, which no rule here reads; on
+    3.10 through 3.13 a call opens `path` alone (the limits census before round 10, an audit hook on the open event across each
+    of the birth case's two calls; review round 10, tests-1: the same hook across every call of a whole-module run, at the head
+    that review read; and the round-11 fixes' re-take of that hook, across every call of a whole-module run on 3.10 through
+    3.14t). Bounds: _DOOR_SPELLINGS, the
     doors' names, the closed set the value rule keys on, spelled by hand once (the birth pin holds that copy against the judge's defs
     and the kernel's called spellings both ways, so the set is a policy here and a derived check there); _DYNAMIC_LOOKUPS and _DICT_READS, the receivers the
     consumer clause reads, an open set kept only for a constant that merely contains the name (a whole spelling is refused whatever
