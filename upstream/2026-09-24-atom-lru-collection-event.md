@@ -3,7 +3,7 @@ title: The materialized-atom LRU kept the entries of freed atom lists until its 
 status: candidate
 where: kernel/event_model.py (_MAT_LRU comment, _MAT_COLLECTED, _ListRef, _mat_collected, _ASM_INDEX_STATS, _mat_register, _mat_trim, _mat_drain, LazyIndex docstring, LazyIndex.__init__, LazyIndex.release, LazyAtoms docstring, LazyAtoms.__init__, LazyAtoms._at, LazyAtoms.clear, LazyAtoms.reverse, LazyAtoms.__iadd__, LazyAtoms.__imul__, asm_index_stats), docs/reference.md, tests/test_asm_mat_lru_release.py, tests/test_perf_stats.py, upstream/2026-09-24-atom-lru-collection-event.md
 added: 2026-09-24
-pr:
+pr: 914
 tier: fix
 offered:
 closed:
