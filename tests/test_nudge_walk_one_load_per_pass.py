@@ -3827,23 +3827,25 @@ class TheCountersOneSite(unittest.TestCase):
         `jd._read_store_json`, outside the recorders and the reconciliations (the module docstring, _pass); a read by the look or the
         gate of the other pass session's store, which lands in that session's count and is held by the ceilings, no assertion checking
         that each reads only the session it looks at (_pass); a second judge module, refused by the birth pin only where
-        kernel/kernel.py or kernel/judge.py spells a door of it in a form the pin reads (a call by attribute whose spelling is outside
-        the called population the pin pins, `_PJ.load_goals_shared(sid)`, in the kernel any base but jd, a jd.<door> call site added
+        kernel/kernel.py or kernel/judge.py spells a door of it in a form the pin reads (among them a call whose spelling is outside
+        the called population the pin pins, by attribute, `_PJ.load_goals_shared(sid)`, in the kernel any base but jd, or by bare
+        name, in the kernel any bare name, a jd.<door> call site added
         in the kernel, which moves the per-spelling count unless a call site of the same spelling is removed with it, a door reference
         that is not the callee of a call, or a constant that spells a door whole or carries the name to a listed lookup, a dict read
-        or a subscript key) and, in kernel/kernel.py alone, where jd is bound to it by an identifier field, an attribute store named
-        jd or a constant whose whole text reads as jd, the pin then red alone while every execution case stays green, and neither the
+        or a subscript key) and, in kernel/kernel.py alone, where jd is bound to it in a form the jd rule reads (among them an
+        identifier field, an attribute store named jd or a constant whose whole text reads as jd), each rule stated in full in
+        _loader_births' docstring, the pin then red alone while every execution case stays green, and neither the
         module's own binding under another name nor a name assembled at run time (the assembled class) being such a form (the birth
         case, _loader_births; the control of review round 9, extra5-2: the second judge written in the kernel as `_PJ`, its shared
         door called, red the birth pin, naming `_PJ.load_goals_shared` in the called dict); a second judge module reached any other
-        way, the reader beside the judge's module named above, outside every witness here, execution included: one bound in either
-        file and reached through a judge function that is not a door (one that loads inside it, `tasks_for` say), one loaded in any
+        way, the reader beside the judge's module named above, outside every witness here, execution included, among them one bound
+        in either file and reached through a judge function that is not a door (one that loads inside it, `tasks_for` say), one loaded in any
         other file, and one bound under jd from any file but kernel/kernel.py (an attribute store on the kernel module, written in
         kernel/judge.py or in cli/) or in kernel/kernel.py by a statement handed to exec or compile, reached through the kernel's
         existing jd.<door> call sites, while a loader spelled in any file but those two is outside the pin and a call from there
         through the real judge's doors is caught only by the recorders and the reconciliations on a road a case drives, within the
-        reconciliations' limit (the item on a load through a door no recorder wraps) (the module docstring, _pass, the birth case;
-        the witnesses of review round 9, extra5-2: a second judge loaded in another kernel file, a second judge bound in the kernel
+        reconciliations' limit (the item on a load through a door no recorder wraps) (the complement of the item above, whose forms
+        _loader_births' docstring and the birth case state in full; the witnesses of review round 9, extra5-2: a second judge loaded in another kernel file, a second judge bound in the kernel
         and reached through a judge function that is not a door, and jd rebound to a second judge from cli/ and from a def of the
         judge, each called from the look with the module green and the second module's reads counted, while a cli/ module calling
         the real judge's shared door from the look red the pass, the recorder naming its caller); a load through a door of the
@@ -3928,11 +3930,12 @@ class TheCountersOneSite(unittest.TestCase):
         closed: a constant that only contains the counter's name, in any letter case, fails the site case at a subscript key, a listed
         lookup or a dict read even when it reaches no counter (os.environ.get of a variable named ROMP_NUDGE_WALK_STATS_TRACE, say),
         and a legitimate one would need an exemption row with its reason, the shape _loader_births states for its whole-spelling
-        constants, while this census has no exemption rows (the site case); the birth pin's rules, which fail closed the same way,
-        each stated in full in _loader_births' docstring: in kernel/kernel.py and kernel/judge.py the consumer clause fires on
+        constants, while this census has no exemption rows (the site case); the birth pin's rules that fail closed the same way,
+        stated in full in _loader_births' docstring and in the birth case's defs, called and hand-off lines, among them: in
+        kernel/kernel.py and kernel/judge.py the consumer clause fires on
         "load_goals" as a substring after lowering at a subscript key, a listed lookup or a dict read, and the value rule on a
-        constant that spells a door whole after the three transforms, wherever it appears, and in the kernel the jd rule fires on a
-        constant that reads as jd after the three transforms, anywhere, and on a keyword `jd=` at any call, so each of these fails
+        constant that spells a door whole after the three transforms, wherever it appears, and in the kernel the jd rule fires, among
+        its forms, on a constant that reads as jd after the three transforms, anywhere, and on a keyword `jd=` at any call, so each of these fails
         the birth case, named by line, with no loader involved, since the pin has no exemption rows (_loader_births, the birth
         case); the increment's value, which no census reads (a `+= 2` or a `+= 1.0` is a bump), held by the served counter's delta
         only on the roads and in the states a case drives and reads the counter on, a value conditioned on a state no case arranges
