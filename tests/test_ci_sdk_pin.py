@@ -25,10 +25,9 @@ This module holds five things, and it never skips: a pin that skips reports gree
    line, and so is one whose step name another pytest-running step of the job shares (`ambiguous`: the key would name
    two steps, and GitHub Actions does not require unique names). The population is derived from
    the file's text by pytest_invocations (its docstring is the rule: `python -m pytest`, `python -mpytest`, a bare
-   `pytest` or `py.test` at command position, in a named or unnamed step in the file's own layout, in a single-line,
-   quoted (closed on its line), continued, `run: |` or `run: >` scalar, a tag before it read through, backslash
-   continuations joined as
-   the shell joins them, comment lines and pip installs excluded), and the two invocations the file is known to
+   `pytest` or `py.test` at command position, in a named or unnamed step in the file's own layout, in a one-line plain
+   or quoted scalar or a `run: |` literal block, backslash continuations joined as the shell joins them, comment lines
+   and pip installs excluded), and the two invocations the file is known to
    hold, the Python matrix step's Run pytest (the switch and the flag) and the vscode-extension job's served-page
    step (the flag; listed for the switch, since its job installs no SDK), are asserted present, so an empty read is
    red. The flag has no list: the constant pins the SDK alone, its dependency closure resolves fresh on every run (26
@@ -40,46 +39,49 @@ This module holds five things, and it never skips: a pin that skips reports gree
    decision, why, and the measurement behind it); pytest accepts the flag where anyio is absent, so an invocation
    whose interpreter has no anyio today (the served-page step: pip, pytest, pytest-timeout, cryptography) passes it
    too rather than carrying a reason about a pip line that a later package on that line would silently make false.
-   The check reads ci.yml's text, and that is its residual. Every line of ci.yml that spells pytest (the word in any
-   case ending at a word boundary, py.test, or a `$PYTEST` expansion), outside a comment or a name: key and other than
-   a pip install, is read as an invocation or is red, whatever its layout (round 4's ruling, 2026-09-23): the line
-   census in PytestPopulation holds each such line to the span of lines the parser read for a row, so a step in a
-   layout the parser does not read (steps at indent 4 or 8, `-   name:`, a flow mapping, a quoted or spaced `run` key)
-   is red at its pytest line (a line joined to the next by a backslash counts when the joined text spells pytest, joined
-   as the shell joins it); a mention the parser reads but not as a command (a wrapper such as `uvx pytest`, a
-   `$PYTEST` variable, an option cluster such as `python -Impytest`, an indentation indicator on a block, a
-   more-indented line in a folded block, an anchor on the run) is red as `unparsed` until the parser reads it; and a
-   line where a job key goes that the parser does not read as one (a quoted key) is red, so no step is read under the
-   job above it. A name: key's own line is excused, and nothing else of the name: a name folded or continued onto a
-   second line that spells pytest there is red on valid YAML, and the message says to reword it. The check does not
-   read YAML anchors, aliases or merge keys, a step written as a flow mapping or flow sequence, a quoted scalar or a
-   flow collection continued past the line it opens on, a double-quoted scalar holding a backslash escape, or a block
-   scalar header on the line after its key, and fails closed on them rather than model them (the owner's fail-closed
-   design, 2026-09-23, and its first verify pass; ci.yml uses none): every anchor (`&cmd`), alias (`*cmd`) and merge
-   key (`<<:`) anywhere in ci.yml, every flow mapping or flow sequence holding a run, env or shell key or a name key
-   beside another key, every quoted scalar and flow collection that does not close on the line it opens, every
-   double-quoted scalar holding a backslash (an escape the parser does not decode: `\n` in a run starts a second
-   command), and every `|` or `>` header on the line after its key (the parser folds that block as one command) is red
-   at its line (unread_yaml_forms),
-   so a run, a step, a steps list or an env reached through an alias is red where it is written, and a key-shaped line
-   inside another key's quoted scalar over several lines is red at that scalar's opening line. Outside the check: a
-   run line that
-   never spells pytest (a `$RUNNER` set elsewhere, `make test`), a pytest run by a script or action a step calls, and
-   every other workflow file under .github/workflows/. The flag half
-   keys on the spelling `-p no:anyio` with one space, the switch half on the merged value reading exactly 1 (a quoted
-   value read verbatim, so `"1 "` is not 1, and a plain value continued on the next line folded as YAML folds it), and
-   their messages say so. The switch half reads what the run text does to the variable only by its spelling (round
+   The check reads ci.yml's text, and that is its residual. The YAML it reads is held to an allowlist (the owner's
+   allowlist design, 2026-09-24): every line of ci.yml is in a form the real file uses, or the scan (yaml_line_forms,
+   run in PytestPopulation) refuses it by name at its line. The accepted forms, YAML_FORMS_ACCEPTED, are derived from
+   the file by the scan itself (CI's shape installs no YAML library), and PytestPopulation asserts that the file uses
+   every one and that each of its lines is in one: blank and comment lines; block mappings and block sequences, each
+   nested block two columns past its parent key, a sequence's entries opening with a key, the keys spelled as ci.yml
+   spells them and none twice in one mapping; on a key's line, a plain scalar that opens with no YAML indicator and
+   holds no `: `, a single-quoted scalar without `''`, a double-quoted scalar without a backslash, or a flow sequence of
+   such scalars, each closed on that line and followed by nothing but a trailing comment; and a `|` literal block as a
+   step's run. Every other line is refused by name, valid YAML included: among them an anchor, an alias, a tag, a merge
+   key, an explicit key, a flow mapping, a flow collection nested or continued past its line, a quoted scalar continued
+   past its line, an escape in a quoted scalar, a folded block, a chomping or indentation indicator, a literal block
+   anywhere but a step's run, a header or a value on the line after its key, a plain scalar continued past its line, a
+   directive, a document marker, a quoted, spaced or otherwise spelled key, a key twice in one mapping, a list at its
+   key's indent, another indentation, a tab or other control character, and a character outside ASCII outside a
+   comment line. A form the scan does not accept is refused by name; reword the step in an accepted form. Until the
+   allowlist the scan refused named forms one at a time, and each of three verify passes found forms the line reading
+   half-modelled; the parser and the censuses read the accepted forms and nothing else. Every line of ci.yml that
+   spells pytest (the word in any case ending at a word boundary, py.test, or a `$PYTEST` expansion), outside a comment
+   or a name: key's own line and other than a pip install, is read as an invocation or is red (round 4's ruling,
+   2026-09-23): the line census in PytestPopulation holds each such line to the span of lines the parser read for a
+   row, so a pytest line outside every run (an action's input) or in a layout the parser does not read is red at its
+   line (a line joined to the next by a backslash counts when the joined text spells pytest, joined as the shell joins
+   it); a mention the parser reads but not as a command (a wrapper such as `uvx pytest`, a `$PYTEST` variable, an
+   option cluster such as `python -Impytest`) is red as `unparsed` until the parser reads it; and a line where a job
+   key goes that the parser does not read as one (a key carrying its value) is red, so no step is read under the job
+   above it. Outside the check: a run line that never spells pytest (a `$RUNNER` set elsewhere, `make test`), a pytest
+   run by a script or action a step calls, and every other workflow file under .github/workflows/. The flag half keys
+   on the words `-p` and `no:anyio`, consecutive in the command's arguments as the shell splits them (so the spelling
+   inside a quoted argument is not the flag), the switch half on the merged value reading exactly 1 (a quoted value
+   read verbatim, so `"1 "` is not 1, and a plain value to YAML's comment, so `1#x` is not 1), and their messages say
+   so. The switch half reads what the run text does to the variable only by its spelling (round
    4's ruling, 2026-09-23): a step whose run text spells ROMP_SDK_REQUIRE anywhere other than as a VAR=value prefix on
    its pytest command (an unset, export, declare, env -u or assignment, on an earlier line or before the command on
    its own line; a comment too), or whose job's other run texts spell it (a write to $GITHUB_ENV sets it for the steps
    after), is `unparsed`, red until read, since the parser does not run the shell. And every line of ci.yml that spells
    the switch, outside a comment, is an env: key line the merge read (a bare key at its block's first key indent, its
-   value on that line and not a block scalar) or lies in a run text the parser read, or the switch census in
-   PytestPopulation names it (review round 4's verify, 2026-09-23): an env: written as an alias or a flow mapping, a
-   quoted or spaced key, a value continued on the next line or written as a block scalar, a key-shaped line inside
-   another key's block scalar (that key's text to YAML), and a step's shell: or a job's defaults that spells the
-   switch are each red at their line; a key-shaped line inside another key's quoted scalar over several lines is red
-   at that scalar's opening line (unread_yaml_forms, above). Outside
+   value on that line) or lies in a run text the parser read, or the switch census in PytestPopulation names it
+   (review round 4's verify, 2026-09-23): an env: written as an alias or a flow mapping, a quoted or spaced key, a
+   key-shaped line deeper than its block's keys (inside another key's block scalar, that key's text to YAML), and a
+   step's shell: or a job's defaults that spells the switch are each red at their line, and the forms among them the
+   scan does not accept are refused as well; the switch's value continued past its line or written as a block scalar,
+   and a key-shaped line inside another key's quoted scalar over several lines, are refused by the scan. Outside
    that read: any write of the switch that does not spell its name, wherever it is written. Among them: one in a
    step's own run text (`env -i`, sudo's reset of the environment, an indirect unset such as `unset "${!ROMP_@}"`, a
    loop over the environment), one in a step's shell: or a job's defaults (`shell: env -i bash -e {0}`), one by a
@@ -756,27 +758,17 @@ class RequireSwitch(unittest.TestCase):
 # comment or a name: key, lies in the span of lines the parser read for a row, or the census names it. A line at the
 # jobs' indent that is not a job the parser reads is red too (unread_job_keys), so no step is read under the job above
 # it. Until 2026-09-23 the parser's limits were claimed red and a step in YAML's compact list style gave no row at all.
-# YAML anchors, aliases and merge keys, a step in flow style, a quoted scalar or flow collection continued past its
-# line, a double-quoted scalar holding a backslash escape and a block scalar header on the line after its key are not
-# read at all: every one is red at its line
-# (unread_yaml_forms, the owner's fail-closed design, 2026-09-23, and its first verify pass), since the real file uses
-# none.
+# The YAML the parser and the censuses read is held to an allowlist (yaml_line_forms, the owner's allowlist design,
+# 2026-09-24): every line of ci.yml is in a form the real file uses, or it is refused by name at its line, valid YAML
+# included (a form the scan does not accept is refused by name; reword the step in an accepted form). The readers below
+# read the accepted forms and nothing else.
 # ---------------------------------------------------------------------------------------------------------------------
 TOP_KEY_RE = re.compile(r"^([A-Za-z_][A-Za-z0-9_-]*):", re.M)                # a column-0 key of the workflow's mapping
 JOB_RE = re.compile(r"^  ([A-Za-z0-9_-]+):[ \t]*(?:#.*)?\n", re.M)           # a job: a bare key at indent 2 under jobs:
 STEP_START_RE = re.compile(r"^      - ", re.M)                                # a step: a list item at indent 6
 STEP_KEY_PAD = "        "                                                     # step keys sit at indent 8 once `- ` is spaced
 RUN_RE = re.compile(r"^        run:(.*)$", re.M)
-BLOCK_INDICATOR_RE = re.compile(r"^[ \t]*([|>])([+-]?)([0-9]?)[ \t]*(#.*)?$")
-# YAML node properties before a scalar: an anchor (`&cmd`) and a tag (`!!str`, `!local`, `!<...>`), in either order. A
-# plain scalar cannot begin with `&` or `!`, so a leading one is a property; neither changes the scalar's text, and until
-# 2026-09-23 one before a block indicator (`run: &cmd |`) kept the block from being read as a block (review round 4's
-# verify: it was folded into one command). _step_run sets them aside to split the scalar, reads through a tag, and
-# reports a run that carries an anchor as unparsed
-NODE_PROPERTIES_RE = re.compile(r"^[ \t]*(?:(?:&[^ \t]+|![^ \t]*)(?:[ \t]+|$))+")
-# an env: key's value that is a block scalar: node properties, then `|` or `>` with its chomping and indentation
-# indicators; its lines are the key's text, and _env_block reads the key as not clean
-ENV_BLOCK_SCALAR_RE = re.compile(r"^(?:(?:&[^ \t]+|![^ \t]*)[ \t]+)*[|>](?:[1-9]?[+-]?|[+-]?[1-9]?)$")
+BLOCK_INDICATOR_RE = re.compile(r"^[ \t]*\|[ \t]*(#.*)?$")      # a literal block header, the one block form yaml_line_forms accepts
 UNNAMED = "(unnamed step)"
 # a command that runs pytest: `python -m pytest`, `python3.12 -m pytest`, `python -mpytest` (one token), a bare `pytest`
 # or `py.test`, at the START of a command (the run line is split into its commands first, _shell_commands: at `&&`,
@@ -803,68 +795,39 @@ PYTEST_WORD_RE = re.compile(r"pytest\b|\bpy\.test\b|\$\{?pytest", re.I)
 # pytest -k "pip and install"`) read as a pip install and gave no row, and the census excused its line (probed).
 PIP_INSTALL_RE = re.compile(r"^(?:[A-Za-z_][A-Za-z0-9_]*=\S*[ \t]+)*(?:\S*/)?(?:python[0-9.]*t?[ \t]+-m[ \t]*|uv[ \t]+)?"
                             r"pipx?[0-9.]*(?:[ \t]+-\S+)*[ \t]+install(?=\s|$)")
-# a line whose key is `name` (`name:` or `- name:`, the value after a space or nothing): the census's first exclusion,
-# applied only when no other key follows on the line (_name_key_alone). A line that merely contains "name:" (a flow
-# mapping `- {name: ..., run: ...}`) is not one, and neither is a line of a flow mapping over several lines that opens
-# with `name:` and carries `run:` after it (until 2026-09-23 this regex alone excused that line; review round 4's verify)
+# a line whose key is `name` (`name:` or `- name:`, the value after a space or nothing): the census's first exclusion. A
+# line that merely contains "name:" (a flow mapping `- {name: ..., run: ...}`) is not one. The name key is the line's
+# only key in every form the scan accepts (yaml_line_forms: a plain value holds no `: `, a quoted one is followed by
+# nothing but a comment); a flow mapping over several lines whose name line carries a run, excused here, is refused by
+# the scan at its opening line (until the allowlist, 2026-09-24, _name_key_alone read the rest of such a line for a key)
 NAME_KEY_RE = re.compile(r"^[ \t]*(?:-[ \t]+)?name:(?:[ \t]|$)")
 
 
-def _name_key_alone(line):
-    """True when the line's key is `name` (NAME_KEY_RE) and no other key follows on it: after the name, no `:` followed
-    by whitespace or the end of the line, and no `:` right after a closed quoted scalar, outside a YAML-quoted scalar
-    and a trailing comment. In a block mapping a plain scalar cannot hold `: ` (a `${{ }}` expression is plain text to
-    YAML, so not there either), so one after the name is the next key of a flow mapping (`name: x, run: y` on one line
-    of a `{ }` written over several), or YAML the runner refuses; and a `:` right after a quoted scalar is YAML's
-    JSON-style key (`name: x, "run":y`, whatever follows the colon). A quote opens a quoted scalar only where a scalar
-    starts (the value's first character, or the first after `,`, `{` or `[`); elsewhere it is the plain scalar's own
-    character (`Don't`), and a `#` after whitespace outside a quoted scalar starts a comment. Keyed on that text, not
-    on YAML structure: a name whose quoted value is unterminated on its line reads as alone, since YAML carries the
-    value on to the next line."""
-    m = NAME_KEY_RE.match(line)
-    if not m:
-        return False
-    rest = line[m.end():]
-    i, n, at_start = 0, len(rest), True
-    while i < n:
-        ch = rest[i]
-        if ch in " \t":
-            i += 1
-            continue
-        if ch == "#" and (i == 0 or rest[i - 1] in " \t"):
-            break
-        if at_start and ch in "'\"":
-            j = i + 1
-            while j < n:
-                if ch == '"' and rest[j] == "\\":
-                    j += 2
-                    continue
-                if rest[j] == ch:
-                    if ch == "'" and rest.startswith("''", j):
-                        j += 2
-                        continue
-                    break
-                j += 1
-            if rest[j + 1:j + 2] == ":":
-                return False
-            i, at_start = j + 1, False
-            continue
-        if ch == ":" and (i + 1 == n or rest[i + 1] in " \t"):
-            return False
-        at_start = ch in ",{["
-        i += 1
-    return True
 # the census's split of a line the parser did not read, for the pip exclusion: at every operator character whatever the
 # quoting, so the commands of a YAML-quoted scalar are judged one by one (a split finer than the shell's never hides a
 # mention: it can only stand a piece of a pip command alone)
 CENSUS_SPLIT_RE = re.compile(r"&&|\|\||[;|&()]")
 # what a raw YAML line opens with before its value, stripped from each piece of that split before the pip test: the
-# indentation, a list dash or a flow mapping's brace, one key (plain or quoted) and its colon, and an opening quote
-YAML_KEY_PREFIX_RE = re.compile(r"""^[ \t]*(?:-[ \t]+)?\{?[ \t]*(?:(?:"[^"]*"|'[^']*'|[A-Za-z0-9_-]+)[ \t]*:[ \t]+)?["']?""")
+# indentation, a list dash, one plain key and its colon, and an opening quote (a flow mapping's brace and a quoted key,
+# stripped until the allowlist, 2026-09-24, are forms the scan refuses, and a line holding one is no longer excused)
+YAML_KEY_PREFIX_RE = re.compile(r"""^[ \t]*(?:-[ \t]+)?(?:[A-Za-z0-9_-]+[ \t]*:[ \t]+)?["']?""")
 INLINE_ENV_RE = re.compile(r"([A-Za-z_][A-Za-z0-9_]*)=(\S*)")
 SWITCH = "ROMP_SDK_REQUIRE"
 FLAG_SPELLING = "-p no:anyio"
-FLAG_RE = re.compile(r"(?:^|\s)-p\s+no:anyio(?=\s|$)")
+
+
+def passes_flag(args):
+    """True when a pytest command's arguments, split into words as the shell splits them (shlex, POSIX rules: quotes
+    and backslashes read), hold `-p` then `no:anyio` as two consecutive words, the flag's spelling (FLAG_SPELLING). A
+    spelling inside a quoted argument (`-k 'x -p no:anyio y'`) is that argument's text, not the flag: until the
+    allowlist build (2026-09-24; the pre-push closer's C01) a regex read the spelling anywhere in the text after a
+    space, and pytest ran without the flag while the step read ok. `-pno:anyio`, one word, is the same flag to pytest
+    and not this spelling, the safe side; arguments the split refuses (a quote left open) read as not passing it."""
+    try:
+        words = shlex.split(args, posix=True)
+    except ValueError:
+        return False
+    return any(words[i] == "-p" and words[i + 1] == "no:anyio" for i in range(len(words) - 1))
 
 # Invocations that pass the flag and do NOT set the switch, each with the reason that makes that right, keyed (job,
 # step name). The reason's premises are CHECKED by ListedInvocations below, not read: a listing whose premise stops
@@ -900,62 +863,51 @@ def _top_sections(src):
 
 
 def _env_block(text, env_indent, keys_out=None):
-    """The `env:` mapping whose `env:` line sits at `env_indent` spaces: {name: value}, the value's surrounding quotes
-    stripped (`"1"` reads as `1`) and a trailing ` # comment` dropped. A quoted value is kept verbatim inside its quotes,
-    whitespace included, as YAML keeps it (`"1 "` reads as `1 `, which is not 1; both runtime readers of the switch
-    compare with == "1"); only an unquoted plain value is stripped (review round 4, 2026-09-23: the strip reached inside
-    quotes, and `"1 "` read as the switch on). Comment and blank lines inside the block are skipped. A value that is a
-    `${{ }}` expression is kept as its text, which is never `1`: the safe side. A key is read only at the block's first
-    key indent (the owner's fail-closed design, 2026-09-23: until then a key-shaped line at any depth was read as a key,
-    so `ROMP_SDK_REQUIRE: "1"` written as a line of another key's `|` block read as the switch on while YAML held it as
-    that key's text). A deeper line continues the key above it, and that key is marked as not read clean: a plain
-    value's lines are folded with one space, as YAML folds them (`1` then `0` reads `1 0`; until review round 4's
-    verify, 2026-09-23, it read `1`); a block scalar's lines (a `|` or `>` value, node properties before it and a
-    chomping or indentation indicator after it included: ENV_BLOCK_SCALAR_RE) are its text, never keys, and the
-    block-scalar value itself (its indicator, never `1`) makes its key unclean, whatever its lines hold. `keys_out`,
-    when a list is given, receives [offset of the key's line in `text`, name, clean] for every key line read, clean
-    False for a key whose value runs on past its line or is a block scalar (the switch census, switch_line_census,
-    counts only a clean key line as read). Not read at all: an `env:` line that carries anything after the colon but a
-    comment (an alias `env: *x`, an anchor, a flow mapping), a line at the key indent this regex does not read as a key
-    (a quoted or spaced key), a line less indented than the first key, and the deeper lines after either of those,
-    which are that line's value and continue no key read here. A quoted value that runs on past its line
-    is not followed, so a key-shaped line inside it reads here as a key; unread_yaml_forms refuses such a value at its
-    opening line (the fail-closed design's first verify pass, 2026-09-23)."""
+    """The `env:` mapping whose `env:` line sits at `env_indent` spaces: {name: value}, read in the forms the scan
+    accepts (yaml_line_forms): a key at the block's first key indent, its value on the key's line. A quoted value is
+    kept verbatim inside its quotes, whitespace included, as YAML keeps it (`"1 "` reads as `1 `, which is not 1; both
+    runtime readers of the switch compare with == "1"; review round 4, 2026-09-23: the strip reached inside quotes, and
+    `"1 "` read as the switch on), and one followed by anything but a spaced comment is kept whole, quotes and all,
+    which is never `1`. A plain value runs to YAML's comment, a `#` after a space or a tab, and is stripped, so `1#x`
+    reads `1#x`, not 1 (until the allowlist, 2026-09-24, the value stopped at any `#`, and `1#x` read as the switch on
+    while YAML holds the string `1#x`). A value that is a `${{ }}` expression is kept as its text, which is never `1`:
+    the safe side. Comment and blank lines are skipped, and so is every line deeper than the key indent: the accepted
+    forms have none (a value continued past its line, a block scalar and a key-shaped line inside one are refused by the
+    scan), and a mapping nested under a key is that key's value, not keys of this block. `keys_out`, when a list is
+    given, receives (offset of the key's line in `text`, name) for every key line read (the switch census,
+    switch_line_census, counts those lines as read). Not read: an `env:` line that carries anything after the colon but
+    a comment (an alias, an anchor, a flow mapping: forms the scan refuses), and a line at the key indent this regex does
+    not read as a key (a quoted or spaced key, refused by the scan; a hyphenated name, which is not the switch)."""
     pad = " " * env_indent
-    m = re.search(r"^%senv:[ \t]*(?:#.*)?\n((?:%s .*\n|[ \t]*\n)+)" % (pad, pad), text, re.M)
+    # the block's lines: those indented past `env:`, blank lines, and comment lines at any indent, which YAML skips
+    # wherever they sit (until the allowlist build, 2026-09-24, a comment line indented no further than `env:` ended the
+    # block here, and the keys after it went unread: a spurious red, found by mutating the real file)
+    m = re.search(r"^%senv:[ \t]*(?:#.*)?\n((?:%s .*\n|[ \t]*\n|[ \t]*#.*\n)+)" % (pad, pad), text, re.M)
     out = {}
     keys = [] if keys_out is None else keys_out
     if m:
-        pos, last, key_indent = m.start(1), None, None   # last: [name, its entry in keys, a plain value to fold]
+        pos, key_indent = m.start(1), None
         for line in m.group(1).splitlines(keepends=True):
             off, pos = pos, pos + len(line)
             body = line.rstrip("\n")
-            if not body.strip():
+            if not body.strip() or body.lstrip().startswith("#"):
                 continue
             indent = len(body) - len(body.lstrip(" "))
-            if body.lstrip().startswith("#"):
-                continue
             if key_indent is None:
                 key_indent = indent
-            km = re.match(r"""^\s*([A-Za-z_][A-Za-z0-9_]*):[ \t]*(?:"([^"]*)"|'([^']*)'|([^#]*?))[ \t]*(?:#.*)?$""", body)
-            if km and indent == key_indent:
-                double, single, plain = km.group(2), km.group(3), km.group(4)
-                out[km.group(1)] = double if double is not None else single if single is not None else plain.strip()
-                block = plain is not None and ENV_BLOCK_SCALAR_RE.match(plain.strip()) is not None
-                keys.append([off, km.group(1), not block])
-                last = [km.group(1), keys[-1], plain is not None and not block]
-            elif indent > key_indent:
-                if last is not None:
-                    if last[2]:
-                        out[last[0]] = (out[last[0]] + " " + _comment_cut(body).strip()).strip()
-                    last[1][2] = False
+            km = re.match(r"([A-Za-z_][A-Za-z0-9_]*):(?=[ \t]|$)", body[indent:])
+            if indent != key_indent or not km:
+                continue
+            v = body[indent + km.end():].strip(" \t")
+            close = v.find(v[:1], 1) if v[:1] in ("'", '"') else -1
+            if close > 0 and re.match(r"(?:[ \t]+#.*)?$", v[close + 1:]):
+                value = v[1:close]
+            elif v[:1] in ("'", '"'):
+                value = v
             else:
-                # a line at the key indent that the regex does not read as a key (a quoted or spaced key, a hyphenated
-                # name), or one less indented: the deeper lines after it are its value, not the last key's (the
-                # fail-closed design's third verify pass, 2026-09-24: attributed to the key above, `"OTHER-X": |` and
-                # its text made a clean `ROMP_SDK_REQUIRE: "1"` above it unclean, and the switch census named that line
-                # on valid YAML)
-                last = None
+                value = re.split(r"[ \t]#", " " + v, 1)[0].strip()
+            out[km.group(1)] = value
+            keys.append((off, km.group(1)))
     return out
 
 
@@ -1041,94 +993,49 @@ def _join_continuation(head, tail):
     return head + tail
 
 
-def _paragraphs(raw):
-    """Fold [(offset, line)] the way YAML folds a plain or `>` scalar: consecutive non-blank lines join with one
-    space, a blank line ends the paragraph. Returns [(offset of the first line, joined text, offset of the last line)]:
-    the last line bounds the span the line census counts as read for a row."""
-    out, cur = [], None
-    for off, line in raw:
-        if line.strip() == "":
-            if cur:
-                out.append(cur)
-            cur = None
-        elif cur is None:
-            cur = (off, line.strip(), off)
-        else:
-            cur = (cur[0], cur[1] + " " + line.strip(), off)
-    if cur:
-        out.append(cur)
-    return out
-
-
 def _step_run(stext):
-    """The step's `run:` scalar as shell lines [(offset in stext, text, offset of its last line)] and an `unreadable`
-    reason (None when the form is one this parser reads); the last line differs from the first for a folded paragraph
-    or a plain scalar continued on later lines. Read: a single-line plain or quoted scalar, with continuation lines
-    indented past the key folded onto it (a quoted scalar that runs on past its line, a double-quoted one holding a
-    backslash escape, which this split does not decode, and a block header on the line after `run:`, which this split
-    would fold as such a continuation, are refused by unread_yaml_forms); a `run: |` literal (with a `-` or `+` chomping indicator: the indicator
-    changes trailing newlines only); a `run: >` folded block, each paragraph one command. Node properties before any of
-    these (NODE_PROPERTIES_RE) are set aside, since they change no text of the scalar, so the scalar is split into its
-    lines as the same scalar without them is: a tag (`!!str`) is read through. Not read, and reported so an invocation
-    in the block is `unparsed`: an anchor on the run (`&cmd`: an alias of it, `run: *cmd`, runs the same text in
-    another step under that step's env and name, and the alias line never spells pytest, so this parser would read the
-    text once, under the wrong step; unread_yaml_forms reds the anchor and every alias at their lines as well); an
-    indentation indicator on the block (`|2`); or a line indented deeper than the
-    block's first line inside a folded block (YAML keeps its line breaks, which this fold would not). Until 2026-09-23
-    a property before a block indicator kept the block from being read as a block, and it was folded into one command
-    (review round 4's verify). No `run:`: (None, None)."""
+    """The step's `run:` scalar as shell lines [(offset in stext, text, offset of its last line)], read in the forms the
+    scan accepts (yaml_line_forms): a plain or quoted scalar on the key's line, one line (a quoted one read inside its
+    quotes; a plain one cut at YAML's comment, a `#` after a space, as YAML cuts it, inside shell quotes too: until the
+    allowlist build, 2026-09-24, the cut was left to _shell_commands, which keeps a quoted `#`, so `-k "a #b" -p
+    no:anyio` read the flag that YAML's value `... -k "a` never passes), and a `run: |` literal block, each of its lines one shell line with the block's indentation,
+    the first text line's, removed. Every other form is refused by the scan at its line and not read here: until the
+    allowlist (2026-09-24) this split read a tag through, reported an anchor or an indentation indicator as unparsed,
+    folded a `>` block and a plain scalar continued on later lines, and read a chomping indicator, and each of those
+    forms is refused now. No `run:`: None."""
     m = RUN_RE.search(stext)
     if not m:
-        return None, None
-    props = NODE_PROPERTIES_RE.match(m.group(1))
-    lines, unreadable = _run_scalar(stext, m, props.end() if props else 0)
-    anchors = re.findall(r"&([^ \t]+)", props.group(0)) if props else []
-    if anchors and lines and unreadable is None:
-        unreadable = ("an anchor (&%s) on the run: an alias of it elsewhere (*%s) runs this text in another step, under "
-                      "that step's env, which the parser does not follow" % (anchors[0], anchors[0]))
-    return lines, unreadable
-
-
-def _run_scalar(stext, m, skip):
-    """_step_run's split of the run scalar that RUN_RE matched at `m` into its lines, `skip` characters of node
-    properties set aside: (lines, unreadable), as _step_run returns them."""
-    rest = m.group(1)[skip:]
-    after_off = m.end() + 1
-    raw, pos = [], 0
-    for line in stext[after_off:].splitlines(keepends=True):
-        if line.strip() == "" or line.startswith(STEP_KEY_PAD + " "):
-            raw.append((after_off + pos, line))
-            pos += len(line)
-        else:
-            break
-    while raw and raw[-1][1].strip() == "":
-        raw.pop()
-    bm = BLOCK_INDICATOR_RE.match(rest)
-    if bm:
-        style, indent_indicator = bm.group(1), bm.group(3)
+        return None
+    rest = m.group(1)
+    if BLOCK_INDICATOR_RE.match(rest):
+        after_off, raw, pos = m.end() + 1, [], 0
+        for line in stext[after_off:].splitlines(keepends=True):
+            if line.strip() == "" or line.startswith(STEP_KEY_PAD + " "):
+                raw.append((after_off + pos, line))
+                pos += len(line)
+            else:
+                break
+        while raw and raw[-1][1].strip() == "":
+            raw.pop()
         content = [(o, l) for o, l in raw if l.strip() != ""]
         if not content:
-            return [], None
-        if indent_indicator:
-            return [(o, l.strip(), o) for o, l in content], "an indentation indicator (%s) on the block" % bm.group(0).strip()
+            return []
         indent = len(content[0][1]) - len(content[0][1].lstrip(" "))
-        if style == "|":
-            return [(o, l[indent:].rstrip("\n"), o) for o, l in raw], None
-        if any(len(l) - len(l.lstrip(" ")) > indent for o, l in content):
-            return [(o, l.strip(), o) for o, l in content], "a line indented deeper than the block's first line in a folded block"
-        return _paragraphs(raw), None
+        return [(o, l[indent:].rstrip("\n"), o) for o, l in raw]
     first = rest.strip()
-    first_off = m.start(1) + skip + (len(rest) - len(rest.lstrip()))
-    paras = _paragraphs([(first_off, first)] + raw) if first else _paragraphs(raw)
-    if paras and len(paras[0][1]) >= 2 and paras[0][1][0] in "\"'" and paras[0][1][-1] == paras[0][1][0]:
-        paras[0] = (paras[0][0], paras[0][1][1:-1], paras[0][2])
-    return paras, None
+    off = m.start(1) + len(rest) - len(rest.lstrip())
+    close = first.find(first[0], 1) if first[:1] in ("'", '"') else -1
+    if close > 0:
+        first = first[1:close]
+    else:
+        first = re.split(r"[ \t]#", " " + first, 1)[0].strip()
+    return [(off, first, off)] if first else []
 
 
 def pytest_invocations(src, read=None, switch_read=None):
     """Every pytest invocation in a workflow's text, as dicts: job, step (the `name:`, else "(unnamed step)"), line (in
-    the file) and last_line (the last file line of the command as read: its last backslash continuation, or the last
-    line of its folded paragraph; the span line..last_line is what the line census counts as read), env (the
+    the file) and last_line (the last file line of the command as read: its last backslash continuation; the span
+    line..last_line is what the line census counts as read), env (the
     workflow's env updated by the job's, by the step's, then by VAR=value prefixes on the command
     itself: the scopes GitHub Actions merges, later overriding earlier, each read by _env_block from its env: key
     lines in the file's own layout; switch_line_census reds a spelling of the switch anywhere else), args (the command's own arguments: the rest
@@ -1145,19 +1052,19 @@ def pytest_invocations(src, read=None, switch_read=None):
     an unset, export or assignment in the shell, or a write to $GITHUB_ENV in an earlier step, changes what pytest
     starts with), a dict with `unparsed` set to the reason and args None. `read`, when a list is given, receives {first, last, text} for every command line the
     parser read in a step's run, row or not (pytest_line_census judges the pip exclusion on that text; the switch
-    census counts those lines as run text read). `switch_read`, when a list is given, receives {line, job, step, scope,
-    clean} for every ROMP_SDK_REQUIRE key line _env_block read in a scope the merge reads (the workflow's env, a job's
-    env, a step's env; job and step None where the scope is wider), clean False where the value runs on past the line.
+    census counts those lines as run text read). `switch_read`, when a list is given, receives {line, job, step, scope}
+    for every ROMP_SDK_REQUIRE key line _env_block read in a scope the merge reads (the workflow's env, a job's env, a
+    step's env; job and step None where the scope is wider).
     A text parse over the file's own indentation (top-level keys at column 0, jobs at 2, job keys at 4, steps at 6,
     step keys at 8, env keys and run block lines at 10), the way this file's other pins and tests/test_ci_bats_bound.py
-    read it: no YAML library in the test deps. A step in any other layout (steps at indent 4 or 8, `-   name:`, a flow
-    mapping, a quoted or spaced `run` key) gives no row here; pytest_line_census reds its pytest line, and
-    unread_job_keys a job key this parser does not read. The run forms read are _step_run's; comment lines are skipped;
-    a line ending in an unescaped backslash is joined with the next the way the shell joins it (_continues,
-    _join_continuation: nothing inserted). Not read, and red at their lines by unread_yaml_forms instead: an anchor,
-    an alias, a merge key, a step in flow style, a quoted scalar or flow collection continued past its line, a
-    double-quoted scalar holding a backslash escape (this parser reads a quoted run's text as written, and decodes no
-    escape), and a block scalar header on the line after its key (this parser would fold the block as a plain scalar).
+    read it: no YAML library in the test deps. The YAML it reads is the forms the allowlist scan accepts
+    (yaml_line_forms, the owner's allowlist design, 2026-09-24), whose two-column nesting is this layout; every other
+    form is refused by the scan at its line and not read here, so the parser models no YAML beyond the accepted forms (a
+    form the scan does not accept is refused by name; reword the step in an accepted form). A step in any other layout
+    (steps at indent 4 or 8, `-   name:`, a flow mapping, a quoted or spaced `run` key) gives no row here; the scan
+    refuses it, pytest_line_census reds its pytest line, and unread_job_keys a job key this parser does not read. The
+    run forms read are _step_run's; comment lines are skipped; a line ending in an unescaped backslash is joined with
+    the next the way the shell joins it (_continues, _join_continuation: nothing inserted).
     Outside this parser by construction: a pytest run by a
     script or action the workflow calls, and a run line that never spells pytest (a `$RUNNER` variable set elsewhere,
     or `make test`)."""
@@ -1168,8 +1075,8 @@ def pytest_invocations(src, read=None, switch_read=None):
         keys = []
         out = _env_block(text, indent, keys)
         if switch_read is not None:
-            switch_read.extend({"line": _line_of(src, base + off), "job": job, "step": step, "scope": scope, "clean": clean}
-                               for off, name, clean in keys if name == SWITCH)
+            switch_read.extend({"line": _line_of(src, base + off), "job": job, "step": step, "scope": scope}
+                               for off, name in keys if name == SWITCH)
         return out
 
     wf_env = {}
@@ -1203,7 +1110,7 @@ def pytest_invocations(src, read=None, switch_read=None):
             cwd = wm.group(1).strip() if wm else job_wd
             env = dict(job_env)
             env.update(env_of(stext, 8, sbase, "step", job, step))
-            lines, unreadable = _step_run(stext)
+            lines = _step_run(stext)
             if lines is None:
                 continue
             run_text = "".join(t + "\n" for _o, t, _e in lines)
@@ -1227,12 +1134,6 @@ def pytest_invocations(src, read=None, switch_read=None):
                     continue
                 base = {"job": job, "step": step, "line": at, "last_line": last_at, "run": run_text, "cwd": cwd, "cmd": cmd,
                         "step_index": k}
-                if unreadable:
-                    # the pip exclusion per command, never per line: `pip install pytest && pytest` in such a block is a
-                    # pytest command after a pip one (until 2026-09-23 the whole line was excused by its pip half)
-                    if any(PYTEST_WORD_RE.search(c) and not PIP_INSTALL_RE.match(c) for c in _shell_commands(cmd)):
-                        parsed.append(dict(base, env=dict(env), args=None, unparsed=unreadable))
-                    continue
                 for command in _shell_commands(cmd):
                     if not PYTEST_WORD_RE.search(command):
                         continue
@@ -1300,11 +1201,11 @@ def pytest_line_census(src):
     counted lines no row covers]), file lines 1-based. A line counts when PYTEST_WORD_RE matches it with a trailing
     comment cut as _shell_commands cuts one (_comment_cut; a comment line is then empty and never counts), or matches
     one of the commands it belongs to (below: a pytest word split over a backslash continuation counts on each line of
-    it), unless one of two exclusions, and no others, applies: its key is `name` and no other key follows on it
-    (_name_key_alone: `name:` or `- name:`; never a line that merely contains "name:", nor one that opens with `name:`
-    and carries another key after it, a JSON-style `"run":` included, so a flow mapping carrying a run counts on
-    whichever line it spells pytest; the exclusion is the key's own line, so a name folded or continued onto a line
-    that spells pytest reds there on valid YAML, and the message says to reword it); or it is a pip install, judged
+    it), unless one of two exclusions, and no others, applies: its key is `name` (NAME_KEY_RE: `name:` or `- name:`,
+    never a line that merely contains "name:", so a one-line flow mapping carrying a run counts; in the forms the scan
+    accepts the name key is its line's only key, and a flow mapping over several lines is refused by the scan; the
+    exclusion is the key's own line, so a name folded or continued onto a line that spells pytest reds there, beside
+    the scan's refusal of the fold); or it is a pip install, judged
     per shell command and never per line: the line is excused only when every command it belongs to that spells pytest
     is a pip install, so a line that installs pytest and then runs it counts. The commands a line belongs to are the
     text the parser read for it when the parser read it (pytest_invocations' `read`: a pip install continued over two
@@ -1332,7 +1233,7 @@ def pytest_line_census(src):
     cut = [_comment_cut(line) for line in lines]
     counted, uncovered = [], []
     for idx, line in enumerate(lines):
-        if _name_key_alone(line):
+        if NAME_KEY_RE.match(line):
             continue
         if idx + 1 in read_text:
             commands = _shell_commands(read_text[idx + 1])
@@ -1368,21 +1269,22 @@ def switch_line_census(src):
     spell ROMP_SDK_REQUIRE and count, [(line, text) of the counted lines the parser read neither as an env: key nor as
     run text]), file lines 1-based. A line counts when it spells the switch's name with a trailing comment cut
     (_comment_cut; a comment line never counts). A counted line is read when it is an env: key line of the switch that
-    _env_block read clean in a scope the merge reads (the workflow's env, a job's, a step's: a bare key at the block's
-    first key indent, its value on that line and not a block scalar), or when it lies in the run text of a step the
-    parser read, whose every spelling of the switch the switch half reads as `unparsed` (pytest_invocations). Anything
-    else sets or clears the switch where the merge does not look and reds here: an `env:` written as an alias (`env:
-    *x`) or a flow mapping, a quoted or spaced key, a value continued on the next line or written as a block scalar, a
-    key-shaped line inside another key's block scalar (that key's text to YAML), a step's `shell:` or a job's `defaults:
-    run: shell:` that spells the name, a line in a layout the parser does not read. A key-shaped line inside another
-    key's quoted scalar over several lines is read here as a key line, and unread_yaml_forms refuses that scalar at its
-    opening line (the fail-closed design's first verify pass). Until 2026-09-23 each of these read
+    _env_block read in a scope the merge reads (the workflow's env, a job's, a step's: a bare key at the block's first
+    key indent, its value on that line), or when it lies in the run text of a step the parser read, whose every
+    spelling of the switch the switch half reads as `unparsed` (pytest_invocations). Anything else sets or clears the
+    switch where the merge does not look and reds here: an `env:` written as an alias (`env: *x`, the anchored mapping's
+    key line unread) or a flow mapping, a quoted or spaced key, a key-shaped line deeper than its block's keys (inside
+    another key's block scalar, that key's text to YAML), a step's `shell:` or a job's `defaults: run: shell:` that
+    spells the name, a line in a layout the parser does not read. Read here as a key line, and refused by the allowlist
+    scan instead (yaml_line_forms): the switch's key line when its value is continued past the line or is a block
+    scalar (until the allowlist, 2026-09-24, this census read such a key as not clean and named it), and a key-shaped
+    switch line at the key indent inside another key's quoted scalar over several lines. Until 2026-09-23 each of these read
     ok beside a pytest step that ran with the switch at 0, `1 0` or unset. Keyed on the spelling over the whole file, so
     a name: or an if: that spells the switch reds too: rename it. What this census cannot see is a write that does not
     spell the name (module docstring, item 1)."""
     read, switch_read = [], []
     pytest_invocations(src, read, switch_read)
-    covered = {e["line"] for e in switch_read if e["clean"]}
+    covered = {e["line"] for e in switch_read}
     for entry in read:
         covered.update(range(entry["first"], entry["last"] + 1))
     counted, uncovered = [], []
@@ -1422,217 +1324,354 @@ def unread_job_keys(src):
     return read, unread
 
 
-STEP_FLOW_KEYS = ("run", "env", "shell")     # keys that make a flow collection a step's to this check
-YAML_FORMS_UNREAD = ("this check does not read YAML anchors, aliases or merge keys, a step written in flow style, a quoted "
-                     "scalar or flow collection continued past its line, a double-quoted scalar holding a backslash escape, "
-                     "nor a block scalar header on the line after its key")
+# The allowlist (the owner's allowlist design, 2026-09-24): the YAML forms the scan accepts are the forms the real ci.yml
+# uses, derived from the file by the scan itself (PytestPopulation asserts that the file uses every form listed here and
+# that each of its lines is in one; PyYAML's event stream read the same forms from the head's file, a scratch read, since
+# CI's shape installs no PyYAML). A line in any other form is refused by name at its line, valid YAML included: a form the
+# scan does not accept is refused by name; reword the step in an accepted form. Until 2026-09-24 the scan refused named
+# forms one at a time, and each of three verify passes found forms the line reading half-modelled (a plain scalar carried
+# onto a line that opens with a quote, a key-shaped line inside a quoted scalar over several lines, a `\n` escape in a
+# double-quoted run starting a second command).
+YAML_FORMS_ACCEPTED = (
+    "a blank line",
+    "a comment line",
+    "a trailing comment",
+    "a block mapping key",
+    "a block sequence entry",
+    "a plain scalar on one line",
+    "a single-quoted scalar on one line",
+    "a double-quoted scalar on one line",
+    "a flow sequence of scalars on one line",
+    "a literal block scalar as a step's run",
+    "a line of a literal block's text",
+)
+YAML_INDENT_STEP = 2                                              # every nested block sits two columns past its parent key
+YAML_KEY_RE = re.compile(r"([A-Za-z_][A-Za-z0-9_-]*):(?= |$)")    # a key as ci.yml spells every key: plain, then `: `
+# a tab, a carriage return, any other C0 control or line-break character YAML or str.splitlines reads, and a BOM
+YAML_REFUSED_CHAR_RE = re.compile("[\x00-\x09\x0b-\x1f\x7f\x85\u2028\u2029\ufeff]")
+# a character outside ASCII: ci.yml holds one only in comment lines, and a line of any other form holding one is
+# refused, since Python's str.strip and `\s` read a no-break space or another Unicode space as whitespace where YAML and
+# the shell read a word's character (`-p no:anyio` then a no-break space read as the flag; pytest takes the plugin name
+# with that character on it and blocks nothing)
+YAML_NON_ASCII_RE = re.compile("[^\x00-\x7f]")
+LITERAL_HEADER_RE = re.compile(r"\|((?: +#.*)?) *$")              # `|` with nothing after it but a spaced comment
+_INDICATOR_WHAT = "a block scalar header with a chomping or indentation indicator, or text after it"
+YAML_CONTINUED = ("a line indented past the block it belongs to: a scalar continued past its line, or an indent no key "
+                  "above it opens")
+# the refusals whose construct YAML carries on to later lines at any indent past its parent's, its own included: the lines
+# at the refused line's indent or deeper are read as part of it and not scanned
+YAML_CARRIED = ("a quoted scalar continued past its line", "a flow collection continued past its line")
+YAML_QUOTED_FORM = {"'": "a single-quoted scalar on one line", '"': "a double-quoted scalar on one line"}
+YAML_PROPERTY_NAMES = {"&": "an anchor", "*": "an alias", "!": "a tag"}
 
 
-def _yaml_quote_end(line, i, quote):
-    """The index just past the quote that closes a YAML quoted scalar opened before `i`, or None when the line ends
-    inside it: a double-quoted scalar's backslash escapes the next character, a single-quoted one's `''` is a quote."""
-    n = len(line)
-    while i < n:
-        ch = line[i]
-        if quote == '"' and ch == "\\":
-            i += 2
+def _yaml_token(text):
+    return text.split(" ", 1)[0].split(",", 1)[0].split("]", 1)[0]
+
+
+def _yaml_quoted(text, i):
+    """The quoted scalar opening at text[i] in an accepted form: (the index just past its closing quote, None), or
+    (None, the refusal): a backslash in a double-quoted scalar, `''` in a single-quoted one (ci.yml's quoted scalars
+    hold neither escape), or no closing quote on the line."""
+    q = text[i]
+    j = text.find(q, i + 1)
+    if q == '"' and "\\" in (text[i + 1:j] if j >= 0 else text[i + 1:]):
+        return None, "a backslash escape in a double-quoted scalar (ci.yml's double-quoted scalars hold none)"
+    if q == "'" and j >= 0 and text[j + 1:j + 2] == "'":
+        return None, "the '' escape in a single-quoted scalar (ci.yml's single-quoted scalars hold none)"
+    if j < 0:
+        return None, "a quoted scalar continued past its line"
+    return j + 1, None
+
+
+def _yaml_tail(tail, what):
+    """What may follow a closed value on its line: nothing, or a trailing comment after a space. ([forms], None) or
+    ([], the refusal)."""
+    if not tail.strip():
+        return [], None
+    if re.match(r" +#", tail):
+        return ["a trailing comment"], None
+    return [], "text after %s" % what
+
+
+def _yaml_flow_sequence(v):
+    """A key's value that opens with `[`, in the accepted form: a flow sequence of plain or quoted scalars closed on the
+    line, nothing but a trailing comment after it. ([forms], None) or ([], the refusal)."""
+    i, n, out = 1, len(v), []
+    while True:
+        while i < n and v[i] == " ":
+            i += 1
+        if i >= n:
+            return [], "a flow collection continued past its line"
+        c = v[i]
+        if c in ",]":
+            return [], "an empty entry in a flow sequence"
+        if c in "[{":
+            return [], "a flow collection inside a flow sequence"
+        if c in YAML_PROPERTY_NAMES:
+            return [], "%s (%s)" % (YAML_PROPERTY_NAMES[c], _yaml_token(v[i:]))
+        if c == "#":
+            return [], "a comment inside a flow sequence"
+        if c in "'\"":
+            end, what = _yaml_quoted(v, i)
+            if what:
+                return [], what
+            out.append(YAML_QUOTED_FORM[c])
+            i = end
+        else:
+            if c in "-?:%@`|>":
+                return [], "a plain scalar opening with an indicator character (%s)" % c
+            j = i
+            while j < n and v[j] not in ",]":
+                j += 1
+            if any(ch in v[i:j] for ch in ":#[{}"):
+                return [], "a plain scalar in a flow sequence holding :, #, [, { or }"
+            out.append("a plain scalar on one line")
+            i = j
+        while i < n and v[i] == " ":
+            i += 1
+        if i >= n:
+            return [], "a flow collection continued past its line"
+        if v[i] == ",":
+            i += 1
             continue
-        if ch == quote:
-            if quote == "'" and line.startswith("''", i):
-                i += 2
-                continue
-            return i + 1
-        i += 1
-    return None
+        if v[i] == "]":
+            break
+        return [], "text between the entries of a flow sequence"
+    tail, what = _yaml_tail(v[i + 1:], "a flow sequence")
+    return ([] if what else out + ["a flow sequence of scalars on one line"] + tail), what
 
 
-def unread_yaml_forms(src):
-    """The YAML constructs this check refuses rather than reads (the owner's fail-closed design, 2026-09-23): [(line,
-    text, what)], file lines 1-based, over every line of ci.yml outside a block scalar's text. Refused: every anchor
-    (`&name`), alias (`*name`) and merge key (`<<:`), wherever it sits (a step, a steps list, an env, a run, a name:
-    value, a line of its own); and every flow mapping or flow sequence, on one line or over several, holding a key a
-    step can carry: `run`, `env` or `shell` (in any case, plain or quoted, a plain key read up to its first colon), or
-    `name` beside any other key of its mapping. Until then the parser read none of them and the two censuses excused
-    some: an anchor on a name: value aliased by `run: *cmd`, an anchored step or steps list aliased into a job without
-    the switch, `env: *x` with its anchor on a line of its own, and a flow mapping over several lines whose name line
-    carried a JSON-style `"run":` each read green beside a pytest run without the switch or the flag (the pre-push
-    lenses' plants). Refused as well, since the scan reads one line at a time (the fail-closed design's first verify
-    pass, 2026-09-23): every quoted scalar and every flow collection that does not close on the line it opens, and
-    every double-quoted scalar holding a backslash escape. Until then a plain scalar continued onto a line that opens
-    with a quote made the scan read a quoted scalar YAML never opened, so the lines up to the next such quote went
-    unread and an anchor or alias there read green (the lenses' env alias, name anchor and anchored step plants each
-    behind such a line); a key-shaped line inside another env key's quoted scalar over several lines read as the
-    switch on; and a double-quoted run's `\\n` escape started a second pytest command, without the flag, that the
-    parser read as part of the first. Refused too, found closing that pass: a block scalar header (`|` or `>`) on the
-    line after its key, which the parser folded as a plain scalar, one command, so a first pytest without the flag
-    took the second's. The real ci.yml uses none of these, so each is red at its line and never modelled. Keyed on a
-    line scan, not a YAML parser: a node starts at a line's first character, after a sequence's `- `, after an explicit
-    key's `? ` and a document start marker's `---` (the first verify pass: an anchor or alias after either was not
-    read), after a key's colon, and after `[`, `{` or `,` inside a flow collection; a block scalar's lines (every line
-    indented past the key, dash or `?` that opened it, on the header's line or, for a header on the next line, the
-    line before) are text and are not read, and a refused quoted scalar or flow collection is followed to its close,
-    so its later lines are not read as nodes. A `#` inside a flow collection with no space before it (after `[`, `{`,
-    `,` or a closing quote) is refused, and the rest of its line is read as a comment, as PyYAML and yaml.v3 read it,
-    so the collection is refused as continued past its line and its later lines are read as flow content (the
-    fail-closed design's second verify pass, 2026-09-23: until then the scan read that `#` as a scalar and closed the
-    collection on its line, and behind it an anchored flow step and its alias, a flow mapping's anchored key and its
-    alias, and a flow step whose double-quoted run started a second pytest without the switch or the flag each read
-    green). The scan's error runs one way: a line that continues a plain scalar is
-    read as if it began a node, so one that opens with `&`, `*`, `<<:`, `|` or `>`, or with a quote or a bracket that
-    does not close on the line, is red on valid YAML; reword it."""
-    out = []
-    block_at = None       # inside a block scalar: its lines are those indented past this column
-    quote = None          # a quoted scalar open at the end of the previous line: (quote character, its opening line)
-    flow = []             # the open flow collections, outermost first: [bracket, opening line, own keys [(key, line)]]
-    expect_key = False    # inside a flow mapping, the next scalar is an entry's key (after `{` or `,`)
-    pending = None        # the column of the key, dash or `?` whose node the last content line left to a later line
+def _yaml_inline_value(v):
+    """A key's value written on the key's line (v: the text after the colon and its spaces, not empty, not a comment,
+    not a block scalar header), in an accepted form: ([forms], None), or ([], the refusal)."""
+    c = v[0]
+    if c in YAML_PROPERTY_NAMES:
+        return [], "%s (%s)" % (YAML_PROPERTY_NAMES[c], _yaml_token(v))
+    if c == "{":
+        return [], "a flow mapping"
+    if c == "[":
+        return _yaml_flow_sequence(v)
+    if c in "'\"":
+        end, what = _yaml_quoted(v, 0)
+        if what:
+            return [], what
+        tail, what = _yaml_tail(v[end:], "a quoted scalar")
+        return ([] if what else [YAML_QUOTED_FORM[c]] + tail), what
+    if c in "-?:,]}%@`":
+        return [], "a plain scalar opening with an indicator character (%s)" % c
+    text, comment, _rest = v.partition(" #")
+    if ": " in text or text.rstrip().endswith(":"):
+        return [], "a plain scalar holding ': ' or ending in ':' (a mapping YAML refuses there)"
+    return ["a plain scalar on one line"] + (["a trailing comment"] if comment else []), None
 
-    def refuse(n, what):
-        if (n, what) not in {(o[0], o[2]) for o in out}:
-            out.append((n, lines[n - 1].strip(), what))
 
-    def key(text, n, quoted):
-        name = (text if quoted else text.split(":")[0]).strip()
-        if name == "<<":
-            refuse(n, "a merge key (<<)")
-        if flow:
-            flow[-1][2].append((name.lower(), n))
+def _yaml_unkeyed(rest, after_key):
+    """Why a line where a mapping key goes is not one in the accepted form (YAML_KEY_RE), by name."""
+    c = rest[0]
+    if after_key and c in "|>":
+        return "a block scalar header on the line after its key"
+    if c in YAML_PROPERTY_NAMES:
+        return "%s (%s)" % (YAML_PROPERTY_NAMES[c], _yaml_token(rest))
+    if rest.startswith("<<"):
+        return "a merge key (<<)"
+    if c == "{":
+        return "a flow mapping"
+    if c == "[":
+        return "a flow sequence where a key goes"
+    if c == "?" and rest[1:2] in ("", " "):
+        return "an explicit key (?)"
+    if c == ":" and rest[1:2] in ("", " "):
+        return "an explicit key's value (:)"
+    if c in "'\"":
+        end, what = _yaml_quoted(rest, 0)
+        if what:
+            return what
+        if rest[end:].lstrip(" ").startswith(":"):
+            return "a quoted key"
+        return "a quoted scalar on the line after its key" if after_key else "a quoted scalar where a key goes"
+    if c in "%@`":
+        return "a reserved indicator (%s)" % c
+    if re.match(r"[^\s:#][^:#]*? +:(?= |$)", rest):
+        return "a key with a space before its colon"
+    if re.match(r"[^\s:#]+:(?= |$)", rest):
+        return "a key spelled with a character ci.yml's keys do not use (%s)" % rest.split(":", 1)[0]
+    if re.match(r"[A-Za-z_][A-Za-z0-9_-]*:\S", rest):
+        return "a key with no space after its colon"
+    if after_key:
+        return "a value on the line after its key"
+    return "a line that is not a key, a sequence entry, a comment or a blank line"
 
-    def close():
-        # each collection is judged on its own keys when it closes, so one nested at any depth is judged too; the
-        # name rule is a mapping's (a flow sequence's `name: x` entries are one-pair mappings of their own)
-        bracket, _opened, keys = flow.pop()
-        kind = "mapping" if bracket == "{" else "sequence"
-        steps = [(k, n) for k, n in keys if k in STEP_FLOW_KEYS]
-        for k, n in steps:
-            refuse(n, "a flow %s holding the key %r" % (kind, k))
-        if not steps and bracket == "{" and len(keys) > 1:
-            for k, n in keys:
-                if k == "name":
-                    refuse(n, "a flow mapping holding a name key beside another key")
 
-    lines = src.splitlines()
+def yaml_line_forms(src):
+    """The allowlist scan of a workflow's text (the owner's allowlist design, 2026-09-24): ({form: [line, ...]} for the
+    forms of YAML_FORMS_ACCEPTED the accepted lines use, [(line, text, what)] for every refused line), file lines
+    1-based. A line is accepted only in a form the real ci.yml uses: a blank line; a comment line; a block mapping key
+    spelled as ci.yml spells every key (letters, digits, `_` and `-`, then `:` and a space or the end of the line), no
+    key twice in one mapping; a block sequence entry `- ` whose node is such a key one space past the dash; each nested
+    block two columns past its parent key (a sequence's dashes included, and an entry's keys two past its dash); as a
+    key's value on the key's line, a plain scalar that opens with no YAML indicator and holds no `: `, a single-quoted
+    scalar without `''`, a double-quoted scalar without a backslash, or a flow sequence of such scalars (a plain one
+    holding no `:`, `#` or bracket), each closed on that line and followed by nothing but a spaced trailing comment; and
+    a literal block header `|` as the value of a step's run (jobs, a job, steps, an entry), whose text is the lines
+    indented past the key, each at least as far as the first, which are not scanned as YAML. Every other line is refused
+    by name, among them an anchor, an alias, a tag, a merge key, an explicit key, a flow mapping, a flow collection
+    inside a flow sequence or continued past its line, a quoted scalar continued past its line, a backslash in a
+    double-quoted scalar, `''` in a single-quoted one, a folded block, a chomping or indentation indicator, a literal
+    block anywhere but a step's run, a header or a value on the line after its key, a plain scalar continued past its
+    line, a directive, a document marker, a quoted, spaced or otherwise spelled key, a key twice in one mapping, a
+    sequence at its parent key's indent (YAML's compact style), an indentation other than two columns past the parent,
+    a tab or any other control character, and a character outside ASCII outside a comment line. After a refused line,
+    the lines that belong to what it opened are not scanned, so a construct is named once, at its first line: the lines
+    indented past it (past its key, for a refused value; past its parent key, for the first line of a nested value), or,
+    for a quoted scalar or flow collection that YAML carries on, every line from its key's column in; scanning resumes
+    at the next line indented no further. Keyed on the text, not on a YAML parser, and its error runs one way: a valid
+    line in a form the scan does not accept is refused (a form the scan does not accept is refused by name; reword the
+    step in an accepted form)."""
+    forms, refused = {}, []
+    lines = src.split("\n")
+    if lines and lines[-1] == "":
+        lines.pop()
+    stack = [[0, "map", (), set()]]   # the open blocks, outermost first: [indent, "map" or "seq", key path, keys held]
+    pending = None                    # a key whose value starts on a later line: (the key's column, the value's key path)
+    block = None                      # inside a literal block: [the key's column, the first text line's indent, the widest leading blank]
+    skip = None                       # after a refusal: lines indented past this column are not scanned
+
+    def use(names, n):
+        for name in names:
+            forms.setdefault(name, []).append(n)
+
     for idx, raw in enumerate(lines):
         n = idx + 1
         indent = len(raw) - len(raw.lstrip(" "))
-        if block_at is not None:
-            if not raw.strip() or indent > block_at:
+        body = raw[indent:]
+        bad = YAML_REFUSED_CHAR_RE.search(raw)
+        wide = YAML_NON_ASCII_RE.search(raw)
+        if block is not None:
+            if bad or wide:
+                refused.append((n, raw.strip(), "a tab or other control character (%r)" % bad.group(0) if bad else
+                                "a character outside ASCII outside a comment line (%r)" % wide.group(0)))
                 continue
-            block_at = None
-        i, size, start, col, own = 0, len(raw), True, indent, True    # own: no key, dash, `?` or `---` on this line yet
-        if quote:
-            end = _yaml_quote_end(raw, 0, quote[0])
-            if end is None:
+            if not body:
+                if block[1] is None:
+                    block[2] = max(block[2], len(raw))
+                use(["a blank line"], n)
                 continue
-            quote, i, start = None, end, False
-        while i < size:
-            ch = raw[i]
-            if ch in " \t":
-                i += 1
+            if indent > block[0]:
+                if block[1] is None:
+                    block[1] = indent
+                    if block[2] > indent:
+                        refused.append((n, raw.strip(), "a literal block whose leading blank line holds more spaces than its first text line"))
+                elif indent < block[1]:
+                    refused.append((n, raw.strip(), "a line of a literal block indented less than its first text line"))
+                    continue
+                use(["a line of a literal block's text"], n)
                 continue
-            if ch == "#" and (i == 0 or raw[i - 1] in " \t"):
-                break
-            if ch == "#" and flow:
-                # the loop lands on a `#` in a flow collection only where a node or an indicator goes (a plain scalar
-                # holding one is read whole below), and PyYAML and yaml.v3 read it there as a comment though no space
-                # precedes it: the rest of the line is that comment, so the collection stays open onto the next lines
-                # (the fail-closed design's second verify pass, 2026-09-23)
-                refuse(n, "a comment in a flow collection with no space before it")
-                break
-            if flow and ch in "]}":
-                close()
-                i, start = i + 1, False
+            block = None
+        if skip is not None:
+            if not body or body.startswith("#") or indent > skip:
                 continue
-            if flow and ch == ",":
-                i, start, expect_key = i + 1, True, flow[-1][0] == "{"
-                continue
-            if flow and ch == ":":
-                i, start, expect_key = i + 1, True, False
-                continue
-            if not start:
-                if not flow:
-                    break                 # the rest of a block-context line after its value: nothing a node starts in
-                i += 1
-                continue
-            if not flow and ch == "-" and raw[i + 1:i + 2] in ("", " ", "\t"):
-                col, i, own = i, i + 1, False    # a sequence entry: a block scalar here is text past the dash's column
-                continue
-            if ch == "?" and raw[i + 1:i + 2] in ("", " ", "\t"):
-                col, i, own = i, i + 1, False    # an explicit key: its node starts after the `?`, as a sequence entry's does
-                continue
-            if not flow and i == 0 and raw.startswith("---") and raw[3:4] in ("", " ", "\t"):
-                i, own = 3, False         # a document start marker: a node may start after it on its line
-                continue
-            if ch in "&*!":
-                j = i + 1
-                while j < size and raw[j] not in " \t" and not (flow and raw[j] in ",[]{}"):
-                    j += 1
-                if ch == "&":
-                    refuse(n, "an anchor (%s)" % raw[i:j])
-                elif ch == "*":
-                    refuse(n, "an alias (%s)" % raw[i:j])
-                    start = False
-                i = j
-                continue
-            if ch in "[{":
-                flow.append([ch, n, []])
-                i, start, expect_key = i + 1, True, ch == "{"
-                continue
-            if ch in "\"'":
-                end = _yaml_quote_end(raw, i + 1, ch)
-                if end is None:
-                    refuse(n, "a quoted scalar continued past its line")
-                    quote = (ch, n)
-                    break
-                if ch == '"' and "\\" in raw[i:end]:
-                    refuse(n, "a double-quoted scalar holding a backslash escape")
-                opened, text, i, start = i, raw[i + 1:end - 1], end, False
-                j = i
-                while j < size and raw[j] in " \t":
-                    j += 1
-                if raw[j:j + 1] == ":" and (flow or raw[j + 1:j + 2] in ("", " ", "\t")):
-                    key(text, n, True)
-                    i, start, expect_key, col, own = j + 1, True, False, opened, False
-                elif flow and expect_key:
-                    key(text, n, True)
-                    expect_key = False
-                continue
-            if not flow and ch in "|>":
-                if own:
-                    # a header on the line after its key: the parser folds such a block as a plain scalar, one command
-                    # (the fail-closed design's first verify pass, 2026-09-23), so it is refused; its lines are the
-                    # text of the key the last content line left open, past that key's column
-                    refuse(n, "a block scalar header on the line after its key")
-                    if pending is not None and indent > pending:
-                        col = pending
-                block_at = col            # a block scalar: its lines are its text
-                break
-            # a plain scalar: to a key's colon (`: `, or `:` at the end of the line or, in a flow, before an indicator),
-            # a comment, the end of the line, or, in a flow, the next indicator
-            j = i
-            while j < size:
-                c = raw[j]
-                if c == ":" and (raw[j + 1:j + 2] in ("", " ", "\t") or (flow and raw[j + 1:j + 2] in (",", "[", "]", "{", "}"))):
-                    break
-                if c == "#" and raw[j - 1] in " \t":
-                    break
-                if flow and c in ",[]{}":
-                    break
-                j += 1
-            text = raw[i:j]
-            if raw[j:j + 1] == ":":
-                key(text, n, False)
-                i, start, expect_key, col, own = j + 1, True, False, i, False
+            skip = None
+        after_key, pending = pending, None
+        what, new_skip, pushed = None, indent, False
+        if bad:
+            what = "a tab or other control character (%r)" % bad.group(0)
+        elif not body:
+            use(["a blank line"], n)
+            pending = after_key
+            continue
+        elif body.startswith("#"):
+            use(["a comment line"], n)
+            pending = after_key
+            continue
+        elif wide:
+            what = "a character outside ASCII outside a comment line (%r)" % wide.group(0)
+        elif indent == 0 and body[:3] in ("---", "...") and body[3:4] in ("", " "):
+            what = "a document marker (%s)" % body[:3]
+        elif indent == 0 and body.startswith("%"):
+            what = "a directive"
+        elif after_key is not None and indent > after_key[0] and indent != after_key[0] + YAML_INDENT_STEP:
+            what, new_skip = "a block nested %d columns past its key, not %d" % (indent - after_key[0], YAML_INDENT_STEP), after_key[0]
+        if what:
+            refused.append((n, raw.strip(), what))
+            skip = new_skip
+            continue
+        entry = body == "-" or body.startswith("- ")
+        if after_key is not None and indent > after_key[0]:
+            stack.append([indent, "seq" if entry else "map", after_key[1], set()])
+            pushed = True
+        while stack[-1][0] > indent:
+            stack.pop()
+        top = stack[-1]
+        line_forms = []
+        if top[0] != indent:
+            # the blocks deeper than the line are closed above, so the line sits past the block it belongs to
+            what, new_skip = YAML_CONTINUED, top[0]
+        elif entry and top[1] != "seq":
+            what = ("a sequence entry where a mapping key goes (a list at its parent key's indent, YAML's compact style, or at "
+                    "the top level)")
+        elif not entry and top[1] == "seq":
+            what = "a key or a scalar where a sequence entry goes"
+        elif entry and (not body[2:].strip() or body[2:3] == " "):
+            what = "a sequence entry whose node is not a key one space past its dash"
+        if what:
+            refused.append((n, raw.strip(), what))
+            if pushed and not entry:
+                stack.pop()
+                new_skip = after_key[0]
+            skip = new_skip
+            continue
+        if entry:
+            line_forms.append("a block sequence entry")
+            col, rest = indent + YAML_INDENT_STEP, body[2:]
+            stack.append([col, "map", top[2] + ("[]",), set()])
+        else:
+            col, rest = indent, body
+        mapping = stack[-1]
+        km = YAML_KEY_RE.match(rest)
+        if not km:
+            what = _yaml_unkeyed(rest, after_key is not None and pushed)
+        elif km.group(1) in mapping[3]:
+            what = "a key its mapping already holds (%s)" % km.group(1)
+        if what:
+            refused.append((n, raw.strip(), what))
+            if entry:
+                stack.pop()
+            elif pushed:
+                stack.pop()
+                new_skip = after_key[0]
+            skip = min(new_skip, indent - 1) if what in YAML_CARRIED else new_skip
+            continue
+        key = km.group(1)
+        mapping[3].add(key)
+        line_forms.append("a block mapping key")
+        v = rest[km.end():].lstrip(" ")
+        if not v or v.startswith("#"):
+            use(line_forms + (["a trailing comment"] if v else []), n)
+            pending = (col, mapping[2] + (key,))
+            continue
+        if v[0] in "|>":
+            header = LITERAL_HEADER_RE.match(v)
+            if v[0] == ">":
+                what = "a folded block scalar (ci.yml's blocks are literal)"
+            elif not header:
+                what = _INDICATOR_WHAT
+            elif not (key == "run" and len(mapping[2]) == 4 and mapping[2][0] == "jobs" and mapping[2][2:] == ("steps", "[]")):
+                what = "a literal block scalar outside a step's run"
             else:
-                if flow and expect_key and text.strip():
-                    key(text, n, False)
-                    expect_key = False
-                i, start = j, False
-        for bracket, opened, _keys in flow:
-            refuse(opened, "a flow collection (%s) continued past its line" % bracket)
-        if raw.strip() and not raw.lstrip().startswith("#"):
-            pending = col if start and not flow and block_at is None and quote is None else None
-    return sorted(out)
+                use(line_forms + ["a literal block scalar as a step's run"] + (["a trailing comment"] if header.group(1) else []), n)
+                block = [col, None, 0]
+                continue
+        else:
+            value_forms, what = _yaml_inline_value(v)
+        if what:
+            # a refused value's own lines are those indented past its key (an entry's first key sits past the dash, and
+            # the entry's later keys are scanned); one YAML carries on is followed from the key's column
+            refused.append((n, raw.strip(), what))
+            skip = col - 1 if what in YAML_CARRIED else col
+            continue
+        use(line_forms + value_forms, n)
+    return forms, refused
 
 
 def invocations_by_key(found):
@@ -1658,7 +1697,7 @@ def verdict(inv):
         return "unparsed"
     if inv["namesakes"]:
         return "ambiguous"
-    if not FLAG_RE.search(inv["args"]):
+    if not passes_flag(inv["args"]):
         return "unlisted"
     if inv["env"].get(SWITCH) == "1":
         return "ok"
@@ -1686,8 +1725,9 @@ def stale_listings(found, table=None):
 
 
 def _describe(inv):
-    """The offender, named: job, step, file line, and what it lacks. The flag half keys on the SPELLING `-p no:anyio`
-    (one space) in the command's own arguments; the switch half on the merged env reading exactly 1."""
+    """The offender, named: job, step, file line, and what it lacks. The flag half keys on the words `-p` and
+    `no:anyio` in the command's own arguments as the shell splits them (passes_flag); the switch half on the merged env
+    reading exactly 1."""
     if inv["unparsed"]:
         return "%s / %r (ci.yml line %d): mentions pytest in a run line the parser does not read as a command (%s): %r" % (
             inv["job"], inv["step"], inv["line"], inv["unparsed"], inv["cmd"].strip())
@@ -1696,8 +1736,8 @@ def _describe(inv):
                 "and this report key on (job, step name), so the name is ambiguous: rename one" % (
                     inv["job"], inv["step"], inv["line"], inv["step"], "s" if len(inv["namesakes"]) > 1 else "",
                     ", ".join(str(l) for l in inv["namesakes"])))
-    lacks = [w for w, ok in (("%s (keyed on that spelling, one space, in the command's arguments)" % FLAG_SPELLING,
-                              bool(FLAG_RE.search(inv["args"]))),
+    lacks = [w for w, ok in (("%s (keyed on the words -p and no:anyio in the command's arguments as the shell splits "
+                              "them)" % FLAG_SPELLING, passes_flag(inv["args"])),
                              ("%s=1 (keyed on the merged workflow, job, step and inline env reading 1)" % SWITCH,
                               inv["env"].get(SWITCH) == "1")) if not ok]
     return "%s / %r (ci.yml line %d): env %s=%r, args %r; lacks %s" % (
@@ -1810,12 +1850,10 @@ class PytestPopulation(unittest.TestCase):
     line that spells pytest (PYTEST_WORD_RE), outside a comment or a name: key and other than a pip install, lies in
     the span of lines the parser read for a row, parsed or unparsed, whatever its layout, or the line census names it;
     a mention the parser reads but not as a command is red as unparsed until it is read; every line where a job key
-    goes is a job the parser reads, so no step is read under the job above it; and no YAML anchor, alias, merge key,
-    step in flow style, quoted scalar or flow collection continued past its line, double-quoted scalar holding a
-    backslash escape, or block scalar header on the line after its key appears in the file, each red at its line,
-    since the check does not read them (the owner's
-    fail-closed design, 2026-09-23, and its first verify pass). Outside the check: a run line that never spells pytest,
-    a pytest run by a script or action a step calls, and any other workflow file."""
+    goes is a job the parser reads, so no step is read under the job above it; and every line of the file is in a YAML
+    form the file itself uses (the allowlist, yaml_line_forms, the owner's allowlist design, 2026-09-24), the forms
+    derived from the file, so the parser and the censuses read no YAML they do not model. Outside the check: a run line
+    that never spells pytest, a pytest run by a script or action a step calls, and any other workflow file."""
     def setUp(self):
         self.src = open(WF).read()
         self.found = pytest_invocations(self.src)
@@ -1855,7 +1893,7 @@ class PytestPopulation(unittest.TestCase):
         # The census's population is derived and must hold the matrix step's own switch line, so an empty census is red
         switch_read = []
         pytest_invocations(self.src, switch_read=switch_read)
-        matrix = [e["line"] for e in switch_read if (e["job"], e["step"]) == MATRIX_STEP and e["clean"]]
+        matrix = [e["line"] for e in switch_read if (e["job"], e["step"]) == MATRIX_STEP]
         counted, uncovered = switch_line_census(self.src)
         self.assertTrue(matrix and set(matrix) <= set(counted), "the switch census does not count the matrix step's switch "
                         "line %r among the lines it counts %r: an empty or partial census is red, not green" % (matrix, counted))
@@ -1879,26 +1917,31 @@ class PytestPopulation(unittest.TestCase):
                          "such a line as the job above's, with that job's name and env. Rewrite the key bare:\n  "
                          + "\n  ".join("line %d: %s" % u for u in unread))
 
-    def test_ci_yml_holds_no_yaml_form_the_check_refuses(self):
-        # the owner's fail-closed design (2026-09-23): the parser and the two censuses read no YAML anchor, alias or
-        # merge key and no step written in flow style, and the pre-push lenses planted each beside a pytest run
-        # without the switch or the flag and read green; its first verify pass found the same behind a quoted scalar
-        # or flow collection carried to the next line, and in a double-quoted run's escape. The real file uses none of
-        # them, so each is refused at its line (unread_yaml_forms; its cases in PopulationCheckReds) and none is modelled
-        found = unread_yaml_forms(self.src)
-        self.assertEqual(found, [], "lines of ci.yml in a YAML form " + YAML_FORMS_UNREAD + " (a flow mapping or sequence "
-                         "holding a run, env or shell key, or a name key beside another key). Keyed on a line scan outside "
-                         "block scalars: rewrite the line in the file's block layout without the anchor, alias, merge key "
-                         "or flow collection, each quoted scalar closed on its line, a double-quoted one without a "
-                         "backslash, and each block scalar header on its key's line (a plain scalar continued onto a line "
-                         "that begins with &, *, <<:, | or >, or with a quote or bracket that does not close there, reads "
-                         "as one: reword it):\n  "
-                         + "\n  ".join("line %d: %s (%s)" % f for f in found))
+    def test_every_line_of_ci_yml_is_in_a_form_the_allowlist_accepts(self):
+        # the owner's allowlist design (2026-09-24): the parser and the two censuses read the YAML forms the real file
+        # uses and nothing else, and the scan refuses every other line by name (yaml_line_forms; its rows in
+        # PopulationCheckReds). Until then the scan refused named forms one at a time and three verify passes found
+        # forms it half-modelled
+        refused = yaml_line_forms(self.src)[1]
+        self.assertEqual(refused, [], "lines of ci.yml in a YAML form the scan does not accept (the forms the file uses, "
+                         "YAML_FORMS_ACCEPTED). A form the scan does not accept is refused by name; reword the step in an "
+                         "accepted form:\n  " + "\n  ".join("line %d: %s (%s)" % f for f in refused))
         # the scan reads to the end of the real file: an alias appended as its last line is named there (a scan left
-        # inside a block scalar, or stopped early, would read nothing after the point it stopped)
+        # inside a literal block, or stopped early, would read nothing after the point it stopped)
         last = len(self.src.rstrip("\n").splitlines()) + 1
-        self.assertEqual(unread_yaml_forms(self.src.rstrip("\n") + "\nzz-alias: *nowhere\n"),
+        self.assertEqual(yaml_line_forms(self.src.rstrip("\n") + "\nzz-alias: *nowhere\n")[1],
                          [(last, "zz-alias: *nowhere", "an alias (*nowhere)")])
+
+    def test_the_forms_the_allowlist_accepts_are_the_forms_ci_yml_uses(self):
+        # the allowlist is derived from the file, by the scan itself (CI's shape installs no YAML library): every form
+        # YAML_FORMS_ACCEPTED lists is one the real file uses, and every line of the file is in one. A form the file
+        # stops using leaves the list; a form it starts to use is refused until the scan reads it and a row pins it
+        forms, _refused = yaml_line_forms(self.src)
+        self.assertEqual(sorted(forms), sorted(YAML_FORMS_ACCEPTED), "the forms the scan accepted in ci.yml are not the "
+                         "forms YAML_FORMS_ACCEPTED lists: drop a form the file no longer uses from the list")
+        lines = len(self.src.splitlines())
+        self.assertEqual(sorted(set().union(*forms.values())), list(range(1, lines + 1)), "a line of ci.yml the scan "
+                         "neither accepted in a form nor refused")
 
     def test_every_invocation_passes_the_flag_and_sets_the_switch_or_is_listed_with_its_reason(self):
         bad = [_describe(i) for i in self.found if verdict(i) in ("unlisted", "unparsed", "ambiguous")]
@@ -1936,7 +1979,7 @@ class ListedInvocations(unittest.TestCase):
 
     def test_the_served_step_passes_the_flag_its_listing_excuses_only_the_switch(self):
         for inv in self.served:
-            self.assertTrue(FLAG_RE.search(inv["args"]), "the served step's pytest line %d lacks %s (keyed on that "
+            self.assertTrue(passes_flag(inv["args"]), "the served step's pytest line %d lacks %s (keyed on those "
                             "spelling): the listing covers the switch alone; the flag is accepted where anyio is absent and "
                             "has no exemption" % (inv["line"], FLAG_SPELLING))
 
@@ -2024,23 +2067,19 @@ class ListedInvocations(unittest.TestCase):
 THIRD_STEP = ("      - name: Kernel smoke (pytest)\n"
               "        run: python -m pytest tests/test_kernel_smoke.py -q\n")
 # read forms, each a step spliced into the shell job: (label, step text, the offset of the pytest command's line from
-# the step's first line, the arguments the parser must read from it)
+# the step's first line, the arguments the parser must read from it). Each is in the forms the allowlist accepts
+# (yaml_line_forms); the chomping indicators, the folded block and the plain scalar continued on the next line, read
+# here until the allowlist (2026-09-24), are refused by the scan now, and their rows are in YAML_REFUSED_ROWS
 READ_FORMS = (
     ("single line", "      - name: Form (pytest)\n        run: python -m pytest tests/test_a.py -q -p no:anyio\n",
      1, "tests/test_a.py -q -p no:anyio"),
     ("literal block", "      - name: Form (pytest)\n        run: |\n          set -e\n          python -m pytest tests/test_a.py -q -p no:anyio\n",
      3, "tests/test_a.py -q -p no:anyio"),
-    ("literal block, strip chomping", "      - name: Form (pytest)\n        run: |-\n          python -m pytest tests/test_a.py -q -p no:anyio\n",
-     2, "tests/test_a.py -q -p no:anyio"),
-    ("literal block, keep chomping", "      - name: Form (pytest)\n        run: |+\n          pytest tests/test_a.py -q -p no:anyio\n",
-     2, "tests/test_a.py -q -p no:anyio"),
-    ("folded block, one command over two lines", "      - name: Form (pytest)\n        run: >\n          python -m pytest tests/test_a.py\n          -q -p no:anyio\n",
-     2, "tests/test_a.py -q -p no:anyio"),
-    ("folded block, strip chomping, second paragraph", "      - name: Form (pytest)\n        run: >-\n          echo start\n\n          python -m pytest tests/test_a.py\n          -q -p no:anyio\n",
-     4, "tests/test_a.py -q -p no:anyio"),
-    ("plain scalar continued on the next line", "      - name: Form (pytest)\n        run: python -m pytest tests/test_a.py\n          -q -p no:anyio\n",
-     1, "tests/test_a.py -q -p no:anyio"),
     ("double-quoted scalar", "      - name: Form (pytest)\n        run: \"python -m pytest tests/test_a.py -q -p no:anyio\"\n",
+     1, "tests/test_a.py -q -p no:anyio"),
+    ("single-quoted scalar, a trailing comment", "      - name: Form (pytest)\n        run: 'python -m pytest tests/test_a.py -q -p no:anyio'  # c\n",
+     1, "tests/test_a.py -q -p no:anyio"),
+    ("plain scalar, a trailing comment", "      - name: Form (pytest)\n        run: python -m pytest tests/test_a.py -q -p no:anyio  # c\n",
      1, "tests/test_a.py -q -p no:anyio"),
     ("after && on one line", "      - name: Form (pytest)\n        run: echo start && python -m pytest tests/test_a.py -q -p no:anyio && echo done\n",
      1, "tests/test_a.py -q -p no:anyio"),
@@ -2080,6 +2119,181 @@ UNREAD_LAYOUTS = (
     ("run : with a space before the colon", "step",
      "      - name: Spaced run key (pytest)\n        run : python -m pytest tests/test_a.py -q\n", 1),
 )
+# The allowlist's refusals (the owner's allowlist design, 2026-09-24), a row per refused form, each spliced into a scratch
+# copy of the live file: (label, where, text, ((line in the text, what the scan names), ...), alone). `where`: "first"
+# opens the shell job's steps, "last" ends them, "job" is a job before the shell job, "start" and "end" open and end the
+# file, "+env" sets the switch in the shell job's env first. `alone`: nothing but the scan names a line (the population
+# check, the two censuses, the job-key check), so the refusal is what reds the plant. The pre-push lenses' and the three
+# verify passes' plants are named by their ids (the round-4 takes record); this build's own by AL-.
+RUN_OK = "        run: python -m pytest tests/test_a.py -q -p no:anyio\n"
+_SW_JOB = '    runs-on: ubuntu-latest\n    env:\n      %s: "1"\n' % SWITCH
+_TWO = "          python -m pytest -q tests/test_a.py\n          python -m pytest -q -p no:anyio tests/test_b.py\n"
+_ESCAPE = "a backslash escape in a double-quoted scalar (ci.yml's double-quoted scalars hold none)"
+_INDICATOR = _INDICATOR_WHAT
+_ENTRY = "a sequence entry whose node is not a key one space past its dash"
+YAML_REFUSED_ROWS = (
+    # node properties and the other YAML-only constructs
+    ("an anchor on a name: value, aliased by a run (N06)", "first",
+     "      - name: &cmd python -m pytest tests/test_a.py -q\n        run: *cmd\n",
+     ((1, "an anchor (&cmd)"), (2, "an alias (*cmd)")), True),
+    ("an anchored step aliased into a job without the switch (A01b)", "job",
+     "  anch:\n" + _SW_JOB + "    steps:\n      - &pystep\n        name: Anchored step (pytest)\n" + RUN_OK +
+     "  alias:\n    runs-on: ubuntu-latest\n    steps:\n      - *pystep\n",
+     ((6, "an anchor (&pystep)"), (12, "an alias (*pystep)")), True),
+    ("an anchored steps list aliased into a job without the switch (A02b)", "job",
+     "  anch:\n" + _SW_JOB + "    steps: &st\n      - name: In anchored list (pytest)\n" + RUN_OK +
+     "  copy:\n    runs-on: ubuntu-latest\n    steps: *st\n",
+     ((5, "an anchor (&st)"), (10, "an alias (*st)")), True),
+    ("env: *x, its anchor on a line of its own, the switch 0 in it (B08)", "job",
+     "  setter:\n" + _SW_JOB + "    steps:\n      - name: Env anchor\n        env:\n          &zeroenv\n"
+     '          %s: "0"\n        run: echo anchor\n      - name: Env alias (pytest)\n        env: *zeroenv\n' % SWITCH + RUN_OK,
+     ((8, "an anchor (&zeroenv)"), (12, "an alias (*zeroenv)")), True),
+    ("a tag on a run's literal block, two pytest commands, the first unflagged (review round 4's M1)", "first+env",
+     "      - name: Tagged (pytest)\n        run: !!str |\n" + _TWO, ((2, "a tag (!!str)"),), False),
+    ("a merge key bringing a run into a step", "first",
+     "      - &base\n        name: Base\n        run: echo base\n      - <<: *base\n        name: Merged\n",
+     ((1, "an anchor (&base)"), (4, "a merge key (<<)")), True),
+    ("an explicit key and its value, an anchor after the ? and its alias (Y21)", "first",
+     "      - name: Explicit key\n        ? &rk run\n        : echo one\n      - name: Explicit alias (pytest)\n        ? *rk\n"
+     "        : python -m pytest tests/test_a.py -q\n",
+     ((2, "an explicit key (?)"), (3, "an explicit key's value (:)"), (5, "an explicit key (?)"), (6, "an explicit key's value (:)")), False),
+    ("a document start marker carrying an anchor (Y22)", "start", "--- &doc\n", ((1, "a document marker (---)"),), True),
+    ("a directive", "start", "%YAML 1.2\n", ((1, "a directive"),), True),
+    ("a document end marker", "end", "...\n", ((1, "a document marker (...)"),), False),
+    # flow collections
+    ("a one-line flow-mapping step (N01)", "first", "      - {name: Flow step, run: python -m pytest tests/test_a.py -q}\n",
+     ((1, "a flow mapping"),), False),
+    ('a flow mapping over several lines, a JSON-style "run": after the name (N04)', "first",
+     '      - {\n          name: FlowAdj, "run":python -m pytest tests/test_a.py -q\n        }\n', ((1, "a flow mapping"),), True),
+    ("a flow env on a step, the switch 0 in it", "first+env", '      - name: Flow env (pytest)\n        env: {%s: "0"}\n' % SWITCH + RUN_OK,
+     ((2, "a flow mapping"),), False),
+    ("a flow mapping inside a flow sequence", "first", "      - uses: ./a\n        with: [{shell: bash}]\n",
+     ((2, "a flow collection inside a flow sequence"),), True),
+    ("a flow sequence continued past its line", "first", "      - uses: ./a\n        with:\n          list: ['3.10',\n            main]\n",
+     ((3, "a flow collection continued past its line"),), True),
+    ("a comment right after a flow sequence's bracket, a double-quoted run behind it (D02)", "job",
+     "  hid:\n    runs-on: ubuntu-latest\n    steps: [#]\n"
+     '      {uses: actions/checkout@v4}, {run: "true; pip install pytest\\npytest tests/test_a.py -q"} ]\n',
+     ((3, "a comment inside a flow sequence"),), True),
+    ("an empty entry in a flow sequence", "first", "      - uses: ./a\n        with:\n          list: [a, , b]\n",
+     ((3, "an empty entry in a flow sequence"),), True),
+    ("a plain scalar holding # in a flow sequence (close 2's B6, valid YAML)", "first",
+     "      - uses: ./a\n        with:\n          list: [a#b, c]\n", ((3, "a plain scalar in a flow sequence holding :, #, [, { or }"),), True),
+    ("text after a flow sequence", "first", "      - uses: ./a\n        with:\n          list: [a] b\n",
+     ((3, "text after a flow sequence"),), True),
+    ("two entries of a flow sequence without a comma", "first", "      - uses: ./a\n        with:\n          list: ['a' 'b']\n",
+     ((3, "text between the entries of a flow sequence"),), True),
+    ("a flow sequence where a key goes", "first", "      - [python -m pytest tests/test_a.py -q]\n",
+     ((1, "a flow sequence where a key goes"),), False),
+    # quoted scalars
+    ("the switch line inside a step env's double-quoted scalar over several lines (Z01)", "last",
+     '      - name: Quoted text (pytest)\n        env:\n          NOTES: "first line\n          %s: \'1\'\n          end"\n' % SWITCH + RUN_OK,
+     ((3, "a quoted scalar continued past its line"),), True),
+    ("the switch line inside a step name's quoted scalar over the env lines (Z04b)", "last",
+     '      - name: "Quoted name\n        env:\n          %s: \'1\'\n        tail"\n' % SWITCH + RUN_OK,
+     ((1, "a quoted scalar continued past its line"),), True),
+    ("a double-quoted run whose \\n escape starts a second, unflagged pytest (Q01)", "last+env",
+     '      - name: Escaped newline (pytest)\n        run: "python -m pytest tests/test_a.py -q -p no:anyio \\npytest tests/test_b.py -q"\n',
+     ((2, _ESCAPE),), True),
+    ("a double-quoted env key whose \\x escape spells the switch, set to 0 (Q03)", "last+env",
+     '      - name: Escaped key (pytest)\n        env:\n          "ROMP_SDK_\\x52EQUIRE": "0"\n' + RUN_OK, ((3, _ESCAPE),), True),
+    ("the '' escape in a single-quoted run (Y14)", "first", "      - name: Single escape\n        run: 'echo ''a'''\n",
+     ((2, "the '' escape in a single-quoted scalar (ci.yml's single-quoted scalars hold none)"),), True),
+    ("a comment right after a quoted run's closing quote (close 2's B1)", "last+env",
+     '      - name: Quoted then hash (pytest)\n        run: "python -m pytest tests/test_a.py -q -p no:anyio"#c\n',
+     ((2, "text after a quoted scalar"),), True),
+    ("a quoted run key", "first+env", '      - name: Quoted run key (pytest)\n        "run": python -m pytest tests/test_a.py -q -p no:anyio\n',
+     ((2, "a quoted key"),), False),
+    ("a quoted run on the line after its key", "first+env", '      - name: Quoted next (pytest)\n        run:\n          "python -m pytest tests/test_a.py -q"\n',
+     ((3, "a quoted scalar on the line after its key"),), False),
+    # block scalars
+    ("a folded run block (read as paragraphs until the allowlist)", "first+env",
+     "      - name: Folded (pytest)\n        run: >\n          python -m pytest tests/test_a.py\n          -q -p no:anyio\n",
+     ((2, "a folded block scalar (ci.yml's blocks are literal)"),), False),
+    ("a literal run block with strip chomping", "first+env",
+     "      - name: Strip (pytest)\n        run: |-\n          python -m pytest tests/test_a.py -q -p no:anyio\n", ((2, _INDICATOR),), False),
+    ("a literal run block with an indentation indicator", "first+env",
+     "      - name: Indented (pytest)\n        run: |2\n            python -m pytest tests/test_a.py -q -p no:anyio\n", ((2, _INDICATOR),), False),
+    ("a literal block as an env value, its text spelling the switch (S10)", "last",
+     '      - name: Block text (pytest)\n        env:\n          NOTES: |\n            %s: "1"\n' % SWITCH + RUN_OK,
+     ((3, "a literal block scalar outside a step's run"),), False),
+    ("an empty folded block as the switch's value, in a job with no pytest step (E35)", "job",
+     "  nopy:\n    runs-on: ubuntu-latest\n    env:\n      %s: >-\n      OTHER: x\n    steps:\n      - run: echo hi\n" % SWITCH,
+     ((4, "a folded block scalar (ci.yml's blocks are literal)"),), True),
+    ("a run's literal block header on the line after its key, two pytest commands (H01)", "first+env",
+     "      - name: Header next (pytest)\n        run:\n          |\n" + _TWO, ((3, "a block scalar header on the line after its key"),), False),
+    ("a run's value on the line after its key", "first+env",
+     "      - name: Value next (pytest)\n        run:\n          python -m pytest tests/test_a.py -q -p no:anyio\n",
+     ((3, "a value on the line after its key"),), False),
+    ("a line of a literal run block less indented than its first, an unflagged pytest (AL-08)", "first+env",
+     "      - name: Ragged (pytest)\n        run: |\n            echo a\n          python -m pytest tests/test_a.py -q\n",
+     ((4, "a line of a literal block indented less than its first text line"),), False),
+    ("a literal run block whose leading blank line holds more spaces than its first line (AL-09)", "first+env",
+     "      - name: Wide blank (pytest)\n        run: |\n              \n          python -m pytest tests/test_a.py -q -p no:anyio\n",
+     ((4, "a literal block whose leading blank line holds more spaces than its first text line"),), True),
+    # plain scalars
+    ("a plain run continued on the next line (read as one folded command until the allowlist)", "first+env",
+     "      - name: Continued (pytest)\n        run: python -m pytest tests/test_a.py\n          -q -p no:anyio\n", ((3, YAML_CONTINUED),), False),
+    ("the switch's plain value continued on the next line, `1 0` to YAML", "last",
+     "      - name: Continued value (pytest)\n        env:\n          %s: 1\n            0\n" % SWITCH + RUN_OK, ((4, YAML_CONTINUED),), True),
+    ("a name continued onto a line that opens with a quote, a name anchor and its alias behind it (W02)", "first",
+     '      - name: Prior step\n          "x\n        run: echo prior\n      - name: &cmd python -m pytest tests/test_a.py -q\n        run: *cmd\n',
+     ((2, YAML_CONTINUED), (4, "an anchor (&cmd)"), (5, "an alias (*cmd)")), True),
+    ("a plain scalar holding ': ' (Y01, which PyYAML refuses)", "first", '      - name: Quoted amp\n        run: echo "&foo *bar <<: baz"\n',
+     ((2, "a plain scalar holding ': ' or ending in ':' (a mapping YAML refuses there)"),), True),
+    ("a plain scalar opening with an indicator character", "first", "      - name: Dash\n        run: -x\n",
+     ((2, "a plain scalar opening with an indicator character (-)"),), True),
+    ("a line that is no key: a plain scalar at the top level", "end", "stray text\n",
+     ((1, "a line that is not a key, a sequence entry, a comment or a blank line"),), False),
+    # structure and keys
+    ("steps at their key's indent, YAML's compact list style (A01)", "job",
+     "  compact:\n    runs-on: ubuntu-latest\n    steps:\n    - name: Compact (pytest)\n      run: python -m pytest tests/test_a.py -q\n",
+     ((4, "a sequence entry where a mapping key goes (a list at its parent key's indent, YAML's compact style, or at the top level)"),), False),
+    ("steps nested four columns past their key (A03)", "job",
+     "  deep:\n    runs-on: ubuntu-latest\n    steps:\n        - name: Deep (pytest)\n          run: python -m pytest tests/test_a.py -q\n",
+     ((4, "a block nested 4 columns past its key, not 2"),), False),
+    ("step env keys nested four columns past env: (Z08, valid YAML)", "last",
+     '      - name: Deep env keys (pytest)\n        env:\n            %s: "1"\n' % SWITCH + RUN_OK,
+     ((3, "a block nested 4 columns past its key, not 2"),), True),
+    ("`-   name:`, the key three columns past the dash (A04)", "first",
+     "      -   name: Wide dash (pytest)\n          run: python -m pytest tests/test_a.py -q\n", ((1, _ENTRY),), False),
+    ("a sequence entry whose node is on the next line", "first", "      -\n        name: Next line\n        run: echo hi\n", ((1, _ENTRY),), True),
+    ("a key or a scalar where a sequence entry goes", "first", "      - uses: ./a\n      name: stray\n",
+     ((2, "a key or a scalar where a sequence entry goes"),), True),
+    ("a key with a space before its colon (A08)", "first+env",
+     "      - name: Spaced run key (pytest)\n        run : python -m pytest tests/test_a.py -q -p no:anyio\n",
+     ((2, "a key with a space before its colon"),), False),
+    ("a key with no space after its colon", "first+env", "      - name: Tight (pytest)\n        run:python -m pytest tests/test_a.py -q -p no:anyio\n",
+     ((2, "a key with no space after its colon"),), True),
+    ("a key spelled with a character ci.yml's keys do not use", "first", "      - uses: ./a\n        with:\n          a.b: c\n",
+     ((3, "a key spelled with a character ci.yml's keys do not use (a.b)"),), True),
+    ("a step holding env: twice, the second without the switch (AL-04)", "first",
+     '      - name: Two envs (pytest)\n        env:\n          %s: "1"\n        env:\n          OTHER: x\n' % SWITCH + RUN_OK,
+     ((4, "a key its mapping already holds (env)"),), True),
+    # characters
+    ("a tab after the switch key's colon (AL-18)", "last", '      - name: Tab (pytest)\n        env:\n          %s:\t"1"\n' % SWITCH + RUN_OK,
+     ((3, "a tab or other control character ('\\t')"),), True),
+    ("the switch's value 1 then a no-break space, which str.strip drops and YAML keeps (AL-02)", "last",
+     "      - name: Nbsp value (pytest)\n        env:\n          %s: 1\xa0\n" % SWITCH + RUN_OK,
+     ((3, "a character outside ASCII outside a comment line ('\\xa0')"),), True),
+)
+# accepted: each shape a form the real file uses, spliced as the first step of the shell job; the scan refuses none
+YAML_ACCEPTED_ROWS = (
+    ("operators and a glob in a plain run", "      - name: Plain\n        run: make a && ls tests/*.py 2>&1 | tee log\n"),
+    ("a literal block's lines opening with *), &>, -, [, a key and an anchor, --- and ?",
+     "      - name: Block\n        run: |\n          case $x in\n            *) echo other ;;\n          esac\n          &>/dev/null true\n"
+     "          - item\n          [ -n x ]\n          key: &x\n          ---\n          ? q\n"),
+    ("quoted scalars holding *, & and #", '      - name: "* & # *"\n        run: echo \'&x *y #z\'\n'),
+    ("a flow sequence of plain, single-quoted and double-quoted scalars", "      - uses: ./a\n        with:\n          list: ['3.10', \"3.13\", main]\n"),
+    ("trailing comments after a key with no value, a plain value, a quoted value and a flow sequence",
+     "      - uses: ./a  # c\n        with:   # c\n          a: x # c\n          b: 'y' # c\n          c: [z] # c\n"),
+    ("comment lines at any indent, holding &, *, <<: and a character outside ASCII (the file's comments hold one)",
+     "# top &x *y <<: z\n      # step \xe9 note\n      - name: Commented\n          # deeper\n        run: echo a#b\n"),
+    ("an expression holding quotes, brackets and ==", "      - name: Expr\n        if: ${{ github.event_name == 'push' && '[a]' != 'b' }}\n        run: echo ok\n"),
+    ("a literal run block with a blank line inside and a trailing comment on its header",
+     "      - name: Block ok\n        run: |  # c\n          set -e\n\n          echo done\n"),
+)
+
 
 
 class PopulationCheckReds(unittest.TestCase):
@@ -2166,8 +2380,9 @@ class PopulationCheckReds(unittest.TestCase):
                 self.assertIn("lacks ROMP_SDK_REQUIRE=1", _describe(inv))
                 with_env = self._new(self._with_shell_job_env(src))
                 self.assertEqual([verdict(i) for i in with_env], ["ok"], "%s: a job-level env must supply the switch: %r" % (label, [_describe(i) for i in with_env]))
-                # a form the parser reads is covered by the line census: no false red on any read form
+                # a form the parser reads is covered by the line census and accepted by the scan: no false red on any
                 self.assertEqual(pytest_line_census(src)[1], [], "%s: the line census reds a form the parser reads" % label)
+                self.assertEqual(yaml_line_forms(src)[1], [], "%s: the scan refuses a form the parser reads" % label)
 
     def test_an_inline_env_prefix_on_the_command_sets_the_switch_for_that_command(self):
         # `ROMP_SDK_REQUIRE=1 python -m pytest ...` sets the variable for that process, as an env: block would
@@ -2196,11 +2411,18 @@ class PopulationCheckReds(unittest.TestCase):
                 new = self._new(src)
                 self.assertEqual([(i["env"].get(SWITCH), verdict(i)) for i in new], [(read, "unlisted")], [_describe(i) for i in new])
                 self.assertIn("lacks ROMP_SDK_REQUIRE=1", _describe(new[0]))
-        for value in ('"1"', "'1'", "1", "1   # a trailing comment"):
+        for value in ('"1"', "'1'", "1", "1   # a trailing comment", '"1"   # a trailing comment'):
             with self.subTest(value=value):
                 src, first = self._with_step_in_shell_job('      - name: Quoted switch (pytest)\n        env:\n          %s: %s\n'
                                                           '        run: python -m pytest tests/test_a.py -q -p no:anyio\n' % (SWITCH, value))
                 self.assertEqual([verdict(i) for i in self._new(src)], ["ok"], "the control: %s reads 1" % value)
+        # a plain value runs to YAML's comment, a `#` after a space: `1#x` is the string 1#x, which is not 1. Until the
+        # allowlist build (2026-09-24) the env reader stopped at any `#`, and this step read ok while pytest ran with the
+        # switch at 1#x (this build's AL-01; a form the scan accepts, so this reader is the one check that sees it)
+        src, first = self._with_step_in_shell_job('      - name: Hash value (pytest)\n        env:\n          %s: 1#x\n'
+                                                  '        run: python -m pytest tests/test_a.py -q -p no:anyio\n' % SWITCH)
+        self.assertEqual([(i["env"].get(SWITCH), verdict(i)) for i in self._new(src)], [("1#x", "unlisted")])
+        self.assertEqual(yaml_line_forms(src)[1], [], "a plain scalar holding # is a form the scan accepts")
 
     def test_a_run_block_that_unsets_exports_or_assigns_the_switch_is_unparsed(self):
         # tests-3 and extra4-3 (review round 4, 2026-09-23): with a step env of "1", an unset, an export of 0 or a bare
@@ -2272,12 +2494,8 @@ class PopulationCheckReds(unittest.TestCase):
         self.assertEqual(len(at), 1, "the shell job's header moved: re-anchor this case")
         self.assertEqual([verdict(i) for i in self._new(src)], ["ok"])
         self.assertEqual(switch_line_census(src)[1], [(at[0], text)])
-        # a plain value continued on the next line: YAML folds it to `1 0`, which is not 1, and the key line is named
-        src, first = self._with_step_in_shell_job("      - name: Continued value (pytest)\n        env:\n          %s: 1\n"
-                                                  "            0\n" % SWITCH + run)
-        new = self._new(src)
-        self.assertEqual([(i["env"].get(SWITCH), verdict(i)) for i in new], [("1 0", "unlisted")], [_describe(i) for i in new])
-        self.assertEqual(switch_line_census(src)[1], [(first + 2, "%s: 1" % SWITCH)])
+        # a plain value continued on the next line (YAML folds it to `1 0`) was named here until the allowlist
+        # (2026-09-24); the scan refuses the continued line now, and its row is in YAML_REFUSED_ROWS
         # the controls: the switch as a step env key, a job env key with a trailing comment, and spelled in run text (the
         # switch half reads that as unparsed) are each read, and the census names nothing
         for label, src in (("a step env key", self._with_step_in_shell_job('      - name: Keyed (pytest)\n        env:\n          %s: "1"\n' % SWITCH + run)[0]),
@@ -2297,11 +2515,37 @@ class PopulationCheckReds(unittest.TestCase):
         self.assertIn("lacks ROMP_SDK_REQUIRE=1", bad["Half B (pytest)"])
 
     def test_the_flag_check_is_a_spelling_check_and_says_so(self):
-        # `-pno:anyio` is the same flag to pytest; this check keys on the spelling with one space and its message says so
+        # `-pno:anyio` is the same flag to pytest; this check keys on the two words -p and no:anyio and its message says so
         src, first = self._with_step_in_shell_job('      - name: Nospace (pytest)\n        env:\n          %s: "1"\n        run: python -m pytest tests/ -q -pno:anyio\n' % SWITCH)
         bad = self._new_bad(src)
         self.assertEqual([verdict(i) for i in bad], ["unlisted"])
-        self.assertIn("lacks -p no:anyio (keyed on that spelling, one space, in the command's arguments)", _describe(bad[0]))
+        self.assertIn("lacks -p no:anyio (keyed on the words -p and no:anyio in the command's arguments as the shell splits "
+                      "them)", _describe(bad[0]))
+
+    def test_the_flag_spelled_inside_a_quoted_argument_is_that_arguments_text(self):
+        # the pre-push closer's C01 (silent until the allowlist build, 2026-09-24): `-k 'x -p no:anyio y'` hands pytest
+        # the flag's spelling as -k's value, and pytest runs with anyio's plugin, while the regex the flag half keyed on
+        # read the spelling after a space inside the quotes and the step read ok. The words are split as the shell splits
+        # them (passes_flag), on one line and over a backslash continuation inside the quote, where the shell keeps the
+        # backslash and the newline as the argument's text
+        env = '        env:\n          %s: "1"\n' % SWITCH
+        for label, run, args in (
+                ("single quotes on one line", "        run: python -m pytest tests/test_a.py -q -k 'x -p no:anyio y'\n",
+                 "tests/test_a.py -q -k 'x -p no:anyio y'"),
+                ("double quotes on one line", '        run: python -m pytest tests/test_a.py -q -k "x -p no:anyio"\n',
+                 'tests/test_a.py -q -k "x -p no:anyio"'),
+                ("single quotes over a continuation (C01)", "        run: |\n          python -m pytest tests/test_a.py -q -k 'x \\\n"
+                 "          -p no:anyio y'\n", "tests/test_a.py -q -k 'x -p no:anyio y'")):
+            with self.subTest(form=label):
+                src, first = self._with_step_in_shell_job("      - name: Quoted flag (pytest)\n" + env + run)
+                new = self._new(src)
+                self.assertEqual([(verdict(i), i["args"].strip()) for i in new], [("unlisted", args)], [_describe(i) for i in new])
+                self.assertIn("lacks -p no:anyio", _describe(new[0]))
+        # the controls: the two words outside every quote, after a quoted argument, read as the flag, and a quote left
+        # open reads as no flag
+        self.assertTrue(passes_flag("tests/ -q -k 'x y' -p no:anyio"))
+        self.assertTrue(passes_flag('tests/ -p  no:anyio -k "a b"'))
+        self.assertFalse(passes_flag("tests/ -q -k 'x -p no:anyio"))
 
     def test_the_served_step_without_the_flag_is_unlisted_and_named_at_its_line(self):
         # the listing excuses the switch alone: the flag off that line is red even with the entry in place
@@ -2449,6 +2693,11 @@ class PopulationCheckReds(unittest.TestCase):
         # a `#` that is not preceded by whitespace is not a comment (an argument's own character)
         src, first = self._with_step_in_shell_job("      - name: Hash (pytest)\n        run: python -m pytest tests/test_a.py -q -k a#b -p no:anyio\n")
         self.assertEqual([(verdict(i), i["args"].strip()) for i in self._new(self._with_shell_job_env(src))], [("ok", "tests/test_a.py -q -k a#b -p no:anyio")])
+        # a plain run is cut at YAML's comment, a `#` after a space, inside shell quotes too: YAML's value here ends at
+        # `-k "a`, and the flag after it never reaches the shell. Until the allowlist build (2026-09-24) the cut was the
+        # shell split's, which keeps a quoted `#`, and the step read ok (this build's AL-12)
+        src, first = self._with_step_in_shell_job('      - name: Quoted hash (pytest)\n        run: python -m pytest tests/test_a.py -q -k "a #b" -p no:anyio\n')
+        self.assertEqual([(verdict(i), i["args"].strip()) for i in self._new(self._with_shell_job_env(src))], [("unlisted", 'tests/test_a.py -q -k "a')])
 
     def test_a_redirection_a_quoted_operator_and_a_subshell_keep_the_command_whole(self):
         for label, line, args in (
@@ -2484,23 +2733,18 @@ class PopulationCheckReds(unittest.TestCase):
                                  "parentheses and an unquoted comment, with quotes, $( ) and redirections kept whole")
 
     def test_a_pytest_mention_the_parser_does_not_read_as_a_command_is_unparsed_and_named(self):
-        # the parser's limits fail loud: each form it does not read is red until it is read (or moved to a comment)
+        # the parser's limits fail loud: each form it does not read is red until it is read (or moved to a comment). An
+        # indentation indicator and a more-indented line in a folded block were unparsed here until the allowlist
+        # (2026-09-24); both are YAML forms the scan refuses now (YAML_REFUSED_ROWS)
         for label, step, reason in (
                 ("a wrapper", "      - name: Wrapped (pytest)\n        run: uvx --with pytest pytest tests/ -q -p no:anyio\n",
                  "a form the parser does not read as a command"),
                 ("a variable", "      - name: Variable (pytest)\n        run: $PYTEST tests/ -q -p no:anyio\n",
                  "a form the parser does not read as a command"),
-                ("an indentation indicator", "      - name: Indented (pytest)\n        run: |2\n            python -m pytest tests/ -q -p no:anyio\n",
-                 "an indentation indicator (|2) on the block"),
-                ("a more-indented line in a folded block", "      - name: Folded (pytest)\n        run: >\n          echo start\n            python -m pytest tests/ -q -p no:anyio\n",
-                 "a line indented deeper than the block's first line in a folded block"),
                 # a pip install is keyed on the command's program: until 2026-09-23 the words pip and install in a
                 # pytest command's arguments excused it as one
                 ("a wrapper whose arguments spell pip and install", '      - name: Pip words (pytest)\n        run: uvx pytest tests/ -q -k "pip and install"\n',
-                 "a form the parser does not read as a command"),
-                # the pip exclusion is per command in such a block too: until 2026-09-23 the pip half excused the line
-                ("pip then pytest in an indentation-indicator block", "      - name: Indented pip (pytest)\n        run: |2\n            python -m pip install pytest && python -m pytest tests/ -q -p no:anyio\n",
-                 "an indentation indicator (|2) on the block")):
+                 "a form the parser does not read as a command")):
             with self.subTest(form=label):
                 bad = self._new_bad(self._with_step_in_shell_job(step)[0])
                 self.assertEqual([verdict(i) for i in bad], ["unparsed"], "%s: %r" % (label, [_describe(i) for i in bad]))
@@ -2559,13 +2803,12 @@ class PopulationCheckReds(unittest.TestCase):
 
     def test_a_compliant_command_whose_pytest_word_sits_on_a_continuation_line_is_covered(self):
         # the census keys on the span the parser read for a row, line through last_line: keyed on the first line alone
-        # it reds these compliant steps at their continuation lines (round 4's tests-1 refuters, probed)
+        # it reds this compliant step at its continuation lines (round 4's tests-1 refuters, probed; the folded
+        # paragraph and the plain scalar continued are forms the scan refuses since the allowlist, 2026-09-24)
         env = '        env:\n          %s: "1"\n' % SWITCH
         for label, run, offset in (
                 ("backslash continuations", "        run: |\n          python -m \\\n            pytest tests/test_a.py -q -p no:anyio \\\n"
-                                            "            --junitxml=pytest-report.xml\n", 4),
-                ("a folded paragraph", "        run: >\n          python -m\n          pytest tests/test_a.py -q -p no:anyio\n", 4),
-                ("a plain scalar continued", "        run: python -m\n          pytest tests/test_a.py -q -p no:anyio\n", 3)):
+                                            "            --junitxml=pytest-report.xml\n", 4),):
             with self.subTest(form=label):
                 src, first = self._with_first_step_in_shell_job("      - name: Continued\n" + env + run)
                 new = self._new(src)
@@ -2582,24 +2825,22 @@ class PopulationCheckReds(unittest.TestCase):
         src, first = self._with_first_step_in_shell_job("      -   name: Wide name only (pytest)\n          run: make test\n")
         self.assertEqual(pytest_line_census(src)[1], [])
         # a flow mapping over several lines whose line OPENS with name: and carries the run after it (review round 4's
-        # verify, 2026-09-23): the line's key is name, and until then NAME_KEY_RE excused it whole while the parser gave
-        # the step no row, so a pytest with neither the switch nor the flag was silent. A name key is excused only when
-        # no other key follows on its line (NAME_KEY_RE); here `run:` does, so the census names the line
+        # verify, 2026-09-23): the line's key is name, the parser gives the step no row, and a pytest with neither the
+        # switch nor the flag was silent until the census read the rest of the line for a key. The scan refuses the
+        # flow mapping at its opening line since the allowlist (2026-09-24), and the census excuses the name line again
+        # (NAME_KEY_RE alone), so the refusal is this step's one red
         for label, text in (("the run after a comma", "      - {\n          name: FlowMulti, run: python -m pytest tests/test_k.py\n        }\n"),
                             ("the run after the name's quoted value", '      - {\n          name: "Flow, quoted", run: python -m pytest tests/test_k.py\n        }\n'),
-                            ("the run after a comma with no space", "      - {\n          name: FlowMulti,run: python -m pytest tests/test_k.py\n        }\n"),
-                            # an apostrophe inside a plain name opens no quoted scalar, so the run after it is still seen
-                            ("the run after a plain name holding an apostrophe", "      - {\n          name: Don't skip, run: python -m pytest tests/test_k.py\n        }\n")):
+                            ("the run after a comma with no space", "      - {\n          name: FlowMulti,run: python -m pytest tests/test_k.py\n        }\n")):
             with self.subTest(form=label):
                 src, first = self._with_first_step_in_shell_job(text)
-                want = [(n, src.splitlines()[n - 1].strip()) for n in range(first, first + text.count("\n"))
-                        if "python -m pytest" in src.splitlines()[n - 1]]
-                self.assertEqual(len(want), 1, label)
-                self.assertEqual(pytest_line_census(src)[1], want, label)
+                self.assertEqual(yaml_line_forms(src)[1], [(first, "- {", "a flow mapping")], label)
+                self.assertEqual((self._new_bad(src), pytest_line_census(src)[1]), ([], []), label)
         # the exclusion is the name key's own line and no other: a name folded onto a second line that spells pytest
-        # reds there, a red on valid YAML whose message says to reword the line (the pre-push lenses' N07 and B46)
+        # reds there, beside the scan's refusal of the folded block (the pre-push lenses' N07 and B46)
         src, first = self._with_first_step_in_shell_job("      - name: >-\n          Smoke pytest\n          on Linux\n        run: echo hi\n")
         self.assertEqual(pytest_line_census(src)[1], [(first + 1, "Smoke pytest")])
+        self.assertEqual(yaml_line_forms(src)[1], [(first, "- name: >-", "a folded block scalar (ci.yml's blocks are literal)")])
         # the controls: a name key that spells pytest with no key after it is still excused, whether its value holds a
         # comma, brackets and an expression, a `: ` inside its quoted scalar, or a `: ` in a trailing comment (in block
         # context a plain scalar cannot hold `: `, so an unquoted one outside a comment is the test)
@@ -2629,49 +2870,6 @@ class PopulationCheckReds(unittest.TestCase):
         # the control: an unquoted ` #` is a comment, and a pytest word after it is cut with it
         src, first = self._with_first_step_in_shell_job("      - name: Commented\n        run : make test  # pytest later\n")
         self.assertEqual(pytest_line_census(src)[1], [])
-
-    def test_a_tagged_run_block_is_read_through_and_an_anchored_run_is_unparsed(self):
-        # review round 4's verify (attacks, M1, 2026-09-23): a node property before the block indicator (`run: &cmd |`,
-        # `run: !!str |`) kept BLOCK_INDICATOR_RE from matching, so the literal block was folded into one command: the
-        # second command's -p no:anyio was credited to the first, and a bare ROMP_SDK_REQUIRE=1 line, a shell variable
-        # that is not exported, read as a prefix on the pytest command after it; both read ok. The properties are set
-        # aside to split the scalar into its lines, as the same block without them is. A tag is read through; a run that
-        # carries an anchor is unparsed at each pytest line, since an alias of it (`run: *cmd`, a line that never spells
-        # pytest) runs the same text under another step's env, which the parser does not follow
-        env = '        env:\n          %s: "1"\n' % SWITCH
-        two = "          python -m pytest -q tests/test_a.py\n          python -m pytest -q -p no:anyio tests/test_b.py\n"
-        bare = "          %s=1\n          python -m pytest -q -p no:anyio tests/test_a.py\n" % SWITCH
-        for label, head in (("a tag", "        run: !!str |\n"), ("a tag, strip chomping", "        run: !!str |-\n")):
-            with self.subTest(form=label, block="two commands, the first unflagged"):
-                src, first = self._with_first_step_in_shell_job("      - name: Tagged (pytest)\n" + env + head + two)
-                new = self._new(src)
-                self.assertEqual([(i["line"], verdict(i), i["args"].strip()) for i in new],
-                                 [(first + 4, "unlisted", "-q tests/test_a.py"), (first + 5, "ok", "-q -p no:anyio tests/test_b.py")],
-                                 "%s: %r" % (label, [_describe(i) for i in new]))
-                self.assertIn("lacks -p no:anyio", _describe(new[0]))
-                self.assertEqual(pytest_line_census(src)[1], [], label)
-            with self.subTest(form=label, block="a bare assignment of the switch, then a flagged pytest"):
-                src, first = self._with_first_step_in_shell_job("      - name: Tagged (pytest)\n" + head + bare)
-                new = self._new(src)
-                self.assertEqual([(i["line"], verdict(i)) for i in new], [(first + 3, "unparsed")], "%s: %r" % (label, [_describe(i) for i in new]))
-                self.assertIn("spells ROMP_SDK_REQUIRE other than as a VAR=value prefix", _describe(new[0]))
-        for label, head in (("an anchor on a block", "        run: &cmd |\n"), ("an anchor and a tag", "        run: &cmd !!str |\n"),
-                            ("a tag and an anchor", "        run: !!str &cmd |\n")):
-            for block, text, lines in (("two commands", env + head + two, (4, 5)), ("a bare assignment", head + bare, (3,))):
-                with self.subTest(form=label, block=block):
-                    src, first = self._with_first_step_in_shell_job("      - name: Anchored (pytest)\n" + text)
-                    new = self._new(src)
-                    self.assertEqual([(i["line"], verdict(i)) for i in new], [(first + n, "unparsed") for n in lines],
-                                     "%s, %s: %r" % (label, block, [_describe(i) for i in new]))
-                    for i in new:
-                        self.assertIn("an anchor (&cmd) on the run: an alias of it elsewhere (*cmd)", _describe(i))
-                    self.assertEqual(pytest_line_census(src)[1], [], "%s, %s: the rows cover the block's lines" % (label, block))
-        # on a one-line plain scalar too, and on a run whose text never spells pytest the anchor gives no row
-        src, first = self._with_first_step_in_shell_job("      - name: Anchored line (pytest)\n" + env +
-                                                        "        run: &cmd python -m pytest -q -p no:anyio tests/test_a.py\n")
-        self.assertEqual([(i["line"], verdict(i)) for i in self._new(src)], [(first + 3, "unparsed")])
-        src, first = self._with_first_step_in_shell_job("      - name: Anchored make\n        run: &cmd make test\n")
-        self.assertEqual(self._new(src), [])
 
     def test_a_backslash_continuation_is_joined_the_way_the_shell_joins_it(self):
         # review round 4's verify (attacks, M3, 2026-09-23): the parser joined a backslash continuation with a space, and
@@ -2751,20 +2949,26 @@ class PopulationCheckReds(unittest.TestCase):
                 src, first = self._with_job_before_shell(head + block)
                 self.assertEqual(pytest_line_census(src)[1], [], label)
 
-    def test_a_key_shaped_line_in_an_env_block_scalar_is_its_text_and_the_key_is_unclean(self):
+    def test_a_key_shaped_line_deeper_than_an_env_blocks_keys_is_not_read_and_is_named(self):
         # the owner's fail-closed design (2026-09-23; the pre-push lenses' S10, S11 and S12): _env_block read a key at
         # any depth, so `ROMP_SDK_REQUIRE: "1"` written as a line of another key's `|` or `>` block read as the switch
-        # on and the switch census counted it a clean key line, while YAML held it as that key's text and pytest ran
-        # without the switch. A key is read at the block's first key indent only, a block scalar's lines are its text,
-        # and a block-scalar value makes its key unclean: the step reads unlisted and the switch census names the line
+        # on and the switch census counted it a key line, while YAML held it as that key's text and pytest ran without
+        # the switch. A key is read at the block's first key indent only, and a deeper line is never a key here: the
+        # step reads unlisted and the switch census names the line. The block scalar itself is refused by the scan
+        # (a literal block outside a step's run, a folded block); until the allowlist (2026-09-24) _env_block read such
+        # a value's key as not clean, and the census named a switch key whose own value was a block scalar or ran on
         run = "        run: python -m pytest tests/test_a.py -q -p no:anyio\n"
-        for label, indicator in (("a literal block", "|"), ("a folded block", ">"), ("a literal block, strip chomping", "|-")):
+        for label, indicator, what in (("a literal block", "|", "a literal block scalar outside a step's run"),
+                                       ("a folded block", ">", "a folded block scalar (ci.yml's blocks are literal)"),
+                                       ("a literal block, strip chomping", "|-", "a block scalar header with a chomping or "
+                                        "indentation indicator, or text after it")):
             with self.subTest(form=label, scope="step"):
                 src, first = self._with_step_in_shell_job("      - name: Block text (pytest)\n        env:\n          NOTES: %s\n"
                                                           '            %s: "1"\n' % (indicator, SWITCH) + run)
                 new = self._new(src)
                 self.assertEqual([(i["env"].get(SWITCH), verdict(i)) for i in new], [(None, "unlisted")], [_describe(i) for i in new])
                 self.assertEqual(switch_line_census(src)[1], [(first + 3, '%s: "1"' % SWITCH)], label)
+                self.assertEqual(yaml_line_forms(src)[1], [(first + 2, "NOTES: %s" % indicator, what)], label)
         with self.subTest(scope="job"):
             src = self.src.replace("\n  shell:\n    name: Shell", '\n  shell:\n    env:\n      NOTES: |\n        %s: "1"\n    name: Shell' % SWITCH, 1)
             self.assertNotEqual(src, self.src, "the shell job's header moved: re-anchor this case")
@@ -2773,297 +2977,79 @@ class PopulationCheckReds(unittest.TestCase):
             self.assertEqual([(i["env"].get(SWITCH), verdict(i)) for i in new], [(None, "unlisted")], [_describe(i) for i in new])
             at = [n + 1 for n, l in enumerate(src.splitlines()) if l == '        %s: "1"' % SWITCH]
             self.assertEqual(switch_line_census(src)[1], [(at[0], '%s: "1"' % SWITCH)])
-        # the switch's own value as a block scalar (`|-` then 1 is "1" to YAML): its key line is not read clean, the
-        # value read is the indicator, never 1, and the census names the key line
+        # a mapping nested under an env key (valid YAML the scan accepts, an env value the runner refuses): the deeper
+        # switch line is that key's value, not read, and named (this build's AL-10)
+        src, first = self._with_step_in_shell_job('      - name: Nested env (pytest)\n        env:\n          NOTES:\n            %s: "1"\n' % SWITCH + run)
+        self.assertEqual([(i["env"].get(SWITCH), verdict(i)) for i in self._new(src)], [(None, "unlisted")])
+        self.assertEqual(switch_line_census(src)[1], [(first + 3, '%s: "1"' % SWITCH)])
+        self.assertEqual(yaml_line_forms(src)[1], [])
+        # the switch's own value as a block scalar (`|-` then 1 is "1" to YAML) reads as its indicator, never 1, and the
+        # scan refuses it; the census counts the key line as read (the E35 case, an empty `>-` in a job with no pytest
+        # step, is a scan refusal too, YAML_REFUSED_ROWS)
         src, first = self._with_step_in_shell_job("      - name: Block switch (pytest)\n        env:\n          %s: |-\n            1\n" % SWITCH + run)
         self.assertEqual([(i["env"].get(SWITCH), verdict(i)) for i in self._new(src)], [("|-", "unlisted")])
-        self.assertEqual(switch_line_census(src)[1], [(first + 2, "%s: |-" % SWITCH)])
-        # an empty block scalar (`>-` with no lines, "" to YAML) in a job with no pytest step: no invocation reads the
-        # value, so the switch census is the one check that sees it, and the block-scalar value alone makes the key
-        # unclean (the fail-closed design's third verify pass, 2026-09-24: E35, the one plant a mutant reading a
-        # block-scalar value as clean changed; the module stayed green under that mutant until this case)
-        src, first = self._with_job_before_shell("  nopy:\n    runs-on: ubuntu-latest\n    env:\n      %s: >-\n      OTHER: x\n"
-                                                 "    steps:\n      - run: echo hi\n" % SWITCH)
-        self.assertEqual(self._new(src), [], "the job runs no pytest")
-        self.assertEqual(switch_line_census(src)[1], [(first + 3, "%s: >-" % SWITCH)])
-        # the controls: a real switch key at the block's key indent after another key's block scalar reads, and a `#`
-        # line inside the block scalar is its text; the census names nothing
-        src, first = self._with_step_in_shell_job("      - name: After a block (pytest)\n        env:\n          NOTES: |\n"
-                                                  "            # a line of text\n            more text\n          %s: \"1\"\n" % SWITCH + run)
-        self.assertEqual([(i["env"].get(SWITCH), verdict(i)) for i in self._new(src)], [("1", "ok")])
         self.assertEqual(switch_line_census(src)[1], [])
-        # a line at the key indent the regex does not read as a key holds the deeper lines after it: they are its value,
-        # so the clean switch above it stays read and the census names nothing (the fail-closed design's third verify
-        # pass, 2026-09-24: E29, E32 and E33, each named at the switch's line on valid YAML until then, the deeper line
-        # counted against the switch). A deeper line that spells the switch is still named, at its own line
-        for label, other in (("a quoted key's block scalar (E29)", '          "OTHER-X": |\n            text\n'),
-                             ("a hyphenated key's block scalar (E32)", "          OTHER-X: |\n            text\n"),
-                             ("a quoted key's plain value continued (E33)", '          "OTHER": a\n            b\n')):
-            with self.subTest(control=label):
-                src, first = self._with_step_in_shell_job("      - name: After an unread key (pytest)\n        env:\n          %s: \"1\"\n"
-                                                          % SWITCH + other + run)
-                self.assertEqual([(i["env"].get(SWITCH), verdict(i)) for i in self._new(src)], [("1", "ok")], label)
-                self.assertEqual(switch_line_census(src)[1], [], label)
-        src, first = self._with_step_in_shell_job("      - name: Switch text under an unread key (pytest)\n        env:\n          %s: \"1\"\n"
-                                                  '          "OTHER-X": |\n            %s: "0"\n' % (SWITCH, SWITCH) + run)
+        self.assertEqual([n - first for n, _t, _w in yaml_line_forms(src)[1]], [2])
+        # the controls: a real switch key at the block's key indent after another key and its nested lines reads, and a
+        # line deeper than the keys that spells the switch is named at its own line
+        src, first = self._with_step_in_shell_job("      - name: After a nested key (pytest)\n        env:\n          NOTES:\n"
+                                                  "            OTHER: x\n          %s: \"1\"\n" % SWITCH + run)
+        self.assertEqual([(i["env"].get(SWITCH), verdict(i)) for i in self._new(src)], [("1", "ok")])
+        self.assertEqual((switch_line_census(src)[1], yaml_line_forms(src)[1]), ([], []))
+        src, first = self._with_step_in_shell_job("      - name: Switch under a nested key (pytest)\n        env:\n          %s: \"1\"\n"
+                                                  '          NOTES:\n            %s: "0"\n' % (SWITCH, SWITCH) + run)
         self.assertEqual([(i["env"].get(SWITCH), verdict(i)) for i in self._new(src)], [("1", "ok")])
         self.assertEqual(switch_line_census(src)[1], [(first + 4, '%s: "0"' % SWITCH)])
+        # a comment line indented no further than `env:` sits inside the block to YAML, which skips comment lines
+        # wherever they are: the switch after it is read, and nothing is named (until the allowlist build, 2026-09-24,
+        # such a line ended the block here, and the switch after it read unset; found by mutating the real file)
+        src, first = self._with_step_in_shell_job("      - name: Comment in env (pytest)\n        env:\n          OTHER: x\n"
+                                                  "# a comment at column 0\n      # and one at the steps' indent\n"
+                                                  "          %s: \"1\"\n" % SWITCH + run)
+        self.assertEqual([(i["env"].get(SWITCH), verdict(i)) for i in self._new(src)], [("1", "ok")])
+        self.assertEqual((switch_line_census(src)[1], yaml_line_forms(src)[1]), ([], []))
 
-    def test_a_yaml_anchor_alias_or_merge_key_anywhere_is_refused_at_its_line(self):
-        # the owner's fail-closed design (2026-09-23): the parser reads no anchor, alias or merge key, and the pre-push
-        # lenses planted the first four of these beside a pytest run without the switch or the flag and read green,
-        # since no other check here names them (asserted per plant: nothing else is red). unread_yaml_forms refuses each
-        # at its line; a merge key, which GitHub's runner refuses, is refused the same way
-        sw_job = '    runs-on: ubuntu-latest\n    env:\n      %s: "1"\n' % SWITCH
-        run_ok = "        run: python -m pytest tests/test_a.py -q -p no:anyio\n"
-        for label, where, text, named in (
-                ("an anchor on a name: value, aliased by a run (N06)", "first",
-                 "      - name: &cmd python -m pytest tests/test_a.py -q\n        run: *cmd\n",
-                 ((1, "an anchor (&cmd)"), (2, "an alias (*cmd)"))),
-                ("an anchored step aliased into a job without the switch (A01b)", "job",
-                 "  anch:\n" + sw_job + "    steps:\n      - &pystep\n        name: Anchored step (pytest)\n" + run_ok +
-                 "  alias:\n    runs-on: ubuntu-latest\n    steps:\n      - *pystep\n",
-                 ((6, "an anchor (&pystep)"), (12, "an alias (*pystep)"))),
-                ("an anchored steps list aliased into a job without the switch (A02b)", "job",
-                 "  anch:\n" + sw_job + "    steps: &st\n      - name: In anchored list (pytest)\n" + run_ok +
-                 "  copy:\n    runs-on: ubuntu-latest\n    steps: *st\n",
-                 ((5, "an anchor (&st)"), (10, "an alias (*st)"))),
-                ("env: *x, its anchor on a line of its own (the env alias plant)", "job",
-                 "  setter:\n" + sw_job + "    steps:\n      - name: Env anchor\n        env:\n          &zeroenv\n"
-                 '          %s: "0"\n        run: echo anchor\n      - name: Env alias (pytest)\n        env: *zeroenv\n' % SWITCH + run_ok,
-                 ((8, "an anchor (&zeroenv)"), (12, "an alias (*zeroenv)"))),
-                # a tag is a node property like an anchor, so an anchor after it is read (the first verify pass's Y26: the
-                # anchor after a tag had no case, and the scan reading a tag as a plain scalar missed it)
-                ("an anchor after a tag on a name: value, aliased by a run (Y26)", "first",
-                 "      - name: !!str &tn python -m pytest tests/test_a.py -q\n        run: *tn\n",
-                 ((1, "an anchor (&tn)"), (2, "an alias (*tn)"))),
-                ("a merge key bringing a run into a step", "first",
-                 "      - &base\n        name: Base\n        run: echo base\n      - <<: *base\n        name: Merged\n",
-                 ((1, "an anchor (&base)"), (4, "a merge key (<<)"), (4, "an alias (*base)"))),
-                # a block scalar's text runs only to the lines indented past the key that opened it, never the dash's
-                # column: the alias on the step's next key is read
-                ("an alias on the key after a `- run: |` block", "first",
-                 "      - name: Anchor\n        env: &e\n          A: b\n        run: echo a\n      - run: |\n          echo b\n"
-                 "        env: *e\n", ((2, "an anchor (&e)"), (7, "an alias (*e)")))):
+    def _splice(self, where, text):
+        # a row's text at its place in a copy of the live file (YAML_REFUSED_ROWS' `where`): (src, the text's first line)
+        src = self._with_shell_job_env(self.src) if where.endswith("+env") else self.src
+        where = where.replace("+env", "")
+        if where == "first":
+            return self._with_first_step_in_shell_job(text, src)
+        if where == "last":
+            return self._with_step_in_shell_job(text, src)
+        if where == "job":
+            return self._with_job_before_shell(text, src)
+        if where == "start":
+            return text + src, 1
+        head = src.rstrip("\n") + "\n"
+        return head + text, len(head.splitlines()) + 1
+
+    def test_every_form_outside_the_allowlist_is_refused_by_name_at_its_line(self):
+        # the owner's allowlist design (2026-09-24): the scan accepts the forms the real file uses and refuses every
+        # other line by name. Until then it refused named forms one at a time, and the pre-push lenses and three verify
+        # passes planted a pytest run without the switch or the flag behind forms the line reading half-modelled; each
+        # row is one of those plants or a form of its own, refused at exactly the lines it names. A row marked alone is
+        # red for nothing else here (no population verdict, no census line, no job key), so the refusal is what reds it.
+        # After a refused line the lines indented past it are its own and not scanned, so a construct is named once
+        for label, where, text, named, alone in YAML_REFUSED_ROWS:
             with self.subTest(form=label):
-                src, first = (self._with_job_before_shell if where == "job" else self._with_first_step_in_shell_job)(text)
+                src, first = self._splice(where, text)
                 want = [(first + k - 1, src.splitlines()[first + k - 2].strip(), what) for k, what in named]
-                self.assertEqual(unread_yaml_forms(src), sorted(want), label)
-                self.assertEqual((self._new_bad(src), pytest_line_census(src)[1], switch_line_census(src)[1], unread_job_keys(src)[1]),
-                                 ([], [], [], []), "%s: the refusal is the one red" % label)
-        # an anchor or alias after an explicit key's `?`, and an anchor after the document start marker, are refused
-        # at their lines too (the first verify pass's Y21 and Y22: neither line was named; Y21's pytest value line is
-        # also named by the line census, a layout the parser does not read)
-        src, first = self._with_first_step_in_shell_job("      - name: Explicit key\n        ? &rk run\n        : echo one\n"
-                                                        "      - name: Explicit alias (pytest)\n        ? *rk\n"
-                                                        "        : python -m pytest tests/test_a.py -q\n")
-        self.assertEqual([(n - first + 1, w) for n, _t, w in unread_yaml_forms(src)], [(2, "an anchor (&rk)"), (5, "an alias (*rk)")])
-        self.assertEqual([n - first + 1 for n, _t in pytest_line_census(src)[1]], [6])
-        self.assertEqual(unread_yaml_forms("--- &doc\n" + self.src), [(1, "--- &doc", "an anchor (&doc)")])
-        # the controls, the real file's own shapes: `&&`, `2>&1` and a `*` glob in a run; a literal block whose lines
-        # open with `*)` and `&>`; a quoted scalar holding `*` and `&`; each reads as text
-        for label, text in (("operators and a glob in a plain run", "      - name: Plain\n        run: make a && ls tests/*.py 2>&1 | tee log\n"),
-                            ("a literal block's lines", "      - name: Block\n        run: |\n          case $x in\n            *) echo other ;;\n"
-                                                        "          esac\n          &>/dev/null true\n"),
-                            ("a quoted scalar", '      - name: "* & *"\n        run: echo \'&x *y\'\n')):
-            with self.subTest(control=label):
-                self.assertEqual(unread_yaml_forms(self._with_first_step_in_shell_job(text)[0]), [], label)
+                self.assertEqual(yaml_line_forms(src)[1], want, label)
+                if alone:
+                    self.assertEqual((self._new_bad(src), pytest_line_census(src)[1], switch_line_census(src)[1], unread_job_keys(src)[1]),
+                                     ([], [], [], []), "%s: the refusal is the one red" % label)
 
-    def test_a_step_or_env_written_as_a_flow_collection_is_refused_at_its_line(self):
-        # the owner's fail-closed design (2026-09-23; the pre-push lenses' N04 and N05): the parser reads no step in
-        # flow style, and a flow mapping over several lines whose name line carried a JSON-style `"run":` key read
-        # green, the census excusing the line as a lone name key. A flow mapping or sequence holding a run, env or shell
-        # key, or a name key beside another key, is refused at the key's line; one written over several lines is
-        # refused at its opening line as well (the fail-closed design's first verify pass: no scan state crosses a line)
-        over_lines = (1, "a flow collection ({) continued past its line")
-        for label, text, named in (
-                ('a JSON-style "run": after the name, over several lines (N04)',
-                 '      - {\n          name: FlowAdj, "run":python -m pytest tests/test_a.py -q\n        }\n',
-                 [over_lines, (2, "a flow mapping holding the key 'run'")]),
-                ("the same with 'run': (N05)",
-                 "      - {\n          name: FlowAdj, 'run':python -m pytest tests/test_a.py -q\n        }\n",
-                 [over_lines, (2, "a flow mapping holding the key 'run'")]),
-                ("a one-line flow step", "      - {name: Flow step, run: python -m pytest tests/test_a.py -q}\n", [(1, "a flow mapping holding the key 'run'")]),
-                ("a flow env on a flow step", '      - {name: Flow env, env: {%s: "0"}, uses: ./a}\n' % SWITCH, [(1, "a flow mapping holding the key 'env'")]),
-                ("a shell key in a flow sequence's mapping", "      - uses: ./a\n        with: [{shell: bash}]\n", [(2, "a flow mapping holding the key 'shell'")]),
-                ("a name beside another key", "      - {name: Flow action, uses: ./.github/actions/a}\n", [(1, "a flow mapping holding a name key beside another key")]),
-                # an entry of a flow mapping is a key whatever follows it, read up to its first colon
-                ("a plain run key with no space after its colon", "      - {name: Tight, run:python -m pytest tests/test_a.py -q}\n",
-                 [(1, "a flow mapping holding the key 'run'")])):
+    def test_every_form_the_real_file_uses_is_accepted_in_a_step(self):
+        # the controls: shapes in the forms the real file uses, the file's own among them (`&&`, `2>&1` and a glob in a
+        # run, a literal block's lines that open with YAML indicators, quoted scalars holding them, a flow sequence of
+        # scalars, trailing comments, a comment line holding a character outside ASCII); the scan refuses none, and
+        # after a literal block the scan reads the next step's keys again
+        for label, text in YAML_ACCEPTED_ROWS:
             with self.subTest(form=label):
-                src, first = self._with_first_step_in_shell_job(text)
-                self.assertEqual([(n, w) for n, _t, w in unread_yaml_forms(src)], [(first + k - 1, what) for k, what in named], label)
-        # a flow collection or a quoted scalar left open at the end of the file is refused at the line that opened it
-        for label, tail, what in (("a flow sequence", "zz-open: [a, b\n", "a flow collection ([) continued past its line"),
-                                  ("a quoted scalar", 'zz-open: "text\n', "a quoted scalar continued past its line")):
-            with self.subTest(open=label):
-                src = self.src.rstrip("\n") + "\n" + tail
-                self.assertEqual(unread_yaml_forms(src), [(len(src.splitlines()), tail.strip(), what)], label)
-        # the N04 line is named by the census as well: a `:` right after a quoted scalar is a key, so the line is not a
-        # lone name key (_name_key_alone)
-        src, first = self._with_first_step_in_shell_job('      - {\n          name: FlowAdj, "run":python -m pytest tests/test_a.py -q\n        }\n')
-        self.assertEqual([n for n, _t in pytest_line_census(src)[1]], [first + 1])
-        # the controls: a flow sequence of values (the file's `branches: [main]` and its matrix lists), a flow mapping
-        # of an action's inputs, and a flow mapping holding a name alone
-        for label, text in (("a flow sequence of values", "      - uses: ./a\n        with:\n          list: ['3.10', \"3.13\", main]\n"),
-                            ("a flow mapping of inputs", "      - uses: actions/setup-python@v5\n        with: {python-version: '3.12', cache: pip}\n"),
-                            ("a name alone", "      - uses: ./a\n        with: {name: only}\n")):
-            with self.subTest(control=label):
-                self.assertEqual(unread_yaml_forms(self._with_first_step_in_shell_job(text)[0]), [], label)
-
-    def test_a_quoted_scalar_or_flow_collection_continued_past_its_line_and_a_double_quoted_escape_are_refused(self):
-        # the fail-closed design's first verify pass (2026-09-23): the scan carried a quoted scalar or flow collection
-        # to the next line as YAML does, and a plain scalar continued onto a line that opens with a quote or a bracket
-        # carried one YAML never opened, so the lines up to the next such quote or bracket were not read as nodes: the
-        # env alias, name anchor and anchored step plants behind such a line (W01 to W03) each read green beside a
-        # pytest run without the switch or the flag. A key-shaped switch line inside another env key's quoted scalar
-        # over several lines (Z01 to Z04b, Z14) read as the switch on, and a double-quoted run's \n escape started a
-        # second pytest command without the flag that the parser read as part of the first (Q01; a \x escape spells
-        # pytest or the switch in text the checks read without it, Q02 and Q03). Each was silent at the round-4 takes
-        # head and at the owner's fail-closed head. Each is refused at the line that opens it, and nothing else here is
-        # red (asserted per plant), so the refusal is what reds it
-        sw_job = '    runs-on: ubuntu-latest\n    env:\n      %s: "1"\n' % SWITCH
-        run_ok = "        run: python -m pytest tests/test_a.py -q -p no:anyio\n"
-        quote = "a quoted scalar continued past its line"
-        escape = "a double-quoted scalar holding a backslash escape"
-        for label, where, text, named in (
-                ("an env alias, each name continued onto a line opening with a double quote (W01)", "job",
-                 "  setter:\n" + sw_job + '    steps:\n      - name: Env anchor\n          "x\n        env:\n          &zeroenv\n'
-                 '          %s: "0"\n        run: echo anchor\n      - name: Env alias (pytest)\n          "y\n        env: *zeroenv\n' % SWITCH + run_ok,
-                 ((7, quote), (13, quote))),
-                ("a name anchor aliased by a run, behind a name continued onto a line opening with a double quote (W02)", "first",
-                 '      - name: Prior step\n          "x\n        run: echo prior\n      - name: &cmd python -m pytest tests/test_a.py -q\n'
-                 "        run: *cmd\n", ((2, quote),)),
-                ("an anchored step aliased into a switchless job, behind a single quote (W03)", "job",
-                 "  anch:\n" + sw_job + "    steps:\n      - name: Prior\n          'x\n        run: echo prior\n      - &pystep\n"
-                 "        name: Anchored step (pytest)\n" + run_ok + "  alias:\n    runs-on: ubuntu-latest\n    steps:\n      - *pystep\n",
-                 ((7, quote),)),
-                ("the switch line inside a step env's double-quoted scalar (Z01)", "last",
-                 '      - name: Quoted text (pytest)\n        env:\n          NOTES: "first line\n          %s: \'1\'\n          end"\n' % SWITCH + run_ok,
-                 ((3, quote),)),
-                ("the same in a single-quoted scalar (Z02)", "last",
-                 "      - name: Single quoted text (pytest)\n        env:\n          NOTES: 'first line\n          %s: \"1\"\n          end'\n" % SWITCH + run_ok,
-                 ((3, quote),)),
-                ("the switch line inside a step name's quoted scalar over the env: lines (Z04b)", "last",
-                 '      - name: "Quoted name\n        env:\n          %s: \'1\'\n        tail"\n' % SWITCH + run_ok, ((1, quote),)),
-                ("a quoted scalar opened on a later key's line (Z14)", "last",
-                 '      - name: Quoted text two (pytest)\n        env:\n          A: plain\n          B: "open\n          %s: \'1\'\n'
-                 '          "\n' % SWITCH + run_ok, ((4, quote),)),
-                ("a double-quoted run whose \\n escape starts a second, unflagged pytest (Q01)", "last, switch",
-                 '      - name: Escaped newline (pytest)\n        run: "python -m pytest tests/test_a.py -q -p no:anyio \\npytest tests/test_b.py -q"\n',
-                 ((2, escape),)),
-                ("a double-quoted run whose \\x escape spells pytest (Q02)", "last",
-                 '      - name: Escaped word\n        run: "python -m py\\x74est tests/test_a.py -q"\n', ((2, escape),)),
-                ("a double-quoted env key whose \\x escape spells the switch, set to 0 (Q03)", "last, switch",
-                 '      - name: Escaped key (pytest)\n        env:\n          "ROMP_SDK_\\x52EQUIRE": "0"\n' + run_ok, ((3, escape),))):
-            with self.subTest(form=label):
-                if where == "job":
-                    src, first = self._with_job_before_shell(text)
-                elif where == "first":
-                    src, first = self._with_first_step_in_shell_job(text)
-                else:
-                    src, first = self._with_step_in_shell_job(text, self._with_shell_job_env(self.src) if "switch" in where else None)
-                want = [(first + k - 1, src.splitlines()[first + k - 2].strip(), what) for k, what in named]
-                self.assertEqual(unread_yaml_forms(src), want, label)
-                self.assertEqual((self._new_bad(src), pytest_line_census(src)[1], switch_line_census(src)[1], unread_job_keys(src)[1]),
-                                 ([], [], [], []), "%s: the refusal is the one red" % label)
-        # a job env's quoted scalar over several lines holding the switch line (Z03): refused at its opening line
-        src = self.src.replace("\n  shell:\n    name: Shell", '\n  shell:\n    env:\n      NOTES: "first\n      %s: \'1\'\n      end"\n    name: Shell' % SWITCH, 1)
-        self.assertNotEqual(src, self.src, "the shell job's header moved: re-anchor this case")
-        src, _first = self._with_step_in_shell_job("      - name: Job quoted text (pytest)\n" + run_ok, src)
-        at = [n + 1 for n, l in enumerate(src.splitlines()) if l == '      NOTES: "first']
-        self.assertEqual(unread_yaml_forms(src), [(at[0], 'NOTES: "first', quote)])
-        # a flow collection continued past its line is refused at its opening line, and the lines inside it are read as
-        # flow content: an alias after a dash there was not named (an anchored step aliased behind a name continued onto
-        # a line opening with `[`); and a flow sequence of values over two lines is refused alone
-        src, first = self._with_job_before_shell("  anch:\n" + sw_job + "    steps:\n      - &pystep\n        name: Anchored step (pytest)\n" + run_ok +
-                                                 "  alias:\n    runs-on: ubuntu-latest\n    steps:\n      - name: Prior\n          [y\n      - *pystep\n"
-                                                 "      - name: Closer y]\n")
-        self.assertEqual([(n - first + 1, w) for n, _t, w in unread_yaml_forms(src)],
-                         [(6, "an anchor (&pystep)"), (13, "a flow collection ([) continued past its line")])
-        src, first = self._with_first_step_in_shell_job("      - uses: ./a\n        with:\n          list: ['3.10',\n            main]\n")
-        self.assertEqual(unread_yaml_forms(src), [(first + 2, "list: ['3.10',", "a flow collection ([) continued past its line")])
-        # a refused quoted scalar is followed to its close: its later lines are its text, never nodes, so a second line
-        # opening with `&` is not also an anchor
-        src, first = self._with_first_step_in_shell_job('      - name: "Build\n          &x and *y test"\n        run: echo hi\n')
-        self.assertEqual(unread_yaml_forms(src), [(first, '- name: "Build', quote)])
-        # a double-quoted scalar's escaped quote does not close it, so the text after the escape is its text: the value
-        # below is refused once, for the escape, and its `*y` is not an alias (the first verify pass's Y27: the escape
-        # rule had no case)
-        src, first = self._with_first_step_in_shell_job('      - uses: ./a\n        with: {a: "x\\", *y"}\n')
-        self.assertEqual(unread_yaml_forms(src), [(first + 1, 'with: {a: "x\\", *y"}', escape)])
-        # the controls: quoted scalars closed on their line, a single-quoted one holding `''`, and a double-quoted one
-        # without a backslash, in a run, a name and an action's inputs
-        for label, text in (("closed quoted scalars", '      - name: "Quoted (x)"\n        run: \'echo \'\'a\'\' "b"\'\n'),
-                            ("a double-quoted value in a flow mapping", '      - uses: ./a\n        with: {a: "x, *y", b: \'z\'}\n')):
-            with self.subTest(control=label):
-                self.assertEqual(unread_yaml_forms(self._with_first_step_in_shell_job(text)[0]), [], label)
-
-    def test_a_comment_in_a_flow_collection_with_no_space_before_it_is_refused_and_the_collection_read_as_open(self):
-        # the fail-closed design's second verify pass (2026-09-23): PyYAML and yaml.v3 read a `#` right after `[`, `{`,
-        # `,` or a closing quote inside a flow collection as a comment, so the collection stays open onto the next lines;
-        # the scan read it as a scalar, closed the collection on its line and read only the first node of each line
-        # after it. Behind such a `#` an anchored flow step and its alias (D01), a flow step whose double-quoted run
-        # holds `\n` and a second pytest without the switch or the flag (D02, which the census excused as a pip
-        # install), and a flow mapping's anchored key and its alias (D04) each read green at the round-4 takes head and
-        # at the fail-closed head. The `#` is refused, the collection is refused as continued past its line, and its
-        # later lines are read as flow content, so each form behind it is named; nothing else here is red
-        comment = "a comment in a flow collection with no space before it"
-        open_seq = "a flow collection ([) continued past its line"
-        open_map = "a flow collection ({) continued past its line"
-        for label, where, text, named in (
-                ("an anchored flow step and its alias, each behind `[#` (D01)", "job",
-                 "  anch:\n    runs-on: ubuntu-latest\n    steps: [#]\n"
-                 "      {uses: actions/checkout@v4}, &hidstep {name: Hidden, run: echo hidden} ]\n"
-                 "  alias:\n    runs-on: ubuntu-latest\n    steps: [#]\n      {uses: actions/checkout@v4}, *hidstep ]\n",
-                 ((3, comment), (3, open_seq), (4, "a flow mapping holding the key 'run'"), (4, "an anchor (&hidstep)"),
-                  (7, comment), (7, open_seq), (8, "an alias (*hidstep)"))),
-                ("a flow step whose double-quoted run starts a second, unflagged pytest, behind `[#` (D02)", "job",
-                 "  hid:\n    runs-on: ubuntu-latest\n    steps: [#]\n"
-                 '      {uses: actions/checkout@v4}, {run: "true; pip install pytest\\npytest tests/test_a.py -q"} ]\n',
-                 ((3, comment), (3, open_seq), (4, "a double-quoted scalar holding a backslash escape"),
-                  (4, "a flow mapping holding the key 'run'"))),
-                ("a flow mapping's anchored key and its alias, each behind a closing quote's `#` (D04)", "first",
-                 '      - uses: ./.github/actions/x\n        with: {a: "b"#}\n          , &hidkey c: e}\n'
-                 '      - uses: ./.github/actions/y\n        with: {a: "b"#}\n          , *hidkey : f}\n',
-                 ((2, comment), (2, open_map), (3, "an anchor (&hidkey)"), (5, comment), (5, open_map), (6, "an alias (*hidkey)")))):
-            with self.subTest(form=label):
-                src, first = (self._with_job_before_shell if where == "job" else self._with_first_step_in_shell_job)(text)
-                want = [(first + k - 1, src.splitlines()[first + k - 2].strip(), what) for k, what in named]
-                self.assertEqual(unread_yaml_forms(src), want, label)
-                self.assertEqual((self._new_bad(src), pytest_line_census(src)[1], switch_line_census(src)[1], unread_job_keys(src)[1]),
-                                 ([], [], [], []), "%s: the refusal is the one red" % label)
-        # the controls: a `#` inside a plain scalar in a flow collection is the scalar's text, and a spaced comment
-        # after a flow collection that closes on its line is a comment; neither is refused
-        for label, text in (("a plain scalar holding #", "      - uses: ./a\n        with: {pattern: a#b, list: [c#d]}\n"),
-                            ("a spaced comment after a closed collection", "      - uses: ./a\n        with: {a: b} # c\n")):
-            with self.subTest(control=label):
-                self.assertEqual(unread_yaml_forms(self._with_first_step_in_shell_job(text)[0]), [], label)
-
-    def test_a_block_scalar_header_on_the_line_after_its_key_is_refused_and_its_lines_are_text(self):
-        # found closing the fail-closed design's first verify pass (2026-09-23): YAML reads `run:` with its `|` header on
-        # the next line as a literal block, and the parser folded it as a plain scalar, one command, so a first pytest
-        # without the flag took the flag of the second and read ok (H01, and H02 with a tag on the key's line; silent at
-        # the round-4 takes head and at the owner's fail-closed head). The scan refuses such a header, and takes the
-        # block's column from the key the last content line left open, so the block's lines are its text: a `*)` line
-        # there was refused as an alias (the first verify pass's Y13, a red on valid YAML for the wrong reason)
-        two = "          python -m pytest -q tests/test_a.py\n          python -m pytest -q -p no:anyio tests/test_b.py\n"
-        header = "a block scalar header on the line after its key"
-        for label, text in (("a literal block (H01)", "      - name: Header next (pytest)\n        run:\n          |\n" + two),
-                            ("a tag on the key's line (H02)", "      - name: Header next tagged (pytest)\n        run: !!str\n          |\n" + two)):
-            with self.subTest(form=label):
-                src, first = self._with_first_step_in_shell_job(text, self._with_shell_job_env(self.src))
-                self.assertEqual(unread_yaml_forms(src), [(first + 2, "|", header)], label)
-                self.assertEqual((self._new_bad(src), pytest_line_census(src)[1], switch_line_census(src)[1], unread_job_keys(src)[1]),
-                                 ([], [], [], []), "%s: the refusal is the one red" % label)
-        for label, text in (("a case statement's `*)` line (Y13)", "      - name: Header next line\n        run:\n          |\n"
-                                                                    "          case \"$x\" in\n          *) echo other ;;\n          esac\n"),
-                            ("a comment line between the key and the header", "      - name: Header after a comment\n        run:\n"
-                                                                               "          # the block below\n          |\n          *) echo other ;;\n")):
-            with self.subTest(form=label):
-                src, first = self._with_first_step_in_shell_job(text)
-                at = first + text.splitlines().index("          |")
-                self.assertEqual(unread_yaml_forms(src), [(at, "|", header)], label)
+                self.assertEqual(yaml_line_forms(self._with_first_step_in_shell_job(text)[0])[1], [], label)
+        src, first = self._with_first_step_in_shell_job("      - name: Block\n        run: |\n          echo b\n        env: *e\n")
+        self.assertEqual(yaml_line_forms(src)[1], [(first + 3, "env: *e", "an alias (*e)")])
 
 
 # ---------------------------------------------------------------------------------------------------------------------
