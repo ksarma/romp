@@ -100,6 +100,11 @@ replayed from the walk's notes (round 2 of #882, group B: before it such a build
 a path one build reported under two keys, a held fold's replayed key behind a fresh walk's among them, is recorded under a
 key no re-stat equals, so that tab is rebuilt too, where a record keeping the first key kept the walk's and never rebuilt
 it; and a sibling session directory appearing after a build moves no key it recorded on any of the three roads, the
+residual, witnessed. An agent's own place holding what the walk refuses (a symlinked agent file, or a symlinked
+subagents/ whose target holds the file) is in no record, so the tab its walk built is served with no rebuild, a write to
+the link's target included, beside the control of an absent place recorded None (round 3 of #882, group B: every build
+replayed the walk's (place, None), which the re-stat through the link never equals, and the tab was rebuilt every
+cycle); and a symlinked subagents/ replaced by a real directory holding the file moves no recorded key, the second
 residual, witnessed. (7) The sum over roots: three alive
 sessions with trees of unequal size and unequal agent counts, read in one pusher cycle and in one jobs pass with the reads
 interleaved, cost the sum over their roots of D_r lstats (each root its own D_r), 0 stats and one fold per agent (the sum
@@ -2787,7 +2792,9 @@ class DependencyKey(_World):
     noted (_subagent_file_notes_replay), where before they recorded nothing for the sibling's tree; a replayed key that
     disagrees with a fresher key the same build reported for the path is recorded as the disagreement (_chat_build_deps),
     which no re-stat equals; the project directory stays out of every record, the residual two cases here witness, one
-    for a build that found the file nowhere and one for a build that found it. Driven
+    for a build that found the file nowhere and one for a build that found it. An own place holding what the walk
+    refuses is noted nothing, so a tab over it is served from its first build on (round 3 of #882, group B), and a
+    symlinked subagents/ replaced by a real directory moves no recorded key, the second residual, witnessed. Driven
     through the real _pusher_cycle, with the
     build's record shape (build_session's literal) open around the real _session_awaiting."""
 
@@ -3354,6 +3361,190 @@ class DependencyKey(_World):
         self.assertEqual(moved, [os.path.relpath(wf, str(proj))],
                          "the recorded keys the creation moved: %r; keyed on the sibling directory it landed in, whose re-stat now "
                          "differs, so the tab is rebuilt (a record of the sibling root alone moves nothing here)" % (moved,))
+
+    def _agent_head_build(self, aid):
+        """A chat build's share of a cycle for a transcript whose Agent tool event names `aid`: build_session's record open
+        around the real Agent head (_stamp_agents, one foreground Agent event, which looks the agent's file up whether or
+        not a sidecar names it) and then the real _session_awaiting, in build_session's order. Returns the record."""
+        km._chat_dep_scope.deps = {"task_outs": [], "postal_any": False}   # build_session's literal for this build
+        try:
+            km._stamp_agents({"toolu_stamps_b": {"name": "Agent", "agentId": aid}}, self.path, None, {})
+            km._session_awaiting(SID, self.path, True)
+            return km._chat_build_deps(SID, {"events": []})
+        finally:
+            km._chat_dep_scope.deps = None
+
+    def _tab_cycles(self, tab, n):
+        """`n` pusher cycles of one cached chat tab under the chat-build cache's rule (_chat_build_sig: a tab is served
+        while its signature holds): each cycle's job evaluates the three dependency components over the tab's latest
+        record (_chat_sig_deps) and rebuilds the tab, one call of tab["build"], when they differ from what that build
+        embedded (the record's at_build); a tab with no record builds at once. `tab` carries across calls: "builds", each
+        build's record in order; "evals", per cycle that had a record, (that record's index, its taskout component then);
+        "rebuilt", per cycle, True when the evaluation rebuilt the tab, False when it served it, None for a cold build."""
+        for _ in range(n):
+            ran = len(tab["rebuilt"])
+
+            def job(now, live_map, **kw):
+                deps = tab["builds"][-1] if tab["builds"] else None
+                if deps is not None:
+                    comps = km._chat_sig_deps(SID, deps)
+                    tab["evals"].append((len(tab["builds"]) - 1, comps[0]))
+                    if comps == deps["at_build"]:
+                        tab["rebuilt"].append(False)
+                        return
+                tab["rebuilt"].append(None if deps is None else True)
+                tab["builds"].append(tab["build"]())
+            km._turn_notify_tick = job
+            km._pusher_cycle()
+            self.assertEqual(len(tab["rebuilt"]), ran + 1, "the cycle's job ran to its end: %r" % (tab["rebuilt"],))
+
+    def _refused_place(self, shape):
+        """Group B's world (round 3 of #882): an agent, named by an Agent tool event and in the live row, whose own place
+        (subagents/agent-<id>.jsonl) holds what the walk refuses, the link's target holding the agent's file outside the
+        project directory, so the walk finds it nowhere and the tab shows it missing. "file": the place a symlink to that
+        file, in the real subagents tree; "subagents": subagents/ itself a symlink to a directory holding the file, which
+        replaces the tree the setUp agents' files were in, the live row naming this agent alone; "absent", the control:
+        nothing at the place. The link's target is aged. Returns (the agent id, its own place, the target's copy of its
+        file or None, the tab: _tab_cycles' carrier, its build the Agent head's, _agent_head_build)."""
+        aid = "a%016x" % 0x7cf9
+        name = "agent-%s.jsonl" % aid
+        elsewhere = Path(self.td.name) / "elsewhere"
+        elsewhere.mkdir()
+        ap = self.sub / name
+        target = None
+        if shape == "file":
+            target = elsewhere / name
+            target.write_text("")
+            os.symlink(str(target), str(ap))
+            _age(self.sub)
+            self.live_aids.append(aid)
+            self.assertTrue(os.path.islink(ap) and os.path.isfile(ap), "premise: the own place is a symlink to the agent's file")
+        elif shape == "subagents":
+            shutil.rmtree(str(self.sub))
+            tdir = elsewhere / "subagents"
+            tdir.mkdir()
+            target = tdir / name
+            target.write_text("")
+            _age(tdir)
+            os.symlink(str(tdir), str(self.sub))
+            self._forget_memos()
+            self.live_aids[:] = [aid]
+            self.assertTrue(os.path.islink(self.sub) and os.path.isfile(ap),
+                            "premise: subagents/ is a symlink to a directory holding the agent's file")
+        else:
+            self.live_aids.append(aid)
+            self.assertFalse(os.path.lexists(ap), "premise: nothing at the own place")
+        self.addCleanup(km._SUBAGENT_FILE_CACHE.pop, (self.path, aid), None)
+        self.addCleanup(setattr, km._chat_dep_scope, "deps", None)
+        tab = {"builds": [], "evals": [], "rebuilt": [], "build": lambda: self._agent_head_build(aid)}
+        return aid, ap, target, tab
+
+    def _walks_then_three_cycles(self, shape):
+        """The walk's build (the tab's cold build: the agent's lookup walks and finds the file nowhere), then three pusher
+        cycles of the tab (_tab_cycles). Returns _refused_place's four."""
+        aid, ap, target, tab = self._refused_place(shape)
+        walks = []
+        with self._counting("_subagent_file_walk", aid, walks):
+            self._tab_cycles(tab, 1)
+        entry = km._SUBAGENT_FILE_CACHE.get((self.path, aid), ((), "unset"))
+        self.assertEqual((tab["rebuilt"], walks, entry[1]), ([None], [None], None),
+                         "premise: the walk's build was the tab's cold build, its lookup walked once and found the file nowhere, and "
+                         "the memo keeps the miss: %r" % ((tab["rebuilt"], walks, entry[1]),))
+        self._tab_cycles(tab, 3)
+        return aid, ap, target, tab
+
+    def _assert_each_build_equals_its_re_stat(self, tab, what):
+        """Every build's whole record equals the next cycle's evaluation of it (its taskout component, re-stat'd)."""
+        firsts = {}
+        for i, touts in tab["evals"]:
+            firsts.setdefault(i, touts)
+        for i, deps in enumerate(tab["builds"]):
+            self.assertIn(i, firsts, "premise: build %d was evaluated by a later cycle (%s)" % (i, what))
+            self.assertEqual(firsts[i], tuple(deps["task_outs"]),
+                             "build %d's record against the next signature's re-stat of it (%s): equal means the tab is served, "
+                             "a difference rebuilds it" % (i, what))
+
+    def _assert_refused_place_settles(self, shape):
+        """Group B's pin (round 3 of #882, correctness-2), for `shape` (_refused_place). Keys on the rebuilds over the three
+        cycles after the walk's build: 0, since the walk notes nothing for a place holding what it refuses, so every build's
+        record equals its re-stat. Then a write to the link's target and one more cycle: 0 rebuilds, the record again equal
+        to its re-stat. Last, the own place in no build's record, asserted after the write so that the rejected form below
+        reds at the write. RED before the fix, and before round 2 of #882's replay too, differently: where the walk noted
+        (place, None) unconditionally and every build replayed it (round 2's group B), the re-stat, which follows the link
+        to the file, differed every cycle and the tab was rebuilt every cycle (3); before that replay only the walk's build
+        recorded the note, a later build answered by the memo recorded nothing for the place, and the tab settled after one
+        rebuild (1), also red here, on the walk's build, because the fix settles one cycle sooner than that head did. The
+        write step reds the other form the ruling rejected, noting the place under a key taken through the link: its steady
+        state holds, but a write to the target moves that key while no stamp the memo checks moves, so every build replays
+        the stale key and the tab is rebuilt every cycle."""
+        aid, ap, target, tab = self._walks_then_three_cycles(shape)
+        rebuilds = tab["rebuilt"][1:].count(True)
+        self.assertEqual(rebuilds, 0,
+                         "rebuilds of the tab over the three cycles after the walk's build (%s): %d; keyed on 0, the place noting nothing "
+                         "(the record equals its re-stat); a note (place, None) replayed by every build rebuilds it every cycle (3), and "
+                         "one recorded by the walk's build alone rebuilds it once (1): %r" % (shape, rebuilds, tab["rebuilt"]))
+        self._assert_each_build_equals_its_re_stat(tab, shape)
+        before = km._chat_stat_key(str(ap))
+        with open(str(target), "a") as fh:
+            fh.write("\n")                                     # a write to the link's target: its key moves, no directory's does
+        self.assertNotEqual(km._chat_stat_key(str(ap)), before, "premise: the write moved the key a re-stat of the place reads through the link")
+        self._tab_cycles(tab, 1)
+        self.assertEqual(tab["rebuilt"][-1], False,
+                         "the cycle after a write to the link's target (%s): rebuilt %r; keyed on the tab served (False); a note of the "
+                         "place under a key taken through the link is replayed stale by every build after the write, and the tab is "
+                         "rebuilt every cycle" % (shape, tab["rebuilt"][-1]))
+        self.assertEqual(tab["evals"][-1], (len(tab["builds"]) - 1, tuple(tab["builds"][-1]["task_outs"])),
+                         "the latest record against its re-stat after the write to the target (%s)" % shape)
+        noted = [i for i, deps in enumerate(tab["builds"]) if str(ap) in dict(deps["task_outs"])]
+        self.assertEqual(noted, [], "builds whose record holds the own place, which holds what the walk refuses (%s): %r" % (shape, noted))
+
+    def test_a_symlinked_agent_file_notes_nothing_for_its_place_so_the_tab_is_never_rebuilt_even_after_a_write_to_the_target(self):
+        """Group B's pin for a symlinked agent file (_assert_refused_place_settles)."""
+        self._assert_refused_place_settles("file")
+
+    def test_a_symlinked_subagents_directory_holding_the_file_notes_nothing_for_the_place_so_the_tab_is_never_rebuilt_even_after_a_write_to_the_target(self):
+        """Group B's pin for a symlinked subagents/ whose target holds the agent's file (_assert_refused_place_settles)."""
+        self._assert_refused_place_settles("subagents")
+
+    def test_control_an_absent_own_place_is_recorded_none_equal_to_its_re_stat_and_the_tab_is_never_rebuilt(self):
+        """Group B's control (round 3 of #882), green at every head by design: nothing at the own place, so the walk notes
+        (place, None), every build records it, and its re-stat answers None too, so the tab is served with no rebuild over
+        the three cycles after the walk's build. A kernel that dropped the note for an absent place fails the record
+        assertion here (the file appearing there would then move no recorded key)."""
+        aid, ap, _target, tab = self._walks_then_three_cycles("absent")
+        self.assertEqual(tab["rebuilt"][1:].count(True), 0, "rebuilds over the three cycles after the walk's build: %r" % (tab["rebuilt"],))
+        self._assert_each_build_equals_its_re_stat(tab, "absent")
+        got = [dict(deps["task_outs"]).get(str(ap), "unrecorded") for deps in tab["builds"]]
+        self.assertEqual(got, [None] * len(tab["builds"]), "each build's key for the absent own place: %r" % (got,))
+
+    def test_a_symlinked_subagents_directory_replaced_by_a_real_directory_holding_the_file_moves_no_key_a_build_recorded(self):
+        """The residual group B leaves (round 3 of #882), witnessed; green by design, and not a claim that the state is
+        wanted. The walk notes the own place only when nothing is there, and a symlinked subagents/ is no tree the readers
+        record (a live link notes nothing), so once the link is replaced by a real directory holding the agent's file, no
+        key the tab's build recorded moves and the tab keeps showing the file missing, while the lookup itself finds the
+        file (the memo's stamp of the own place moved). Keys on no recorded key moving and the next cycle serving the tab.
+        A kernel that keys the own place when it is a link closes the residual and turns this case red; the text in
+        _subagent_file's docstring goes with it."""
+        aid, ap, _target, tab = self._refused_place("subagents")
+        self._tab_cycles(tab, 2)
+        self.assertEqual(tab["rebuilt"], [None, False], "premise: the walk's build, then a cycle that served the tab: %r" % (tab["rebuilt"],))
+        self.assertIsNone(km._SUBAGENT_FILE_CACHE.get((self.path, aid), ((), "unset"))[1], "premise: the memo keeps the miss")
+        os.unlink(str(self.sub))
+        self.sub.mkdir()                                            # the link replaced by a real directory holding the file
+        ap.write_text("")
+        self.assertTrue(not os.path.islink(self.sub) and os.path.isfile(ap), "premise: subagents/ is a real directory holding the file")
+        deps = tab["builds"][-1]
+        recorded = dict(deps["task_outs"])
+        now_keys = dict(km._chat_sig_deps(SID, deps)[0])
+        proj = str(Path(self.path).parent)
+        moved = sorted(os.path.relpath(p, proj) for p in recorded if now_keys.get(p) != recorded[p])
+        self.assertEqual(moved, [],
+                         "keys the tab's build recorded that the replacement moved: %r; keyed on none, the residual (stated in "
+                         "_subagent_file's docstring)" % (moved,))
+        self._tab_cycles(tab, 1)
+        self.assertEqual(tab["rebuilt"][-1], False, "the next cycle serves the tab, which shows the file missing: the residual")
+        self.assertEqual(km._subagent_file(self.path, aid), ap,
+                         "the lookup itself finds the file: the memo's stamp of the own place moved, so it walks")
 
 
 class SumOverRoots(_World):

@@ -35951,8 +35951,9 @@ def _subagent_tree_memo_report():
       - the dependency-note signature (every build that looks the agent up records the walk's noted keys, by walking or
         replayed by the memo or a held fold, as round 2 of #882's group B left it, one entry per path whatever the
         number of reports, a path reported under two keys recorded as their disagreement, _chat_build_deps): per pusher
-        cycle, per cached chat tab whose latest build recorded them, one os.stat per recorded path, 1 for the absent
-        beside-path, D_s for the own tree, S_d per sibling tree the walk read and 1 per absent sibling place,
+        cycle, per cached chat tab whose latest build recorded them, one os.stat per recorded path, 1 for the beside-path
+        only when it is absent (a place holding what the walk refuses notes nothing: round 3 of #882, group B), D_s for
+        the own tree, S_d per sibling tree the walk read and 1 per absent sibling place,
         re-stat'd by the signature every cycle (_chat_sig_deps) and counted in memos.chatSig stats, in none of this
         memo's counters; a change in any of those directories moves its key and rebuilds the tab, the half round 1's
         ruling asked for. DependencyKey
@@ -36194,6 +36195,12 @@ def _subagent_file(path, agent_id, faults=None, notes=None):
     build recorded: an agent whose file was nowhere when the build looked, landing under the new sibling's tree, leaves
     that tab showing the file missing until another recorded key moves, while the next lookup finds the file. Witnessed
     by DependencyKey test_a_sibling_directory_appearing_after_a_build_moves_no_key_that_build_recorded_on_any_road.
+    A second residual (round 3 of #882, group B): the walk notes the own place only when nothing is there, and a
+    symlinked subagents/ is no tree the readers record (_subagent_tree_dep_note notes nothing for a live link), so when
+    that link is replaced by a real directory holding the agent's file, no key a build recorded moves: the tab keeps
+    showing the file missing until another recorded key moves, while the next lookup finds the file (the memo's stamp of
+    the own place moved). Witnessed by DependencyKey
+    test_a_symlinked_subagents_directory_replaced_by_a_real_directory_holding_the_file_moves_no_key_a_build_recorded.
     `faults`, a list when given, receives the reason when the answer stands for a lookup that could not be made: the
     file found nowhere while a tree, a place below a tree's root, a candidate file (the own place among them), a
     project-directory entry or the listing the walk needed could not be read (_subagent_file_walk's faults, and the
@@ -36317,13 +36324,18 @@ def _subagent_file_walk(path, agent_id, read=None, faults=None, notes=None, excl
     own = _subagents_dir(path)
     read.append(_dir_stamp(str(own)))
     ap = own / name
-    if not os.path.islink(own):                           # this tree's own file (a symlinked subagents/ is not taken)
+    if os.path.islink(own):                               # a symlinked subagents/ is not taken, and the flat check reads nothing:
+        ap_absent = not os.path.lexists(ap)               #  whether anything is at the own place, asked of that path
+    else:                                                 # this tree's own file
         try:
             if stat.S_ISREG(os.lstat(ap).st_mode):        # a regular file: a symlink at the place is not taken
                 return ap
-        except OSError:                                   # absent, or a fault that is not excluded here: ap is the own root's
-            pass                                          #  candidate, read again by _find_agent_file below, which excludes it
-    own_tree = None                                      # stays None when the own tree could not be read: the loop skips its note
+            ap_absent = False                             # present and refused: a symlink, or a directory, at the place
+        except (FileNotFoundError, NotADirectoryError):   # ENOENT, ENOTDIR: nothing at the own place
+            ap_absent = True
+        except OSError:                                   # a fault, not an absence, and not excluded here: ap is the own root's
+            ap_absent = False                             #  candidate, read again by _find_agent_file below, which excludes it
+    own_tree = None                                     # stays None when the own tree could not be read: the loop skips its note
     below = []                                            # (place, error) under a tree's root the tree read could not read
     try:
         own_tree = _subagent_tree(str(own), faults=below)
@@ -36336,8 +36348,17 @@ def _subagent_file_walk(path, agent_id, read=None, faults=None, notes=None, excl
         if nested is not None:
             return nested
     # A miss is a dependency of the chat payload that asked (the taskout idiom, _chat_dep_note_taskout): the
-    # file appearing at its own place, or a sibling fsid's directory gaining one, changes the Agent card.
-    notes.append((str(ap), None))
+    # file appearing at its own place, or a sibling fsid's directory gaining one, changes the Agent card. The own place
+    # is noted only when nothing is there, as (ap, None), which the next signature's re-stat answers while it stays
+    # absent; a place holding what the walk refuses (a symlinked file, or a file reached through a symlinked subagents/)
+    # notes nothing, since the re-stat follows the link to a key None never equals and every build replaying the note
+    # would rebuild the tab every cycle, while a key taken through the link stops matching at the first write to its
+    # target, which moves no stamp the memo checks (round 3 of #882, group B). A fault on the flat check's lstat notes
+    # nothing here: the place is excluded (the own root's candidate read, or the own root's exclusion), and a file found
+    # nowhere is noted under _TREE_UNREADABLE. Under a symlinked subagents/, os.path.lexists answers False on a fault too,
+    # so the place is noted (ap, None), which _chat_stat_key's re-stat answers while the fault lasts.
+    if ap_absent:
+        notes.append((str(ap), None))
     parent = Path(str(path)).parent
     try:
         read.append(_dir_stamp(str(parent)))          # the project directory: a sibling fsid's directory appearing moves it
