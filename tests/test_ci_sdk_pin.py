@@ -767,6 +767,7 @@ TOP_KEY_RE = re.compile(r"^([A-Za-z_][A-Za-z0-9_-]*):", re.M)                # a
 JOB_RE = re.compile(r"^  ([A-Za-z0-9_-]+):[ \t]*(?:#.*)?\n", re.M)           # a job: a bare key at indent 2 under jobs:
 STEP_START_RE = re.compile(r"^      - ", re.M)                                # a step: a list item at indent 6
 STEP_KEY_PAD = "        "                                                     # step keys sit at indent 8 once `- ` is spaced
+STEPS_END_RE = re.compile(r"^ {0,4}[^ \n#]", re.M)                           # a line past the steps: indented 4 or less, not blank or a comment
 RUN_RE = re.compile(r"^        run:(.*)$", re.M)
 BLOCK_INDICATOR_RE = re.compile(r"^[ \t]*\|[ \t]*(#.*)?$")      # a literal block header, the one block form yaml_line_forms accepts
 UNNAMED = "(unnamed step)"
@@ -1057,7 +1058,9 @@ def pytest_invocations(src, read=None, switch_read=None):
     step's env; job and step None where the scope is wider).
     A text parse over the file's own indentation (top-level keys at column 0, jobs at 2, job keys at 4, steps at 6,
     step keys at 8, env keys and run block lines at 10), the way this file's other pins and tests/test_ci_bats_bound.py
-    read it: no YAML library in the test deps. The YAML it reads is the forms the allowlist scan accepts
+    read it: no YAML library in the test deps. A step's text runs from its dash to the next step's dash or to the end of
+    the steps sequence, the first line after it indented 4 or less that is not blank or a comment, so a job key after
+    the steps (services.<id>.env, strategy.matrix.name) is never read as the last step's own. The YAML it reads is the forms the allowlist scan accepts
     (yaml_line_forms, the owner's allowlist design, 2026-09-24), whose two-column nesting is this layout; every other
     form is refused by the scan at its line and not read here, so the parser models no YAML beyond the accepted forms (a
     form the scan does not accept is refused by name; reword the step in an accepted form). A step in any other layout
@@ -1100,6 +1103,13 @@ def pytest_invocations(src, read=None, switch_read=None):
         run_spellings, prefix_spellings, step_names = {}, {}, {}
         for k, sm in enumerate(steps):
             send = steps[k + 1].start() if k + 1 < len(steps) else len(jtext)
+            # the step ends at the end of the steps sequence too: the first line after its dash, other than a blank or
+            # comment line, indented 4 or less, the job's next key. Until the allowlist's first verify pass
+            # (2026-09-24) the last step ran to the end of the job, and a job key after the steps nested at indent 8
+            # (services.<id>.env, strategy.matrix.name) was read as the step's own env or name: a service's env set the
+            # switch for the parser, and pytest ran without it
+            em = STEPS_END_RE.search(jtext, sm.end(), send)
+            send = em.start() if em else send
             # the `- ` of the list item spaced out, so every step key, the first included, sits at indent 8 and a
             # step that opens with `- run:` is read like one that opens with `- name:`; same length, offsets kept
             stext = STEP_KEY_PAD + jtext[sm.end():send]
@@ -2790,6 +2800,48 @@ class PopulationCheckReds(unittest.TestCase):
             with self.subTest(key=key):
                 src, first = self._with_job_before_shell(key + "\n")
                 self.assertEqual(unread_job_keys(src)[1], [(first, key)])
+
+    def test_a_job_key_after_the_steps_is_not_read_as_the_last_steps_own(self):
+        # the allowlist's first verify pass (2026-09-24; its S01, S02, S06, S03 and X09): the last step's text ran to
+        # the end of the job, so a job key after the steps whose nested keys sit at the step keys' indent was read as
+        # that step's own. services.<id>.env set the switch for the parser, while GitHub Actions hands a service's env
+        # to the service container alone and pytest ran without it; the module was silent and the scan refused nothing.
+        # A step's text now ends at the end of the steps sequence: the first line after its dash, other than a blank or
+        # comment line, indented 4 or less. The step reads unlisted at its pytest line, and the switch census names the
+        # service's switch line, a spelling of the switch where the merge does not look
+        services = '    services:\n      cache:\n        image: redis:7\n        env:\n          %s: "1"\n' % SWITCH
+        pytest_line = "python -m pytest -q -p no:anyio tests/test_a.py"
+        for label, steps in (
+                ("a named step after another", "      - uses: actions/checkout@v4\n      - name: Extra tests\n        run: %s\n" % pytest_line),
+                ("a literal block run", "      - name: Extra tests\n        run: |\n          %s\n" % pytest_line),
+                ("an unnamed step opening with run:", "      - run: %s\n" % pytest_line)):
+            with self.subTest(form=label):
+                job = "  extra:\n    runs-on: ubuntu-latest\n    steps:\n" + steps + services
+                src, first = self._with_job_before_shell(job)
+                rows = job.splitlines()
+                at = first + next(k for k, l in enumerate(rows) if l.endswith(pytest_line))
+                sw_at = first + rows.index('          %s: "1"' % SWITCH)
+                new = self._new(src)
+                self.assertEqual([(i["line"], i["env"].get(SWITCH), verdict(i)) for i in new], [(at, None, "unlisted")],
+                                 "%s: the service's env is not the step's: %r" % (label, [_describe(i) for i in new]))
+                self.assertEqual(switch_line_census(src)[1], [(sw_at, '%s: "1"' % SWITCH)], label)
+                self.assertEqual(yaml_line_forms(src)[1], [], "%s: every line is in an accepted form; the reader is the check" % label)
+        # the Run pytest step's own env moved under a services: key after the python job's steps (S03)
+        lines = self.src.split("\n")
+        i_env = lines.index("        env:", lines.index("      - name: Run pytest"))
+        i_gil = next(k for k in range(i_env, len(lines)) if lines[k].startswith("          PYTHON_GIL: "))
+        i_run = next(k for k in range(i_gil, len(lines)) if lines[k].startswith("        run: python -m pytest"))
+        moved = (lines[:i_env] + lines[i_gil + 1:i_run + 1] + ["    services:", "      cache:", "        image: redis:7", "        env:"]
+                 + lines[i_env + 1:i_gil + 1] + lines[i_run + 1:])
+        src = "\n".join(moved)
+        rows = [(i["line"], i["env"].get(SWITCH), verdict(i)) for i in pytest_invocations(src) if (i["job"], i["step"]) == MATRIX_STEP]
+        self.assertEqual(rows, [(i_env + i_run - i_gil, None, "unlisted")], "the Run pytest step's env moved under services:")
+        self.assertEqual([t for _n, t in switch_line_census(src)[1]], ['%s: "1"' % SWITCH])
+        self.assertEqual(yaml_line_forms(src)[1], [])
+        # a key name: under strategy.matrix after the steps is not the unnamed last step's name (X09)
+        src, first = self._with_job_before_shell("  extra:\n    runs-on: ubuntu-latest\n    steps:\n      - run: %s\n"
+                                                 "    strategy:\n      matrix:\n        name: [a]\n" % pytest_line)
+        self.assertEqual([(i["line"], i["step"], verdict(i)) for i in self._new(src)], [(first + 3, UNNAMED, "unlisted")])
 
     def test_python_mpytest_is_read_as_a_command_and_an_option_cluster_is_unparsed(self):
         # round 4's extra4-1: `python -mpytest` runs pytest; until 2026-09-23 PYTEST_WORD_RE's leading word boundary kept
