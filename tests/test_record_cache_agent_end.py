@@ -503,6 +503,24 @@ class AgentEnd(unittest.TestCase):
         km._begin_checkpoint_cycle()
         self.assertEqual((self._stat("falseEnds"), self._stat("released")), (0, {}), "no release taken, no false end")
 
+    def test_the_pay_reports_the_outcome_of_every_owed_release(self):
+        keys = [os.path.join(self.root, "owed-%d.jsonl" % i) for i in range(2)]
+        for k in keys:
+            em._owe_release(k, "agentEnded")
+        real = em.release_entry
+
+        def release(key, reason):
+            if key == keys[0]:
+                raise RuntimeError("synthetic")
+            return real(key, reason)
+        em.release_entry = release
+        try:
+            with contextlib.redirect_stderr(io.StringIO()):
+                paid = em.checkpoint_pay_owed_releases()
+        finally:
+            em.release_entry = real
+        self.assertEqual(paid, {keys[0]: "raised", keys[1]: "absent"}, "one outcome per owed release, a raise included")
+
     def test_a_start_whose_session_path_no_longer_resolves_still_cancels_its_owed_release(self):
         size = self._owed()
         km._path_of = lambda sid, now=None: None                         # the session's transcript is not known at the start
