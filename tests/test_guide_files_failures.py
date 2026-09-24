@@ -71,8 +71,9 @@ RENDER_FELL_SAYS = ("When a file cannot be shown as rendered Markdown, its text 
                     "or click of that button tries again.")
 FIGURE_SAYS = ("A figure that cannot be loaded, because its file is missing or is not an image, shows a line where the "
                "picture would be: **Image failed to load**, then the figure's path as written in the file (for a web "
-               "address, only its origin: its scheme, host and port; for a source with an @ that may be a sign-in, a note "
-               "that its address is withheld), and its alt text when it has one.")
+               "address, only its origin: its scheme, host and port; for a source with an @ that may be a sign-in, "
+               "**address withheld because it appears to carry a sign-in** in its place), and its alt text when it "
+               "has one.")
 DECODE_SAYS = ("A picture opened as a file of its own whose bytes will not decode, because it is still being written or "
                "was cut short, shows a line in its place (**this image failed to decode: it may be mid-write or "
                "truncated**), then the file's path, and **Download**, which saves the file to your device.")
