@@ -2201,6 +2201,16 @@ YAML_REFUSED_ROWS = (
      ((3, "text between the entries of a flow sequence"),), True),
     ("a flow sequence where a key goes", "first", "      - [python -m pytest tests/test_a.py -q]\n",
      ((1, "a flow sequence where a key goes"),), False),
+    # inside a flow sequence, each a refusal whose deletion left every test green (the allowlist's first verify pass,
+    # M22, M24 and M25; no reader reads a flow sequence for a run, an env or a name, so none of them reached one)
+    ("an anchor inside a flow sequence (M22)", "first", "      - uses: ./a\n        with:\n          list: [&a main]\n",
+     ((3, "an anchor (&a)"),), True),
+    ("a tag inside a flow sequence (M22)", "first", "      - uses: ./a\n        with:\n          list: [!!str main]\n",
+     ((3, "a tag (!!str)"),), True),
+    ("a plain scalar opening with an indicator character inside a flow sequence (M24)", "first",
+     "      - uses: ./a\n        with:\n          list: [-main]\n", ((3, "a plain scalar opening with an indicator character (-)"),), True),
+    ("a flow sequence left open after an entry, its comma on the next line (M25)", "first",
+     "      - uses: ./a\n        with:\n          list: ['3.10'\n            , main]\n", ((3, "a flow collection continued past its line"),), True),
     # quoted scalars
     ("the switch line inside a step env's double-quoted scalar over several lines (Z01)", "last",
      '      - name: Quoted text (pytest)\n        env:\n          NOTES: "first line\n          %s: \'1\'\n          end"\n' % SWITCH + RUN_OK,
@@ -2274,6 +2284,11 @@ YAML_REFUSED_ROWS = (
     ("`-   name:`, the key three columns past the dash (A04)", "first",
      "      -   name: Wide dash (pytest)\n          run: python -m pytest tests/test_a.py -q\n", ((1, _ENTRY),), False),
     ("a sequence entry whose node is on the next line", "first", "      -\n        name: Next line\n        run: echo hi\n", ((1, _ENTRY),), True),
+    # the allowlist's first verify pass's M31 scans a carried construct's lines at its own column: that adds a second
+    # refusal after the first one stands and changes nothing else, so it affects naming only; this row pins the naming
+    # (a construct is named once, at its first line)
+    ("a sequence entry that is a quoted scalar continued at its dash's column (M31)", "first",
+     '      - "a step written\n      as a quoted string"\n', ((1, "a quoted scalar continued past its line"),), True),
     ("a key or a scalar where a sequence entry goes", "first", "      - uses: ./a\n      name: stray\n",
      ((2, "a key or a scalar where a sequence entry goes"),), True),
     ("a key with a space before its colon (A08)", "first+env",
@@ -2317,6 +2332,9 @@ YAML_ACCEPTED_ROWS = (
     ("an expression holding quotes, brackets and ==", "      - name: Expr\n        if: ${{ github.event_name == 'push' && '[a]' != 'b' }}\n        run: echo ok\n"),
     ("a literal run block with a blank line inside and a trailing comment on its header",
      "      - name: Block ok\n        run: |  # c\n          set -e\n\n          echo done\n"),
+    # the allowlist's first verify pass's M33 dropped the pending key at a blank line and refused this valid shape (the
+    # safe side), with every test green
+    ("a key, a blank line, then its nested block", "      - uses: ./a\n        with:\n\n          a: x\n"),
 )
 
 
