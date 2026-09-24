@@ -175,7 +175,16 @@ test("an oversize PDF's tab is not a dead end, and the listing marks such a file
   assert.match(KERNEL, /return self\._send\(413, _too_large_page\(msg, os\.path\.basename\(fp\), q\), "text\/html; charset=utf-8",/);
   assert.match(KERNEL, /def _is_navigation\(self\):/);
   assert.match(KERNEL, /dest = \(h\.get\("Sec-Fetch-Dest"\) or ""\)\.strip\(\)\.lower\(\)/);
-  assert.match(KERNEL, /return dest in \("document", "iframe"\)/, "a navigation OR the lightbox iframe gets the page");
+  // _is_navigation hands its two destinations to _dest_in, which the svg image mode's _svg_as_document shares. These two
+  // read WHERE the rule lives: the executed proof that a navigation and the lightbox iframe get the page is
+  // tests/test_kernel_preview.py test_an_oversize_pdf_navigated_to_in_its_own_tab_gets_a_page_with_the_download_as_the_way_out.
+  const navAt = KERNEL.indexOf("def _is_navigation(self):"), navEnd = KERNEL.indexOf("\n    def ", navAt + 1);
+  const destAt = KERNEL.indexOf("def _dest_in(self, dests):"), destEnd = KERNEL.indexOf("\n    def ", destAt + 1);
+  assert.ok(navAt >= 0 && navEnd > navAt && destAt >= 0 && destEnd > destAt, "the kernel defines _is_navigation and _dest_in");
+  assert.match(KERNEL.slice(navAt, navEnd), /\n\s+return self\._dest_in\(\("document", "iframe"\)\)\n/,
+    "a navigation OR the lightbox iframe gets the page: _is_navigation asks _dest_in for exactly those two destinations");
+  assert.match(KERNEL.slice(destAt, destEnd), /\n\s+if dest:\n\s+return dest in dests\n/,
+    "a navigation OR the lightbox iframe gets the page: a Sec-Fetch-Dest decides by membership in the destinations asked for");
   // Fetch Metadata is sent only to trustworthy origins: on plain http the Accept header decides
   assert.match(KERNEL, /return "text\/html" in \(h\.get\("Accept"\) or ""\)\.lower\(\)/);
   assert.match(KERNEL, /def _too_large_page\(msg, name, q, route="\/file"\):/);
