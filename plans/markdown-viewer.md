@@ -8541,12 +8541,19 @@ picture in smaller text than an italic or bold italic f glued before it, inside 
 `<small>` or in text at 0.8em or 0.7em of the f's, gets less margin than that f reaches and the ring covers up to 4 pixels of the f's
 ink in one read (at a device scale of 1 or 2, counted in device pixels; inside one `<small>`, `<sub>` or `<sup>`, up to 2), at every text size from
 100% to 200% with the line moved by each eighth of a pixel, every dash still at 4.83:1 dark and 4.90:1 light, since the f paints
-before the picture and the ring over it, and text under 0.7em of the f's is not measured; up and down the ring's width, so the ring
+before the picture and the ring over it; below 0.7em of the f's the ring covers more, a residual disclosed and measured (the file
+review's round 15, extra5-3): Chromium sets no floor on a nested `<small>`'s text size, so the margin across the line falls to the
+ring's own 3px, and over 24,576 reads by screenshot pixels (the Files pane and the chat modal under touch, device scales 1 and 2,
+both themes, 100% to 200% with the line moved by each eighth of a pixel, `<small>` nested 3 to 16, 20, 30, 40, 60 and 100 deep,
+`<sub>` and `<sup>` inside the deepest, and a `<font>` of size 1, 2 or 3 with `<sub>` and `<sup>` inside it) the worst read was a bold italic f before
+a picture in a `<sub>` inside a hundred nested `<small>` at 200%, 30 pixels at a device scale of 1 and 102 device pixels at 2,
+sampled maxima, every dash still at 4.83:1 dark and 4.90:1 light (the open leg's FLOOR_BOUND holds that scene within 1 and 30
+pixels at a device scale of 1); up and down the ring's width, so the ring
 stands inside the picture's margin box, where at 2px it covered the bottom row of a key on the line above), a line holding such a
 picture up to 6px taller and the text after it 14.97px along at the default size (the file review's round 14, correctness-2 with
 extra5-1 and extra5-2, the margin measured per axis on the two margin rulings of 2026-09-24; the open leg's neighbour pin reads runs
 of f, heading runs, a callout's float and an italic run glued to a picture in two nested `<small>`, held to that bound, at the
-default text size and at 150%, and its line pin, at a device scale of 2, a code span and keys on the line above and three tinted
+default text size and at 150%, and the floor's scene held within 1 and 30 pixels there and at 200%, and its line pin, at a device scale of 2, a code span and keys on the line above and three tinted
 grounds), so a tap's open is shown before it
 happens where the title is no surface; the file review's round 12, fresh-1; the web control rests at full opacity where the at-rest rule
 stands, a local one at 0.8, any focus reveals it, a keyboard's or one a script gives it with no ring, no mouse press of any button

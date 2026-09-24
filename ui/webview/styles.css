@@ -5025,7 +5025,17 @@ body.filebrowse-open { overflow: hidden; }
    f's ink in one read (at a device scale of 1 or 2, counted in device pixels; inside one <small>, <sub> or <sup>, up to 2), read the same way at every
    text size from 100% to 200% with the line moved by each eighth of a pixel, and every dash still reads 4.83:1 dark and 4.90:1 light
    on both sides, since the f paints before the picture and the ring over it (file-figure-open-browser.test.ts holds one such picture,
-   in two nested <small>, to that bound, SMALLER_BOUND); text smaller than 0.7em of the f's is not measured. Up and down 3px, the
+   in two nested <small>, to that bound, SMALLER_BOUND). Below 0.7em of the f's the ring covers more, a residual disclosed and
+   measured (the file review's round 15, extra5-3): Chromium sets no floor on a nested <small>'s text size, which falls by 1.2 a
+   level (1.8e-7px a hundred deep at 200%), so the margin across the line falls to the ring's own 3px, and there the ring covers
+   the most of that f, the most of all with the picture lowered by a <sub>. Over 24,576 reads by screenshot pixels (the Files pane
+   and the chat modal under touch, at device scales of 1 and 2, in both themes, at every text size from 100% to 200% with the line
+   moved by each eighth of a pixel; <small> nested 3 to 16, 20, 30, 40, 60 and 100 deep, <sub> and <sup> inside the deepest, a <font> of size 1,
+   2 or 3, whose size does not follow the viewer's text size, with <sub> and <sup> inside it) the worst read was a bold italic f
+   before a picture in a <sub> inside a hundred nested <small> at 200%: 30 pixels at a device scale of 1 and 102 device pixels at
+   2, sampled maxima that move with the subpixel position, every dash still at 4.83:1 dark and 4.90:1 light and no ink covered
+   past the margin box (file-figure-open-browser.test.ts holds that scene within 1 and 30 pixels at a device scale of 1,
+   FLOOR_BOUND). Up and down 3px, the
    ring's width, so the ring stands inside the picture's margin
    box on every side, which the picture's own line holds, and reaches no other line: at 2px it covered the bottom row of a key (kbd)
    on the line above, whose box reaches its line's edge, and painted the page's ground over the tint of the highlight, table row or
