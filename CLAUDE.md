@@ -117,23 +117,21 @@ This repo may go public; assume every commit is permanent and world-readable.
 The rule above is about identifiers a human can enumerate. Credentials are the
 other half and cannot work that way: nobody knows a token's text until it leaks,
 so there is no list to write. **gitleaks** covers them, in two places:
-- **`.githooks/pre-push`** runs it over the commits a push would publish (a
-  merge by its first-parent diff, so a secret typed into a conflict resolution
-  is read too) and refuses the push on a hit. No gitleaks on the machine means a
+- **`.githooks/pre-push`** reads for itself the changes a push would publish:
+  the lines the pushed commits add, a merge by its combined diff (the lines in
+  none of its parents, so a secret typed into a conflict resolution is read
+  too). It hands exactly those bytes to gitleaks, which runs no git, and
+  refuses the push on a hit. No gitleaks on the machine means a
   loud notice and no scan (requiring an install to push would break every clone
   that never asked for it); a gitleaks that fails to run refuses the push and
   says so, and so does one that ran but cannot show what it scanned: an error
-  line in its own log, or a scanned-commit count that is not the hook's own
-  count of the commits with content to scan, or no count at all (the two
-  coverage conditions). `log.showRoot` set to false would hide a root commit's
-  diff from the scanner's log: the hook passes `--root` on the scanner's log so
-  a root commit's diff is scanned whatever `log.showRoot` says, and a count that
-  comes up short beside that key and a root commit is refused with the key named
-  as a candidate cause and its remedy. The scanner's log carries `--text` as
-  well, so a diff attribute cannot hide a credential from it: a path git would
-  otherwise call binary (a `-diff` line or the `binary` macro in an attributes
-  file, or a blob over `core.bigFileThreshold`) is diffed as text and scanned
-  like any other, while a plain patch stream prints no hunk for it.
+  line in its own log, or a scanned-byte figure that is not the count of bytes
+  the hook handed it, or no figure at all (the two coverage conditions). The
+  hook's read carries `--text`, so a diff attribute cannot hide a credential
+  from it: a path git would otherwise call binary (a `-diff` line or the
+  `binary` macro in an attributes file, or a blob over `core.bigFileThreshold`)
+  is diffed as text and scanned like any other, while a plain patch stream
+  prints no hunk for it.
   `ROMP_NO_GITLEAKS=1` skips the credential scan for one push, and
   `ROMP_GITLEAKS` points at a binary. A clone that carries any replace ref
   (`git replace`) is refused before either scan runs when either scan is armed,
