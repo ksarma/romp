@@ -76,9 +76,10 @@ below read the test's parts as statements that run (the trio, the wrap and the f
 before the fake and the environment are put back; none after a return, a raise, a skip or an exit, none in the body of a
 try with an except clause), hold every other statement of the test to putting back none of what those set, in any
 binding form or by reflection named in any reference form, and hold each name those parts are read by to one value,
-bound once and read only where they read it (a plant test reds each part), run its fake's own def over the argv
-shapes it must tell apart, and run the test in a child pytest with a sitecustomize that records every connect and
-every Python process of the run: none dials the fixed port, and no ensure child starts.
+bound once and read only where they read it (a plant test reds each binding form, each read half and each identifier
+of reflection or of the environment on a plant of its own), run its fake's own def over the argv shapes it must
+tell apart, and run the test in a child pytest with a sitecustomize that records every connect and every Python
+process of the run: none dials the fixed port, and no ensure child starts.
 The census pin passes one floor write of a leak name, upstream's client-only "1" (FLOOR_LEAK_WRITES), and the tunnels
 probe compares client-only with the value the floor modules left. `python -m tests.test_hermetic_kernel_postal
 --census` prints the counts by name and shape (fork PR #871's by-product figures, derived by ast), with the parsed
@@ -3135,11 +3136,15 @@ _ENV_NAMES = ("environ", "environb", "putenv", "unsetenv")
 
 def _environ_mentions(node):
     """Every node inside `node`, nested defs included, that names the process environment or a function that changes it:
-    an attribute environ, environb, putenv or unsetenv on any object (os under any name, or reached any way), and a bare
-    name so spelled (after `from os import environ`), whatever its context. A write through a name bound to the mapping
-    (`env = os.environ`) is read at the binding, which names it."""
+    an attribute environ, environb, putenv or unsetenv on any object (os under any name, or reached any way), a bare
+    name so spelled (after `from os import environ`), whatever its context, and an import of a name so spelled, under
+    its own name or another (`from os import environ as _e`: before round 2's twenty-fourth commit on fork PR #894 that
+    import, with a pop through `_e` in the guard test's window, passed the guard pin, since an import's name is neither
+    an attribute nor a bare name). A write through a name bound to the mapping (`env = os.environ`) is read at the
+    binding, which names it."""
     return [n for n in ast.walk(node)
-            if (isinstance(n, ast.Attribute) and n.attr in _ENV_NAMES) or (isinstance(n, ast.Name) and n.id in _ENV_NAMES)]
+            if (isinstance(n, ast.Attribute) and n.attr in _ENV_NAMES) or (isinstance(n, ast.Name) and n.id in _ENV_NAMES)
+            or (isinstance(n, ast.alias) and n.name in _ENV_NAMES)]
 
 
 def _attribute_binds(node):
@@ -5332,17 +5337,20 @@ class HermeticKernelPostal(unittest.TestCase):
         os.environ.get reads, in the trio and in the restore (_environ_mentions); and no statement binds or deletes an
         attribute, whatever its name, on any object, in any binding form (_attribute_binds), other than the four put-ins
         and put-backs and the assignments of km.BUS_PORT, so no assertion method or Event method is replaced either.
-        Every name the parts are read by holds one value (the verifier's five one-line plants on the fourth commit rebound
-        real_run or real_revive, cleared the saved mapping, set the Event before the call or rebound it, and every pin
-        passed): the kept real run and real revive, the Event, the wait's result, the fake, the wrapper and each road def,
-        the saved mapping, the road's list, the threading module and the test case (self) are each bound ONCE in the whole
-        test, parameters of nested defs and lambdas included, by the statement the parts are read from (_name_binds), and
-        each but self is read only where the parts read it (_name_loads: the real run in the unfake and in a road's call,
-        the real revive in the unwrap and the wrapper's call, the Event in the wrapper's set and the wait, and so on); the
-        road's list is made by an empty list literal. NOT READ by the name rule: the fake's own list (the plants read it;
-        nothing the pin guarantees rests on it, and fork PR #875's assertion reads it); the names local to a nested def (the
-        fake's argv and text), whose behaviour the pin on the fake runs; and the restore loop's two names and the saved
-        mapping's comprehension name, bound and read inside texts the pin requires exactly.
+        Every name the parts are read by holds one value (the verifier's five one-line plants on the fourth commit
+        rebound real_run or real_revive, cleared the saved mapping, set the Event before the call or rebound it, and
+        every pin passed): the kept real run and real revive, the Event, the wait's result, the fake, the wrapper and
+        each road def, the saved mapping, the road's list, the threading module and the test case (self) are each bound
+        ONCE in the whole test, parameters of nested defs and lambdas included, by the statement the parts are read from
+        (_name_binds), and each but self is read only where the parts read it (_name_loads: the real run in the unfake
+        and in a road's call, the real revive in the unwrap and the wrapper's call, the Event in the wrapper's set and
+        the wait, and so on); the road's list is made by an empty list literal. The plant test holds each binding form
+        _name_binds reads, the read half of each of those names but self, and each identifier the reflection and
+        environment readers list, in each reference form its reader reads, to a plant that only that rule refuses. NOT
+        READ by the name rule: the fake's own list (the plants read it; nothing the pin guarantees rests on it, and fork
+        PR #875's assertion reads it); the names local to a nested def (the fake's argv and text), whose behaviour the
+        pin on the fake runs; and the restore loop's two names and the saved mapping's comprehension name, bound and
+        read inside texts the pin requires exactly.
         NOT READ, each with what sees it instead: a put-back made by code the test calls but does not contain (a helper of
         the module, setUp or tearDown), code outside the test that rebinds what it names (module-level code of
         tests/test_kernel.py, a fixture), a put-back through a module _reflective does not name (a pickle or marshal
@@ -5353,6 +5361,13 @@ class HermeticKernelPostal(unittest.TestCase):
         still running at the put-back; of the environment, nothing sees it while the fake holds, since every
         postal-service call is then answered in the process, so the restore's place after the wait is a second belt. A
         skip or an exit from a callee or from the class reds the executed pin, which requires the child run to pass.
+        NOT READ either: what else the test starts. A statement that kicks a revive, a notify or an ensure outside the
+        wrapper and the window passes this pin and the guard test (the re-verifier's three on round 2's fifth commit: the
+        real revive started on a thread through km.threading before the rebind, a second notify after the try, and
+        km._ensure_postal_bus() called after the try). The executed pin sees each: a real ensure child is recorded at its
+        exit, and one forked after the restore dials the fixed port, which the spy refuses and records. The first one's
+        ensure starts nothing on a run where the fake is installed before its thread reaches subprocess.run, since the
+        fake answers it.
         Returns what the pin on the fake's behaviour and the plants need."""
         fn = self._guard_test(src)
         self.assertEqual(fn.decorator_list, [], "the guard test carries no decorator: a skip or an expected failure passes a run that never reached its statements")
@@ -5579,7 +5594,24 @@ class HermeticKernelPostal(unittest.TestCase):
         made over two names, holding None, filtered by an if, or made after the trio. Reflection in every reference form:
         the verifier's three (setattr and getattr through another name, setattr handed to functools.partial), setattr and
         getattr imported under another name, builtins.setattr, operator's attrgetter and methodcaller by a string, a
-        closure cell rewritten, a function's globals and a frame's locals."""
+        closure cell rewritten, a function's globals and a frame's locals.
+        Since round 2's twenty-fourth commit (the re-verifier's findings on the fifth: a name's read half set to accept
+        any read, a binding form dropped from _name_binds, or an identifier dropped from a reflection list, left every
+        pin green), a plant for each such rule that only that rule refuses. For the read half of the kept real run and
+        real revive, the wait's result, the wrapper, the fake, threading and the road: the real run handed to a thread
+        through km.threading, outside the road, the real revive started on a thread outside the wrapper, the wait's
+        result read outside its assertion, the wrapper called directly (which sets the Event before the notify, so the
+        wait no longer covers the revive the notify kicks), the fake bound to another name, threading read to start the
+        real revive before the rebind, and the road called outside the fake. For each binding form no plant above
+        reaches: the Event rebound by a def, by a class statement, by an except clause's as name and by a match star,
+        and declared nonlocal in a nested def; the wrapper rebound by an async def; the kept real run declared global
+        and rebound by a match capture and by a match mapping's rest; the saved mapping deleted; os bound by a dotted
+        import. For the import forms: environ imported under another name, which passed the pin before that commit,
+        another object imported under a reflective name, and a dotted import whose last part is one. And every
+        identifier of _REFLECTIVE_NAMES, _REFLECTIVE_ATTRS and _ENV_NAMES alone, in each reference form its reader reads
+        (a bare name where the reader reads one, an attribute, an imported name), from lists written out in the test and
+        held equal to the readers' lists after the loop: an identifier dropped from a reader's list leaves its plants
+        passing, and one added without a plant fails the equality."""
         cls_src = self._guard_class_source()
         shape = self._guard_shape(cls_src)
         stubbed = sorted({c.func.value.id for c in ast.walk(shape["fake_def"]) if isinstance(c, ast.Call) and isinstance(c.func, ast.Attribute)
@@ -5605,12 +5637,19 @@ class HermeticKernelPostal(unittest.TestCase):
                    "the wrapper try's clauses": (wrapper_try.body[-1], "after", wrapper_try.col_offset),
                    "the restore": (shape["restore"], "replace"), "after the restore": (shape["restore"], "after"),
                    "the saved mapping": (shape["saved_made"], "replace"), "the road's list": (shape["list_made"], "replace"),
-                   "before the install": (shape["install"], "before"), "before the rebind": (shape["rebind"], "before")}
+                   "before the install": (shape["install"], "before"), "before the rebind": (shape["rebind"], "before"),
+                   "the body's start": (shape["fn"].body[0], "before")}
         after_try, finally_run, one_try, wait_msg = ("after the try the wait's result", "the finally puts the real run back",
                                                     "the notify call runs in one try", "the finally waits on the Event")
         reflect, binds, rebinds, env = ("names reflection, in any reference form", "binds or deletes an attribute",
                                         "binds the names km or os", "names the environment only in")
         held = "holds one value"
+
+        def read_at(role, name):           # the name rule's fault for that row's read half, and no other row's
+            return "%s (%s) is read at lines" % (role, name)
+
+        def bound_at(role, name):          # ...and for its bind half
+            return "%s (%s) is bound at lines" % (role, name)
         plants = (
             ("a return between the try and the final assertions", "after the try", "return", after_try),
             ("a return in the finally between the wait and the put-backs", "after the wait", "return", finally_run),
@@ -5701,6 +5740,43 @@ class HermeticKernelPostal(unittest.TestCase):
             ("the saved mapping filtered by an if", "the saved mapping",
              '%(saved_env)s = {k: os.environ.get(k) for k in ("ROMP_POSTAL_CLIENT_ONLY", "ROMP_POSTAL_PEERS", "ROMP_POSTAL_PORT") if k != "ROMP_POSTAL_PORT"}',
              "is made as {name: os.environ.get(name)"),
+            # round 2's twenty-fourth commit on fork PR #894 (the re-verifier's findings on the fifth: one row's read
+            # half set to accept any read, or one binding form dropped from _name_binds, left every pin green): each
+            # row's read half that no plant above reaches, and each binding form, planted so that rule alone refuses it
+            ("the kept real run handed to a thread through km.threading, outside the road", "after the install",
+             'km.threading.Thread(target=%(real_run)s, args=(["true"],)).start()', read_at("the kept real run", names["real_run"])),
+            ("the kept real revive started on a thread outside the wrapper", "after the install",
+             "km.threading.Thread(target=%(real_revive)s, daemon=True).start()", read_at("the kept real revive", names["real_revive"])),
+            ("the wait's result read outside its assertion", "after the try", "_planted = %(ended)s", read_at("the wait's result", names["ended"])),
+            ("the wrapper called directly, which sets the Event before the notify", "after the install", "%(wrapper)s()",
+             read_at("the wrapper", names["wrapper"])),
+            ("the fake bound to another name", "after the install", "_planted = %(fake)s", read_at("the fake", names["fake"])),
+            ("threading read to start the real revive before the rebind", "before the rebind",
+             "threading.Thread(target=km._revive_postal_bus, daemon=True).start()", read_at("the threading module", "threading")),
+            ("the road called outside the fake", "after the install", '%(road)s("true", (["true"],), {})',
+             read_at("a road from the fake to the real run", names["road"])),
+            ("the Event rebound by a def", "after the install", "def %(event)s():\n    pass", bound_at("the Event", names["event"])),
+            ("the Event rebound by a class statement", "after the install", "class %(event)s:\n    wait = staticmethod(lambda t: True)",
+             bound_at("the Event", names["event"])),
+            ("the wrapper rebound by an async def", "before the rebind", "async def %(wrapper)s():\n    pass", bound_at("the wrapper", names["wrapper"])),
+            ("the Event bound by an except clause's as name, and unbound at its end", "after the install",
+             'try:\n    int("planted")\nexcept ValueError as %(event)s:\n    pass', bound_at("the Event", names["event"])),
+            ("the kept real run declared global", "the body's start", "global %(real_run)s", bound_at("the kept real run", names["real_run"])),
+            ("the Event declared nonlocal in a nested def", "after the install", "def _planted():\n    nonlocal %(event)s",
+             bound_at("the Event", names["event"])),
+            ("the kept real run rebound by a match capture", "after the install", "match km.subprocess.run:\n    case %(real_run)s:\n        pass",
+             bound_at("the kept real run", names["real_run"])),
+            ("the Event rebound by a match star", "after the install", "match [0]:\n    case [*%(event)s]:\n        pass",
+             bound_at("the Event", names["event"])),
+            ("the kept real run rebound by a match mapping's rest", "after the install", "match {}:\n    case {**%(real_run)s}:\n        pass",
+             bound_at("the kept real run", names["real_run"])),
+            ("the saved mapping deleted", "before the try", "del %(saved_env)s", bound_at("the saved environment", names["saved_env"])),
+            ("os bound by a dotted import", "after the install", "import os.path", rebinds),
+            # the same commit: the import forms of the environment and reflection readers (environ imported under another
+            # name passed the pin before it)
+            ("environ imported under another name", "before the wait", 'from os import environ as _e\n_e.pop("ROMP_POSTAL_PORT", None)', env),
+            ("another object imported under a reflective name", "after the install", "from json import loads as setattr", reflect),
+            ("a dotted import whose last part is a reflective name", "after the install", "import six.moves.builtins", reflect),
             # reflection in every reference form (the verifier's three first: the getattr one reddened nothing, the two setattr
             # ones only the executed pin); in each pair the plant that names no other name the pin reads comes first, so it is
             # the reflection rule alone that reds it
@@ -5741,6 +5817,27 @@ class HermeticKernelPostal(unittest.TestCase):
             both = _plant_at(cls_src, node, 'self.assertEqual(%(stubbed)s, [], "a client-only kernel never runs the bus ensure")' % names, where)
             self.assertEqual(self._guard_shape(both)["reached"], shape["reached"],
                              "fork PR #875's assertion kept %s: the pin passes and reads the road's list" % label)
+        # every identifier the reflection and environment readers list, planted alone in each reference form its reader
+        # reads (the re-verifier's finding on round 2's fifth commit: an identifier dropped from a list left both pins
+        # green). Written out here, not read from the readers' lists, so an identifier dropped from a list leaves its
+        # plants passing the pin; held equal to those lists after the loop, so one added without a plant fails the test
+        reflective_names = ("setattr", "delattr", "getattr", "vars", "globals", "locals", "exec", "eval", "compile", "__import__",
+                            "patch", "builtins", "__builtins__", "import_module", "attrgetter", "methodcaller", "_getframe",
+                            "currentframe", "get_referrers", "get_referents", "get_objects")
+        reflective_attrs = ("__setattr__", "__delattr__", "__getattribute__", "__dict__", "__globals__", "__closure__", "__code__",
+                            "__defaults__", "__kwdefaults__", "cell_contents", "f_locals", "f_globals", "f_builtins", "modules")
+        env_names = ("environ", "environb", "putenv", "unsetenv")
+        forms = {"a bare name": "_planted = %s", "an attribute": "_planted = km.%s", "an imported name": "from _anywhere import %s as _planted"}
+        for fragment, idents, read_forms in ((reflect, reflective_names, ("a bare name", "an attribute", "an imported name")),
+                                             (reflect, reflective_attrs, ("an attribute", "an imported name")),
+                                             (env, env_names, ("a bare name", "an attribute", "an imported name"))):
+            for ident in idents:
+                for form in read_forms:
+                    with self.assertRaises(AssertionError, msg="%s as %s: the pin passed it" % (ident, form)) as caught:
+                        self._guard_shape(_plant_at(cls_src, shape["install"], forms[form] % ident, "after"))
+                    self.assertIn(fragment, str(caught.exception), "%s as %s: the pin reds for the reader that lists it" % (ident, form))
+        self.assertEqual((reflective_names, reflective_attrs, env_names), (_REFLECTIVE_NAMES, _REFLECTIVE_ATTRS, _ENV_NAMES),
+                         "every identifier the two readers list is planted above, in each reference form its reader reads")
 
     def test_the_guard_tests_fake_answers_only_a_postal_service_call_and_passes_every_other_call_to_the_real_run(self):
         """The guard test's own fake, run: its def (and any def of the test it calls by name) is compiled from the test's
