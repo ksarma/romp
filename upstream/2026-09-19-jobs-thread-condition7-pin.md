@@ -1,5 +1,5 @@
 ---
-title: Jobs stage 1 follow-up: the nudge walk's shared goal-store loads are counted (memos.nudgeWalk.loads) and fold ruling A condition 7 is pinned as ruled, at most one per alive session per pass, exactly one on a run, zero on a skip
+title: Jobs stage 1 follow-up: the nudge walk's shared goal-store loads are counted (memos.nudgeWalk.loads) and fold ruling A condition 7 is pinned as ruled, at most one per alive session per pass, exactly one when the look reaches the store, zero on a skip or at a state gate before the store read
 status: candidate
 where: kernel/kernel.py (the shared read in `_auto_nudge_session`, `_NUDGE_WALK_STATS`, the `_PerfStats` gloss); docs/reference.md (the `jobs` block and the `memos.nudgeWalk` entry); tests/test_nudge_walk_one_load_per_pass.py (new: the module that pins the walk's and the gate's per-pass load bounds); upstream/2026-09-19-jobs-thread-condition7-pin.md (this entry)
 added: 2026-09-19
