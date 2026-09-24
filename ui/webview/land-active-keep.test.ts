@@ -427,8 +427,15 @@ test("a deep link with a time whose pre-jump moves a reader who is not following
 
 test("render.ts: the two marks the fallback reads describe this attempt: scrollToAnchor clears both before anything else, the pre-jump (reached only through scrollToAnchor's window ask) marks the jump right after its write and the record's sync, and landActive reads them straight after its attempt by id, never on a pass that made none. A source pin on where the marks are set and read, which the harness above stubs; the road above executes what landActive does with them, and the landing lab's roads 10 and 16 run the pre-jump in the browser", () => {
   assert.match(RENDER, /function scrollToAnchor\(uuid: string\): boolean \{\n\s*anchorPendingOlder = false;[^\n]*\n\s*anchorPreJumped = false;/, "scrollToAnchor clears both marks on entry, so what they say is this attempt's");
-  assert.equal((RENDER.match(/\brequestAround\(/g) || []).length, 2, "requestAround is declared once and called once, inside scrollToAnchor");
-  assert.equal((RENDER.match(/\bpreJumpIntoGap\(/g) || []).length, 2, "preJumpIntoGap is declared once and called once, inside requestAround: the pre-jump runs only inside an attempt, after its marks were cleared");
+  // each call counted over the file, then found inside the one function that makes it: a count alone stays green for a call moved elsewhere
+  const bodyOf = (sig: RegExp, name: string): string => { const b = RENDER.match(sig); assert.ok(b, name + " is declared where the pin looks"); return b![0]; };
+  const calls = (src: string, name: string): number => (src.match(new RegExp("\\b" + name + "\\(", "g")) || []).length;
+  const sta = bodyOf(/^function scrollToAnchor\(uuid: string\): boolean \{[\s\S]*?\n\}/m, "scrollToAnchor");
+  const around = bodyOf(/^function requestAround\(sid: string, uuid: string\): boolean \{[\s\S]*?\n\}/m, "requestAround");
+  assert.equal(calls(RENDER, "requestAround"), 2, "requestAround is declared once and called once");
+  assert.equal(calls(sta, "requestAround"), 1, "requestAround's one call is inside scrollToAnchor");
+  assert.equal(calls(RENDER, "preJumpIntoGap"), 2, "preJumpIntoGap is declared once and called once");
+  assert.equal(calls(around, "preJumpIntoGap"), 1, "preJumpIntoGap's one call is inside requestAround: the pre-jump runs only inside an attempt, after its marks were cleared");
   const pj = RENDER.match(/^function preJumpIntoGap\([\s\S]*?\n\}/m);
   assert.ok(pj, "preJumpIntoGap");
   assert.match(pj![0], /writeScroll\(content, y, "land-guess"\);\n\s*v\.scrollTop = content\.scrollTop;\n\s*anchorPreJumped = true;/, "the pre-jump marks the jump right after it writes the reader's place and syncs the record, on the one road that places the reader");
