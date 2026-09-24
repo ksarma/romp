@@ -4804,8 +4804,9 @@ function targetHost(href: string): string {
  *  prints as `http://2x.png`), never a secret. An address that parses is read as the parser reads it, and two spellings of a
  *  credential parse with no userinfo at all, so they print: a password whose part before a /, ? or # is a number parses as a port,
  *  the username before it as the host and, after a /, the rest as the path, and an `http:` source written without its slashes on
- *  an http page resolves as a path of the page's own origin. URL parsing normalises the spelling (the scheme and the host
- *  lower-cased, a space percent-encoded). */
+ *  an http page resolves as a path of the page's own origin. Those two print by the coordinator's ruling, a disclosed residual whose
+ *  executed witness is the case in file-view-outline.test.ts titled "two spellings of a credential that the URL parser reads with no
+ *  sign-in part ...". URL parsing normalises the spelling (the scheme and the host lower-cased, a space percent-encoded). */
 export function shownAddress(href: string, base?: string): string {
   const cut = (s: string): string => {
     const lead = (/^(?:[a-z][a-z0-9+.-]*:[/\\]*|[/\\]{2})/i.exec(s) || [""])[0];

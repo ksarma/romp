@@ -1878,8 +1878,10 @@ async function tabToControl(page: any, alt: string): Promise<number> {
 /** What a press of each key pins (d) and (f) press sends, as a key and a code: Space and Enter as themselves, and the numeric keypad's
  *  Enter as the key Enter under the code NumpadEnter, so the key gate, which reads the key, reads it as it reads Enter. */
 const KEY_SENT: Record<"Space" | "Enter" | "NumpadEnter", [string, string]> = { Space: [" ", "Space"], Enter: ["Enter", "Enter"], NumpadEnter: ["Enter", "NumpadEnter"] };
-/** `key` pressed on the keyboard's holder, its keydown read at the window before any listener of the page's; returns the key and the
- *  code the keydown carried. */
+/** `key` pressed on the keyboard's holder, its keydown read at the window in the capture phase, so before the key gate's listener,
+ *  which is on the file view's .fileview-body element. It is not the first listener: the page's one window capture listener for
+ *  keydown, the save chord's (file-comments.ts, registered at load), runs before it and acts on that chord alone. Returns the key and
+ *  the code the keydown carried. */
 async function pressReadingKey(page: any, key: keyof typeof KEY_SENT): Promise<[string, string] | null> {
   await page.evaluate(() => { const w = window as any; w.__keySent = null; window.addEventListener("keydown", (e) => { w.__keySent = [e.key, e.code]; }, { capture: true, once: true }); });
   await page.keyboard.press(key);
