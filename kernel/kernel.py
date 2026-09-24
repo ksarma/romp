@@ -34131,7 +34131,9 @@ def _awaiting_nest(agents, commands, cmd_owner, path):
     # newer by then: that memo is cleared whole past 1024 entries by any thread's lookup
     # (tests/test_subagent_tree_stamps_per_cycle.py DependencyKey
     # test_a_held_fold_replays_its_own_walks_notes_after_the_agent_file_memo_was_cleared), and a later lookup's walk
-    # replaces the entry with pairs the held ids never reflected.
+    # replaces the entry with pairs the held ids never reflected: a lookup on a thread that holds no slot, whose walk reads
+    # the disk afresh (DependencyKey
+    # test_a_held_fold_replays_its_own_walks_notes_after_a_lookup_on_a_thread_with_no_scope_replaced_the_agent_file_memos_entry).
     launch_sets = getattr(_live_scope, "subagent_launches", None)
     if launch_sets is None:
         launch_sets = {}                                  # no launch-fold slot on this thread: this call's own map
@@ -36069,7 +36071,7 @@ def _subagent_file(path, agent_id, faults=None, notes=None):
     agent up records them, exactly as noted (_subagent_file_notes_replay): the build whose lookup walked; a build whose
     lookup this memo answers, on the stamps the walk took (on this thread or another, in this cycle or an earlier one),
     the pairs being the memo entry's third element; and a build whose lookup _awaiting_nest's held launch fold answers
-    without calling here, the pairs being the fold entry's fourth element (`notes`, a list when given, receives the
+    without calling here, the pairs being the fold entry's second element (`notes`, a list when given, receives the
     pairs this lookup reported, which is how the fold stores them). Where a fresher read in the same build reported
     another key for one of those paths, the build records the disagreement, a key no re-stat equals, so the tab is
     rebuilt next cycle (_chat_build_deps). Until round 2 of #882 (group B, fresh-1) the walk
@@ -39400,12 +39402,16 @@ def _chat_build_deps(sid, payload):
     the next cycle's signature misses and the tab is rebuilt: two keys mean the payload embeds reads of the
     path in two states, and a record of either key can equal the next re-stat while the payload shows the
     other state. Keeping the first key was enough while every report came from a read made when it was
-    reported, since the first was then the oldest and any later change left it behind the re-stat. A report
-    replayed from a held read breaks that order: in one build a fresh walk reported a sibling directory's
-    key after an agent's file landed in it, and a launch fold held from before the landing then replayed
-    the older key, which the first key hid, so the tab that showed that agent's file missing was never
-    rebuilt (the pass applying round 2 of #882's rulings; tests/test_subagent_tree_stamps_per_cycle.py
-    DependencyKey executes both orders and a path reported twice under one key)."""
+    reported, since the first was then the oldest and any later change left it behind the re-stat; a report
+    replayed from a held read or a memo entry can come after a fresher one, which that order would hide.
+    The rule is pinned at the unit level: tests/test_subagent_tree_stamps_per_cycle.py DependencyKey
+    test_a_path_one_build_reported_under_two_keys_is_recorded_under_a_key_no_re_stat_equals_in_either_order,
+    both orders and a path reported twice under one key. Through the readers, the agent-file walk reaches it
+    when it notes a place it could not read under _TREE_UNREADABLE that the tree read noted under its own key
+    (tests/test_subagent_tree_memo.py FaultBelowTheRoot), where a record keeping the first key re-arms the
+    tab as well; the road on which the rule was found (the pass applying round 2 of #882's rulings: a fresh
+    walk after an evicted pair was dropped from the scope, beside a launch fold held from before a landing)
+    went with the eviction table (round 4 of #882, D3)."""
     sc = getattr(_chat_dep_scope, "deps", None) or {}
     touts = {}
     for of, key in sc.get("task_outs") or ():

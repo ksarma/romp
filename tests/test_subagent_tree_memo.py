@@ -512,7 +512,8 @@ class UnreadableRoot(_Tree):
     is a read that did not happen, not an absent tree: nothing is popped, nothing is noted absent, no counter moves, each
     reader answers its standing entry unheld, and the next call after the fault clears reads the disk again and finds the
     entry standing (a validation, never a walk). This is the second of the two rules in which this branch's tree read
-    differs from upstream's: #1822's _subagent_tree_sample takes every OSError on the root's lstat for absence and pops.
+    differs from upstream's: #1822's _subagent_tree_sample takes every OSError on the root's lstat for absence and pops,
+    and that sample's `except` applied at this head as a mutant reds both cases on the entry popped under the fault.
     RED FIRST: until 2026-09-21 the root's `except OSError` took every errno for absence, so an EIO popped the entry,
     answered (), () and noted the tree absent to the chat build, which showed no subagents until the fault cleared; the
     module's own cases
