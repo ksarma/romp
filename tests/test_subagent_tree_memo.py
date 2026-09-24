@@ -22,8 +22,8 @@ frame built at all), from the helper, and from the tracking-off frame, where a f
 /perf's memos.subagentTree reports the hits and misses; (8) a tree written within the racy window is re-listed until it
 has been quiet; (9) a listing that failed (EMFILE) or a child whose lstat failed (EIO) is never vouched: the next call
 re-lists and recovers the whole tree; (10) a root whose own lstat fails for a reason other than absence (an EIO by mock, a
-real EACCES from its parent) is a read that did not happen, not an absent tree: nothing is popped, no eviction is
-recorded, nothing is noted absent, no counter moves, each reader answers its standing entry unheld or an unreadable
+real EACCES from its parent) is a read that did not happen, not an absent tree: nothing is popped, nothing is noted
+absent, no counter moves, each reader answers its standing entry unheld or an unreadable
 marker, and the next call after the fault clears validates the standing entry; (11) such a fault excludes its own tree
 from the agent-file walk and nothing else: a file under a readable sibling's tree is found, memoized and answered with no
 fault passed to the caller while the own tree, a sibling sorted before it or an entry whose type cannot be read faults,

@@ -107,8 +107,9 @@ residual, witnessed. An agent's own place holding what the walk refuses (a symli
 subagents/ whose target holds the file) is in no record, so the tab its walk built is served with no rebuild, a write to
 the link's target included, beside the control of an absent place recorded None (round 3 of #882, group B: every build
 replayed the walk's (place, None), which the re-stat through the link never equals, and the tab was rebuilt every
-cycle); and a symlinked subagents/ replaced by a real directory holding the file moves no recorded key, the second
-residual, witnessed. (7) The sum over roots: three alive
+cycle); and a symlinked subagents/ replaced by a real directory holding the file moves the key the walk recorded for
+the link (#910 notes a live link at a subagents path under its stat key), so the tab is rebuilt: what was the second
+residual is closed. (7) The sum over roots: three alive
 sessions with trees of unequal size and unequal agent counts, read in one pusher cycle and in one jobs pass with the reads
 interleaved, cost the sum over their roots of D_r lstats (each root its own D_r), 0 stats and one fold per agent (the sum
 over the sessions of A_s), so the total directories decide the cycle's cost and not their split over roots (the derived
@@ -4015,14 +4016,14 @@ class DependencyKey(_World):
         got = [dict(deps["task_outs"]).get(str(ap), "unrecorded") for deps in tab["builds"]]
         self.assertEqual(got, [None] * len(tab["builds"]), "each build's key for the absent own place: %r" % (got,))
 
-    def test_a_symlinked_subagents_directory_replaced_by_a_real_directory_holding_the_file_moves_no_key_a_build_recorded(self):
-        """The residual group B leaves (round 3 of #882), witnessed; green by design, and not a claim that the state is
-        wanted. The walk notes the own place only when nothing is there, and a symlinked subagents/ is no tree the readers
-        record (a live link notes nothing), so once the link is replaced by a real directory holding the agent's file, no
-        key the tab's build recorded moves and the tab keeps showing the file missing, while the lookup itself finds the
-        file (the memo's stamp of the own place moved). Keys on no recorded key moving and the next cycle serving the tab.
-        A kernel that keys the own place when it is a link closes the residual and turns this case red; the text in
-        _subagent_file's docstring goes with it."""
+    def test_a_symlinked_subagents_directory_replaced_by_a_real_directory_holding_the_file_moves_the_links_recorded_key_and_rebuilds_the_tab(self):
+        """What was group B's residual (round 3 of #882), now closed by the dependency-key fix this branch merges (#910):
+        the agent-file walk notes a live link at a subagents path under the path's stat key (_subagent_walk_dep_note), the
+        link's target's (st_mtime, st_size), so the own subagents/ that is a link is in the tab's record. Once the link is
+        replaced by a real directory holding the agent's file, that recorded key, and no other, moves against the next
+        signature's re-stat, the next cycle rebuilds the tab, and the lookup finds the file. Keys on the moved keys being
+        the own subagents path alone, the tab rebuilt, and the file found. Red under a walk that notes nothing for a live
+        link (the residual: no key moves and the tab is served showing the file missing)."""
         aid, ap, _target, tab = self._refused_place("subagents")
         self._tab_cycles(tab, 2)
         self.assertEqual(tab["rebuilt"], [None, False], "premise: the walk's build, then a cycle that served the tab: %r" % (tab["rebuilt"],))
@@ -4036,13 +4037,13 @@ class DependencyKey(_World):
         now_keys = dict(km._chat_sig_deps(SID, deps)[0])
         proj = str(Path(self.path).parent)
         moved = sorted(os.path.relpath(p, proj) for p in recorded if now_keys.get(p) != recorded[p])
-        self.assertEqual(moved, [],
-                         "keys the tab's build recorded that the replacement moved: %r; keyed on none, the residual (stated in "
-                         "_subagent_file's docstring)" % (moved,))
+        self.assertEqual(moved, [os.path.relpath(str(self.sub), proj)],
+                         "keys the tab's build recorded that the replacement moved: %r; keyed on the own subagents path alone, noted "
+                         "under the link's stat key and moved by the real directory that replaced it" % (moved,))
         self._tab_cycles(tab, 1)
-        self.assertEqual(tab["rebuilt"][-1], False, "the next cycle serves the tab, which shows the file missing: the residual")
+        self.assertIs(tab["rebuilt"][-1], True, "the next cycle rebuilds the tab: %r" % (tab["rebuilt"],))
         self.assertEqual(km._subagent_file(self.path, aid), ap,
-                         "the lookup itself finds the file: the memo's stamp of the own place moved, so it walks")
+                         "the lookup finds the file: the memo's stamp of the own place moved, so it walks")
 
     @staticmethod
     def _eio_on_both(path):
