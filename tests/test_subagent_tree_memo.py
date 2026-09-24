@@ -1577,9 +1577,9 @@ class FaultBelowTheRoot(_Walk):
     def test_a_chat_build_that_reads_the_sidecar_map_before_its_lookup_rebuilds_its_tab_through_the_disagreement_eio(self):
         """The live road of _chat_build_deps' two-key rule. A chat build reads the sidecar map before it looks an agent up
         (_stamp_agents, as build_session does). Under an EIO by mock on workflows/'s listing, the map's tree read notes
-        workflows/ under the stat key of its read; the lookup's walk excludes that place, notes it under _TREE_UNREADABLE
-        and replays its own tree read's key after that. Premise, from the build's reports for workflows/ in order: the
-        first is a stat key and _TREE_UNREADABLE is among the later ones. Once the fault clears, the key the build
+        workflows/ under the stat key of its read; the lookup's walk excludes that place and notes it under
+        _TREE_UNREADABLE. Premise, from the build's reports for workflows/ in order: the first is a stat key and
+        _TREE_UNREADABLE is among the later ones. Once the fault clears, the key the build
         recorded for workflows/ differs from the next signature's re-stat, so the tab is rebuilt, and the lookup finds the
         file. Red under a record that keeps a path's first key: it records the tree read's stat key, which the EIO did not
         move, and the re-stat equals it."""
