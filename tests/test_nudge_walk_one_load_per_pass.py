@@ -136,8 +136,9 @@ of mode 000 at the store path) loads once through the walk, is counted, and note
 
 The wake sweep, `_awaiting_wake_outcomes`, is the store's third reader on the pass. It runs after the per-session loop,
 in the same pass and outside the toggle guard, and takes one shared load per wake record it owns: a record that is
-wake-set, not failed, moot or answered, not muted, and whose sid the walk did not visit or visited under a wedge gate.
-It keeps no memo, so it reads again every pass, and `memos.nudgeWalk.loads` does not count it. The harness holds it to
+wake-set; not failed, moot or answered; not under a journaled muted gate; and whose sid is not alive this pass or whose
+journaled walk gate is a wedge gate (the journaled gate keyed by gid when present and else by sid, and for a sid the walk's
+yield deferred, the gate from its last visit). It keeps no memo, so it reads again every pass, and `memos.nudgeWalk.loads` does not count it. The harness holds it to
 that bound per sid per pass (`owned_records`, the records the seeding helper gave it): the first cases' ledger holds no
 wake record, so the sweep reads nothing there, and TheSweepIsItsOwnBoundedReader drives both of its constituencies: one
 record for an unwalked private sid, with one sweep load on each of two passes, once with a store whose nodes lack the goal
@@ -149,9 +150,7 @@ since its real body is a writer).
 Most of this module's time is the stranger witness (TheWalkersRefuseAStrangerByExecution), and its floor is the walk it drives:
 every roster row runs at every plantable position over the real tree it reads, and each row's first walk is breadth-first through
 _walk, so a drive yields every node above the plant's depth before it meets the plant, over the kernel its module level and at most
-two levels below it. To keep each drive to that walk, the plant goes first in the module body, _loader_births walks once and reads
-the nodes it yielded, _traversal_references walks the whole tree before its owner map, and the case parses each source once for both
-of its sides (review round 8, regression-1 and extra9-1).
+two levels below it.
 
 Two provenances are named in this module, never by one word. The reviewer's rounds carry a number. "The round-N fixes" are the
 changes the Review round N paragraph records: through round 6, the changes that answer round N's rulings; the round-7 fixes answer
@@ -2652,8 +2651,9 @@ class _WalkHarness(unittest.TestCase):
             recs = "; ".join("%s (%s:%d)" % (c, f, ln) for s, c, f, ln in self.calls if s == sid and c in SWEEP)
             self.assertLessEqual(n, self.owned_records.get(sid, 0),
                                  "sid ..%s: the sweep takes at most one shared load per wake record it owns per pass (a record that is "
-                                 "wake-set, not failed, moot or answered, not muted, and whose sid the walk did not visit or visited "
-                                 "under a wedge gate), none for a sid with no owned record; it runs after the per-session loop in the "
+                                 "wake-set, not failed, moot or answered, not under a journaled muted gate, and whose sid is not alive "
+                                 "this pass or whose journaled walk gate, keyed by gid when present and else by sid, is a wedge gate), "
+                                 "none for a sid with no owned record; it runs after the per-session loop in the "
                                  "same pass and memos.nudgeWalk.loads does not count it; its records for this sid: %s" % (sid[-4:], recs))
         foreign = ["%s (%s:%d, sid ..%s)" % (c, f, ln, s[-4:]) for s, c, f, ln in self.calls if c in WALK + GATE and s not in SIDS]
         self.assertEqual(foreign, [], "a shared load by the look or the placement gate for a session that is not one of this pass's two, by "
