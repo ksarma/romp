@@ -198,16 +198,21 @@ This module holds five things, and it never skips: a pin that skips reports gree
    way (the owner's fail-closed design, 2026-09-23), a call whose callee's name the resolution cannot resolve: one
    inside a comprehension or generator expression in a class body that binds the name (Python looks it up past the class
    there, a scope the census does not model); and, in a module with a star import from a module whose calls the census
-   does not read, one through a name the lookup takes to the module, since only a function scope that binds the name
-   proves the star import cannot reach it: a name the module binds (the star import may rebind it, and the census
-   follows no order; the first verify pass, 2026-09-23, found such a binding read as the module's own and passed) or a
-   name no scope binds and no builtin names (the name may come from it). A string anywhere else, or one held in a
+   does not read, one through a name the lookup takes to the module, since the census takes only a function scope that
+   binds the name as proof that the star import cannot reach it: a name the module binds (the star import may rebind
+   it, and the census follows no order; the first verify pass, 2026-09-23, found such a binding read as the module's
+   own and passed) or a name no scope binds and no builtin names (the name may come from it); and one through a name a
+   function binds by a plain or annotated assignment from a name or an attribute whose root name is one of those,
+   followed along a chain of such assignments (the second verify pass, 2026-09-23, found `run = main` in a function,
+   main from the star import, read as the function's own and passed). A string anywhere else, or one held in a
    variable or built with %, + or .format, is outside the read, as is an argv assembled one element at a time (append
    calls) and any call, string or in process, reached through a name the census does not resolve (a name bound other
    than by an import or a plain or annotated assignment: tuple unpacking, a walrus, a conditional expression, a
    parameter default; an attribute of a class or an instance, `T.m` or `self.m`; getattr, importlib or runpy; beside a
    star import from a module the census does not read, a builtin name, read as the builtin, or a module name no scope
-   binds, read as that module (subprocess, os, shlex, asyncio, pytest, _pytest), which the star import may rebind; a
+   binds, read as that module (subprocess, os, shlex, asyncio, pytest, _pytest), which the star import may rebind, and
+   a name a function binds from such a star import's name other than by a plain or annotated assignment from a name or
+   an attribute (from a call's result or a subscript, as a parameter or a loop target), read as the function's own; a
    call in a class body through a name the class binds, which the census reads as the class's binding, where the body
    reads the name past the class until that binding runs; among others); and so is every module whose text spells
    neither pytest nor py.test and holds no star import, which the census skips without a parse, so nothing above is read
@@ -3179,9 +3184,11 @@ def _launchers_in(src, filename):
     where Python looks the name up past the class and the census does not model that scope; and, in a module with a
     star import from a module outside CENSUS_STAR_MODULES (or a relative one), whose names the census does not read,
     one through a name the lookup takes to the module: a name the module binds, which the star import may rebind, or a
-    name no scope binds and no builtin names, which it may bring. A star import binds at the module, so only a function
-    scope on the lookup that binds the name is proof that the call does not reach it; a class body's binding is not,
-    since the body reads the name past the class until its own binding runs. Unparsed too: a list or tuple literal that may run pytest and
+    name no scope binds and no builtin names, which it may bring; and one through a name a function binds by a plain
+    or annotated assignment from a name or an attribute whose root name is one of those, along a chain of such
+    assignments (from_star). A star import binds at the module, so only a function scope on the lookup that binds the
+    name, other than by such an assignment, is taken as proof that the call does not reach it; a class body's binding
+    is not, since the body reads the name past the class until its own binding runs. Unparsed too: a list or tuple literal that may run pytest and
     the census cannot tell (after an interpreter head, a -m whose module name is not a constant, or an element that is
     not a constant right before `pytest`; _argv_command's docstring); a constant string or f-string, written at the
     call, handed to subprocess.run, Popen, call, check_call, check_output, getoutput or getstatusoutput, to os.system
@@ -3200,6 +3207,8 @@ def _launchers_in(src, filename):
     expression, a parameter default), an attribute of a class or an instance (`T.m`, `self.m`), one reached through
     getattr, importlib or runpy, beside a star import from a module the census does not read, a builtin name or a
     module name no scope binds (UNBOUND_MODULES), read as the builtin or the module, which the star import may rebind,
+    a name a function binds from such a star import's name other than by a plain or annotated assignment from a name
+    or an attribute (from a call's result or a subscript, as a parameter or a loop target), read as the function's own,
     and a call in a class body through a name the class binds, read as the class's binding, where the body reads the
     name past the class until that binding runs (a class body's call of the module's pytest.main before the class
     binds the name to something else gives no row; found closing the first verify pass, 2026-09-23); and a string that spells pytest anywhere else (a script written to a file, an
@@ -3432,6 +3441,46 @@ def _launchers_in(src, filename):
         """The scopes a statement binds `name` in, each moved where a global or nonlocal declaration puts it."""
         return {home(where, name) for where, names in bound_by_any().items() if name in names}
 
+    def star_lands(name, scope):
+        """Where the lookup of `name` from `scope` lands beside a star import from a module the census does not read: the
+        function scope on the lookup that binds the name, None for the module, or "unbound". A class body's binding is
+        passed by: the body reads the module's name until its own binding runs."""
+        homes = homes_of(name)
+        return next((s for s in chain(name, scope) if s in homes and not isinstance(s, ast.ClassDef)), "unbound")
+
+    assigned_from = []
+
+    def from_star(name, scope, seen):
+        """True when `name`, looked up from `scope` beside such a star import, may hold a name the star import brings or
+        rebinds (the fail-closed design's second verify pass, 2026-09-23): the lookup lands at the module, or at no
+        binding for a name that is neither a builtin nor a module name the census reads as itself (UNBOUND_MODULES), or
+        at a function scope where a plain or annotated assignment binds it from a name or an attribute whose root name is
+        itself from the star import, followed along a chain of such assignments. Until then a function's binding was
+        proof, so `run = main` in a test, main from the star import, then `run(["-q"])`, gave no row where pytest.main
+        ran. A function binding made any other way (an import, a def, a parameter, a loop target, an assignment from a
+        call or a subscript) is read as the function's own."""
+        lands = star_lands(name, scope)
+        if lands is None:
+            return True
+        if lands == "unbound":
+            return name not in BUILTIN_NAMES and name not in UNBOUND_MODULES
+        if not assigned_from:
+            table = {}          # (the scope a binding lands in, name) -> [(the value's root name, the assignment's scope)]
+            for node, targets, value in assigns:
+                vroot = value
+                while isinstance(vroot, ast.Attribute):
+                    vroot = vroot.value
+                if isinstance(vroot, ast.Name):
+                    where = scope_of(node)
+                    for t in targets:
+                        if isinstance(t, ast.Name):
+                            table.setdefault((home(where, t.id), t.id), []).append((vroot.id, where))
+            assigned_from.append(table)
+        if (lands, name) in seen:
+            return False
+        seen.add((lands, name))
+        return any(from_star(vname, where, seen) for vname, where in assigned_from[0].get((lands, name), ()))
+
     def unresolved(func):
         """Why the census refuses to read a call through `func` (its root name), or None."""
         root = func
@@ -3450,9 +3499,7 @@ def _launchers_in(src, filename):
             # module's name until its own binding runs (the fail-closed design's first verify pass, 2026-09-23: a
             # module binding, `main = None` or `from json import loads as run`, that the star import then rebinds was
             # read as the module's own and gave no row where pytest ran)
-            homes = homes_of(root.id)
-            lands = next((scope for scope in chain(root.id, scope_of(root)) if scope in homes and not isinstance(scope, ast.ClassDef)),
-                         "unbound")
+            lands = star_lands(root.id, scope_of(root))
             if lands is None:
                 return ("a call through %r, a name the module binds, in a module with a star import from %s, which the census "
                         "does not read (the star import may rebind it, and the census follows no order): not read as a "
@@ -3461,6 +3508,10 @@ def _launchers_in(src, filename):
                 return ("a call through %r, a name no scope here binds, in a module with a star import from %s, which the census "
                         "does not read (the name may come from it): not read as a launcher until the name is imported by name"
                         % (root.id, ", ".join(unread_stars)))
+            if lands != "unbound" and from_star(root.id, scope_of(root), set()):
+                return ("a call through %r, a name the function %s binds from a name the star import from %s may bring or "
+                        "rebind (the census does not read that module): not read as a launcher until the star import is "
+                        "replaced by imports by name" % (root.id, getattr(lands, "name", "<lambda>"), ", ".join(unread_stars)))
         return None
 
     out = []
@@ -3865,6 +3916,32 @@ class ChildPytestLaunchers(unittest.TestCase):
         ("a class body's call before its own binding, beside such a star import (K5)",
          'from helpers_x import *\nclass T:\n    out = main(["-q"])\n    main = None\n',
          "unparsed", "a name no scope here binds, in a module with a star import from helpers_x"),
+        # nor does a function's binding made from a name the star import may bring or rebind: `run = main` in a
+        # function, main from the star import, gave no row where pytest.main ran (the fail-closed design's second verify
+        # pass, 2026-09-23: LA1 to LA4 and LA17). A plain or annotated assignment from a name or an attribute is followed
+        # along its chain to the module, and the call through it is refused
+        ("a function's binding from a name such a star import brings (LA1)",
+         'from helpers_x import *\ndef go():\n    run = main\n    return run(["-q"])\n',
+         "unparsed", "a name the function go binds from a name the star import from helpers_x may bring or rebind"),
+        ("an attribute of a function's binding from such a name, called with a pytest string (LA2)",
+         'from helpers_x import *\ndef go():\n    m = sp\n    return m.run("python -m pytest -q", shell=True)\n',
+         "unparsed", "a name the function go binds from a name the star import from helpers_x may bring or rebind"),
+        ("such a binding called from a nested function (LA3)",
+         'from helpers_x import *\ndef go():\n    run = main\n    def inner():\n        return run(["-q"])\n    return inner()\n',
+         "unparsed", "a name the function go binds from a name the star import from helpers_x may bring or rebind"),
+        ("such a binding called under a nonlocal declaration (LA4)",
+         'from helpers_x import *\ndef go():\n    m = main\n    def inner():\n        nonlocal m\n        return m(["-q"])\n'
+         '    return inner()\n',
+         "unparsed", "a name the function go binds from a name the star import from helpers_x may bring or rebind"),
+        ("a function's binding from an attribute of such a name (LA17)",
+         'from helpers_x import *\ndef go():\n    run = main.__call__\n    return run(["-q"])\n',
+         "unparsed", "a name the function go binds from a name the star import from helpers_x may bring or rebind"),
+        ("a chain of two such bindings, one annotated",
+         'from helpers_x import *\ndef go():\n    a: object = main\n    b = a\n    return b(["-q"])\n',
+         "unparsed", "a name the function go binds from a name the star import from helpers_x may bring or rebind"),
+        ("a function's binding from an attribute of a module import such a star import may rebind, the flag passed",
+         'import pytest\nfrom helpers_x import *\ndef go():\n    run = pytest.main\n    return run(["-q", "-p", "no:anyio"])\n',
+         "unparsed", "a name the function go binds from a name the star import from helpers_x may bring or rebind"),
     )
     # the argv each positional form reads, its elements joined by spaces (None for an expression): a spawn form's mode
     # and an e form's env are not argv elements. Strings, not lists: a list here would be an argv literal this census reads.
@@ -3947,6 +4024,11 @@ class ChildPytestLaunchers(unittest.TestCase):
         # verify pass)
         ("a builtin name a star import from an unread module may rebind", 'from helpers_x import *\ndef go():\n    return print(["-q"])\n'),
         ("a module name a star import from an unread module may rebind", 'from helpers_x import *\nsubprocess.run(["-q"])\n'),
+        # beside such a star import, a function's binding from one of its names other than by a plain or annotated
+        # assignment from a name or an attribute is read as the function's own (the second verify pass's fix follows
+        # those assignments alone)
+        ("a function's binding from a subscript of such a star import's name", 'from helpers_x import *\ndef go():\n'
+         '    run = [main][0]\n    return run(["-q"])\n'),
         # a class body reads a name past the class until the class binds it, and the census reads the class's binding
         # (K1, found closing the first verify pass; reading both, or refusing the call, reds the first-iterable case
         # in test_a_name_the_resolution_reads_is_not_refused)
@@ -3978,6 +4060,11 @@ class ChildPytestLaunchers(unittest.TestCase):
                  '    os.getcwd()\n', []),
                 ("a name the enclosing function binds, beside such a star import",
                  'from helpers_x import *\ndef outer():\n    from json import loads as main\n    def go():\n        return main("[1]")\n', []),
+                ("a function's binding from a name the function imports by name, beside such a star import",
+                 'from helpers_x import *\ndef go():\n    from pytest import main\n    run = main\n    return run(["-q", "-p", "no:anyio"])\n',
+                 ["pytest.main (in process)"]),
+                ("a function's bindings from each other alone, beside such a star import",
+                 'from helpers_x import *\ndef go():\n    a = b\n    b = a\n    return a()\n', []),
                 ("a star import from a module the census reads refuses nothing",
                  'from subprocess import *\ndef go():\n    return helper()\n', []),
                 ("a name declared global and bound nowhere else is unbound, with no star import to refuse it",

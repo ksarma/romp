@@ -159,12 +159,14 @@ jobs:
         # a constant string or f-string written at the call and handed to subprocess, os.system or os.popen,
         # asyncio.create_subprocess_shell, shlex.split or a shell's -c is red until spelled as an argv, and so is
         # a call through a name it cannot resolve (in a comprehension in a class body that binds the name, or,
-        # beside a star import from a module it does not read, one the module binds or no scope binds); a
-        # string anywhere else, or one held in a variable or built with %, + or .format, is outside the read, as
-        # is an argv assembled one element at a time and any other call, string or in process, reached through a
+        # beside a star import from a module it does not read, one the module binds or no scope binds, or one a
+        # function binds from such a name by a plain or annotated assignment from a name or an attribute); a
+        # string anywhere else, or one held in a variable or built with %, + or .format, is outside the read,
+        # as is an argv assembled one element at a time and any other call, string or in process, reached through a
         # name the census does not resolve (tuple unpacking, a conditional expression, a parameter default, a
         # class or instance attribute, getattr, importlib or runpy, a builtin or a module name such a star
-        # import rebinds, a class body's call before the class binds that name, among others), as is every
+        # import rebinds, a function's binding from such a name made any other way, a class body's call before
+        # the class binds that name, among others), as is every
         # module whose text spells neither pytest nor py.test and holds no star import, which the census
         # does not parse). The two plugin sets are not equal, and this
         # comment does not say they are: the box's
