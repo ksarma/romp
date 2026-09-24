@@ -3145,7 +3145,8 @@ class DependencyKey(_World):
     disagrees with a fresher key the same build reported for the path is recorded as the disagreement (_chat_build_deps),
     which no re-stat equals; the project directory stays out of every record, the residual two cases here witness, one
     for a build that found the file nowhere and one for a build that found it. An own place holding what the walk
-    refuses is noted nothing, so a tab over it is served from its first build on (round 3 of #882, group B), and a
+    refuses is noted nothing, so a tab over it is served from its first build on (round 3 of #882, group B), as is an
+    own place whose lstat faults, so a tab over a file found past that fault is served once it clears; and a
     symlinked subagents/ replaced by a real directory moves no recorded key, the second residual, witnessed. Driven
     through the real _pusher_cycle, with the
     build's record shape (build_session's literal) open around the real _session_awaiting."""
@@ -4001,6 +4002,64 @@ class DependencyKey(_World):
         self.assertEqual(tab["rebuilt"][-1], False, "the next cycle serves the tab, which shows the file missing: the residual")
         self.assertEqual(km._subagent_file(self.path, aid), ap,
                          "the lookup itself finds the file: the memo's stamp of the own place moved, so it walks")
+
+    @staticmethod
+    def _eio_on_both(path):
+        """A context in which os.lstat and os.stat both raise EIO for `path` alone, every other path reading: a real EIO
+        fails both calls, and only a mock of both reaches whichever of them a kernel reads the place with."""
+        def raising(real):
+            def f(p, *a, **k):
+                if not isinstance(p, int) and os.fsdecode(os.fspath(p)) == str(path):
+                    raise OSError(errno.EIO, "input/output error")
+                return real(p, *a, **k)
+            return f
+        cm = contextlib.ExitStack()
+        cm.enter_context(mock.patch.object(os, "lstat", raising(os.lstat)))
+        cm.enter_context(mock.patch.object(os, "stat", raising(os.stat)))
+        return cm
+
+    def test_a_fault_on_the_own_places_lstat_notes_nothing_so_the_tab_over_a_file_found_under_a_sibling_is_served_after_it_clears(self):
+        """Group B's clause that a fault on the own place's lstat is not an absence and notes nothing (round 3 of #882),
+        executed. The agent's file lies at the own flat place and a copy at the top of a sibling's tree. For the walk's
+        build and one cycle after, the own place faults (EIO on both calls, _eio_on_both), so the walk finds the file past
+        the fault under the sibling and memoizes it (round 2 of #882's group A). Keys on two things: the walk's notes, read
+        from the memo entry, hold no pair for the own place, and over the three cycles after the fault clears the tab is
+        rebuilt 0 times, each build's record equal to its re-stat. A kernel that reads the fault as an absence notes (own
+        place, None), which the re-stat answers while the fault lasts; once it clears the re-stat reads the file's key,
+        and every build replays the stale note from the memo, whose stamps a cleared EIO never moves, so the tab is
+        rebuilt every cycle (3)."""
+        aid = "a%016x" % 0x7cfa
+        name = "agent-%s.jsonl" % aid
+        ap = self.sub / name
+        ap.write_text("")
+        other = self._sibling(workflows=False)
+        (other / name).write_text("")
+        _age(self.sub)
+        _age(other)
+        self.live_aids.append(aid)
+        self.addCleanup(km._SUBAGENT_FILE_CACHE.pop, (self.path, aid), None)
+        tab = {"builds": [], "evals": [], "rebuilt": [], "build": lambda: self._agent_head_build(aid)}
+        km._SUBAGENT_FILE_CACHE.pop((self.path, aid), None)
+        with self._eio_on_both(ap):
+            with self.assertRaises(OSError, msg="premise: the own place's lstat raises under the mock") as c:
+                os.lstat(str(ap))
+            self.assertEqual(c.exception.errno, errno.EIO, "premise: the fault is an EIO, not an absence")
+            self._tab_cycles(tab, 2)                            # the walk's build and one cycle, under the fault
+        entry = km._SUBAGENT_FILE_CACHE.get((self.path, aid), ((), "unset", ()))
+        self.assertEqual(entry[1], other / name, "premise: the walk found the file past the fault under the sibling and memoized it")
+        own_notes = [key for p, key in entry[2] if p == str(ap)]
+        self.assertEqual(own_notes, [],
+                         "the walk's notes for the own place under a fault on its lstat: %r; keyed on none, a fault not being an "
+                         "absence; a kernel that reads it as one notes [None]" % (own_notes,))
+        self.assertTrue(os.path.isfile(str(ap)), "premise: the fault cleared, the own place holds the agent's file")
+        n = len(tab["rebuilt"])
+        self._tab_cycles(tab, 3)                                # the fault cleared: three cycles
+        after = tab["rebuilt"][n:]
+        self.assertEqual(after.count(True), 0,
+                         "rebuilds of the tab over the three cycles after the fault on the own place cleared: %r; keyed on 0, the "
+                         "place having noted nothing; a note (place, None) replayed from the memo is rebuilt every cycle (3): %r"
+                         % (after, tab["rebuilt"]))
+        self._assert_each_build_equals_its_re_stat(tab, "the own place faulted, then cleared")
 
 
 class SumOverRoots(_World):
