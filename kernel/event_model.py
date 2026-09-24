@@ -5101,7 +5101,8 @@ _ASM_INDEX_STATS = {"materialized": 0, "materializedBy": {}, "materializedByStag
 #                                                              materializedByStage: the same builds under "<stage>:<caller>" (T401 (5a):
 #                                                              a build from an unmarked thread reads "none:<caller>", the read boot's face)
 #                                                              released: entries LazyIndex.release popped for a dropped assembly entry;
-#                                                              expired: entries of a collected list dropped, at the drain after its collection, at the cap, or when a live list registers under the id the dead one held; no slot touched
+#                                                              expired: entries of a collected list dropped, at the drain after its collection, at the cap,
+#                                                              or when a live list registers under the id the dead one held; no slot touched
 #                                                              collected: the entries the drain removed (_mat_drain), the collection event's part of expired
 _PRE_TURN_KEYS = ("pre", "uuids", "lastT", "maxT", "lastModel", "tools", "segs", "pcs", "hT")   # a pre-turn's fields beyond a plain turn's
 
