@@ -1331,8 +1331,10 @@ class FaultBelowTheRoot(_Walk):
     the first key as well, since the walk's _TREE_UNREADABLE is reported before the replayed tree note; a chat build that
     reads the sidecar map before its lookup (_stamp_agents) reports the tree read's key first, and its case re-arms only
     through the disagreement. A standing resolution under the place that faults is answered with
-    the fault and left standing, red under the same kernel, whose walk's miss replaces it in the memo. A control, green by
-    design: a file under a readable sibling is found past the fault below the own root, memoized and answered
+    the fault and left standing; that case stays green under the kernel above, since the candidate's own lstat in the
+    unsearchable workflow directory faults and excludes it, and is red under a kernel whose _subagent_file memoizes the
+    walk's miss whatever faulted (its fault gate removed), which replaces the resolution in the memo. A control, green
+    by design: a file under a readable sibling is found past the fault below the own root, memoized and answered
     with no fault. The EACCES cases skip as root, whom permission bits do not bind."""
 
     ERR = {"eacces-workflows": "PermissionError", "eio-workflows": "OSError", "eacces-wf": "PermissionError"}
