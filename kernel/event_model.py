@@ -707,7 +707,7 @@ _RECORD_CACHE_STATS = {"inserts": 0, "evictions": 0, "evictedBytes": 0, "budgetE
 _RECORD_CACHE_STATS.update({   # the release at an agent's end (release_entry, 2026-09-24):
     "released": {},            #  reason -> {"count", "bytes"}: entries a release popped (the reason today: agentEnded)
     "releaseDeferred": 0,      #  releases owed to the next pusher cycle: its checkpoint budget refused the document write, or a
-    #                             read replaced the entry between the write and the pop (paid by checkpoint_pay_owed_drops)
+    #                             read replaced the entry between the write and the pop (paid by checkpoint_pay_owed_releases)
     "releaseLost": 0,          #  releases given up, the entry left to the count cap: no document could be written (the drop writes
     #                             off, no checkpoint directory, a write that wrote nothing), a bounded queue of them overflowed, or
     #                             resolving one raised
@@ -1030,7 +1030,8 @@ _DROP_OWED = {}                   # path -> when its quiescence drop was deferre
 _DROP_OWED_MAX = 4096             # over it the OLDEST owed entry is popped unwritten (its memory released), never the table cleared
 _RELEASE_OWED = {}                # path -> reason: a release at an agent's end deferred to the next cycle (release_entry: the cycle's
 #                                   budget refused its write, or a read replaced the entry before the pop); paid at the next cycle's
-#                                   start with the owed drops. At most _DROP_OWED_MAX: over it the oldest is given up (releaseLost)
+#                                   start (checkpoint_pay_owed_releases) unless the agent entered its session's live set again first
+#                                   (cancel_owed_release). At most _DROP_OWED_MAX: over it the oldest is given up (releaseLost)
 _DROP_HOLD = threading.local()    # the converge pass holds this thread's quiescence drops while it heals and primes a leaf, then pays
 #                                   them once (T362 follow-up review, low 2): {path: pop} of the drops held, or absent
 _CKPT_LOCK = threading.Lock()
@@ -1472,13 +1473,35 @@ def checkpoint_pay_owed_drops():
         with _CKPT_LOCK:
             if key not in _DROP_OWED:
                 paid += 1
-    with _CKPT_LOCK:                                      # the releases at an agent's end owed from an earlier cycle: no age gate,
-        owed_rel = list(_RELEASE_OWED.items())            #  since the agent's end is the event; over the budget again they re-defer
+    return paid
+
+
+def checkpoint_pay_owed_releases():
+    """The releases at an agent's end owed from an earlier cycle (_RELEASE_OWED), paid with this cycle's room: no age gate,
+    since the agent's end is the event; over the budget again they re-defer. The kernel pays them after it has drained the
+    cycle's live-set events and cancelled the release of every agent that entered its session's live set again
+    (cancel_owed_release), so a running agent's entry is never released. One release that raises is given up and counted
+    (releaseLost); the rest are still paid. Returns the releases paid."""
+    with _CKPT_LOCK:
+        owed = list(_RELEASE_OWED.items())
         _RELEASE_OWED.clear()
-    for key, reason in owed_rel:
-        if release_entry(key, reason) == "released":
+    paid = 0
+    for key, reason in owed:
+        try:
+            got = release_entry(key, reason)
+        except Exception as e:                            # one owed release that raises must not lose the rest, nor the cycle's
+            note_release_lost(1, "a release raised %s" % type(e).__name__)   #  drain that the kernel runs after this
+            continue
+        if got == "released":
             paid += 1
     return paid
+
+
+def cancel_owed_release(path):
+    """Forget `path`'s owed release (the agent entered its session's live set again before the release was paid): True when
+    one was owed."""
+    with _CKPT_LOCK:
+        return _RELEASE_OWED.pop(str(path), None) is not None
 
 
 def checkpoint_cycle_charge(n):

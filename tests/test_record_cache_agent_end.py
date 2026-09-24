@@ -41,6 +41,7 @@ AID = "a0123456789abcdef"                              # an agent id in the hook
 WF_AID = "afedcba9876543210"                           # a workflow agent
 WF_AID2 = "a2222222222222222"                          # the slot's retried attempt
 WF_TID = "w0000000000000001"                           # the workflow run's task id
+AID3 = "a3333333333333333"                             # a third agent, for a cycle that must still drain its end
 LAUNCH = "toolu_notesapi_bg_tests"                     # the agent's run_in_background Bash: the pending command the rows attribute
 
 
@@ -366,6 +367,74 @@ class AgentEnd(unittest.TestCase):
         self.assertIsNone(self._weight(self.agent), "released at the next cycle with room")
         self.assertTrue(em._ckpt_file(self.agent).exists())
         self.assertEqual((self._stat("releaseDeferred"), self._stat("released")), (1, {"agentEnded": {"count": 1, "bytes": size}}))
+        self._start(AID)
+        km._begin_checkpoint_cycle()
+        self.assertEqual(self._stat("falseEnds"), 1, "the agent starting after its owed release was paid is a false end")
+
+    def test_an_owed_release_is_cancelled_when_the_agent_starts_again(self):
+        size = self._fold_while_running(AID, self.agent)
+        self._stop(AID)
+        km.CKPT_CONVERGE_BYTES = 1                                       # the budget refuses the document: the release is owed
+        km._begin_checkpoint_cycle()
+        km.CKPT_CONVERGE_BYTES = 8 * 1024 * 1024
+        self._start(AID)                                                 # resumed before the cycle that would pay it
+        km._begin_checkpoint_cycle()
+        self.assertEqual(self._weight(self.agent), size, "the running agent keeps its records")
+        self.assertEqual((self._stat("released"), self._stat("falseEnds"), self._stat("releaseDeferred")), ({}, 0, 1),
+                         "nothing released, no false end counted, one deferral")
+        self.assertEqual(em._RELEASE_OWED, {}, "nothing is owed any more")
+
+    def test_an_owed_release_then_a_start_and_an_end_releases_once(self):
+        size = self._fold_while_running(AID, self.agent)
+        self._stop(AID)
+        km.CKPT_CONVERGE_BYTES = 1
+        km._begin_checkpoint_cycle()                                     # the release is owed
+        km.CKPT_CONVERGE_BYTES = 8 * 1024 * 1024
+        self._start(AID); self._stop(AID)                                # resumed and ended again before the next cycle
+        km._begin_checkpoint_cycle()
+        self.assertIsNone(self._weight(self.agent), "released in that cycle")
+        self.assertEqual((self._stat("released"), self._stat("falseEnds")), ({"agentEnded": {"count": 1, "bytes": size}}, 0),
+                         "one release, and no false end counted")
+        self._start(AID)
+        km._begin_checkpoint_cycle()
+        self.assertEqual(self._stat("falseEnds"), 1, "the agent starting after that release is a false end")
+
+    def test_an_owed_release_that_raises_loses_neither_the_rest_nor_the_cycle(self):
+        self._fold_while_running(AID, self.agent)
+        self._stop(AID)
+        self.s._on_task_event("task_started", {"task_id": WF_TID, "task_type": "local_workflow"})
+        self._fold_while_running(WF_AID, self.wf_agent)
+        self.s._on_task_event("task_progress", {"task_id": WF_TID, "workflow_progress": [_wf(1, WF_AID, "done")]})
+        km.CKPT_CONVERGE_BYTES = 1
+        km._begin_checkpoint_cycle()
+        self.assertEqual(list(em._RELEASE_OWED), [self.agent, self.wf_agent], "precondition: two releases owed, in end order")
+        agent3 = os.path.join(os.path.dirname(self.agent), "agent-%s.jsonl" % AID3)
+        _append(agent3, _agent_lines(AID3, 0, 40))
+        self._fold_while_running(AID3, agent3)
+        self._stop(AID3)                                                 # an end queued for the cycle below
+        real, calls = em._drop_write, []
+
+        def raising(key, ent, *a, **k):
+            calls.append(key)
+            if len(calls) == 1:
+                raise RuntimeError("synthetic")
+            return real(key, ent, *a, **k)
+        em._drop_write = raising
+        km.CKPT_CONVERGE_BYTES = 8 * 1024 * 1024
+        err, raised = io.StringIO(), None
+        try:
+            with contextlib.redirect_stderr(err):
+                km._begin_checkpoint_cycle()
+        except Exception as e:
+            raised = e
+        finally:
+            em._drop_write = real
+        self.assertIsNone(raised, "the cycle did not raise")
+        self.assertEqual(calls[0], self.agent, "precondition: the first owed release is the one that raised")
+        self.assertIsNone(self._weight(self.wf_agent), "the owed release after the one that raised was released")
+        self.assertIsNone(self._weight(agent3), "the end queued for the same cycle was released in it")
+        self.assertEqual(self._stat("releaseLost"), 1, "the raise is one release given up")
+        self.assertIn("a release raised RuntimeError", err.getvalue())
 
     def test_with_the_drop_writes_off_the_release_keeps_the_entry_and_says_so_once(self):
         km.CKPT_CONVERGE_MS = 0                                          # the pass off: the cycle begins with no budget
