@@ -15618,7 +15618,7 @@ function landActive(content: HTMLElement | null, v: View, scrollerHolds: boolean
     // (untakeMeasure), so the saved scrollTop lands in the layout it was saved in and the figures wait, as on the nothing-armed road (the
     // maintainer's round 3 ruling B).
     // A MISS WITH A FETCH ARMED puts nothing back: the navigation is under way, and returning the reader to where they started only to move
-    // them forward again when the reply lands is a jump nobody asked for. A pre-jump's placement stands (the raw write is of the place it
+    // them forward again when the reply lands is a jump the reader did not ask for. A pre-jump's placement stands (the raw write is of the place it
     // synced, and moves nothing), and it was measured after the take, so the take stands under it: giving the take back would re-size the gap
     // under the reader just placed. With no pre-jump the saved place is written raw, the take given back first. Before PR 861 this road wrote
     // the synced place too; PR 861's restore of the row captured before the attempt reversed a deep pre-jump in the same pass
