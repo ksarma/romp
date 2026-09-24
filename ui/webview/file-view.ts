@@ -4764,7 +4764,7 @@ const FIGOPEN_WEB_CLASS = FIGOPEN_CLASS + "-web";
 /** The control's words for a picture from the web: the open is a new tab at the address's host (targetHost), in words a hover and a
  *  screen reader both read. The host is the parse's, and the URL parser can read a sign-in part as a host and a port, so a source
  *  that appears to carry a sign-in never reaches these words: its control reads FIGURE_OPEN_WEB_WITHHELD (figureSourceCredentialed,
- *  dressFigureControl). */
+ *  dressFigureControl), at that rule's stated cost: a harmless address with an at sign after its scheme, https://cdn/img/a@2x.png, is withheld too. */
 export function figureOpenWebTitle(host: string): string { return "Open the picture in a new tab at " + host; }
 /** The line the picture itself carries in its title for a web target, for the two gestures that have no control to carry words (the
  *  plain click and the Cmd/Ctrl-click on the picture where the press reaches it): the address the open leaves for, as shownAddress
@@ -4877,7 +4877,8 @@ function authorityCut(s: string): string {
 }
 /** The host the control's words name for a web target: the address's host, with its port when one is written, and for an address
  *  the parser refuses its authority cut (authorityCut). It prints the parse, which can read a sign-in part as a host and a port,
- *  so a source that appears to carry a sign-in never reaches it (figureSourceCredentialed, read first by dressFigureControl). */
+ *  so a source that appears to carry a sign-in never reaches it (figureSourceCredentialed, read first by dressFigureControl),
+ *  at that rule's stated cost: a harmless address with an at sign after its scheme, https://cdn/img/a@2x.png, is withheld too. */
 function targetHost(href: string): string {
   try { return new URL(href).host; } catch { return authorityCut(href); }
 }
@@ -4886,13 +4887,14 @@ function targetHost(href: string): string {
  *  or a userinfo (the file review's round 15, extra9-2, on the coordinator's answer: a ;jsessionid= parameter or an opaque
  *  token segment in the path printed while the file review's round 14, correctness-1 with extra5-3, kept origin plus path,
  *  having dropped the userinfo, the query and the fragment). A source that appears to carry a sign-in never reaches it:
- *  figureSourceCredentialed decides that first, for every surface, and the address is withheld whole. An address that parses,
+ *  figureSourceCredentialed decides that first, for every surface, and the address is withheld whole, at that rule's stated cost: a harmless address with an at sign after its scheme, https://cdn/img/a@2x.png, is withheld too. An address that parses,
  *  against `base` when one is given (a protocol-relative source has no scheme of its own), is printed as its protocol, two
  *  slashes and its host, never as `origin`, which prints "null" for a file: address or for one resolved against a VS Code
  *  webview; a blob: address as blob: and the origin of the address it wraps; an address with no host (s3:bucket/key.png,
  *  file:///srv/x.png) as its scheme alone. An address the parser refuses (an out-of-range port, say) is cut at its authority
  *  (authorityCut). URL parsing normalises the spelling (the scheme and the host lower-cased). The cost: neither the tooltip
- *  nor the label names the file on the web, and on a URL document every failed picture's label names the document's origin. */
+ *  nor the label names the file on the web, and on a URL document a relative figure's failed label names the document's
+ *  origin, since resolveFigureRefs resolved it against the document, while an absolute one names its own. */
 export function shownAddress(href: string, base?: string): string {
   try {
     const u = new URL(href, base);
@@ -5219,8 +5221,11 @@ function figureControlOf(target: Element | null, within: Element): HTMLElement |
  *  parent of another origin ends the walk with the reads made so far: its frameElement reads null in Chromium, or throws, and
  *  that stop is not an out, since VS Code's webview host is of another origin and an out there would refuse every key. So in
  *  VS Code the walk stops at the webview's own window, and whether that host lets a pinch zoom the webview at all is
- *  unmeasured. The top window, its own parent, ends the walk too. Read at the call and never kept; a control partly in view
- *  is in view. */
+ *  unmeasured. The top window, its own parent, ends the walk too. A frame element's CSS padding is not read: the walk moves the
+ *  box by the frame element's box and its border alone, so inside a frame padded on its top or left the window's content stands
+ *  further in than the walk places it, and a control past the parent's edge by less than that padding reads as in view (an
+ *  iframe with 60px of top padding kept Enter and Space on a control wholly below the top page); the kernel's pages give their
+ *  frames a border of 0 and no padding. Read at the call and never kept; a control partly in view is in view. */
 function controlInView(control: Element): boolean {
   try {
     const r = control.getBoundingClientRect();

@@ -5454,10 +5454,12 @@ why, and the test that holds it:
    absolute URL, never the figure as written: `resolveFigureRefs` rewrites every relative src and srcset candidate of
    a URL document to an absolute URL against the document and stamps neither `data-fv-src` nor `data-fv-srcset` (the
    src stamp is the panel's pairing key and a URL document has no panel), so `pictureDest` falls to the rewritten src
-   and the srcset walk names the rewritten candidate; a document at a test origin's `/notes/doc.md` holding
-   `![u](figs/u-missing.png)` wears the label with that origin's `/notes/figs/u-missing.png` in full, and only a
-   candidate written absolute reads as the author wrote it (the review's round 2 corrected this clause, which had
-   counted a URL document's candidates among those left as written). A `data:` source is cut to its head through the
+   and the srcset walk names the rewritten candidate, which the label shows as its origin alone since the follow-on's
+   origin cut (below): a document at a test origin's `/notes/doc.md` holding `![u](figs/u-missing.png)` wears the
+   label with that origin alone, where it wore the origin's `/notes/figs/u-missing.png` in full, the document's origin
+   standing for every relative figure (the cut's stated cost), and only a candidate written absolute names an origin
+   of its own (the review's round 2 corrected this clause, which had counted a URL document's candidates among those
+   left as written). A `data:` source is cut to its head through the
    comma with an ellipsis (`shownSource`; the first forty characters when there is no comma): a broken inline image's
    label printed the whole encoded payload, 1518 px tall at 380 px, two screens of base64 where the note should go on.
    Since the link-navigation follow-on, `shownSource` sends a source with any other scheme, or a protocol-relative

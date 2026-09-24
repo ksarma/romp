@@ -531,7 +531,7 @@ test("the URL viewer arms the same two listeners on its body: a figure of a URL 
   const fig = img({ src: "http://notes-api.test/notes/figs/p95.png", alt: "p95" });   // resolveDocRelative made it absolute; no data-fv-src for a URL document
   md.appendChild(block("p", txt("See "), fig, txt(" here.")));
   fire(fig, "error");
-  assert.equal(labelAfter(fig)!.textContent, fv.FIGURE_FAILED + " http://notes-api.test (p95)", "the label names the src the figure carries, as its origin alone: on a URL document every failed picture's label names the document's origin, the rule's stated cost");
+  assert.equal(labelAfter(fig)!.textContent, fv.FIGURE_FAILED + " http://notes-api.test (p95)", "the label names the src the figure carries, as its origin alone: on a URL document a relative figure's failed label names the document's origin, resolveFigureRefs having resolved it against the document, the rule's stated cost (an absolute figure's names its own origin)");
   fire(fig, "load");
   assert.equal(labelAfter(fig), null);
   fv.closeFileView();
