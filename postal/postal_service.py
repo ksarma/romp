@@ -4366,14 +4366,14 @@ def _via_held(presence, bus, road, *prevs):
     a request the hub gave up on can arrive after the next one) releases a word the newer one named: residual (3d)'s
     face (1) in _remote_sids_document, a false rule 5 left open that this release causes (at the thirty-first commit
     the word stayed held). A second machine the hub files under the host's name, answering the hub with an empty
-    listing, reads the same as the host's own empty answer and releases the word too, again at each of its exchanges
-    while the host's word at the hub is a cache (the reviewer's verifier at the forty-fifth commit and its
-    re-verifier at the forty-seventh, by execution; held at the thirty-first commit). With (3a)'s second face these
-    are the release's three races, its cost under the reviewer's ruling of round 4 to keep it (stated under (3d)
-    there): a race's window ends at the next word about the host, the third race's opening again at the second
-    machine's next exchange, but a completion, reply or resolve for the sender inside it
+    listing, reads the same as the host's own empty answer and releases the word too (the reviewer's verifier at the
+    forty-fifth commit, by execution; held at the thirty-first commit). With (3a)'s second face these are the
+    release's three races, its cost under the reviewer's ruling of round 4 to keep it (stated under (3d) there): a
+    race's window ends at the next word about the host, but a completion, reply or resolve for the sender inside it
     settles the live session's card wrong for good, a rare permanent wrong settle the ruling weighs against the
-    common frozen machine that holding the word leaves."""
+    common frozen machine that holding the word leaves (a second machine that keeps exchanging under the host's name
+    is THE PREMISE's violation, which reopens the window at each of its exchanges: THE PREMISE in
+    _remote_sids_document)."""
     def rows(v):                                      # a roster that is not a list names nothing (the peer's bytes)
         return v if isinstance(v, list) else []
     named, named_bus = set(), set()
@@ -4530,10 +4530,29 @@ def _remote_sids_document(now, previous, owned=frozenset(), lost=None):
     presumes the other's sessions closed, for as long as both exchange with the hub (the reviewer's verifier at the
     forty-fifth commit, by execution; tests/test_dead_session_staleness.py ReaderFollowsTheWriter
     test_the_premise_violated_a_second_machine_naming_its_own_session_under_a_far_hosts_name_presumes_the_far_hosts_sessions_closed,
-    which asserts those rule-5 answers and turns red if a hub comes to tell the two machines apart). The same second
-    machine answering with an EMPTY listing is not left to the premise: the release by the same hub process's
-    omission causes that false rule 5, the release's third race, once per exchange of the second machine while the
-    host's word at the hub is a cache (under residual (3d) below).
+    which asserts those rule-5 answers and turns red if a hub comes to tell the two machines apart). A second machine
+    that KEEPS EXCHANGING with the hub under a far host's name violates the premise WHATEVER ITS LISTING (the
+    reviewer's ruling of 12:43Z, the forty-ninth commit). With an EMPTY listing, each of its exchanges replaces the
+    host's word at the hub, and while that word is a cache (the host's kernel not answering) the same hub process's
+    roster omits the host on the road that named it and the release by that omission (under residual (3d) below)
+    frees the held word: the violation REOPENS THE WINDOW AT EACH OF ITS EXCHANGES, a false rule 5 for the session
+    whose mail rode the host's cached exchange, each ended by the host's next cached exchange, and a completion,
+    reply or resolve for the sender in any of them settles the live session's card wrong for good, so a settle can
+    go permanently wrong at each of its exchanges (the release causes these windows, unlike the violation above: at
+    the thirty-first commit the word stayed held at each). The host's kernel's answer ends the windows only for the
+    sessions it names: a session started on the host since, whose mail rides the host's cached exchange at its
+    kernel's next blink, answers rule 5 again at the second machine's next exchange (the reviewer's re-verifier at
+    the forty-eighth commit, by execution, its rvReblink road). The witness is the reviewer's re-verifier at the
+    forty-seventh commit, its rvRecur road through the real builders, handlers, folds, this bus's writer, the reader
+    and run_propagate under both root shapes: three windows, a courier settle standing in the second (its logs
+    r4-rvA2c-probe-recur-summary.log and r4-rvA2c-probe-recur-*-py312.log and its tool
+    r4-rvA2c-tools/add_recur_road.py, in the review's notes), pinned in tests/test_dead_session_staleness.py
+    ReaderFollowsTheWriter
+    test_the_premise_violated_a_second_machine_that_keeps_exchanging_under_a_far_hosts_name_with_an_empty_listing_reopens_the_window_at_each_exchange
+    (its pins recurs and the next word again, and the session the host's answer did not name answering rule 5
+    again) and by the settle's window settleAgain in
+    test_a_settle_decided_in_a_window_of_the_releases_false_rule_5_stands_after_the_next_word. One exchange of such
+    a machine, the transient case, is the release's third race (under residual (3d) below), one window.
     The kernel's link state decides both (round 2 of
     fork PR #897, the reviewer's ruling): a session started on a host after its last heard roster is in no
     roster, so a host counted as vouching for absence while its link is down, or while the kernel has never
@@ -4667,8 +4686,9 @@ def _remote_sids_document(now, previous, owned=frozenset(), lost=None):
     sub-case, and one of order, (3d), which the source's own order on its rosters would close (its face (1), which
     the release by the same hub process's omission causes, the carrier fix as well wherever the older roster carries
     no answered word of the host); the release's third race, a second machine answering a hub under a far host's
-    name with an empty listing, a window at each of its exchanges while the host's word there is a cache, is stated
-    under (3d), and a second machine naming its own sessions there is outside the model (THE PREMISE above). Each
+    name with an empty listing, one window, is stated under (3d), and a second machine naming its own sessions there,
+    or one that keeps exchanging there whatever its listing, is outside the model (THE PREMISE above, which states
+    that the latter reopens the window at each of its exchanges). Each
     false rule 5 below is the reader's answer, and its window ends at the event
     named, but a settle decided inside the window does not: a completion, reply or resolve for the sender there
     settles the live session's card wrong for good. The judge reads _presumed_closed for a sid absent from the live
@@ -4719,10 +4739,11 @@ def _remote_sids_document(now, previous, owned=frozenset(), lost=None):
     thirty-first, by execution). The reviewer ruled to keep this release (round 4). Its cost is three races, (3a)'s
     second face above, (3d)'s face (1) below and a third, a second machine the hub files under the host's name
     answering it with an empty listing, which reads as the host's own; each is a false rule 5 whose window ends at
-    the next word about the host (the third race's window opens again at each exchange of the second machine while
-    the host's word at the hub is a cache), and a completion, reply or resolve for the sender inside a window settles
-    it wrong for good: a rare permanent wrong settle, which the ruling weighs against holding the word, a common frozen
-    machine (the ruling, its trade and the third race are stated under (3d)). That reading needs the omitting
+    the next word about the host (a second machine that keeps exchanging under the host's name is THE PREMISE's
+    violation, which reopens the window at each of its exchanges: THE PREMISE above), and a completion, reply or
+    resolve for the sender inside a window settles it wrong for good: a rare permanent wrong settle, which the ruling
+    weighs against holding the word, a common frozen machine (the ruling, its trade and the third race are stated
+    under (3d)). That reading needs the omitting
     roster taken after the naming one, and this bus
     records one hub process's rosters by two roads, the hub's dial (peer_exchange_handle) and its answer to our dial
     (peer_exchange_apply): each road keeps the hub's order (one dialing loop each way, each exchange finished before
@@ -4789,21 +4810,13 @@ def _remote_sids_document(now, previous, owned=frozenset(), lost=None):
     answer: after the host's cached word and a new session's mail were relayed here, the release frees the held word
     and the session live on the host answers rule 5 while another row vouches, a false rule 5 whose window ends at
     the real host's next exchange with the hub and the hub's next exchange here (the reviewer's verifier at the
-    forty-fifth commit, by execution). The race RECURS: each later exchange by the second machine, an empty listing
-    under the host's name again, replaces the host's cached word at the hub once more, the same hub process's roster
-    omits the host again on the road that named it, and the release frees the word again, so while both machines
-    exchange with the hub and the host's word there is a cache (its kernel not answering), the session answers rule 5
-    after each of the second machine's exchanges reaches here and cannot-determine after each of the host's: a window
-    per exchange of the second machine, not one, each a chance for a completion, reply or resolve for the sender to
-    settle it wrong for good (the reviewer's re-verifier at the forty-seventh commit, by execution, three windows). The
-    windows end at the host's kernel's answer: once the host names the session (rule 4), the second machine's next
-    exchange replaces an ANSWERED word, which is not held and is carried, not heard, still naming the session, so the
-    session answers cannot-determine, as at the thirty-first commit and the round's base. The release causes the race
-    and each of its windows: at the thirty-first commit the word stayed held at each of the second machine's
-    exchanges. Neither
+    forty-fifth commit, by execution). It is the transient case, one exchange of the second machine and one window (a
+    second machine that keeps exchanging under the host's name is THE PREMISE's violation, which reopens the window at
+    each of its exchanges: THE PREMISE above). The release causes the race: at the thirty-first commit the word stayed
+    held. Neither
     the carrier fix nor the source's own order closes it: the carrier would carry the second machine's answered bit as
-    the host's, and the order does not tell two machines apart. It is not THE PREMISE's violation above, a second
-    machine naming its own sessions, which the release does not cause and which is outside the model. THE REVIEWER'S
+    the host's, and the order does not tell two machines apart. Nor is it the violation of THE PREMISE above by a
+    second machine naming its own sessions, which the release does not cause and which is outside the model. THE REVIEWER'S
     RULING ON THE RELEASE (round 4, restated at 11:08Z): it stays. Holding the word on that omission instead (HOLD),
     as the thirty-first commit did, FREEZES THE MACHINE in a COMMON state, a far host whose word is held (its hub last
     named it over a cache) answering the hub with an empty listing once its sessions all end: every sid on this
@@ -4811,18 +4824,17 @@ def _remote_sids_document(now, previous, owned=frozenset(), lost=None):
     session, or its own row speaking here, _direct_row_speaks, ends it sooner), and nothing tells the reader it is
     happening. The release's cost is its three races, face (1) here, (3a)'s second face above and the third race
     above, each a false rule 5 whose window ends at the next word about the host, face (1)'s at the hub's next roster,
-    which names the host again, and the third race's window opening again at each exchange of the second machine
-    until the host's kernel answers. A settle decided inside a window does not end with it: a completion, reply or
+    which names the host again, and the third race's at the real host's next exchange with the hub and the hub's next
+    exchange here (a second machine that keeps exchanging under the host's name is THE PREMISE's violation, which
+    reopens the window at each of its exchanges: THE PREMISE above). A settle decided inside a window does not end
+    with it: a completion, reply or
     resolve for the sender there settles the live session's card wrong for good (the reviewer's verifier at the
     forty-fifth commit, by execution, a courier pass's completion in each window; at the thirty-first commit the
     window read cannot-determine and the card stayed unsettled). So the cost is a RARE PERMANENT WRONG SETTLE, weighed
     against HOLD's COMMON FROZEN MACHINE, and the trade favours the release: a permanent wrong settle needs a narrow
     race AND a completion, reply or resolve for the sender landing inside its window, while HOLD's freeze is the
-    common empty-peer state, cleared only by a restart. The third race is narrow in its condition, a second machine
-    exchanging with the hub under the host's name while the host's kernel does not answer, not in its windows: under
-    that condition every exchange of the second machine opens one. The ruling's first reason, that each race is a
-    wrong answer the next event corrects, is withdrawn: the next word corrects the reader's answer, not a settle
-    decided on it. The
+    common empty-peer state, cleared only by a restart. The ruling's first reason, that each race is a wrong answer
+    the next event corrects, is withdrawn: the next word corrects the reader's answer, not a settle decided on it. The
     carrier fix closes (3a)'s second face and face (1) wherever the older roster carries no answered word of the host;
     the source's own order closes face (1) in every shape; no follow-up named here closes the third race. The
     witnesses, in tests/test_dead_session_staleness.py ReaderFollowsTheWriter:
@@ -4833,11 +4845,11 @@ def _remote_sids_document(now, previous, owned=frozenset(), lost=None):
     test_residual_3d_face_1_in_one_hub_process_an_older_dial_over_the_far_hosts_empty_cache_answers_rule_5 (the
     hub's word about the host a cache, empty, when it built the older dial), each turning red when the residual
     closes;
-    test_the_releases_third_race_a_second_machine_answering_the_hub_under_a_far_hosts_name_with_an_empty_listing_answers_rule_5
-    (its second window and the host's kernel's answer ending the windows among its pins), turning red when the race
-    closes or stops recurring; and
+    test_the_releases_third_race_a_second_machine_answering_the_hub_under_a_far_hosts_name_with_an_empty_listing_answers_rule_5,
+    turning red when the race closes; and
     test_a_settle_decided_in_a_window_of_the_releases_false_rule_5_stands_after_the_next_word (a completion in each
-    window of the release: face (1) in its three shapes, (3a)'s second face and the third race's first two windows).
+    window of the release's three races: face (1) in its three shapes, (3a)'s second face and the third race; and in
+    the reopened window of THE PREMISE's violation above, its window settleAgain).
     The display and routing
     consumers keep their own fold (_via_duplicate: a direct
     link wins over a relay hop on screen and on the wire); the mirror does not use it, because what the
@@ -4931,8 +4943,8 @@ def _remote_sids_document(now, previous, owned=frozenset(), lost=None):
     (h)), and
     settle-on-release, which re-runs the settle of each dead sender a courier write rolled up
     unsettled under the arm, keyed on the release event, with no timer. None of them closes the release's third race
-    (under (3d) above), and a second machine naming its own sessions under a far host's name is outside the model
-    (THE PREMISE above).
+    (under (3d) above), and a second machine naming its own sessions under a far host's name, or one that keeps
+    exchanging there whatever its listing, is outside the model (THE PREMISE above).
     THE ONE RELEASE, and what nothing retires (round 3 of fork PR #897, the reviewer's ruling, the seventeenth
     commit). A heartbeat row whose sid the local kernel's ANSWERED listing owns is dropped, heard or carried
     (`owned`: the sids of the listing as this bus last read it through local_agents_checked, when that read

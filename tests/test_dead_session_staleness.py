@@ -170,6 +170,7 @@ ROAD_SIDS = {                                        # private synthetic sids, t
     "web": "a11f0001-1111-4222-8333-000000000201",       # a session on OUR host, the recipient of the new session's mail
     "gsid": "a11f0001-1111-4222-8333-000000000160",      # a session on G, a second far host behind the hub
     "f2sid": "a11f0001-1111-4222-8333-000000000170",     # a session on F2, a second machine the hub knows by F's name
+    "reblinked": "a11f0001-1111-4222-8333-000000000115", # a session started on F during a LATER blink, after F's kernel answered
 }
 
 RULE_5 = (True, 5, "no-reachable-host-names-it")               # the ladder's verdicts, (closed, rule, why), as
@@ -1087,10 +1088,16 @@ class ReaderFollowsTheWriter(unittest.TestCase):
     premise that a hub knows one machine by a name, a misconfiguration outside the model; face (1) in one hub process
     with the older dial built over the far host's empty cache, which the carrier fix closes as well; and face (2) by the
     same road, the hub's older dial naming the far host's answered word. Since the forty-eighth commit (the reviewer's
-    re-verifier at the forty-seventh, by execution) the third race's recurrence: the second machine's next exchange
-    opens the window again while the far host's word at the hub is a cache, with a settle in that second window
-    standing too, and once the far host's kernel answers, the second machine's exchange leaves the host's answered
-    word carried, cannot-determine, the windows' end.
+    re-verifier at the forty-seventh, by execution) the second machine's next exchange, which opens the window again
+    while the far host's word at the hub is a cache, with a settle in that second window standing too, and once the
+    far host's kernel answers, the second machine's exchange leaving the host's answered word carried,
+    cannot-determine. Since the forty-ninth commit (the reviewer's ruling of 12:43Z, and its re-verifier at the
+    forty-eighth commit, by execution) those pins are the witness of the premise's violation by a second machine that
+    keeps exchanging under the far host's name, whatever its listing, which reopens the window at each of its
+    exchanges (the writer's docstring, THE PREMISE), while the release's third race stays the transient case, one
+    window; and the far host's answer ends the windows only for the sessions it names: after its kernel blinks again,
+    a session started since, whose mail rides its cached exchange, answers rule 5 at the second machine's next
+    exchange.
     The control isolates the old path: with the bus's file removed and a line at STATE/remote-sids, the
     judge's read path until 2026-09-22, the reader answers cannot-determine, so the read MOVED to the
     bus's file rather than widening to both, and a reverted read fails this pin by its own message. The
@@ -2734,8 +2741,9 @@ fold_older()
 step(road, "olderAnswerFolded", us, newOnB=S["new"], other=S["other"])
 # A SECOND MACHINE UNDER F'S NAME (round 4 of fork PR #897, the forty-sixth commit; the reviewer's verifier at the
 # forty-fifth, by execution): F2, its own bus, exchanges with the same hub process under F's name, and the hub files it
-# as F. With an empty listing, the release's third race; naming a session of its own, a violation of the premise that
-# a hub knows one machine by a name (the reviewer's ruling of round 4 at 11:08Z, the forty-seventh commit)
+# as F. With an empty listing once, the release's third race; naming a session of its own, a violation of the premise
+# that a hub knows one machine by a name (the reviewer's ruling of round 4 at 11:08Z, the forty-seventh commit), and so is
+# F2 exchanging again and again, whatever its listing (the reviewer's ruling of 12:43Z, the forty-ninth commit)
 def f2_behind_hub(road, sids):                     # F2, its kernel listing answering with `sids`, knows the hub as a link
     f2 = other(road, "f2")
     LISTINGS["f2"] = sids
@@ -2747,7 +2755,7 @@ def hub_row_for_f(hub, f, f2):                     # the hub's row for F's name:
     bus = row.get("busId") or ""
     return ["F2" if bus == f2.BUS_ID else "F" if bus == f.BUS_ID else bus, row.get("presenceAnswered"),
             sorted(pa.get("id") for pa in row.get("presence") or [])]
-road = "hubNameCollisionEmpty"                     # the release's third race: F2 answers the hub with an EMPTY listing
+road = "hubNameCollisionEmpty"                     # the release's third race: F2 answers the hub with an EMPTY listing, once
 us, f, hub, c = held_after_relay(road, HUB, "px-hub17")
 f2 = f2_behind_hub(road, [])
 out["roads"][road]["f2Dial"] = dial(f2, F, hub, HUB)   # F2's exchange declares F's name
@@ -2760,9 +2768,11 @@ dial(f, F, hub, HUB); dial(hub, HUB, us, US)       # the next word about F: F's 
 out["roads"][road]["hubRowAfterF"] = hub_row_for_f(hub, f, f2)
 step(road, "fAgain", us, newOnFar=S["new"], nobody=S["nobody"])
 settle_after(out["roads"][road]["settle"])
-# THE RACE RECURS (the forty-eighth commit; the reviewer's re-verifier at the forty-seventh, by execution): while F's word
-# at the hub is a cache, each exchange by F2 opens a window again and each of F's ends it; once F's kernel answers, F2's
-# exchange leaves F's answered word carried, not heard, still naming the session (an answered word is not held): the end
+# F2 KEEPS EXCHANGING, THE PREMISE VIOLATED WITH AN EMPTY LISTING (the forty-eighth commit, the reviewer's re-verifier at
+# the forty-seventh, by execution; placed under the premise by the reviewer's ruling of 12:43Z, the forty-ninth commit):
+# while F's word at the hub is a cache, each exchange by F2 opens a window again and each of F's ends it; once F's kernel
+# answers, F2's exchange leaves F's answered word carried, not heard, still naming the session (an answered word is not
+# held): the end for the sessions F's answer names
 out["roads"][road]["f2AgainDial"] = dial(f2, F, hub, HUB)   # F2's next exchange: an empty listing under F's name again
 out["roads"][road]["hubRowForFAgain"] = hub_row_for_f(hub, f, f2)
 dial(hub, HUB, us, US)                             # the same hub process's dial omits F again, on the road that named it
@@ -2779,6 +2789,22 @@ dial(f2, F, hub, HUB); dial(hub, HUB, us, US)      # F2's next exchange, F's wor
 out["roads"][road]["hubRowAfterF2Answered"] = hub_row_for_f(hub, f, f2)
 out["roads"][road]["heldAfterF2Answered"] = held_words(us, HUB)
 step(road, "f2AfterFAnswers", us, newOnFar=S["new"], other=S["other"])
+# ONLY FOR THE SESSIONS F'S ANSWER NAMES (the forty-ninth commit; the reviewer's re-verifier at the forty-eighth, by
+# execution, its rvReblink road): F answers the hub again, then F's kernel blinks AGAIN and a second new session starts on F
+# and mails ours on F's cached exchange; F2's next exchange opens a window for it, and F's next cached exchange ends it
+dial(f, F, hub, HUB); dial(hub, HUB, us, US)       # F's answering exchange with the hub again, then the hub's dial
+LISTINGS["f"] = None                               # F's kernel blinks again; the second new session starts on F and mails ours
+out["roads"][road]["parkReblink"] = park(f, S["reblinked"], "px-hub22")
+out["roads"][road]["landingAtHubReblink"] = mail_dial(f, F, hub, HUB)
+out["roads"][road]["landingHereReblink"] = mail_dial(hub, HUB, us, US)
+step(road, "fBlinksAgain", us, newOnFar=S["new"], reblinked=S["reblinked"], nobody=S["nobody"])
+dial(f2, F, hub, HUB)                              # F2's next exchange, F's word at the hub a cache again
+out["roads"][road]["hubRowForFReblink"] = hub_row_for_f(hub, f, f2)
+dial(hub, HUB, us, US)                             # the same hub process's dial omits F on the road that named it
+out["roads"][road]["heldAfterReblink"] = held_words(us, HUB)
+step(road, "f2AfterReblink", us, newOnFar=S["new"], reblinked=S["reblinked"], nobody=S["nobody"])
+dial(f, F, hub, HUB); dial(hub, HUB, us, US)       # F's next exchange, still cached, and the hub's dial
+step(road, "fAfterReblink", us, newOnFar=S["new"], reblinked=S["reblinked"])
 road = "hubNameCollisionSessions"                  # the premise violated: F2 answers the hub naming a session of its own
 us, f, hub, c = held_after_relay(road, HUB, "px-hub19")
 f2 = f2_behind_hub(road, [S["f2sid"]])
@@ -4575,28 +4601,31 @@ print(json.dumps(out))
         sender's node, and rollup_status keeps a settled card completed until a reopen event. This witness drives the
         completion; a reply for the session rolls its store up by the same read in run_propagate's reply loop, and a
         user's resolve in the kernel's resolve handler (kernel/kernel.py), each with _presumed_closed for a sid absent
-        from the live registry, and rollup_status's sticky completion keeps each settle alike. The six windows:
-        residual (3a)'s second face (the next word names the session: rule 4), residual (3d)'s face (1) in its three
-        shapes (a restarted hub's older dial, one hub process's older dial carrying F's answered empty listing, and one
-        built over F's empty cache) and the release's third race twice, a second machine answering the hub under F's
-        name with an empty listing and then its next exchange, which opens the window again while F's word at the hub is
-        a cache (the next word each time is F's cached word again: cannot-determine; the second window since the
-        forty-eighth commit, found by the reviewer's re-verifier at the forty-seventh, by execution). At the thirty-first
-        commit, without the release, each window read cannot-determine and the tracker rolled up 'working'. So the
-        release's cost is a RARE PERMANENT WRONG SETTLE, a narrow race AND a completion, reply or resolve for the session
-        inside its window (the third race's window reopening at each exchange of the second machine while F's word at
-        the hub is a cache, so each of its exchanges is another such chance), and the reviewer's ruling of round 4 keeps
-        the release on that cost, weighed against holding the word, a COMMON FROZEN MACHINE, every sid cannot-determine
-        until our bus restarts while the far host stays empty (the writer's docstring states the ruling and its trade
-        under residual (3d)); its first reason, that each race is a wrong answer the next event corrects, is withdrawn.
-        The pins turn red when a closure removes a window, and the disclosure moves with it."""
+        from the live registry, and rollup_status's sticky completion keeps each settle alike. The six windows: five
+        from the release's three races, residual (3a)'s second face (the next word names the session: rule 4), residual
+        (3d)'s face (1) in its three shapes (a restarted hub's older dial, one hub process's older dial carrying F's
+        answered empty listing, and one built over F's empty cache) and the release's third race, a second machine
+        answering the hub under F's name with an empty listing once (the next word is F's cached word again:
+        cannot-determine); and a sixth on the third race's road, the same second machine's next exchange, which opens the
+        window again while F's word at the hub is a cache (the next word F's cached word again), found by the reviewer's
+        re-verifier at the forty-seventh commit, by execution, and pinned by the forty-eighth. A second machine that
+        keeps exchanging under F's name is the premise's violation, which reopens the window at each of its exchanges
+        (the writer's docstring, THE PREMISE; the reviewer's ruling of 12:43Z, the forty-ninth commit), so the sixth
+        window is that violation's witness of a settle standing in a reopened window, not a part of the third race. At
+        the thirty-first commit, without the release, each window read cannot-determine and the tracker rolled up
+        'working'. So the release's cost is a RARE PERMANENT WRONG SETTLE, a narrow race AND a completion, reply or
+        resolve for the session inside its window, and the reviewer's ruling of round 4 keeps the release on that cost,
+        weighed against holding the word, a COMMON FROZEN MACHINE, every sid cannot-determine until our bus restarts
+        while the far host stays empty (the writer's docstring states the ruling and its trade under residual (3d)); its
+        first reason, that each race is a wrong answer the next event corrects, is withdrawn. The pins turn red when a
+        closure removes a window, and the disclosure moves with it."""
         via = UNANSWERED(R_VIA_F + " (listing unanswered)")
         after = [("farBusRestartsNoTwin", "settle", "farAnswersHub", RULE_4),   # (road, its window's settle, the next word, its verdict)
                  ("hubDialsOutOfOrder", "settle", "hubDialsAgain", via),
                  ("hubDialsOutOfOrderOneProcess", "settle", "hubDialsAgain", via),
                  ("hubDialsOutOfOrderOverEmptyCache", "settle", "hubDialsAgain", via),
                  ("hubNameCollisionEmpty", "settle", "fAgain", via),
-                 ("hubNameCollisionEmpty", "settleAgain", "fAgainTwice", via)]   # the third race's second window
+                 ("hubNameCollisionEmpty", "settleAgain", "fAgainTwice", via)]   # the premise violated: F2's second window
         for shape, got in self.roads.items():
             for road, key, next_step, next_verdict in after:
                 with self.subTest(shape=shape, road=road, window=key):
@@ -4622,24 +4651,20 @@ print(json.dumps(out))
         (cannot-determine); then the same hub process's dial, the road that named F, omits F, which reads as F's empty
         answer, so the release by the same hub process's omission frees F's held word, and the session live on F answers
         rule 5 while the hub and C vouch, until the real F's next exchange with the hub, still cached, and the hub's next
-        dial (cannot-determine). THE RACE RECURS (the reviewer's re-verifier at the forty-seventh commit, by execution,
-        its rvRecur road; the forty-eighth commit): F2's next exchange, an empty listing under F's name again, opens the
-        window again, the same hub process's dial omitting F on the road that named it, and F's next exchange, still
-        cached, ends it again, so while both machines exchange with the hub and F's word there is a cache (F's kernel not
-        answering), the session reads rule 5 after each of F2's exchanges reaches here and cannot-determine after each
-        of F's: not one window but one per exchange of F2. Once F's kernel answers, naming the session (rule 4), F2's
-        next exchange no longer answers rule 5: the hub's roster omits F, F's answered word is not held and is carried,
-        not heard, still naming the session, so it answers cannot-determine, named by an unreachable host, as at the
-        thirty-first commit and the round's base. So the race's windows recur for as long as F's kernel does not answer
-        while F2 keeps exchanging, and end at the kernel's answer. The release causes this race: at the thirty-first
-        commit the word stayed held at each of F2's exchanges. It is one of the release's three races, its cost under
-        the reviewer's ruling to keep it, with residual (3a)'s second face and residual (3d)'s face (1): each window ends
-        at F's next word, but a completion, reply or resolve for the session inside any of them settles its card wrong
-        for good (test_a_settle_decided_in_a_window_of_the_releases_false_rule_5_stands_after_the_next_word, which pins
-        a settle in each of the first two windows). It is not the premise's violation (the next test), which the
-        release does not cause. Neither the carrier fix nor the source's own order closes it: the carrier would carry
-        F2's answered bit as F's, and the order does not tell two machines apart. This witness asserts each rule-5
-        answer, so it turns red when the race closes, or stops recurring, and the disclosure moves with it."""
+        dial (cannot-determine): ONE window, the transient case. The release causes this race: at the thirty-first commit
+        the word stayed held. It is one of the release's three races, its cost under the reviewer's ruling to keep it,
+        with residual (3a)'s second face and residual (3d)'s face (1): the window ends at F's next word, but a
+        completion, reply or resolve for the session inside it settles its card wrong for good
+        (test_a_settle_decided_in_a_window_of_the_releases_false_rule_5_stands_after_the_next_word), a rare permanent
+        wrong settle. A second machine that keeps exchanging under F's name is the premise's violation, which reopens the
+        window at each of its exchanges (the writer's docstring, THE PREMISE; the reviewer's ruling of 12:43Z, the
+        forty-ninth commit; its witness on this road:
+        test_the_premise_violated_a_second_machine_that_keeps_exchanging_under_a_far_hosts_name_with_an_empty_listing_reopens_the_window_at_each_exchange).
+        Nor is this race the violation by a second machine naming its own session
+        (test_the_premise_violated_a_second_machine_naming_its_own_session_under_a_far_hosts_name_presumes_the_far_hosts_sessions_closed),
+        which the release does not cause. Neither the carrier fix nor the source's own order closes it: the carrier would
+        carry F2's answered bit as F's, and the order does not tell two machines apart. This witness asserts the rule-5
+        answer, so it turns red when the race closes, and the disclosure moves with it."""
         S = ROAD_SIDS
         via = UNANSWERED(R_VIA_F + " (listing unanswered)")
         v = lambda got, step, key: self._road(got, "hubNameCollisionEmpty", step, key)
@@ -4656,22 +4681,6 @@ print(json.dumps(out))
                  "the real F's next exchange with the hub, still cached, and the hub's next dial end the window: the reader "
                  "no longer answers rule 5 (a settle decided in the window stands: "
                  "test_a_settle_decided_in_a_window_of_the_releases_false_rule_5_stands_after_the_next_word)"),
-                ("recurs", (empty["f2AgainDial"], empty["hubRowForFAgain"], v(got, "f2Again", "newOnFar"),
-                            empty["heldAfterAgain"]),
-                 ([200, True, []], ["F2", True, []], RULE_5, []),
-                 "THE RACE RECURS: F2's next exchange, an empty listing under F's name again, replaces F's cached word at "
-                 "the hub, the same hub process's dial omits F on the road that named it, the release frees F's word again "
-                 "and the session live on F answers rule 5 again: a second window, not one (at the thirty-first commit the "
-                 "word stayed held)"),
-                ("the next word again", v(got, "fAgainTwice", "newOnFar"), via,
-                 "F's next exchange, still cached, and the hub's dial end the second window as they ended the first"),
-                ("F answers", v(got, "fAnswers", "newOnFar"), RULE_4, "F's kernel answers, naming the session"),
-                ("after F answers", (empty["hubRowAfterF2Answered"], empty["heldAfterF2Answered"],
-                                     v(got, "f2AfterFAnswers", "newOnFar")),
-                 (["F2", True, []], [], LOST(R_VIA_F + " (not heard)")),
-                 "THE WINDOWS END AT F'S KERNEL'S ANSWER: F2's next exchange replaces F's answered word at the hub, which "
-                 "is not held and is carried, not heard, still naming the session, so the reader answers cannot-determine, "
-                 "not rule 5 (as at the thirty-first commit and the round's base)"),
             ]
             for pin, got_value, want, msg in pins:
                 with self.subTest(shape=shape, pin=pin):
@@ -4710,6 +4719,70 @@ print(json.dumps(out))
                 ("F2 again", (v(got, "f2Again", "newOnFar"), v(got, "f2Again", "other"), named["hubRowAfterF2Again"]),
                  (RULE_5, RULE_5, ["F2", True, [S["f2sid"]]]),
                  "THE PREMISE VIOLATED, with F's kernel answering: F2's next exchange presumes F's live sessions closed"),
+            ]
+            for pin, got_value, want, msg in pins:
+                with self.subTest(shape=shape, pin=pin):
+                    self.assertEqual(got_value, want, msg)
+
+    def test_the_premise_violated_a_second_machine_that_keeps_exchanging_under_a_far_hosts_name_with_an_empty_listing_reopens_the_window_at_each_exchange(self):
+        """THE PREMISE VIOLATED BY A SECOND MACHINE THAT KEEPS EXCHANGING, WITH AN EMPTY LISTING (the writer's docstring,
+        THE PREMISE; the reviewer's re-verifier at the forty-seventh commit, by execution, its rvRecur road, which the
+        forty-eighth commit pinned here; the reviewer's ruling of 12:43Z, the forty-ninth commit, which places it under
+        the premise): a second machine that keeps exchanging with a hub under a far host's name violates the premise that
+        a hub knows one machine by a name, whatever its listing. On the third race's road (F2's first exchange and the
+        window F's next cached exchange ends:
+        test_the_releases_third_race_a_second_machine_answering_the_hub_under_a_far_hosts_name_with_an_empty_listing_answers_rule_5),
+        F2 exchanges again with an empty listing under F's name: the same hub process's dial omits F on the road that
+        named it, the release frees F's word again, and the session live on F answers rule 5 again, a second window,
+        ended by F's next cached exchange as the first was, and a courier settle decided in it stands after
+        (test_a_settle_decided_in_a_window_of_the_releases_false_rule_5_stands_after_the_next_word, its window
+        settleAgain). So while both machines exchange with the hub and F's word there is a cache (F's kernel not
+        answering), a window opens at each of F2's exchanges and a permanent wrong settle is possible in each. F's
+        kernel's answer ends the windows ONLY FOR THE SESSIONS IT NAMES: once F answers naming the session (rule 4), F2's
+        next exchange replaces F's answered word at the hub, which is not held and is carried, not heard, still naming
+        it, so it reads cannot-determine; but when F's kernel blinks again and a second new session starts on F and
+        mails ours on F's cached exchange (cannot-determine), F2's next exchange opens a window for that session (rule
+        5, the word released) while the session F's answer named stays cannot-determine, and F's next cached exchange
+        ends it (the reviewer's re-verifier at the forty-eighth commit, by execution, its rvReblink road). The release
+        causes these windows, unlike the violation by a second machine naming its own session (the previous test): at
+        the thirty-first commit the word stayed held at each of F2's exchanges. The third race in the release's cost
+        stays the transient case, one window. This witness asserts each reopened window's rule-5 answer, so it turns
+        red when a hub comes to tell the two machines apart or the release stops acting on the second machine's
+        omission, and the premise's text moves with it."""
+        S = ROAD_SIDS
+        via = UNANSWERED(R_VIA_F + " (listing unanswered)")
+        v = lambda got, step, key: self._road(got, "hubNameCollisionEmpty", step, key)
+        for shape, got in self.roads.items():
+            empty = got["roads"]["hubNameCollisionEmpty"]
+            pins = [   # each pin its own subtest, so a mutant that reds one shows which
+                ("recurs", (empty["f2AgainDial"], empty["hubRowForFAgain"], v(got, "f2Again", "newOnFar"),
+                            empty["heldAfterAgain"]),
+                 ([200, True, []], ["F2", True, []], RULE_5, []),
+                 "THE PREMISE VIOLATED, A SECOND WINDOW: F2's next exchange, an empty listing under F's name again, "
+                 "replaces F's cached word at the hub, the same hub process's dial omits F on the road that named it, the "
+                 "release frees F's word again and the session live on F answers rule 5 again (at the thirty-first commit "
+                 "the word stayed held)"),
+                ("the next word again", v(got, "fAgainTwice", "newOnFar"), via,
+                 "F's next exchange, still cached, and the hub's dial end the second window as they ended the first"),
+                ("F answers", v(got, "fAnswers", "newOnFar"), RULE_4, "F's kernel answers, naming the session"),
+                ("after F answers", (empty["hubRowAfterF2Answered"], empty["heldAfterF2Answered"],
+                                     v(got, "f2AfterFAnswers", "newOnFar")),
+                 (["F2", True, []], [], LOST(R_VIA_F + " (not heard)")),
+                 "F'S KERNEL'S ANSWER ENDS THE WINDOWS FOR THE SESSIONS IT NAMES: F2's next exchange replaces F's answered "
+                 "word at the hub, which is not held and is carried, not heard, still naming the session, so the reader "
+                 "answers cannot-determine, not rule 5 (as at the thirty-first commit and the round's base)"),
+                ("F blinks again", (empty["landingHereReblink"]["reqRelays"], v(got, "fBlinksAgain", "reblinked")),
+                 ([S["reblinked"]], via),
+                 "F's kernel blinks again and a second new session's mail rides F's cached exchange here through the hub: "
+                 "cannot-determine by the arm"),
+                ("only the sessions it names", (empty["hubRowForFReblink"], empty["heldAfterReblink"],
+                                                v(got, "f2AfterReblink", "reblinked"), v(got, "f2AfterReblink", "newOnFar")),
+                 (["F2", True, []], [], RULE_5, LOST(R_VIA_F + " (not heard)")),
+                 "ONLY FOR THE SESSIONS IT NAMES: F2's next exchange, F's word at the hub a cache again, opens a window for "
+                 "the session started since F's answer, which answers rule 5, the word released, while the session F's "
+                 "answer named stays cannot-determine (at the thirty-first commit the word stayed held)"),
+                ("the next word after the reblink", v(got, "fAfterReblink", "reblinked"), via,
+                 "F's next exchange, still cached, and the hub's dial end that window as they ended the others"),
             ]
             for pin, got_value, want, msg in pins:
                 with self.subTest(shape=shape, pin=pin):
