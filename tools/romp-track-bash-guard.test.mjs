@@ -68,8 +68,11 @@ const ROMP_NOUNS = /\b(romp|card|board|column|goal|nudge|dashboard|panel|viewer|
 // naming the shell, whatever its list is called or how it loops, never a silent run and never a red naming nothing.
 // The refusable case is run by hand with a `zsh` stub that exits 1 first on PATH: the file passes and prints the NOT RUN lines.
 const SHELL_FLOOR = { bash: [4, 3] };   // bash 4.3 for `declare -n`; nothing here needs a zsh or dash newer than the oldest CI build
+// The probe reads no startup file of the account's (round 7 of fork PR #780 review, thirty-second commit, the round's verifiers): it ran
+// `zsh -c true` under the inherited environment, so zsh read ~/.zshenv and the probe ran whatever that file runs; zsh now takes -f, bash
+// --norc and --noprofile, and the environment is PATH alone, so bash reads no BASH_ENV either (dash reads nothing when not interactive).
 const probeShell = (sh) => {
-  const r = _spawnSync(sh, ['-c', sh === 'bash' ? 'printf %s "$BASH_VERSION"' : 'true'], { encoding: 'utf8' });
+  const r = _spawnSync(sh, sh === 'bash' ? ['--norc', '--noprofile', '-c', 'printf %s "$BASH_VERSION"'] : sh === 'zsh' ? ['-f', '-c', 'true'] : ['-c', 'true'], { encoding: 'utf8', env: { PATH: process.env.PATH } });
   if (r.status !== 0) return { ok: false, why: 'is not on this runner' };
   const floor = SHELL_FLOOR[sh];
   if (!floor) return { ok: true, why: null };
@@ -124,12 +127,43 @@ const rowsNotRun = (rows, pin, table = NAMED_PROBE) => {
   for (const row of rows) for (const p of needs[row.id] || []) if (!probeOk(table, p)) { skip.set(row.id, p); break; }
   return skip;
 };
+// NO STARTUP FILE OF THE ACCOUNT'S (round 7 of fork PR #780 review, thirty-second commit; the round's verifiers found it at the shell
+// probe). A shell a leg starts may read a startup file of the account's by three roads. zsh reads $ZDOTDIR/.zshenv, else $HOME/.zshenv,
+// unless it is started with -f, and a zsh whose environment has no HOME takes the account's home from the passwd entry. bash started with
+// -c and no --norc, not interactive, whose standard input is a socket (a piped spawn's is: node makes its pipes as socket pairs) and whose
+// SHLVL is below 1 takes itself for a shell rshd ran and reads /etc/bash.bashrc and ~/.bashrc, the account's where HOME is unset or the
+// account's, in place of BASH_ENV (bash's run_startup_files). And bash otherwise reads the file BASH_ENV names, the account's where the
+// environment is inherited from this process. So every leg below that ran zsh or bash under an environment of PATH alone read the account's
+// ~/.zshenv or ~/.bashrc, whatever those files run, and its reading depended on them. The wrapper gives every spawn whose environment opens
+// a road the environment that closes it: ZDOTDIR set to /dev/null, under which zsh finds no file and reads the system's /etc/zsh/zshenv
+// alone; SHLVL set to 1, under which bash counts itself a nested shell and reads BASH_ENV alone, which a named environment carries only
+// where its leg sets one; and an inherited environment without the account's BASH_ENV. A shell the leg's own command starts inherits it. A
+// leg whose environment names a HOME of its own (every test world's) keeps its reading, so the rows that write a .zshenv into the world's
+// HOME and run zsh (RT-zshenv-home) still measure what they measure, and so does one that sets ZDOTDIR, SHLVL or BASH_ENV itself.
+const ACCOUNT_HOMES = new Set([(() => { try { return os.userInfo().homedir; } catch { return null; } })(), process.env.HOME].filter(Boolean).map((h) => path.resolve(h)));
+const NO_ZDOTDIR = '/dev/null';
+const accountStartupRoads = (env, inherited = false) => {
+  const acct = !env.HOME || ACCOUNT_HOMES.has(path.resolve(env.HOME));
+  return { zshenv: acct && !env.ZDOTDIR, bashrc: acct && !(/^\d+$/.test(env.SHLVL || '') && Number(env.SHLVL) >= 1), bashEnv: inherited && env.BASH_ENV !== undefined };
+};
+const withoutAccountStartup = (opts) => {
+  const inherited = !(opts && opts.env);
+  const env = inherited ? process.env : opts.env;
+  const roads = accountStartupRoads(env, inherited);
+  if (!roads.zshenv && !roads.bashrc && !roads.bashEnv) return opts;
+  const next = { ...env };
+  if (roads.zshenv) next.ZDOTDIR = NO_ZDOTDIR;
+  if (roads.bashrc) next.SHLVL = '1';
+  if (roads.bashEnv) delete next.BASH_ENV;
+  return { ...(opts || {}), env: next };
+};
 // THE LIVE-VALUE CHECK (round 5): the spawnSync every leg of this file calls. A shell the probe declined throws by name, so a leg
 // written outside shellsFor cannot run that shell in silence, however its list is spelled; `table` and `raw` are parameters so
-// the wrapper is pinned in-process against a synthetic table.
+// the wrapper is pinned in-process against a synthetic table. It hands every spawn the options NO STARTUP FILE OF THE ACCOUNT'S gives.
 const guardedSpawn = (table, raw) => (cmd, ...rest) => {
   if (Object.hasOwn(table, cmd) && !probeOk(table, cmd)) throw new Error(`a real-shell leg ran ${cmd} outside the probe: real ${cmd} ${probeWhy(table, cmd)}; ask shellsFor first`);
-  return raw(cmd, ...rest);
+  const [args, opts] = rest.length && !Array.isArray(rest[0]) && rest[0] !== undefined ? [[], rest[0]] : rest;   // spawnSync(cmd, [args], [options])
+  return raw(cmd, args, withoutAccountStartup(opts));
 };
 const spawnSync = guardedSpawn(SHELL_PROBE, _spawnSync);
 
@@ -7761,13 +7795,19 @@ const RESIDUAL_TABLE = [
 //       session, with its standard streams on /dev/null, still holds that descriptor, so the run ends after the command has run and its
 //       witness is read; until then the run ended when the shell exited, before such a command ran, and the program was filed as
 //       refusing. That end is an event, the pipe's close, not a wait of any length; a run that outlasts its timeout (the program's
-//       descendant still holding the pipe) is no refusal either, since whether the command ran is then unknown. The witness is spelled
-//       twice, and every entry of its directory named with its name as a prefix is unlinked with it: the row's own text after the copy
-//       follows the replacement, so a suffix glued onto the copy's target (`report.md.bak`, a quoted, escaped, braced, expanded or
+//       descendant still holding the pipe) is no refusal either, since whether the command ran is then unknown. Every run of a probe is
+//       runProbe's, the real-programs test's direct run among them (the thirty-second commit). The witness is spelled twice, and every
+//       entry of its directory named with its name as a prefix is unlinked with it: the row's own text after the copy follows the
+//       replacement, so a suffix glued onto the copy's target as ONE word (`report.md.bak`, a quoted, escaped, braced, expanded or
 //       globbed suffix, `report.md/x`: G1 to G9 in the thirty-first commit's test) glues onto the second operand, the first is the
 //       witness as spelled whatever follows, and what the second made does not outlive the call (the same verifiers, informational:
 //       with one operand a glued suffix made the probe touch another path, whose absent witness read as a refusal and whose file stayed
-//       in scratch).
+//       in scratch). Those entries are regular files, all touch makes, so an entry of the witness's name that is anything else is none
+//       the probe made and the call throws naming it, unlinking nothing; and the witness's name is a plain file name (THE WITNESS'S
+//       SPELLING, the thirty-second commit). A suffix that SPLITS into further words (an unquoted substitution whose value holds a
+//       blank, G10 in the thirty-second commit's test, the round's verifiers' H12) hands touch operands of its own, which it makes where
+//       they point, relative to the row's cwd, and those outlive the call; the verdict is unchanged, the first operand being the witness
+//       still, and the table's world is rebuilt before each measurement (sixthPassWorld's build), so no later row reads them.
 // Anything else is no refusal, and the row reds as before. The first shell's first stderr line is the reason (a bare label ending in a
 // colon, perf's `Error:`, takes the line after it). A row is NOT RUN only when every writer leg left the subset unchanged AND its
 // program refuses; a row of a refusing program that still wrote reds (a contradiction to see), and a row that missed under a program
@@ -7809,27 +7849,56 @@ const refusalReason = (stderr) => {
 const shellArgv = (shell, cmd) => (shell === 'bash' ? ['--norc', '--noprofile', '-c', cmd] : shell === 'zsh' ? ['-f', '-c', cmd] : ['-c', cmd]);   // as the world runs a row
 const parseArgv = (shell, cmd) => (shell === 'bash' ? ['--norc', '--noprofile', '-n', '-c', cmd] : shell === 'zsh' ? ['-f', '-n', '-c', cmd] : ['-n', '-c', cmd]);   // read, not run: condition (i)
 const SAFE_WITNESS = /^\/[\w./-]+$/;
+// THE WITNESS'S SPELLING: an absolute path of safe characters (spelled bare into the probe) whose text after its last `/` is a plain file
+// name, never empty (a trailing separator), `.` or `..`, each of which names a directory, so the witness's directory and name are what
+// its text says (round 7 of fork PR #780 review, thirty-second commit, the round's verifiers, LOW: `<dir>/sub/` passed, and clearing it
+// took `sub` for the name in `<dir>`, removing `<dir>/sub` and `<dir>/subsidiary`; `/tmp/` would have taken `tmp` for the name in `/`)
+const safeWitness = (witness) => typeof witness === 'string' && SAFE_WITNESS.test(witness) && !['', '.', '..'].includes(witness.slice(witness.lastIndexOf('/') + 1));
+const WITNESS_SPELLING = (witness) => `THE REFUSING PROGRAM's witness is an absolute path of safe characters ending in a plain file name, spelled bare into the probe: ${JSON.stringify(witness)}`;
 // the probe of `cmd` for the witness at `witness`: the copy replaced by the witness's touch, the witness spelled twice so a suffix the row
 // glues onto the copy's target glues onto the second operand and the first is the witness as spelled (THE REFUSING PROGRAM, (iii))
 const probeOf = (cmd, witness) => cmd.replace(WRITE_SPELLING, () => `touch ${witness} ${witness}`);
-// the witness and every entry of its directory named with the witness's name as a prefix (a glued second operand), unlinked
+// the witness and every entry of its directory named with the witness's name as a prefix (a glued second operand), unlinked. touch makes
+// regular files alone, so an entry of that name that is anything else (a directory, a link) is none the probe made: the call throws
+// naming it and unlinks nothing, and nothing is removed recursively (the thirty-second commit; a witness of a bad spelling throws too)
 const clearWitness = (witness) => {
+  if (!safeWitness(witness)) throw new Error(WITNESS_SPELLING(witness));
   const dir = path.dirname(witness);
   const base = path.basename(witness);
   let names = [];
   try { names = fs.readdirSync(dir); } catch { return; }
-  for (const n of names) if (n.startsWith(base)) fs.rmSync(path.join(dir, n), { recursive: true, force: true });
+  const made = names.filter((n) => n.startsWith(base)).map((n) => path.join(dir, n));
+  const other = made.filter((p) => { const st = fs.lstatSync(p, { throwIfNoEntry: false }); return st !== undefined && !st.isFile(); });
+  if (other.length) throw new Error(`THE REFUSING PROGRAM's witness ${witness}: ${other.join(', ')} is named with its name and is not a regular file, which touch never makes, so nothing is cleared`);
+  for (const p of made) try { fs.unlinkSync(p); } catch (e) { if (e.code !== 'ENOENT') throw e; }   // unlink, which never recurses
+};
+// one run of the probe in `shell` from `cwd` under `env`: the fourth pipe beside the standard three, so the run ends when the last process
+// holding one of its pipes has exited (THE REFUSING PROGRAM, (iii)). refusalOf and probeRan, the real-programs test's direct run, run a
+// probe through it alone (the thirty-second commit, the round's verifiers: the direct run spelled its own spawn, and three pipes there left
+// every pin green)
+const runProbe = (shell, probe, cwd, env, timeout = 20000) => spawnSync(shell, shellArgv(shell, probe), { cwd, input: '', encoding: 'utf8', env, timeout, stdio: ['pipe', 'pipe', 'pipe', 'pipe'] });
+// whether the probe of `cmd` made its witness in `shell` (the witness cleared before and after), with the run's status and stderr: the
+// real-programs test asks it whether a program runs the probe it was provoked to refuse
+const probeRan = (shell, cmd, cwd, env, witness) => {
+  if (!safeWitness(witness)) throw new Error(WITNESS_SPELLING(witness));
+  fs.mkdirSync(path.dirname(witness), { recursive: true });
+  clearWitness(witness);
+  try {
+    const r = runProbe(shell, probeOf(cmd, witness), cwd, env);
+    return { ran: fs.existsSync(witness), status: r.status, stderr: String(r.stderr || '') };
+  } finally { clearWitness(witness); }
 };
 // the refusal's reason when `program` refuses to run the probe of `cmd` in every shell of `shells` under `env` from `cwd`, the probe's
 // witness at `witness` (THE REFUSING PROGRAM's three conditions); null when a shell does not parse the probe, a run exits 0, 126 or 127,
 // is killed or outlasts `timeout` (ms), a stderr matches no shape recorded for `program` (a program with none, or a nonzero exit that
 // says nothing), the witness is there after a run, no shell is given, or cmd carries no copy to replace; a witness path that cannot be
-// spelled bare throws. The run carries a fourth pipe, so it ends only when every process holding one of its pipes has exited.
+// spelled bare, or whose name is not a plain file name, throws, as does an entry named with the witness's name that is not a regular
+// file (clearWitness). Each run is runProbe's, whose fourth pipe makes it end only when every process holding one of its pipes has exited.
 const refusalOf = (cmd, cwd, env, shells, { program = null, witness = null, timeout = 20000 } = {}) => {
   if (!WRITE_SPELLING.test(cmd) || !shells.length) return null;
   const shapes = program !== null && Object.hasOwn(REFUSAL_SHAPES, program) ? REFUSAL_SHAPES[program] : null;
   if (!shapes) return null;
-  if (typeof witness !== 'string' || !SAFE_WITNESS.test(witness)) throw new Error(`THE REFUSING PROGRAM's witness is an absolute path of safe characters, spelled bare into the probe: ${JSON.stringify(witness)}`);
+  if (!safeWitness(witness)) throw new Error(WITNESS_SPELLING(witness));
   const probe = probeOf(cmd, witness);
   const clear = () => clearWitness(witness);
   fs.mkdirSync(path.dirname(witness), { recursive: true });
@@ -7838,7 +7907,7 @@ const refusalOf = (cmd, cwd, env, shells, { program = null, witness = null, time
     for (const shell of shells) {
       clear();
       if (spawnSync(shell, parseArgv(shell, probe), { cwd, input: '', encoding: 'utf8', env, timeout: 20000 }).status !== 0) return null;   // (i) the probe does not parse: the row's own command is broken
-      const r = spawnSync(shell, shellArgv(shell, probe), { cwd, input: '', encoding: 'utf8', env, timeout, stdio: ['pipe', 'pipe', 'pipe', 'pipe'] });   // (iii) the fourth pipe: the run ends when its last holder exits
+      const r = runProbe(shell, probe, cwd, env, timeout);   // (iii) the fourth pipe: the run ends when its last holder exits
       if (fs.existsSync(witness)) return null;   // (iii) the program ran the command
       if (r.error) return null;   // (iii) the run did not end on its own (it outlasted its timeout, a descendant still holding a pipe), so whether the command ran is unknown
       if (r.status === 0 || r.status === null || r.status === 126 || r.status === 127) return null;   // (i) ran, killed, or the shell's own not-executable or not-found
@@ -10185,11 +10254,8 @@ test("round 7 of fork PR #780 review, thirtieth commit, THE RECORDED REFUSAL SHA
     for (const [p, cmd, env] of PROVOKED) {
       if (!hasProgram(p)) { console.error(`NOT RUN: real ${p} is not on this runner, so its evidence leg did not run: THE RECORDED REFUSAL SHAPES, ${p}'s refusal`); continue; }
       const witness = path.join(r.dir, 'scratch', `ran-${p}`);
-      const probe = probeOf(cmd, witness);
-      const direct = spawnSync(shells[0], shellArgv(shells[0], probe), { cwd: r.cwd, input: '', encoding: 'utf8', env, timeout: 20000, stdio: ['pipe', 'pipe', 'pipe', 'pipe'] });
-      const ran = fs.existsSync(witness);
-      clearWitness(witness);
-      if (ran) { console.error(`NOT RUN: real ${p} runs its provoked probe on this runner (a privilege it has here), so its evidence leg did not run: THE RECORDED REFUSAL SHAPES, ${p}'s refusal`); continue; }
+      const direct = probeRan(shells[0], cmd, r.cwd, env, witness);   // runProbe's run, so a command the program detaches is seen as run
+      if (direct.ran) { console.error(`NOT RUN: real ${p} runs its provoked probe on this runner (a privilege it has here), so its evidence leg did not run: THE RECORDED REFUSAL SHAPES, ${p}'s refusal`); continue; }
       const took = REFUSAL_SHAPES[p].some((shape) => shape.test(String(direct.stderr || '')));
       if (p === 'setpriv') {
         got.push([p, direct.status, took, refusalOf(cmd, r.cwd, env, shells, { program: p, witness })]);
@@ -10406,6 +10472,256 @@ test("round 7 of fork PR #780 review, thirty-first commit, THE LABELS over a str
   assert.deepEqual(JSON.parse(m[1]), Object.fromEntries(Object.keys(saved).map((sh) => [sh, sh === one ? liveShellLabel(one) : planted[sh]])), `${one} labelled by its own report, and ${others.join(' and ')} (${others.filter((sh) => present.includes(sh)).join(', ') || 'none'} present here) as the record holds them`);
   const keys = Object.entries(RECORDED_COMMANDS).filter(([, [sh]]) => sh === one).map(([k]) => k);
   assert.deepEqual(lines.slice(1), keys.map((k) => `    ${JSON.stringify(k)}: ${JSON.stringify(ESCAPE_OUTPUTS_RECORDED.outputs[k])},`), `the outputs lines are ${one}'s entries alone`);
+});
+
+// ── round 7 of fork PR #780 review, thirty-second commit (2026-09-24): the round's verifiers on the thirty-first commit ──────────────
+//
+// THE WITNESS'S SPELLING and what clearing it may remove (LOW): a witness spelled with a trailing separator passed, and clearing it
+// removed, recursively, every entry of the directory ABOVE it named with the last directory's name. THE DIRECT RUN (informational): the
+// real-programs test spelled its own spawn of the probe, so three pipes there left every pin green; it runs the probe through runProbe now,
+// refusalOf's run, pinned by execution over a command the program detaches. THE SPLIT SUFFIX (informational): a suffix that splits into
+// further words hands touch operands of its own, made in the row's cwd; the comment at refusalOf is scoped to one glued word and discloses
+// the rest, and G10 is that residual's witness. NO STARTUP FILE OF THE ACCOUNT'S (informational, carried to this group): the shell probe,
+// and every leg that ran zsh or bash under an environment of PATH alone, read the account's startup files; the probe starts each shell
+// reading none, and the rule at the wrapper closes each road. Each test runs in a world of its own under the private temporary directory,
+// and every witness a test hands a helper sits in that world, so no spelling any mutant accepts can reach a path outside it.
+const threwWith = (f, re) => { try { f(); return 'no throw'; } catch (e) { return re.test(String(e && e.message)) || String(e && e.message).slice(0, 200); } };
+const treeOf = (d) => fs.readdirSync(d, { recursive: true }).map(String).sort().map((n) => { const st = fs.lstatSync(path.join(d, n)); return `${n}:${st.isSymbolicLink() ? 'link' : st.isDirectory() ? 'dir' : 'file'}`; });
+
+test("round 7 of fork PR #780 review, thirty-second commit, THE WITNESS'S SPELLING in-process: a witness is an absolute path of safe characters whose text after its last separator is a plain file name, so a trailing separator, `.` and `..` are refused beside a blank, a relative path and an expansion, the root among them (strings alone: no path here reaches the file system)", () => {
+  const SPELLINGS = [
+    ['/w/scratch/ran-probe', true], ['/w/scratch/ran-probe.bak', true], ['/w/scratch/...', true], ['/w/./scratch/ran-probe', true],
+    ['/w/scratch/sub/', false], ['/w/scratch/sub//', false], ['/w/scratch/.', false], ['/w/scratch/..', false],
+    ['/', false], ['//', false], ['/tmp/', false], ['/.', false], ['/..', false],
+    ['/w/scratch/ran probe', false], ['scratch/ran-probe', false], ['/w/scratch/ran-$x', false], ['', false], [null, false],
+  ];
+  assert.deepEqual(SPELLINGS.map(([w]) => [w, safeWitness(w)]), SPELLINGS, 'a witness is an absolute path of safe characters whose name is a plain file name');
+});
+
+test("round 7 of fork PR #780 review, thirty-second commit, THE WITNESS'S SPELLING by execution and what clearing it may remove: a witness whose name is not a plain file name (a trailing separator, `.`, `..`) is refused by refusalOf, probeRan and clearWitness alike, and an entry named with the witness's name that is not a regular file (a directory, the witness itself one, a symbolic link) makes each throw naming it; in every case nothing in the witness's directory is removed, while the regular files a glued second operand made are cleared as before", () => {
+  const r = refusalWorld();
+  try {
+    // each witness inside `keep`, a directory of its own in the world's scratch, planted afresh before every call
+    const keep = path.join(r.dir, 'scratch', 'keep');
+    const plant = () => {
+      fs.rmSync(keep, { recursive: true, force: true });
+      fs.mkdirSync(path.join(keep, 'sub'), { recursive: true });
+      for (const f of ['sub/inner', 'subsidiary', '.hidden', '..x', 'keep.md']) fs.writeFileSync(path.join(keep, f), 'keep\n');
+      fs.symlinkSync('keep.md', path.join(keep, 'link'));
+    };
+    plant();
+    const before = treeOf(keep);
+    const shells = shellsFor(['bash', 'zsh', 'dash'], "THE WITNESS'S SPELLING by execution");
+    assert.ok(shells.length >= 1, 'a shell to hand the helpers');
+    const refusing = r.env(refusingPerf(r.dir));
+    const callers = (w) => [
+      ['refusalOf', () => refusalOf(PERF_CMD, r.cwd, refusing, shells, { program: 'perf', witness: w })],
+      ['probeRan', () => probeRan(shells[0], PERF_CMD, r.cwd, refusing, w)],
+      ['clearWitness', () => clearWitness(w)],
+    ];
+    const esc = (t) => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const SPELLING_RE = /^THE REFUSING PROGRAM's witness is an absolute path of safe characters ending in a plain file name, spelled bare into the probe: /;
+    const got = [];
+    const want = [];
+    for (const tail of ['/sub/', '/sub//', '/.', '/..']) for (const [what, call] of callers(`${keep}${tail}`)) {
+      plant();
+      got.push([tail, what, threwWith(call, SPELLING_RE), treeOf(keep)]);
+      want.push([tail, what, true, before]);
+    }
+    for (const [tail, entry] of [['/sub', 'sub'], ['/su', 'sub'], ['/link', 'link']]) for (const [what, call] of callers(`${keep}${tail}`)) {
+      plant();
+      got.push([tail, what, threwWith(call, new RegExp(`: ${esc(path.join(keep, entry))} is named with its name and is not a regular file, which touch never makes, so nothing is cleared$`)), treeOf(keep)]);
+      want.push([tail, what, true, before]);
+    }
+    assert.deepEqual(got, want, 'each refused, and nothing in the witness\'s directory removed');
+    // the control: the regular files a glued second operand makes (G1's `.bak`, the verifiers' quoted H11, a brace alternative) are cleared
+    plant();
+    for (const n of ['ran-x', 'ran-x.bak', 'ran-x x', 'ran-xa']) fs.writeFileSync(path.join(keep, n), '');
+    clearWitness(path.join(keep, 'ran-x'));
+    assert.deepEqual(treeOf(keep), before, 'the witness and its glued regular files are cleared, and nothing else');
+  } finally { r.rm(); }
+});
+
+test("round 7 of fork PR #780 review, thirty-second commit, THE REFUSING PROGRAM's direct run (probeRan, the real-programs test's question whether a program runs the probe it was provoked to refuse) is runProbe's run: a perf that starts the copy detached with its standard streams on /dev/null (V1 in a delayed subshell, V3 under setsid, V5 under a delayed nohup) and then prints the runner's refusal has run it, as a perf that runs it in the foreground has, and the refusing perf has not, in every present shell; the witness is cleared before the run, so a stale one reads as nothing, and after it", () => {
+  const r = refusalWorld();
+  try {
+    const shells = shellsFor(['bash', 'zsh', 'dash'], "THE REFUSING PROGRAM's direct run");
+    const scratch = path.dirname(r.witness);
+    const refuse = `${RUNNER_TEXT_SH}\nexit 255`;
+    const cases = [
+      ['the refusing perf', refusingPerf(r.dir), false],
+      ['a perf that runs the copy, then refuses', plantedPerf(r.dir, 'fg', `"$@"\n${refuse}`), true],
+      ['V1: the copy in a delayed subshell, its standard streams on /dev/null', plantedPerf(r.dir, 'v1', `( sleep 1; "$@" ) </dev/null >/dev/null 2>&1 &\n${refuse}`), true],
+    ];
+    if (hasProgram('setsid')) cases.push(['V3: the copy under setsid, its standard streams on /dev/null', plantedPerf(r.dir, 'v3', `setsid "$@" </dev/null >/dev/null 2>&1 &\n${refuse}`), true]);
+    else console.error("NOT RUN: real setsid is not on this runner, so its evidence leg did not run: THE REFUSING PROGRAM's direct run, V3");
+    cases.push(['V5: the copy under a delayed nohup, its standard streams on /dev/null', plantedPerf(r.dir, 'v5', `nohup sh -c 'sleep 1; exec "$@"' sh "$@" </dev/null >/dev/null 2>&1 &\n${refuse}`), true]);
+    const got = [];
+    const want = [];
+    cases.forEach(([what, bin, ran], i) => {
+      for (const sh of shells) {
+        const w = path.join(scratch, `ran-direct-${i}-${sh}`);
+        got.push([what, sh, probeRan(sh, PERF_CMD, r.cwd, r.env(bin), w).ran, fs.readdirSync(scratch)]);
+        want.push([what, sh, ran, []]);
+      }
+    });
+    assert.deepEqual(got, want, `the direct run in ${shells.join(', ')}`);
+    fs.writeFileSync(r.witness, 'stale\n');   // a witness an earlier run left
+    assert.equal(probeRan(shells[0], PERF_CMD, r.cwd, r.env(cases[0][1]), r.witness).ran, false, 'a stale witness is cleared before the run, so the refusing perf has not run it');
+    assert.deepEqual(fs.readdirSync(scratch), [], 'and none is left when the call ends');
+  } finally { r.rm(); }
+});
+
+test("round 7 of fork PR #780 review, thirty-second commit, THE REFUSING PROGRAM's witness under a suffix that splits into further words (G10, the round's verifiers' H12: an unquoted command substitution whose value opens with a blank): the first operand is the witness still, so a perf that runs the command and then prints the runner's refusal is no refusal and a perf that refuses is filed one, in every present shell; the split word is touch's own operand, made where it points, relative to the row's cwd, and it outlives the call, the residual the comment at refusalOf discloses; the quoted twin (G11) splits nothing and leaves nothing", () => {
+  const r = refusalWorld();
+  try {
+    const shells = shellsFor(['bash', 'zsh', 'dash'], "THE REFUSING PROGRAM's witness under a split suffix");
+    const scratch = path.dirname(r.witness);
+    const refusing = r.env(refusingPerf(r.dir));
+    const ranThenRefused = r.env(plantedPerf(r.dir, 'ran-then-refused', `"$@"\n${RUNNER_TEXT_SH}\nexit 255`));
+    const got = [];
+    const want = [];
+    for (const [id, suffix, splitLeft] of [['G10', "$(printf ' x')", ['x']], ['G11', "\"$(printf ' x')\"", []]]) {
+      for (const sh of shells) for (const [mode, env, expected, cwdLeft] of [['ran', ranThenRefused, null, splitLeft], ['refused', refusing, RUNNER_REASON, []]]) {
+        const w = path.join(scratch, `ran-${id}-${sh}-${mode}`);
+        const reason = refusalOf(`${PERF_CMD}${suffix}`, r.cwd, env, [sh], { program: 'perf', witness: w });
+        got.push([id, sh, mode, reason, fs.readdirSync(scratch), fs.readdirSync(r.cwd).sort()]);
+        want.push([id, sh, mode, expected, [], cwdLeft]);
+        for (const n of fs.readdirSync(r.cwd)) fs.rmSync(path.join(r.cwd, n));   // the split word's file, so the next call starts from an empty cwd
+      }
+    }
+    assert.deepEqual(got, want, `the witness under a split suffix in ${shells.join(', ')}`);
+  } finally { r.rm(); }
+});
+
+test("round 7 of fork PR #780 review, thirty-second commit, NO STARTUP FILE OF THE ACCOUNT'S in-process: a spawn whose environment opens a road to a startup file of the account's (no HOME or the account's, with no ZDOTDIR for zsh's .zshenv, with SHLVL below 1 for bash's ~/.bashrc) is given the environment that closes it, ZDOTDIR=/dev/null and SHLVL=1, the rest of its options kept, and one naming a HOME of its own, or a ZDOTDIR and a SHLVL, keeps its options as given; a spawn that inherits this process's environment is given it without the account's BASH_ENV, where a named environment keeps its own; and the wrapper hands the raw spawn the options the rule gives, with the arguments or without them", () => {
+  const acct = [...ACCOUNT_HOMES][0];
+  const Z = { ZDOTDIR: NO_ZDOTDIR };
+  const L = { SHLVL: '1' };
+  const ENVS = [
+    ['PATH alone', { PATH: '/bin' }, { ...Z, ...L }],
+    ["the account's HOME", { PATH: '/bin', HOME: acct }, { ...Z, ...L }],
+    ["the account's HOME with a trailing separator", { PATH: '/bin', HOME: `${acct}/` }, { ...Z, ...L }],
+    ["a world's HOME", { PATH: '/bin', HOME: '/w/home' }, null],
+    ['a ZDOTDIR of its own', { PATH: '/bin', ZDOTDIR: '/w/z' }, L],
+    ["the account's HOME and a ZDOTDIR of its own", { PATH: '/bin', HOME: acct, ZDOTDIR: '/w/z' }, L],
+    ['SHLVL 1', { PATH: '/bin', SHLVL: '1' }, Z],
+    ['SHLVL 3', { PATH: '/bin', SHLVL: '3' }, Z],
+    ['SHLVL 0', { PATH: '/bin', SHLVL: '0' }, { ...Z, ...L }],
+    ['SHLVL not a number', { PATH: '/bin', SHLVL: 'x' }, { ...Z, ...L }],
+    ['a ZDOTDIR and a SHLVL of its own', { PATH: '/bin', ZDOTDIR: '/w/z', SHLVL: '2' }, null],
+  ];
+  const got = [];
+  const want = [];
+  for (const [what, env, adds] of ENVS) {
+    const opts = { cwd: '/', env };
+    const out = withoutAccountStartup(opts);
+    got.push([what, out === opts ? 'as given' : out]);
+    want.push([what, adds === null ? 'as given' : { cwd: '/', env: { ...env, ...adds } }]);
+  }
+  assert.deepEqual(got, want, 'each environment given the variables that close its roads, and no other change');
+  // an inherited environment: BASH_ENV dropped, the account's roads closed as for a named one
+  const saved = { HOME: process.env.HOME, BASH_ENV: process.env.BASH_ENV, ZDOTDIR: process.env.ZDOTDIR, SHLVL: process.env.SHLVL };
+  const restore = () => { for (const [k, v] of Object.entries(saved)) if (v === undefined) delete process.env[k]; else process.env[k] = v; };
+  let inheritedAcct;
+  let inheritedWorld;
+  try {
+    process.env.BASH_ENV = '/w/planted-bash-env';
+    delete process.env.ZDOTDIR;
+    delete process.env.SHLVL;
+    const a = withoutAccountStartup(undefined);
+    inheritedAcct = a === undefined ? 'as given' : [a.env.ZDOTDIR, a.env.SHLVL, Object.hasOwn(a.env, 'BASH_ENV'), a.env.PATH === process.env.PATH];
+    process.env.HOME = '/w/home';
+    const bOpts = { cwd: '/' };
+    const b = withoutAccountStartup(bOpts);
+    inheritedWorld = b === bOpts ? 'as given' : [b.cwd, b.env.ZDOTDIR, b.env.SHLVL, Object.hasOwn(b.env, 'BASH_ENV'), b.env.HOME];
+  } finally { restore(); }
+  assert.deepEqual(inheritedAcct, [NO_ZDOTDIR, '1', false, true], "an inherited environment under the account's HOME: ZDOTDIR and SHLVL added, BASH_ENV dropped, the rest kept");
+  assert.deepEqual(inheritedWorld, ['/', undefined, undefined, false, '/w/home'], "an inherited environment under a world's HOME: BASH_ENV dropped alone");
+  const named = { env: { PATH: '/bin', HOME: '/w/home', BASH_ENV: '/w/b' } };
+  assert.equal(withoutAccountStartup(named), named, 'a named environment keeps its own BASH_ENV');
+  // the wrapper
+  const calls = [];
+  const guarded = guardedSpawn({ x: true }, (...a) => { calls.push(a); return { status: 0 }; });
+  guarded('x', ['-c', 'true'], { env: { PATH: '/bin' } });
+  guarded('x', ['-c', 'true'], { env: { PATH: '/bin', HOME: '/w/home' } });
+  guarded('x', { env: { PATH: '/bin' } });
+  assert.deepEqual(calls.map((a) => [a[1], a[2] === undefined ? 'no options' : a[2].env]), [[['-c', 'true'], { PATH: '/bin', ...Z, ...L }], [['-c', 'true'], { PATH: '/bin', HOME: '/w/home' }], [[], { PATH: '/bin', ...Z, ...L }]], 'the wrapper hands the raw spawn the options the rule gives, with the arguments or without them');
+});
+
+test("round 7 of fork PR #780 review, thirty-second commit, NO STARTUP FILE OF THE ACCOUNT'S, bash by execution: a bash leg under an environment of PATH alone that names a BASH_ENV reads it, as does a bash a dash leg under that environment starts, so neither took the branch that reads ~/.bashrc in its place; a bash leg that inherits this process's environment, SHLVL 1 there so it would read BASH_ENV, does not read the BASH_ENV this process holds, nor does a bash a dash leg inheriting it starts; and a bash leg under a world's HOME still reads the ~/.bashrc written there", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'romp-bash-guard-bashenv-'));
+  const saved = { BASH_ENV: process.env.BASH_ENV, SHLVL: process.env.SHLVL, MARK: process.env.MARK };
+  const restore = () => { for (const [k, v] of Object.entries(saved)) if (v === undefined) delete process.env[k]; else process.env[k] = v; };
+  try {
+    const bashEnv = path.join(dir, 'bash-env');
+    const home = path.join(dir, 'home');
+    fs.mkdirSync(home);
+    fs.writeFileSync(bashEnv, `: > "${dir}/read-bash-env-$MARK"\n`);
+    fs.writeFileSync(path.join(home, '.bashrc'), `: > "${dir}/read-bashrc-$MARK"\n`);
+    const read = () => fs.readdirSync(dir).filter((n) => n.startsWith('read-')).sort();
+    const got = [];
+    const want = [];
+    for (const sh of shellsFor(['bash'], "NO STARTUP FILE OF THE ACCOUNT'S, bash")) {
+      const dashLegs = shellsFor(['dash'], "NO STARTUP FILE OF THE ACCOUNT'S, a bash a dash leg starts");
+      for (const n of read()) fs.rmSync(path.join(dir, n));
+      spawnSync(sh, ['-c', ':'], { encoding: 'utf8', env: { PATH: process.env.PATH, BASH_ENV: bashEnv, MARK: 'named' } });
+      for (const outer of dashLegs) spawnSync(outer, ['-c', `${sh} -c :`], { encoding: 'utf8', env: { PATH: process.env.PATH, BASH_ENV: bashEnv, MARK: 'named-nested' } });
+      try {
+        process.env.BASH_ENV = bashEnv;
+        process.env.SHLVL = '1';
+        process.env.MARK = 'inherited';
+        spawnSync(sh, ['-c', ':'], { encoding: 'utf8' });
+        process.env.MARK = 'inherited-nested';
+        for (const outer of dashLegs) spawnSync(outer, ['-c', `${sh} -c :`], { encoding: 'utf8' });
+      } finally { restore(); }
+      spawnSync(sh, ['-c', ':'], { encoding: 'utf8', env: { PATH: process.env.PATH, HOME: home, MARK: 'world' } });
+      got.push(read());
+      want.push(['read-bash-env-named', ...(dashLegs.length ? ['read-bash-env-named-nested'] : []), 'read-bashrc-world']);
+    }
+    assert.deepEqual(got, want, "the files each bash read: its own BASH_ENV under PATH alone, none of this process's, and a world's ~/.bashrc");
+  } finally { restore(); fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("round 7 of fork PR #780 review, thirty-second commit, NO STARTUP FILE OF THE ACCOUNT'S at the shell probe, by execution over stubs that record what each shell was given: the probe starts zsh with -f and bash with --norc and --noprofile under an environment of PATH alone, so a BASH_ENV planted in this process's environment reaches none of them, nor does its HOME", () => {
+  const stub = fs.mkdtempSync(path.join(os.tmpdir(), 'romp-bash-guard-probestub-'));
+  const savedPath = process.env.PATH;
+  const savedBashEnv = process.env.BASH_ENV;
+  try {
+    for (const sh of Object.keys(SHELL_PROBE)) fs.writeFileSync(path.join(stub, sh), `#!/bin/sh\n{ printf '%s\\n' "$@"; printf 'HOME=%s BASH_ENV=%s ZDOTDIR=%s\\n' "\${HOME-unset}" "\${BASH_ENV-unset}" "\${ZDOTDIR-unset}"; } > '${path.join(stub, sh)}.log'\nprintf %s 5.2.21\n`, { mode: 0o755 });
+    process.env.PATH = `${stub}:${savedPath}`;
+    process.env.BASH_ENV = path.join(stub, 'planted-bash-env');
+    for (const sh of Object.keys(SHELL_PROBE)) probeShell(sh);
+    process.env.PATH = savedPath;
+    const seen = Object.fromEntries(Object.keys(SHELL_PROBE).map((sh) => [sh, fs.readFileSync(path.join(stub, `${sh}.log`), 'utf8').split('\n').filter(Boolean)]));
+    const bare = 'HOME=unset BASH_ENV=unset ZDOTDIR=unset';
+    assert.deepEqual(seen, { bash: ['--norc', '--noprofile', '-c', 'printf %s "$BASH_VERSION"', bare], zsh: ['-f', '-c', 'true', bare], dash: ['-c', 'true', bare] }, 'the probe starts each shell reading no startup file, under PATH alone');
+  } finally {
+    process.env.PATH = savedPath;
+    if (savedBashEnv === undefined) delete process.env.BASH_ENV; else process.env.BASH_ENV = savedBashEnv;
+    fs.rmSync(stub, { recursive: true, force: true });
+  }
+});
+
+test("round 7 of fork PR #780 review, thirty-second commit, NO STARTUP FILE OF THE ACCOUNT'S by execution: a zsh leg under an environment of PATH alone or of the account's HOME, and a zsh that a bash or dash leg under PATH alone starts, sources no file under the account's home (SOURCE_TRACE names each file a zsh sources), while a zsh under a world's HOME, or under a ZDOTDIR of its own, still reads the .zshenv written there", () => {
+  const sourced = (r) => String(r.stderr || '').split('\n').map((l) => l.match(/^\+(.*?):\d+> <sourcetrace>$/)).filter(Boolean).map((m) => m[1]);
+  const accountFiles = (files) => files.filter((f) => [...ACCOUNT_HOMES].some((h) => f === h || f.startsWith(`${h}/`))).length;
+  for (const zsh of shellsFor(['zsh'], "NO STARTUP FILE OF THE ACCOUNT'S by execution")) {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'romp-bash-guard-worldhome-'));
+    try {
+      fs.writeFileSync(path.join(home, '.zshenv'), ':\n');
+      const legs = [
+        ['a zsh leg under PATH alone', spawnSync(zsh, ['-o', 'SOURCE_TRACE', '-c', ':'], { encoding: 'utf8', env: { PATH: process.env.PATH } })],
+        ["a zsh leg under the account's HOME", spawnSync(zsh, ['-o', 'SOURCE_TRACE', '-c', ':'], { encoding: 'utf8', env: { PATH: process.env.PATH, HOME: [...ACCOUNT_HOMES][0] } })],
+      ];
+      for (const outer of shellsFor(['bash', 'dash'], "NO STARTUP FILE OF THE ACCOUNT'S, a zsh a leg's command starts")) legs.push([`a zsh a ${outer} leg under PATH alone starts`, spawnSync(outer, ['-c', `${zsh} -o SOURCE_TRACE -c :`], { encoding: 'utf8', env: { PATH: process.env.PATH } })]);
+      assert.deepEqual(legs.map(([what, r]) => [what, r.status, accountFiles(sourced(r))]), legs.map(([what]) => [what, 0, 0]), "no zsh a leg starts sources a file under the account's home");
+      const world = spawnSync(zsh, ['-o', 'SOURCE_TRACE', '-c', ':'], { encoding: 'utf8', env: { PATH: process.env.PATH, HOME: home } });
+      assert.ok(sourced(world).includes(path.join(home, '.zshenv')), `a zsh under a world's HOME reads the .zshenv written there: ${JSON.stringify(sourced(world))}`);
+      const own = spawnSync(zsh, ['-o', 'SOURCE_TRACE', '-c', ':'], { encoding: 'utf8', env: { PATH: process.env.PATH, ZDOTDIR: home } });
+      assert.ok(sourced(own).includes(path.join(home, '.zshenv')), `a zsh under a ZDOTDIR of its own reads the .zshenv there: ${JSON.stringify(sourced(own))}`);
+    } finally { fs.rmSync(home, { recursive: true, force: true }); }
+  }
 });
 
 // ── round 7 of fork PR #780 review, seventeenth commit (2026-09-23): the reviewer's correctness-1, correctness-2 and extra6-2 ─────────
