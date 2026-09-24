@@ -399,22 +399,25 @@ class AgentEnd(unittest.TestCase):
 
     def test_an_end_that_raises_does_not_lose_the_rest_of_the_batch(self):
         size = self._fold_while_running(AID, self.agent)
+        other = sb.SdkSession(self.be, {"sid": OTHER_SID, "name": "web", "cwd": self.root})
+        asyncio.run(other._subagent_start_hook({"agent_id": WF_AID2, "agent_type": "general-purpose"}, None, None))
+        asyncio.run(other._subagent_stop_hook({"agent_id": WF_AID2}, None, None))   # queued BEFORE the good end below
         self._stop(AID)
-        self.be.note_agent_live(OTHER_SID, AID, False)                  # another session's end, queued after
         path_of = km._path_of
 
         def raising(sid, now=None):
-            if sid != SID:
+            if sid == OTHER_SID:
                 raise RuntimeError("synthetic")
             return path_of(sid, now)
         km._path_of = raising
         err = io.StringIO()
         with contextlib.redirect_stderr(err):
             km._begin_checkpoint_cycle()
-        self.assertIsNone(self._weight(self.agent), "the good event was released")
+        self.assertIsNone(self._weight(self.agent), "the end queued after the one that raised was still released")
         self.assertEqual((self._stat("releaseLost"), self._stat("released")), (1, {"agentEnded": {"count": 1, "bytes": size}}))
         self.assertIn("a release raised RuntimeError", err.getvalue())
-        self.be.note_agent_live(OTHER_SID, AID, False)
+        asyncio.run(other._subagent_start_hook({"agent_id": WF_AID2, "agent_type": "general-purpose"}, None, None))
+        asyncio.run(other._subagent_stop_hook({"agent_id": WF_AID2}, None, None))
         err = io.StringIO()
         with contextlib.redirect_stderr(err):
             km._begin_checkpoint_cycle()
