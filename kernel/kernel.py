@@ -15557,29 +15557,36 @@ def _begin_checkpoint_cycle():
     _release_ended_agents()
 
 
-_AGENT_RELEASED = {}                # (sid, agent id) -> True for the ends _release_ended_agents released an entry for or owed a
-#                                     release, oldest first, at most _AGENT_RELEASED_MAX: the agent entering its session's live set
-#                                     again after that is a false end (recordCache.falseEnds) when the entry was popped, and cancels
-#                                     the release when it is still owed. The pusher thread's alone
+_AGENT_RELEASED = {}                # (sid, agent id) -> [path, taken] for the ends _release_ended_agents released an entry for
+#                                     (taken True) or owed a release (taken False until checkpoint_pay_owed_releases takes it; at a
+#                                     cycle that paid any owed release, an owed end whose release was not taken and is no longer
+#                                     owed is dropped), oldest first, at most _AGENT_RELEASED_MAX: the agent entering its session's
+#                                     live set again after its release was taken is a false end (recordCache.falseEnds), after a
+#                                     release still owed it cancels that release, and after one never taken it counts nothing.
+#                                     The pusher thread's alone
 _AGENT_RELEASED_MAX = 4096
 
 
 def _release_ended_agents():
     """The pusher cycle's start (2026-09-24): each agent that left its session's live set since the last cycle has its parsed
     transcript released from the record cache (em.release_entry, reason agentEnded: the file's checkpoint document written
-    when it lacks what the cache holds, then the records dropped), so a later fold restores a tail and reads nothing whole.
-    The events come from the SDK backend's own add and removal sites, queued in arrival order
+    when it lacks what the cache holds, then the records dropped), so a later fold whose cursor the document records restores
+    a tail and reads nothing whole. The events come from the SDK backend's own add and removal sites, queued in arrival order
     (SdkBackend.drain_agent_live_events), never from a difference of liveness snapshots: three threads take those
     independently, and a staler one would end an agent a fresher one listed. In order:
     - The batch is drained. End events dropped past the queue's bound are releases given up (recordCache.releaseLost); a
       dropped start is not counted.
     - An agent that entered the live set in this batch and whose earlier end is still owed its release (an earlier cycle's
-      budget refused the document, or a read raced the pop) has that release cancelled (em.cancel_owed_release). Its entry
-      was never popped, so that start is not a false end, as for an end and a start in one batch.
-    - The releases still owed are paid (em.checkpoint_pay_owed_releases).
+      budget refused the document, or a read raced the pop) has that release cancelled (em.cancel_owed_release, under the
+      path the release was owed for). Its entry was never popped, so that start is not a false end, as for an end and a
+      start in one batch.
+    - The releases still owed are paid (em.checkpoint_pay_owed_releases). An owed end whose release is taken now is marked
+      taken. When any was paid, an owed end whose release was not taken and is no longer owed (paid as absent or lost,
+      raised, given up at the owed table's bound, forgotten at a checkpoint-directory rebind, or cancelled above) is
+      dropped; one left in the table is still never counted, since its entry was not popped.
     - Each agent whose last event in the batch is an end is released. An end followed in the same batch by the agent
       entering the live set again releases nothing. An agent entering the live set after its release was taken is a false
-      end, counted (recordCache.falseEnds).
+      end, counted (recordCache.falseEnds); after a release that was only owed, it is not.
     The file is resolved as the folds resolve it (_path_of, _subagent_file), so the release names the cache key the folds
     read. Returns the releases taken or owed for this batch's ends."""
     be = _sdk_backend
@@ -15590,24 +15597,26 @@ def _release_ended_agents():
     last = {}
     for i, (sid, aid, _live) in enumerate(events):
         last[(sid, aid)] = i
-    cancelled = set()
     for sid, aid, live in events:
-        pair = (sid, aid)
-        if not live or pair in cancelled or pair not in _AGENT_RELEASED:
-            continue                                   # only an end released or owed here can be owed a release (the last
-        try:                                           #  _AGENT_RELEASED_MAX of them)
-            path = _path_of(sid)
-            ap = _subagent_file(path, aid) if path else None
-        except Exception:
-            continue                                   # unresolved: an owed release is paid below, and the start is a false end
-        if ap is not None and em.cancel_owed_release(str(ap)):
-            cancelled.add(pair)
-    em.checkpoint_pay_owed_releases()
+        rec = _AGENT_RELEASED.get((sid, aid))
+        if live and rec is not None and not rec[1]:
+            em.cancel_owed_release(rec[0])             # an end whose release is still owed (the last _AGENT_RELEASED_MAX ends)
+    paid = em.checkpoint_pay_owed_releases()           # {path: outcome} of the releases an earlier cycle owed
+    if paid:
+        owed = em.owed_release_paths()
+        for pair, rec in list(_AGENT_RELEASED.items()):
+            if rec[1]:
+                continue
+            if paid.get(rec[0]) == "released":
+                rec[1] = True                          # the owed release was taken: a start after it is a false end
+            elif rec[0] not in owed:
+                _AGENT_RELEASED.pop(pair, None)        # not taken and no longer owed: no entry was popped for this end
     n = 0
     for i, (sid, aid, live) in enumerate(events):
         pair = (sid, aid)
         if live:
-            if _AGENT_RELEASED.pop(pair, None) is not None and pair not in cancelled:
+            rec = _AGENT_RELEASED.pop(pair, None)
+            if rec is not None and rec[1]:
                 em.note_false_end()
             continue
         if last[pair] != i:
@@ -15621,7 +15630,7 @@ def _release_ended_agents():
             continue
         if got in ("released", "deferred", "raced"):   # None: no transcript for the session or no file for the agent
             _AGENT_RELEASED.pop(pair, None)
-            _AGENT_RELEASED[pair] = True
+            _AGENT_RELEASED[pair] = [str(ap), got == "released"]
             while len(_AGENT_RELEASED) > _AGENT_RELEASED_MAX:
                 _AGENT_RELEASED.pop(next(iter(_AGENT_RELEASED)), None)
             n += 1

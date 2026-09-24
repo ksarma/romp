@@ -451,6 +451,67 @@ class AgentEnd(unittest.TestCase):
         km._begin_checkpoint_cycle()
         self.assertEqual(self._stat("falseEnds"), 1, "the agent starting after that release is a false end")
 
+    # ---- a release only owed, never taken, counts no false end ----
+
+    def _owed(self):
+        size = self._fold_while_running(AID, self.agent)
+        self._stop(AID)
+        km.CKPT_CONVERGE_BYTES = 1                                       # the budget refuses the document: the release is owed
+        km._begin_checkpoint_cycle()
+        km.CKPT_CONVERGE_BYTES = 8 * 1024 * 1024
+        self.assertEqual((list(em._RELEASE_OWED), self._weight(self.agent)), ([self.agent], size), "precondition: owed")
+        return size
+
+    def test_an_owed_release_paid_as_absent_then_a_start_is_no_false_end(self):
+        self._owed()
+        with em._JSONL_CACHE_LOCK:
+            em._cache_pop_locked(self.agent)                             # an eviction between the deferral and the pay
+        km._begin_checkpoint_cycle()                                     # the owed release finds no entry
+        held = (SID, AID) in km._AGENT_RELEASED
+        self._start(AID)
+        km._begin_checkpoint_cycle()
+        self.assertEqual((self._stat("falseEnds"), self._stat("released")), (0, {}), "no release taken, no false end")
+        self.assertFalse(held, "the end whose release was not taken was forgotten at the pay")
+
+    def test_an_owed_release_paid_as_lost_then_a_start_is_no_false_end(self):
+        size = self._owed()
+        km.CKPT_CONVERGE_MS = 0                                          # the drop writes off when the owed release is paid
+        with contextlib.redirect_stderr(io.StringIO()):
+            km._begin_checkpoint_cycle()
+        self.assertEqual((self._stat("releaseLost"), self._weight(self.agent)), (1, size), "precondition: given up, entry kept")
+        self._start(AID)
+        km._begin_checkpoint_cycle()
+        self.assertEqual((self._stat("falseEnds"), self._stat("released")), (0, {}), "no release taken, no false end")
+
+    def test_an_owed_release_forgotten_at_a_rebind_then_a_start_is_no_false_end(self):
+        size = self._owed()
+        em.set_checkpoint_dir(lambda: Path(os.path.join(self.root, "checkpoints-rebound")))
+        self._start(AID)                                                 # a start in the batch of the next cycle
+        km._begin_checkpoint_cycle()
+        self.assertEqual((self._stat("falseEnds"), self._stat("released")), (0, {}), "no release taken, no false end")
+        self.assertEqual(self._weight(self.agent), size, "the entry is whole")
+
+    def test_an_owed_release_given_up_at_its_bound_then_a_start_is_no_false_end(self):
+        self._owed()
+        saved = em._DROP_OWED_MAX
+        em._DROP_OWED_MAX = 1
+        self.addCleanup(setattr, em, "_DROP_OWED_MAX", saved)
+        with contextlib.redirect_stderr(io.StringIO()):
+            em._owe_release(os.path.join(self.root, "owed-other.jsonl"), "agentEnded")   # the agent's owed release is the oldest
+        self.assertEqual(list(em._RELEASE_OWED), [os.path.join(self.root, "owed-other.jsonl")], "precondition: given up")
+        self._start(AID)
+        km._begin_checkpoint_cycle()
+        self.assertEqual((self._stat("falseEnds"), self._stat("released")), (0, {}), "no release taken, no false end")
+
+    def test_a_start_whose_session_path_no_longer_resolves_still_cancels_its_owed_release(self):
+        size = self._owed()
+        km._path_of = lambda sid, now=None: None                         # the session's transcript is not known at the start
+        self._start(AID)
+        km._begin_checkpoint_cycle()
+        self.assertEqual(self._weight(self.agent), size, "the running agent keeps its records")
+        self.assertEqual((em._RELEASE_OWED, self._stat("released"), self._stat("falseEnds")), ({}, {}, 0),
+                         "the release owed under the agent's path is cancelled, none taken, no false end")
+
     def test_an_owed_release_that_raises_loses_neither_the_rest_nor_the_cycle(self):
         self._fold_while_running(AID, self.agent)
         self._stop(AID)
@@ -837,6 +898,9 @@ class AgentEnd(unittest.TestCase):
         self.assertEqual(self._weight(self.agent), size, "the entry is whole")
         for d in (self.ckdir, other):
             self.assertEqual([f for _r, _d, fs in os.walk(d) for f in fs], [], "no document in %s" % os.path.basename(d))
+        self._start(AID)                                                 # the agent starts again after the forgotten release
+        km._begin_checkpoint_cycle()
+        self.assertEqual(self._stat("falseEnds"), 0, "a release forgotten, never taken, counts no false end")
 
     def test_a_cycle_over_a_backend_without_the_queue_does_nothing(self):
         for be in (None, False, object()):                               # not built, unavailable, a double without the queue

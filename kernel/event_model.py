@@ -718,8 +718,9 @@ _RECORD_CACHE_STATS.update({   # the release at an agent's end (release_entry, 2
     #                             directory, a write that was due and failed, or the check whether a write was due raised), an
     #                             agent end or an owed release was dropped past its queue's bound, or resolving or paying one
     #                             raised
-    "falseEnds": 0,            #  agents released at their end that entered their session's live set again (a resumed agent, or an
-    #                             end reported early): note_false_end, counted by the kernel
+    "falseEnds": 0,            #  agents whose release at their end was taken (the entry popped) that entered their session's live
+    #                             set again (a resumed agent, or an end reported early): note_false_end, counted by the kernel; a
+    #                             release only owed, then cancelled, forgotten, given up or paid without being taken, counts none
     "releasedReread": {"count": 0, "bytes": 0}})   # the first whole read of a path after a release popped it, when no other pop
 #                                                    of the path came in between: what releasing cost. At most _JSONL_CACHE_MAX
 #                                                    marks are outstanding, the oldest dropped first; a mark leaves when it is
@@ -817,7 +818,7 @@ def _stat_table_locked(key, empty=dict):
 
 
 def note_false_end():
-    """The kernel saw an agent it released at its end enter its session's live set again (recordCache.falseEnds)."""
+    """The kernel saw an agent whose release at its end was taken enter its session's live set again (recordCache.falseEnds)."""
     with _JSONL_CACHE_LOCK:
         _RECORD_CACHE_STATS["falseEnds"] = int(_RECORD_CACHE_STATS.get("falseEnds") or 0) + 1
 
@@ -1044,7 +1045,7 @@ _DROP_OWED = {}                   # path -> when its quiescence drop was deferre
 _DROP_OWED_MAX = 4096             # over it the OLDEST owed entry is popped unwritten (its memory released), never the table cleared
 _RELEASE_OWED = {}                # path -> reason: a release at an agent's end deferred to the next cycle (release_entry: the cycle's
 #                                   budget refused its write, or a read replaced the entry before the pop); paid at the next cycle's
-#                                   start (checkpoint_pay_owed_releases) unless the agent entered its session's live set again first
+#                                   start (checkpoint_pay_owed_releases) unless that cycle drains the agent's start first
 #                                   (cancel_owed_release). At most _DROP_OWED_MAX: over it the oldest is given up (releaseLost)
 _DROP_HOLD = threading.local()    # the converge pass holds this thread's quiescence drops while it heals and primes a leaf, then pays
 #                                   them once (T362 follow-up review, low 2): {path: pop} of the drops held, or absent
@@ -1493,22 +1494,23 @@ def checkpoint_pay_owed_drops():
 def checkpoint_pay_owed_releases():
     """The releases at an agent's end owed from an earlier cycle (_RELEASE_OWED), paid with this cycle's room: no age gate,
     since the agent's end is the event; over the budget again they re-defer. The kernel pays them after it has drained the
-    cycle's live-set events and cancelled the release of every agent that entered its session's live set again
-    (cancel_owed_release), so a running agent's entry is never released. One release that raises is given up and counted
-    (releaseLost); the rest are still paid. Returns the releases paid."""
+    cycle's live-set events and cancelled the owed release of every agent whose start is in that batch
+    (cancel_owed_release), so an agent whose start is in the drained batch keeps its entry. A start that does not cancel the
+    owed release lets it pop a running agent's entry: one queued after the drain (counted in falseEnds when the next cycle
+    drains it), one dropped past the queue's bound, or one whose end has left the kernel's table of released ends past its
+    bound (neither of those two counted). One release that raises is given up and counted (releaseLost); the rest are still
+    paid. Returns {path: outcome} for every release it paid: release_entry's result, or "raised"."""
     with _CKPT_LOCK:
         owed = list(_RELEASE_OWED.items())
         _RELEASE_OWED.clear()
-    paid = 0
+    out = {}
     for key, reason in owed:
         try:
-            got = release_entry(key, reason)
+            out[key] = release_entry(key, reason)
         except Exception as e:                            # one owed release that raises must not lose the rest, nor the cycle's
             note_release_lost(1, "a release raised %s" % type(e).__name__)   #  drain that the kernel runs after this
-            continue
-        if got == "released":
-            paid += 1
-    return paid
+            out[key] = "raised"
+    return out
 
 
 def cancel_owed_release(path):
@@ -1516,6 +1518,12 @@ def cancel_owed_release(path):
     one was owed."""
     with _CKPT_LOCK:
         return _RELEASE_OWED.pop(str(path), None) is not None
+
+
+def owed_release_paths():
+    """The paths whose release at an agent's end is owed now (a copy)."""
+    with _CKPT_LOCK:
+        return set(_RELEASE_OWED)
 
 
 def checkpoint_cycle_charge(n):

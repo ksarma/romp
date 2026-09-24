@@ -3087,8 +3087,10 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   cursor the document records restores a tail from it; a file no fold holds
   a recordable cursor for is dropped without a document and read whole at
   its next fold, and a file that no longer exists is dropped with nothing
-  written; an agent that enters the live set again before a deferred
-  release is paid keeps its records):
+  written; an agent whose start the cycle drains before a deferred release
+  is paid keeps its records, while a start queued after the drain is
+  counted in `falseEnds` instead, and a start dropped past the queue's
+  bound, or one whose end the kernel no longer holds, is not counted):
   `released` (per reason, today `agentEnded`, with `count` and `bytes`),
   `releaseDeferred` (deferrals of a release to the next cycle, one per
   deferral, so a release refused on N cycles counts N and the figure is not
@@ -3101,8 +3103,10 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   `ROMP_CKPT_CONVERGE_MB=0` or when the check whether a write was due
   raised, an agent end or an owed release was dropped past its bound, or
   resolving or paying one raised; said once on stderr per cause),
-  `falseEnds` (agents released at their end that entered the live set
-  again) and `releasedReread` (`count` and `bytes` of the first whole read
+  `falseEnds` (agents whose release at their end was taken, the entry
+  popped, that entered the live set again; a release that was only owed,
+  then cancelled, forgotten, given up or paid without being taken, counts
+  none) and `releasedReread` (`count` and `bytes` of the first whole read
   of a path after a release popped it, when no other pop of the path came in
   between: what releasing cost; at most `countCap` marks are outstanding,
   the oldest dropped first, and a mark leaves when it is taken or cleared,
