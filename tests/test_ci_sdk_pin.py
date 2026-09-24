@@ -2277,6 +2277,15 @@ YAML_REFUSED_ROWS = (
     ("a literal block as an env value, its text spelling the switch (S10)", "last",
      '      - name: Block text (pytest)\n        env:\n          NOTES: |\n            %s: "1"\n' % SWITCH + RUN_OK,
      ((3, "a literal block scalar outside a step's run"),), False),
+    # each clause of the literal block's place, a step's run (the allowlist's second verify pass, N01 to N03: with one
+    # clause taken out every test stayed green; the plant of each read red through a census, or PyYAML refused it)
+    ("a step's name: as a literal block (N01)", "first", "      - name: |\n          Block name\n        run: echo hi\n",
+     ((1, "a literal block scalar outside a step's run"),), True),
+    ("a steps entry's run: as a literal block under a top-level key other than jobs (N02)", "end",
+     "zz:\n  a:\n    steps:\n      - run: |\n          echo hi\n", ((4, "a literal block scalar outside a step's run"),), True),
+    ("a service's run: as a literal block, four keys deep under jobs (N03)", "job",
+     "  svc:\n    runs-on: ubuntu-latest\n    services:\n      db:\n        run: |\n          echo hi\n    steps:\n"
+     "      - run: echo ok\n", ((5, "a literal block scalar outside a step's run"),), True),
     ("an empty folded block as the switch's value, in a job with no pytest step (E35)", "job",
      "  nopy:\n    runs-on: ubuntu-latest\n    env:\n      %s: >-\n      OTHER: x\n    steps:\n      - run: echo hi\n" % SWITCH,
      ((4, "a folded block scalar (ci.yml's blocks are literal)"),), True),
@@ -2303,6 +2312,11 @@ YAML_REFUSED_ROWS = (
      ((2, "a plain scalar holding ': ' or ending in ':' (a mapping YAML refuses there)"),), True),
     ("a plain scalar opening with an indicator character", "first", "      - name: Dash\n        run: -x\n",
      ((2, "a plain scalar opening with an indicator character (-)"),), True),
+    # the value ending in ':' (the allowlist's second verify pass, N07: with that clause taken out every test stayed
+    # green); the parser reads the switch as `1:`, which is not 1, and PyYAML refuses the line
+    ("the switch's plain value ending in ':' (N07)", "last",
+     "      - name: Colon value (pytest)\n        env:\n          %s: 1:\n" % SWITCH + RUN_OK,
+     ((3, "a plain scalar holding ': ' or ending in ':' (a mapping YAML refuses there)"),), False),
     ("a line that is no key: a plain scalar at the top level", "end", "stray text\n",
      ((1, "a line that is not a key, a sequence entry, a comment or a blank line"),), False),
     # structure and keys
@@ -2363,6 +2377,17 @@ YAML_REFUSED_ROWS = (
      ((8, "a tab or other control character ('\\u2028')"),), True),
     ("PS in a comment line, a step env setting the switch to 0 behind it (N31i)", "end", _HIDDEN_ENV % ("\u2029", "\u2029"),
      ((8, "a tab or other control character ('\\u2029')"),), True),
+    # the other refused characters no row held (the allowlist's second verify pass, N30, N33 and N36: with each dropped
+    # from the refused set every test stayed green; PyYAML refuses each as an unacceptable character). U+001C, VT and
+    # FF are line breaks to str.splitlines, so they take the shape above; DEL is not, and sits in a comment line alone
+    ("U+001C in a comment line, a step env setting the switch to 0 behind it (N30)", "end", _HIDDEN_ENV % ("\x1c", "\x1c"),
+     ((8, "a tab or other control character ('\\x1c')"),), True),
+    ("VT in a comment line, a step env setting the switch to 0 behind it (N36)", "end", _HIDDEN_ENV % ("\x0b", "\x0b"),
+     ((8, "a tab or other control character ('\\x0b')"),), True),
+    ("FF in a comment line, a step env setting the switch to 0 behind it (N36)", "end", _HIDDEN_ENV % ("\x0c", "\x0c"),
+     ((8, "a tab or other control character ('\\x0c')"),), True),
+    ("DEL in a comment line after a step's run (N33)", "last", "      - name: Del comment\n        run: echo hi\n"
+     "        # a comment holding DEL \x7f\n", ((3, "a tab or other control character ('\\x7f')"),), True),
     # the file's end (the allowlist's first verify pass, X10: a step env's switch key on a last line with no newline
     # after it was unread, and the file, which PyYAML and actionlint accept, was red for another reason than a refusal)
     ("a last line with no newline after it, a step env's switch key on it (X10)", "end",
