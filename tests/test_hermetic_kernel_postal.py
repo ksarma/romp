@@ -33,15 +33,16 @@ synthetic copies with the leak planted, so it is known to be able to fail), the 
 for EVERY module under tests/, walked recursively, fixtures/ included (941 files on 2026-09-18): no module-level write
 of the variable, module-level if/try/for/with bodies included, in each shape the scan reads (a subscript assignment,
 setdefault, update of a literal or of a module-level name bound to one, |=, os.putenv, through os.environ or a name
-bound to it; review round 2, 2026-09-18, after the subscript and setdefault alone left a module-level update
-invisible; the dunder spellings __setitem__ and __ior__, called on the mapping or unbound with the mapping as the first
-argument, and os.environb with a bytes key, since the third commit of 2026-09-22, when the verifier found those three
-passing silently; an augmented assignment to a key and a key bound as a for, comprehension or with target since round
-2 of fork PR #894; the shapes it does not read are listed above _Module, each with a plant), and a write whose keys
-the scan cannot read fails the test rather than passing unread. The probe beside
-them imports the module in a fresh interpreter and runs one setUp, and one that fails, to see the value. The restore is
-a cleanup rather than a tearDown since review round 1 (2026-09-18): unittest skips tearDown when a subclass's setUp
-raises after the base's returned, and a tearDown restore left the 0 in the worker on that path.
+a plain assignment binds to it (`env = os.environ`, the one target a name); review round 2, 2026-09-18, after the
+subscript and setdefault alone left a module-level update invisible; the dunder spellings __setitem__ and __ior__,
+called on the mapping or unbound with the mapping as the first argument, and os.environb with a bytes key, since the
+third commit of 2026-09-22, when the verifier found those three passing silently; an augmented assignment to a key
+and a key bound as a for, comprehension or with target since round 2 of fork PR #894; the shapes it does not read
+are listed above _Module, each with a plant), and a write whose keys the scan cannot read fails the test rather than
+passing unread. The probe beside them imports the module in a fresh interpreter and runs one setUp, and one that
+fails, to see the value. The restore is a cleanup rather than a tearDown since review round 1 (2026-09-18): unittest
+skips tearDown when a subclass's setUp raises after the base's returned, and a tearDown restore left the 0 in the
+worker on that path.
 
 Since 2026-09-22 (the reviewer's ruling on fork PR #813's finding) the import-time rule covers EVERY environment name,
 not peers alone, and no leg of the trio is written at module level in the tunnels module any more: a module-level
@@ -94,7 +95,8 @@ call at import the scan can resolve to a def or class under tests/ (a module-loc
 tests-local module, a bare decorator, an instantiation; two such calls exist today, both to
 test_asm_checkpoint.kernel_module(), whose setdefault of the browser switch is licensed; since round 2 of fork PR #894
 a def in any import-time block or class body, every binding of a name, a re-export, a metaclass's hooks and a base's
-__init_subclass__, the mapping passed into a parameter, and a bare name read as a call only where Python calls it),
+__init_subclass__, the mapping passed into a parameter of such a def (not a lambda's), and a bare name read as a call
+only where Python calls it),
 with what stays outside the scan named above _Module; and every licence carries a checkable value condition (a value written through a name is read
 through the name) and every temporary licence a since date, held by _licence_table_faults. The third commit of the same
 day closes the second verification's findings: the call resolver reads a dotted `import tests.helper` and a star import,
@@ -193,10 +195,14 @@ class _EnvNames:
     `os.environ.update(...)` was invisible to it): `os.environ` under any name os is imported as, `environ` after
     `from os import environ` (or its `as` name) or after `from os import *` (since the verifier's finding on round 2 of
     fork PR #894: os.__all__ carries environ and environb, and a write through the star-imported name passed silently),
-    and every name bound to it (`env = os.environ`); `os.environb`, the same environment keyed by bytes, the same way
-    (the third commit of 2026-09-22); a parameter a call at import passes the
-    mapping to, or whose default is the mapping, when the resolver reads that call's callee (_environ_params; round 2
-    of fork PR #894, the reviewer's ruling of round 1, where the parameter route was missed silently). Beside those, the
+    and every name a plain assignment binds to it, the one target a name (`env = os.environ`; a name bound to it any
+    other way, an annotated or a chained assignment among them, is [held-otherwise] above _Module); `os.environb`,
+    the same environment keyed by bytes, the same way (the third commit of 2026-09-22); a parameter of the def a call
+    at import resolves to (_resolve: a function, a method, or a class's __new__ or __init__) that the call passes the
+    mapping to, or whose default is the mapping (_environ_params; round 2 of fork PR #894, the reviewer's ruling of
+    round 1, where the parameter route was missed silently). A lambda's parameter is never one, whether the lambda
+    defaults it to the mapping or is called with it: the lambda is read where it stands with every parameter
+    unreadable, and the comment above _Module names that ([lambda-parameter], with its two plants). Beside those, the
     names bound to a dict literal or to `dict(...)` of keywords, which an `update(NAME)` reads through the name
     (tests/test_update_banner_confirm_served.py updates its DEAD_PORTS that way at import).
     THE RULE (the reviewer's ruling of round 1 on fork PR #894, where the first binding was read as the only one and a
@@ -491,8 +497,13 @@ def _resolved(node, names):
     """The value expression `node` as text with every name whose one binding at import is an assignment replaced by what it
     is bound to (`_ROOT` -> `tempfile.mkdtemp()`, `_STATE_TD.name` -> `tempfile.TemporaryDirectory().name`,
     `os.path.join(_tmp, 'romp')` -> `os.path.join(tempfile.mkdtemp(), 'romp')`), so a licence's value check reads the
-    value and not the name; the text of `node` itself where nothing substitutes (a name bound again by anything, or bound
-    by something other than an assignment, stays a name: THE RULE in _EnvNames); "" for None."""
+    value and not the name; the text of `node` itself where nothing substitutes (a name bound again by any binding the
+    module's code spells, or bound by something other than an assignment, stays a name: THE RULE in _EnvNames); "" for
+    None. A name rebound through the module's namespace (`globals()["_ROOT"] = "/srv/real-state"`) is not seen and still
+    resolves to its first assignment, so a licence's value check passes the first value (the verifier's finding on round
+    2 of fork PR #894, where this docstring said a name bound again by anything stays a name); the comment above _Module
+    names it ([namespace-rebinding]), and the licence test holds that plant clean, so a change that starts reading it
+    reds."""
     if node is None:
         return ""
     # Contract: a parsed tree is read-only for every consumer, so the value is re-parsed from its text, never deep-copied.
@@ -716,7 +727,11 @@ def _compound_header(s):
     its target, the with items and their targets, a match subject and its guards, the handler types of a try. The for
     and with targets since round 2 of fork PR #894 (the reviewer's ruling of round 1: `for os.environ[K] in ...` at
     module level wrote K with the scan silent, since no node of the header held the target): a target is a store, so
-    _env_write_records reads an environment subscript in one as a write, and nothing else in it runs as a call."""
+    _env_write_records reads an environment subscript in one as a write. A target also runs code of its own: Python
+    evaluates the object and the key of a subscript target and the object of an attribute target before each store, so
+    a call in them (`for _d[_w()] in ...`, `for _w().x in ...`) runs at import and _reached_writes follows it like any
+    call; a bare name in a target is a store or a reference, never a call (the verifier's finding on round 2 of fork PR
+    #894, where this docstring said nothing in a target ran as a call; the bare-name test plants all three)."""
     out = [getattr(s, a) for a in ("test", "iter", "subject") if getattr(s, a, None) is not None]
     if isinstance(s, (ast.For, ast.AsyncFor)):
         out.append(s.target)
@@ -837,10 +852,12 @@ def _import_time_defs(body):
 # decorator factory's call; a `metaclass=M` value (M's __prepare__, __new__, __call__ and __init__; __prepare__ since the
 # verifier's finding on round 2 of fork PR #894, where a write in it passed silently); a base named bare (not called:
 # its __init_subclass__ chain, which creating the subclass runs); recursively through the callee's own calls, the
-# mapping followed into a parameter the call passes it to or that defaults to it (_environ_params; passed into *args,
-# **kwargs or a spread, it is loud). A bare name anywhere else (a default, an if test, a with item, a for iterable, an
-# except type, a keyword other than metaclass=) is a reference and not a call; the calls inside a base or keyword
-# expression are followed. The whole callee is read, so a write or a call in a def or lambda nested in it counts
+# mapping followed into a parameter of the def the call resolves to that the call passes it to or that defaults to it
+# (_environ_params; passed into *args, **kwargs or a spread, it is loud; a lambda's parameter is not followed,
+# [lambda-parameter] below). A bare name anywhere else (a default, an if test, a with item, a for iterable, a for or
+# with target, an except type, a keyword other than metaclass=) is a reference or a store and not a call; a call inside
+# a for or with target's subscript or attribute runs and is followed (_compound_header), and so are the calls inside a
+# base or keyword expression. The whole callee is read, so a write or a call in a def or lambda nested in it counts
 # whether or not the callee calls it, and a module-level block's body is read whatever its test, an `if __name__ ==
 # "__main__":` body among them, which runs when the file runs as a script and not at import: both on the safe side. A
 # chain of calls is followed to _CALL_DEPTH_CAP (40) calls and raises past it, naming the chain (the deepest chain in the
@@ -890,9 +907,10 @@ def _import_time_defs(body):
 #   [inherited-method] a method a class inherits from a base of another module (`class K(helper.Base)`, then `K()` runs
 #     helper.Base.__init__); _method_chain follows bases of the same module only.
 #   [held-otherwise] the mapping held by anything but a name the scan binds (`os.environ` under any name os is imported
-#     as, `from os import environ` or its `as` name, `environ` after `from os import *`, a name a single-target
-#     assignment binds to either mapping, and a parameter the call being followed binds to it): an attribute (`ns.env =
-#     os.environ`), a container item, a name bound by unpacking, a walrus, or a for or with target, a name another module
+#     as, `from os import environ` or its `as` name, `environ` after `from os import *`, a name a plain assignment binds
+#     to either mapping, the one target a name, and a parameter the call being followed binds to it): an attribute
+#     (`ns.env = os.environ`), a container item, a name bound by unpacking, an annotated assignment (`env: dict =
+#     os.environ`), a chained one (`A = env = os.environ`), a walrus, or a for or with target, a name another module
 #     binds to it (`from helper import ENV`, or through `from helper import *`), the mapping fetched by getattr
 #     (`getattr(os, "environ")`) or through sys.modules.
 #   [from-os-putenv] `from os import putenv` or `from os import *`, then `putenv(K, v)`.
@@ -900,10 +918,13 @@ def _import_time_defs(body):
 #     binding or a reference the module spells (`globals()["k"] = v`, `globals()["D"][K] = v`, `vars()["D"][K] = v`,
 #     `sys.modules[__name__].D[K] = v`), or by a module it imports that reaches back into it through sys.modules: the
 #     name reads through its first binding (THE RULE in _EnvNames), so a write through it is recorded under the first
-#     binding's key and a licence's value check reads the first binding's value. Not read as rebinding every name
-#     wherever such a reference appears: many of the tree's writer modules reference globals(), vars(), sys.modules or a
-#     __dict__ for other ends, and each value they write through a name would go unreadable and fault its licence (five
-#     licensed writes in four modules, measured at the fix of the verifier's findings on round 2 of fork PR #894).
+#     binding's key and a licence's value check reads the first binding's value. The key side has the plants below;
+#     the value side (`_ROOT = tempfile.mkdtemp()`, then `globals()["_ROOT"] = "/srv/real-state"`, then XDG_STATE_HOME
+#     set to `_ROOT`) is a plant the licence test holds clean, since that write is recorded and so does not fit the
+#     plants' form. Not read as rebinding every name wherever such a reference appears: many of the tree's writer
+#     modules reference globals(), vars(), sys.modules or a __dict__ for other ends, and each value they write through
+#     a name would go unreadable and fault its licence (five licensed writes in four modules, measured at the fix of
+#     the verifier's findings on round 2 of fork PR #894).
 #   [bound-method] a bound method of the mapping held in a name or fetched by getattr (`_set = os.environ.__setitem__;
 #     _set(K, v)`, `getattr(os.environ, "update")(K=v)`), or a functools.partial of one.
 #   [posix-putenv] `posix.putenv(K, v)`.
@@ -1000,10 +1021,10 @@ def _call_roles(tree):
     `tree`: a decorator ("decorator": `@_arm` calls `_arm(fn)`), a class's `metaclass=` value ("metaclass": creating the
     class runs M.__prepare__, then calls M, which runs M.__new__ and M.__init__; M.__call__ is read beside them, the safe
     side) and a class's base ("base": NOT a call; creating the subclass runs the base's __init_subclass__). Any other
-    bare name, in a base expression's arguments, a default, an if test, a with item, a for iterable or an except type, is
-    a reference and not a call (the reviewer's ruling of round 1 on fork PR #894: the resolver read every bare name
-    handed in as a call, so a base's __init__ counted as the class statement's write and a def named in a default was
-    reported as called)."""
+    bare name, in a base expression's arguments, a default, an if test, a with item, a for iterable, a for or with
+    target or an except type, is a reference or a store and not a call (the reviewer's ruling of round 1 on fork PR
+    #894: the resolver read every bare name handed in as a call, so a base's __init__ counted as the class statement's
+    write and a def named in a default was reported as called)."""
     roles = {}
     for n in _every_statement(tree.body):
         if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
@@ -1330,6 +1351,9 @@ _OUTSIDE_THE_SCAN = {
     "held-otherwise": [_outside_plant("import os, types\nns = types.SimpleNamespace()\nns.env = os.environ\nns.env['{key}'] = '1'\n"),
                        _outside_plant("import os\n[os.environ][0]['{key}'] = '1'\n"),
                        _outside_plant("import os\nenv, _x = os.environ, None\nenv['{key}'] = '1'\n"),
+                       # the fix of the verifier's findings on round 2 of fork PR #894 (an alias claim wider than the read)
+                       _outside_plant("import os\nenv: dict = os.environ\nenv['{key}'] = '1'\n"),
+                       _outside_plant("import os\n_a = env = os.environ\nenv['{key}'] = '1'\n"),
                        _outside_plant("import os\nif (env := os.environ) is not None:\n    env['{key}'] = '1'\n"),
                        _outside_plant("import os\nfor env in (os.environ,):\n    env['{key}'] = '1'\n"),
                        _outside_plant("import contextlib, os\nwith contextlib.nullcontext(os.environ) as env:\n    env['{key}'] = '1'\n"),
@@ -2779,7 +2803,10 @@ class HermeticKernelPostal(unittest.TestCase):
         putenv (a SyntaxError naming no module at the round-1 head); a licence whose re-assert conftest dropped; and a
         dead licence. The floor modules are never faulted, whatever they write; a licensed write is clean, every mkdtemp
         form the census shows among them, and so is a bare annotation of a leak name, which writes nothing (a new-name
-        fault at the eleventh commit)."""
+        fault at the eleventh commit). A name rebound through the module's namespace (`globals()["_ROOT"] = v`) is not
+        seen, so its first assignment is the value checked and the write passes: that residual is named above _Module
+        ([namespace-rebinding]) and held here as it is, so a change that starts reading it reds (the verifier's finding on
+        round 2 of fork PR #894, where _resolved's docstring said a name bound again by anything stays a name)."""
         def records_of(src, rel):
             out = collections.defaultdict(list)
             for name, rec in _module_level_records(ast.parse(src), rel):
@@ -2898,6 +2925,14 @@ class HermeticKernelPostal(unittest.TestCase):
                           "test_planted.py")
             self.assertEqual(len(faults), 1, faults)
             self.assertIn("bound more than once at import", faults[0])
+        # the disclosed residual [namespace-rebinding]: the rebinding through globals() is not seen, the value resolves to
+        # the first assignment, and the licence passes a value the module never writes
+        spoofed = ('import os, tempfile\n_ROOT = tempfile.mkdtemp()\nglobals()["_ROOT"] = "/srv/real-state"\n'
+                   'os.environ["XDG_STATE_HOME"] = _ROOT\n')
+        recs = _module_level_env_write_records(ast.parse(spoofed), "test_planted.py")
+        self.assertEqual([(w.key, w.resolved) for w, _n in recs], [("XDG_STATE_HOME", "tempfile.mkdtemp()")],
+                         "a namespace rebinding is not seen by the value resolver")
+        self.assertEqual(full(spoofed, "test_planted.py"), [], "the residual named above _Module, [namespace-rebinding]")
         # the floor modules are licensed wholesale
         self.assertEqual(full('import os\nos.environ["ROMP_ANYTHING"] = "1"\n', "conftest.py"), [])
         # a re-asserted licence stands only while conftest re-asserts the name
@@ -3272,7 +3307,10 @@ class HermeticKernelPostal(unittest.TestCase):
         inside a base expression were recorded at both heads. The verifier's findings on round 2 of fork PR #894 added two:
         a metaclass's __prepare__, which creating the class runs before it calls the metaclass (not recorded at round 2's
         eleventh commit), and a metaclass named by attribute (`metaclass=helper.Meta`), recorded at that commit but held by
-        no plant, so a mutant that read a Name alone as the metaclass left every pin green."""
+        no plant, so a mutant that read a Name alone as the metaclass left every pin green. The fix of those findings adds
+        three more, each read at round 2's twelfth commit and held by no plant, while _compound_header's docstring said
+        nothing in a for or with target ran as a call: a call in a for or with target's key and a call in a for target's
+        attribute object run at import and are read, and a def named bare as a for target's key is not a call."""
         self.maxDiff = None
         root = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, root, True)
@@ -3289,7 +3327,8 @@ class HermeticKernelPostal(unittest.TestCase):
                  ("a def named in a with item", write + 'with _w:\n    pass'),
                  ("a def named as a for iterable", write + 'for _x in _w:\n    pass'),
                  ("a def named as an except type", write + 'try:\n    pass\nexcept _w:\n    pass'),
-                 ("a def named in a keyword other than metaclass", write + 'class _K(flag=_w):\n    pass'))
+                 ("a def named in a keyword other than metaclass", write + 'class _K(flag=_w):\n    pass'),
+                 ("a def named bare as a for target's key", '_d = {}\n' + write + 'for _d[_w] in [1]:\n    pass'))
         run = (("a metaclass's __init__ (the control)", 'class _M(type):\n    def __init__(cls, *a):\n'
                 '        os.environ["ROMP_POSTAL_PEERS"] = "0"\nclass _K(metaclass=_M):\n    pass'),
                ("a metaclass's __new__", 'class _M(type):\n    def __new__(mcs, *a):\n        os.environ["ROMP_POSTAL_PEERS"] = "0"\n'
@@ -3303,7 +3342,12 @@ class HermeticKernelPostal(unittest.TestCase):
                ("a call inside a base expression", write + 'class _K(_w() or object):\n    pass'),
                ("a metaclass's __prepare__", 'class _M(type):\n    @classmethod\n    def __prepare__(mcs, name, bases, **kw):\n'
                 '        os.environ["ROMP_POSTAL_PEERS"] = "0"\n        return {}\nclass _K(metaclass=_M):\n    pass'),
-               ("a metaclass named by attribute", 'import planted_base\nclass _K(metaclass=planted_base.Meta):\n    pass'))
+               ("a metaclass named by attribute", 'import planted_base\nclass _K(metaclass=planted_base.Meta):\n    pass'),
+               ("a call in a for target's key", '_d = {}\n' + write + 'for _d[_w()] in [1]:\n    pass'),
+               ("a call in a with target's key", 'import contextlib\n_d = {}\n' + write +
+                'with contextlib.nullcontext(1) as _d[_w()]:\n    pass'),
+               ("a call in a for target's attribute object", 'import types\n' + write +
+                '    return types.SimpleNamespace()\nfor _w().x in [1]:\n    pass'))
         wrong = []
         for label, body in never + run:
             keys = _module_level_env_writes(ast.parse("import os\n" + body + "\n"), "planted.py", root=root)

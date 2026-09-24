@@ -126,9 +126,13 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   `os.putenv`, the dunder spellings `__setitem__` and `__ior__` on the mapping or
   unbound with the mapping as the first argument, through `os.environ` or
   `os.environb` under any name `os` is imported as, `from os import environ` or
-  `from os import *`, a name
-  a single assignment binds to either, or a parameter a call at import passes it to
-  or that defaults to it, a subscript whose key a `for` over string literals binds),
+  `from os import *`, a name a plain assignment binds to either, the one target a
+  name (`env = os.environ`; an annotated or a chained assignment is not read), or a
+  parameter of the def a call at import resolves to (a function, a method, or a
+  class's `__new__` or `__init__`) that the call passes it to or that defaults to it
+  (a lambda's parameter is not read; each of these unread shapes is on the list of
+  what stays outside the scan, named below), a subscript whose key a `for` over string
+  literals binds),
   EQUALS the licensed set `LICENSED_MODULE_LEVEL_WRITES` there, an equality and never
   a floor, and every write meets its licence's condition. A name is read through its
   first binding alone: bound again by any binding the module's code spells (a star
