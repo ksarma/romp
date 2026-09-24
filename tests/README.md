@@ -147,22 +147,34 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   the written value (read through a module-level name bound once, so
   `_ROOT = tempfile.mkdtemp()` is read as the mkdtemp): the state preamble
   (`XDG_STATE_HOME` a bare mkdtemp or one with a literal prefix, never a `dir=`;
-  `ROMP_STATE_DIR` a private root of the same shape or the shell's value put back;
-  `tests/test_state_isolation_order.py` mandates the preamble),
+  `ROMP_STATE_DIR` a bare `TemporaryDirectory`'s name, a path joined onto such a
+  mkdtemp, or the shell's value put back, never a bare mkdtemp, which no writer
+  uses; `tests/test_state_isolation_order.py` mandates the preamble, so every new
+  module that loads `bin/romp-*` is a new writer of both, no date bounds them, and
+  their licences rest on the value check of every write),
   `ROMP_SERVE_TOKEN` (a string literal, or the shell's value put back) and
   `ROMP_KERNEL_NO_OPEN` (the value "1"), the four of them dated 2026-09-22 and
   pointed at the class item fork PR #871 filed in the notes (import-time writers
-  migrate into fixtures or the floor), the dead ports and the catalog, scope,
+  migrate into fixtures or the floor); the writer modules of these two are
+  committed, one path per line, in `tests/fixtures/module-level-env-writers/` and
+  compared with the census as sets, so a new writer fails naming itself (omit the
+  write or move it to the conftest floor; not `setUp`, since a module that loads
+  the kernel at import needs the value before the load) and a migrated one fails
+  until its line is removed. Then the dead ports and the catalog, scope,
   claude-config and service-env floors (one value or a path under the module's
-  root, and `tests/conftest.py` re-asserts the name in an autouse fixture, so the
-  module value cannot outlive collection), and `ROMP_MODELS_URL` (read at kernel
-  import, a dead loopback URL); a check over the table itself holds every licence to
-  a per-write condition and every temporary one to a since date and a named item.
-  The two floor modules, `tests/conftest.py` and `tests/__init__.py`, are the one
-  home of run-wide values and are licensed wholesale, except for the five names a
-  module-level write of which is the leak itself (the postal peers, port, client-only
-  and host, and the sessions-file seam): of those a floor module may write only
-  upstream's client-only floor of "1". A write whose keys the scan
+  root, and `tests/conftest.py` re-asserts the name before every test, by an
+  unconditional plain assignment or pop before the yield of a function-scoped
+  autouse fixture, one in a `for` over a literal tuple included, so the module
+  value cannot outlive collection), and `ROMP_MODELS_URL` (read at kernel import,
+  port 9 of 127.0.0.1 and no other); a check over the table itself holds every
+  licence to a per-write condition and every temporary one to a since date and a
+  named item. The two floor modules, `tests/conftest.py` and `tests/__init__.py`,
+  are the one home of run-wide values and are licensed wholesale, except for the
+  five names a module-level write of which is the leak itself (the postal peers,
+  port, client-only and host, and the sessions-file seam): of those a floor module
+  may write only upstream's client-only floor of "1". The other names only the
+  floor modules write are committed in the same directory, one line per writer
+  module, and compared as a set. A write whose keys the scan
   cannot read fails the test naming the file and line rather than passing unread. A
   module-level `pop` is outside that pin: unset is the production default and what a
   clean shell gives every module. Writes at a module's setup rather than its import
@@ -188,7 +200,12 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   The tree has no fixture scoped above module, and the hermetic module holds that
   list at empty.
   `python -m tests.test_hermetic_kernel_postal --census` prints the counts by name
-  and shape. The per-test half, set in setUp and put back by a cleanup registered
+  and shape, a total line per name and the split between `test_*.py` files and
+  the others, and the number of files it parsed, which the census pin compares
+  with an `os.walk` of the tree by equality; the census reads each file through
+  `tests/parse_cache.py` and derives once per set of paths per process, and its
+  docstring says which figures are compared and which are not. The per-test half,
+  set in setUp and put back by a cleanup registered
   right after the write (`restore_env` from `tests/conftest.py`, or a method of the
   class; a tearDown restore is skipped when a subclass's setUp fails part-way, and
   the value leaks the same way), is a convention and not a pinned rule, except for

@@ -1,0 +1,18 @@
+# The names only the floor modules (tests/conftest.py and tests/__init__.py) write at module level, one
+# `NAME module` line per writer module, the five leak names aside (_leak_writers holds those); derived by the
+# census of tests/test_hermetic_kernel_postal.py at round 2 of fork PR #894's review. The census pin compares
+# it with the census by equality (_writer_set_faults): a floor name added, dropped or moved between the two
+# floor modules changes this file in the same change.
+GIT_AUTHOR_EMAIL conftest.py
+GIT_AUTHOR_NAME conftest.py
+GIT_COMMITTER_EMAIL conftest.py
+GIT_COMMITTER_NAME conftest.py
+GIT_CONFIG_GLOBAL conftest.py
+GIT_CONFIG_NOSYSTEM conftest.py
+ROMP_CKPT_FIRST_DOC_KB __init__.py
+ROMP_CKPT_FIRST_DOC_KB conftest.py
+ROMP_CLAUDE_BIN conftest.py
+ROMP_POSTAL_HERMETIC conftest.py
+ROMP_TESTS_REAL_CLAUDE_CONFIG_DIR conftest.py
+ROMP_TESTS_SYSTEM_TMPDIR __init__.py
+TMPDIR __init__.py
