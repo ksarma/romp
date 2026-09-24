@@ -435,7 +435,8 @@ def _kernel_modules():
     return sorted(f for f in os.listdir(_KERNEL_DIR) if f.endswith(".py"))
 
 
-_PARSES = {}   # kernel module file name -> how many times this module parsed it (_parse_kernel_module), read by pin (3)
+_PARSES = {}   # kernel module file name -> how many times this module parsed it (_parse_kernel_module) in the process,
+               # read by setUpModule (none before the module's first test) and by pin (3)
 
 
 def _parse_kernel_module(name):
@@ -779,7 +780,9 @@ def _unit_facts(tree):
     return table, frozenset(loads)
 
 
-_CENSUS_BUILDS = 0   # the census's builds in this module's run (_flag_census), read by the mechanism pin
+_CENSUS_BUILDS = 0   # the censuses _flag_census has built in this PROCESS, counted when a build returns (one that
+                     # raises made no census); setUpModule reads it before the module's first test, so the mechanism
+                     # pin can tell a build in the module's run from one at import; tearDownModule reads it for pin (2)
 
 
 class _Census(dict):
@@ -819,26 +822,33 @@ def _flag_census():
     unreachable when the census adopted tests/parse_cache.py, again after round 1's one-walk cut on fork PR #909, and
     again at round 2 of that PR, where a collection right after dropping the census found nothing unreachable either."""
     global _CENSUS_BUILDS, _WALKS
-    _CENSUS_BUILDS += 1
     _WALKS = walks = {}
     try:
         census = _derive_flag_census(FlagWriterPopulation)
     finally:
         _WALKS = None
     census["walks"] = walks
+    _CENSUS_BUILDS += 1
     return census
 
 
 _FROZEN_BEFORE = None   # gc.get_freeze_count() before the module's first test (setUpModule), pin (1)'s first read
+_BUILT_BEFORE = None    # (censuses built, kernel modules parsed) before the module's first test (setUpModule), which
+                        # the mechanism pin requires to be (0, 0)
 _CENSUS_REF = None      # a weak reference to the census FlagWriterPopulation holds (its setUpClass), pin (2)'s subject
 
 
 def setUpModule():
-    """Pin (1)'s first read, before the module's first test and not at import (pytest imports every module at
-    collection, before any test runs): gc.get_freeze_count(), which tearDownModule reads again. Two reads only, since
-    each walks the permanent generation."""
-    global _FROZEN_BEFORE
+    """The first reads, before the module's first test and not at import (pytest imports every module at collection,
+    before any test runs). Pin (1)'s: gc.get_freeze_count(), which tearDownModule reads again; two reads only, since
+    each walks the permanent generation. The mechanism pin's: how many censuses _flag_census has built and how many
+    kernel modules _parse_kernel_module has parsed so far in the process (_CENSUS_BUILDS, _PARSES), both counted per
+    process, so a build at import would count as the module's one build. That pin requires both to be 0 here: a census
+    or a tree made at import would be held, tracked, through every module that sorts before this one, the retention
+    that ruled out the cache's shared parse (_flag_census), over the first 61 percent of CI's serial run."""
+    global _FROZEN_BEFORE, _BUILT_BEFORE
     _FROZEN_BEFORE = gc.get_freeze_count()
+    _BUILT_BEFORE = (_CENSUS_BUILDS, sum(_PARSES.values()))
 
 
 def tearDownModule():
@@ -853,14 +863,24 @@ def tearDownModule():
     heap). Red under a module-scope cache that keeps the census and under a build whose value refers back to itself. It
     does not see a cycle among the inner containers that does not pass through the held object, or an inner container
     kept by another name (_flag_census states that half as a measurement). Not read through gc.get_objects(), which
-    does not list frozen objects, so under a derived() build it would find nothing and pass for the wrong reason."""
+    does not list frozen objects, so under a derived() build it would find nothing and pass for the wrong reason.
+    Neither pin skips without a word: a census built (_CENSUS_BUILDS above 0) with no weak reference taken reds pin
+    (2), and a missing first read reds pin (1). The one silent case is pin (2) when no census was built at all (every
+    FlagWriterPopulation test deselected), where there is nothing to be gone."""
     problems = []
-    if _CENSUS_REF is not None and _CENSUS_REF() is not None:
+    if _CENSUS_REF is None:
+        if _CENSUS_BUILDS:
+            problems.append("pin (2): %d census(es) built in this process but no weak reference was taken to the one "
+                            "FlagWriterPopulation holds (its setUpClass takes it), so this pin cannot read that the "
+                            "census is gone" % _CENSUS_BUILDS)
+    elif _CENSUS_REF() is not None:
         problems.append("pin (2): the census FlagWriterPopulation held is alive after its tearDownClass dropped it: "
                         "something else keeps it (a module-scope cache, a test's own reference) or it refers back to "
                         "itself, a cycle that only a collection frees, and this module runs none")
     frozen = gc.get_freeze_count()
-    if _FROZEN_BEFORE is not None and frozen > _FROZEN_BEFORE:
+    if _FROZEN_BEFORE is None:
+        problems.append("pin (1): setUpModule took no first read of gc.get_freeze_count(), so this pin cannot compare")
+    elif frozen > _FROZEN_BEFORE:
         problems.append("pin (1): gc.get_freeze_count() rose from %d before the module's first test to %d after its "
                         "last: something in the module froze the heap (tests/parse_cache.py's derived() freezes after "
                         "a build), and every later read of the kernel's perf snapshot walks what is frozen"
@@ -1071,7 +1091,10 @@ class FlagWriterPopulation(unittest.TestCase):
     def test_the_census_is_one_derivation_over_one_parse_per_module(self):
         """The census's mechanism, read from counts. It is built once in this module's run however many tests read it
         (_CENSUS_BUILDS, which _flag_census keeps; a build per test reds here, and so that this holds whatever order the
-        tests run in, a second test of the class is run from here first, its whole run with setUp and tearDown). That
+        tests run in, a second test of the class is run from here first, its whole run with setUp and tearDown), and
+        nothing of it is made before the module's first test: setUpModule read no census built and no kernel module
+        parsed (_BUILT_BEFORE), since both counts are the process's and a census built at import would otherwise pass
+        as the module's one build while held through every module that sorts before this one. That
         build walks each unit with _facts exactly once: each def in fns, each statement in rest, and each class's parts
         outside its body, read from the build's walk table (a walk outside _facts, such as an ast.walk per fact, is
         outside this count, and the module's measured time is the guard for it). And each module of the kernel's
@@ -1083,6 +1106,9 @@ class FlagWriterPopulation(unittest.TestCase):
         FlagWriterPopulation("test_the_setters_of_the_flags_store_are_the_two_the_doors_call").run(other)
         self.assertEqual((other.testsRun, len(other.failures), len(other.errors)), (1, 0, 0),
                          "a second test of the class ran green beside this one")
+        self.assertEqual(_BUILT_BEFORE, (0, 0), "(censuses built, kernel modules parsed) before the module's first "
+                         "test, as setUpModule read them: none, since a census or a tree made at import is held, "
+                         "tracked, through every module that sorts before this one")
         self.assertEqual(_CENSUS_BUILDS, 1, "the census is built once in this module's run, however many tests read it")
         units = {}
         for module, tree in self.census["trees"].items():
