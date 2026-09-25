@@ -43,16 +43,16 @@
 //     reads it), which refuses a stale, a duplicate and a malformed line as the step's run does; hands node every line
 //     of a roster whose last line has no newline; prints "no legs in the roster" and starts no node on an empty roster;
 //     and after node --test reads the reporter's record and derives the property and the reds the script's header
-//     states, each read from the script's stderr in the cases below, within the scope the script's header states, and
-//     passes node's own failure status through. The two remedies that move a leg off the step, after an unrun leg and
-//     after a skip under the switch, take its line out of the roster, each read from the script's stderr. The reporter
-//     itself is executed here over synthetic bundles with a real node --test (a pass beside a skip, todos, a describe()
-//     with a test and without one, a file that registered nothing, failures inside a todo, a lost browser's failure, a
-//     bundle that throws at load, and a name holding a tab and a newline), and so is the composition: the script with
-//     the real node and the real reporter over those bundles as rostered legs, and over a leg whose test passes and
-//     whose error comes after the test ended. After one stub run and after the composition's first real-node run, the
-//     record file the script handed its reporter (the path the stub logged, in the fresh TMPDIR the run was given) is
-//     gone and that TMPDIR is empty;
+//     states, each read from the script's stderr in the cases below, within the scope the script's header states,
+//     executed by the foreign-file case below, and passes node's own failure status through. The two remedies that move
+//     a leg off the step, after an unrun leg and after a skip under the switch, take its line out of the roster, each
+//     read from the script's stderr. The reporter itself is executed here over synthetic bundles with a real node
+//     --test (a pass beside a skip, todos, a describe() with a test and without one, a file that registered nothing,
+//     failures inside a todo, a lost browser's failure, a bundle that throws at load, and a name holding a tab and a
+//     newline), and so is the composition: the script with the real node and the real reporter over those bundles as
+//     rostered legs, and over a leg whose test passes and whose error comes after the test ended. After one stub run
+//     and after the composition's first real-node run, the record file the script handed its reporter (the path the
+//     stub logged, in the fresh TMPDIR the run was given) is gone and that TMPDIR is empty;
 //   - the phrase the script reads a lost browser by is a literal in ui/webview/real-viewer-leg.ts's source, the SHARED
 //     PHRASE between the helper and the script, so a reword on either side is red here rather than a remedy dropped in
 //     silence. That pin reads text and guards the phrase alone: that inBrowser FAILS with it under the switch and skips
@@ -1058,6 +1058,30 @@ test('after node --test the script derives per rostered leg that a test of its b
   // line, and its tally names the skip (with a skip counted as a pass this red is not printed; with the skip tally dropped it
   // names 0 skipped)
   assert.ok(both.err.includes(UNRUN + '1 skipped, 0 todo, 0 suite and 0 file-level results for it)'), 'a skip-only record is red as unrun too, naming what the record held (1 skipped): a skip is not a counting pass, and the skip reaches the unrun red\'s tally:\n' + both.err);
+  // the foreign-file case, the scope the script's header states: over a roster of A alone, results recorded under
+  // out-tests/ui/webview/helper.js, a file the roster does not name (as a leg's run records a file it loads outside its
+  // bundle), are read through node's status alone, each row below run and the rows that read otherwise named together.
+  // Beside A's counting pass, a foreign skip and a foreign failure inside a todo read green at node's exit 0, and a
+  // foreign file-level failure and a foreign failure whose message begins with inBrowser's phrase are node's red at its
+  // exit 1, with no line of the script's. With no pass of A's own, A is red as unrun, its tally counting none of the
+  // foreign skip, todo, suite and file-level results, and no skip is named. A foreign pass alone is not that row: a pass
+  // is none of the tallied kinds, so its zero tally holds under a script that credits foreign results to A's tally
+  const H = 'out-tests/ui/webview/helper.js';
+  const FOREIGN_ROWS = [
+    { what: 'a foreign skip and a foreign failure inside a todo beside A\'s counting pass: exit 0, nothing on stderr', exit: 0, status: 0, err: (e) => e === '',
+      report: PASS + rec(H, 'pass', 'test', 'skip', 'test', 'a helper test', 'why', '-') + rec(H, 'fail', 'test', 'todo', 'test', 'a helper todo', 'the helper is broken', 'testCodeFailure') },
+    { what: 'a foreign file-level failure and a foreign failure that begins with inBrowser\'s phrase beside A\'s counting pass: node\'s exit 1, nothing on stderr', exit: 1, status: 1, err: (e) => e === '',
+      report: PASS + rec(H, 'fail', 'test', '-', 'file-level', H, 'the helper exited 1', 'testCodeFailure') + rec(H, 'fail', 'test', '-', 'test', 'a helper test', LOST, 'testCodeFailure') },
+    { what: 'a foreign pass, skip, todo, suite result and file-level pass with no pass of A\'s own: A red as unrun with a zero tally, no skip named', exit: 0, status: 1,
+      err: (e) => e.includes(UNRUN + '0 skipped, 0 todo, 0 suite and 0 file-level results for it)') && !e.includes('skipped with'),
+      report: rec(H, 'pass', 'test', '-', 'test', 'a helper pass', '', '-') + rec(H, 'pass', 'test', 'skip', 'test', 'a helper skip', 'why', '-') + rec(H, 'pass', 'test', 'todo', 'test', 'a helper todo', '', '-') + rec(H, 'pass', 'suite', '-', 'test', 'a helper suite', '', '-') + rec(H, 'pass', 'test', '-', 'file-level', H, '', '-') },
+  ];
+  const foreignWrong = [];
+  for (const row of FOREIGN_ROWS) {
+    const r = run(A + '\n', { report: row.report, exit: row.exit });
+    if (r.status !== row.status || !row.err(r.err)) foreignWrong.push(row.what + ': the script exits ' + r.status + ', stderr ' + JSON.stringify(r.err));
+  }
+  assert.deepEqual(foreignWrong, [], 'the foreign-file case: each row reads as the script\'s header states, a result recorded under a file the roster does not name read through node\'s status alone; the rows read otherwise: ' + JSON.stringify(foreignWrong));
 });
 
 /** Synthetic bundles for the reporter and the composition: each a node:test module of one shape, written under `dir` as
