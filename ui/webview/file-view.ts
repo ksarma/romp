@@ -2241,8 +2241,8 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
 
   // ── download (the user 2026-08-09) ── Any linked file can be SAVED, including everything the pane
   // cannot show: the kernel's ?download=1 serves anything on disk (the rationale lives with
-  // _file_download in kernel.py). Same-origin and cookie-authed like the view fetch, and
-  // federation-aware for free — fileUrl already routes a remote session's file through the relay.
+  // _file_download in kernel.py). Same-origin, authorized by the cap fileUrl adds (file-cap.ts) as the
+  // view is, and federation-aware for free: fileUrl already routes a remote session's file through the relay.
   const dlUrl = fileUrl(path, sid) + "&download=1";
   const dl = el("button", "fileview-btn") as HTMLButtonElement;
   dl.type = "button"; dl.innerHTML = ICON_DOWNLOAD; dl.classList.add("fileview-icon"); dl.dataset.icon = "1";   // the tray glyph the lightbox wears (icons.ts)
@@ -3596,8 +3596,8 @@ function offersDownload(status: number | undefined): boolean {
 // It presents here instead: same modal, same Rendered ⇄ Raw preference (FMT_KEY), same loader-first
 // wait, same mdBlock — fetched by the BROWSER from the URL itself, with no kernel in the loop. Zero new
 // kernel surface is the point: the kernel's /file relay is a preview relay and has stayed one on
-// purpose (_remote_file's docstring), and a same-origin URL needs no relay — the browser already has
-// the cookie. Cross-origin .md links are never routed here (render.ts checks isMarkdownUrl first).
+// purpose (_remote_file's docstring), and a same-origin URL needs no relay: the fetch carries the
+// page key like every other. Cross-origin .md links are never routed here (render.ts checks isMarkdownUrl first).
 //
 // The shell is built here rather than threaded through openFileView because almost everything in that
 // row is keyed on the KERNEL's reply — Edit on the text/plain + mtime verdicts, Download on the
@@ -3813,7 +3813,7 @@ export function openUrlView(href: string): void {
     parts = urlTitleParts(loc);
     dir.textContent = parts.dir; base.textContent = parts.base; name.title = loc;
   };
-  // Same-origin, cookie-authed, cache: no-store like every viewer fetch, on this open's abort signal.
+  // Same-origin (the fetch wrapper adds the page key), cache: no-store like every viewer fetch, on this open's abort signal.
   // mode: "same-origin" holds the rule through REDIRECTS too: the clicked URL passed isMarkdownUrl, but
   // a same-origin alias that 302s to a foreign host answering with a permissive CORS header would
   // otherwise be fetched and rendered with that host as the base for every relative figure (review
@@ -3852,7 +3852,7 @@ export function openUrlView(href: string): void {
 }
 
 // Kick the browser's downloader at `url` without touching the pane: a clicked <a download> starts a
-// same-origin, cookie-authed request the BROWSER owns (its progress UI, its save location), and since
+// same-origin request, authorized by the cap in its URL, that the BROWSER owns (its progress UI, its save location), and since
 // the kernel answers with Content-Disposition: attachment the page never navigates — the viewer, the
 // feed behind it, and the scroll position all stay put. The button acknowledges the click itself
 // (ui/CLAUDE.md), because the browser's download UI can take a beat to appear over a slow tunnel.
@@ -4420,7 +4420,7 @@ const FV_SRCSET = "data-fv-srcset";
  *  one: a relative src against the page's directory, an absolute path against the dashboard ORIGIN, where no route
  *  serves it; only http(s), data: and other URLs ever rendered (plans/file-review.md, Images and PDFs; Slice 3). So
  *  each path `src` in the sanitized rendered DOM is re-pointed at the kernel's /file route — fileUrl: same-origin,
- *  cookie-authed, and a remote session's figure relays through /remote/<host>/file exactly as the file itself did.
+ *  capped (file-cap.ts), and a remote session's figure relays through /remote/<host>/file exactly as the file itself did.
  *  A relative src names `<dir of the open file>/<src>`; an absolute one (`/…`) names that path itself, which is how
  *  every other reader of an embed's destination already takes it — the panel's embed matching (embedPath, in
  *  file-comments.ts), the poll's figurePath (file-comments-model.ts) and the host's resolveSrc (file-comments-host.mjs)

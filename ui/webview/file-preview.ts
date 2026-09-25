@@ -7,6 +7,7 @@
 // the card itself: the element, the fetch, the rendering per kind, the placement.
 
 import { hostOf, bareId } from "./host-prefix";   // pure: a remote session's sid carries its host (T364)
+import { fileCap } from "./file-cap";   // the per-file cap a header-less /file load carries (file-cap.ts)
 
 export const PREVIEW_DWELL_MS = 350;   // a hover shorter than this is a pass-through, not a question
 export const PREVIEW_GRACE_MS = 150;   // leaving the link toward the card must not close it on the way
@@ -62,7 +63,8 @@ export function sliceUrl(path: string, sid: string | null, anchor: string): stri
 /** GET /file: the bytes behind an image or a PDF preview (the route the figures already use). */
 export function fileUrl(path: string, sid: string | null): string {
   const r = previewRoute(sid);
-  return r.base + "?path=" + encodeURIComponent(path) + (r.sid ? "&sid=" + encodeURIComponent(r.sid) : "");
+  const cap = fileCap(sid ? hostOf(sid) : "", path, r.sid);   // the same cap preview.ts fileUrl carries; "" with no page key
+  return r.base + "?path=" + encodeURIComponent(path) + (r.sid ? "&sid=" + encodeURIComponent(r.sid) : "") + (cap ? "&cap=" + cap : "");
 }
 
 const LANG_BY_EXT: Record<string, string> = {

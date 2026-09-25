@@ -1897,8 +1897,9 @@ export class FederationManager {
     // the page — never at 127.0.0.1:<forwarded port>, which only exists on the kernel's machine:
     // from a phone reading the dashboard over `tailscale serve`, that address is the phone itself,
     // and every remote host silently vanished with no disconnected mark (the user 2026-07-30).
-    // Same-origin also means the local auth cookie rides the upgrade; the remote kernel's own
-    // credential is added by the relay (_remote_ws), so this URL carries no token at all. The URL is
+    // Same-origin also means the local session cookie rides the upgrade, with the page key as k=
+    // (remoteDialUrl); the remote kernel's own credential is added by the relay (_remote_ws), so this
+    // URL carries no serve token at all. The URL is
     // built fresh on every dial (remoteDialUrl, called from connect) so a redial reflects the page's
     // current terms, exactly as the pane's own local socket rebuilds its ?active=/reconnect on each open.
     const conn: Conn = { host, ws: null, url: "", closed: false, live, lastRecv: 0, resumeProvisional: 0, connT: 0, pending: new Map(),
@@ -2002,6 +2003,10 @@ export class FederationManager {
       if (t.provrows) url += "&provrows=1";
     }
     if (redial && (this.pageProto === 1 || this.pageProto === 2)) url += `&reconnect=1&proto=${this.pageProto}`;
+    // The page key (k=), the socket class's credential on this origin, from the kernel's page-key script (none in a page
+    // that has no key: the dial is then refused, as any socket without one is). The hub reads it and drops it before
+    // dialing the peer with that host's own credential (_remote_ws), so it never leaves this kernel.
+    try { const kq = (window as any).__rompKeyQ; if (typeof kq === "function") url += String(kq() || ""); } catch (e) { /* no page-key script: the dial as it was */ }
     return url;
   }
 

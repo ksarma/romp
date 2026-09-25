@@ -7,6 +7,7 @@
 // kernel origin from an <img>, so callers gate on canPreview() and keep the plain click-to-open link.
 
 import { hostOf, bareId } from "./host-prefix";
+import { fileCap } from "./file-cap";   // the per-file cap a header-less /file load carries (file-cap.ts)
 import { mediaSrc } from "./media";
 import { ICON_DOWNLOAD, ICON_COPY, ICON_CHECK, ICON_CROSS } from "./icons";   // the shared stroke-family glyphs (T367)
 import * as pz from "./pinch";
@@ -42,7 +43,7 @@ export function wantsOwnTab(ev?: { metaKey?: boolean; ctrlKey?: boolean; button?
 }
 
 // A file in the browser's OWN tab, on the gesture above: ONE window.open aimed at the kernel's /file URL, the
-// same-origin, cookie-authed route the viewer fetches from (a remote session's file relays exactly as the
+// same-origin route the viewer fetches from, its URL carrying the cap (file-cap.ts) (a remote session's file relays exactly as the
 // viewer's fetch does), so the browser renders what the kernel serves: a PDF in its viewer, an image, a text
 // file as text. False when nothing opened, and the caller's in-app view takes over: the popup was blocked, or
 // this is the VS Code webview, whose sandbox has no tabs and no kernel origin (canPreview). The tab's opener is
@@ -136,7 +137,8 @@ export function fileUrl(path: string, sid?: string | null): string {
   const host = sid ? hostOf(sid) : "";
   const base = host ? "/remote/" + encodeURIComponent(host) + "/file" : "/file";
   const bare = sid ? bareId(sid) : "";
-  return base + "?path=" + encodeURIComponent(path) + (bare ? "&sid=" + encodeURIComponent(bare) : "");
+  const cap = fileCap(host, path, bare);   // what lets a header-less load (an img, an own tab, a download) through; "" with no page key
+  return base + "?path=" + encodeURIComponent(path) + (bare ? "&sid=" + encodeURIComponent(bare) : "") + (cap ? "&cap=" + cap : "");
 }
 
 // A PDF's OWN browser tab — on a Cmd/Ctrl- or middle-click (wantsOwnTab). A plain click keeps the PDF
@@ -146,7 +148,7 @@ export function fileUrl(path: string, sid?: string | null): string {
 // dashboard while the work goes on. Those sites do nothing more than link the PDF's URL with a new-tab
 // target and serve it inline as application/pdf; the browser renders it from its own cache and nothing lands
 // on disk unless the browser is set to download PDFs — no download-then-delete dance is needed. /file
-// already serves exactly that (same-origin, cookie-authed, federation-aware through fileUrl), so the
+// already serves exactly that (same-origin, capped and federation-aware through fileUrl), so the
 // tab is ONE window.open inside the click gesture — synchronous, so a popup blocker reads it as
 // user-initiated; a fetch-then-open would lose the gesture and be blocked everywhere. The opener
 // link is severed by hand (w.opener = null) rather than with the noopener feature: with noopener

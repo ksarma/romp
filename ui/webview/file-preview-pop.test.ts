@@ -80,12 +80,12 @@ test("the card: the comment popover's size and surface, transient; closes on Esc
   assert.match(RENDER, /p\.style\.display = "";\s*\n\s*watchFilePreviewAnchor\(a\);/, "armed when the card shows");
   assert.match(RENDER, /if \(filePreviewAnchorWatch\) \{ filePreviewAnchorWatch\.disconnect\(\); filePreviewAnchorWatch = null; \}/, "…and released when it hides");
   // a previewed document's remote images never load on a hover: they become their alt text (a hover is not a choice to fetch)
-  assert.match(RENDER, /function previewMdClean\(src: string\): HTMLElement \{[\s\S]*?clean = sanitizeMd\(marked\.parse\(src\) as string\);[\s\S]*?stripRemoteLoads\(clean, location\.origin, location\.href\);\s*\n\s*return clean;/,
-               "a previewed document is rendered on the sanitizer's inert DOM and stripped of remote loads THERE, before any node joins the page (the review: a strip after innerHTML raced the fetch)");
+  assert.match(RENDER, /function previewMdClean\(src: string\): HTMLElement \{[\s\S]*?clean = sanitizeMd\(marked\.parse\(src\) as string\);[\s\S]*?stripRemoteLoads\(clean, location\.origin, location\.href\);\s*\n\s*capAuthoredFileUrls\(clean\);[^\n]*\n\s*return clean;/,
+               "a previewed document is rendered on the sanitizer's inert DOM and stripped of remote loads THERE, before any node joins the page (the review: a strip after innerHTML raced the fetch); its same-origin /file pictures are capped there too (authored-file-caps.ts)");
   assert.match(RENDER, /body\.replaceChildren\(\.\.\.Array\.from\(previewMdClean\(c\.body\.markdown\)\.childNodes\)\)/, "the card adopts the stripped nodes");
   const renderFn = RENDER.slice(RENDER.indexOf("function renderFilePreview("), RENDER.indexOf("function showFilePreview("));
   assert.doesNotMatch(renderFn, /innerHTML = md\(/, "never md() into a live innerHTML: the fetch would start before any strip");
-  assert.match(RENDER, /const clean = sanitizeMd\(c\.body\.html\); stripRemoteLoads\(clean, location\.origin, location\.href\); body\.replaceChildren\(clean\);/, "a provider's HTML body, the same way");
+  assert.match(RENDER, /const clean = sanitizeMd\(c\.body\.html\); stripRemoteLoads\(clean, location\.origin, location\.href\); capAuthoredFileUrls\(clean\); body\.replaceChildren\(clean\);/, "a provider's HTML body, the same way: stripped and capped on the inert DOM");
   assert.doesNotMatch(RENDER, /function stripRemoteImages/, "the src-only strip is gone");
   assert.doesNotMatch(fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "file-preview.ts"), "utf8"), /headings\?:/, "the dead heading index is gone from the answer type (the review)");
   assert.match(RENDER, /p\.addEventListener\("pointerenter", \(\) => filePreviewIntent\.pin\(\)\);/, "inside the card it stays");

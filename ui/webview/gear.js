@@ -13,7 +13,8 @@
 //   the VS Code host injects http://127.0.0.1:<port> and allows it in the
 //   webview CSP (connect-src). window.__rompKernelToken rides along the same
 //   way: the kernel gates every request on the serve token (loopback included);
-//   the browser has its cookie, a webview's cross-origin fetch does not — so
+//   the browser has its sign-in (the cookie and the page key), a webview's
+//   cross-origin fetch has neither, so
 //   ku() appends ?token= when the host injected one (mirrors media.ts kernelUrl).
 // - Opening: a {romp:'openSettings'} window message (the web shell's rail gear
 //   posts it into the settings iframe, the kernel's /settings page hosting this
