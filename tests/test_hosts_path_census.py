@@ -144,7 +144,7 @@ THE PARSER'S SHARED NODES (2026-09-22, read back by CI's diagnostic run 35740276
 every node of its own trees with `_fn` (the scope that owns it) and `_parent` (its parent node). The parser hands out ONE
 instance of each expression context (Load, Store, Del) and of each operator (the operator, boolop, unaryop and cmpop
 subclasses) per process, shared by every tree it parses, so a mark written on one of them rode on every tree any later
-module in the same process parsed: in CI's serial cell (until 2026-09-25) this module ran before the thread-stop census,
+module in the same process parsed: in CI's serial Linux cells (until 2026-09-25) this module ran before the thread-stop census,
 whose copy.deepcopy of a two-node hand (a Name and its Load) followed the shared Load's `_parent` into this census's whole
 graph, a RecursionError inside copy.py on 3.10 and 3.11 and on 3.12 a completed copy of the graph costing minutes. The
 three marks (the third, `_lfn`, names a Lambda's scope on the Lambda node, which the parser never shares, and is guarded
@@ -2131,7 +2131,7 @@ class HostsPathCensus(unittest.TestCase):
         runs, and after it (the wide census and the plants walk by the same code) the instances carry nothing the snapshot
         did not hold, and nothing it held as another object. So what a red names is a write of THIS module's, and the pin
         reads the same alone, in a serial run (one process, every test module in collection order; CI's cells until
-        2026-09-25) and in any xdist worker: a module that
+        2026-09-25, its macOS cells since) and in any xdist worker: a module that
         wrote on a shared node before this one runs leaves its attribute in the snapshot and is not this pin's red (the
         thread-stop census's singleton pin, tests/parse_cache.py, names such a writer), while a write this census makes
         on an attribute an earlier module also wrote is a changed object and is red. Before round 4 the pin asserted the

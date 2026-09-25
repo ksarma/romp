@@ -394,7 +394,7 @@ pins the MECHANISM through the helper's counters, not the seconds: the entry poi
 of the population and every product file was parsed once, the parse count over the population is the module count, and a
 second derivation reds (a planted key beside the census's shows it). The cache is per PROCESS: under pytest-xdist the
 censuses that land on different workers parse and derive on their own, and no saving is claimed there; the saving is a
-serial run (CI's cells until 2026-09-25) and this module's own tests.
+serial run (CI's cells until 2026-09-25, its macOS cells since) and this module's own tests.
 A second census in the same process that reads kernel/kernel.py or another
 product file through the helper gets this census's parse (a tree test holds that from this side). WHAT A DERIVATION LEAVES
 ALIVE, the trees among it, stays for the process: the helper holds the collector off for the build's own run and, once
@@ -414,7 +414,8 @@ asserts gc.collect() finds nothing. And EVERY gc.get_freeze_count() READ AFTER T
 generation's list, a tenth of a second per read over the eight million objects this module freezes (up to a second once
 a collection has scattered the heap): the kernel's perf snapshot (_PerfStats.snapshot) reads it, so a test that reads
 the snapshot after this module in the same process pays that per read, 2 to 60 times its call time (about 2 s over a
-serial run such as CI's cells until 2026-09-25, where four snapshot-reading modules sort after this one;
+serial run such as CI's cells until 2026-09-25 and its macOS cells since, where four snapshot-reading modules sort
+after this one;
 18 to 25 s for an xdist worker that runs this
 module before tests/test_kernel_delta_send.py); the count is read here by the retention pins alone, and the kernel side
 is a follow-up, not this pass's. THE CACHED TREES ARE
@@ -446,7 +447,8 @@ and before and after every build, the build returning or raising (a raising buil
 own exception chained as the cause), so every consumer of the cache inherits it; setUpClass calls it before the tree
 derivation as the visible site; a tree test holds the singletons clean after the derivation; the read-only pin walks
 them too, each named once per tree with the words that say it is shared. Order-dependent by nature: red exactly when a
-writer ran earlier in the same process (a serial run, as CI's cells were until 2026-09-25, or the same xdist worker),
+writer ran earlier in the same process (a serial run, as CI's cells were until 2026-09-25 and its macOS cells still
+are, or the same xdist worker),
 green for a module run alone. The mechanism is reproduced by a plant in IterativeHandCopier on the process's real Load,
 the restore registered before the write.
 
@@ -5517,8 +5519,8 @@ class ThreadStopCensus(unittest.TestCase):
         35740276523 read that back, tests/test_hosts_path_census.py's `_fn` and `_parent` marks on the shared nodes, which
         copy.deepcopy of a hand followed into that census's whole graph (the mechanism plant in IterativeHandCopier
         reproduces it). ORDER-DEPENDENT BY NATURE: this reds only when such a writer ran EARLIER in the same process, a
-        serial run (one process, every test module in collection order, as CI's cells were until 2026-09-25) or the same
-        xdist worker, and is green when the module runs alone;
+        serial run (one process, every test module in collection order, as CI's cells were until 2026-09-25 and its
+        macOS cells still are) or the same xdist worker, and is green when the module runs alone;
         a red here names the attributes, their value types and the remedy (grep tests/ for the write over AST walks
         and guard singleton nodes), and the writer is the module to fix, not this one. After the derivation the singletons
         are clean (setUpClass held the same before it, so the derivation wrote nothing on them either), and the probe sees

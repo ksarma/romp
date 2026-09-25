@@ -25,10 +25,10 @@ with the process.
 
 THE SCOPE IS THE PROCESS. Module-level dicts, nothing on disk. Under pytest-xdist each worker is its own process with its
 own cache: two censuses that land on different workers each parse and derive on their own, so no saving is claimed there.
-The saving is the SERIAL run (CI's Python cells ran pytest serially until 2026-09-25 and run two workers under --dist load
-since) and a module's own tests when pytest keeps them in one worker (--dist loadfile or loadscope); under --dist load a
-class splits across workers and each derives once, a second derivation in another process, which that process's counters
-do not see and no pin reads as red.
+The saving is the SERIAL run (CI's Python cells ran pytest serially until 2026-09-25; since then its Linux cells run two
+workers under --dist load and its macOS cells stay serial) and a module's own tests when pytest keeps them in one worker
+(--dist loadfile or loadscope); under --dist load a class splits across workers and each derives once, a second
+derivation in another process, which that process's counters do not see and no pin reads as red.
 
 ONE LOCK. A module-level threading.RLock is held across the whole body of source_and_tree, derived and clear: two threads
 asking for one path or one key get one parse or one build and the same object. Without it (the ninth pass's helper) two
@@ -90,10 +90,10 @@ the eight million objects the census freezes, up to a second once a collection h
 this module reads it and a pin reads it at most twice. EVERY READER PAYS THAT after a derivation, not this module's pins
 alone: kernel/kernel.py's perf snapshot (_PerfStats.snapshot) reads gc.get_freeze_count() on every call, so a test that
 reads the snapshot after the census in the same process runs 2 to 60 times slower per read, about 2 s over a serial run
-(CI's cells until 2026-09-25; four snapshot-reading modules sort after the census) and 18 to 25 s for an xdist worker that
-runs the census before tests/test_kernel_delta_send.py (measured by the fifteenth pass's verification on 3.10 and 3.12; no
-test outcome changed). The kernel side (a memoised count behind a cheap check) is a follow-up for the kernel's perf owner, not this
-tests-only change. Acceptable in a test process because the process is a test run and
+(CI's cells until 2026-09-25, its macOS cells since; four snapshot-reading modules sort after the census) and 18 to 25 s
+for an xdist worker that runs the census before tests/test_kernel_delta_send.py (measured by the fifteenth pass's
+verification on 3.10 and 3.12; no test outcome changed). The kernel side (a memoised count behind a cheap check) is a
+follow-up for the kernel's perf owner, not this tests-only change. Acceptable in a test process because the process is a test run and
 ends with it: an object alive at a freeze that later falls into an unreachable cycle is never reclaimed by the collector
 (a cycle made after the freeze is, as before), gc.get_objects() no longer lists what is frozen, and a full collection
 over a frozen heap costs microseconds on the interpreters with a GIL; the free-threaded build's collector, which has one
@@ -128,9 +128,10 @@ just raised as the writer and chains the build's exception as its __cause__, and
 exception propagates as it did), so every consumer of the cache inherits it; a consumer's own visible call is the
 thread-stop census's setUpClass, before its tree derivation. It NEVER removes what it finds: a repair would hide the
 writer. It is order-dependent by nature: red exactly when a writer ran earlier in the same process, a serial run (one
-process, every test module in collection order, as CI's cells were until 2026-09-25) or the same xdist worker, and green
-for a module run alone. Under CI's two workers since then a writer and the census can land on different workers, so CI
-reds on a writer only when a check runs after it in the same worker. Its cost per check
+process, every test module in collection order, as CI's cells were until 2026-09-25 and its macOS cells still are) or
+the same xdist worker, and green for a module run alone. Under the Linux cells' two workers since then a writer and the
+census can land on different workers, so a Linux cell reds on a writer only when a check runs after it in the same
+worker. Its cost per check
 is two small parses (parser_singletons reads the probe text twice and asserts the instances identical across both) and
 a vars() per singleton. The read-only pin over the cached nodes (the contract above) walks the singletons too, each once
 per tree, and says which of its lines name a shared node.
