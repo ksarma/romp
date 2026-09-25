@@ -3411,29 +3411,33 @@ def _conftest_reasserted_names(src=None, where=None):
     re-assert (_reassert_proof) in each read of the child's context (the ruling of 23:17Z, (4); _PROOF_READS,
     _proof_modes). For tests/conftest.py the child runs in a scratch copy of the checkout (the ruling of 2026-09-25
     01:54Z, (6); _proof_checkout): the real package tests, on its one directory, with the real tests/__init__.py, the
-    real conftest and every other file of tests/ in place, the conftest imported as tests.conftest and each probe module
-    as tests.<module>, and the checkout's other files around it; only the two probe modules are added, named to sort
-    before every test module (_PROOF_PROBE_FILE), so they are collected first and second, where a real run handed
-    tests/ or the checkout collects them. The context: V1, a directory named tests; the package; the start, the
-    conftest loaded when pytest starts; V3, a module collected first and one collected after it; V4, in each, function
-    tests and a unittest TestCase; V5, a run with no xdist worker, none of this process's PYTEST_XDIST_* variables in
-    its environment, and, where pytest-xdist is installed, a run with -n 2. A road in the conftest's own code, in the
-    code that runs before it or in pytest that keeps pytest from running that re-assert in a test of that context,
-    keyed on those facts alone or together, is refused, named above or not (planted: the module road's residuals and
-    every facet of _proof_facets; _proof_context_roads, a road keyed on each part of each fact, on the complement of
-    each fact a read can lack, and on one conjunction; and _proof_copy_roads, a road in the copy of tests/conftest.py
-    keyed on the verifier's three facts of the package and on every file of the checkout in its place in the copy).
+    real conftest and every other entry of tests/ in place, the conftest imported as tests.conftest and each probe module
+    as tests.<module>, and the checkout's other files around it; only the two probe modules are added. The child is
+    run as CI's pytest step runs the suite, `python -m pytest -q` from the copy's root, with no path, no --rootdir and
+    the cache plugin loaded, and -k selecting the probe tests: it collects every test module under tests/ between the
+    first probe module and the second (_PROOF_PROBE_FILE), no test of another directory before the first or after the
+    second, and runs the probe tests alone. The context: V1, a directory named tests; the package; the start, the
+    conftest loaded when pytest starts; V3, the first module collected, and one collected after it, which in the copy
+    is collected after every test module under tests/ (collection order through the real modules); V4, in each, function tests and a unittest TestCase; V5, a
+    run with no xdist worker, none of this process's PYTEST_XDIST_* variables in its environment, and, where
+    pytest-xdist is installed, a run with -n 2. A road in the conftest's own code, in the code that runs before it or
+    in pytest that keeps pytest from running that re-assert in a test of that context, keyed on those facts alone or
+    together, is refused, named above or not (planted: the module road's residuals and every facet of _proof_facets;
+    _proof_context_roads, a road keyed on each part of each fact, on the complement of each fact a read can lack, and
+    on one conjunction; and the copy test's roads, keyed on the verifier's three facts of the package, on every entry
+    of the checkout in its place in the copy, on the child's command line, _proof_command_roads, and on a module
+    collected after a test module under tests/ and one collected before every one).
     WHAT THE PROOF DOES NOT READ, each granted where the filter counts it (the unsafe side, as above): any conftest hook
     condition the child's context does not reproduce, a mark, an environment variable, a host name, or another
-    collection-time signal, among them which test it is (its module, its name, the modules collected before it) and
-    which modules a run collects after the probe's, which the run's command line decides (the witness: V2, a copy of
+    collection-time signal, such as an option of the run's command line (the child's is CI's with -k added; a
+    developer's run may add -p no:cacheprovider, a worker count or a path) (the witness: V2, a copy of
     tests/conftest.py whose listed pytest_collectreport takes _dead_manager_port out of each marked test is granted,
     and a real run of that copy reads a module-level write in a marked test and the floor in the unmarked control);
-    what the clone keeps for itself, which differs from clone to clone as a host name does and which the copy does
-    not hold (its .git, the files git ignores outside tests/, each __pycache__ directory); what a real test module, a
-    class or a conftest.py below tests/ does for its own tests (a fixture of the same name, a parametrization of it, a
-    hook), since the child collects its probe modules alone; a plugin a run loads by -p on its command line, which
-    the child is not given; and an attribute of tests.conftest a test changes in the test process after pytest
+    what the clone keeps for itself, which differs from clone to
+    clone as a host name does and which the copy does not hold (its .git, what git ignores outside tests/, each
+    __pycache__ directory); what the code of a real test module, of its class or of a conftest.py below tests/ does for
+    that module's own tests (a fixture of the same name, a parametrization of it, a hook), since the child runs the
+    probe tests alone; and an attribute of tests.conftest a test changes in the test process after pytest
     registered it. The filter still refuses every fixture of a module with a hook off _LISTED_HOOKS
     (test_a_hook_that_may_keep_pytest_from_running_a_fixture_refuses_it_on_both_roads), so that limit is reached only
     by code the module road takes on trust (import-time code, a fixture's body, a listed hook's body) that keys a
@@ -3576,12 +3580,13 @@ _PROOF_READS = tuple(((module, cls, test), "the %s test of %s, %s" % (when, wher
 #   proof requires of each run it makes (_proof_modes), keyed (module, class, test), the module by its last letter.
 #   Each run is over the package tests (V1, a directory named tests; the package, so the conftest imports as
 #   tests.conftest and each probe module as tests.<module>; for tests/conftest.py, the real package in the one copy of
-#   the checkout, _proof_checkout, the ruling of 2026-09-25 01:54Z, (6)), handed to pytest as its argument or its probe
-#   modules by path, so the conftest loads when pytest starts (the start), with a probe module collected first and one
-#   collected after it (V3), each read as function tests and as a unittest TestCase (V4), and the run is made with no
-#   xdist worker and with -n 2 (V5): every combination of V3, V4 and V5 is read, _proof_context_roads plants a road
-#   keyed on each fact, and _proof_copy_roads one keyed on the verifier's three facts of the package and on every file
-#   of the checkout in its place in the copy
+#   the checkout, _proof_checkout, the ruling of 2026-09-25 01:54Z, (6)), the conftest loaded when pytest starts (the
+#   start): a synthetic case's run is handed its package directory, and a run in the copy starts from the copy's root
+#   with no path; with a probe module collected first and one collected after it (V3), the second, in the copy, after
+#   every test module under tests/, each read as function tests and as a unittest TestCase (V4), and the run is made
+#   with no xdist worker and with -n 2 (V5): every combination of V3, V4 and V5 is read, _proof_context_roads plants a
+#   road keyed on each fact, and the copy test's roads one keyed on the verifier's three facts of the package, on every
+#   entry of the checkout in its place in the copy, on the child's command line and on the order it collects in
 
 
 def _proof_modes():
@@ -3639,10 +3644,12 @@ def _proof_verdicts(sites, reports, conftest, rcs):
     return out
 
 
-_PROOF_PROBE_FILE = "test_0_reassert_probe_%02d_%s.py"
-#   the probe modules' file name, by case and module letter: test_0 sorts before every test module of the checkout
-#   (tests/'s own begin test_ and a lowercase letter, and no other directory holds one; the copy's pin reads both), so a
-#   real run handed tests/ or the checkout would collect them first and second, as the child does
+_PROOF_PROBE_FILE = {"a": "test_0_reassert_probe_%02d_a.py", "b": "test_zzzz_reassert_probe_%02d_b.py"}
+_PROOF_PROBE_NAME = r"test_(0|zzzz)_reassert_probe_\d\d_[ab]\.py"
+_PROOF_SELECT = "reassert_probe_%02d_"
+#   the probe modules' file names, by module letter and case number, the pattern they match, and the -k expression that
+#   selects a case's probe tests in the one copy: a's name sorts before every test module of tests/ and b's after every
+#   one, and the copy test reads, in each child process, the order it collected the modules in and the tests -k left it
 
 _PROOF_COPY = []
 #   THE ONE COPY (the reviewer's ruling of 2026-09-25 01:54Z on round 2 of fork PR #894, (6)): [the scratch directory]
@@ -3655,36 +3662,63 @@ _PROOF_RUN = collections.Counter()
 
 def _proof_checkout_files(root=None):
     """THE COPY'S POPULATION: the paths, relative to the checkout's root (`root`, default the checkout this module sits
-    in) and sorted, of the files the one copy holds (_proof_checkout). The package whole: every entry under tests/ but
-    what a __pycache__ directory holds, walked, a link copied as a link and not followed. The rest of the checkout:
-    every file git does not ignore (`git ls-files --cached --others --exclude-standard`, the environment's GIT_*
-    variables dropped), or, where git reads no repository there (a tree unpacked from an archive, or no git to run),
-    every file but .git's and what a __pycache__ directory holds. NOT HELD, and why: the clone's own state, which
-    differs from clone to clone and machine to machine as a host name does and is not the package (its .git, the files
-    git ignores outside tests/: caches, build output, installed dependencies, and each __pycache__ directory, the byte
-    code the child's own imports write again)."""
+    in) and sorted, of the entries the one copy holds (_proof_checkout): files, links and directories. The package
+    whole: tests/ and every entry under it, a directory included whatever it holds, but a __pycache__ directory and
+    what it holds, walked, a link held as a link and not followed. The rest of the checkout: every file git does not
+    ignore (`git ls-files --cached --others --exclude-standard`), and every directory the walk reaches that git does not
+    ignore (a directory `git ls-files --others --ignored --exclude-standard --directory` names is not entered), both
+    read with the environment's GIT_* variables dropped; or, where git reads no repository there (a tree unpacked from
+    an archive, or no git to run), every entry but .git and what a __pycache__ directory holds. NOT HELD, and why: the
+    clone's own state, which differs from clone to clone and machine to machine as a host name does and is not the
+    package (its .git, what git ignores outside tests/: caches, build output, installed dependencies, and each
+    __pycache__ directory, the byte code the child's own imports write again)."""
     root = os.path.dirname(HERE) if root is None else root
-    tests = os.path.join(root, "tests")
 
-    def walk(top):
-        out = []
+    def walk(top, skip=frozenset(), files_too=True):
+        out = [top] if top != root else []
         for d, dirs, files in os.walk(top):
-            out += [os.path.join(d, n) for n in files + [n for n in dirs if os.path.islink(os.path.join(d, n))]]
-            dirs[:] = [n for n in dirs if n != "__pycache__" and not os.path.islink(os.path.join(d, n))]
+            links = [n for n in dirs if os.path.islink(os.path.join(d, n))]
+            dirs[:] = [n for n in dirs if n != "__pycache__" and n not in links
+                       and os.path.relpath(os.path.join(d, n), root) not in skip]
+            out += [os.path.join(d, n) for n in (files + links if files_too else []) + dirs]
         return [os.path.relpath(p, root) for p in out]
-    paths = walk(tests)
+    paths = walk(os.path.join(root, "tests")) if os.path.isdir(os.path.join(root, "tests")) else []
     env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
-    try:
-        r = subprocess.run(["git", "-C", root, "ls-files", "-z", "--cached", "--others", "--exclude-standard"],
-                           env=env, stdin=subprocess.DEVNULL, capture_output=True, timeout=120)
-    except (OSError, subprocess.SubprocessError):
-        r = None
-    if r is not None and r.returncode == 0:
-        rest = [p for p in r.stdout.decode("utf-8", "surrogateescape").split("\0") if p]
+
+    def git(*args):
+        try:
+            r = subprocess.run(["git", "-C", root, "ls-files", "-z"] + list(args), env=env, stdin=subprocess.DEVNULL,
+                               capture_output=True, timeout=120)
+        except (OSError, subprocess.SubprocessError):
+            return None
+        return [p for p in r.stdout.decode("utf-8", "surrogateescape").split("\0") if p] if r.returncode == 0 else None
+    listed, ignored = git("--cached", "--others", "--exclude-standard"), git("--others", "--ignored", "--exclude-standard", "--directory")
+    if listed is not None and ignored is not None:
+        skip = {os.path.normpath(p) for p in ignored if p.endswith("/")} | {".git", "tests"}
+        rest = listed + walk(root, skip, files_too=False)
     else:
-        rest = [p for p in walk(root) if p.split(os.sep)[0] != ".git"]
-    paths += [p for p in rest if p.split("/")[0] != "tests" and os.path.lexists(os.path.join(root, p))]
+        rest = walk(root, {".git"})
+    paths += [p for p in rest if os.path.normpath(p).split(os.sep)[0] not in ("tests", ".git")
+              and os.path.lexists(os.path.join(root, p))]
     return sorted(set(os.path.normpath(p) for p in paths))
+
+
+def _proof_copy_into(src, dst):
+    """Copies the entries of _proof_checkout_files(src) from `src` to `dst`: a link as a link, a directory as a
+    directory with its mode, a file with its bytes and mode (shutil.copy2)."""
+    dirs = []
+    for rel in _proof_checkout_files(src):
+        s, at = os.path.join(src, rel), os.path.join(dst, rel)
+        os.makedirs(os.path.dirname(at), exist_ok=True)
+        if os.path.islink(s):
+            os.symlink(os.readlink(s), at)
+        elif os.path.isdir(s):
+            os.makedirs(at, exist_ok=True)
+            dirs.append((s, at))
+        else:
+            shutil.copy2(s, at)
+    for s, at in reversed(dirs):
+        shutil.copymode(s, at)
 
 
 def _proof_checkout():
@@ -3692,26 +3726,19 @@ def _proof_checkout():
     scratch copy of the real package, not in a model of it; and its application of 02:40Z, (7): a copy of the whole
     checkout, the package in its real tree): (the scratch directory, the copy's root), the copy made by the first call
     of this module's run and returned to every later one. The copy's root carries the checkout's own directory name and
-    holds the files of _proof_checkout_files, each copied with its bytes and mode (a link as a link), so the package
-    tests is the real one, on its one directory, the real tests/__init__.py, tests/conftest.py and every module in
-    place, and kernel/ and every other directory stand around it as in the checkout. The files are copied from the
-    working tree the run imports, not archived from a commit: a run imports its working tree, an edit not yet
-    committed included, and a tree with no repository (one unpacked from an archive) has no commit to archive. The
-    scratch directory also holds `tmp`, the children's TMPDIR, and each case's reports, outside the copy."""
+    holds the entries of _proof_checkout_files (_proof_copy_into), so the package tests is the real one, on its one
+    directory, the real tests/__init__.py, tests/conftest.py and every module and directory in place, and kernel/ and
+    every other directory stand around it as in the checkout. The entries are copied from the working tree the run
+    imports, not archived from a commit: a run imports its working tree, an edit not yet committed included, and a tree
+    with no repository (one unpacked from an archive) has no commit to archive. The scratch directory also holds `tmp`,
+    the children's TMPDIR, and each case's reports, outside the copy."""
     _PROOF_RUN["reads"] += 1
     if not _PROOF_COPY:
         scratch = os.path.realpath(tempfile.mkdtemp())
         _PROOF_COPY.append(scratch)          # held first, so tearDownModule removes a copy a failure left half made
         _PROOF_RUN["copies"] += 1
         src = os.path.dirname(HERE)
-        dst = os.path.join(scratch, os.path.basename(src))
-        for rel in _proof_checkout_files(src):
-            at = os.path.join(dst, rel)
-            os.makedirs(os.path.dirname(at), exist_ok=True)
-            if os.path.islink(os.path.join(src, rel)):
-                os.symlink(os.readlink(os.path.join(src, rel)), at)
-            else:
-                shutil.copy2(os.path.join(src, rel), at)
+        _proof_copy_into(src, os.path.join(scratch, os.path.basename(src)))
         os.makedirs(os.path.join(scratch, "tmp"))
     return _PROOF_COPY[0], os.path.join(_PROOF_COPY[0], os.path.basename(os.path.dirname(HERE)))
 
@@ -3752,14 +3779,18 @@ def _reassert_proof(cases, real=False):
     writing its report under the case's reports directory, outside the package. With `real` (the ruling of
     2026-09-25 01:54Z, (6), and its application of 02:40Z, (7)), every case runs in THE ONE COPY of the checkout
     (_proof_checkout), one case at a time: the case's conftest (tests/conftest.py's bytes, or the text) and the two
-    probe modules, named by the case's number in the module run, are written into the copy's tests/, each mode is a
-    child of its own handed the probe modules by path from the copy's root, and after the case the probe modules
-    and tests/__pycache__ are removed and tests/conftest.py's bytes put back, so every case finds the copy as the
-    checkout is and no case runs byte code a case before it wrote. A `real` case with a helper file is refused
-    (ValueError): the copy's package is the checkout's own. Else each case and run has a directory of its own, cNN-<mode>
-    under a scratch root, holding the package tests: an __init__.py, a helper's where one is given and else an empty
-    one, the conftest.py, the helpers (a name may carry a directory, ../ being the run's directory, which pytest puts on
-    sys.path) and the probe modules, `pytest tests` from that directory. The child's
+    probe modules, named by the case's number in the module run, are written into the copy's tests/, and each mode is
+    a child of its own, run from the copy's root as CI's pytest step runs the suite, with no path, no --rootdir, the
+    cache plugin loaded, and `-k` _PROOF_SELECT selecting the case's probe tests, so it collects every test module
+    under tests/ between the two probe modules. The children of a case run while this process holds an exclusive lock
+    (flock) on the checkout's tests/conftest.py, so the processes of the checkout make one case's collection at a
+    time. After the case the probe modules, the byte code of the conftest and of the probe modules in tests/__pycache__
+    and the copy's .pytest_cache are removed and tests/conftest.py's bytes put back, so every case finds the copy as
+    the checkout is and no case runs byte code of a file a case before it wrote. A `real` case with a helper file is
+    refused (ValueError): the copy's package is the checkout's own. Else each case and run has a directory of its own,
+    cNN-<mode> under a scratch root, holding the package tests: an __init__.py, a helper's where one is given and else
+    an empty one, the conftest.py, the helpers (a name may carry a directory, ../ being the run's directory, which
+    pytest puts on sys.path) and the probe modules, `pytest tests` from that directory. The child's
     environment is _proof_child_env's, its TMPDIR under the scratch directory, which is removed after (the one copy's
     by tearDownModule). Returns ({label: _proof_verdicts over the case's reports}, 0 or the first nonzero return code
     of the runs, their output)."""
@@ -3773,10 +3804,9 @@ def _reassert_proof(cases, real=False):
                 .replace("__REPORTS__", repr(at)))
 
     def run(job):
-        mode, cwd, args = job
-        return subprocess.run([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider"]
-                              + (["-n", "2"] if mode == "xdist" else []) + ["--rootdir", cwd] + args,
-                              cwd=cwd, env=child, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=180)
+        mode, cwd, args, bound = job
+        return subprocess.run([sys.executable, "-m", "pytest", "-q"] + (["-n", "2"] if mode == "xdist" else []) + args,
+                              cwd=cwd, env=child, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=bound)
 
     def record(i, mode, r):
         nonlocal first
@@ -3786,6 +3816,7 @@ def _reassert_proof(cases, real=False):
         rcs[i][mode] = r.returncode
 
     if real:
+        import fcntl
         for label, _t, helpers, _s in cases:
             if helpers:
                 raise ValueError("a real proof runs the checkout's own package, with no helper file: %r" % label)
@@ -3797,7 +3828,7 @@ def _reassert_proof(cases, real=False):
             n = _PROOF_RUN["real cases"]          # the case's number in the module run: its probe modules' names are its own
             _PROOF_RUN["real cases"] += 1
             at = os.path.join(scratch, "reports-%02d" % n)
-            probes = [os.path.join(tests_dir, _PROOF_PROBE_FILE % (n, m)) for m in "ab"]
+            probes = [os.path.join(tests_dir, _PROOF_PROBE_FILE[m] % n) for m in "ab"]
             try:
                 if text is None:
                     shutil.copy2(os.path.join(HERE, "conftest.py"), conftest)
@@ -3807,9 +3838,12 @@ def _reassert_proof(cases, real=False):
                 for p in probes:
                     with open(p, "w", encoding="utf-8") as f:
                         f.write(probe(i, at))
-                args = [os.path.relpath(p, checkout) for p in probes]
-                with concurrent.futures.ThreadPoolExecutor(max_workers=len(modes)) as pool:
-                    results = list(pool.map(run, [(mode, checkout, args) for mode in modes]))
+                lock = os.open(os.path.join(HERE, "conftest.py"), os.O_RDONLY)
+                try:
+                    fcntl.flock(lock, fcntl.LOCK_EX)     # released when the descriptor closes
+                    results = [run((mode, checkout, ["-k", _PROOF_SELECT % n], 900)) for mode in modes]
+                finally:
+                    os.close(lock)
                 for mode, r in zip(modes, results):
                     record(i, mode, r)
                     conftests[i][mode] = conftest
@@ -3819,7 +3853,12 @@ def _reassert_proof(cases, real=False):
                     if os.path.lexists(p):
                         os.unlink(p)
                 shutil.copy2(os.path.join(HERE, "conftest.py"), conftest)
-                shutil.rmtree(os.path.join(tests_dir, "__pycache__"), True)
+                written = {"conftest"} | {os.path.basename(p)[:-3] for p in probes}
+                cached = os.path.join(tests_dir, "__pycache__")
+                for fn in sorted(os.listdir(cached)) if os.path.isdir(cached) else ():
+                    if fn.split(".")[0] in written:
+                        os.unlink(os.path.join(cached, fn))
+                shutil.rmtree(os.path.join(checkout, ".pytest_cache"), True)
                 shutil.rmtree(at, True)
     else:
         root = os.path.realpath(tempfile.mkdtemp())
@@ -3831,7 +3870,7 @@ def _reassert_proof(cases, real=False):
                 files.update(helpers)
                 at = os.path.join(root, "reports-%02d" % i)
                 for module in "ab":
-                    files[_PROOF_PROBE_FILE % (i, module)] = probe(i, at)
+                    files[_PROOF_PROBE_FILE[module] % i] = probe(i, at)
                 files["conftest.py"] = text if text is not None else open(os.path.join(HERE, "conftest.py"), encoding="utf-8").read()
                 for mode in modes:
                     run_dir = os.path.join(root, "c%02d-%s" % (i, mode))
@@ -3842,7 +3881,7 @@ def _reassert_proof(cases, real=False):
                             f.write(body)
                     jobs.append((i, mode, run_dir))
             with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:    # each run has a directory of its own
-                results = list(pool.map(run, [(mode, run_dir, ["tests"]) for _i, mode, run_dir in jobs]))
+                results = list(pool.map(run, [(mode, run_dir, ["tests"], 180) for _i, mode, run_dir in jobs]))
             for (i, mode, run_dir), r in zip(jobs, results):
                 record(i, mode, r)
                 conftests[i][mode] = os.path.join(run_dir, "tests", "conftest.py")
@@ -6738,20 +6777,29 @@ class HermeticKernelPostal(unittest.TestCase):
     def test_the_real_conftests_proof_runs_its_child_in_one_scratch_copy_of_the_checkout(self):
         """THE CHILD RUNS IN A SCRATCH COPY OF THE REAL PACKAGE (the reviewer's ruling of 2026-09-25 01:54Z on round 2 of
         fork PR #894, (6), after the verifier's findings at the thirty-seventh commit, a package of two directories whose
-        __init__.py appended the checkout's tests/ to its path, and at the thirty-eighth, a package of the files its
-        import loads, where a hook keyed on tests/README.md, a real test module, tests/fixtures/ or a file of the
-        checkout outside tests/ was granted and a real run of each read the module-level write). THE COPY
-        (_proof_checkout): its files equal _proof_checkout_files', each with the checkout's bytes and mode, or its link;
-        every entry of tests/ but __pycache__ is among them (the package whole); and no test module of the copy sorts
-        before the probe modules (_PROOF_PROBE_FILE), so a real run handed tests/ or the checkout would collect them
-        first and second, as the child does. THE ROADS (_proof_copy_roads): each condition holds in this process, a real
-        run, evaluated in tests.conftest's own namespace; the proof over a copy of tests/conftest.py whose listed
-        pytest_collectreport takes _dead_manager_port out of each test where every condition holds refuses the four
-        names that fixture re-asserts and no other; and each child process records every condition true. The verifier's
-        Q1, Q2 and Q3 are three of them, true in a real run and false under the thirty-seventh commit's shim. ONE COPY,
-        SHARED: the proof ran in the copy this test read, still the module run's one copy after it, and the copy is the
-        checkout again after the case: its files the population with the checkout's bytes, and no tests/__pycache__ left
-        from the case's runs, so no later case runs byte code this one wrote."""
+        __init__.py appended the checkout's tests/ to its path, at the thirty-eighth, a package of the files its import
+        loads, and at the thirty-ninth, a child handed its two probe modules alone, with --rootdir and -p
+        no:cacheprovider, in a copy without tests/'s empty directories, where a hook keyed on a module collected third or
+        later, on either flag or on an empty directory was granted and a real run of each read the module-level write).
+        THE COPY (_proof_checkout): its entries equal _proof_checkout_files', each of the checkout's kind with its bytes
+        and mode, or its link, under the checkout's own directory name; and every entry under tests/ at any depth but
+        __pycache__ and what it holds, read by pathlib's rglob, is among them (the package whole). THE ROADS: each
+        condition of _proof_copy_roads holds in this process, a real run, evaluated in tests.conftest's own namespace;
+        the proof over a copy of tests/conftest.py carrying _COPY_ROAD_HOOK refuses the four names _dead_manager_port
+        re-asserts in each read, the three _no_real_service_env re-asserts in the reads of the module collected after the
+        checkout's test modules and in no other, and the two _no_cli_scope re-asserts in the reads of the module collected
+        before them and in no other, and grants the other two; and each child process that collects records every
+        condition of _proof_copy_roads and _proof_command_roads true (the verifier's Q1, Q2 and Q3, true in a real run
+        and false under the thirty-seventh commit's shim, and its X1 and X2), the modules under tests/ in the order it
+        collected them, the first probe module first, the second last and every test module under tests/ between them,
+        each once (collection order through the real modules), among the tests it collected in any directory the first
+        probe module's first and the second's last, the eight probe tests alone left to run, and the checkout's
+        tests/conftest.py locked while it runs. ONE COPY, SHARED: the
+        proof ran in the copy this test read, still the module run's one copy after it, and the copy is the checkout
+        again after the case: its entries the population with the checkout's bytes, no .pytest_cache at its root and no
+        byte code of the conftest or of a probe module in tests/__pycache__, so no later case runs byte code of a file
+        this one wrote."""
+        import pathlib
         src = os.path.dirname(HERE)
         scratch, checkout = _proof_checkout()
         copies = _PROOF_RUN["copies"]
@@ -6760,14 +6808,18 @@ class HermeticKernelPostal(unittest.TestCase):
         def held():
             got, faults = [], []
             for d, dirs, files in os.walk(checkout):
-                got += [os.path.relpath(os.path.join(d, n), checkout) for n in files + [n for n in dirs if os.path.islink(os.path.join(d, n))]]
-                dirs[:] = [n for n in dirs if n != "__pycache__" and not os.path.islink(os.path.join(d, n))]
+                links = [n for n in dirs if os.path.islink(os.path.join(d, n))]
+                dirs[:] = [n for n in dirs if n != "__pycache__" and n not in links]
+                got += [os.path.relpath(os.path.join(d, n), checkout) for n in files + links + dirs]
             for rel in want:
                 a, b = os.path.join(checkout, rel), os.path.join(src, rel)
                 if os.path.islink(b):
                     same = os.path.islink(a) and os.readlink(a) == os.readlink(b)
-                elif os.path.islink(a) or not os.path.isfile(a) or (os.stat(a).st_mode & 0o7777) != (os.stat(b).st_mode & 0o7777):
+                elif (os.path.islink(a) or not os.path.exists(a) or os.path.isdir(a) != os.path.isdir(b)
+                      or (os.stat(a).st_mode & 0o7777) != (os.stat(b).st_mode & 0o7777)):
                     same = False
+                elif os.path.isdir(b):
+                    same = True
                 else:
                     with open(a, "rb") as fa, open(b, "rb") as fb:
                         same = fa.read() == fb.read()
@@ -6775,88 +6827,148 @@ class HermeticKernelPostal(unittest.TestCase):
                     faults.append(rel)
             return sorted(got), faults
         self.assertEqual((held(), os.path.basename(checkout)), ((want, []), os.path.basename(src)),
-                         "THE COPY holds the population, each file with the checkout's bytes and mode, or its link, and nothing "
-                         "else, under the checkout's own directory name")
-        self.assertEqual(sorted({p.split(os.sep)[1] for p in want if p.split(os.sep)[0] == "tests"}),
-                         sorted(n for n in os.listdir(HERE) if n != "__pycache__"),
-                         "THE PACKAGE WHOLE: every entry of tests/ but __pycache__ is in the copy")
-        first = min(_PROOF_PROBE_FILE % (0, m) for m in "ab")
-        self.assertEqual([p for p in want if re.fullmatch(r"test_.*\.py|.*_test\.py", os.path.basename(p))
-                          and tuple(p.split(os.sep)) < ("tests", first)], [],
-                         "THE ORDER: no test module of the checkout sorts before the probe modules")
-        roads = _proof_copy_roads(src)
+                         "THE COPY holds the population, each entry of the checkout's kind with its bytes and mode, or its "
+                         "link, and nothing else, under the checkout's own directory name")
+        self.assertEqual(sorted(os.path.relpath(str(e), src) for e in pathlib.Path(HERE).rglob("*")
+                                if "__pycache__" not in e.relative_to(HERE).parts),
+                         [p for p in want if p.split(os.sep)[0] == "tests" and p != "tests"],
+                         "THE PACKAGE WHOLE: every entry under tests/ at any depth but __pycache__ is in the copy")
+        roads, commands = _proof_copy_roads(src), _proof_command_roads()
+        hook = _COPY_ROAD_HOOK.replace("__PROBE__", repr(_PROOF_PROBE_NAME)).replace("__LOCK__", repr(os.path.join(HERE, "conftest.py")))
         here = dict(vars(_real_conftest_module()))
-        exec(compile(_COPY_ROAD_HOOK.replace("__CONDITIONS__", "()").replace("__VALUES__", "None"), "<the copy roads' hook>", "exec"),
-             here)
+        exec(compile(hook.replace("__CONDITIONS__", "()").replace("__VALUES__", "None"), "<the copy roads' hook>", "exec"), here)
         labels = [label for label, _c in roads]
         self.assertEqual({label: bool(eval(condition, here)) for label, condition in roads}, dict.fromkeys(labels, True),
                          "each condition holds in a real run: this process's, in tests.conftest's namespace")
         sites, refused = _reassert_sites()
         self.assertEqual(refused, ())
-        stopped = {n for n, s in sites.items() if any(f == "_dead_manager_port" for f, _l, _o in s)}
-        self.assertEqual(stopped, {"ROMP_MANAGER_PORT", "ROMP_KERNEL_PORT", "ROMP_SERVE_PORT", "ROMP_POSTAL_PORT"})
+        by = {fixture: {n for n, s in sites.items() if any(f == fixture for f, _l, _o in s)}
+              for fixture in ("_dead_manager_port", "_no_real_service_env", "_no_cli_scope")}
+        self.assertEqual(by, {"_dead_manager_port": {"ROMP_MANAGER_PORT", "ROMP_KERNEL_PORT", "ROMP_SERVE_PORT", "ROMP_POSTAL_PORT"},
+                              "_no_real_service_env": {"ROMP_SERVICE_ENV", "ROMP_SERVICE_ENV_FILE", "ROMP_SUPERVISED"},
+                              "_no_cli_scope": {"ROMP_CLAUDE_BIN", "ROMP_CLI_SCOPE"}})
         values = os.path.join(scratch, "copy-roads")
         shutil.rmtree(values, True)
         os.makedirs(values)
         self.addCleanup(shutil.rmtree, values, True)
         planted = (open(os.path.join(HERE, "conftest.py"), encoding="utf-8").read()
-                   + _COPY_ROAD_HOOK.replace("__CONDITIONS__", repr(roads)).replace("__VALUES__", repr(values)))
+                   + hook.replace("__CONDITIONS__", repr(roads + commands)).replace("__VALUES__", repr(values)))
+        n = _PROOF_RUN["real cases"]
         got, rc, out = _reassert_proof([("copy", planted, {}, sites)], real=True)
         recorded = []
         for fn in sorted(os.listdir(values)):
             with open(os.path.join(values, fn), encoding="utf-8") as f:
                 recorded.append(json.load(f))
-        self.assertEqual(recorded, [dict.fromkeys(labels, True)] * (1 + 2 * ("xdist" in _proof_modes())),
+        modes = _proof_modes()
+        self.assertEqual([r["facts"] for r in recorded],
+                         [dict.fromkeys(labels + [label for label, _c in commands], True)] * (1 + 2 * ("xdist" in modes)),
                          "each child process that collected (the run with no worker, and each worker of the -n 2 run) "
                          "records every condition true (rc %d): %s\n%s" % (rc, recorded, out[-3000:]))
-        self.assertEqual(sorted(n for n, why in got["copy"].items() if why), sorted(stopped),
-                         "THE ROADS: the proof refuses the four names _dead_manager_port re-asserts, and no other (rc %d): %s"
-                         % (rc, got["copy"]))
+        probes = [os.path.join("tests", _PROOF_PROBE_FILE[m] % n) for m in "ab"]
+        modules = sorted(p for p in want if p.split(os.sep)[0] == "tests" and os.path.isfile(os.path.join(src, p))
+                         and re.fullmatch(r"test_.*\.py|.*_test\.py", os.path.basename(p)))
+        for r in recorded:
+            order = [os.path.relpath(m, checkout) for m in r["modules"]]
+            files = [os.path.relpath(m, checkout) for m in r["item_modules"]]
+            self.assertEqual((order[:1], order[-1:], sorted(order[1:-1]), files[:1], files[-1:]),
+                             (probes[:1], probes[1:], modules, probes[:1], probes[1:]),
+                             "THE ORDER: under tests/, the first probe module collected first, the second last and every "
+                             "test module between them, each once (%d modules), and among the tests collected in any "
+                             "directory, the first probe module's first and the second's last (%d files)" % (len(order), len(files)))
+            self.assertEqual((sorted(r["selected"]), r["locked"]), (sorted([os.path.basename(p) for p in probes] * 4), True),
+                             "the probe tests alone are left to run (-k %s), and the checkout's tests/conftest.py is locked "
+                             "while the child runs" % (_PROOF_SELECT % n))
+        reads = [("%s, %s" % (where, _PROOF_MODES[mode]), key) for mode in modes for key, where in _PROOF_READS]
+
+        def at(name):
+            why = got["copy"][name]
+            return set() if why is None else {ctx for ctx, _k in reads if ctx in why or "in each of the %d reads" % len(reads) in why}
+        self.assertEqual({name: at(name) for name in sites},
+                         {name: ({ctx for ctx, _k in reads} if name in by["_dead_manager_port"] else
+                                 {ctx for ctx, key in reads if key[0] == "b"} if name in by["_no_real_service_env"] else
+                                 {ctx for ctx, key in reads if key[0] == "a"} if name in by["_no_cli_scope"] else set())
+                          for name in sites},
+                         "THE ROADS: the proof refuses _dead_manager_port's names in each read, _no_real_service_env's in "
+                         "the reads of the module collected after the checkout's test modules, _no_cli_scope's in the "
+                         "reads of the module collected before them, and grants the rest (rc %d): %s" % (rc, got["copy"]))
         self.assertEqual((_PROOF_COPY, _PROOF_RUN["copies"]), ([scratch], copies),
                          "ONE COPY, SHARED: the proof ran in the module run's one copy, and no other was made")
-        self.assertEqual((held(), os.path.exists(os.path.join(checkout, "tests", "__pycache__"))), ((want, []), False),
-                         "after the case the copy is the checkout again, with no byte code left from the case's runs")
+        cached = os.path.join(checkout, "tests", "__pycache__")
+        written = {"conftest"} | {os.path.basename(p)[:-3] for p in probes}
+        self.assertEqual((held(), os.path.lexists(os.path.join(checkout, ".pytest_cache")),
+                          sorted(fn for fn in (os.listdir(cached) if os.path.isdir(cached) else ()) if fn.split(".")[0] in written)),
+                         ((want, []), False, []),
+                         "after the case the copy is the checkout again, with no cache and no byte code of a file the case wrote")
 
     def test_the_copys_population_is_the_package_whole_and_the_files_git_does_not_ignore(self):
-        """THE COPY'S POPULATION (_proof_checkout_files), over a synthetic checkout, both roads. With a repository: every
-        entry under tests/, walked (a file git ignores there included), less what a __pycache__ directory holds; outside
-        tests/, a tracked file (one that matches .gitignore included, by --cached), an untracked file git does not
-        ignore (--others) and a link, as a link, and not a file git ignores (--exclude-standard) nor anything under .git;
-        read with the environment's GIT_* variables dropped (a GIT_DIR pointing elsewhere is set here and does not
-        reach git). With no git to run, and with no repository (the tree unpacked from an archive): every file but
-        .git's and a __pycache__ directory's. And a `real` proof refuses a case with a helper file: the copy's package is
-        the checkout's own."""
+        """THE COPY'S POPULATION (_proof_checkout_files), over a synthetic checkout, both roads. With a repository: tests/
+        and every entry under it, walked: a file git ignores there, a directory holding nothing, one nested in another,
+        and one holding only a __pycache__ directory, less what a __pycache__ directory holds; outside tests/, a tracked
+        file (one that matches .gitignore included, by --cached), an untracked file git does not ignore (--others), a
+        link, as a link, and every directory git does not ignore, an empty one and a nested one included, and not a file
+        git ignores (--exclude-standard), a directory git ignores (--ignored --directory), one holding only a __pycache__
+        or only ignored files, which git names as ignored, nor anything under .git; read with the environment's GIT_*
+        variables dropped (a GIT_DIR pointing elsewhere is set here and does not reach git). With no git to run, and with
+        no repository (the tree unpacked from an archive): every entry but .git and what a __pycache__ directory holds.
+        THE COPY STEP (_proof_copy_into) over the same tree holds each entry of the population and nothing else, a
+        directory as a directory with its mode, a file with its bytes and mode, a link as a link. And a `real` proof
+        refuses a case with a helper file: the copy's package is the checkout's own."""
         root = os.path.realpath(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, root, True)
         files = {"tests/a.py": "", "tests/sub/b.txt": "", "tests/__pycache__/a.cpython-312.pyc": "", "tests/ignored.log": "",
-                 "kept.txt": "", "new.txt": "", "build/out.bin": "", "build/tracked.bin": "", ".gitignore": "build/\n*.log\n__pycache__/\n",
-                 "bin/__pycache__/x.pyc": ""}
+                 "tests/only_cache/__pycache__/c.pyc": "", "kept.txt": "k", "new.txt": "", "build/out.bin": "",
+                 "build/tracked.bin": "", ".gitignore": "build/\n*.log\n__pycache__/\ncache/\n", "bin/__pycache__/x.pyc": "",
+                 "logs/a.log": ""}
         for rel, body in files.items():
             os.makedirs(os.path.join(root, os.path.dirname(rel)), exist_ok=True)
             with open(os.path.join(root, rel), "w", encoding="utf-8") as f:
                 f.write(body)
+        for rel in ("tests/empty", "tests/sub/nested/deeper", "outside_empty", "lib/deep/empty", "cache/inner"):
+            os.makedirs(os.path.join(root, rel))
+        os.chmod(os.path.join(root, "tests", "empty"), 0o750)
+        os.chmod(os.path.join(root, "kept.txt"), 0o640)
         os.symlink("kept.txt", os.path.join(root, "link"))
         env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
         env.update(GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL=os.devnull)
         for args in (["init", "-q"], ["add", "kept.txt", "link", ".gitignore", "tests/a.py"], ["add", "-f", "build/tracked.bin"]):
             subprocess.run(["git", "-C", root] + args, env=env, stdin=subprocess.DEVNULL, capture_output=True, check=True, timeout=60)
+        tests = ["tests", "tests/a.py", "tests/empty", "tests/ignored.log", "tests/only_cache", "tests/sub", "tests/sub/b.txt",
+                 "tests/sub/nested", "tests/sub/nested/deeper"]
         from unittest import mock
         with mock.patch.dict(os.environ, {"GIT_DIR": os.path.join(root, "no-such-repository"), "GIT_WORK_TREE": root}):
             got = _proof_checkout_files(root)
-        self.assertEqual(got, sorted(os.path.normpath(p) for p in [".gitignore", "build/tracked.bin", "kept.txt", "link", "new.txt",
-                                                                   "tests/a.py", "tests/ignored.log", "tests/sub/b.txt"]),
+        self.assertEqual(got, sorted(os.path.normpath(p) for p in tests + [".gitignore", "build", "build/tracked.bin", "kept.txt",
+                                                                            "lib", "lib/deep", "lib/deep/empty", "link",
+                                                                            "new.txt", "outside_empty"]),
                          "with a repository: tests/ whole but __pycache__, and outside it what git does not ignore")
-        with mock.patch.dict(os.environ, {"PATH": root}):     # no git to run: the tree's own files, the repository's left out
-            self.assertEqual(_proof_checkout_files(root),
-                             sorted(os.path.normpath(p) for p in [".gitignore", "build/out.bin", "build/tracked.bin", "kept.txt",
-                                                                  "link", "new.txt", "tests/a.py", "tests/ignored.log",
-                                                                  "tests/sub/b.txt"]),
-                             "with no git to run: every file but .git's and a __pycache__ directory's")
+        whole = sorted(os.path.normpath(p) for p in tests + [".gitignore", "bin", "build", "build/out.bin", "build/tracked.bin",
+                                                             "cache", "cache/inner", "kept.txt", "lib", "lib/deep",
+                                                             "lib/deep/empty", "link", "logs", "logs/a.log", "new.txt",
+                                                             "outside_empty"])
+        with mock.patch.dict(os.environ, {"PATH": root}):     # no git to run: the tree's own entries, the repository's left out
+            self.assertEqual(_proof_checkout_files(root), whole, "with no git to run: every entry but .git and __pycache__")
         shutil.rmtree(os.path.join(root, ".git"))
-        self.assertEqual(_proof_checkout_files(root),
-                         sorted(os.path.normpath(p) for p in [".gitignore", "build/out.bin", "build/tracked.bin", "kept.txt", "link",
-                                                              "new.txt", "tests/a.py", "tests/ignored.log", "tests/sub/b.txt"]),
-                         "with no repository: every file but .git's and a __pycache__ directory's")
+        self.assertEqual(_proof_checkout_files(root), whole, "with no repository: every entry but .git and __pycache__")
+        dst = os.path.join(os.path.realpath(tempfile.mkdtemp()), "copy")
+        self.addCleanup(shutil.rmtree, os.path.dirname(dst), True)
+        _proof_copy_into(root, dst)
+        copied = []
+        for d, dirs, names in os.walk(dst):
+            copied += [os.path.relpath(os.path.join(d, x), dst) for x in names + dirs]
+
+        def entry(path):
+            if not os.path.lexists(path):
+                return ("missing",)
+            if os.path.islink(path):
+                return "link", os.readlink(path)
+            if os.path.isdir(path):
+                return "dir", os.stat(path).st_mode & 0o7777
+            with open(path, "rb") as f:
+                return "file", os.stat(path).st_mode & 0o7777, f.read()
+        self.assertEqual((sorted(copied), {rel: entry(os.path.join(dst, rel)) for rel in whole}),
+                         (whole, {rel: entry(os.path.join(root, rel)) for rel in whole}),
+                         "THE COPY STEP: each entry of the population and nothing else, of its kind, with its mode and "
+                         "bytes, or its link")
         with self.assertRaises(ValueError):
             _reassert_proof([("a helper", "", {"x.py": ""}, {"ROMP_PROBE_HELPER": frozenset()})], real=True)
 
@@ -10111,19 +10223,25 @@ def _proof_context_roads():
         ("V2: a test with a mark", "item.get_closest_marker('filterwarnings') is not None", None))
 
 
-_COPY_ROAD_HOOK = textwrap.dedent('''\
+_COPY_ROAD_HOOK = textwrap.dedent("""\
 
 
     import json as _cr_json
+    import re as _cr_re
+
+    import pytest as _cr_pytest
 
     _CR_FACTS = {}
+    _CR_MODULES = []
+    _CR_ITEM_MODULES = {}
 
 
     def _cr_walk(top):
         out = []
         for d, dirs, files in os.walk(top):
-            out += [os.path.relpath(os.path.join(d, n), top) for n in files + [n for n in dirs if os.path.islink(os.path.join(d, n))]]
-            dirs[:] = [n for n in dirs if n != "__pycache__" and not os.path.islink(os.path.join(d, n))]
+            links = [n for n in dirs if os.path.islink(os.path.join(d, n))]
+            dirs[:] = [n for n in dirs if n != "__pycache__" and n not in links]
+            out += [os.path.relpath(os.path.join(d, n), top) for n in files + links + dirs]
         return out
 
 
@@ -10134,7 +10252,12 @@ _COPY_ROAD_HOOK = textwrap.dedent('''\
             if os.path.islink(theirs):
                 if not (os.path.islink(mine) and os.readlink(mine) == os.readlink(theirs)):
                     return False
-            elif os.path.islink(mine) or not os.path.isfile(mine) or os.path.realpath(mine) != os.path.join(real, rel):
+            elif os.path.islink(mine) or os.path.realpath(mine) != os.path.normpath(os.path.join(real, rel)):
+                return False
+            elif os.path.isdir(theirs):
+                if not os.path.isdir(mine):
+                    return False
+            elif not os.path.isfile(mine):
                 return False
             elif rel not in presence:
                 with open(mine, "rb") as a, open(theirs, "rb") as b:
@@ -10143,27 +10266,71 @@ _COPY_ROAD_HOOK = textwrap.dedent('''\
         return True
 
 
-    def _cr_facts():
+    def _cr_after(item):
+        before = _CR_MODULES[:_CR_MODULES.index(str(item.path))]
+        return any(_cr_re.fullmatch(__PROBE__, os.path.basename(m)) is None for m in before)
+
+
+    def _cr_facts(item):
         if not _CR_FACTS:
             for label, condition in __CONDITIONS__:
-                _CR_FACTS[label] = bool(eval(condition))
-            with open(os.path.join(__VALUES__, "%d.json" % os.getpid()), "w", encoding="utf-8") as f:
-                _cr_json.dump(_CR_FACTS, f)
+                _CR_FACTS[label] = bool(eval(condition, dict(globals(), item=item)))
         return _CR_FACTS
+
+
+    def pytest_collectstart(collector):
+        if isinstance(collector, _cr_pytest.Module):
+            _CR_MODULES.append(str(collector.path))
 
 
     def pytest_collectreport(report):
         for item in report.result:
-            if hasattr(item, "fixturenames") and all(_cr_facts().values()):
-                if "_dead_manager_port" in item.fixturenames:
-                    item.fixturenames.remove("_dead_manager_port")
-''')
-#   the hook _proof_copy_roads' conditions ride on, appended to a copy of tests/conftest.py, the verifier's plants' shape:
-#   a listed pytest_collectreport takes _dead_manager_port out of each test when every condition holds, each evaluated
-#   once per process in the conftest's own namespace and recorded, {label: value}, in <pid>.json under __VALUES__.
-#   _cr_walk lists a tree's files and links, less __pycache__, as _proof_checkout_files does; _cr_in_place holds each
-#   path under `base` to the checkout's: a link with the same target, else a file at that realpath under `base` (not a
-#   link, nor a file reached through one), with the checkout's bytes unless named in `presence`
+            if not hasattr(item, "fixturenames"):
+                continue
+            for fixture, road in (("_dead_manager_port", all(_cr_facts(item).values())),
+                                  ("_no_real_service_env", _cr_after(item)), ("_no_cli_scope", not _cr_after(item))):
+                if road and fixture in item.fixturenames:
+                    item.fixturenames.remove(fixture)
+
+
+    @_cr_pytest.hookimpl(tryfirst=True)
+    def pytest_collection_modifyitems(items):
+        for i in items:
+            _CR_ITEM_MODULES.setdefault(str(i.path), None)
+
+
+    def _cr_locked():
+        import fcntl
+        fd = os.open(__LOCK__, os.O_RDONLY)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return True
+        finally:
+            os.close(fd)
+        return False
+
+
+    def pytest_collection_finish(session):
+        with open(os.path.join(__VALUES__, "%d.json" % os.getpid()), "w", encoding="utf-8") as f:
+            _cr_json.dump({"facts": _CR_FACTS, "modules": _CR_MODULES, "item_modules": list(_CR_ITEM_MODULES),
+                           "selected": [os.path.basename(str(i.path)) for i in session.items], "locked": _cr_locked()}, f)
+""")
+#   the hook the copy test's roads ride on, appended to a copy of tests/conftest.py, the verifier's plants' shape: a
+#   listed pytest_collectreport takes _dead_manager_port out of each test when every condition of _proof_copy_roads and
+#   _proof_command_roads holds (each evaluated once per process, at the first test collected, in the conftest's own
+#   namespace with that test as `item`), _no_real_service_env out of each test of a module collected after a test
+#   module under tests/ (_cr_after: a module before it in the order this process collected them, not a probe module),
+#   and _no_cli_scope out of each test of a module collected before every one. At the end of its collection each
+#   process that collects (the run with no worker, each worker of the -n 2 run) records in <pid>.json under __VALUES__
+#   the conditions' values; the modules under tests/ in the order pytest collected them (pytest_collectstart, which
+#   pytest calls on this conftest for the modules of its own directory alone); the files of the tests collected in any
+#   directory, in their order, before -k deselects (a tryfirst pytest_collection_modifyitems, which pytest calls for
+#   the whole session); the file of each test left to run; and whether the checkout's tests/conftest.py is locked.
+#   _cr_walk lists a tree's files, links and directories, less __pycache__, as _proof_checkout_files does; _cr_in_place
+#   holds each path under `base` to the checkout's: a link with the same target, else an entry at that realpath under
+#   `base` (not a link, nor reached through one) of the checkout's kind, a directory or a file, a file with the
+#   checkout's bytes unless named in `presence`
 
 
 def _proof_copy_roads(checkout=None):
@@ -10172,10 +10339,11 @@ def _proof_copy_roads(checkout=None):
     own, `checkout`, default the one this module sits in), for one road over them all (_COPY_ROAD_HOOK). The verifier's
     three at the thirty-seventh commit, word for word: Q1, the package tests on one directory; Q2, tests.romp_load
     beside the conftest by realpath; Q3, Q1 and the conftest a module of the package. Every module of the package the
-    run loaded, under the conftest's directory by realpath. Every file of the checkout's tests/, walked there, in its
-    place beside the conftest with the checkout's bytes (conftest.py by presence: it is the plant), and nothing beside
-    the conftest but those and the probe modules. Every file of the checkout outside tests/ that _proof_checkout_files
-    lists, in its place under the conftest's parent with the checkout's bytes."""
+    run loaded, under the conftest's directory by realpath. Every entry of the checkout's tests/, walked there, in its
+    place beside the conftest, a directory as a directory and a file with the checkout's bytes (conftest.py by
+    presence: it is the plant), and nothing beside the conftest but those and the probe modules. Every entry of the
+    checkout outside tests/ that _proof_checkout_files lists, in its place under the conftest's parent, a file with the
+    checkout's bytes."""
     checkout = os.path.dirname(HERE) if checkout is None else checkout
     tests = os.path.join(checkout, "tests")
     outside = [p for p in _proof_checkout_files(checkout) if p.split(os.sep)[0] != "tests"]
@@ -10188,13 +10356,27 @@ def _proof_copy_roads(checkout=None):
         ("every module of the package loaded, under the conftest's directory",
          "all(os.path.realpath(m.__file__).startswith(%s + os.sep) for n, m in list(sys.modules.items()) "
          "if n.startswith('tests.') and getattr(m, '__file__', None))" % here),
-        ("every file of the checkout's tests/ in its place beside the conftest, with its bytes",
+        ("every entry of the checkout's tests/ in its place beside the conftest, a file with its bytes",
          "_cr_in_place(%s, %r, _cr_walk(%r), ('conftest.py',))" % (here, tests, tests)),
         ("nothing beside the conftest but the checkout's tests/ and the probe modules",
-         "all(os.path.basename(p).startswith('test_0_reassert_probe_') and os.sep not in p "
-         "for p in set(_cr_walk(%s)) - set(_cr_walk(%r)))" % (here, tests)),
-        ("every file of the checkout outside tests/ in its place under the conftest's parent, with its bytes",
+         "all(_cr_re.fullmatch(%r, p) for p in set(_cr_walk(%s)) - set(_cr_walk(%r)))" % (_PROOF_PROBE_NAME, here, tests)),
+        ("every entry of the checkout outside tests/ in its place under the conftest's parent, a file with its bytes",
          "_cr_in_place(os.path.dirname(%s), %r, %r)" % (here, checkout, outside)))
+
+
+def _proof_command_roads():
+    """THE CHILD'S COMMAND LINE, PLANTED (the verifier's finding at round 2's thirty-ninth commit of fork PR #894: a hook
+    keyed on the child's own --rootdir or -p no:cacheprovider was granted, and a real run of it read the module-level
+    write): (label, condition on `item`, a test of the child's) for each fact of the command line CI's pytest step runs
+    the suite with (`python -m pytest -q` from the checkout's root) that the child's shares, each on the road of
+    _COPY_ROAD_HOOK beside _proof_copy_roads'. The verifier's X2 and X1, word for word: no --rootdir given, and the
+    cache plugin loaded; and the rootdir the copy's root, where pytest puts it for a run from there. Read in the child
+    alone: this process's command line is its own (a sweep's run may pass -p no:cacheprovider)."""
+    return (
+        ("X2: no --rootdir on the command line", "not item.config.getoption('rootdir')"),
+        ("X1: the cache plugin loaded", "hasattr(item.config, 'cache')"),
+        ("the rootdir the copy's root, the conftest's parent",
+         "str(item.config.rootpath) == os.path.dirname(os.path.dirname(os.path.realpath(__file__)))"))
 
 
 if __name__ == "__main__":
