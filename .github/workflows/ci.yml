@@ -98,7 +98,9 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
       - name: Install pytest
-        # pytest-xdist runs the Run pytest step's two workers (-n 2; the reason is on that step).
+        # pytest-xdist: the Run pytest step passes -n on every cell, two workers on ubuntu-latest
+        # and -n 0, an in-process run, elsewhere, and pytest refuses -n without it (the reasons
+        # are on that step).
         run: python -m pip install --upgrade pip pytest pytest-timeout pytest-xdist
       - name: Install cryptography
         # cryptography: the kernel's Web Push soft dependency (plans/ios-app.md). Installed here
@@ -124,26 +126,32 @@ jobs:
         # timeout in test_session_move_live. Its timer waits on an Event, so it can never itself
         # consume a patched sleep. --durations names the slowest tests on every run so a creeping
         # one is visible before it stalls.
-        # Two workers (-n 2, 2026-09-25): serially the cells had reached the 25-minute cap they
-        # had then (this fork's main, run 35890814789: the 3.14t cell at 24 min 35 s). Measured on
-        # 2026-09-22 with Python 3.10 at this step's other flags on a four-CPU budget (a systemd
-        # CPUQuota of 400 percent; GitHub documents its Linux runner for a public repository at
-        # 4 CPUs and 16 GB), the suite took 1437 s serially and 739 s with two workers, whose
-        # run's cgroup memory peaked at 10.9 GB (decimal, page cache included); three workers
-        # peaked at 15.8 GB, near the 16 GB GitHub documents. The macOS cells run the same two
-        # workers unmeasured, on runners GitHub documents at 3 CPUs and 7 GB for a public
-        # repository (arm64).
+        # Two workers on the ubuntu-latest cells, none elsewhere (-n 2 and -n 0, 2026-09-25):
+        # serially the cells had reached the 25-minute cap they had then (this fork's main, run
+        # 35890814789: the 3.14t cell at 24 min 35 s). Measured on 2026-09-22 with Python 3.10 at
+        # this step's other flags on a four-CPU budget (a systemd CPUQuota of 400 percent; GitHub
+        # documents its Linux runner for a public repository at 4 CPUs and 16 GB), the suite took
+        # 1437 s serially at a cgroup memory peak of 6.0 GB and 739 s with two workers at 10.9 GB
+        # (decimal, page cache included), about 5 GB a worker; three workers peaked at 15.8 GB,
+        # near the 16 GB GitHub documents. The macOS cells stay serial under their 60-minute cap:
+        # GitHub documents that runner for a public repository at 3 CPUs and 7 GB (arm64), below
+        # the two-worker peak, and two workers have not been measured on it.
+        # The count keys on matrix.os, as timeout-minutes does, and names the one label the
+        # measurement ran on, rather than excluding macOS or matching every Linux runner
+        # (runner.os), so a runner the matrix adds later runs serially until it is measured.
+        # GitHub substitutes the expression into this line before the shell runs it. -n 0 is
+        # xdist's in-process run, and pytest refuses -n without xdist, so every cell installs it.
         # The job cap above and its pin in tests/test_ci_bats_bound.py are romp-on/romp PR #2130
         # as merged: their figures and run ids are romp-on/romp's Actions runs of its serial
         # suite. With two workers the measurement above puts this fork's Linux cells at about
         # half their serial time, well inside that cap.
-        # Under the workers a timeout ends the worker process running the hung test: xdist fails
-        # that test by name ("worker 'gw0' crashed while running '<test id>'") and the other tests
-        # run on. The thread dump pytest-timeout writes goes to that worker's stdout, which xdist's
-        # transport (execnet) points at /dev/null, so the log names the test but carries no stacks;
-        # run the named test alone (without -n) and the dump prints, its bottom frame the blocked
-        # primitive.
-        run: python -m pytest -q -n 2 --durations=10 --timeout=600 --timeout-method=thread
+        # Under the Linux cells' workers a timeout ends the worker process running the hung test:
+        # xdist fails that test by name ("worker 'gw0' crashed while running '<test id>'") and the
+        # other tests run on. The thread dump pytest-timeout writes goes to that worker's stdout,
+        # which xdist's transport (execnet) points at /dev/null, so the log names the test but
+        # carries no stacks; run the named test alone (without -n) and the dump prints, its bottom
+        # frame the blocked primitive.
+        run: python -m pytest -q -n ${{ matrix.os == 'ubuntu-latest' && '2' || '0' }} --durations=10 --timeout=600 --timeout-method=thread
 
   shell:
     name: Shell (bats, ${{ matrix.os }})
