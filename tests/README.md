@@ -178,28 +178,36 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   entry of `tests/` in place, directories included, and the checkout's other
   files around it (the copy leaves out what each clone keeps for itself: `.git`,
   what git ignores outside `tests/`, and `__pycache__`); only two probe modules
-  and two dummy modules are added. The child collects those four modules and no
-  other: it runs from the copy's root with the options of CI's pytest step (read
-  from `.github/workflows/ci.yml`), no `--rootdir` and the cache plugin loaded,
-  and is handed the four as files, so it collects the first probe module first,
-  then the two dummy modules, then the second probe module fourth. The run's
-  limit comes in three tiers. It refuses an unconditional removal of the fixture
-  (from every test), which is the class of the bug, and any removal keyed on a
-  fact of the first tier. First, matched by construction at no added cost: the
+  and two dummy modules are added for each form of command line below. The
+  child collects those four modules and no other: it runs from the copy's root
+  with no `--rootdir` and is handed the four as files, so it collects the first
+  probe module first, then the two dummy modules, then the second probe module
+  fourth. Each run is made in two forms of command line: CI's, with the options
+  of CI's pytest step (read from `.github/workflows/ci.yml`), so the cache
+  plugin is loaded, and a developer's, with none of those options and with
+  `-p no:cacheprovider -k reassert`, which blocks the cache plugin and
+  deselects none of the four. The run's limit comes in three tiers. It refuses
+  an unconditional removal of the fixture (from every test), which is the class
+  of the bug, and any removal keyed on a fact of the first tier. First, matched by construction at no added cost: the
   conftest and the probe modules in a directory named `tests`, which is a
   package, so the conftest imports as `tests.conftest` and each probe module as
   a module of `tests`; the conftest loaded when pytest starts; the first module
   collected and the fourth, so a hook keyed on a place third or later is caught;
   function tests and a `unittest.TestCase` in each; a run with no xdist worker
   (and none of the variables pytest-xdist sets in one) and, where pytest-xdist
-  is installed, one with `-n 2`; and CI's options. Code that stops the fixture
-  from running in any of those tests, named or not, is refused by the run.
+  is installed, one with `-n 2`; and the pair of forms, each of those runs made
+  in both: whether each option that one form gives and the other does not is
+  given (CI's `-q`, `--durations`, `--timeout` and `--timeout-method`, the
+  developer's `-p no:cacheprovider` and `-k`). The pair covers whether an option
+  is given, not its value. Code that stops the fixture from running in any of
+  those tests, keyed on those facts alone or on facts one run has together,
+  named or not, is refused by the run.
   Second, matchable at a cost and not matched here: the rest of the collection,
   meaning a module's exact place, which modules come before a test's module and
   after it, and how many (the child collects its four; a real run collects every
   test module under `tests/`, hundreds of them after most modules), and the
   run's arguments (the child hands its four modules as files, where CI's step
-  hands no path and a developer's run may hand `tests/`). Matching them takes a
+  hands no path and a developer's run may hand `tests/`). Matching these takes a
   child that collects every test module of `tests/`, about 40 s per child. When
   the child did that, at the fortieth commit of fork PR #894, this module ran
   for about six minutes where it had run for about one, which would put CI's
@@ -209,11 +217,18 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   earlier, on the module collected exactly third, on a module collected fifth or
   later, on a module that four or more modules follow, or on a directory among
   the arguments is granted, and under each road a real run of that copy reads
-  the value a module-level write or an earlier test left (planted). Third,
-  unmatchable at any cost: a hook condition keyed on an open-valued signal (a
-  mark, an environment variable, a host name, or another collection-time
-  signal), what each clone keeps for itself, and what a real test module's own
-  code does for its own tests. A copy of the conftest whose
+  the value a module-level write or an earlier test left (planted). Also in
+  this tier are the forms of command line the pair does not have: an option
+  neither form gives (`--rootdir`, `-x` or `-s`, say), and a combination of
+  options neither form has (the cache plugin blocked with no `-k`, as a sweep
+  of this suite may run). Each could be matched by more runs per case, one per
+  option or combination. A road on `--rootdir` given and one on the cache
+  plugin blocked with no `-k` are granted (planted; no committed test makes a
+  real run under either). Third, unmatchable at any cost: a hook condition
+  keyed on an open-valued signal (a mark, an environment variable, a host name,
+  an option's value such as a `--durations` of 5 where CI's step gives 10, or
+  another collection-time signal), what each clone keeps for itself, and what
+  a real test module's own code does for its own tests. A copy of the conftest whose
   `pytest_collectreport` takes the fixture out of each marked test is granted
   the licence, and a real run of that copy shows a marked test reading a
   module-level write (planted). This tier rests on an untampered run (pytest and
