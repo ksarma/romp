@@ -418,10 +418,9 @@ class ServedDashboardOverThePageKey(unittest.TestCase):
         if k:
             k.kill()
             k.wait()
-        o = getattr(cls, "other", None)
-        if o:
-            o.shutdown()
-            o.server_close()
+        if getattr(cls, "other", None):
+            cls.other.shutdown()                      # ends the other origin's serve_forever thread
+            cls.other.server_close()
         shutil.rmtree(getattr(cls, "lab", ""), ignore_errors=True)
 
     def _klog_tail(self):
