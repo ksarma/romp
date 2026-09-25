@@ -1796,7 +1796,8 @@ attributes() {   # <line>: a committed .gitattributes
     [[ "$output" == *"core.attributesFile"* ]]
     [[ "$output" == *"git push --no-verify"* ]]
     [[ "$output" != *"personal identifier"* ]]      # refused as unscanned, not as a finding: the scan could not read the file
-    ! remote_holds_main
+    run remote_holds_main
+    [ "$status" -ne 0 ]             # the remote holds no main (explicit, not a bare negation: round 10's corpus cost)
 }
 
 @test "the same file carrying NO banned string is refused on the premise alone: what the scan cannot read it cannot call clean; the remote holds nothing" {
@@ -1808,7 +1809,8 @@ attributes() {   # <line>: a committed .gitattributes
     [[ "$output" == *"notes.txt at the tip of refs/heads/main (${sha:0:10}) is text that its diff attribute (unset) hides from the identifier scan"* ]]
     [[ "$output" != *"personal identifier"* ]]
     [[ "$output" != *"BLOCKED"* ]]
-    ! remote_holds_main
+    run remote_holds_main
+    [ "$status" -ne 0 ]             # the remote holds no main (explicit, not a bare negation: round 10's corpus cost)
 }
 
 @test "a genuinely binary blob under the binary attribute passes: the scan never read binaries, and the attribute adds nothing" {
@@ -2041,7 +2043,8 @@ big_text_file() {   # <path> <last line>: a 150-byte text line, then the line gi
     [[ "$output" != *"at the tip of"* ]]
     [[ "$output" != *"personal identifier"* ]]
     [[ "$output" == *"git push --no-verify"* ]]
-    ! remote_holds_main
+    run remote_holds_main
+    [ "$status" -ne 0 ]             # the remote holds no main (explicit, not a bare negation: round 10's corpus cost)
 }
 
 @test "an explicit \"<path> diff\" line outranks the key: the same big text file is judged by content (a hit at the tip and in the commit), never as hidden" {
@@ -2134,7 +2137,8 @@ symlink_commit() {   # <path> <target> <message>: a committed symlink
     [[ "$output" != *"at the tip of"* ]]
     [[ "$output" != *"personal identifier"* ]]
     [[ "$output" == *"git push --no-verify"* ]]
-    ! remote_holds_main
+    run remote_holds_main
+    [ "$status" -ne 0 ]             # the remote holds no main (explicit, not a bare negation: round 10's corpus cost)
 }
 
 @test "an explicit \"link diff\" line does not reach a symlink: the same link under it is hidden by the key all the same and refused the same way, so the advice names the key as a link's remedy" {
@@ -3002,7 +3006,8 @@ is_octopus() {   # <sha>: three parents (rev-list --parents prints the commit an
     [[ "$output" == *"romp pre-push: notes.txt at the tip of refs/heads/main (${sha:0:10}) is text that its diff attribute (diff=set, binary) hides from the identifier scan, so the push is refused rather than scanned"* ]]
     [[ "$output" != *"notes.txt in commit ${sha:0:10} is text that"* ]]      # the tip holds the blob: one verdict, the tip's
     [[ "$output" != *"personal identifier"* ]]
-    ! remote_holds_main
+    run remote_holds_main
+    [ "$status" -ne 0 ]             # the remote holds no main (explicit, not a bare negation: round 10's corpus cost)
 }
 
 @test "a text file under a driver NAMED unspecified (diff.unspecified.binary true) is refused the same way; the remote holds nothing" {
@@ -3017,7 +3022,8 @@ is_octopus() {   # <sha>: three parents (rev-list --parents prints the commit an
     [[ "$output" == *"notes.txt at the tip of refs/heads/main (${sha:0:10}) is text that its diff attribute (diff=unspecified, binary) hides from the identifier scan"* ]]
     [[ "$output" != *"notes.txt in commit ${sha:0:10} is text that"* ]]      # the tip holds the blob: one verdict, the tip's
     [[ "$output" != *"personal identifier"* ]]
-    ! remote_holds_main
+    run remote_holds_main
+    [ "$status" -ne 0 ]             # the remote holds no main (explicit, not a bare negation: round 10's corpus cost)
 }
 
 @test "a driver merely NAMED unspecified, with no attribute naming it on any path, hides nothing: a clean push passes with nothing printed (the control: unspecified is also check-attr's answer for a path with no attribute)" {
@@ -3953,7 +3959,8 @@ commit_stamped_as() {   # <address> <path> <message>: one clean file, author and
     [[ "$output" == *"the ADDRESSES this clone is configured to use could not be read (git config --get-all user.email exited 128)"* ]]
     [[ "$output" == *"commit ${sha:0:10} is authored as <dev@zzsynthuser.example>: whether this clone is configured to use that address could not be read"* ]]
     [[ "$output" != *"not configured to use, whose domain"* ]]
-    ! remote_holds_main
+    run remote_holds_main
+    [ "$status" -ne 0 ]             # the remote holds no main (explicit, not a bare negation: round 10's corpus cost)
 }
 
 @test "the same failed read beside a commit stamped under a clean domain the clone did not choose is refused as unscanned naming the read alone, through a real push: no address line, since the domain is clean, and the remote holds nothing (the round 7 text passed it, the failure swallowed as no chosen address)" {
