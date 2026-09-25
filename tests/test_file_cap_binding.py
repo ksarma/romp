@@ -6,12 +6,14 @@ carries a per-file CAP instead: an HMAC under the session's page key of exactly 
 the URL names, presented WITH the session cookie. This pins that the cap authenticates that one file
 and no other: a different path, sid or host, or a differently-spelled path that resolves to the same
 file (a trailing slash, a dot segment, a double slash, a symlink to it), each needs its own cap and
-this one does not validate for it. The positive path (the cap for the exact spelling, with the cookie)
-is served.
+this one does not validate for it; and a cap made under another sign-in is refused beside this
+sign-in's session cookie. The positive path (the cap for the exact spelling, with the cookie) is
+served.
 
-Green here; red under a mutant that drops the (host, path, sid) binding from the cap (see
-build-checklist.md). Synthetic only: an invented serve token, files under a temp dir, no session
-state touched. No cap, session id or key VALUE is printed.
+Green here; red under a mutant that drops the (host, path, sid) binding from the cap, and under one
+that keys the cap by the serve token instead of the sign-in's page key (see build-checklist.md).
+Synthetic only: an invented serve token, files under a temp dir, no session state touched. No cap,
+session id or key VALUE is printed.
 """
 import os
 import socket
@@ -69,9 +71,10 @@ class CapBinding(unittest.TestCase):
         import shutil
         shutil.rmtree(cls.dir, ignore_errors=True)
 
-    def _file_status(self, path, sid=None, cap=None, host="", download=False):
-        """GET a local /file (host="") or /remote/<host>/file with the session cookie and the given
-        cap; return the status. A 403 is an auth refusal; anything else means the cap authorized."""
+    def _file_status(self, path, sid=None, cap=None, host="", download=False, sess=None):
+        """GET a local /file (host="") or /remote/<host>/file with the session cookie (SESS unless
+        `sess` names another sign-in's session) and the given cap; return the status. A 403 is an auth
+        refusal; anything else means the cap authorized."""
         base = "/file" if not host else "/remote/%s/file" % _q(host)
         url = base + "?path=" + _q(path)
         if sid is not None:
@@ -81,7 +84,7 @@ class CapBinding(unittest.TestCase):
         if cap is not None:
             url += "&cap=" + cap
         req = urllib.request.Request("http://127.0.0.1:%d%s" % (self.port, url))
-        req.add_header("Cookie", "%s=%s" % (CN, SESS))
+        req.add_header("Cookie", "%s=%s" % (CN, sess or SESS))
         try:
             with urllib.request.urlopen(req, timeout=10) as r:
                 return r.status
@@ -90,6 +93,17 @@ class CapBinding(unittest.TestCase):
 
     def _cap(self, path, sid, host=""):
         return km._file_cap(SESS, host, path, sid)
+
+    def test_a_cap_made_under_another_sign_in_is_refused(self):
+        # the cap is an HMAC under the page key of the sign-in that made it, so it serves only beside
+        # that sign-in's session cookie: another sign-in's cap for the very same (host, path, sid) is
+        # refused, and the same cap serves beside its own sign-in's cookie (so the refusal is the binding)
+        other = km._mint_session()
+        cap = km._file_cap(other, "", self.target, SID)
+        self.assertEqual(self._file_status(self.target, SID, cap), 403,
+                         "a cap made under another sign-in is refused beside this sign-in's cookie")
+        self.assertEqual(self._file_status(self.target, SID, cap, sess=other), 200,
+                         "the same cap serves beside the cookie of the sign-in that made it")
 
     def test_the_exact_cap_with_the_cookie_serves_the_file(self):
         cap = self._cap(self.target, SID)

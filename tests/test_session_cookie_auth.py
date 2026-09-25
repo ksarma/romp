@@ -226,6 +226,11 @@ class CookiePlusKey(_Server):
     def test_the_key_with_a_forged_foreign_origin_is_refused(self):
         self.assertEqual(self._status("/sessions", cookie=SESS, key=KEY, origin="http://evil.example"), 403)
 
+    def test_the_socket_dial_checks_the_origin_as_the_other_routes_do(self):
+        # the cookie and k= that open the socket from the dashboard's own origin (the 101 above) are
+        # refused on an upgrade whose Origin is another site's: the Origin gate covers the upgrade too
+        self.assertEqual(self._ws_status("app=chat&k=" + KEY, cookie=SESS, origin="http://other.example"), 403)
+
 
 class DomainSeparation(_Server):
     """Condition 1: a value minted for one role is refused where another role's value is required.
