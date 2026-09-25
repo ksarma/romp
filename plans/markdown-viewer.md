@@ -9014,7 +9014,7 @@ that step in the vscode-extension job and the switch (ROMP_BROWSER_LEGS_REQUIRE,
 ui/webview/browser-legs-require.ts): where the tree carries none of the four it holds this sentence, where it carries all
 four it holds every leg to a roster line outside the exclusions and the roster's own tree test to exist, and a tree with
 some of the four it refuses, naming them (the file review's round 8, extra8-2: the legs were the feature's evidence and none of them ran where
-landing is gated, the gating run's log showing every browser scenario of theirs as SKIP). Twenty standing suites were re-aimed, not undone:
+landing is gated, the gating run's log showing every browser scenario of theirs as SKIP). Twenty-one standing suites were re-aimed, not undone:
 ui/webview/file-view-text-size.test.ts (its real-module bar leg at 380, 420, 480 and 600 px in the chat and feed modals
 reads the group hidden on a fresh open and, once a link is followed, measures the two glyphs among the actions, case 8), ui/webview/file-view.test.ts and ui/webview/file-view-links.test.ts
 (the delegate's open through openFromViewer; the model import), ui/webview/file-view-figure-error.test.ts and
@@ -9065,7 +9065,10 @@ extra5-2, dropDimmingClasses's classList.remove, the classes the sheets dim read
 figure) and ui/webview/spacer-measure.test.ts (its roster of
 the modules under ui/webview that no page bundle loads names css-rules.mjs, host-sheets.mjs and source-units.ts, the readers
 this follow-on's tests import, and its closed multiset of the writes of a view property names the trail's two, trailSetView's
-and moveTrail's, each kept in the page's trail state and never posted). The guide's Links in a file paragraph gained two sentences, the trail's and
+and moveTrail's, each kept in the page's trail state and never posted), and since the fixes for the file review's round 16,
+extra5-2, ui/webview/file-view-decisions.test.ts (its pin on the word the viewer no longer uses for the editor's decisions lets
+the one quoted page class inside SHEET_DIM_CLASSES's literal through by value, since the list holds another page's tree-node
+class as the sheets spell it). The guide's Links in a file paragraph gained two sentences, the trail's and
 the figure control's, and the browser plan's navigation-stack section (plans/file-browser.md) a pointer sentence.
 tools/markdown-viewer-plan-linknav.test.mjs holds this section to the tree: the section is present once after "## Out of
 scope" and carries the ask, what existed, the six decisions, the tests and the open points in that order; the trail

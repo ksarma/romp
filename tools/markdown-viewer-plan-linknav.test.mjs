@@ -841,9 +841,10 @@ test('every test module that names the follow-on in its own text is named in the
 });
 
 test('the re-aimed sentence: its count is the number of pre-existing test modules the diff since the merge-base modifies, each named in it (behind L6\'s two-part gate, since the count is a claim about the branch\'s delta; the file review\'s round 7, tests-3: the text-keyed rule cannot see a module whose own text does not name the follow-on)', (t) => {
-  const m = /(?:^| )(\w+) standing suites were re-aimed, not undone:/.exec(section);   // `section` is flat: one space where the line broke
+  const m = /(?:^| )(\w+(?:-\w+)?) standing suites were re-aimed, not undone:/.exec(section);   // `section` is flat: one space where the line broke
   assert.ok(m, 'the Tests paragraph counts the re-aimed suites');
-  const count = NUMBER_WORDS[m[1].toLowerCase()] ?? Number(m[1]);
+  const [tens, unit] = m[1].toLowerCase().split('-');   // a compound number word past twenty (twenty-one) is the tens and the unit
+  const count = unit !== undefined ? (NUMBER_WORDS[tens] >= 20 && NUMBER_WORDS[unit] < 10 ? NUMBER_WORDS[tens] + NUMBER_WORDS[unit] : NaN) : NUMBER_WORDS[tens] ?? Number(m[1]);
   assert.ok(Number.isInteger(count) && count > 0, 'the count is a number word: ' + m[1]);
   const end = section.indexOf("The guide's Links in a file paragraph gained", m.index);
   assert.ok(end > m.index, 'the sentence runs to the guide\'s sentence');
