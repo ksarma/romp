@@ -3831,8 +3831,8 @@ class TheCountersOneSite(unittest.TestCase):
         call of a name in _DYNAMIC_LOOKUPS or _DICT_READS, the slice, the arguments and the keyword values walked (the consumer
         clause of _loader_births, copied). Its three receiver kinds have their pin, the clause run first in this case over a
         synthetic file: a constant containing the name is named at a subscript key and at a call of each name of the two lists, and
-        by nothing at a call of a name on neither, so a kind dropped, or the calls widened past the lists, reds (review round 11,
-        tests-1 and extra6-1). That clause fails closed: a constant that only contains the name, in any case, fails
+        by nothing at a call of print, a name on neither, so a kind dropped from the clause reds, and so does the clause widened to
+        read print's arguments, every call's among them (review round 11, tests-1 and extra6-1). That clause fails closed: a constant that only contains the name, in any case, fails
         the case at one of those receivers even when it reaches no counter (os.environ.get of a variable named
         ROMP_NUDGE_WALK_STATS_TRACE, say; a verifier of the clause planted it in the kernel and this case failed naming the line),
         and a legitimate one would need an exemption row with its reason, the shape _loader_births states for its whole-spelling
@@ -3967,7 +3967,7 @@ class TheCountersOneSite(unittest.TestCase):
         road a case drives and asserts memos.nudgeWalk.loads on, so a write on a road no such case drives is caught by nothing, a driven
         road among them: the wake sweep's skip branch for a failed or moot record, reached on those rows of the case whose records the
         sweep does not own, which does not read the counter (the site case, whose pin of the contained-name clause names a constant
-        containing the name at a subscript key and at a call of each name of the two lists and none at a call of a name on neither);
+        containing the name at a subscript key and at a call of each name of the two lists and none at a call of print, on neither);
         the counter census's population, the files the glob
         kernel/*.py matches in the kernel's real directory, non-recursive, each read as text, the case failing by name on any whose
         text as the interpreter decodes it (importlib.util.decode_source over its bytes) differs from that read, and each whose text
@@ -4188,7 +4188,9 @@ class TheCountersOneSite(unittest.TestCase):
         # key, at a call of each name of _DYNAMIC_LOOKUPS (by bare name) and of _DICT_READS (by attribute), and at a call of a name on
         # neither list
         held, unlisted = "x" + name, "print"          # held contains the name and reads as it whole under none of _door_text's transforms
-        self.assertNotIn(unlisted, _DYNAMIC_LOOKUPS + _DICT_READS, "the unlisted receiver is on neither list")
+        self.assertTrue(_DYNAMIC_LOOKUPS and _DICT_READS and unlisted not in _DYNAMIC_LOOKUPS + _DICT_READS,
+                        "each list has a name to plant a row at (a derived population fails on empty), and the unlisted receiver is on "
+                        "neither list")
         rows = ([("globals()[%r]" % held, "a subscript key")] + [("%s(%r)" % (m, held), "a call of %s" % m) for m in _DYNAMIC_LOOKUPS]
                 + [("R.%s(%r)" % (m, held), "a call of %s" % m) for m in _DICT_READS] + [("%s(%r)" % (unlisted, held), None)])
         text = "".join(r + "\n" for r, _kind in rows)
@@ -4197,7 +4199,7 @@ class TheCountersOneSite(unittest.TestCase):
         self.assertEqual(got, want, "the contained-name clause over a synthetic file holding one constant that contains %s per line: named "
                                     "at a subscript key and at a call of each name of _DYNAMIC_LOOKUPS and of _DICT_READS, each with the "
                                     "receiver it reaches, and named by nothing at a call of %s, a name on neither list, so a receiver kind "
-                                    "dropped from the clause, or its calls widened past the two lists, reds here (review round 11, tests-1 "
+                                    "dropped from the clause, or the clause widened to read that call's arguments, reds here (review round 11, tests-1 "
                                     "and extra6-1); (line, receiver) got %r, want %r" % (name, unlisted, got, want))
         # the admitted forms' pin: the four forms admitted in a synthetic module, and each other form listed refused by line
         accept = ("%s = {'loads': 0}\n"
@@ -4241,7 +4243,8 @@ class TheCountersOneSite(unittest.TestCase):
                                       "assignment of its dict display, a plain or augmented store to a constant key, `.get` with a constant "
                                       "key, or a `dict(...)` copy; any other form (among them an alias, a key that is not a constant, a method "
                                       "that writes, a second definition) could write the counter where this census does not read, and the "
-                                      "admitted forms' pin above holds the four both ways: %s" % (name, "; ".join(outside)))
+                                      "admitted forms' pin above reds when one of the four is dropped or a form it lists is admitted: %s"
+                                      % (name, "; ".join(outside)))
         # every other spelling of the counter's name, in each file the glob kernel/*.py matches, non-recursive, whose text holds it
         # in any case (a file outside that glob, in cli/, postal/ or any other directory, in a subdirectory of kernel/, or in a file
         # of kernel/ not named *.py, is not read): a node naming it in an identifier field its class declares (in the kernel a Name
