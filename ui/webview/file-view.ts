@@ -2863,8 +2863,10 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // by a pinch zoom of the viewer's page or of a same-origin page framing it, as the dashboard frames it (the file review's
   // round 15, extra5-2), opens nothing while nothing is shown. Since the file review's round 16, extra5-1, the key is the one
   // gate's too: its press is read at its first keydown (repeat false) by signShown, in view and uncovered, the verdict kept for
-  // that press, and a refused press opens nothing and reveals the control (revealSign; the keyboard already holds it), so the
-  // next press opens; a control partly in view counts as in view. A held key's repeats read that verdict: after a refused keydown, or with no first keydown seen on the
+  // that press, and a refused press opens nothing and reveals the control (revealSign; the keyboard already holds it), closing the
+  // viewer's own text-size flyout too if it is open, since no other key but Escape closes it and it can stand over the control (the
+  // file review's round 16, extra5-1: a second Enter under it was refused as the first was), so the next press opens; a control
+  // partly in view counts as in view. A held key's repeats read that verdict: after a refused keydown, or with no first keydown seen on the
   // control, a repeat is cancelled too, so it neither clicks nor presses the control; after a shown one, a repeat is read in view
   // at its own event, as before. Space clicks a button on its keyup, which is cancelled when its press was refused and otherwise
   // read in view at the release, so a Space pressed in view and released out of view opens nothing; no repeat clears a refusal,
@@ -2886,7 +2888,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     if (ev.repeat) { if (keyPress.get(ev.key) !== true || !controlInView(c!)) ev.preventDefault(); return; }
     const shown = signShown(c!);
     keyPress.set(ev.key, shown);
-    if (!shown) { ev.preventDefault(); revealSign(c!); }
+    if (!shown) { ev.preventDefault(); if (zoomOpen) zoomOpen.close(); revealSign(c!); }   // the viewer's own text-size flyout is closed too, so the next press finds the control uncovered where the flyout was over it
   };
   body.addEventListener("keydown", keyOnHiddenWebControl);
   body.addEventListener("keyup", keyOnHiddenWebControl);
@@ -4461,14 +4463,66 @@ const SHEET_DIM_CLASSES: ReadonlySet<string> = new Set([
  *  a fence's lines, and before that pass, since the viewer's own code rows and Copy buttons wear listed classes and are made there;
  *  before the anchors' pass too, which gives a dead link its own fv-dead. Its cost: an author's element of a page class around a
  *  picture loses what that class gave it. The chat's md() does not run it (md-sanitize.ts is unchanged), and an author element laid
- *  over a figure rather than around it is the one gate's to read (signUncovered: a sign under an element a press would reach
- *  opens nothing). */
+ *  over a figure rather than around it is the one gate's to read: dropPressThrough takes off the author's markup what would let a
+ *  press pass through such an element, so a press there reaches it, and signUncovered refuses a sign under it. */
 function dropDimmingClasses(root: Element): void {
   root.querySelectorAll("img, image").forEach((fig) => {
     for (let e: Element | null = fig; e && e !== root; e = e.parentElement) {
       const dim = (e.getAttribute("class") || "").split(/\s+/).filter((c) => SHEET_DIM_CLASSES.has(c));
       if (dim.length) e.classList.remove(...dim);
     }
+  });
+}
+/** The classes the page's sheets let a press pass through, every one (the file review's round 16, extra5-1, the covered sign): each
+ *  class a rule of a sheet some page of either host loads (ui/webview/host-sheets.mjs hostSheets) names where that rule sets
+ *  pointer-events to any value but auto, or an animation whose keyframes do, taken from the rule's subject as SHEET_DIM_CLASSES's
+ *  are (the classes of its last compound outside :not() and :has(), or, where that names none, the classes of its other compounds,
+ *  since the property is inherited and `.x span` lets a press pass through a span inside an x); a rule on a pseudo-element counts
+ *  for its element's class. The hit test at a gesture's start (elementFromPoint, signUncovered) does not see an element such a rule
+ *  reaches, and neither does elementsFromPoint (measured in Chromium, Firefox and WebKit), so an author's element of one of these
+ *  laid over a picture (locate-toast: fixed, opaque, pointer-events none) painted over the web control while the gate read the
+ *  control uncovered and the tab opened; so dropPressThrough takes them off every element of a file document's author markup. Held
+ *  to the sheets both ways by file-figure-open.test.ts, which derives the list by this rule, names each class the sheets let a press
+ *  pass through that the list lacks and each listed class they no longer do, and names each rule that sets the property with no class
+ *  to take and no id in its subject: an author's id is prefixed user-content-, so a rule keyed on an id reaches no author element,
+ *  while one keyed on an element or an attribute alone would reach one, and no drop of a class undoes it. */
+const SHEET_PRESS_THROUGH_CLASSES: ReadonlySet<string> = new Set([
+  "chat-theme-yatharth", "cmt-outline", "cmt-rail", "dismissing", "drop-over", "emoji-cat", "emoji-cats", "emoji-cell", "expanded",
+  "fc-overlay-off", "fc-region-chip", "feed-sess-head", "feed-toast", "fitem", "fitem-absorbing", "fitem-flying", "fsm-chips",
+  "glow-ruler", "gone", "locate-toast", "off", "rail-band", "rail-day", "rail-sticky", "romp-tl-tip", "rs-jrow", "rs-off", "rs-row",
+  "rs-sub", "scroll-marks", "sending", "sess-exit", "tab-group-break", "tab-row-line", "tab-row-sentinel", "tab-tip", "tg-child",
+  "tg-last", "think-clamp", "turn-toolgroup", "tx-gap", "tx-loading-anchor", "tx-spacer"
+]);
+/** The property a declaration of a style attribute's text names, read as CSS reads it: comments already taken out by the caller,
+ *  each escape in the name resolved (a backslash and up to six hex digits with one optional space after, or a backslash and any
+ *  other character), trimmed and lower-cased; empty for a declaration with no colon. */
+function declaredProperty(decl: string): string {
+  const at = decl.indexOf(":");
+  if (at < 0) return "";
+  return decl.slice(0, at).replace(/\\([0-9a-fA-F]{1,6})[ \t\n\r\f]?|\\([^\n\r\f0-9a-fA-F])/g, (_, hex: string | undefined, ch: string | undefined) => (hex ? String.fromCodePoint(Math.min(parseInt(hex, 16), 0x10ffff)) : ch || "")).trim().toLowerCase();
+}
+/** A file document's author markup with what lets a press pass through an element taken off it, so the hit test at a gesture's start
+ *  reads every author element a picture's sign lies under (signUncovered; the file review's round 16, extra5-1, the covered sign): on
+ *  the sanitizer's body, before any pass of the viewer's own, every element loses the classes of SHEET_PRESS_THROUGH_CLASSES, the
+ *  inert attribute (the sanitizer keeps it, and the hit test skips an inert element and everything inside it, in Chromium, Firefox and
+ *  WebKit alike), and each pointer-events declaration of its style attribute (the sanitizer's colour-only rule, md-sanitize.ts
+ *  colorOnlyStyle, drops one already; this keeps the drop the viewer's own, the name read as CSS reads it, declaredProperty, over the
+ *  attribute's text with its comments taken out, and the attribute untouched where it holds none). Every element, not a figure's
+ *  ancestors alone: an element laid over a picture may stand anywhere in the document, and the property is inherited from any
+ *  ancestor of it. Its cost: an author's element of one of these page classes loses what that class gave it, and an inert part of a
+ *  note takes presses. The chat's md() does not run it (md-sanitize.ts is unchanged). */
+function dropPressThrough(root: Element): void {
+  root.querySelectorAll("[class], [inert], [style]").forEach((e) => {
+    const pass = (e.getAttribute("class") || "").split(/\s+/).filter((c) => SHEET_PRESS_THROUGH_CLASSES.has(c));
+    if (pass.length) e.classList.remove(...pass);
+    e.removeAttribute("inert");
+    const style = e.getAttribute("style");
+    if (style === null) return;
+    const decls = style.replace(/\/\*[\s\S]*?(?:\*\/|$)/g, "").split(";");
+    const kept = decls.filter((d) => declaredProperty(d) !== "pointer-events");
+    if (kept.length === decls.length) return;
+    const text = kept.map((d) => d.trim()).filter(Boolean).join("; ");
+    if (text) e.setAttribute("style", text); else e.removeAttribute("style");
   });
 }
 // Markdown rendered as the prose it means (the user 2026-08-09: Rendered is the default, Raw one click
@@ -4518,6 +4572,7 @@ function mdBlock(text: string, doc?: MdDocLoc): HTMLElement {
   // tag as HTML (results).
   const clean = sanitizeMd(dirty, mintHeadingIds);   // the sanitized <body>: DOMPurify's own document's, which never loads (below)
   if (doc && doc.kind === "file") dropDimmingClasses(clean);   // an author's dimming class off every figure's ancestors, before any pass of the viewer's own (dropDimmingClasses)
+  if (doc && doc.kind === "file") dropPressThrough(clean);     // and off every author element what would let a press pass through it, so the hit test reads it (dropPressThrough)
   // Fenced blocks: highlight only a language the fence NAMES and this bundle registers (the same no-guessing rule as
   // langFor; an unnamed block stays plain rather than being painted at random). Then, for EVERY fence, named or not, the
   // chat's own dress (code-block.ts): the per-line rows that number the lines and make a soft-wrap read distinctly from a
@@ -5493,7 +5548,8 @@ function signShown(sign: Element): boolean {
 /** Whether nothing covers the sign where it is in view: the element at five sample points of `part`, the in-view part of its box
  *  in its own window's coordinates, is the sign or inside it, in the sign's own document (elementFromPoint, which reads the element
  *  a press there would reach, so it sees the viewer's Outline popover, the text-size flyout and an author's element laid over the
- *  figure that takes a press, while a control transparent at rest still counts as its own). The samples are the part's centre and its four quarter points:
+ *  figure, from whose markup dropPressThrough has taken the page classes, the inert attribute and the style declarations that would
+ *  let a press pass through it, while a control transparent at rest still counts as its own). The samples are the part's centre and its four quarter points:
  *  inside the part, since a sign partly in view is in view and samples over its whole box meet the chrome above the body where
  *  the box leaves it (the sliver of a control's bottom inside the body); and a quarter of the way in, since the control's corners
  *  are rounded, and under a body zoom of 1.25 a point 2px in from a corner falls outside the curve onto the picture. A same-origin
@@ -5515,8 +5571,8 @@ function signUncovered(sign: Element, part: ViewBox): boolean {
  *  and a pointer's or a finger's refusal leaves the keyboard where it was, as no press of the pointer ever focuses the web control
  *  (the file review's round 14, ui-1 with extra9-1; its round 16, extra5-1, kept that). Where it cannot put the sign on the
  *  screen the gate stays closed, stated limits measured in Chromium: what covers the sign it cannot move (a press outside the
- *  Outline popover or the text-size flyout closes it, no key but Escape closes the flyout, and an author's element laid over the
- *  figure stays); and from the chat page's modal framed by the dashboard it pans no visual viewport of a pinch-zoomed top page,
+ *  Outline popover or the text-size flyout closes it, the key gate closes the flyout on a refused key, and an author's element laid
+ *  over the figure stays); and from the chat page's modal framed by the dashboard it pans no visual viewport of a pinch-zoomed top page,
  *  since the viewer's card is fixed in its frame (the viewer as the top page and the Files pane's frame pan), so there a gesture
  *  opens nothing until the reader pans by hand. */
 function revealSign(sign: Element): void {

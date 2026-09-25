@@ -3047,11 +3047,13 @@ for (const surface of ["chat", "feed", "pane"] as Surface[]) for (const width of
 // - covered signs (decisions 4 and 5), each red at the head the file review's round 16 read by one open: the Outline popover over the control of a picture
 //   490 wide, a click and a tap on the picture's visible part, the popover closed by that press, and a second gesture then opens once;
 //   the text-size flyout over the same control with its top 3px inside the body, a click and a tap the same way, and the keyboard,
-//   Tab to the control with the flyout opened by Enter still open, then Enter, which opens nothing, and a second Enter nothing either,
-//   since no key closes the flyout (the stated limit of a reveal that cannot uncover); an author's element of two page classes laid
-//   over the figure (`picker-overlay tx-starting`: fixed, over the whole Rendered box), Tab then Enter, fine and under touch, opening
-//   nothing twice (the disclosed cost: such an element keeps the picture from opening at all), and a tap there, which the element
-//   itself takes, opening nothing at either head (a guard);
+//   Tab to the control with the flyout opened by Enter still open, then Enter, which opens nothing and closes the flyout, the viewer's
+//   own chrome, since no other key but Escape closes it, and a second Enter, which opens once (red under the gate before the key's
+//   refusal closed the flyout by the second Enter, the flyout still open); an author's element of two page classes laid over the
+//   figure (`picker-overlay tx-starting`: fixed, over the whole Rendered box), Tab then Enter, fine and under touch, opening nothing
+//   twice (the disclosed cost: such an element keeps the picture from opening at all), and a tap there, which the element itself
+//   takes, opening nothing at either head (a guard); and an author's element a press would pass through, whose page class, style
+//   declaration or inert attribute the viewer takes off (dropPressThrough; the block before the middle button's guard says the rest);
 // - the middle button (fact 1 of the rulings): on the picture with its control out of view, on the control and on the picture in view,
 //   no open at either head, the auxclick firing (a guard);
 // - the mark, under touch emulation: a picture from the web under the floor wearing the mark, scrolled wholly out of the body, and a
@@ -3345,7 +3347,7 @@ for (const surface of ["chat", "pane"] as Surface[]) {
       g.cell("the second gesture's opens", [1, 1], opensOf(await g.opens()));
     });
   });
-  test("in a browser " + gateOn("fine", surface).replace("a fine click", "a fine pointer") + ", the one gate's covered sign, the text-size flyout from the keyboard (the coordinator's decisions 4 and 5): Enter on the zoom glyph opens the flyout, Tab walks on to the web control of a picture 490 wide with the flyout still open over it, and Enter there opens nothing, and a second Enter nothing either, since no key but Escape closes the flyout and the reveal cannot uncover the control (the stated limit of a reveal that cannot bring the sign into view; red at the head the file review's round 16 read by one open on the first Enter)", { timeout: 180000 }, async (t) => {
+  test("in a browser " + gateOn("fine", surface).replace("a fine click", "a fine pointer") + ", the one gate's covered sign, the text-size flyout from the keyboard (the coordinator's decisions 4 and 5, and the coordinator's word on the key's reveal): Enter on the zoom glyph opens the flyout, Tab walks on to the web control of a picture 490 wide with the flyout still open over it, and Enter there opens nothing and closes the flyout, the viewer's own chrome, since no other key but Escape closes it, and a second Enter opens once (red at the head the file review's round 16 read by one open on the first Enter, and under the gate before the key's refusal closed the flyout by the second Enter, which opened nothing with the flyout still open)", { timeout: 180000 }, async (t) => {
     const rec: Record<string, unknown> = { scene: "flyout keys" };
     await gateCase(t, "fine", surface, COVER_TEXT, rec, async (g) => {
       await g.place("w490", 3);
@@ -3360,9 +3362,10 @@ for (const surface of ["chat", "pane"] as Surface[]) {
       rec.pre = { ...pre, tabs, read: r };
       assert.ok(pre.open && pre.overCentre && pre.active && r.inView, "the keyboard on the control, in view under the open flyout (a precondition): " + JSON.stringify(rec.pre));
       await g.page.keyboard.press("Enter");
-      g.cell("the first Enter's opens", [0, 0], opensOf(await g.opens()));
+      g.cell("the first Enter's opens, and the flyout still open after it", [[0, 0], false], [opensOf(await g.opens()), await g.page.evaluate(() => !(document.querySelector(".fileview-zoom-menu") as HTMLElement).hidden)]);
+      g.cell("the keyboard still on the control after the first Enter", true, await g.page.evaluate(() => document.activeElement === (window as any).__ctl("w490")));
       await g.page.keyboard.press("Enter");
-      g.cell("the second Enter's opens, the flyout still open", [[0, 0], true], [opensOf(await g.opens()), await g.page.evaluate(() => !(document.querySelector(".fileview-zoom-menu") as HTMLElement).hidden)]);
+      g.cell("the second Enter's opens, and the flyout still open", [[1, 1], false], [opensOf(await g.opens()), await g.page.evaluate(() => !(document.querySelector(".fileview-zoom-menu") as HTMLElement).hidden)]);
     });
   });
   for (const device of ["fine", "touch"] as GateDevice[]) test("in a browser " + gateOn(device, surface).replace("a fine click", "a fine pointer") + ", the one gate's covered sign, an author's element laid over the figure (the coordinator's decisions 4 and 5): `<div class=\"picker-overlay tx-starting\">` after a loaded remote picture computes position fixed over the Rendered box; the body focused and Tab to the web control, then Enter opens nothing, and a second Enter nothing either (the disclosed cost: an overlay the reader cannot dismiss keeps that picture from opening; red at the head the file review's round 16 read by one open on the first Enter); a tap at the picture's point lands on the element itself and opens nothing at either head (a guard)", { timeout: 180000 }, async (t) => {
@@ -3385,6 +3388,62 @@ for (const surface of ["chat", "pane"] as Surface[]) {
         await g.gesture("touch", r.pt.x, r.pt.y);
         g.cell("guard: a tap at the picture's point, which the element takes (" + r.hit + "), opens", [0, 0], opensOf(await g.opens()));
       }
+    });
+  });
+}
+// ── what lets a press pass through an author's element, off the markup (the file review's round 16, extra5-1, the covered sign) ── The
+// hit test at a gesture's start (elementFromPoint) reads the element a press would reach, and a press passes through an element a page
+// class sets pointer-events none on, one whose style attribute does, and an inert one, so such an element painted over the web control
+// while the gate read the control uncovered and the tab opened (elementsFromPoint skips them too, measured in Chromium, Firefox and
+// WebKit, so a read of the stack does not see them either). file-view.ts dropPressThrough takes the three off a file document's author
+// markup before any pass of the viewer's own. Four scenes, each after a loaded remote picture 300 by 200 near the report's top: the
+// locate-toast shape (a page class that sets position fixed, an opaque ground and pointer-events none) over the picture and its
+// control, whose class goes, so the element stands in the flow below the picture and a gesture opens with the control shown; and three
+// shapes of the full-screen overlay the gate refuses under (picker-overlay tx-starting): with a page class that sets pointer-events none
+// (fc-overlay-off), with that declaration in its style attribute, and inert, each of which the drop turns back into an element that
+// takes the press. The inline scene opens nothing at every head that carries the gate: the sanitizer's colour-only rule drops the
+// declaration before the viewer reads it (md-sanitize.ts colorOnlyStyle), so the viewer's own drop is red only under a sanitizer that
+// keeps the declaration, recorded in the checklist beside the head's green.
+const PT_WORDS = Array.from({ length: 260 }, (_, i) => "word" + (i % 17)).join(" ");
+const PT_OVERLAY = (cover: string): string => "# Report\n\n" + PARA(1) + "\n\n![ov](" + WEB + "/ov.svg)\n\n" + cover + "\n\n" + Array.from({ length: 12 }, (_, i) => PARA(i + 3)).join("\n\n") + "\n";
+const PRESS_THROUGH: Array<{ scene: string; what: string; text: string }> = [   // each element carries the id pt, which the sanitizer prefixes (user-content-pt), for the read to find it whatever its classes
+  { scene: "toast", what: "the locate-toast shape by its page class, `<div class=\"locate-toast\">` holding words", text: "# Report\n\n" + PARA(1) + "\n\n![ov](" + WEB + "/ov.svg)\n\n" + '<div id="pt" class="locate-toast">' + PT_WORDS + "</div>" + "\n" },
+  { scene: "class", what: "the overlay with a page class that sets pointer-events none, `<div class=\"picker-overlay tx-starting fc-overlay-off\">`", text: PT_OVERLAY('<div id="pt" class="picker-overlay tx-starting fc-overlay-off"></div>') },
+  { scene: "inline", what: "the overlay with pointer-events none in its style attribute", text: PT_OVERLAY('<div id="pt" class="picker-overlay tx-starting" style="pointer-events: none"></div>') },
+  { scene: "inert", what: "the overlay inert, `<div class=\"picker-overlay tx-starting\" inert>`", text: PT_OVERLAY('<div id="pt" class="picker-overlay tx-starting" inert></div>') },
+];
+for (const surface of ["chat", "pane"] as Surface[]) for (const device of ["fine", "touch"] as GateDevice[]) for (const pt of PRESS_THROUGH) {
+  test("in a browser " + gateOn(device, surface).replace("a fine click", "a fine pointer") + ", the one gate's covered sign, an author's element a press would pass through, " + pt.what + " (the file review's round 16, extra5-1, the covered sign): " + (pt.scene === "toast" ? "after the paint the element holds no class the sheets let a press pass through and stands in the flow, off the control, so a gesture on the picture and Enter on the control each open once with the control shown" : "after the paint the element holds no class, attribute or style declaration that lets a press pass through it, a press at the control's centre reaches it, and a gesture at the picture's point and Enter on the control each open nothing") + " (red at the head the file review's round 16 read, which had no gate, and " + (pt.scene === "inline" ? "green under the gate by design, since the sanitizer's colour-only rule drops the declaration: the viewer's own drop is red under a sanitizer that keeps it" : "under the gate before the drop, whose hit test read through the element: " + (pt.scene === "toast" ? "the element painted over the control as a gesture opened" : "a gesture and Enter each opened once")) + ")", { timeout: 180000 }, async (t) => {
+    const rec: Record<string, unknown> = { scene: "press-through " + pt.scene };
+    await gateCase(t, device, surface, pt.text, rec, async (g) => {
+      const st = await g.page.evaluate(() => {
+        const w = window as any, o = document.getElementById("user-content-pt"), c = w.__ctl("ov") as HTMLElement, cr = c.getBoundingClientRect();
+        const orr = o ? o.getBoundingClientRect() : null, cs = o ? getComputedStyle(o) : null;
+        const e = document.elementFromPoint((cr.left + cr.right) / 2, (cr.top + cr.bottom) / 2);
+        return { found: !!o, classes: o ? o.getAttribute("class") : null, inert: o ? o.hasAttribute("inert") : null, style: o ? o.getAttribute("style") : null, position: cs && cs.position, pe: cs && cs.pointerEvents,
+          over: !!orr && cs!.position === "fixed" && orr.left <= cr.left && orr.right >= cr.right && orr.top <= cr.top && orr.bottom >= cr.bottom,
+          hit: !e ? "null" : e === c || c.contains(e) ? "the control" : o && (e === o || o.contains(e)) ? "the element" : e.localName };
+      });
+      rec.state = st;
+      assert.ok(st.found, "the author's element painted (the case's premise): " + JSON.stringify(st));
+      if (pt.scene === "toast") {
+        g.cell("the element after the paint: [its classes, over the control, what a press at the control's centre reaches]", ["", false, "the control"], [st.classes, st.over, st.hit]);
+      } else {
+        assert.ok(st.over, "the overlay fixed and over the control (a precondition): " + JSON.stringify(st));
+        g.cell("the overlay after the paint: [its classes, inert, its style attribute, its computed pointer-events, what a press at the control's centre reaches]", ["picker-overlay tx-starting", false, null, "auto", "the element"], [st.classes, st.inert, st.style, st.pe, st.hit]);
+      }
+      const want = pt.scene === "toast" ? [1, 1] : [0, 0];
+      const r = await g.read("ov");
+      rec.read = r;
+      await g.gesture(device, r.pt.x, r.pt.y);
+      g.cell("a gesture at the picture's point (" + r.hit + "): its opens", want, opensOf(await g.opens()));
+      await g.page.evaluate(() => { (document.querySelector(".fileview-body") as HTMLElement).focus(); });
+      let tabs = 0;
+      for (; tabs < 20; tabs++) { if (await g.page.evaluate(() => document.activeElement === (window as any).__ctl("ov"))) break; await g.page.keyboard.press("Tab"); await frames(g.page, 1); }
+      rec.tabs = tabs;
+      assert.ok(await g.page.evaluate(() => document.activeElement === (window as any).__ctl("ov")), "the keyboard on the control (a precondition)");
+      await g.page.keyboard.press("Enter");
+      g.cell("Enter on the control: its opens", want, opensOf(await g.opens()));
     });
   });
 }

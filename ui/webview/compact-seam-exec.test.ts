@@ -363,8 +363,10 @@ test("render.ts: one owner per hover class. The tail paint (both paths and the t
     "file-view.ts:decideFigureControl:classList.add", "file-view.ts:dressFigureControl:classList.toggle",
     // the drop of the classes the sheets dim from an author's markup around a figure (the file review's round 16, extra5-2), no hover class
     // among them: dropDimmingClasses removes the classes of SHEET_DIM_CLASSES an element of the sanitizer's body carries, read at run time off
-    // the author's class attribute, before any pass of the viewer's own
-    "file-view.ts:dropDimmingClasses:classList.remove",
+    // the author's class attribute, before any pass of the viewer's own; and beside it the drop of what lets a press pass through an author
+    // element (the file review's round 16, extra5-1, the covered sign), no hover class among them either: dropPressThrough removes the classes
+    // of SHEET_PRESS_THROUGH_CLASSES any element of the sanitizer's body carries, read the same way
+    "file-view.ts:dropDimmingClasses:classList.remove", "file-view.ts:dropPressThrough:classList.remove",
     "file-view.ts:el:className=", "path-links.ts:el:className=", "path-links.ts:markPathLink:setAttribute(class)",
     "pinned-notes.ts:make:className=", "preview.ts:say:classList.add",
     "render.ts:applyFold:classList.add", "render.ts:applyTabStatus:classList.add", "render.ts:dress:className=", "render.ts:el:className=",

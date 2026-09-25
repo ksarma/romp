@@ -1370,6 +1370,36 @@ test("the dimming classes off a figure's ancestors, over the render path (the fi
   assert.deepEqual(read, { span1: ["keep"], img: ["mine"], span2: ["tag-chip-off", "fv-figopen", "keep"], span3: ["keep"], svg: ["keep"] }, "each element's classes after the paint: the listed classes off the picture and its ancestors, the svg image's too, the rest kept, and an author element holding no figure untouched (a property pin over the classes)");
 });
 
+// ── what lets a press pass through an author element, off a file document's markup (the file review's round 16, extra5-1, the covered
+// sign): the render path takes off every author element the classes the sheets let a press pass through (file-view.ts
+// SHEET_PRESS_THROUGH_CLASSES), the inert attribute and each pointer-events declaration of a style attribute, under any spelling the
+// attribute's text gives the name, before any pass of the viewer's own, so the one gate's hit test reads an element laid over a figure.
+// The sanitizer's stand-in here keeps the markup as written, so the style rows read the viewer's own drop; in a browser the sanitizer's
+// colour-only rule drops such a declaration first. The two-way pin holding the list to the sheets is file-figure-open.test.ts's; the
+// open leg reads the drop's effect on the gate.
+test("what lets a press pass through an author element, off a file document's markup over the render path (the file review's round 16, extra5-1, the covered sign): an author's div of a page class the sheets let a press pass through (locate-toast) keeps its other class alone; an inert div of another such class (rail-band) with pointer-events none and a colour in its style attribute keeps its colour alone, the attribute and the class gone; an inert element nested inside an author element loses the attribute; pointer-events declared in capitals after a comment, and with an escape in its name, goes and the colour beside it stays; a style attribute that holds nothing but the declaration goes whole; an element with none of these is untouched, a class the sheets do not name and a colour kept (a property pin over each element's classes, inert and style after the paint)", async (t) => {
+  const md = '# R\n\n<div class="locate-toast keep">a toast</div>\n\n<div class="rail-band other" inert style="pointer-events: none; color: red">an overlay</div>\n\n'
+    + 'Words <span class="plain"><em inert>nested</em></span> here.\n\n<div style="/* c */ POINTER-EVENTS : none ; color: green">caps</div>\n\n'
+    + '<div style="pointer\\-events: none; color: blue">escaped</div>\n\n<div style="pointer-events:none">only</div>\n\n<div class="plain" style="color: gray">untouched</div>\n';
+  const o = await open(REPORT, md, t);
+  const box = o.body.querySelector(".fileview-md")!;
+  const byText = (s: string): El | undefined => box.querySelectorAll("div, em").find((x) => x.textContent === s);
+  const names = ["a toast", "an overlay", "nested", "caps", "escaped", "only", "untouched"];
+  const els = names.map(byText);
+  assert.ok(els.every(Boolean), "each author element painted (the case's premise): " + JSON.stringify(names.map((n, i) => [n, !!els[i]])));
+  const read = Object.fromEntries(names.map((n, i) => [n, [els[i]!.getAttribute("class"), els[i]!.hasAttribute("inert"), els[i]!.getAttribute("style")]]));
+  t.diagnostic("after the paint, [class, inert, style]: " + JSON.stringify(read));
+  assert.deepEqual(read, {
+    "a toast": ["keep", false, null],
+    "an overlay": ["other", false, "color: red"],
+    "nested": [null, false, null],
+    "caps": [null, false, "color: green"],
+    "escaped": [null, false, "color: blue"],
+    "only": [null, false, null],
+    "untouched": ["plain", false, "color: gray"],
+  }, "each element's classes, inert and style after the paint: a listed class, the inert attribute and every pointer-events declaration off, the rest kept (a property pin over the attributes)");
+});
+
 // ── the sign-in rule's decode, bounded (the file review's round 16, regression-2): the decode ran to its fixed point, and a `%25` chain
 // loses one level per pass, so one source nested deep held the page's thread for a time quadratic in its length. It now runs at most
 // eight passes (DECODE_PASSES), and a text still changing at the last reads as carrying a sign-in, failing closed. Held by the answers

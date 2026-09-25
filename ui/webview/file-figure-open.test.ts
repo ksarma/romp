@@ -542,3 +542,78 @@ test("the dimming classes, a two-way pin (the file review's round 16, extra5-2):
   assert.deepEqual(dimDrift(derived, cut).missing.map((m) => m.split(" ")[0]), ["tag-chip-off"], "a class taken off the list is named missing (a property pin over the drift)");
   assert.deepEqual(dimDrift(derived, new Set([...listed, "plant-never-dims"])).stale, ["plant-never-dims"], "a class put on the list that no sheet dims is named (a property pin over the drift)");
 });
+
+// ── the classes that let a press pass through, both ways (the file review's round 16, extra5-1, the covered sign) ── The one gate's hit
+// test (file-view.ts signUncovered, elementFromPoint) reads the element a press would reach, so an author's element of a page class that
+// sets pointer-events none (locate-toast: fixed, opaque) painted over the web control while the gate read the control uncovered and the
+// tab opened. file-view.ts takes every such class off a file document's author markup (dropPressThrough over
+// SHEET_PRESS_THROUGH_CLASSES), and the list is held here to every sheet a page of either host loads (SHEETS), derived by the rule the
+// list's docstring states and compared both ways, as the dimming classes are above, with one more read: a rule that sets the property
+// with no class to take (its subject and its other compounds name none) and no id in its subject reaches author markup that no drop of a
+// class undoes, and is named. The open leg reads the drop's effect on the gate and file-view-outline.test.ts runs it over the stand-in.
+/** The declarations of a block that let a press pass through what they apply to: pointer-events at any value but auto (one it cannot
+ *  read, a var(), counted, the safe side), and an animation naming keyframes that set such a value (`keyframes`). */
+function pressThroughOf(body: string, keyframes: ReadonlySet<string>): string[] {
+  const hits: string[] = [];
+  for (const d of splitTop(body, ";")) {
+    const at = d.indexOf(":");
+    if (at < 0) continue;
+    const p = d.slice(0, at).trim().toLowerCase(), v = d.slice(at + 1).trim().toLowerCase().replace("!important", "").trim();
+    if (p === "pointer-events") { if (v !== "auto") hits.push("pointer-events " + v); }
+    else if (p === "animation" || p === "animation-name") { for (const k of v.split(/[\s,]+/)) if (keyframes.has(k)) hits.push("animation " + k); }
+  }
+  return hits;
+}
+/** Every class the sheets let a press pass through by SHEET_PRESS_THROUGH_CLASSES's rule, each with its rules (sheet, selector, what
+ *  sets it), and the rules whose selector yields no class and names no id in its subject (`untaken`). */
+function pressThroughClasses(sheets: Array<{ name: string; css: string }>): { classes: Map<string, string[]>; untaken: string[] } {
+  const rules = sheets.flatMap((s) => cssRules(s.css).map((r) => ({ ...r, sheet: s.name })));
+  const keyframes = new Set<string>();
+  for (const r of rules) { const k = keyframesOf(r.chain); if (k && pressThroughOf(r.body, new Set()).length) keyframes.add(k); }
+  const classes = new Map<string, string[]>(), untaken: string[] = [];
+  const CLASS = /\.(-?[_a-zA-Z][_a-zA-Z0-9-]*)/g;
+  for (const r of rules) {
+    if (keyframesOf(r.chain)) continue;
+    const hits = pressThroughOf(r.body, keyframes);
+    if (!hits.length) continue;
+    for (const one of splitTop(r.selector, ",")) {
+      const sel = one.trim(), compounds = withoutNotHas(sel).trim().split(/\s*[>+~]\s*|\s+/).filter(Boolean);
+      const last = compounds[compounds.length - 1] || "";
+      const subject = [...last.matchAll(CLASS)].map((m) => m[1]);
+      const others = compounds.slice(0, -1).flatMap((c) => [...c.matchAll(CLASS)].map((m) => m[1]));
+      const why = r.sheet + ": " + sel + " (" + hits.join(", ") + ")";
+      const got = subject.length ? subject : others;
+      for (const c of got) classes.set(c, [...(classes.get(c) || []), why]);
+      if (!got.length && !/#-?[_a-zA-Z]/.test(last)) untaken.push(why);
+    }
+  }
+  return { classes, untaken };
+}
+/** SHEET_PRESS_THROUGH_CLASSES read off file-view.ts's source: one array of string literals inside `new Set([` and `]);`. */
+function listedPressThroughClasses(): Set<string> {
+  const m = /\nconst SHEET_PRESS_THROUGH_CLASSES: ReadonlySet<string> = new Set\(\[\n([\s\S]*?)\n\]\);\n/.exec(VIEW);
+  assert.ok(m, "file-view.ts holds SHEET_PRESS_THROUGH_CLASSES as one array of string literals (a sentence pin on the shape this read takes)");
+  const names: unknown[] = JSON.parse("[" + m![1] + "]");
+  assert.ok(names.every((n) => typeof n === "string"), "every member a string literal");
+  assert.equal(new Set(names).size, names.length, "no class listed twice");
+  return new Set(names as string[]);
+}
+test("the classes that let a press pass through, a two-way pin (the file review's round 16, extra5-1, the covered sign): SHEET_PRESS_THROUGH_CLASSES in file-view.ts, the classes dropPressThrough takes off every author element of a file document, equals the classes every sheet a page of either host loads sets pointer-events on at any value but auto (one not read counted), directly or by an animation whose keyframes do, derived by the rule its docstring states (the subject's classes outside :not() and :has(), else the other compounds'); each class the sheets set it on that the list lacks, and each listed class they no longer set it on, is named, and so is each rule that sets it with no class to take and no id in its subject, whose reach no drop of a class undoes; no listed class is one the markdown renderers write before the sanitizer (md-config.ts's and math.ts's class constants and a dead wikilink's fv-dead), which the drop over every element would strip; the derivation's reads are armed by planted rules, a declaration, a var(), a pseudo-element, a subject that names no class, a :not() whose argument is not taken, the keyframes, and an element-keyed and an attribute-keyed rule named as untaken beside an id-keyed one that is not, and by a class taken off the list and one put on it, each named in the drift, with controls of auto that let nothing through (a property pin over the derived set against the list; red at every head before the list, whose literal it reads, and red with a class taken off the list and with a rule added to a sheet under a class the list lacks)", () => {
+  const listed = listedPressThroughClasses();
+  const { classes: derived, untaken } = pressThroughClasses(SHEETS);
+  assert.ok(derived.size >= 30, "the derivation reads the sheets: " + derived.size + " classes (a derivation that reads nothing is red; a property pin over the derived set's size)");
+  const drift = dimDrift(derived, listed);
+  assert.deepEqual(drift.missing, [], "each class a sheet lets a press pass through that SHEET_PRESS_THROUGH_CLASSES lacks, with the rule that does it: add it to the list, in the same change as the rule (a property pin over the derived set against the list)");
+  assert.deepEqual(drift.stale, [], "each class SHEET_PRESS_THROUGH_CLASSES lists that no sheet lets a press pass through now: take it off the list, in the same change as the rule (a property pin over the derived set against the list)");
+  assert.deepEqual(untaken, [], "each rule that sets pointer-events with no class for the drop to take and no id in its subject, which reaches an author's element no drop of a class undoes: key it on a class the list then takes, or take the property off (a property pin over the sheets' rules)");
+  const RENDERED = new Set<string>(["fv-dead", ...[web("md-config.ts"), web("math.ts")].flatMap((src) => [...src.matchAll(/\nexport const \w+_CLASS = "([\w-]+)";/g)].map((m) => m[1]))]);
+  assert.ok(RENDERED.has("fv-wikilink") && RENDERED.has("md-math-inline") && RENDERED.size >= 10, "the renderers' class constants read off md-config.ts and math.ts (a sentence pin on the spelling the read takes): " + [...RENDERED].join(" "));
+  assert.deepEqual([...listed].filter((c) => RENDERED.has(c)), [], "no listed class is one a markdown renderer writes before the sanitizer, which the drop over every element would strip from the viewer's own markup (a property pin over the two sets)");
+  const planted = { name: "planted", css: ".plant-pe { pointer-events: none; } .plant-var { pointer-events: var(--x); } .plant-psd::after { pointer-events: none; } .plant-sub span { pointer-events: none; } .plant-not:not(.plant-neg) { pointer-events: none; } @keyframes plant-kf { from { pointer-events: none; } } .plant-anim { animation: plant-kf 1s; } .plant-keep { pointer-events: auto; } .plant-keep-imp { pointer-events: auto !important; } aside { pointer-events: none; } [data-plant] { pointer-events: none; } #plant-id { pointer-events: none; }" };
+  const withPlant = pressThroughClasses([...SHEETS, planted]);
+  assert.deepEqual(dimDrift(withPlant.classes, listed).missing.map((m) => m.split(" ")[0]), ["plant-anim", "plant-not", "plant-pe", "plant-psd", "plant-sub", "plant-var"], "a planted sheet's classes are named missing, the pseudo-element's, the one above a subject that names no class and the animation's among them, and neither the :not() argument nor the controls of auto are (a property pin over the drift)");
+  assert.deepEqual(withPlant.untaken, ["planted: aside (pointer-events none)", "planted: [data-plant] (pointer-events none)"], "the element-keyed and the attribute-keyed plants are named as untaken, and the id-keyed one is not (a property pin over the read)");
+  const cut = new Set(listed); cut.delete("locate-toast");
+  assert.deepEqual(dimDrift(derived, cut).missing.map((m) => m.split(" ")[0]), ["locate-toast"], "a class taken off the list is named missing (a property pin over the drift)");
+  assert.deepEqual(dimDrift(derived, new Set([...listed, "plant-never-passes"])).stale, ["plant-never-passes"], "a class put on the list that no sheet lets a press pass through is named (a property pin over the drift)");
+});

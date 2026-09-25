@@ -782,8 +782,11 @@ test("the convention: the branch's review has rounds 1 and 2, the file review's 
  *  which it reads in CSS pixels at every zoom, names that round); thirty-two since the fixes for the same round's regression-2 (the
  *  docstring of DECODE_PASSES, the bound on the sign-in rule's decode, names that round); thirty-three since the fixes for the same
  *  round's extra5-2 (the docstring of SHEET_DIM_CLASSES, the classes the sheets dim, which the render path takes off the markup around
- *  a figure, names that round). A property pin: the count is compared to the derived list, whose lines the message prints. */
-const VIEWER_UNITS = 33;
+ *  a figure, names that round); thirty-five since the fixes for the same round's extra5-1 were completed by the author's closing pass
+ *  after them (the docstrings of SHEET_PRESS_THROUGH_CLASSES, the classes the sheets let a press pass through, and of dropPressThrough,
+ *  which takes them, the inert attribute and a pointer-events declaration off a file document's author markup, each names that round).
+ *  A property pin: the count is compared to the derived list, whose lines the message prints. */
+const VIEWER_UNITS = 35;
 
 test("road 1, every checkout, a rule over the tree: every file git lists at the repo root, tracked or untracked and not ignored, whose text names the file review or carries an id of the author's family, plus the files the branch created, the plan's section, the guide's Links paragraph and the browser plan's pointer; the created files and the three records in full, the rest keyed on the review named, so another review's rounds are left alone; no round outside the convention and no finding of the author's outside a pass; road 2, on the open PR branch where main has moved past its last merge (the merge-base off origin/main and the diff adding this module): every unit the branch added or touched, the working tree against the merge-base", (t) => {
   const reviews = convention();
