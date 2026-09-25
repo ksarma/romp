@@ -349,7 +349,7 @@ test("render.ts: one owner per hover class. The tail paint (both paths and the t
     'render.ts:paintGlowRuler:".turn.ext-glow"', 'render.ts:paintRailBand:".turn.ext-glow"',                                                // the two READERS of the glow: the ruler mirrors it, the band reads it
   ].sort(), "every string, template or regular-expression literal in the bundle naming a hover class as a token, by module and owner: the owners, the two readers, nothing else (a literal handed to a helper that mutates by parameter, a new selector on the class, or a pattern that strips it, a regular-expression literal or a RegExp source string, is enumerated here or reds)");
   // the mutators the two axes cannot read (a parameter, a computed value), by module, owner and method, a closed multiset; the message names
-  // what was added and what is gone, so a 44th is enumerated here (and its class, when a literal reaches it, on the literal axis) or reds
+  // what was added and what is gone, so a 45th is enumerated here (and its class, when a literal reaches it, on the literal axis) or reds
   const EXPECTED_UNRESOLVED = [
     "anchor-map.ts:makeMark:setAttribute(class)", "anchor-map.ts:makePoint:setAttribute(class)", "anchor-map.ts:stampBlock:setAttribute(class)",
     "code-block.ts:el:className=", "ctx-menu.ts:addMenuItem:className=", "ctx-menu.ts:menuCard:className=", "file-browse.ts:el:className=",
@@ -361,6 +361,10 @@ test("render.ts: one owner per hover class. The tail paint (both paths and the t
     // read at run time; dressFigureControl toggles FIGOPEN_WEB_CLASS, fv-figopen-web, on a control whose target is a picture from the web, a
     // constant declared as FIGOPEN_CLASS + "-web", a concatenation constOf above (a literal initializer alone) does not fold
     "file-view.ts:decideFigureControl:classList.add", "file-view.ts:dressFigureControl:classList.toggle",
+    // the drop of the classes the sheets dim from an author's markup around a figure (the file review's round 16, extra5-2), no hover class
+    // among them: dropDimmingClasses removes the classes of SHEET_DIM_CLASSES an element of the sanitizer's body carries, read at run time off
+    // the author's class attribute, before any pass of the viewer's own
+    "file-view.ts:dropDimmingClasses:classList.remove",
     "file-view.ts:el:className=", "path-links.ts:el:className=", "path-links.ts:markPathLink:setAttribute(class)",
     "pinned-notes.ts:make:className=", "preview.ts:say:classList.add",
     "render.ts:applyFold:classList.add", "render.ts:applyTabStatus:classList.add", "render.ts:dress:className=", "render.ts:el:className=",

@@ -9048,7 +9048,9 @@ and not the text read's wider isControl, since a gated figure's top-level placeh
 merge of the fork's main at fa3ef54b5, whose batch PR 907 brought them, ui/webview/compact-seam-exec.test.ts (its closed
 multiset of the class mutators whose class is no constant of the source names the figure control's two: decideFigureControl's
 classList.add, the control's float side read off the figure's align, and dressFigureControl's classList.toggle, the web class
-declared by a concatenation the census's constant reader does not fold) and ui/webview/spacer-measure.test.ts (its roster of
+declared by a concatenation the census's constant reader does not fold, and since the fixes for the file review's round 16,
+extra5-2, dropDimmingClasses's classList.remove, the classes the sheets dim read at run time off an author's markup around a
+figure) and ui/webview/spacer-measure.test.ts (its roster of
 the modules under ui/webview that no page bundle loads names css-rules.mjs, host-sheets.mjs and source-units.ts, the readers
 this follow-on's tests import, and its closed multiset of the writes of a view property names the trail's two, trailSetView's
 and moveTrail's, each kept in the page's trail state and never posted). The guide's Links in a file paragraph gained two sentences, the trail's and
