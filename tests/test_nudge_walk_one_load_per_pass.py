@@ -41,14 +41,16 @@ for the kernel caller of that call and counted under that caller's mechanism). T
 a reader below those loaders (among them the judge's own file reader and parser) is outside the recorders and outside the claim. The
 road: the execution witness covers every caller the fixture actually executes, and a caller on a road no case drives is
 outside it: a load on such a road is seen by the site census or the gate scan when it sits in the look's own source or in
-its gate wrapper's and by the birth pin's count of the kernel's call sites per spelling when it adds, removes or re-doors
-a kernel call site, and by nothing on some roads, among them one that reaches a kernel call site that already exists or
+its gate wrapper's and by the birth pin's count of the kernel's call sites per spelling when the edit moves that count (a
+call site added with one of the same spelling removed moves nothing), and by nothing on some roads, among them one that reaches a
+kernel call site that already exists or
 a load written into a judge function that is neither a door nor a helper the fixture replaces; the helpers in REPLACED_KM and REPLACED_JD and
 Sessions.backend_for run as stubs, so a loader inside their real bodies is outside the recorders and is caught by the
 source census in TheCountersOneSite instead, one level deep (the helper's own source, checked to be the named helper's: a
 decorator without functools.wraps would hand the census its wrapper's source), and a door call written into a kernel
 helper's body or into Sessions.backend_for's is a new kernel call site, so the birth pin's per-spelling count reds on it too
-(the judge side of that pin reads the set of called spellings and no count, so in a judge helper's body the census alone sees
+unless a call site of the same spelling is removed with it (the judge side of that pin reads the set of called spellings and no
+count, so in a judge helper's body the census alone sees
 a door call), while a loader that would reach a body under
 another name, or through a string, is refused, when that name is born in kernel/kernel.py or kernel/judge.py, by a pin over those
 two files, each read whole (among them: every loader by attribute the callee of a call; no alias, parameter or keyword spells one, no
@@ -1044,8 +1046,9 @@ KERNEL_FILE = os.path.basename(os.path.realpath(km.__file__))   # the kernel's r
 # helpers; _pending_ops and _PREV_ALIVE are data, not callables), the judge names, and Sessions.backend_for (replaced by
 # setUp beside them). Their real bodies never run under the fixture, so the source census in TheCountersOneSite is the
 # witness for a loader inside them, and the only one for the judge names: a door call added to a kernel name's body or to
-# Sessions.backend_for's is also a new kernel call site, which the birth pin's per-spelling count reds on, while the judge
-# side of that pin reads the set of called spellings and no count. _session_working is not in the list: its real body runs
+# Sessions.backend_for's is also a new kernel call site, which the birth pin's per-spelling count reds on unless a call site of
+# the same spelling is removed with it, while the judge side of that pin reads the set of called spellings and no count.
+# _session_working is not in the list: its real body runs
 # (the event model reads the fixture turns, both ended, as not working, the answer the stub gave), and the state-gate case
 # replaces it for its own world.
 # CASE_KM: names a CASE may replace after setUp for its own world, saved with the rest and restored by the cleanup, which then
@@ -1054,8 +1057,9 @@ KERNEL_FILE = os.path.basename(os.path.realpath(km.__file__))   # the kernel's r
 # through the writer door at their write moments by design (the reference's jobs block names them among the store's other
 # readers), so the replaced-helpers census does not read them. No case runs those bodies either: the wedge-gate sweep case, the
 # case whose road reaches them, replaces both. A shared load in either real body is seen by the birth pin's count of the
-# kernel's call sites per spelling when it adds, removes or re-doors a kernel call site (a shared load written into either body
-# as its first statement red the birth case at that count with every other case green: the staging census before round 9),
+# kernel's call sites per spelling when the edit moves that count (a call site added with one of the same spelling removed moves
+# nothing; a shared load written into either body as its first statement red the birth case at that count with every other case
+# green: the staging census before round 9),
 # and by nothing when it reaches a kernel call site that already exists.
 CASE_KM = ("_session_working", "_mark_nudge_failed", "_file_wake_answer")
 # CASE_JD: the judge names a CASE may replace after setUp for its own world, saved with the rest and restored by the cleanup, as
@@ -3912,17 +3916,20 @@ class TheCountersOneSite(unittest.TestCase):
         harness case drives, so a wrapper missing from the recorder's boundary is noticed only by the derivation the birth pin reads
         (the comment above _BOUNDARY_HANDOFFS); a caller the fixture does not execute, on a road no case drives, outside the execution
         witness: a load on such a road is seen by the site census or the gate scan when it sits in the look's own source or in its gate
-        wrapper's and by the birth pin's count of the kernel's call sites per spelling when it adds, removes or re-doors a kernel call
-        site, and by nothing on some roads, among them one that reaches a kernel call site that already exists or a load written into
+        wrapper's and by the birth pin's count of the kernel's call sites per spelling when the edit moves that count (a call site
+        added with one of the same spelling removed moves nothing), and by nothing on some roads, among them one that reaches a
+        kernel call site that already exists or a load written into
         a judge function that is neither a door nor a helper the fixture replaces (the module docstring, _pass, the replaced-helpers case); a loader in the
         real body of a helper the fixture replaces, seen by the replaced-helpers source census one level deep, so a loader in a callee
-        of that body is outside it, and, when it is a door call in a kernel helper's body or in Sessions.backend_for's, by the birth
-        pin's count of the kernel's call sites per spelling too, whose judge side reads the set of called spellings and no count, so in
+        of that body is outside it, and, when it is a door call in a kernel helper's body or in Sessions.backend_for's and no call
+        site of the same spelling is removed with it, by the birth pin's count of the kernel's call sites per spelling too, whose
+        judge side reads the set of called spellings and no count, so in
         a judge helper's body the census alone sees a door call (the module docstring, the replaced-helpers case); the real bodies of
         the writers CASE_KM lists, _mark_nudge_failed and _file_wake_answer, which load through the writer door by design, outside the
         replaced-helpers census and run by no case, since the wedge-gate sweep case, the case whose road reaches them, replaces them, so
-        a shared load in a writer's real body is seen by the birth pin's count of the kernel's call sites per spelling when it adds,
-        removes or re-doors a kernel call site and by nothing when it reaches a kernel call site that already exists (the comment above
+        a shared load in a writer's real body is seen by the birth pin's count of the kernel's call sites per spelling when the edit
+        moves that count (a call site added with one of the same spelling removed moves nothing) and by nothing when it reaches a
+        kernel call site that already exists (the comment above
         CASE_KM, the wedge-gate sweep case); a wrapper handed to a census in place of the named body, held by the identity check where a
         census runs it first, the replaced-helpers census on the fixture's helpers and the walk census and the gate scan on the look and
         the gate factory (the wrapper class of _LIMITS, _loader_sites, _the_named_def); a loader reached through a string constant,
@@ -4455,7 +4462,8 @@ class TheCountersOneSite(unittest.TestCase):
         execution witness cannot see it; this scan of each real source for either door's name (by the AST, _loader_sites, on
         every interpreter) is the witness for those bodies, and the only one for the judge's: a door call added to a kernel
         helper's body or to Sessions.backend_for's is also a new kernel call site, which the birth pin's per-spelling count reds on
-        (the staging census before round 9: a shared load written into _closer_settled or Sessions.backend_for red this case and
+        unless a call site of the same spelling is removed with it (the staging census before round 9: a shared load written into
+        _closer_settled or Sessions.backend_for red this case and
         the birth case, and one written into the judge's parsed_session red this case alone), while the judge side of that pin
         reads the set of called spellings and no count. One level deep, the helper's own source: _session_awaiting reaches two bare-door
         readers (_owned_yield_why and _session_stamp_read) only under stamp=True, which the walk's call does not pass, so
@@ -4479,7 +4487,8 @@ class TheCountersOneSite(unittest.TestCase):
             hits = [ln.strip() for _i, ln in _loader_sites(obj, "load_goals")]
             self.assertEqual(hits, [], "%s: a loader planted in a replaced helper never runs under the fixture, so this scan is the witness "
                                        "for its body, the only one in a judge helper (in a kernel helper the birth pin's per-spelling count "
-                                       "also reds on an added door call): %s" % (label, "; ".join(hits)))
+                                       "also reds on an added door call unless one of the same spelling is removed with it): %s"
+                                       % (label, "; ".join(hits)))
 
     def test_no_other_name_for_a_loader_is_born_in_the_kernel_or_the_judge(self):
         """The census reads a body. A loader that reaches a body under another name (among them a module-level `_lgs = jd.load_goals_shared`,
@@ -4506,7 +4515,7 @@ class TheCountersOneSite(unittest.TestCase):
         head of the round-4 fixes, 27 through load_goals, 9 through load_goals_or_fault, 7 through load_goals_shared and 15 through
         load_goals_shared_or_fault; review round 4, tests-3: the figure was prose and the case asserted the set of spellings, which a
         kernel that kept one call site per spelling passed; the dict is pinned rather than the sum, since a swap between doors moves
-        two counts and the sum not at all, so an upstream fold that adds, removes or re-doors a kernel call site reds here by design
+        two counts and the sum not at all, so an upstream fold that moves a spelling's count reds here by design
         and the number moves with a re-read of the reference's other-readers clause or of a bound), and the hand-offs are the outer
         wrappers'. The limit that stays: a name completed at run time from constants that spell no door whole (with an ASCII
         bytes literal decoded, surrounding whitespace stripped and str.lower applied; another codec, a strip of other characters and
