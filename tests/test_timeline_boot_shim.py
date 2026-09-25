@@ -67,6 +67,8 @@ global.HTMLElement = function () {};
 global.window = global;
 const SHELL = { name: 'shell' };
 global.parent = SHELL;
+const OPENER = { name: 'a page on another origin that opened /timeline' };
+global.opener = OPENER;
 global.location = { origin: ORIGIN };
 global.acquireVsCodeApi = () => ({ postMessage() {} });
 global.addEventListener = (t, f) => { if (t === 'message') LISTENERS.push(f); };
@@ -78,9 +80,16 @@ const SENDERS = {
   self: [window, ORIGIN],
   embedder: [SHELL, ORIGIN],      // the shell, this frame's parent
   peer: [{}, ORIGIN],             // another window on this origin
-  opener: [{}, OTHER],            // a page on another origin that opened /timeline
+  opener: [OPENER, OTHER],        // the page on another origin that opened /timeline: this window's opener
+  stranger: [{}, OTHER],          // a window on another origin this one does not know
   sandboxed: [{}, 'null'],        // a sandboxed frame
+  sandboxedSibling: [{ parent: SHELL }, 'null'],   // a sandboxed frame beside this one in the shell
+  sandboxedChild: [{ parent: window }, 'null'],    // a sandboxed frame inside this one
+  overlappingOrigin: [{}, ORIGIN + '0'],           // another port whose text begins with this origin
+  noPort: [{}, 'http://127.0.0.1'],                // this origin's scheme and host on another port (the default)
+  otherPort: [{}, 'http://127.0.0.1:7778'],        // this origin's scheme and host on another port
   sourcelessElsewhere: [null, OTHER],
+  sourcelessOpaque: [null, 'null'],                // a sandboxed frame gone after it posted
 };
 Object.keys(SENDERS).forEach((k) => {
   const e = { data: { type: 'data', data: { from: k } } };
@@ -94,7 +103,9 @@ process.stdout.write(JSON.stringify({ listeners: LISTENERS.length, updates: UPDA
 class TimelineBootSenders(unittest.TestCase):
     """The browser timeline's frame listener acts on a frame only from the senders windowSender hears
     (ui/webview/window-sender.ts): this page's own dispatch, this window, its parent (the shell), a window on this
-    origin (2026-09-25). A frame from any other sender (a page on another origin, a sandboxed frame) is ignored."""
+    origin (2026-09-25). A frame from any other sender (a page on another origin, a sandboxed frame) is ignored.
+    ui/webview/timeline-boot-senders.test.ts pins the rule to windowSender itself, over a grid of receiving windows,
+    senders and origins; the rows here keep the kernel's own suite red on the widenings that grid names."""
 
     def test_a_data_frame_is_drawn_from_every_heard_sender_and_from_no_other(self):
         node = shutil.which("node")
@@ -112,8 +123,10 @@ class TimelineBootSenders(unittest.TestCase):
         got = json.loads(r.stdout)
         self.assertEqual(got["listeners"], 1, "the boot registers one window message listener")
         self.assertEqual(got["updates"], ["dispatch", "fedDirect", "self", "embedder", "peer"],
-                         "drawn once from each heard sender, never from a page on another origin, a sandboxed frame "
-                         "or a sourceless post that names another origin")
+                         "drawn once from each heard sender, never from a page on another origin (the one that opened "
+                         "this page included), a sandboxed frame (beside or inside this one, or gone after it posted), "
+                         "an origin that overlaps this one's text or differs only in its port, or a sourceless post "
+                         "that names another origin")
 
     def test_source_the_check_heads_the_frame_listener(self):
         boot = km._TIMELINE_BOOT

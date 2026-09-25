@@ -67250,7 +67250,8 @@ function post(m){api.postMessage(m);}
 // [fork] (2026-09-25) a frame counts only from the senders ui/webview/window-sender.ts's windowSender hears: this page's
 // own dispatch (the shim's and federation.js's frames, a MessageEvent with no source and no origin), this window, its
 // parent (the shell), or a window on this page's origin. Any other sender is foreign and its frame is ignored: a page on
-// another origin that opened this one, a sandboxed frame (origin "null"). tests/test_timeline_boot_shim.py runs it.
+// another origin that opened this one, a sandboxed frame (origin "null"). tests/test_timeline_boot_shim.py runs it, and
+// ui/webview/timeline-boot-senders.test.ts runs this boot against windowSender itself over every window, sender and origin.
 function heardSender(e){if(!e)return false;var s=e.source;
 if(s===null||s===undefined){if(e.origin===undefined||e.origin===null||e.origin==="")return true;}
 else{if(s===window)return true;if(window.parent&&window.parent!==window&&s===window.parent)return true;}
