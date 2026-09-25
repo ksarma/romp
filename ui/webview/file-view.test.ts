@@ -907,7 +907,8 @@ test("SVG renders via <img> ONLY — never innerHTML, never an iframe: its scrip
   assert.match(live, /body\.replaceChildren\(codeBlock\(svgText, path, true\)\)/,
     "the SVG Source view renders through codeBlock, uncommented (born wrapped, like every code view)");
   assert.match(VIEW, /isSvgImage = v\.isImage && ct\.split\(";"\)\[0\]\.trim\(\)\.toLowerCase\(\) === "image\/svg\+xml";/, "the toggle keys on the kernel's verdict too, its media type alone, for an answer the viewer takes as an image (executed: file-view-seam.test.ts, the svg answers with a charset parameter and the answer typed IMAGE/SVG+XML)");
-  assert.match(VIEW, /mediaBlob\.text\(\)/, "the source view decodes the SAME fetched bytes — no second request");
+  assert.match(VIEW, /decodeForSource\(mediaBlob\);/, "the Source toggle's press decodes the fetched bytes it holds, with no second request: a source pin on the press's line; executed in file-view-seam.test.ts (a press of the Source toggle while its bytes decode, and a reload landing in that window, which paint the Source view with no fetch but the reload's)");
+  assert.match(VIEW, /const decodeForSource = \(b: Blob\): void => \{\n\s*srcDecode = b;\n\s*void b\.text\(\)\.then\(/, "the Source view's decode reads the bytes it is handed (the press's, or a landing's while the press waits): a source pin; executed in the same cases");
 });
 
 // executed: the object-URL lifecycle (the Escape-handler test's shape) — every teardown revokes
@@ -995,17 +996,19 @@ test("an image 200 that fails to DECODE swaps to the failure pane: plain words +
   assert.deepEqual(sim(false),
     ["this image failed to decode: it may be mid-write or truncated", "Download"],
     "garbage bytes land on words + the way out");
-  // source: the handler rides the img itself, armed BEFORE src so no event can slip past it
+  // source: the handler rides the img itself, armed BEFORE src so no event can slip past it, and takes the event (imgFailed reads
+  // its target: a picture the body no longer holds paints nothing; executed in file-view-seam.test.ts, "the picture's error paints
+  // nothing once the body no longer holds that picture")
   const imgFn = VIEW.split("function imgBlock")[1].split("// The PDF body")[0];
-  assert.match(imgFn, /^\(objUrl: string, path: string, onDecodeFail: \(\) => void\)/);
-  assert.match(imgFn, /img\.addEventListener\("error", onDecodeFail, \{ once: true \}\);\s*\n\s*img\.src = objUrl;/);
+  assert.match(imgFn, /^\(objUrl: string, path: string, onFail: \(e: Event\) => void\)/, "imgBlock hands its caller the error event: a source pin; executed in file-view-seam.test.ts (the replaced picture's error, the svg's re-ask)");
+  assert.match(imgFn, /img\.addEventListener\("error", onFail, \{ once: true \}\);\s*\n\s*img\.src = objUrl;/, "armed before src: a source pin; the error reaches the pane in file-view-seam.test.ts's decode cases");
   // …and the continuation builds the EXACT failure idiom the 413/415 catch renders: fileview-err
   // words + the path hint + the fileview-err-dl Download wired through startDownload
   const openFn = VIEW.split("export function openFileView")[1].split("function offersDownload")[0];
   const failFn = (openFn.split("const imgFailed = ")[1] || "").split("\n  };")[0];
   assert.ok(failFn, "imgFailed lives in the open viewer's closure — it needs body and dlUrl");
   assert.match(failFn, /el\("div", "fileview-err"\)/);
-  assert.match(failFn, /why\.textContent = DECODE_FAILED;/, "the sentence is the exported constant (hoisted in the Slice 7 review's round 1 for the guide's pin)");
+  assert.match(failFn, /why\.textContent = isSvgImage \? SVG_PICTURE_FAILED : DECODE_FAILED;/, "the sentence is the exported constant (hoisted in the Slice 7 review's round 1 for the guide's pin), SVG_PICTURE_FAILED over an svg's picture after its re-ask: a source pin; executed in file-view-seam.test.ts, the svg's failed load asking its address again (and the png's DECODE_FAILED)");
   assert.match(VIEW, /\nexport const DECODE_FAILED = "this image failed to decode: it may be mid-write or truncated";\n/, "its export line, the words the guide's pin reads");
   assert.match(failFn, /el\("div", "fileview-err-hint"\)/);
   assert.match(failFn, /hint\.textContent = path;/);
@@ -1403,7 +1406,9 @@ test("source: the Slice 7 review's round 2 (plans/markdown-viewer.md, the Slice 
   assert.doesNotMatch(VIEW, /renderFell = err instanceof Error/, "no catch records the raw message, and none records before its fallback swap");
   // the hold's comment above fetchFile: fireRendered wraps every hook in its own try, so a hook's throw never reaches the chain's catch
   assert.match(VIEW, /const fireRendered = \(why: FileViewRenderWhy = "paint"\) => \{ for \(const cb of renderHooks\) \{ try \{ cb\(why\); \} catch \{[^\n]*\} \} \};/, "each hook in its own try");
-  const hold = VIEW.slice(VIEW.indexOf("// The landing runs through the hold's defer"), VIEW.indexOf("const fetchFile = () => {"));
+  const holdFrom = VIEW.indexOf("// The landing runs through the hold's defer"), holdTo = VIEW.indexOf("const fetchFile = (");
+  assert.ok(holdFrom >= 0 && holdTo > holdFrom, "the hold's comment, bounded by fetchFile's own line, whatever its parameters");
+  const hold = VIEW.slice(holdFrom, holdTo);
   assert.match(hold, /the passes after the try that can throw through \(the folds' restore, the width stamp,\n\s*\/\/ the Outline's sync, the seat\)/, "the passes named are the ones whose throw reaches the catch");
   assert.match(hold, /Never a hook's own throw: fireRendered runs each hook in its own\n\s*\/\/ try and swallows it/, "and the hooks are named as the exception");
   assert.doesNotMatch(hold, /the folds' restore, the hooks, the seat/, "round 1's list, which named the hooks as a rejecting pass, is gone (the review's round 2)");

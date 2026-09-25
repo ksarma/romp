@@ -400,8 +400,9 @@ test("reload on an image: the previous object URL is revoked once, the <img> get
   assert.deepEqual(revoked, [first, second], "close revokes the CURRENT URL — the registration moved with the reload");
 });
 
-// An svg's picture loads from its /file address, which carries the landed mtime as a version key: a new <img> at an address the
-// page has already loaded shows the picture it holds and asks for nothing, so the reload's picture needs the new mtime's address.
+// An svg's picture loads from its /file address, which carries the landed mtime as a version key: while the page still holds the
+// picture of an address it has loaded, a new <img> at that address shows it and asks for nothing, so the reload's picture needs
+// the new mtime's address.
 const figAt = (key: string) => "/file?path=" + encodeURIComponent(FIG) + "&sid=" + SID + "&v=" + key;
 
 test("reload on an svg picture: the picture's /file address follows the landed mtime, a new <img> at the new mtime's address, and no object URL is released at the reload or the close", async (t) => {

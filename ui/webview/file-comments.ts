@@ -263,6 +263,11 @@ export const CHANGES_UNREAD_UNDER_EDIT = "This file has pending changes that wer
 // plans/markdown-viewer.md a reload that fails paints a pane the seam reports (error()) and the wait ends on that
 // paint (bytesFailed), so with a current kernel the bytes either land (bytesLanded) or fail (bytesFailed), each an
 // event, and the timer speaks only where no kernel answers the fetch at all.
+// The wait ends when the bytes arrive or when the body's paint shows them, whichever comes first: an svg picture loads
+// from its /file address in a request of its own, which ends after its bytes land unless the page still holds that
+// picture (then it paints first), and the Source view, when the bytes go to it, paints at their decode; the seam's
+// onLanded ends the wait at the landing, so the deadline has one job, a fetch that never lands, and never covers the
+// picture's load or that decode.
 const STATUS_DEADLINE_MS = 15000;
 // The head's row when the reload the panel asked for FAILED (the seam's error() on the paint that put the failure pane
 // in place of the file, Slice 7 item 3): the seam's own words in parentheses, then what the person is looking at and
@@ -1648,6 +1653,11 @@ class Panel {
   // settles it (the review of Slice 7, round 4: the row's Reload over a standing pane re-filed the row off that pane as soon as
   // the status ask landed, the fetch still out, and cleared the deadline with it)
   reloadOut = false;
+  // the view's mtime at its last paint (the onRendered hook, `why` other than "reflow"), or at the mount before any paint: the
+  // mtime of the text the body shows. landedAhead: the seam has reported a landing since that paint (onLanded, an svg picture's
+  // bytes), so mtimeNs() may answer bytes the body does not show yet; the next paint lowers it. Both are read by paintCurrent
+  paintedAt = "";
+  landedAhead = false;
   // ── the margin layout (the build's reading, not a ruling, of the user's 2026-09-07 ask after walking the loop: that
   // comments might move with the window when possible, each trying to stay centered near its place in the text; the
   // build put each card level with its passage instead, and the plan's margin-layout note under Slice 2 records both,
@@ -1910,7 +1920,17 @@ class Panel {
     // plans/markdown-viewer.md, item 3) ends the wait for the bytes at once, in the seam's words, at the head of the pass (paintAll → bytesFailed)
     // ...and every paint other than a reflow is the viewer's answer to whatever the panel asked it to re-fetch (a landing, a failure
     // pane), so the record of a fetch of the panel's being out (reloadOut, reloadView) ends here, before the pass reads it at its head
-    ctx.onRendered((why) => { this.hideFloat(); this.retargetComposer(); if (why === "reflow") { this.trimBlanks(); this.scheduleLayout(); } else { this.reloadOut = false; this.paintAll(); } });
+    // ...and a paint is what the body shows from then on: its mtime is recorded (paintedAt), and a landing reported ahead of it
+    // has its paint now (landedAhead lowered), before the pass reads either (paintCurrent)
+    this.paintedAt = ctx.mtimeNs();
+    ctx.onRendered((why) => { this.hideFloat(); this.retargetComposer(); if (why === "reflow") { this.trimBlanks(); this.scheduleLayout(); } else { this.reloadOut = false; this.paintedAt = ctx.mtimeNs(); this.landedAhead = false; this.paintAll(); } });
+    // ...and the bytes of an svg picture landing (the seam's onLanded). Their paint is the picture's own load, or the Source view's
+    // at their decode, and it may come before the landing or after it: a picture the page still holds paints first. The wait for
+    // a reload's bytes ends at whichever comes first, here when the status's mtime is the view's (bytesLanded, with the loader in
+    // the head going), while the paint pass, the regions layer's included, waits for that paint and its onRendered. The render
+    // here reads nothing of the paint: until the paint the body shows the text painted before the landing, so the change cards
+    // read the status against that paint's mtime (landedAhead, paintCurrent) and keep their state until the paint moves them
+    if (ctx.onLanded) ctx.onLanded(() => { this.landedAhead = true; if (this.status && this.textCurrent(this.status)) { this.bytesLanded(); this.render(); } });
     ctx.onSaved((info) => {
       if (this.base) this.base.file = info.mtimeNs;   // the poll must not re-fetch the person's own save
       if (this.lastSaveNs === info.mtimeNs) { this.lastSaveNs = null; return; }   // a save through this panel: its reply IS the status (Slice 5)
@@ -2891,7 +2911,11 @@ class Panel {
   // ── the bytes a status describes but the view does not show yet: the wait for the reload ───────
   /** A status whose file mtime is not the view's just applied and the view was asked to re-fetch (syncBytes): hold
    *  the "bytes" slot busy (the loader at the head of the cards) until a paint shows the status's text (bytesLanded) or a
-   *  failure pane in its place (bytesFailed), or the deadline (bytesLate). The slot is the wait's while it is armed: a
+   *  failure pane in its place (bytesFailed), or the deadline (bytesLate). An svg picture's landing ends it too (bytesLanded
+   *  from the seam's onLanded), at the landing or at the paint, whichever comes first: its bytes are in hand while the picture
+   *  loads in a request of its own (a picture the page still holds paints before the landing), or while the Source view, when
+   *  the bytes go to it, decodes them, and the deadline is for a fetch that never lands, never for that load or that decode.
+   *  The slot is the wait's while it is armed: a
    *  Reload's status ask that marked the same slot leaves it at its end (refresh). Nothing to wait for when the view already
    *  shows it (the stand-in's synchronous reload). */
   private awaitBytes(r: Status): void {
@@ -2915,7 +2939,10 @@ class Panel {
     this.errors.delete("bytes");
   }
   /** The deadline: the fetch neither landed nor told the seam it failed (a kernel from before this feature; a current one
-   *  answers every fetch, and the seam reports a failure through error(), bytesFailed). The loader yields to a row, and its
+   *  answers every fetch, and the seam reports a failure through error(), bytesFailed). A landing ends the wait whether or not
+   *  its picture has loaded (an svg's, through the seam's onLanded), and before the Source view's decode when the bytes go to
+   *  it, so this row never says the bytes have not arrived while they are in hand and only the picture's own load, or that
+   *  decode, is out. The loader yields to a row, and its
    *  Reload re-fetches the bytes and re-asks status (fcreload): the loader never traps the person (ui/CLAUDE.md). Two edges,
    *  pre-existing, recorded in the plan's Slice 7 note and routed, not changed here (the review's rounds 3 and 5): the timer
    *  is armed afresh by every status that lands while the wait is up (awaitBytes, on each status whose file mtime is
@@ -3200,10 +3227,11 @@ class Panel {
    *  cut the span from (indexedText: the view's, or the file as the editor loaded it), the status's — not the bytes of a
    *  reject's reply before its reload lands, or of the poll's reload before its status (textCurrent; renderChangeCard's
    *  inFlux, which withholds an unpainted insertion's Reveal on the same ground) — and a view that shows text at all (not
-   *  the picture of a media file). A deletion has no span to carry and never asks. */
+   *  the picture of a media file). A deletion has no span to carry and never asks. From a landing the seam reports ahead of its
+   *  paint until that paint, the view's text is the one painted before the landing (paintCurrent). */
   private spanCarried(c: ChangeCard): boolean {
     const s = this.status;
-    return !!s && this.textCurrent(s) && this.indexedText() !== null && this.ctx.mode() !== "media";
+    return !!s && this.paintCurrent(s) && this.indexedText() !== null && this.ctx.mode() !== "media";
   }
   /** The pending changes whose marks a selection's range overlaps (the about follow-on): an insertion's or a
    *  substitution's span sharing any character with the range, a deletion's point strictly inside it (a selection that
@@ -3827,9 +3855,17 @@ class Panel {
    *  host read, and after a reject (or a session write the poll has seen but the status has not) the two
    *  differ until the reload lands — painting changes over the other text would mark the wrong passages.
    *  An empty viewer mtime (the fetch not landed) claims nothing. */
-  private textCurrent(s: Status): boolean {
-    const vm = this.ctx.mtimeNs();
+  private textCurrent(s: Status, vm = this.ctx.mtimeNs()): boolean {
     return !vm || !s.fileMtimeNs || vm === s.fileMtimeNs;
+  }
+  /** textCurrent over the text the body SHOWS: from a landing the seam reports ahead of its paint (onLanded, landedAhead)
+   *  until that paint, mtimeNs() answers the landed bytes while the body still shows what was painted before them (the Source
+   *  view's older XML until the decode, the paint before the picture's load), so the mtime read is that paint's (paintedAt).
+   *  The change cards read this (renderChangeCard's inFlux, spanCarried), so a card keeps its state from the landing to the
+   *  paint and moves at the paint, the event that shows the new bytes (CLAUDE.md: cards move on new information). With no
+   *  landing since the last paint, or when the paint came first, the two mtimes are one. */
+  private paintCurrent(s: Status): boolean {
+    return this.textCurrent(s, this.landedAhead ? this.paintedAt : this.ctx.mtimeNs());
   }
   /** The text the status's offsets and a composer's range index: the view's, or while the editor is up — when text()
    *  answers the buffer, which every keystroke moves under the offsets — the file as the editor loaded it or as the last
@@ -6634,8 +6670,10 @@ class Panel {
     // and its status has not — so nothing was painted, and nothing is known yet about what the view will show once the
     // two agree. Neither the "not shown" tag nor a Reveal is claimed on that: a tag and a button that appear for one
     // fetch and vanish with it would move on no new information (CLAUDE.md). A deletion's Reveal is constant and stays.
+    // The bytes are the ones the body shows: from a landing the seam reports ahead of its paint until that paint, they are the
+    // text painted before the landing (paintCurrent), so the card keeps its state until the paint and moves then.
     const s = this.status;
-    const inFlux = !!s && !this.textCurrent(s);
+    const inFlux = !!s && !this.paintCurrent(s);
     const slot = "change:" + c.id;
     const card = el("div", "fc-card fc-change" + (isOpen ? " open" : "") + (c.detached ? " fc-card-detached" : "") + (this.openBodies.has(c.key) ? " fc-more" : ""));   // fc-more: its long parts shown whole (clipCards)
     card.dataset.id = c.key; card.dataset.change = c.id; card.dataset.kind = c.kind;

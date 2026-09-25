@@ -23,7 +23,7 @@ class FakeEl {
   children!: FakeEl[]; parent!: FakeEl | null;   // both edges are defined in the constructor, non-enumerable (ui/test-dom-shim.ts hideEdges):
                                               // a node inspects as its primitives, never as the tree it hangs in
   style: Record<string, string> = {}; _cls = new Set<string>(); _text = ""; isConnected = true;
-  onclick: any = null; onerror: any = null; onmousedown: any = null; onauxclick: any = null; title = ""; src = ""; alt = ""; loading = ""; decoding = "";
+  onclick: any = null; onerror: any = null; onload: any = null; onmousedown: any = null; onauxclick: any = null; title = ""; src = ""; alt = ""; loading = ""; decoding = "";
   listeners: Record<string, Function[]> = {};
   constructor(tag: string) {
     this.tag = tag;
@@ -202,6 +202,21 @@ const streams = (sizes: number[], hold?: Promise<void>) => () => Promise.resolve
 const shownImg = (box: FakeEl) => box.children.find((c) => c.tag === "img" && c._cls.has("path-full-img"));
 /** The preview's /file address: SID's host relays it, with the bare sid. */
 const addressOf = (file: string) => "/remote/TESTHOST/file?path=" + encodeURIComponent(file) + "&sid=11111111-2222-4333-8444-000000000291";
+/** A box whose picture at its own address is loading: the wait element with its one swirl and its note, and the picture hidden beside it. */
+const WAITING = "span.path-full(span.path-full-wait(img.path-load-spin(),span.path-load-note()),img.path-full-img.path-img-loading())";
+/** The swirls under a node. */
+const spins = (n: FakeEl): number => n.children.reduce((k, c) => k + (c._cls.has("path-load-spin") ? 1 : 0) + spins(c), 0);
+/** The pictures in a box. */
+const pictures = (box: FakeEl): number => box.children.filter((c) => c._cls.has("path-full-img")).length;
+/** The attempts a box has left, read as the fetches its per-message heals make until the chip when each answers a real verdict
+ *  (a 404, which spends one attempt and refills nothing): the attempts left, plus the one that settles the chip. */
+async function untilChip(P: any, box: FakeEl): Promise<number> {
+  fetchAnswer = failWith(404, "not found: the file is gone");
+  const c0 = fetchCalls;
+  for (let i = 0; i < 8 && !box.querySelector("path-full-retry"); i++) { P.retryFailedPreviews(); await sleep(460); }
+  assert.ok(box.querySelector("path-full-retry"), "the chip, the attempts spent on real verdicts");
+  return fetchCalls - c0;
+}
 /** A fresh box for the same mention, as a re-render of the turn builds it (the earlier boxes leave the document). */
 async function rerendered(file: string): Promise<FakeEl> {
   const P = await import("./preview");
@@ -211,15 +226,16 @@ async function rerendered(file: string): Promise<FakeEl> {
   return box;
 }
 
-test("an svg after a retry: the resumed fetch keeps its error words and its progress, then the picture shows from the /file address the first attempt used; a re-render shows the same address with no fetch", async () => {
+test("an svg after a retry: the resumed fetch keeps its error words and its progress, then the picture loads from the /file address the first attempt used, beside the swirl and with no progress in the note until its load; a re-render shows the same address with no fetch, and with no cue after the load", async () => {
   stubBlobs();
   fetchCalls = 0;
   const file = "/home/user/notes-api/plots/diagram.svg";
+  const minted0 = blobs;
   const { P, box } = await armedBox(file);
   // a link failure first: classified and worded as for any image
   fetchAnswer = failWith(502, "tunnel to TESTHOST is not answering; re-dialing");
   P.retryFailedPreviews(); await sleep(20); await sleep(450);
-  assert.match(box.shape(), /tunnel to TESTHOST is not answering; re-dialing \u2014 retries when the link is back · tap to retry now/, "the server's words and the link's plan");
+  assert.match(box.shape(), /tunnel to TESTHOST is not answering; re-dialing . retries when the link is back · tap to retry now/, "the server's words and the link's plan");
   // the link is back: the fetch narrates its progress while the second chunk is held
   let release!: () => void;
   fetchAnswer = streams([1200000, 1800000], new Promise<void>((r) => { release = r; }));
@@ -230,15 +246,26 @@ test("an svg after a retry: the resumed fetch keeps its error words and its prog
   await sleep(30);
   assert.equal(fetchCalls, 2, "the two managed attempts, nothing more");
   const img = shownImg(box);
-  assert.ok(img, "the picture replaced the wait box");
+  assert.ok(img, "the picture is in the box");
   assert.ok(!img!.src.startsWith("blob:"), "the svg's picture is its /file address, not an object URL; got " + img!.src);
   assert.equal(img!.src, addressOf(file), "the /file address the first attempt used");
+  // the picture's own load is a wait of its own: the wait element and its one swirl stay, the picture beside them until it loads
+  assert.equal(box.bones(), WAITING, "the swirl holds the spot beside the picture, which waits hidden (path-img-loading)");
+  assert.equal(box.querySelector("path-load-note")!.textContent, "", "the note carries no transfer progress while the picture loads");
+  assert.equal(spins(box), 1, "one swirl in the box");
+  const early = await rerendered(file);
+  assert.equal(early.bones(), WAITING, "a re-render before the picture has loaded waits the same way");
+  assert.equal(shownImg(early)?.src, addressOf(file), "at the same address");
+  shownImg(early)!.onload();
+  assert.equal(early.bones(), "span.path-full(img.path-full-img())", "the picture's load: the wait element goes and the picture shows alone");
   const again = await rerendered(file);
+  assert.equal(again.bones(), "span.path-full(img.path-full-img())", "a re-render of a picture that has loaded puts it in the box with no cue (loadedOnce holds its address)");
   assert.equal(shownImg(again)?.src, addressOf(file), "the re-render's picture: the same address");
-  assert.equal(fetchCalls, 2, "and no fetch for it");
+  assert.equal(fetchCalls, 2, "and no fetch for either re-render");
+  assert.equal(blobs, minted0, "no object URL was made for the svg on any of these roads");
 });
 
-test("a png after a retry shows from the object URL of its fetched bytes, and so does its re-render (the control for the svg case above)", async () => {
+test("a png after a retry shows from the object URL of its fetched bytes, and so does its re-render, each the plain <img> (the control for the svg case above)", async () => {
   stubBlobs();
   fetchCalls = 0;
   const file = "/home/user/notes-api/plots/p99-latency.png";
@@ -246,46 +273,93 @@ test("a png after a retry shows from the object URL of its fetched bytes, and so
   fetchAnswer = streams([3]);
   P.retryFailedPreviews();
   await sleep(40);
-  const src = shownImg(box)?.src || "";
+  const shown = shownImg(box)!;
+  const src = shown?.src || "";
   assert.match(src, /^blob:fake-\d+$/, "a png shows from its bytes; got " + src);
+  assert.equal(shown.onerror, null, "a picture shown from its fetched bytes carries no failure handler");
+  assert.equal(shown.onload, null, "and no load handler");
+  assert.equal(box.bones(), "span.path-full(img.path-full-img())", "the plain <img> alone: no swirl, no path-img-loading");
   const again = await rerendered(file);
   assert.equal(shownImg(again)?.src, src, "the re-render reads the same object URL");
+  assert.equal(shownImg(again)!.onerror, null, "the re-render's picture carries no failure handler either");
+  assert.equal(shownImg(again)!.onload, null, "and no load handler");
+  assert.equal(again.bones(), "span.path-full(img.path-full-img())", "the plain <img> alone");
   assert.equal(fetchCalls, 1, "one managed fetch in all");
 });
 
-test("an svg picture whose load fails after the resumed fetch takes the first attempt's failure path: no broken picture stays, the wait box says what the first attempt's does, and the heal shows a fresh <img> at the same address with no second fetch", async () => {
+test("an svg picture whose load fails after the resumed fetch: no broken picture stays, the wait box says what the first attempt's does, and the next attempt runs the managed fetch again; when every fetch succeeds and every picture fails, the fetches number the bound the budget gives and the box settles on the chip", async () => {
   stubBlobs();
   fetchCalls = 0;
   const file = "/home/user/notes-api/plots/error-budget.svg";
+  const minted0 = blobs;
   const { P, box } = await armedBox(file);
   fetchAnswer = streams([3]);
   P.retryFailedPreviews();
   await sleep(40);
   const img = shownImg(box)!;
   assert.equal(img?.src, addressOf(file), "the picture shows from its /file address; got " + img?.src);
-  assert.ok(img.onerror, "and carries an onerror, as the first attempt's <img> does");
+  assert.equal(typeof img.onerror, "function", "and carries a failure handler, as the first attempt's <img> does");
+  const waits: string[] = [];                             // the box while each picture loads: its bones and its swirls
+  const waitOf = (): string => box.bones() + ", swirls " + spins(box);
+  waits.push(waitOf());
   img.onerror();
   await sleep(10);
   assert.notEqual(box.style.display, "none", "the verified box stays shown when its picture fails to load after the resumed fetch; only an unverified box hides");
   assert.equal(shownImg(box), undefined, "no broken picture stays in the box");
-  assert.match(box.shape(), /span\.path-load-note\[\]\{"connection dropped \u2014 retrying · tap to retry now"\}/, "the first attempt's words (no byte count: the bytes were not kept)");
-  const calls = fetchCalls;
+  assert.match(box.shape(), /span\.path-load-note\[\]\{"connection dropped . retrying · tap to retry now"\}/, "the first attempt's words (no byte count: the bytes were not kept)");
   P.retryFailedPreviews();
-  await sleep(20);
+  await sleep(40);
+  assert.equal(fetchCalls, 2, "the next attempt runs the managed fetch again: the memo entry went with the picture's failure");
   const retried = shownImg(box);
-  assert.ok(retried && retried !== img, "the heal built a fresh picture");
-  assert.notEqual(box.style.display, "none", "and the verified box shows it");
+  assert.ok(retried && retried !== img, "and its landing built a fresh picture");
+  assert.notEqual(box.style.display, "none", "the heal leaves a verified box shown");
   assert.equal(retried!.src, addressOf(file), "at the same address");
-  assert.equal(typeof retried!.onerror, "function", "the healed picture carries its failure handler, as the first one does");
-  assert.equal(fetchCalls, calls, "with no second managed fetch");
-  // the budget still bounds it: every further failure spends an attempt, and the spent budget settles on the chip
-  for (let i = 0; i < 6; i++) { const cur = shownImg(box); if (!cur) break; cur.onerror(); await sleep(10); P.retryFailedPreviews(); await sleep(10); }
-  assert.match(box.shape(), /span\.path-full-retry\[\]\{"⚠ still unavailable \u2014 tap to retry"\}/, "the chip, once the attempts are spent");
+  assert.equal(typeof retried!.onerror, "function", "the new picture carries its failure handler, as the first one does");
+  waits.push(waitOf());
+  // every fetch succeeds and every picture fails, over twenty kernel messages: a fetch that ends in a picture's failure does not
+  // refill the budget, so the attempts run out, the settled chip's heal makes its one attempt, and the box settles
+  retried!.onerror();
+  await sleep(10);
+  const roads: string[] = [];
+  for (let i = 0; i < 20; i++) {
+    P.retryFailedPreviews();
+    await sleep(40);
+    const cur = shownImg(box);
+    if (cur) { roads.push(cur.src); waits.push(waitOf()); cur.onerror(); await sleep(10); }
+  }
+  assert.ok(roads.length > 0 && roads.every((u) => u === addressOf(file)), "every picture the heals built is the /file address: " + roads.join(" | "));
+  assert.deepEqual(waits, Array(6).fill(WAITING + ", swirls 1"), "each of the six pictures loads beside the one swirl, the settled chip's heal included, whose chip gives way to the swirl while its picture loads: " + waits.join(" | "));
+  assert.equal(blobs, minted0, "and no object URL was made for the svg");
+  assert.equal(fetchCalls, 6, "six managed fetches over twenty messages, the bound the budget of three gives: the first, whose progress refilled the budget before any picture had failed; three budgeted attempts; and the settled chip's one new-evidence heal with the attempt it leaves");
+  assert.match(box.shape(), /span\.path-full-retry\[\]\{"⚠ still unavailable . tap to retry"\}/, "the chip, once the attempts are spent");
   const settled = box.shape();
   for (let i = 0; i < 30; i++) P.retryFailedPreviews();
-  await sleep(20);
+  await sleep(40);
   assert.equal(box.shape(), settled, "the same failure again is no new evidence: the chip stays");
-  assert.equal(fetchCalls, calls, "no managed fetch at any point after the bytes arrived");
+  assert.equal(fetchCalls, 6, "and no further fetch");
+});
+
+test("a picture that has loaded, put in the box again with no cue by a re-render, then fails to load: its failure takes the address out of loadedOnce with its memo entry, so the next attempt runs the managed fetch and its picture waits beside the one swirl", async () => {
+  stubBlobs();
+  fetchCalls = 0;
+  const file = "/home/user/notes-api/plots/ingest-rate.svg";
+  const { P, box } = await armedBox(file);
+  fetchAnswer = streams([3]);
+  P.retryFailedPreviews();
+  await sleep(40);
+  assert.equal(typeof shownImg(box)?.onload, "function", "the picture at the preview's own address carries its load handler");
+  shownImg(box)!.onload();                                // the picture loaded: its address joined loadedOnce
+  const again = await rerendered(file);
+  assert.equal(again.bones(), "span.path-full(img.path-full-img())", "a re-render puts the loaded picture in the box with no cue (loadedOnce holds its address)");
+  const calls = fetchCalls;
+  shownImg(again)!.onerror();                             // the re-render's picture fails to load
+  await sleep(10);
+  P.retryFailedPreviews();
+  await sleep(40);
+  assert.equal(fetchCalls, calls + 1, "the next attempt runs the managed fetch: the memo entry went with the picture's failure");
+  assert.equal(again.bones(), WAITING, "and its picture waits beside the swirl: the failure took the address out of loadedOnce, so the picture is not shown as one that has loaded");
+  assert.equal(spins(again), 1, "one swirl");
+  assert.equal(shownImg(again)?.src, addressOf(file), "at its /file address");
 });
 
 test("the memo's eviction releases object URLs only: an evicted svg entry, which holds its /file address, releases nothing; an evicted png entry releases its object URL", async () => {
@@ -310,7 +384,7 @@ test("the memo's eviction releases object URLs only: an evicted svg entry, which
   assert.ok(revoked.every((u) => u.startsWith("blob:")), "only object URLs are released: " + revoked.join(" | "));
 });
 
-test("an unverified svg preview whose picture fails to load after the resumed fetch hides its box, as it does when the first attempt's picture fails, and then takes the same failure path: registered for the heal, which builds a fresh picture from the memo", async () => {
+test("an unverified svg preview whose picture fails to load after the resumed fetch hides its box, as it does when the first attempt's picture fails, and then takes the same failure path: registered for the heal, whose managed fetch lands a fresh picture and shows the box again", async () => {
   stubBlobs();
   fetchCalls = 0;
   const P = await import("./preview");
@@ -331,14 +405,15 @@ test("an unverified svg preview whose picture fails to load after the resumed fe
   assert.equal(box.style.display, "none", "the unverified box hides when its picture fails to load after the resumed fetch, as when the first attempt's does");
   await sleep(10);
   assert.equal(shownImg(box), undefined, "no broken picture stays in the box");
-  assert.match(box.shape(), /span\.path-load-note\[\]\{"connection dropped \u2014 retrying · tap to retry now"\}/, "then the first attempt's failure path: the wait box and its words");
+  assert.match(box.shape(), /span\.path-load-note\[\]\{"connection dropped . retrying · tap to retry now"\}/, "then the first attempt's failure path: the wait box and its words");
   const calls = fetchCalls;
   P.retryFailedPreviews();
-  await sleep(20);
+  await sleep(40);
+  assert.equal(fetchCalls, calls + 1, "the heal runs the managed fetch again, within the budget (the memo entry went with the picture's failure)");
   const again = shownImg(box);
-  assert.ok(again && again !== img, "registered for the heal, which built a fresh picture");
-  assert.equal(again!.src, addressOf(file), "at the same address, from the memo");
-  assert.equal(fetchCalls, calls, "with no second managed fetch");
+  assert.ok(again && again !== img, "registered for the heal, whose landing built a fresh picture");
+  assert.equal(again!.src, addressOf(file), "at the same address");
+  assert.equal(box.style.display, "", "and the box shows again, the swirl beside the loading picture (the fetch landing's unhide)");
 });
 
 test("an upper-case .SVG path is an svg too: after the resumed fetch its picture is its /file address", async () => {
@@ -352,6 +427,224 @@ test("an upper-case .SVG path is an svg too: after the resumed fetch its picture
   const src = shownImg(box)?.src || "";
   assert.equal(src, addressOf(file), "the svg's picture is its /file address, not an object URL; got " + src);
   assert.equal(fetchCalls, 1, "after the one managed fetch");
+});
+
+test("a pinned mention's svg picture after the resumed fetch is the first attempt's address, its pin included, with the failure handler of a picture at that address", async () => {
+  stubBlobs();
+  fetchCalls = 0;
+  const P = await import("./preview");
+  for (const b of minted) b.isConnected = false;
+  const file = "/home/user/notes-api/plots/queue-lag.svg";
+  const box = P.previewFull(file, SID, true, "a1b2c3d4e5f60718") as unknown as FakeEl;   // the message's mention pin (synthetic)
+  minted.push(box);
+  const first = shownImg(box)!;
+  assert.equal(first.src, addressOf(file) + "&pin=a1b2c3d4e5f60718", "the first attempt's address carries the pin");
+  first.onerror();
+  await sleep(10);
+  fetchAnswer = streams([3]);
+  P.retryFailedPreviews();
+  await sleep(40);
+  const img = shownImg(box)!;
+  assert.equal(img?.src, first.src, "the picture after the resumed fetch is the first attempt's address, its pin included; got " + img?.src);
+  assert.equal(typeof img.onerror, "function", "and carries the failure handler of a picture at the preview's own address");
+});
+
+test("after a memo'd success, a picture that fails to load runs the managed fetch again: a relay's 502 then carries the relay's words and waits for the reconnect-class heal, spending none of the budget, while the picture's own failure spends one, as a first attempt's does", async () => {
+  stubBlobs();
+  // a picture failure after the resumed fetch, then a relay's 502 on the fetch the next message runs
+  fetchCalls = 0;
+  const file = "/home/user/notes-api/plots/tail-latency.svg";
+  const { P, box } = await armedBox(file);
+  fetchAnswer = streams([3]);
+  P.retryFailedPreviews();
+  await sleep(40);
+  shownImg(box)!.onerror();
+  await sleep(10);
+  fetchAnswer = failWith(502, "tunnel to TESTHOST is not answering; re-dialing");
+  P.retryFailedPreviews();
+  await sleep(20);
+  assert.equal(fetchCalls, 2, "the picture's failure runs the managed fetch again on the next message (the memo entry went with it)");
+  await sleep(450);
+  assert.match(box.shape(), /span\.path-load-note\[\]\{"tunnel to TESTHOST is not answering; re-dialing . retries when the link is back · tap to retry now"\}/, "the note carries the relay's words and says what will happen");
+  for (let i = 0; i < 60; i++) { P.retryFailedPreviews(); if (i % 10 === 0) await sleep(5); }
+  await sleep(450);
+  assert.equal(fetchCalls, 2, "sixty kernel messages, no fetch: the link's heal is the reconnect event");
+  fetchAnswer = failWith(404, "not found: the file is gone");
+  P.refreshSettledPreviews();
+  await sleep(460);
+  assert.equal(fetchCalls, 3, "one fetch on the reconnect");
+  const after502 = 1 + await untilChip(P, box);
+  // the controls: the attempts left after the picture's failure alone, and after a first attempt's failure alone
+  const { box: picOnly } = await armedBox("/home/user/notes-api/plots/heap-growth.svg");
+  fetchAnswer = streams([3]);
+  P.retryFailedPreviews();
+  await sleep(40);
+  shownImg(picOnly)!.onerror();
+  await sleep(10);
+  const afterPicture = await untilChip(P, picOnly);
+  const { box: firstOnly } = await armedBox("/home/user/notes-api/plots/gc-pauses.svg");
+  const afterFirst = await untilChip(P, firstOnly);
+  assert.equal(after502, afterPicture, "the 502 attempt spent none of the budget: the attempts left after it (the reconnect's fetch counted) equal those left after the picture's failure: " + after502 + " against " + afterPicture);
+  assert.equal(afterPicture, afterFirst, "the picture's own failure spends one attempt, as a first attempt's does: " + afterPicture + " fetches to the chip against " + afterFirst);
+});
+
+test("after two builds within one load's life, the replaced picture's failure changes nothing, and one failed request both pictures share spends one attempt: the failed loads the budget absorbs equal a single build's", async () => {
+  stubBlobs();
+  // a chip settled on real verdicts, its new-evidence heal landing a picture (img1), and with `two` a reconnect heal during
+  // img1's load building a second from the memo (img2); then the pictures fail until the chip, the first failure fired on
+  // every picture sharing the request (`both`) or on the current one alone; the count is the failed loads before the chip
+  const twoPictures = async (file: string) => {
+    const { P, box } = await armedBox(file);
+    await untilChip(P, box);
+    fetchAnswer = streams([3]);
+    P.retryFailedPreviews();
+    await sleep(40);
+    const img1 = shownImg(box)!;
+    P.refreshSettledPreviews();
+    await sleep(10);
+    const img2 = shownImg(box)!;
+    assert.equal(img1.src, addressOf(file), file + ": the chip's heal lands the picture at its /file address");
+    assert.equal(img2?.src, addressOf(file), file + ": and the reconnect heal's picture, from the memo, is the same address");
+    return { P, box, img1, img2 };
+  };
+  const absorbed = async (file: string, two: boolean, both: boolean): Promise<number> => {
+    let P: any, box: FakeEl, shared: FakeEl[];
+    if (two) {
+      const s = await twoPictures(file);
+      ({ P, box } = s);
+      assert.ok(s.img2 && s.img2 !== s.img1, file + ": the reconnect heal built a second picture");
+      assert.equal(pictures(box), 1, file + ": one picture in the box, the first gone from it");
+      shared = both ? [s.img1, s.img2] : [s.img2];
+    } else {
+      ({ P, box } = await armedBox(file));
+      await untilChip(P, box);
+      fetchAnswer = streams([3]);
+      P.retryFailedPreviews();
+      await sleep(40);
+      shared = [shownImg(box)!];
+    }
+    let failures = 0;
+    for (let i = 0; i < 20; i++) {
+      for (const p of shared) p.onerror();
+      failures++;
+      await sleep(10);
+      if (box.querySelector("path-full-retry")) break;
+      P.retryFailedPreviews();
+      await sleep(40);
+      const cur = shownImg(box);
+      shared = cur ? [cur] : [];
+      if (!cur) break;
+    }
+    assert.ok(box.querySelector("path-full-retry"), file + ": the chip in the end");
+    return failures - 1;
+  };
+  const single = await absorbed("/home/user/notes-api/plots/fanout.svg", false, false);
+  const twoBuilds = await absorbed("/home/user/notes-api/plots/fanin.svg", true, false);
+  const shared = await absorbed("/home/user/notes-api/plots/backlog.svg", true, true);
+  assert.equal(shared, single, "two builds sharing one failed request: one attempt spent for it, so the failed loads before the chip equal a single build's (" + shared + " against " + single + ")");
+  assert.equal(twoBuilds, single, "two builds, the current picture failing: the count equals a single build's (" + twoBuilds + " against " + single + ")");
+  // the replaced picture's failure alone changes nothing
+  const { box, img1, img2 } = await twoPictures("/home/user/notes-api/plots/drain.svg");
+  const before = box.shape();
+  img1.onerror();
+  await sleep(10);
+  assert.equal(shownImg(box), img2, "the replaced picture's failure leaves the current picture in the box");
+  assert.equal(box.shape(), before, "and changes nothing else (no failure counted, no attempt spent)");
+});
+
+test("a tap on the swirl while the picture loads builds it again in the same wait element: one picture and one swirl in the box, and a failed request both pictures share spends one attempt", async () => {
+  stubBlobs();
+  const run = async (file: string, tap: boolean): Promise<number> => {
+    const { P, box } = await armedBox(file);
+    fetchAnswer = streams([3]);
+    P.retryFailedPreviews();
+    await sleep(40);
+    const img1 = shownImg(box)!;
+    const wait = box.firstElementChild!;
+    assert.ok(wait._cls.has("path-full-wait") && typeof wait.onclick === "function", file + ": the wait element keeps the failure's tap handler while the picture loads");
+    const pics = [img1];
+    if (tap) {
+      wait.onclick({ stopPropagation() {}, currentTarget: wait });
+      await sleep(10);
+      const img2 = shownImg(box)!;
+      assert.ok(img2 && img2 !== img1, file + ": the tap built the picture again");
+      assert.equal(img2.src, addressOf(file), file + ": at its /file address");
+      assert.equal(box.firstElementChild, wait, file + ": the box keeps its wait element across the attempt from the memo");
+      assert.equal(pictures(box), 1, file + ": one picture in the box, the earlier one gone from it");
+      assert.equal(spins(box), 1, file + ": and one swirl");
+      pics.push(img2);
+    }
+    for (const p of pics) p.onerror();
+    await sleep(10);
+    assert.equal(pictures(box), 0, file + ": the failed picture left the box");
+    return untilChip(P, box);
+  };
+  const control = await run("/home/user/notes-api/plots/retries.svg", false);
+  const tapped = await run("/home/user/notes-api/plots/timeouts.svg", true);
+  assert.equal(tapped, control, "the shared failure spent one attempt of the budget the tap re-armed, leaving what one picture's failure leaves: " + tapped + " fetches to the chip against " + control);
+});
+
+test("a tap on the chip a failing svg picture settled on shows the swirl: the tap runs the managed fetch, in the loading persona", async () => {
+  stubBlobs();
+  fetchCalls = 0;
+  const { P, box } = await armedBox("/home/user/notes-api/plots/saturation.svg");
+  fetchAnswer = streams([3]);
+  for (let i = 0; i < 20; i++) {
+    P.retryFailedPreviews();
+    await sleep(40);
+    const cur = shownImg(box);
+    if (cur) { cur.onerror(); await sleep(10); }
+  }
+  const chip = box.querySelector("path-full-retry")!;
+  assert.ok(chip, "the chip, the budget spent");
+  const before = fetchCalls;
+  fetchAnswer = () => new Promise(() => {});          // an attempt that stays in flight
+  chip.onclick({ stopPropagation() {}, currentTarget: chip });
+  await sleep(20);
+  assert.match(box.shape(), /span\.path-full-wait\[\]\{img\.path-load-spin\[\]\{""\},span\.path-load-note\[\]\{"fetching…"\}\}/, "the tap shows the swirl and the note");
+  assert.equal(fetchCalls, before + 1, "the tap ran the managed fetch");
+});
+
+test("a tap, and a reconnect-class heal, clear the budget flag a picture's failure set: after either, fetches that make progress refill the budget again, as before the picture failed; with neither, the flag holds the refill and the box settles on the chip", async () => {
+  stubBlobs();
+  // a link that cuts every transfer: the first answer brings 1000 of 6000 bytes, each resumed one 500 more, then the stream ends
+  const flaky = () => { let first = true; return () => { const size = first ? 1000 : 500; const answer = first
+    ? { status: 200, ok: true, headers: { get: (h: string) => (h === "Content-Length" ? "6000" : null) } }
+    : { status: 206, ok: true, headers: { get: (h: string) => (h === "Content-Range" ? "bytes 1000-5999/6000" : null) } };
+    first = false;
+    return Promise.resolve({ ...answer, body: { getReader: () => { let sent = false; return { read: async () => sent ? { done: true, value: undefined } : (sent = true, { done: false, value: new Uint8Array(size) }) }; } } }); }; };
+  // the picture at its address fails after its fetch: the flag is set
+  const failedPicture = async (file: string) => {
+    const { P, box } = await armedBox(file);
+    fetchAnswer = streams([3]);
+    P.retryFailedPreviews();
+    await sleep(40);
+    shownImg(box)!.onerror();
+    await sleep(10);
+    return { P, box };
+  };
+  // six kernel messages over the flaky link: whether the chip settles
+  const settles = async (P: any, box: FakeEl): Promise<boolean> => {
+    for (let i = 0; i < 6 && !box.querySelector("path-full-retry"); i++) { P.retryFailedPreviews(); await sleep(460); }
+    return !!box.querySelector("path-full-retry");
+  };
+  const held = await failedPicture("/home/user/notes-api/plots/wal-flush.svg");
+  fetchAnswer = flaky();
+  assert.equal(await settles(held.P, held.box), true, "with neither: the flag holds the refill, so the cut attempts spend the budget and the box settles on the chip");
+  const tapped = await failedPicture("/home/user/notes-api/plots/wal-sync.svg");
+  fetchAnswer = flaky();
+  const wait = tapped.box.firstElementChild!;
+  wait.onclick({ stopPropagation() {}, currentTarget: wait });
+  await sleep(460);
+  assert.equal(await settles(tapped.P, tapped.box), false, "after a tap: each cut attempt made progress and refilled the budget, so no chip");
+  const healed = await failedPicture("/home/user/notes-api/plots/wal-replay.svg");
+  fetchAnswer = failWith(502, "tunnel to TESTHOST is not answering; re-dialing");
+  healed.P.retryFailedPreviews();
+  await sleep(460);                                       // a link failure: registered for the reconnect-class heal
+  fetchAnswer = flaky();
+  healed.P.refreshSettledPreviews();
+  await sleep(460);
+  assert.equal(await settles(healed.P, healed.box), false, "after a reconnect-class heal: each cut attempt made progress and refilled the budget, so no chip");
 });
 
 test("the source keeps the two rules where the behaviour lives", () => {
