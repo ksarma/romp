@@ -329,36 +329,38 @@ await page.goto(cfg.origin + "/chat?token=" + encodeURIComponent(cfg.token));
 await page.waitForSelector('#tabs .tab[data-id="' + cfg.sid + '"]', { timeout: cfg.deadline });
 await page.click('#tabs .tab[data-id="' + cfg.sid + '"]');
 await page.waitForFunction(() => { const i = document.querySelector('#content img[alt="authored figure"]'); return !!i && i.complete; }, null, { timeout: cfg.deadline }).catch(() => {});
-async function open(pg, handle) {
-  const r = { found: !!handle };
-  if (!handle) return r;
-  r.hrefCap = await handle.evaluate((a) => { try { return new URL(a.getAttribute("href") || "", location.href).searchParams.has("cap"); } catch (e) { return null; } });
-  r.hrefAbsolute = await handle.evaluate((a) => /^https?:\/\//.test(a.getAttribute("href") || ""));
+async function open(pg, sel) {
+  // by selector, re-resolved at each step: a pane that repaints its rows (the Waiting pane on each frame) detaches an
+  // element handle between the read and the click
+  const loc = pg.locator(sel).first();
+  const r = { found: (await loc.count().catch(() => 0)) > 0 };
+  if (!r.found) return r;
+  const href = (await loc.getAttribute("href").catch(() => null)) || "";
+  try { r.hrefCap = new URL(href, cfg.origin).searchParams.has("cap"); } catch (e) { r.hrefCap = null; }
+  r.hrefAbsolute = /^https?:\/\//.test(href);
   const t = Date.now();
   const popup = ctx.waitForEvent("page", { timeout: 8000 }).catch(() => null);
-  const dl = pg.waitForEvent("download", { timeout: 8000 }).catch(() => null);
-  await handle.click().catch((e) => { r.clickErr = String(e).slice(0, 80); });
+  await loc.click({ timeout: cfg.deadline }).catch((e) => { r.clickErr = String(e).slice(0, 80); });
   const tab = await popup;
   for (let i = 0; i < 80 && !docs.some((d) => d.at >= t); i++) await pg.waitForTimeout(100);
   r.fileRequests = docs.filter((d) => d.at >= t).map((d) => ({ kind: d.kind, status: d.status, cap: d.cap }));
   if (tab) { await pg.waitForTimeout(300); await tab.close().catch(() => {}); }   // a download's tab may close itself (Firefox)
-  void dl;
   return r;
 }
-out.codeSpan = await open(page, await page.$("#content a.url-code-link"));
-out.todoText = await open(page, await page.$(".ut-text a.url-link"));
-out.todoChip = await open(page, await page.$("a.ut-link"));
+out.codeSpan = await open(page, "#content a.url-code-link");
+out.todoText = await open(page, ".ut-text a.url-link");
+out.todoChip = await open(page, "a.ut-link");
 await page.click('#content .file-uri-link[data-path="docs/note.md"]');
 await page.waitForSelector("#romp-fileview", { timeout: cfg.deadline });
 await page.waitForFunction(() => { const i = document.querySelector('#romp-fileview img[alt="abs figure"]'); return !!i && i.complete; }, null, { timeout: cfg.deadline }).catch(() => {});
 out.viewerFigure = await page.evaluate(() => { const i = document.querySelector('#romp-fileview img[alt="abs figure"]'); if (!i) return null; let cap = null, absolute = null; try { cap = new URL(i.getAttribute("src") || "", location.href).searchParams.has("cap"); absolute = /^https?:\/\//.test(i.getAttribute("src") || ""); } catch (e) {} return { loaded: i.naturalWidth > 0, cap, absolute }; });
-out.viewerLink = await open(page, await page.$('#romp-fileview a:text-is("dashboard address")'));
+out.viewerLink = await open(page, '#romp-fileview a:text-is("dashboard address")');
 await page.keyboard.press("Escape").catch(() => {});
 const w = await ctx.newPage();
 await w.goto(cfg.origin + "/waiting");
 await w.waitForSelector("a.wt-link", { timeout: cfg.deadline }).catch(() => {});
-out.waitingText = await open(w, await w.$("a.url-link:not(.wt-link)"));
-out.waitingChip = await open(w, await w.$("a.wt-link"));
+out.waitingText = await open(w, "a.url-link:not(.wt-link)");
+out.waitingChip = await open(w, "a.wt-link");
 fs.writeSync(1, "RESULT:" + JSON.stringify(out) + "\n");
 await browser.close();
 process.exit(0);
