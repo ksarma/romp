@@ -397,12 +397,17 @@ test("in a browser: a failed figure's label never prints a path, a userinfo, a q
 // (openViewer's origin), which the heal records resolved against that base (red before the fix by the missing withheld wording, as
 // nothing of the address printed there); and, as controls green before the fix and after it, a srcset candidate and a
 // <picture> source from the web, whose label names the candidate's origin once the browser has chosen again after the heal
-// removed the src (each img's error events counted, and the label read after its last one). Every planted value is assembled
-// at run time.
-test("in a browser, the chat modal with the page's heal: a failed web picture whose address is its own src is labelled from the heal's record, its origin alone or the withheld address, never 'the source is empty', a same-scheme source written without slashes withheld on an http and on an https base, and a srcset and a <picture> source from the web still named by the candidate's origin after the browser chooses again (the file review's round 15, fresh-1: the heal parked the img before the viewer read it; a property pin over the label's text)", { timeout: 120000 }, async (t) => {
+// removed the src (each img's error events counted, and the label read after its last one). Four empty destinations join them
+// (the file review's round 16, correctness-1): `![diagram]()`, `<img src="">` and `<img src="   ">` on the http page and the first on
+// the https one. The heal parks each as it parks any failed img, recording img.src, which for an empty or blank src is the page's
+// base address, and the label read that record as the page's own origin; failedSource now leaves a record equal to that address
+// unread, so the label says the source is empty (red at the head that round read, the web cells its controls). Every planted value
+// is assembled at run time.
+test("in a browser, the chat modal with the page's heal: a failed web picture whose address is its own src is labelled from the heal's record, its origin alone or the withheld address, never 'the source is empty', a same-scheme source written without slashes withheld on an http and on an https base, and a srcset and a <picture> source from the web still named by the candidate's origin after the browser chooses again (the file review's round 15, fresh-1: the heal parked the img before the viewer read it); and an empty markdown destination, an empty src and a blank src, which the heal parks recording the page's base address, say 'the source is empty' and name no origin, on the http page and on the https one (the file review's round 16, correctness-1: red at the head that round read by the page's origin in each; the web cells are its controls, green there by design) (a property pin over the label's text)", { timeout: 120000 }, async (t) => {
   const TOK = "tok" + "en", UI = "u" + "ser" + ":" + "p" + "w" + String(4 * 4) + "@";
   const V = (k: string): string => k + "TOK" + String(k.length * 37);
   const W = "address withheld because it appears to carry a sign-in";   // FIGURE_ADDRESS_WITHHELD as a literal, so the expected text never moves with the product
+  const EMPTY = "the source is empty (diagram)";   // FIGURE_NO_SOURCE and the alt, a literal for the same reason
   /** [cell, the paragraph's figure, the page's origin ("http" or "https"), the label's words, whether the cell is a control] */
   const cells: Array<[string, string, "http" | "https", string, boolean]> = [
     ["a plain web source", '<img src="https://example.test/missing.svg" alt="">', "http", "https://example.test", false],
@@ -412,6 +417,12 @@ test("in a browser, the chat modal with the page's heal: a failed web picture wh
     ["https: written without slashes on a page at https://notes-api.test", '<img src="https:' + UI + 'example.test/s.png" alt="">', "https", W, false],
     ["a srcset candidate from the web (a control)", '<img src="figs/fallback.png" srcset="https://example.test/ss.svg 1x" alt="">', "http", "https://example.test", true],
     ["a <picture> source from the web (a control)", '<picture><source srcset="https://example.test/pic.svg"><img src="figs/fallback2.png" alt=""></picture>', "http", "https://example.test", true],
+    // the empty destinations (the file review's round 16, correctness-1): the heal parks them too, recording img.src, the page's base
+    // address for an empty or blank src, and the label says the source is empty, as it did before the heal's record was read
+    ["an empty markdown destination on the http page", "![diagram]()", "http", EMPTY, false],
+    ["an empty src on the http page", '<img src="" alt="diagram">', "http", EMPTY, false],
+    ["a blank src on the http page", '<img src="   " alt="diagram">', "http", EMPTY, false],
+    ["an empty markdown destination on a page at https://notes-api.test", "![diagram]()", "https", EMPTY, false],
   ];
   const planted = ["user:", "pw16", "?" + TOK, V("HQ")];
   const served: string[] = [];
@@ -450,7 +461,9 @@ test("in a browser, the chat modal with the page's heal: a failed web picture wh
           assert.equal(rows.length, mine.length, "one paragraph per cell");
           // the precondition: the heal parked each failed img (no src, md-img-failed, the resolved address in data-md-src)
           assert.deepEqual(rows.map((r) => [r.parked, r.src, !!r.mdSrc]), mine.map(() => [true, false, true]), "the heal parked every failed figure before the label was read");
-          // FAILS BEFORE the fix: the five cells that are not controls read FIGURE_FAILED + " the source is empty"
+          // FAILS BEFORE the fix: the five cells that are not controls read FIGURE_FAILED + " the source is empty"; and at the head the
+          // file review's round 16 read, the four empty destinations read FIGURE_FAILED + " http://notes-api.test (diagram)" (or https), the
+          // page's own origin (correctness-1)
           assert.deepEqual(rows.map((r, k) => (mine[k][4] ? null : r.label)), mine.map(([, , , w, control]) => (control ? null : FAILED + " " + w)), "each label names the heal's record as any address is named, the origin alone or the withheld address (a property pin over the label's text)");
           // the controls, green before the fix by design: the label names the candidate the browser chose, from its origin on (the path
           // after it printed before the origin cut), never the fallback src and never the empty source

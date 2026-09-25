@@ -5031,7 +5031,13 @@ const HEAL_RECORD = "data-md-src";
  *  failed img first: it records the img's resolved src in HEAL_RECORD and removes the src, so chosenSource named nothing and
  *  the label of every failed web picture whose address was its own src read "the source is empty" (the file review's round 15,
  *  fresh-1). When chosenSource names nothing and the img has no src, the heal's record is read. It is a resolved address, so
- *  the sign-in rule withholds it and any other shows its origin, as shownSource shows every address. It is read here and never
+ *  the sign-in rule withholds it and any other shows its origin, as shownSource shows every address. A record equal to the
+ *  address an empty source resolves to (absUrl(""), the document's base without its fragment) is an empty destination and
+ *  is not read, so the label says the source is empty: the heal parks an img whose src is empty or blank too and records
+ *  img.src, which for such a src is that address, and the label of `![diagram]()`, `<img src="">` and `<img src="   ">` had
+ *  named the page's own origin on the chat modal (the file review's round 16, correctness-1). Compared with absUrl(""), not
+ *  document.URL: img.src drops a fragment the chat page's address can carry (#only=web). The cost: a figure whose source is
+ *  the page's own address reads as empty on the chat modal. It is read here and never
  *  in chosenSource, which also feeds figureTarget, the reader of the outbound open. A srcset or `<picture>` figure's first label
  *  on chat is transient: once the heal has removed the src there is no currentSrc to match, so it names the fallback src (its
  *  workspace path by pictureDest's rule, or the heal's record of a web one); the browser, choosing again with the src gone,
@@ -5040,7 +5046,8 @@ const HEAL_RECORD = "data-md-src";
 function failedSource(img: Element): string | null {
   const chosen = chosenSource(img);
   if (chosen || img.hasAttribute("src")) return chosen;
-  return img.getAttribute(HEAL_RECORD) || chosen;
+  const parked = img.getAttribute(HEAL_RECORD);
+  return parked && parked !== absUrl("") ? parked : chosen;
 }
 /** The candidate the browser chose for a figure, as the author wrote it: the source the picture shows once it has loaded,
  *  the one that failed when it has not (failedSource), and the file "Open the picture" opens (figureTarget), so the picture

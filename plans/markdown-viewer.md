@@ -8465,7 +8465,11 @@ records-3, while prose may quote the word, since a comment is no literal); the t
 again at the click; the failed figure's label, `failedSource`,
 delegates to it, and when the candidate names nothing and the img has no src, reads the chat page's heal record of the
 address it parked (`data-md-src`, preview.ts parkMdImg), never for the open (the file review's round 15, fresh-1: the heal
-parks a failed img before the viewer's listener runs, and the label had read "the source is empty"); read from the src alone, the control opened the fallback src a `<picture>` or a srcset figure had
+parks a failed img before the viewer's listener runs, and the label had read "the source is empty"), and never a record equal to
+the address an empty source resolves to (`absUrl("")`, the base without its fragment), which the label reads as an empty
+destination (the file review's round 16, correctness-1: the heal parks an empty or blank src too, recording that address, and
+the label had named the page's own origin; the cost, a figure whose source is the page's own address reads as empty on the
+chat modal); read from the src alone, the control opened the fallback src a `<picture>` or a srcset figure had
 skipped), joined by the model's `figurePath` (file-comments-model.ts, the join rewriteFigureSrcs fetched through, so the
 picture opened is the one shown and its request is the paint's), through the figure's own door,
 `openFigureInViewer` (openFileView itself with the trail tag set to push and cleared in a `finally`, as

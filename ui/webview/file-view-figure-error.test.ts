@@ -819,7 +819,7 @@ test("the label through the real error listener over the stand-in (form b): ever
   }
 });
 
-test("the label of a figure the chat page's heal parked (the file review's round 15, fresh-1): on the chat modal the page's heal (preview.ts installMdImgHeal, a capture listener on the document, so it runs before the viewer's on the body) parks a failed img before the viewer reads it, its resolved src moved into data-md-src and the src removed, so the label read 'the source is empty'; the viewer's error listener over the stand-in, fired on a parked img, names the heal's record as it names any address, the origin alone for a plain and a query-bearing address and the withheld address for a standard userinfo and for a same-scheme source written without slashes, recorded resolved against an https base; controls: a parked local figure names its workspace path (data-fv-src, pictureDest's rule), and an img holding an empty src beside a record keeps 'the source is empty', since the heal parks only by removing the src (a property pin over the label's text through the real listener; CI runs it, as it skips the browser leg's chat cells)", async (t) => {
+test("the label of a figure the chat page's heal parked (the file review's round 15, fresh-1): on the chat modal the page's heal (preview.ts installMdImgHeal, a capture listener on the document, so it runs before the viewer's on the body) parks a failed img before the viewer reads it, its resolved src moved into data-md-src and the src removed, so the label read 'the source is empty'; the viewer's error listener over the stand-in, fired on a parked img, names the heal's record as it names any address, the origin alone for a plain and a query-bearing address and the withheld address for a standard userinfo and for a same-scheme source written without slashes, recorded resolved against an https base; a control: a parked local figure names its workspace path (data-fv-src, pictureDest's rule); and the heal's parking of an empty destination, which records img.src, the document's base address for an empty or blank src, says 'the source is empty' and names no origin, on a base of its own and on its fragment twin, a page address and base carrying #only=web with the record without it, as img.src drops a fragment (the file review's round 16, correctness-1: red at the head that round read, where both labels named the page's origin, and the twin red under a comparison with document.URL) (a property pin over the label's text through the real listener; CI runs it, as it skips the browser leg's chat cells)", async (t) => {
   const { md, fv } = await open(t);
   /** [cell, the heal's record (data-md-src, the img's resolved src as parkMdImg stores it), the words after FIGURE_FAILED] */
   const PARKED: Array<[string, string, string]> = [
@@ -838,13 +838,30 @@ test("the label of a figure the chat page's heal parked (the file review's round
     assert.equal(l ? l.textContent : null, fv.FIGURE_FAILED + " " + want, name + ": the label names the heal's record as it names any address (a property pin over the label's text)");
   }
   for (const s of got) for (const x of L_PLANTED) assert.ok(!s.includes(x), "no planted value in a label (a property pin): " + JSON.stringify(x) + " in " + JSON.stringify(s));
-  // controls, green before the fix by design: a parked local figure keeps pictureDest's rule, and a record beside a src the heal did not remove is not read
+  // a control, green before the fix by design: a parked local figure keeps pictureDest's rule
   const local = img({ alt: "", class: "md-img-failed", "data-fv-src": "figs/p95.png", "data-md-src": "http://notes-api.test" + fileSrc("figs/p95.png") });
   md.appendChild(block("p", local)); fire(local, "error");
   assert.equal(labelAfter(local) ? labelAfter(local)!.textContent : null, fv.FIGURE_FAILED + " figs/p95.png", "a parked local figure: its workspace path, data-fv-src (a control)");
-  const kept = img({ alt: "", src: "", "data-md-src": "https://example.test/stale.svg" });
-  md.appendChild(block("p", kept)); fire(kept, "error");
-  assert.equal(labelAfter(kept) ? labelAfter(kept)!.textContent : null, fv.FIGURE_FAILED + " the source is empty", "an img holding an empty src beside a record: the source is empty, the record unread (a control; the heal parks only by removing the src)");
+  // the heal's shape for an empty destination (the file review's round 16, correctness-1): the heal parks an img whose src is empty or
+  // blank as it parks any failed img, recording img.src, which for such a src is the document's base address without its fragment. The
+  // stand-in document has no base and no address, so each cell gives it the dashboard's own: the base itself, and its fragment twin, the
+  // page's address and base carrying #only=web while the record, as img.src reads it, carries none
+  const EMPTY: Array<[string, string, string]> = [
+    ["an empty destination parked against the dashboard's base", L_BASE, L_BASE],
+    ["its fragment twin: the page's address and base carrying #only=web, the record without it", L_BASE + "#only=web", L_BASE],
+  ];
+  t.after(() => { delete (doc as any).baseURI; delete (doc as any).URL; });
+  const empty: Array<[string, string | null]> = [];
+  for (const [name, at, rec] of EMPTY) {
+    (doc as any).baseURI = at; (doc as any).URL = at;   // the page's own address, as document.baseURI and document.URL read there
+    const i = img({ alt: "diagram", class: "md-img-failed", "data-md-src": rec });   // parked: no src attribute, the base address in data-md-src
+    md.appendChild(block("p", i)); fire(i, "error");
+    empty.push([name, labelAfter(i) ? labelAfter(i)!.textContent : null]);
+  }
+  delete (doc as any).baseURI; delete (doc as any).URL;
+  // FAILS BEFORE the fix (the file review's round 16, correctness-1): each reads FIGURE_FAILED + " http://notes-api.test (diagram)", the
+  // page's own origin; the twin alone fails under a comparison with document.URL, which keeps the fragment
+  assert.deepEqual(empty, EMPTY.map(([name]) => [name, fv.FIGURE_FAILED + " the source is empty (diagram)"]), "each parked empty destination's label says the source is empty and names no origin, [cell, label] (a property pin over the label's text)");
 });
 
 // ── source pins: what the node cases cannot execute here (the browser leg executes the rest) ──────────────────────────
