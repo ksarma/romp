@@ -96,11 +96,30 @@ test("another window on this document's origin is a peer; any other origin is fo
   assert.equal(windowSender({ source: other }, framed), "foreign", "no origin at all");
 });
 
+// Each origin here shares text with ORIGIN: one begins with it, one is a prefix of it, one differs from it only in the
+// scheme. A comparison by prefix, or by host and port alone, would call one of them a peer; only an exact match may.
+test("an origin whose text overlaps this document's origin is still another origin", () => {
+  for (const src of [other, null]) {
+    const who = src === null ? "no source, " : "another window, ";
+    assert.equal(windowSender({ source: src, origin: ORIGIN + "0" }, framed), "foreign", who + "another port whose text begins with this origin");
+    assert.equal(windowSender({ source: src, origin: "http://127.0.0.1" }, framed), "foreign", who + "this origin's text without its port");
+    assert.equal(windowSender({ source: src, origin: "https://127.0.0.1:1" }, framed), "foreign", who + "the same host and port on another scheme");
+  }
+});
+
 test("an opaque own origin never makes a peer: \"null\" matches nothing", () => {
   const opaque = { parent, location: { origin: "null" } };
   assert.equal(windowSender({ source: other, origin: "null" }, opaque), "foreign");
   assert.equal(windowSender({ source: parent, origin: "null" }, opaque), "embedder", "the parent is still the parent");
   assert.equal(windowSender({ source: other, origin: "null" }, { parent }), "foreign", "no location: no peer");
+});
+
+// With no location, this document's origin is unknown. A post that names no origin must not match that unknown: the
+// "null" row above cannot show it, since "null" never equals a missing origin.
+test("a window with no location has no peer, even for a post that names no origin", () => {
+  const bare = { location: undefined };
+  assert.equal(windowSender({ source: other }, bare), "foreign");
+  assert.equal(windowSender({ source: other, origin: undefined }, bare), "foreign");
 });
 
 test("a top-level page (its parent is itself) has no embedder: a same-window post is self", () => {
@@ -111,4 +130,21 @@ test("a top-level page (its parent is itself) has no embedder: a same-window pos
   assert.equal(windowSender({ source: other, origin: "null" }, top), "foreign");
   const orphan = { location: { origin: ORIGIN } };
   assert.equal(windowSender({ source: other, origin: "null" }, orphan), "foreign", "no parent at all");
+});
+
+// render.ts calls windowSender(e) with no window argument, and every other test here passes one, so this test is the
+// only one that reads the default. It sets the global window to a framed pane and restores it after.
+test("with no window argument, windowSender reads the global window", () => {
+  const g = globalThis as { window?: unknown };
+  const had = "window" in g, prev = g.window;
+  g.window = framed;
+  try {
+    assert.equal(windowSender({ source: framed, origin: ORIGIN }), "self", "a same-window post");
+    assert.equal(windowSender({ source: parent, origin: "https://example.invalid" }), "embedder", "the parent");
+    assert.equal(windowSender({ source: other, origin: ORIGIN }), "peer", "a second chat column");
+    assert.equal(windowSender({ source: other, origin: "null" }), "foreign", "a sandboxed frame");
+    assert.equal(windowSender({ source: null, origin: "" }), "dispatch", "the kernel's frames");
+  } finally {
+    if (had) g.window = prev; else delete g.window;
+  }
 });
