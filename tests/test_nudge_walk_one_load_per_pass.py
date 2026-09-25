@@ -122,7 +122,12 @@ a Docs case against the loader's count of this module's cases, and the plants ar
 witnesses answer different questions: the recorders say
 who loaded, the delta says that something did. By the served counter: `memos.nudgeWalk.loads`, bumped on the line before the walk's one
 call site, so a look that reaches the read counts once whether the read returns a store, returns a fault or raises out of the look, must
-move by the walk's count per pass. A skipped look repeats its verdict and writes nothing (the wake-only memo of PR 784),
+move by the walk's count per pass. Under the precondition of an honest source, the site case's census of that counter has a stated
+limit: its refusal of a kernel/*.py file whose text as importlib.util.decode_source gives it differs from its UTF-8 read passes a
+file whose first line opens with a lone CR above a utf-7 declaration, which the interpreter honours and decode_source, splitting
+lines on LF alone, does not (review round 11, extra5-1: such a file in kernel/, its counter write behind +AAo- in a comment and its
+function called first in _nudge_fire_list, moved the counter on a direct call with the site case green). A skipped look repeats its
+verdict and writes nothing (the wake-only memo of PR 784),
 so it needs no data: the recorder sees no call from either.
 
 The gate's load is `_nudge_placement_gate`'s currency check after a derivation (upstream's since the 2026-09-09 fold; ruling
