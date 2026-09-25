@@ -19,6 +19,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import util from 'node:util';
+import vm from 'node:vm';
 import { CENSUS, census } from './romp-track-bash-guard-census.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -245,7 +247,8 @@ const ledger = read('upstream', '2026-09-18-track-guard-non-literal-targets.md')
 // each conditioned on a unit the witnesses never put beside that form). SIGNAL_UPPER reads a name in upper case, or SIG and an upper-case run (a
 // name another system's list adds), anywhere in a word (nonINT, INThandlers, unSIGTHR). A name in lower or mixed case glued to letters beyond
 // an inflection is not read, since in lower case a name opens or ends many English words (print, still, interrupt, terminal, pipeline): the
-// third boundary the README pin states.
+// third boundary the README pin states. signalNamesIn, the one reader every witness and the README pin call, is the union of the two runs and
+// nothing else, which THE READER pin in the test below holds together with the names, the objects and the built-ins on its path.
 const SIGNAL_NAMES = ['HUP', 'INT', 'QUIT', 'ILL', 'TRAP', 'ABRT', 'IOT', 'BUS', 'FPE', 'KILL', 'USR1', 'SEGV', 'USR2', 'PIPE', 'ALRM', 'TERM',
   'STKFLT', 'CHLD', 'CLD', 'CONT', 'STOP', 'TSTP', 'TTIN', 'TTOU', 'URG', 'XCPU', 'XFSZ', 'VTALRM', 'PROF', 'WINCH', 'IO', 'POLL', 'PWR', 'SYS',
   'RTMIN', 'RTMAX', 'EMT', 'INFO', 'EXIT', 'ERR', 'DEBUG', 'RETURN', 'ZERR'];
@@ -331,8 +334,9 @@ test('the install guide, the hook\'s README row and the ledger entry say a name 
   // side leaves it unread) and is not read with a letter before it or after it (the third boundary, each side on its own); and every name in
   // each of the six spellings SIGNAL_SPELLINGS makes, with each printable joiner (a space, a digit, an underscore, punctuation) before it, after
   // it and on both sides, is read as that spelling (on_exit, sigint_handler, sigint2, SigInt_handler). A boundary class that stops at any unit
-  // that is not an ASCII letter, or reads a name in lower case glued to one, reds here even while the committed row holds no such word, and a
-  // condition on a unit outside the match placed anywhere else in either pattern reds the premise pin
+  // that is not an ASCII letter, or reads a name in lower case glued to one, reds here even while the committed row holds no such word, a
+  // condition on a unit outside the match placed anywhere else in either pattern reds the premise pin, and one placed on the reader's path
+  // outside the two patterns (signalNamesIn's body, the names it uses, the pattern objects, the built-ins it runs) reds THE READER pin
   assert.ok(!SIGNAL_WORD.unicode && !SIGNAL_WORD.unicodeSets, 'the boundary witness runs every UTF-16 code unit, the units SIGNAL_WORD reads while it has no u or v flag; with either flag it reads a character above U+FFFF as one unit, and the witness must run those');
   // THE PREMISE the witnesses rely on for every form but the lower-case name (the forty-second commit, after the reviewer's verifier found
   // the forty-first commit's witnesses green under three mutants that each leave a README word unread: a SIG spelling unread after U+00A0, an
@@ -381,6 +385,49 @@ test('the install guide, the hook\'s README row and the ledger entry say a name 
   assert.deepEqual({ ends: endsHold ? ENDS : [lead, trail], inside: wordAssertions.slice(1, -1).map((a) => a.text), upper: assertionsIn(SIGNAL_UPPER.source).map((a) => a.text) },
     { ends: ENDS, inside: [...SIGNAL_NAMES.filter((n) => n.endsWith('E')).map(() => '(?=ing)'), '(?<=([A-Za-z]))'], upper: [] },
     'THE PREMISE: SIGNAL_WORD reads a unit outside its match only through its leading (?<! and trailing (?!, each over one character class whose units the full-unit witness holds, and SIGNAL_UPPER through none; every other assertion in either source (^, $, \\b, \\B or a lookaround) looks inside the match, the E-dropped stems\' (?=ing) and the inflection\'s (?<=([A-Za-z])), as the comment argues; a form the witnesses run beside a space or printable ASCII alone is read beside every joiner only while this holds');
+  // THE READER (the forty-third commit, after the reviewer's verifier found two rewrites placed in signalNamesIn, U+00A0 before sig and
+  // U+2026 after ts each turned into a letter, green with the premise pin, which holds the two patterns while every witness and the README
+  // pin read through this function). Between a text and the names read, the two sources aside, run: the function's body; the names it uses
+  // and does not declare, SIGNAL_WORD, SIGNAL_UPPER and Set; the two pattern objects, whose reading is their source, their flags and
+  // RegExp.prototype's methods; and the built-ins the language runs for the body, String.prototype.match, RegExp.prototype's
+  // [Symbol.match], its exec, its flags getter and each flag getter that reads, Set with its add and its iterator, and the array iterator a
+  // spread takes. The assertions below hold them. The body's text, printed by a fresh realm's Function.prototype.toString (an own toString,
+  // a bound function or a proxy cannot answer for it), is the union of the two runs and nothing else, so a statement before, between or
+  // after them reds. Each pattern is a plain RegExp, no proxy, its prototype RegExp.prototype, no own property but lastIndex, its flags the
+  // ones stated, so a subclass, a proxy or an own exec or [Symbol.match] reds. Each built-in prints as the same built-in of that fresh
+  // realm prints, which no statement here reaches, so a replaced one (its own source), a bound or a proxied one (no name) reds. And one
+  // call with String.prototype.match and Set spied on reaches the two objects the premise pin reads, with the text as given, and the global
+  // Set, so a name shadowed around the body (a parameter, a block, a wrapper object) reds. Beyond this pin, stated: which function a call
+  // site reaches and which text it hands in. A witness builds its text in its own line and the README pin hands in rest, cut from the row
+  // above; a declaration that shadows signalNamesIn at a call site, or a statement that rewrites the row or rest before the reading,
+  // changes the test's own call or input, as an edit to an assertion's expected side does, and no assertion holds a statement that runs
+  // after it
+  const FRESH = vm.runInNewContext('globalThis');
+  const show = FRESH.Function.prototype.toString;
+  assert.ok(FRESH !== globalThis && FRESH.Function !== Function && FRESH.Object !== Object, 'THE READER reads code through a fresh realm, whose built-ins no statement in this module replaces');
+  const READER = '(text) => [...new Set([...(text.match(SIGNAL_WORD) || []), ...(text.match(SIGNAL_UPPER) || [])])]';
+  assert.equal(show.call(signalNamesIn), READER, 'THE READER: signalNamesIn is the union of SIGNAL_WORD\'s and SIGNAL_UPPER\'s matches, in that order, and nothing else, so what the witnesses and the premise pin hold of the two patterns is what the README pin reads; a rewrite of the text before or between the two runs, or of the names after them, reds here');
+  const plain = (re) => ({ regexp: util.types.isRegExp(re), proxy: util.types.isProxy(re), prototype: FRESH.Object.getPrototypeOf(re) === RegExp.prototype, own: [...FRESH.Reflect.ownKeys(re)], flags: re.flags });
+  assert.deepEqual({ SIGNAL_WORD: plain(SIGNAL_WORD), SIGNAL_UPPER: plain(SIGNAL_UPPER) },
+    { SIGNAL_WORD: { regexp: true, proxy: false, prototype: true, own: ['lastIndex'], flags: 'gi' }, SIGNAL_UPPER: { regexp: true, proxy: false, prototype: true, own: ['lastIndex'], flags: 'g' } },
+    'THE READER: each pattern is a plain RegExp (no proxy, its prototype RegExp.prototype, no own property but lastIndex) with the flags stated, so it reads by its source, its flags and RegExp.prototype\'s methods alone; a subclass, a proxy or an own exec or [Symbol.match] reads otherwise and reds here');
+  const getter = (proto, key) => FRESH.Object.getOwnPropertyDescriptor(proto, key).get;
+  const builtIns = (G) => [['String.prototype.match', G.String.prototype.match], ['RegExp.prototype[Symbol.match]', G.RegExp.prototype[Symbol.match]], ['RegExp.prototype.exec', G.RegExp.prototype.exec],
+    ...['flags', 'hasIndices', 'global', 'ignoreCase', 'multiline', 'dotAll', 'unicode', 'unicodeSets', 'sticky'].map((key) => [`the ${key} getter`, getter(G.RegExp.prototype, key)]),
+    ['Set', G.Set], ['Set.prototype.add', G.Set.prototype.add], ['Set.prototype[Symbol.iterator]', G.Set.prototype[Symbol.iterator]],
+    ['the set iterator\'s next', FRESH.Object.getPrototypeOf(G.Set.prototype[Symbol.iterator].call(new G.Set())).next],
+    ['Array.prototype[Symbol.iterator]', G.Array.prototype[Symbol.iterator]], ['the array iterator\'s next', FRESH.Object.getPrototypeOf(G.Array.prototype[Symbol.iterator].call(new G.Array())).next]];
+  const [here, there] = [builtIns(globalThis), builtIns(FRESH)];
+  assert.deepEqual(here.filter(([, f], i) => typeof f !== 'function' || show.call(f) !== show.call(there[i][1])).map(([label]) => label), [],
+    'THE READER: each built-in the body runs (String.prototype.match; RegExp.prototype\'s [Symbol.match], exec, flags getter and each flag getter it reads; Set, its add and its iterator; the array iterator) prints as the same built-in of a fresh realm prints; a replaced one prints its own source and a bound or proxied one no name, and reds here (the labels listed)');
+  const PROBE = ' handlers for SIGINT and hup pass; ';
+  const [realMatch, RealSet, calls, sets] = [String.prototype.match, globalThis.Set, [], []];
+  let probed;
+  String.prototype.match = function match(re) { calls.push([re === SIGNAL_WORD ? 'SIGNAL_WORD' : re === SIGNAL_UPPER ? 'SIGNAL_UPPER' : `another object, ${String(re)}`, `${this}`]); return realMatch.call(this, re); };
+  globalThis.Set = class Set extends RealSet { constructor(items) { sets.push([...items]); super(items); } };
+  try { probed = signalNamesIn(PROBE); } finally { String.prototype.match = realMatch; globalThis.Set = RealSet; }
+  assert.deepEqual({ calls, sets, probed }, { calls: [['SIGNAL_WORD', PROBE], ['SIGNAL_UPPER', PROBE]], sets: [['SIGINT', 'hup', 'SIGINT']], probed: ['SIGINT', 'hup'] },
+    'THE READER: one call of signalNamesIn with String.prototype.match and Set spied on matches SIGNAL_WORD and then SIGNAL_UPPER, the objects the premise pin and the assertions above read, each on the text as given, and builds one Set of the global Set from their matches, so the names the body uses are those objects and the language\'s Set; a name shadowed around the body (a parameter, a block, a wrapper object) reds here');
   const UNITS = Array.from({ length: 0x10000 }, (_, u) => String.fromCharCode(u));
   const JOINERS = UNITS.filter((c) => !/[A-Za-z]/.test(c));
   const LETTERS = UNITS.filter((c) => /[A-Za-z]/.test(c));
