@@ -4047,11 +4047,14 @@ _PAGE_KEY_SLOT = "romp.pageKey." + _SESSION_COOKIE
 # renderers are not edited). It reads K from this origin's localStorage (the per-kernel slot above);
 # wraps window.fetch so a request to this origin carries K as X-Romp-Key and a request to any other
 # origin is left untouched; exposes __rompKeyQ() for the socket dials and __rompPageKey() for
-# ui/webview/file-cap.ts. It sends the top frame to /login (never a pane) in two cases. First, this
-# origin holds no key at all (site data cleared); a browser that refuses storage gets a sentence
-# instead of a redirect loop. Second, a same-origin fetch comes back with the kernel's distinct
-# re-sign-in 403 (X-Romp-Reauth: a valid session whose stored key no longer matches), in which case
-# it drops the stale key first.
+# ui/webview/file-cap.ts. It sends the TOP frame to /login (a pane never navigates itself) in two
+# cases. First, this origin holds no key at all (site data cleared), which the top frame checks as it
+# loads; a browser that refuses storage gets a sentence instead of a redirect loop. Second, a
+# same-origin fetch in ANY frame, the top or a pane, comes back with the kernel's distinct re-sign-in
+# 403 (X-Romp-Reauth: a valid session whose stored key no longer matches, as when two sign-ins race
+# and leave the cookie of one beside the key of the other), in which case it drops the stale key and
+# hops the top frame. Neither case can loop: nothing is sent from /login itself, and /login navigates
+# only when the person submits it.
 _PAGE_KEY_JS = ("(function(){if(window.__rompPageKey)return;var KN=" + json.dumps(_PAGE_KEY_SLOT) + ";"
     "function key(){try{return localStorage.getItem(KN)||''}catch(e){return ''}}"
     "window.__rompPageKey=key;window.__rompKeyQ=function(){var k=key();return k?'&k='+encodeURIComponent(k):''};"
@@ -4061,8 +4064,8 @@ _PAGE_KEY_JS = ("(function(){if(window.__rompPageKey)return;var KN=" + json.dump
     "if(u.origin===location.origin){var h=new Headers((init&&init.headers)||(isReq?input.headers:undefined));"
     "h.set('X-Romp-Key',k);init=Object.assign({},init||{},{headers:h});}}}catch(e){}"
     "return f.call(window,input,init).then(function(r){try{"
-    "if(r&&r.status===403&&r.headers&&r.headers.get('X-Romp-Reauth')&&window===window.top&&location.pathname!=='/login'){"
-    "try{localStorage.removeItem(KN)}catch(e){}location.replace('/login');}}catch(e){}return r;});};"
+    "if(r&&r.status===403&&r.headers&&r.headers.get('X-Romp-Reauth')){var t=window.top;"
+    "if(t.location.pathname!=='/login'){try{localStorage.removeItem(KN)}catch(e){}t.location.replace('/login');}}}catch(e){}return r;});};"
     "if(!key()&&window===window.top&&location.pathname!=='/login'){var ok=true;"
     "try{localStorage.setItem(KN+'.probe','1');localStorage.removeItem(KN+'.probe');}catch(e){ok=false;}"
     "if(ok)location.replace('/login');else document.addEventListener('DOMContentLoaded',function(){"
@@ -4092,10 +4095,13 @@ def _ws_head_allowlist(head):
     return b"\r\n".join([status] + kept) + rest
 
 
-# Unauthorized browser GET of "/" gets this instead of a bare 403 — Jupyter's login-page flow: paste
-# the token once, the redirect's ?token= sets the year-long cookie, never see this page again. Static,
-# self-contained (every other asset route is token-gated), leaks nothing. Colors follow the UI: the
-# accent button is --accent #9cd2ff on --accent-fg #0c1a2e.
+# Unauthorized browser GET of "/" gets this instead of a bare 403, Jupyter's login-page flow: paste
+# the token once, and the redirect's ?token= signs this browser in (the session cookie, and the page
+# key in this origin's storage). It is also /login, where the page-key script sends a browser whose
+# saved sign-in is gone: the key lives in site storage, which a browser can lose while the cookie
+# stays, and only the token (or a fresh `romp url` link, or a window `romp` opens) mints a new one.
+# Static and self-contained (every other asset route is token-gated), and it carries no credential.
+# Colors follow the UI: the accent button is --accent #9cd2ff on --accent-fg #0c1a2e.
 # The login page stays on the SYSTEM stack, deliberately: it renders pre-auth and /media is
 # token-gated (only the install icons ride exempt), so an 'Inter' lead could never load here —
 # it would just misstate the stack (PR-730 review, 2026-08-27).
@@ -4107,18 +4113,20 @@ background:#101418;color:#dfe7ee;font:15px/1.5 system-ui,-apple-system,sans-seri
 <form style="text-align:center;max-width:26em;padding:2em" onsubmit="\
 location.replace('/?token='+encodeURIComponent(document.getElementById('t').value.trim()));return false">
   <div style="font-size:1.6em;letter-spacing:.04em;margin-bottom:.4em">romp</div>
-  <div style="opacity:.8;margin-bottom:1.2em">This dashboard needs its access token &mdash; every
-  request is token-gated, loopback included. If this tab worked before, romp was reinstalled and
-  minted a new token: you are signed out, not broken.</div>
+  <div style="opacity:.8;margin-bottom:1.2em">Sign in with this dashboard's access token. If this
+  tab worked before, you are signed out, not broken. Either this browser lost its saved sign-in
+  (cleared site data, a private window, or a browser that clears a site's storage after a week
+  without a visit), or romp's token changed because romp was reinstalled or its token file was
+  replaced.</div>
   <input id="t" autofocus placeholder="paste token"
     style="width:100%;box-sizing:border-box;padding:.55em .7em;border:1px solid #35414d;\
 border-radius:6px;background:#0c1117;color:#dfe7ee">
   <button style="margin-top:.9em;padding:.5em 1.4em;border:0;border-radius:6px;\
 background:#9cd2ff;color:#0c1a2e;font-weight:600;cursor:pointer">Open</button>
-  <div style="opacity:.6;margin-top:1.2em;font-size:.9em">Get a ready-made link with
-  <code>romp url</code> &mdash; in a NEW terminal if romp was just installed, since the old one
-  has a stale <code>PATH</code>. No <code>romp</code> yet?
-  <code>cat ~/.local/state/romp/serve-token</code></div>
+  <div style="opacity:.6;margin-top:1.2em;font-size:.9em">To skip pasting, run <code>romp url</code>
+  on the machine romp runs on and open the link it prints, or run <code>romp</code> there to open a
+  signed-in window. If romp was just installed, use a new terminal: an older one has a stale
+  <code>PATH</code>. No <code>romp</code> yet? <code>cat ~/.local/state/romp/serve-token</code></div>
 </form>
 """
 

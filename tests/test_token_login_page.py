@@ -36,6 +36,20 @@ class TokenLoginPage(unittest.TestCase):
         self.assertIn("signed out", low)
         self.assertIn("not broken", low)
 
+    def test_says_a_browser_that_lost_its_saved_sign_in_needs_the_token_or_a_fresh_link(self):
+        """The page key a sign-in leaves lives in the site's storage, which a browser can lose while its cookie stays
+        (cleared site data, a private window, a browser that clears the storage of a site it has not opened for a
+        while). The page-key script then sends the reader here, and only the token, a `romp url` link or a window a
+        bare `romp` opens signs them in again. The page must name that case, since it is not a reinstall, and name the
+        two ways back that need no pasting."""
+        flat = " ".join(HTML.split())
+        low = flat.lower()
+        self.assertIn("lost its saved sign-in", low)
+        for case in ("cleared site data", "a private window", "clears a site's storage"):
+            self.assertIn(case, low)
+        self.assertIn("run <code>romp url</code>", flat, "the link that signs a browser in")
+        self.assertIn("run <code>romp</code> there to open a signed-in window", flat, "the window a bare romp opens")
+
     def test_names_the_exact_command_not_just_the_binary(self):
         """`romp` opens the dashboard; `romp url` PRINTS the link. A signed-out reader needs
         the link, and on a headless/remote box `romp` alone has nothing to open."""
