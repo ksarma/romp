@@ -4226,11 +4226,11 @@ class TheCountersOneSite(unittest.TestCase):
         want = list(range(3, 3 + len(refused)))
         self.assertEqual(r_outside, want,
                          "and every other form listed is refused, named by its line: a call on the Name of each name dir(dict) gives "
-                         "but get (among them __setitem__, pop, update and setdefault), a store to a key that is not a constant (a name, "
-                         "a concatenation), an alias, the Name handed to a call, `.get` with a key that is not a constant, and "
-                         "`dict(...)` with a keyword or a second argument, so admitting any of them as a fifth form reds here (review "
-                         "round 11, tests-3 and extra6-1); refused and not named: %s; named and not refused: %s"
-                         % ("; ".join(refused[i - 3] for i in sorted(set(want) - set(r_outside))) or "none",
+                         "but get (among them __setitem__, pop, update and setdefault), a store to a name key and an augmented store to "
+                         "a concatenation key, an alias by plain assignment (`s = %s`), the Name handed to print, `.get` with a name "
+                         "key, and `dict(...)` with a keyword or a second argument, so admitting any listed row's form as a fifth form "
+                         "reds here (review round 11, tests-3 and extra6-1); refused and not named: %s; named and not refused: %s"
+                         % (name, "; ".join(refused[i - 3] for i in sorted(set(want) - set(r_outside))) or "none",
                             ", ".join("line %d" % i for i in sorted(set(r_outside) - set(want))) or "none"))
         twice = "%s = {'loads': 0}\n%s = {'loads': 0}\n" % (name, name)
         self.assertEqual(sorted(n.lineno for n in admitted_forms(*parsed(twice))[2]), [1, 2],
