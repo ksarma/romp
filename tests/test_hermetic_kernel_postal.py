@@ -6927,28 +6927,15 @@ class HermeticKernelPostal(unittest.TestCase):
             self.assertEqual(sorted(names), names, "case %d: the added modules' names sort in the order the child collects them" % n)
 
     def test_each_run_of_the_proof_has_a_temporary_directory_of_its_own(self):
-        """EACH RUN'S OWN TEMPORARY DIRECTORY (the builder's red while making every run in both forms of command line,
-        round 2's forty-fourth commit of fork PR #894: a child of the facets' proof ended in FileNotFoundError on
-        another run's pytest-current link, where the two forms' -n 2 runs, at once, shared one TMPDIR and pytest's
-        clean-up of the numbered temporary directories a -n 2 run makes raced; and the verifier's F1 at that commit:
-        with each run's TMPDIR handed and never made, a child's tempfile passed it over for the next of its candidates,
-        /tmp where TEMP and TMP are unset, which every run shares, and the test as it stood passed). Every pytest child
-        that one call of _reassert_proof makes, synthetic (two cases, each run in a directory of its own) or `real` (the
-        runs of one case in the one copy, at once), is handed a TMPDIR no other run of the call has, a `real` run's
-        under the one copy's scratch directory, and that TMPDIR is what tempfile.gettempdir() returns at the moment the
-        child would start, read by running a separate Python then with the child's environment and working directory.
-        Read by a spy on subprocess.run that answers the pytest children alone, in their place, and hands every other
-        call to the real one (the copy is made first, whose file list runs git). Not read: anything a child's own
-        process does, which this test never starts, so neither what the child's own tempfile resolves nor where the
-        child's pytest makes its temporary root (the re-verifier's RN1 at the forty-sixth commit, whose text said the
-        test read the first and named two roads to the second as all it did not see). Either can lie outside the
-        TMPDIR a child is handed, and the test sees no setting that puts it there, however the setting reaches the
-        child, code the child runs among them: tempfile's directory set in the child's process, as the tests package's
-        import sets it in every process that imports it, to a romp-tests root it makes (tests/__init__.py;
-        PrivateTempRoot in tests/test_tempdir_hygiene.py pins it), and as the re-verifier's TT at that commit sets it to
-        one directory for every run, from a pytest_configure in the copy's tests/conftest.py; and PYTEST_DEBUG_TEMPROOT
-        and --basetemp, either of which puts pytest's root elsewhere whatever tempfile resolves (the verifier's PBT at
-        the forty-fifth commit: the same hook setting --basetemp to one directory for every run)."""
+        """EACH RUN'S OWN TEMPORARY DIRECTORY (the builder's red at round 2's forty-fourth commit of fork PR #894, and
+        the verifier's F1 at that commit). A spy on subprocess.run answers each pytest child of a call of
+        _reassert_proof in its place, and for each one runs a separate Python with that child's environment and working
+        directory, which prints what tempfile.gettempdir() returns. The test asserts three things. A call with two
+        synthetic cases makes twice as many pytest children as _proof_modes() has modes, a call with one `real` case
+        makes as many, and no two children of a call are handed the same TMPDIR. Each `real` child's TMPDIR lies under
+        the one copy's scratch directory. For every child, the separate Python's tempfile.gettempdir() is the TMPDIR
+        the child is handed, so that directory exists at the moment the child would start. The test does not read where
+        a child's own code later puts its temporary files."""
         from unittest import mock
         scratch, _checkout = _proof_checkout()
         real_run, seen = subprocess.run, []
