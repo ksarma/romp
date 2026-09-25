@@ -5071,23 +5071,23 @@ _MAT_LRU = collections.OrderedDict()  # (id(LazyAtoms), row) → (the list's _Li
 #                                       below: 1 - 1,005,102 / 6.15 million). A list's _ListRef queues itself when the list is freed holding
 #                                       an entry, since its entries keep the reference reachable from _MAT_LRU (a list with no entry, freed
 #                                       in a cycle with its index, may go unqueued and has nothing to remove), except in the residual named
-#                                       in _ListRef: on CPython 3.13 and later, entries a finalizer registers during the collection that
-#                                       frees their list hold a reference that is never queued, and wait for the cap or a registration
-#                                       under their id. The callback takes no lock, since it can fire at any decref, under this lock
-#                                       included, and the lock is not reentrant; the next registration or release drains the queue under
-#                                       the lock (_mat_drain). The cap is the backstop, counted in `evictions` for a live entry (a dead
-#                                       entry it drops counts `expired`): on that machine the live entries are at most 1,005,102 (27 live
-#                                       indexes at the peak, times the largest document's 37,226 rows), so the cap sits about 7.7 times
+#                                       in _ListRef: on CPython 3.13.13 and later and 3.14.4 and later, entries a finalizer registers during
+#                                       the collection that frees their list hold a reference that is never queued, and wait for the cap or
+#                                       a registration under their id. The callback takes no lock, since it can fire at any decref, under
+#                                       this lock included, and the lock is not reentrant; the next registration or release drains the queue
+#                                       under the lock (_mat_drain). The cap is the backstop, counted in `evictions` for a live entry (a
+#                                       dead entry it drops counts `expired`): on that machine the live entries are at most 1,005,102 (27
+#                                       live indexes at the peak, times the largest document's 37,226 rows), so the cap sits about 7.7 times
 #                                       above them; a cap under the live entries rebuilds on every pass (above).
 _MAT_LOCK = threading.Lock()
 _MAT_COLLECTED = collections.deque()  # the _ListRef of every LazyAtoms freed since the last drain (or brought back by a finalizer: see
 #                                       _ListRef) whose callback ran, which it does for a reference still reachable when the list died, as
 #                                       the reference of every list holding an LRU entry is (its entries hold it in _MAT_LRU), except in the
-#                                       residual named in _ListRef: on CPython 3.13 and later, a reference minted for a registration a
-#                                       finalizer ran during the collection that frees the list is cleared without its callback and never
-#                                       queued. A list with no entry, freed in a cycle with its index, may go unqueued and has nothing to
-#                                       remove. Queued by _mat_collected and drained under _MAT_LOCK before each registration and at each
-#                                       release (_mat_drain)
+#                                       residual named in _ListRef: on CPython 3.13.13 and later and 3.14.4 and later, a reference minted
+#                                       for a registration a finalizer ran during the collection that frees the list is cleared without its
+#                                       callback and never queued. A list with no entry, freed in a cycle with its index, may go unqueued
+#                                       and has nothing to remove. Queued by _mat_collected and drained under _MAT_LOCK before each
+#                                       registration and at each release (_mat_drain)
 
 
 class _ListRef(weakref.ref):
@@ -5108,14 +5108,15 @@ class _ListRef(weakref.ref):
     holds no live reference to it); a slot neither read again nor released stays built with no entry, which `resident`
     does not count and the cap cannot reach, as before the collection event, when the trim stripped such a slot and no
     release could reach the list. No kernel path resurrects a list.
-    The residual, on CPython 3.13 and later: a registration run from inside a finalizer (a __del__, or a generator's or
-    coroutine's close) during the collection that frees the list, a build or a re-registration of a built slot, finds
-    the reference the collector cleared before the finalizer ran, so _mat_register mints the list a fresh one, as for a
-    resurrected list; the interpreter then clears that fresh reference without running its callback, and the list dies
-    holding entries whose reference is never queued. No drain or release removes them: they leave, counted `expired` and
-    not `collected`, at the cap's trim or when a new list registers the same row under their id, as every freed list's
-    entries did before the collection event. 3.10 to 3.12 run the callback, and the next drain removes them. Kernel code
-    defines no __del__ and no weakref.finalize (tests/test_asm_mat_lru_release.py, FinalizerRead)."""
+    The residual, on CPython 3.13.13 and later and 3.14.4 and later (tests/test_asm_mat_lru_release.py, FinalizerRead): a
+    registration run from inside a finalizer (a __del__, or a generator's or coroutine's close) during the collection
+    that frees the list, a build or a re-registration of a built slot, finds the reference the collector cleared before
+    the finalizer ran, so _mat_register mints the list a fresh one, as for a resurrected list; the interpreter then
+    clears that fresh reference without running its callback, and the list dies holding entries whose reference is never
+    queued. No drain or release removes them: they leave, counted `expired` and not `collected`, at the cap's trim or
+    when a new list registers the same row under their id, as every freed list's entries did before the collection event.
+    3.10 to 3.12, 3.13 before 3.13.13 and 3.14 before 3.14.4 run the callback, and the next drain removes them. Kernel
+    code defines no __del__ and no weakref.finalize."""
     __slots__ = ("lid", "n")
 
 
@@ -5204,9 +5205,9 @@ def _mat_trim():
     leave at the drain that runs before every registration (_mat_drain) once its callback has queued its reference, so the
     dead entries this branch meets belong to lists freed, or brought back by a finalizer, since this registration's drain
     (the reference cleared and the callback queued or about to be: at a last decref on another thread, or in a collection
-    on any thread, this one included), belong to the residual named in _ListRef (on CPython 3.13 and later, entries a
-    finalizer registered during the collection that freed their list, under a reference cleared without its callback), or
-    are planted with another reference; they count `expired` without `collected`."""
+    on any thread, this one included), belong to the residual named in _ListRef (on CPython 3.13.13 and later and 3.14.4 and
+    later, entries a finalizer registered during the collection that freed their list, under a reference cleared without its
+    callback), or are planted with another reference; they count `expired` without `collected`."""
     while len(_MAT_LRU) > _MAT_CAP:
         _, (ref, j) = _MAT_LRU.popitem(last=False)
         lz = ref()
@@ -5218,13 +5219,14 @@ def _mat_trim():
 
 
 def _mat_drain():
-    """Under _MAT_LOCK: the entries of every list freed since the last drain leave the LRU, counted `expired` (entries of a
-    collected list dropped) and `collected`. An entry is removed only when it holds the freed list's own reference, never by
-    id alone (a guard: a list's callback, when it runs, queues it before its id can be reused, and every registration drains
-    first, so no live list's entry sits under a queued list's key; a dead entry the queue never held is left for the trim);
-    no slot is touched (the list is gone, or a finalizer resurrected it: see _ListRef). The cost is one dict lookup per row
-    of each freed list, the walk release() pays for a live index. It runs before each registration and at each release,
-    never in the /perf read (asm_index_stats changes nothing)."""
+    """Under _MAT_LOCK: the entries of every list whose reference its callback queued since the last drain (every list freed
+    holding an entry, or brought back by a finalizer, except the residual named in _ListRef) leave the LRU, counted
+    `expired` (entries of a collected list dropped) and `collected`. An entry is removed only when it holds the freed list's
+    own reference, never by id alone (a guard: a list's callback, when it runs, queues it before its id can be reused, and
+    every registration drains first, so no live list's entry sits under a queued list's key; a dead entry the queue never
+    held is left for the trim); no slot is touched (the list is gone, or a finalizer resurrected it: see _ListRef). The cost
+    is one dict lookup per row of each freed list, the walk release() pays for a live index. It runs before each
+    registration and at each release, never in the /perf read (asm_index_stats changes nothing)."""
     q = _MAT_COLLECTED
     n = 0
     while q:

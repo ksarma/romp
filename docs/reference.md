@@ -3171,12 +3171,13 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   dropped, never a field in place), `collected` (entries the collection event
   removed: when a list holding entries is freed, its weak reference queues
   itself, and the next build, re-registration or release removes that list's
-  entries, with one residual: on CPython 3.13 and later, entries that a
-  finalizer (such as a `__del__` or a generator's close) registers during the
-  collection that frees their list hold a reference that is never queued,
-  so no removal takes them, and they wait for the cap or for a list
-  registering the same row under their id; no kernel code defines a
-  `__del__` or a `weakref.finalize`), `expired` (an entry whose list has
+  entries, with one residual: on CPython 3.13.13 and later and
+  3.14.4 and later, entries that a finalizer (such as a `__del__` or
+  a generator's close) registers during the collection that frees
+  their list hold a reference that is never queued, so no removal
+  takes them, and they wait for the cap or for a list registering
+  the same row under their id; no kernel code defines a `__del__` or
+  a `weakref.finalize`), `expired` (an entry whose list has
   been collected, dropped in one of three ways, no slot touched in any case:
   by that removal, so every `collected` entry counts here too; by the cap; or
   when a live list registers a slot under the id the dead one held. Every
