@@ -3816,14 +3816,20 @@ class TheCountersOneSite(unittest.TestCase):
         toggle on reaches left the module green): kernel/kernel.py parsed and walked with _walk, every reference to the Name
         _NUDGE_WALK_STATS is one of the admitted forms (the one module-level assignment of its dict display with "loads" among
         its keys, a plain or augmented store to a constant key, `.get` with a constant key, a `dict(...)` copy), any other form
-        named by line, and exactly one of them writes the "loads" key: the look's bump. The counter's name has no other spelling
+        named by line, and exactly one of them writes the "loads" key: the look's bump; the admitted forms' pin, the rule run first
+        in this case over synthetic texts, admits the four and names by line each other form it lists, a call on the Name of every
+        name dir(dict) gives but get among them, so a form dropped, or any listed form admitted as a fifth, reds (review round 11,
+        tests-3 and extra6-1). The counter's name has no other spelling
         in the files the glob kernel/*.py matches in the kernel's real directory, non-recursive, whose text holds it in any letter
         case (each of those files read as text, and each whose text holds the name parsed and walked with _walk, so the kernel is
         among them or the case reds): no node names it in an
         identifier field its class declares (_IDENTIFIER_FIELDS), the kernel's Names excepted; no str or bytes constant reads as
         it whole through _door_text, wherever it appears; and none whose text so read contains it reaches a subscript key or a
         call of a name in _DYNAMIC_LOOKUPS or _DICT_READS, the slice, the arguments and the keyword values walked (the consumer
-        clause of _loader_births, copied). That clause fails closed: a constant that only contains the name, in any case, fails
+        clause of _loader_births, copied). Its three receiver kinds have their pin, the clause run first in this case over a
+        synthetic file: a constant containing the name is named at a subscript key and at a call of each name of the two lists, and
+        by nothing at a call of a name on neither, so a kind dropped, or the calls widened past the lists, reds (review round 11,
+        tests-1 and extra6-1). That clause fails closed: a constant that only contains the name, in any case, fails
         the case at one of those receivers even when it reaches no counter (os.environ.get of a variable named
         ROMP_NUDGE_WALK_STATS_TRACE, say; a verifier of the clause planted it in the kernel and this case failed naming the line),
         and a legitimate one would need an exemption row with its reason, the shape _loader_births states for its whole-spelling
@@ -3957,7 +3963,9 @@ class TheCountersOneSite(unittest.TestCase):
         refuse, caught only by execution, on a
         road a case drives and asserts memos.nudgeWalk.loads on, so a write on a road no such case drives is caught by nothing, a driven
         road among them: the wake sweep's skip branch for a failed or moot record, reached on those rows of the case whose records the
-        sweep does not own, which does not read the counter (the site case); the counter census's population, the files the glob
+        sweep does not own, which does not read the counter (the site case, whose pin of the contained-name clause names a constant
+        containing the name at a subscript key and at a call of each name of the two lists and none at a call of a name on neither);
+        the counter census's population, the files the glob
         kernel/*.py matches in the kernel's real directory, non-recursive, each read as text, the case failing by name on any whose
         text as the interpreter decodes it (importlib.util.decode_source over its bytes) differs from that read, and each whose text
         holds the counter's name in any letter case parsed and walked, so a module in a file that glob does not match is outside the counter census
@@ -3971,7 +3979,8 @@ class TheCountersOneSite(unittest.TestCase):
         closed: a constant that only contains the counter's name, in any letter case, fails the site case at a subscript key, a listed
         lookup or a dict read even when it reaches no counter (os.environ.get of a variable named ROMP_NUDGE_WALK_STATS_TRACE, say),
         and a legitimate one would need an exemption row with its reason, the shape _loader_births states for its whole-spelling
-        constants, while this census has no exemption rows (the site case); the birth pin's rules that fail closed the same way,
+        constants, while this census has no exemption rows (the site case, whose pin of the clause names such a constant at each of
+        the three receivers); the birth pin's rules that fail closed the same way,
         stated in full in _loader_births' docstring and in the birth case's defs, called and hand-off lines, among them: in
         kernel/kernel.py and kernel/judge.py the consumer clause fires on
         "load_goals" as a substring after lowering at a subscript key, a listed lookup or a dict read, and the value rule on a
@@ -4108,39 +4117,128 @@ class TheCountersOneSite(unittest.TestCase):
         gated = [ln.strip() for _i, ln in _loader_sites(km._nudge_look_gated, "load_goals")]
         self.assertEqual(gated, [], "the gate around the look reads no store: a skipped look loads through neither mechanism: %s" % "; ".join(gated))
         self.assertIn("loads", km._NUDGE_WALK_STATS, "the counter is a key of the served block")
-        # the counter across the kernel: every reference to the Name classified, and exactly one write of the loads key
-        admitted, loads_writes = set(), []
-        displays = [s for s in tree.body if isinstance(s, ast.Assign) and len(s.targets) == 1 and isinstance(s.targets[0], ast.Name)
-                    and s.targets[0].id == name and isinstance(s.value, ast.Dict)
-                    and any(isinstance(k, ast.Constant) and k.value == "loads" for k in s.value.keys)]
-        if len(displays) == 1:                        # the one module-level definition; a second is named below as a form outside the list
-            admitted.add(id(displays[0].targets[0]))
-        for n in nodes:
-            targets = n.targets if isinstance(n, ast.Assign) else [n.target] if isinstance(n, ast.AugAssign) else []
-            for t in targets:                         # a plain or augmented store to a constant key
-                if (isinstance(t, ast.Subscript) and isinstance(t.value, ast.Name) and t.value.id == name
-                        and isinstance(t.slice, ast.Constant) and isinstance(t.slice.value, str)):
-                    admitted.add(id(t.value))
-                    if t.slice.value == "loads":
-                        loads_writes.append(t)
-            if isinstance(n, ast.Call) and not n.keywords:
-                f = n.func
-                if (isinstance(f, ast.Attribute) and f.attr == "get" and isinstance(f.value, ast.Name) and f.value.id == name
-                        and 1 <= len(n.args) <= 2 and isinstance(n.args[0], ast.Constant)):
-                    admitted.add(id(f.value))         # .get with a constant key
-                elif (isinstance(f, ast.Name) and f.id == "dict" and len(n.args) == 1 and isinstance(n.args[0], ast.Name)
-                        and n.args[0].id == name):
-                    admitted.add(id(n.args[0]))       # a dict(...) copy
-        refs = [n for n in nodes if isinstance(n, ast.Name) and n.id == name]
+        # the counter across the kernel: every reference to the Name classified, and exactly one write of the loads key. The census's
+        # two rule definitions, the admitted forms and the contained-name clause, are the nested defs below, each run first over
+        # synthetic texts, its pin, and then over the kernel (review round 11, tests-1, tests-3 and extra6-1: fed no input it must
+        # refuse, the clause could lose a receiver kind and the forms could gain a fifth with the module green)
+        def admitted_forms(module, walked):
+            """The admitted forms over a parsed module and its walked nodes: (refs, displays, outside, loads_writes), the references
+            to the Name `name`, its module-level dict displays with "loads" among their keys, the references in none of the four
+            admitted forms (the one module-level display, a plain or augmented store to a constant key, `.get` with a constant key, a
+            `dict(...)` copy), and the stores to its "loads" key."""
+            admitted, loads_writes = set(), []
+            displays = [s for s in module.body if isinstance(s, ast.Assign) and len(s.targets) == 1 and isinstance(s.targets[0], ast.Name)
+                        and s.targets[0].id == name and isinstance(s.value, ast.Dict)
+                        and any(isinstance(k, ast.Constant) and k.value == "loads" for k in s.value.keys)]
+            if len(displays) == 1:                    # the one module-level definition; a second is named as a form outside the list
+                admitted.add(id(displays[0].targets[0]))
+            for n in walked:
+                targets = n.targets if isinstance(n, ast.Assign) else [n.target] if isinstance(n, ast.AugAssign) else []
+                for t in targets:                     # a plain or augmented store to a constant key
+                    if (isinstance(t, ast.Subscript) and isinstance(t.value, ast.Name) and t.value.id == name
+                            and isinstance(t.slice, ast.Constant) and isinstance(t.slice.value, str)):
+                        admitted.add(id(t.value))
+                        if t.slice.value == "loads":
+                            loads_writes.append(t)
+                if isinstance(n, ast.Call) and not n.keywords:
+                    f = n.func
+                    if (isinstance(f, ast.Attribute) and f.attr == "get" and isinstance(f.value, ast.Name) and f.value.id == name
+                            and 1 <= len(n.args) <= 2 and isinstance(n.args[0], ast.Constant)):
+                        admitted.add(id(f.value))     # .get with a constant key
+                    elif (isinstance(f, ast.Name) and f.id == "dict" and len(n.args) == 1 and isinstance(n.args[0], ast.Name)
+                            and n.args[0].id == name):
+                        admitted.add(id(n.args[0]))   # a dict(...) copy
+            refs = [n for n in walked if isinstance(n, ast.Name) and n.id == name]
+            return refs, displays, [n for n in refs if id(n) not in admitted], loads_writes
+
+        def other_spellings(fname, walked, flines):
+            """Every other spelling of the Name `name` in one file's walked nodes, as (line, kind, entry): a node naming it in an
+            identifier field, its kind the class and the field (in the kernel a Name is classified by admitted_forms instead), a
+            constant reading as it whole through _door_text, its kind the constant, and the contained-name clause, a constant whose
+            text so read contains it reaching a subscript key or a call of a name in _DYNAMIC_LOOKUPS or _DICT_READS, its kind the
+            receiver it reaches."""
+            found, reported = [], set()
+            for n in walked:
+                fields = [f for f in _IDENTIFIER_FIELDS.get(type(n), ())
+                          if name in (getattr(n, f) if isinstance(getattr(n, f), list) else [getattr(n, f)])]
+                keys, into = ([n.slice], "a subscript key") if isinstance(n, ast.Subscript) else ([], None)
+                if isinstance(n, ast.Call):
+                    last = n.func.id if isinstance(n.func, ast.Name) else n.func.attr if isinstance(n.func, ast.Attribute) else ""
+                    if last in _DYNAMIC_LOOKUPS or last in _DICT_READS:
+                        keys, into = list(n.args) + [k.value for k in n.keywords], "a call of %s" % last
+                for sub in (s for key in keys for s in _walk(key)):
+                    if name.lower() in (_door_text(sub) or "") and id(sub) not in reported:
+                        reported.add(id(sub))
+                        found.append((sub.lineno, into, "%s line %d, a constant %r containing it, reaching %s: %s"
+                                      % (fname, sub.lineno, sub.value[:48], into, flines[sub.lineno - 1].strip())))
+                what = ("%s.%s" % (type(n).__name__, fields[0]) if fields and (fname != KERNEL_FILE or not isinstance(n, ast.Name))
+                        else "a constant %r" % (n.value,) if _door_text(n) == name.lower() and id(n) not in reported else None)
+                if what is not None:
+                    ln = getattr(n, "lineno", 0)
+                    found.append((ln, what, "%s line %d, %s: %s" % (fname, ln, what, flines[ln - 1].strip() if ln else "")))
+            return found
+
+        def parsed(text):
+            module = ast.parse(text)
+            return module, list(_walk(module))
+        # the contained-name clause's pin: a synthetic file, not the kernel, one constant containing the name per line, at a subscript
+        # key, at a call of each name of _DYNAMIC_LOOKUPS (by bare name) and of _DICT_READS (by attribute), and at a call of a name on
+        # neither list
+        held, unlisted = "x" + name, "print"          # held contains the name and reads as it whole under none of _door_text's transforms
+        self.assertNotIn(unlisted, _DYNAMIC_LOOKUPS + _DICT_READS, "the unlisted receiver is on neither list")
+        rows = ([("globals()[%r]" % held, "a subscript key")] + [("%s(%r)" % (m, held), "a call of %s" % m) for m in _DYNAMIC_LOOKUPS]
+                + [("R.%s(%r)" % (m, held), "a call of %s" % m) for m in _DICT_READS] + [("%s(%r)" % (unlisted, held), None)])
+        text = "".join(r + "\n" for r, _kind in rows)
+        got = sorted((ln, kind) for ln, kind, _entry in other_spellings("c7pin_counter.py", parsed(text)[1], text.splitlines()))
+        want = [(i, kind) for i, (_r, kind) in enumerate(rows, 1) if kind is not None]
+        self.assertEqual(got, want, "the contained-name clause over a synthetic file holding one constant that contains %s per line: named "
+                                    "at a subscript key and at a call of each name of _DYNAMIC_LOOKUPS and of _DICT_READS, each with the "
+                                    "receiver it reaches, and named by nothing at a call of %s, a name on neither list, so a receiver kind "
+                                    "dropped from the clause, or its calls widened past the two lists, reds here (review round 11, tests-1 "
+                                    "and extra6-1); (line, receiver) got %r, want %r" % (name, unlisted, got, want))
+        # the admitted forms' pin: the four forms admitted in a synthetic module, and each other form listed refused by line
+        accept = ("%s = {'loads': 0}\n"
+                  "def f():\n"
+                  "    %s['x'] = 1\n"
+                  "    %s['loads'] += 1\n"
+                  "    %s.get('loads')\n"
+                  "    %s.get('loads', 0)\n"
+                  "    return dict(%s)\n") % ((name,) * 6)
+        a_refs, _a_displays, a_outside, a_writes = admitted_forms(*parsed(accept))
+        self.assertEqual((len(a_refs), [n.lineno for n in a_outside], [t.lineno for t in a_writes]),
+                         (accept.count(name), [], [i for i, ln in enumerate(accept.splitlines(), 1) if "['loads'] +=" in ln]),
+                         "the admitted forms over a synthetic module: the one module-level display, a plain store to a constant key, an "
+                         "augmented store to the loads key, `.get` with a constant key alone and with a default, and a `dict(...)` copy "
+                         "are each admitted, the augmented store the one write of the loads key, so a form dropped from the census reds "
+                         "here and not only where the kernel happens to use it (review round 11, tests-3); (references, lines outside, "
+                         "loads writes): %r" % ((len(a_refs), [n.lineno for n in a_outside], [t.lineno for t in a_writes]),))
+        refused = (["%s.%s('loads')" % (name, m) for m in dir(dict) if m != "get"]
+                   + ["%s[k] = 1" % name, "%s['lo' + 'ads'] += 1" % name, "s = %s" % name, "print(%s)" % name, "%s.get(k)" % name,
+                      "dict(%s, loads=1)" % name, "dict(%s, {})" % name])
+        text = "%s = {'loads': 0}\ndef f(k):\n%s" % (name, "".join("    %s\n" % r for r in refused))
+        r_outside = sorted(n.lineno for n in admitted_forms(*parsed(text))[2])
+        want = list(range(3, 3 + len(refused)))
+        self.assertEqual(r_outside, want,
+                         "and every other form listed is refused, named by its line: a call on the Name of each name dir(dict) gives "
+                         "but get (among them __setitem__, pop, update and setdefault), a store to a key that is not a constant (a name, "
+                         "a concatenation), an alias, the Name handed to a call, `.get` with a key that is not a constant, and "
+                         "`dict(...)` with a keyword or a second argument, so admitting any of them as a fifth form reds here (review "
+                         "round 11, tests-3 and extra6-1); refused and not named: %s; named and not refused: %s"
+                         % ("; ".join(refused[i - 3] for i in sorted(set(want) - set(r_outside))) or "none",
+                            ", ".join("line %d" % i for i in sorted(set(r_outside) - set(want))) or "none"))
+        twice = "%s = {'loads': 0}\n%s = {'loads': 0}\n" % (name, name)
+        self.assertEqual(sorted(n.lineno for n in admitted_forms(*parsed(twice))[2]), [1, 2],
+                         "and a second module-level display is a form outside the list: with two, neither is the one definition and "
+                         "both are named (review round 11, tests-3)")
+        refs, displays, outside_refs, loads_writes = admitted_forms(tree, nodes)
         self.assertTrue(refs and displays, "the kernel refers to %s and defines it by a module-level dict display (a derived population "
                                            "fails on empty): %d references, %d displays" % (name, len(refs), len(displays)))
-        outside = ["line %d: %s" % (n.lineno, lines[n.lineno - 1].strip()) for n in refs if id(n) not in admitted]
+        outside = ["line %d: %s" % (n.lineno, lines[n.lineno - 1].strip()) for n in outside_refs]
         self.assertEqual(outside, [], "every reference to %s by Name in kernel/kernel.py is one of the admitted forms: the one module-level "
                                       "assignment of its dict display, a plain or augmented store to a constant key, `.get` with a constant "
                                       "key, or a `dict(...)` copy; any other form (among them an alias, a key that is not a constant, a method "
-                                      "that "
-                                      "writes, a second definition) could write the counter where this census does not read: %s"
-                                      % (name, "; ".join(outside)))
+                                      "that writes, a second definition) could write the counter where this census does not read, and the "
+                                      "admitted forms' pin above holds the four both ways: %s" % (name, "; ".join(outside)))
         # every other spelling of the counter's name, in each file the glob kernel/*.py matches, non-recursive, whose text holds it
         # in any case (a file outside that glob, in cli/, postal/ or any other directory, in a subdirectory of kernel/, or in a file
         # of kernel/ not named *.py, is not read): a node naming it in an identifier field its class declares (in the kernel a Name
@@ -4172,26 +4270,8 @@ class TheCountersOneSite(unittest.TestCase):
                                                % (name, population, len(texts)))
         spellings = []
         for fname in population:
-            flines = texts[fname].splitlines()
-            reported = set()
-            for n in (nodes if fname == KERNEL_FILE else list(_walk(ast.parse(texts[fname])))):
-                fields = [f for f in _IDENTIFIER_FIELDS.get(type(n), ())
-                          if name in (getattr(n, f) if isinstance(getattr(n, f), list) else [getattr(n, f)])]
-                keys, into = ([n.slice], "a subscript key") if isinstance(n, ast.Subscript) else ([], None)
-                if isinstance(n, ast.Call):
-                    last = n.func.id if isinstance(n.func, ast.Name) else n.func.attr if isinstance(n.func, ast.Attribute) else ""
-                    if last in _DYNAMIC_LOOKUPS or last in _DICT_READS:
-                        keys, into = list(n.args) + [k.value for k in n.keywords], "a call of %s" % last
-                for sub in (s for key in keys for s in _walk(key)):
-                    if name.lower() in (_door_text(sub) or "") and id(sub) not in reported:
-                        reported.add(id(sub))
-                        spellings.append("%s line %d, a constant %r containing it, reaching %s: %s"
-                                         % (fname, sub.lineno, sub.value[:48], into, flines[sub.lineno - 1].strip()))
-                what = ("%s.%s" % (type(n).__name__, fields[0]) if fields and (fname != KERNEL_FILE or not isinstance(n, ast.Name))
-                        else "a constant %r" % (n.value,) if _door_text(n) == name.lower() and id(n) not in reported else None)
-                if what is not None:
-                    ln = getattr(n, "lineno", 0)
-                    spellings.append("%s line %d, %s: %s" % (fname, ln, what, flines[ln - 1].strip() if ln else ""))
+            walked = nodes if fname == KERNEL_FILE else list(_walk(ast.parse(texts[fname])))
+            spellings += [entry for _ln, _kind, entry in other_spellings(fname, walked, texts[fname].splitlines())]
         self.assertEqual(spellings, [], "no other spelling of %s in the kernel/*.py files whose text holds it, %s: no node naming it in an "
                                         "identifier field (among them an attribute on any receiver, a keyword, a parameter, an import alias, a "
                                         "global "
@@ -4199,8 +4279,9 @@ class TheCountersOneSite(unittest.TestCase):
                                         "as it whole through _door_text, and none whose text so read contains it reaching a subscript key "
                                         "or a call of a name in _DYNAMIC_LOOKUPS or _DICT_READS (among them an exec of a statement naming it, a key "
                                         "sliced from a longer constant; a string there that only contains the name, an environment "
-                                        "variable's name say, is refused as well); a write through the kernel module object, globals(), vars(), "
-                                        "setattr, getattr or exec leaves no Name for the census above to classify: %s"
+                                        "variable's name say, is refused as well, and the contained-name clause's pin above holds its three "
+                                        "receiver kinds); a write through the kernel module object, globals(), vars(), setattr, getattr or "
+                                        "exec leaves no Name for the census above to classify: %s"
                                         % (name, ", ".join(population), "; ".join(spellings)))
         writes = ["line %d: %s" % (t.lineno, lines[t.lineno - 1].strip()) for t in loads_writes]
         self.assertEqual([t.lineno for t in loads_writes], [first + bump[0]],
@@ -5556,7 +5637,8 @@ class TheWalkersRefuseAStrangerByExecution(unittest.TestCase):
             "TheCountersOneSite.test_the_walk_has_one_shared_load_site_and_the_counter_is_bumped_beside_it":
                 ["_walk", "ast.parse"],                      # the counter's census across the kernel, in this case and not a row by the
                                                              # round-8 ruling: the whole kernel walked with _walk, which refuses a stranger
-                                                             # at any position before a reference is classified
+                                                             # at any position before a reference is classified; its two rules' pins parse
+                                                             # and walk their synthetic texts the same way
             "TheCountersOneSite.test_the_shared_doors_bump_roster_is_the_reconciliations_and_its_second_bumps_sit_below_the_fills":
                 ["_walk", "ast.parse", "inspect.getsource"], # the roster pin's inline reads (the deep count per list, the bumps under each
                                                              # finalbody, the try subtrees) are over subtrees _door_regions, a row, holds
