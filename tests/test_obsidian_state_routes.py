@@ -310,10 +310,11 @@ class SocketFlagWhitelist(_Routes):
             self.assertEqual((fr["type"], fr["gesture"], fr["sid"], fr["itemId"]), ("settingRefused", "flag", SID, ""), fr)
             self.assertIsNone(fr["value"], "%r: no pane paints an unlisted flag, so there is no toggle to repaint" % (name,))
             self.assertEqual(fr["text"], self._wrapped(r["error"]), "%r: the route's sentence, wrapped as the socket's refusals are" % (name,))
-            self.assertIsInstance(fr["flag"], str)
-            if isinstance(name, str) or not name:
-                self.assertEqual(fr["flag"], name or "", "%r: addressed to the name the client sent, as str() spells it, "
-                                 "the empty string for a falsy one" % (name,))
+            # every name, the truthy non-strings (7, True, a list, a dict) among them, as _refuse_setting sends it,
+            # str(flag or ""); equal to a str, so a name sent raw reds too (the reviewer's ruling on round 2 of fork
+            # PR #909, tests-3)
+            self.assertEqual(fr["flag"], str(name or ""), "%r: addressed to the name the client sent, as str() spells "
+                             "it, the empty string for a falsy one" % (name,))
         st, r = self._post("/flag", {"id": SID, "flag": "threadMail", "value": True})
         self.assertEqual(r["error"], 'flag must be one of hideFromFeed, postalServiceOff, notify, got "threadMail"')
         self.assertEqual(self._ws({"type": "setSessionFlag", "id": SID, "flag": "threadMail", "value": True})[0]["text"],
