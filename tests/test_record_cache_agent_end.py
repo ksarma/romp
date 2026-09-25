@@ -16,6 +16,7 @@ document and read whole at its next fold; a file that no longer exists is releas
 
 Synthetic data only: a notes-api project under a temp root, placeholder ids, a private sid, hostname TESTHOST.
 """
+import ast
 import asyncio
 import contextlib
 import io
@@ -25,8 +26,13 @@ import shutil
 import tempfile
 import threading
 import unittest
+from collections import Counter
 from pathlib import Path
 from romp_load import load_source
+if __package__:                                   # under pytest tests/ is a package: the one parse cache every census shares
+    from . import parse_cache as PC
+else:                                             # a direct run has tests/ on sys.path
+    import parse_cache as PC
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 BIN = os.path.join(os.path.dirname(HERE), "bin")
@@ -1290,6 +1296,325 @@ class AgentEnd(unittest.TestCase):
         self.assertEqual(jd._SERVE_GAUGES["recordCache"], ("entries", "bytes", "bytesMax", "budgetBytes", "countCap"),
                          "bytesMax is the one new gauge")
 
+
+
+# ---- the census of the places an agent leaves what a session knows (PR 913 round 1, group A; tests-2) ----
+
+ROOT = os.path.dirname(HERE)
+CENSUS_FILES = ("kernel/sdk_backend.py", "kernel/kernel.py")
+CENSUS_STRUCTS = frozenset(("_subagents", "_bg_tasks", "_seeded_tasks", "_reported_tasks", "_wf_agents", "_wf_slots", "_wf_ended"))
+CENSUS_REMOVES = frozenset(("_subagents", "_bg_tasks", "_wf_agents", "_wf_slots"))   # a QUEUES site over these needs the call AFTER it
+CENSUS_METHODS = frozenset(("pop", "clear", "popitem", "discard", "remove", "difference_update", "intersection_update",
+                            "symmetric_difference_update"))
+CENSUS_ALIAS_FROM = frozenset(("get", "setdefault"))   # a local bound from one of these (or a subscript) of a structure is its alias
+CENSUS_QUEUE_CALLS = {"_note_live_agents": 1, "note_agent_live": 2}   # the call that queues, and the index of its `live` argument
+MIRROR, SESSIONS = "bgTasks mirror", "sessions"
+Q, X, ADD, DROP = "QUEUES", "EXEMPT", "ADD", "DROP"
+SB = "kernel/sdk_backend.py"
+_MARKER = "a marker set over _bg_tasks rows: the row stays (a start or progress frame) or leaves at a _bg_tasks pop"
+_ROW_ADDED = "a _bg_tasks row added, guarded by the id's absence"
+_ENDS_QUEUED = ("the record of ends already queued: it names no live agent, and a repeated end is harmless (in the cycle of "
+                "an earlier attempt it counts nothing; with the drop writes off a repeat in a later cycle counts again)")
+_GONE_ROAD = ("kernel/sdk_backend.py SdkBackend._on_session_gone queues every agent the dropped object knows before this drop "
+              "or after its thread ends")
+# (file, enclosing function, structure, operation) -> one (verdict, the executed road test that proves it, or the reason) per
+# site, in source order. QUEUES: the site's function calls _note_live_agents(..., False) or note_agent_live(..., False)
+# after a removal of a _subagents entry, a _bg_tasks row or a roster, and anywhere for a mirror write; ADD: a call with
+# True after it; EXEMPT and DROP: the reason.
+RELEASE_CENSUS = {
+    (SB, "SdkSession._subagent_start_hook", "_subagents", "setitem"): [
+        (ADD, "test_a_resumed_agent_is_a_false_end_and_appends_to_its_tail")],
+    (SB, "SdkSession._subagent_stop_hook", "_subagents", "pop"): [
+        (Q, "test_an_agent_folded_while_it_ran_is_released_at_its_stop_hook")],
+    (SB, "SdkSession._drop_live_work", "_subagents", "clear"): [(Q, "test_an_agent_is_released_when_its_cli_is_torn_down")],
+    (SB, "SdkSession._drop_live_work", "_wf_agents", "clear"): [
+        (Q, "test_a_reattached_objects_roster_agent_ends_when_its_cli_is_torn_down")],
+    (SB, "SdkSession._drop_live_work", "_wf_slots", "clear"): [
+        (Q, "test_a_reattached_objects_roster_agent_ends_when_its_cli_is_torn_down")],
+    (SB, "SdkSession._drop_live_work", "_wf_ended", "clear"): [(X, _ENDS_QUEUED)],
+    (SB, "SdkSession._drop_live_work", "_bg_tasks", "clear"): [
+        (Q, "test_a_reattached_objects_seeded_agent_row_ends_when_its_cli_is_torn_down")],
+    (SB, "SdkSession._drop_live_work", "_seeded_tasks", "clear"): [(X, _MARKER + ", cleared with the rows")],
+    (SB, "SdkSession._drop_live_work", "_reported_tasks", "clear"): [(X, _MARKER + ", cleared with the rows")],
+    (SB, "SdkSession._drop_live_work", MIRROR, "_update_reg"): [
+        (Q, "test_a_reattached_objects_seeded_agent_row_ends_when_its_cli_is_torn_down")],
+    (SB, "SdkSession._reconcile_workflow_agents", "_wf_slots", "setitem (alias)"): [
+        (Q, "test_a_workflow_agent_is_released_when_its_slot_is_re_minted")],
+    (SB, "SdkSession._reconcile_workflow_agents", "_wf_agents", "pop"): [(Q, "test_a_workflow_agent_is_released_at_its_run_end")],
+    (SB, "SdkSession._reconcile_workflow_agents", "_wf_slots", "pop"): [(Q, "test_a_workflow_agent_is_released_at_its_run_end")],
+    (SB, "SdkSession._reconcile_workflow_agents", "_wf_ended", "pop"): [(X, _ENDS_QUEUED)],
+    (SB, "SdkSession._reconcile_workflow_agents", "_subagents", "pop"): [
+        (Q, "test_a_workflow_agent_is_released_when_its_slot_reports_done")],
+    (SB, "SdkSession._on_task_event", "_seeded_tasks", "discard"): [(X, _MARKER)],
+    (SB, "SdkSession._on_task_event", "_reported_tasks", "discard"): [(X, _MARKER)],
+    (SB, "SdkSession._on_task_event", "_bg_tasks", "setitem"): [(X, _ROW_ADDED)],
+    (SB, "SdkSession._on_task_event", "_bg_tasks", "setitem (alias)"): [(X, "a field of a standing row")] * 4,
+    (SB, "SdkSession._on_task_event", "_bg_tasks", "pop"): [
+        (Q, "test_a_reattached_object_queues_the_end_at_the_agents_task_end_and_not_a_shells")],
+    (SB, "SdkSession._on_task_event", "_subagents", "pop"): [
+        (Q, "test_an_agent_folded_while_it_ran_is_released_at_its_own_task_end")],
+    (SB, "SdkSession._on_task_event", MIRROR, "_update_reg"): [
+        (Q, "test_a_reattached_object_queues_the_end_at_the_agents_task_end_and_not_a_shells")],
+    (SB, "SdkSession._seed_live_work_from_reg", "_bg_tasks", "setitem"): [(X, _ROW_ADDED)],
+    (SB, "SdkSession._reconcile_seeded_with_report", "_bg_tasks", "setitem"): [(X, _ROW_ADDED)],
+    (SB, "SdkSession._reconcile_seeded_with_report", "_bg_tasks", "pop"): [
+        (Q, "test_a_reattached_objects_seeded_agent_row_ends_when_the_report_lists_it_ended"),
+        (X, "a row the report omits: only a shell reaches it (report_absence_decides), and a shell names no agent; the type "
+            "test runs over both retired lists, so this stays right if the predicate widens")],
+    (SB, "SdkSession._reconcile_seeded_with_report", "_seeded_tasks", "clear"): [
+        (X, _MARKER + ", or stays in _bg_tasks")],
+    (SB, "SdkSession._reconcile_seeded_with_report", "_reported_tasks", "difference_update"): [
+        (X, _MARKER + ", or stays in _bg_tasks")],
+    (SB, "SdkSession._reconcile_seeded_with_report", MIRROR, "_update_reg"): [
+        (Q, "test_an_adopted_agent_row_ends_when_a_later_report_lists_it_ended")],
+    (SB, "SdkBackend._boot_reconcile", MIRROR, "setitem"): [
+        (Q, "test_a_dead_mirrors_agent_row_at_boot_is_released_after_a_read_holds_its_file")],
+    (SB, "SdkBackend._ensure", MIRROR, "setitem"): [
+        (Q, "test_a_threads_wake_over_a_dead_mirrors_agent_row_releases_its_held_file")] * 2,
+    (SB, "SdkBackend._ensure", SESSIONS, "setitem"): [
+        (DROP, "replaces an object whose thread has ended (a live one is returned instead); that thread's end ran "
+               "SdkBackend._on_session_gone")],
+    (SB, "SdkBackend.kill", SESSIONS, "pop"): [(DROP, "ends the session's thread, whose end runs " + _GONE_ROAD)],
+    (SB, "SdkBackend.conserve_close", SESSIONS, "pop"): [(DROP, "ends the session's thread, whose end runs " + _GONE_ROAD)],
+    (SB, "SdkBackend._on_session_gone", SESSIONS, "pop"): [(DROP, "inside " + _GONE_ROAD)],
+    (SB, "SdkBackend._on_session_gone", "_subagents", "clear"): [
+        (Q, "test_a_reattached_objects_seeded_agent_row_ends_when_its_cli_dies_while_idle")],
+    (SB, "SdkBackend._on_session_gone", MIRROR, "setitem"): [
+        (Q, "test_a_reattached_objects_seeded_agent_row_ends_when_its_cli_dies_while_idle")],
+    (SB, "SdkBackend._heal_cut_session", SESSIONS, "pop"): [(DROP, "called by and inside " + _GONE_ROAD)] * 2,
+}
+CENSUS_NOT_COVERAGE = (
+    "The census proves classification, not coverage: that a queue call follows a site cannot show that the call queues what "
+    "the site removed (the rosters and rows _drop_live_work clears sit in a function whose _subagents queue call already "
+    "follows them). What proves each QUEUES site is the executed road test named beside it.")
+
+
+def _census_scopes(tree):
+    """[(qualified name, the nodes it owns)] for the module and every function: a nested def owns its own body, a class only
+    prefixes its methods' names, and a lambda's body belongs to the function around it. Reads the tree only."""
+    mod = []
+    out = [("<module>", mod)]
+
+    def visit(node, qual, own):
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                q = (qual + "." if qual else "") + child.name
+                mine = []
+                out.append((q, mine))
+                visit(child, q, mine)
+            elif isinstance(child, ast.ClassDef):
+                visit(child, (qual + "." if qual else "") + child.name, own)
+            else:
+                own.append(child)
+                visit(child, qual, own)
+    visit(tree, "", mod)
+    return out
+
+
+def _census_targets(t):
+    if isinstance(t, (ast.Tuple, ast.List)):
+        for e in t.elts:
+            yield from _census_targets(e)
+    elif isinstance(t, ast.Starred):
+        yield from _census_targets(t.value)
+    else:
+        yield t
+
+
+def _census_struct(node):
+    return node.attr if isinstance(node, ast.Attribute) and node.attr in CENSUS_STRUCTS else None
+
+
+def release_census(trees):
+    """Every site in `trees` ([(file, tree)]) at which an entry leaves, or is written into, what a session knows of its
+    agents: a pop, clear, popitem, discard, remove or set update, a del of a subscript, a `-=` or `&=`, a rebinding outside
+    __init__, and a subscript assignment (directly, or through a local alias bound from a structure's get, setdefault or
+    subscript), on any receiver, over CENSUS_STRUCTS; every write of the reg's bgTasks mirror (_update_reg's bgTasks keyword,
+    a subscript assignment to "bgTasks"); and every drop of a session object from `sessions` (those methods, a del, a
+    subscript assignment). Returns ([(file, function, structure, operation, line)], {(file, function): [(line, live)]}), the
+    second the queue calls of each function (`live` the literal, or None when it is not one)."""
+    sites, queues = [], {}
+    for rel, tree in trees:
+        for qual, nodes in _census_scopes(tree):
+            alias = {}
+            for n in nodes:
+                binds = ([(t, n.value) for t in n.targets] if isinstance(n, ast.Assign)
+                         else [(n.target, n.value)] if isinstance(n, ast.NamedExpr) else [])
+                for t, v in binds:
+                    src = None
+                    if isinstance(v, ast.Call) and isinstance(v.func, ast.Attribute) and v.func.attr in CENSUS_ALIAS_FROM:
+                        src = _census_struct(v.func.value)
+                    elif isinstance(v, ast.Subscript):
+                        src = _census_struct(v.value)
+                    if src and isinstance(t, ast.Name):
+                        alias[t.id] = src
+
+            def recv(node):
+                st = _census_struct(node)
+                if st:
+                    return st, ""
+                if isinstance(node, ast.Name) and node.id in alias:
+                    return alias[node.id], " (alias)"
+                return None, ""
+
+            def is_sessions(node):
+                return isinstance(node, ast.Attribute) and node.attr == SESSIONS
+            calls = []
+            fn = qual.rsplit(".", 1)[-1]
+            for n in nodes:
+                ln = getattr(n, "lineno", 0)
+                if isinstance(n, ast.Call) and isinstance(n.func, (ast.Attribute, ast.Name)):
+                    name = n.func.attr if isinstance(n.func, ast.Attribute) else n.func.id
+                    if name in CENSUS_QUEUE_CALLS:
+                        i = CENSUS_QUEUE_CALLS[name]
+                        arg = n.args[i] if len(n.args) > i else next((k.value for k in n.keywords if k.arg == "live"), None)
+                        calls.append((ln, arg.value if isinstance(arg, ast.Constant) else None))
+                    if isinstance(n.func, ast.Attribute) and n.func.attr in CENSUS_METHODS:
+                        st, how = recv(n.func.value)
+                        if st:
+                            sites.append((rel, qual, st, n.func.attr + how, ln))
+                        elif is_sessions(n.func.value):
+                            sites.append((rel, qual, SESSIONS, n.func.attr, ln))
+                    if name == "_update_reg" and any(k.arg == "bgTasks" for k in n.keywords):
+                        sites.append((rel, qual, MIRROR, "_update_reg", ln))
+                elif isinstance(n, ast.Delete):
+                    for x in (x for t in n.targets for x in _census_targets(t)):
+                        if isinstance(x, ast.Subscript):
+                            st, how = recv(x.value)
+                            if st:
+                                sites.append((rel, qual, st, "del" + how, ln))
+                            elif is_sessions(x.value):
+                                sites.append((rel, qual, SESSIONS, "del", ln))
+                elif isinstance(n, ast.AugAssign):
+                    st = _census_struct(n.target)
+                    if st and isinstance(n.op, (ast.Sub, ast.BitAnd)):
+                        sites.append((rel, qual, st, "-=" if isinstance(n.op, ast.Sub) else "&=", ln))
+                    elif isinstance(n.target, ast.Subscript):
+                        st, how = recv(n.target.value)
+                        if st:
+                            sites.append((rel, qual, st, "setitem" + how, ln))
+                elif isinstance(n, (ast.Assign, ast.AnnAssign)):
+                    for x in (x for t in (n.targets if isinstance(n, ast.Assign) else [n.target]) for x in _census_targets(t)):
+                        if _census_struct(x):
+                            if fn != "__init__":
+                                sites.append((rel, qual, x.attr, "rebind", ln))
+                        elif isinstance(x, ast.Subscript):
+                            st, how = recv(x.value)
+                            if st:
+                                sites.append((rel, qual, st, "setitem" + how, ln))
+                            elif isinstance(x.slice, ast.Constant) and x.slice.value == "bgTasks":
+                                sites.append((rel, qual, MIRROR, "setitem", ln))
+                            elif is_sessions(x.value):
+                                sites.append((rel, qual, SESSIONS, "setitem", ln))
+            queues[(rel, qual)] = calls
+    return sites, queues
+
+
+def release_census_problems(trees, table=None):
+    """The census's findings against the recorded table (RELEASE_CENSUS), one line each; [] when they agree. Fails on: nothing
+    found; a (file, function, structure, operation) the source has more or fewer times than the table; a QUEUES site whose
+    function lacks the queue call its kind needs, and an ADD site with no start queued after it; a named road test that does
+    not exist in this module."""
+    table = RELEASE_CENSUS if table is None else table
+    sites, queues = release_census(trees)
+    if not sites:
+        return ["the census found nothing in %s: a file moved, or every structure was renamed" % ", ".join(r for r, _t in trees)]
+    probs = []
+    found = Counter(s[:4] for s in sites)
+    want = Counter({k: len(v) for k, v in table.items()})
+    for k in sorted(set(found) | set(want)):
+        if found[k] != want[k]:
+            lines = [s[4] for s in sites if s[:4] == k]
+            probs.append("%s %s: %s %s found %d time%s (lines %s), the table records %d" % (
+                k[0], k[1], k[2], k[3], found[k], "" if found[k] == 1 else "s", lines or "none", want[k]))
+    by_key = {}
+    for s in sorted(sites, key=lambda s: (s[0], s[4])):
+        by_key.setdefault(s[:4], []).append(s[4])
+    for k, lines in by_key.items():
+        for ln, (verdict, why) in zip(lines, table.get(k, [])):
+            calls = queues.get((k[0], k[1]), [])
+            if verdict == Q:
+                after = k[2] in CENSUS_REMOVES
+                if not any(live is False and (ln < cl or not after) for cl, live in calls):
+                    probs.append("%s %s line %d: %s %s is recorded QUEUES (%s), and the function has no "
+                                 "_note_live_agents(..., False) or note_agent_live(..., False) %s" % (
+                                     k[0], k[1], ln, k[2], k[3], why, "after it" if after else "anywhere in it"))
+            elif verdict == ADD and not any(live is True and ln < cl for cl, live in calls):
+                probs.append("%s %s line %d: the add queues no start after it" % (k[0], k[1], ln))
+    for rows in table.values():
+        for verdict, why in rows:
+            if verdict in (Q, ADD) and not callable(getattr(AgentEnd, why, None)):
+                probs.append("the road test %s named in the table is not in this module" % why)
+    return probs
+
+
+class ReleaseCensus(unittest.TestCase):
+    """EVERY PLACE AN AGENT LEAVES WHAT A SESSION KNOWS QUEUES ITS END, OR SAYS WHY NOT (PR 913 round 1, group A; tests-2).
+    A session knows its agents through four structures: _subagents, the _bg_tasks rows (a Task agent's row is keyed by its
+    agent's id), the Workflow rosters (_wf_agents, with _wf_slots) and the reg's bgTasks mirror, which a reattach seeds rows
+    from. The census re-derives from the source, by AST over kernel/sdk_backend.py and kernel/kernel.py (release_census), the
+    multiset of (file, enclosing function, structure, operation) sites over those structures and their markers
+    (_seeded_tasks, _reported_tasks, _wf_ended), the mirror's writes, and the drops of a session object from `sessions`,
+    and asserts it equals the table RELEASE_CENSUS in both directions. Each site is QUEUES, naming the executed road test of
+    its road, or EXEMPT or DROP with its reason, or the one ADD (the start hook, which queues a start). A QUEUES site that
+    removes a _subagents entry, a _bg_tasks row or a roster needs a queue call with live False after it in its function; a
+    mirror write needs one anywhere in its function; an ADD needs one with live True after it; and each road test named
+    must exist in this module. That the named test shows its road releasing the finished agent is the test's to show, not
+    the census's (CENSUS_NOT_COVERAGE, which the failure message carries). kernel/kernel.py holds no session structure,
+    and the census finds nothing there.
+    Shown red before it was relied on (2026-09-25), and kept red by the test_the_census_reds_* tests below: a clear of
+    _subagents in a new function of SdkSession with no queue call; a second _bg_tasks clear inside
+    SdkBackend._on_session_gone, a function already listed, whose queue call follows it; the queue call removed from
+    _reconcile_seeded_with_report, whose sites are recorded QUEUES; and a tree in which it finds nothing."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.texts, cls.trees = {}, []
+        for rel in CENSUS_FILES:
+            text, tree = PC.source_and_tree(os.path.join(ROOT, rel), rel)
+            cls.texts[rel] = text
+            cls.trees.append((rel, tree))
+
+    def _planted(self, old, new):
+        text = self.texts[SB]
+        self.assertEqual(text.count(old), 1, "precondition: the plant's anchor is in kernel/sdk_backend.py once")
+        return [(SB, ast.parse(text.replace(old, new)))] + [t for t in self.trees if t[0] != SB]
+
+    def test_every_site_is_recorded_and_every_queues_site_queues(self):
+        probs = release_census_problems(self.trees)
+        self.assertEqual(probs, [], "\n".join(probs) + "\n" + CENSUS_NOT_COVERAGE + " The table: " + "; ".join(
+            "%s %s %s: %s" % (k[1], k[2], k[3], ", ".join("%s (%s)" % r for r in v)) for k, v in sorted(RELEASE_CENSUS.items())))
+
+    def test_kernel_py_holds_no_session_structure(self):
+        sites, _queues = release_census([t for t in self.trees if t[0] == "kernel/kernel.py"])
+        self.assertEqual(sites, [])
+
+    def test_the_census_reds_on_a_planted_site_in_a_new_function(self):
+        probs = release_census_problems(self._planted(
+            "    def _known_agents_locked(self) -> list:\n",
+            "    def _forget_live_agents(self):\n"
+            "        with self._sub_lock:\n"
+            "            self._subagents.clear()\n\n"
+            "    def _known_agents_locked(self) -> list:\n"))
+        self.assertTrue(any("SdkSession._forget_live_agents: _subagents clear found 1 time" in p for p in probs), probs)
+
+    def test_the_census_reds_on_a_planted_site_inside_a_listed_function(self):
+        probs = release_census_problems(self._planted(
+            "                gone_agents = sess._known_agents_locked()\n",
+            "                gone_agents = sess._known_agents_locked()\n"
+            "                sess._bg_tasks.clear()\n"))
+        self.assertTrue(any("SdkBackend._on_session_gone: _bg_tasks clear found 1 time" in p for p in probs), probs)
+
+    def test_the_census_reds_when_a_queues_site_loses_its_call(self):
+        probs = release_census_problems(self._planted("            self._note_live_agents(retired_agents, False)\n", ""))
+        self.assertTrue(any("_reconcile_seeded_with_report line" in p and "_bg_tasks pop is recorded QUEUES" in p
+                            for p in probs), probs)
+        self.assertTrue(any("_reconcile_seeded_with_report line" in p and "bgTasks mirror _update_reg is recorded QUEUES" in p
+                            for p in probs), probs)
+
+    def test_the_census_reds_when_it_finds_nothing(self):
+        self.assertEqual(release_census_problems([(SB, ast.parse("x = 1\n"))]),
+                         ["the census found nothing in kernel/sdk_backend.py: a file moved, or every structure was renamed"])
 
 
 if __name__ == "__main__":
