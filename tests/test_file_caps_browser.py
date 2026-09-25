@@ -22,8 +22,8 @@ the REAL chat page of a hermetic kernel in playwright's Chromium and checks ever
      are all refused. Two tabs of a browser that still holds the cookie of the version before this one, opened at the
      same moment (tabs restored after the upgrade), both end signed in: each is handed the same session and key.
      That old cookie, holding this kernel's token, is cleared by any response to a request that carries it beside a
-     valid session (a browser can keep it after the migrating response cleared it); a browser with no session keeps
-     it, and an old cookie holding another value is never cleared.
+     valid session (a browser sends both when an earlier version, run after this one, set the old cookie again); a
+     browser with no session keeps it, and an old cookie holding another value is never cleared.
   4. A same-origin /file address typed where no markdown renderer runs carries the cap and opens: a code span holding
      one URL, a user todo's text and its link chip (in the chat and in the Waiting pane), and, in the viewer, a figure
      and a link the note writes with the scheme.
@@ -366,9 +366,10 @@ const watch = (ctx) => {
   } catch (e) {} });
   return seen;
 };
-{ // 1. migrated, and the browser still holds the old cookie: the next navigation carries it beside the session and clears
-  //    it. A cookie the test adds has been dropped by the engine before any request carried it (WebKit, about 1 run in 4),
-  //    so the state is set up again, up to four times, until a navigation carries it.
+{ // 1. migrated, then the old cookie set again beside the session (the state an earlier version, run after this one,
+  //    leaves when this version comes back with the same token): the next navigation carries both and clears it. An
+  //    engine can drop a cookie the test adds before any request carries it (seen in WebKit and in Firefox), so the
+  //    state is set up again, up to four times, until a navigation carries it.
   const ctx = await browser.newContext(VIEW);
   await ctx.addCookies([{ name: "romp_token", value: cfg.token, url: cfg.origin }]);
   let page = await ctx.newPage();

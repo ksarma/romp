@@ -745,10 +745,11 @@ class _OneShotPeer(threading.Thread):
 
 class LegacyCookieClearedBesideASession(_Server):
     """The legacy romp_token cookie holding THIS kernel's token is cleared on ANY response to a request that
-    also carries a valid session cookie of this kernel. The session shows the browser migrated already, and a
-    browser can keep the old cookie although the migrating response cleared it; the next response clears it.
-    A request with no valid session keeps the old cookie (a dashboard that has not migrated still signs in
-    with it), and a romp_token holding any other value is never cleared. The kinds below reach the browser by
+    also carries a valid session cookie of this kernel. The session shows the browser signed in without the old
+    cookie. A request carries both when an earlier version, run after this one, set the old cookie again and this
+    version then came back with the same token; the next response clears it. Apart from the response that signs
+    the browser in, a request with no valid session keeps the old cookie (a dashboard that has not migrated still
+    signs in with it), and a romp_token holding any other value is never cleared. The kinds below reach the browser by
     every road a response takes: _send, the file route's own headers (GET and HEAD), the preflight's, the
     socket upgrade's, and the socket relay's raw head. Counts, kinds and statuses only; no value is printed."""
 
@@ -847,11 +848,51 @@ class LegacyCookieClearedBesideASession(_Server):
 
     def test_another_kernels_old_cookie_beside_a_valid_session_is_never_cleared(self):
         # a romp_token holding another value (a second, older kernel on the same host) beside this kernel's
-        # valid session: no response clears it, the sign-in navigations included
-        got = self._answers("%s=%s; romp_token=another-kernels-token" % (CN, SESS))
-        self.assertEqual({k: s for k, s, _ in got}, self.SIGNED_IN, "each kind reached the road it names")
-        self.assertEqual([(k, s, c) for k, s, c in got if c], [],
-                         "another kernel's cookie is not cleared: (kind, status, clears) of the responses that clear it")
+        # valid session: no response clears it, the sign-in navigations included. The values close to this
+        # kernel's token are there for the compare: the token's letters in the other case, the token with a
+        # trailing "=", the token in double quotes, and the token after a space are other values, so a compare
+        # that ignores case, or that trims quotes, spaces or "=" before it compares, clears one of them.
+        for what, value in (("another kernel's value", "another-kernels-token"), ("the other case", TOK.swapcase()),
+                            ("a trailing '='", TOK + "="), ("double quotes", '"%s"' % TOK), ("a leading space", " " + TOK)):
+            self.assertNotEqual(value, TOK, "%s: a value other than this kernel's token" % what)
+            got = self._answers("%s=%s; romp_token=%s" % (CN, SESS, value))
+            self.assertEqual({k: s for k, s, _ in got}, self.SIGNED_IN, "%s: each kind reached the road it names" % what)
+            self.assertEqual([(k, s, c) for k, s, c in got if c], [],
+                             "%s: the cookie is not cleared: (kind, status, clears) of the responses that clear it" % what)
+
+    def test_an_error_before_a_request_is_read_carries_no_clear_left_from_the_request_before_it(self):
+        # One keep-alive connection: a request carrying the old cookie beside a valid session, whose response clears
+        # it, then a request with more header lines than the server reads, which the server answers with a 431
+        # before it has read that request's headers. The 431 reads nothing of the request before it, so it
+        # carries no clear.
+        s = socket.create_connection(("127.0.0.1", self.port), timeout=10)
+        try:
+            host = "Host: 127.0.0.1:%d\r\n" % self.port
+            s.sendall(("GET /chat HTTP/1.1\r\n%sCookie: %s=%s; romp_token=%s\r\n\r\n" % (host, CN, SESS, TOK)).encode())
+            s.sendall(("GET /chat HTTP/1.1\r\n" + host).encode() + b"".join(b"X-Filler-%d: 1\r\n" % i for i in range(120)) + b"\r\n")
+            buf = b""
+            while True:
+                try:
+                    b = s.recv(65536)
+                except socket.timeout:
+                    break
+                if not b:
+                    break
+                buf += b
+        finally:
+            s.close()
+        answers = []       # (status, clears) of each response on the connection, read head by head
+        while buf.startswith(b"HTTP/"):
+            end = buf.find(b"\r\n\r\n")
+            if end < 0:
+                break
+            lines = buf[:end].decode("latin-1").split("\r\n")
+            fields = [ln.split(":", 1) for ln in lines[1:] if ":" in ln]
+            length = int(next((v for k, v in fields if k.strip().lower() == "content-length"), "0"))
+            answers.append((int(lines[0].split(" ")[1]), self._clears([v.strip() for k, v in fields if k.strip().lower() == "set-cookie"])))
+            buf = buf[end + 4 + length:]
+        self.assertEqual(answers, [(200, 1), (431, 0)],
+                         "the first response clears the old cookie, and the 431 after it on the same connection does not")
 
 
 class NoPageDataInlined(_Server):
