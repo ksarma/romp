@@ -86,9 +86,11 @@ call is named; a regex hit at no call is accounted for when the module has a sit
 containing it, and is named otherwise. No proof inside a reader excuses a hit, and no reader carries an exemption
 keyed on a spelling (PR #850's tenth review round, after each proof that a call launches nothing had grown into a list
 the next round extended). The one visible listing is the one --roads prints under `# unresolved:`: the scan's derived
-entries, each with its kind, and the entries listed by hand in LISTED_BY_HAND, each naming the module, the line's text,
-a kind and a reason, which the comparison reads as covering a match on that line of that module; a hand entry that
-covers no match reds the comparison case, naming the entry, so the listing holds only lines that exist. The cost of
+entries, each with its kind, and the entries listed by hand in LISTED_BY_HAND, each naming the module, the line's number
+and its text, a kind and a reason, which the comparison reads as covering the matches on that line of that module only,
+and only while that line holds that text (PR #850's eleventh review round: an entry keyed on the text alone covered
+every line of its module with that text); a hand entry that covers no match reds the comparison case, naming the entry,
+so the listing holds only lines that exist. The cost of
 failing closed is stated and intended: a clean line the regex matches that the scan does not read as a site is named,
 and its author lists it by hand with its reason. The rows hold examples of the clean shapes that cost, among them the
 CLI with refresh or --help (N26, N43, N96, N97, N104), a -c child that load_sources the kernel (N9, N10, N44, N98, N99,
@@ -1381,11 +1383,11 @@ def _roads_row(name, src, tree, hand=()):
     """One module's reading for the roads table: ((road, sites, unresolved), whether its text carries the trio
     (_hermetic), its comparison values or None). The comparison values are _regex_scan_comparison's, read with the same
     scan, when the round-8 regex census flags a call or the scan finds a site, so the comparison case scans no module
-    again; `hand` is the module's entries of the hand listing, which the comparison reads as covering a match on their
-    line. Everything returned is tuples, strings and numbers: no node, no scan and no bindings. The scan's bindings are
-    released (Bindings.release) before this returns, which breaks their cycles (a scope holds its declarations and each
-    declaration its scope), so the module's tree and bindings are freed by reference counting once the caller drops the
-    tree."""
+    again; `hand` is the module's entries of the hand listing, which the comparison reads as covering the matches on the
+    line each names, by its number and its text. Everything returned is tuples, strings and numbers: no node, no scan
+    and no bindings. The scan's bindings are released (Bindings.release) before this returns, which breaks their cycles
+    (a scope holds its declarations and each declaration its scope), so the module's tree and bindings are freed by
+    reference counting once the caller drops the tree."""
     scan = _SpawnScan(tree, name)
     try:
         try:
@@ -1615,10 +1617,10 @@ def spawn_roads(directory, skip=()):
 def _print_roads(directory, skip=(), listing=None):
     """The --roads arm: one line per module (`<module> <road> [<line>:<road>:<argv> ...]`), the unresolved names,
     targets and calls under `# unresolved:`, then under the same heading each entry of the hand listing (LISTED_BY_HAND,
-    or `listing` when given) whose module the table holds (`<module>: <line> (<kind>; listed by hand: <reason>)`), and a
-    summary line with every count of the scan's derived entries, so the census's population is derived by one command
-    rather than stated. It prints the roads table (_roads_table), over the real tree the table of the one read the tests
-    share."""
+    or `listing` when given) whose module the table holds (`<module>:<line> <text> (<kind>; listed by hand: <reason>)`),
+    and a summary line with every count of the scan's derived entries, so the census's population is derived by one
+    command rather than stated. It prints the roads table (_roads_table), over the real tree the table of the one read
+    the tests share."""
     table = _roads_table(directory, skip, listing)
     roads = table.roads
     for name, (road, sites, _) in roads.items():
@@ -1631,9 +1633,9 @@ def _print_roads(directory, skip=(), listing=None):
             kinds[kind] = kinds.get(kind, 0) + 1
             calls.add((name, line))
             modules.add(name)
-    for module, line, kind, reason in LISTED_BY_HAND if listing is None else listing:
+    for module, line, text, kind, reason in LISTED_BY_HAND if listing is None else listing:
         if module in roads:
-            print("%s: %s (%s; listed by hand: %s)" % (module, line, kind, reason))
+            print("%s:%d %s (%s; listed by hand: %s)" % (module, line, text, kind, reason))
     count = {r: sum(1 for road, _, _ in roads.values() if road == r) for r in ("argv", "binding", "neither", "refused")}
     sites = [(r, name) for name, (_, s, _) in roads.items() for _, _, r in s]
     offenders = [(name, line, argv) for name, (road, s, _) in roads.items() if road in ("argv", "binding") and
@@ -1736,12 +1738,14 @@ def _bin_romp_text():
 
 # THE HAND LISTING (PR #850's tenth review round): lines the round-8 regex census matches at a call that the scan does
 # not read as a site, or at no call in a module with no site, each listed with the reason it starts no kernel, since the
-# comparison names every other such match (_regex_scan_comparison). An entry is (module, line, kind, reason): the
-# module's path under tests/, the text of the line holding the match with its surrounding whitespace stripped, a kind,
-# and the reason. --roads prints each under `# unresolved:` with its kind and reason, the comparison reads it as
-# covering every match on that line of that module, and an entry that covers no match reds the comparison case, naming
-# the entry (_hand_entries_covering_nothing), so the listing holds only lines that exist. Empty: the tree needs no
-# entry.
+# comparison names every other such match (_regex_scan_comparison). An entry is (module, line, text, kind, reason): the
+# module's path under tests/, the number of the line holding the match, that line's text with its surrounding
+# whitespace stripped, a kind, and the reason. --roads prints each under `# unresolved:` with its kind and reason, and
+# the comparison reads it as covering the matches on that line of that module only, and only while that line's text is
+# the entry's (PR #850's eleventh review round: keyed on the text alone, an entry covered every line of its module with
+# that text, a launch among them): an entry whose line has moved or changed covers nothing. An entry that covers no
+# match reds the comparison case, naming the entry (_hand_entries_covering_nothing), so the listing holds only lines
+# that exist. Empty: the tree needs no entry.
 LISTED_BY_HAND = ()
 
 _Comparison = collections.namedtuple("_Comparison", "dropped missed not_calls flagged by_hand")
@@ -1785,8 +1789,9 @@ def _regex_scan_comparison(src, name, scan_all=False, scanned=None, hand=()):
     no exemption, since that would be a proof that a hit launches nothing. The listed entries are the scan's
     (`unresolved`, each covering a match its expression's extent holds whole, the match's start and its end: at a call,
     an entry at the call's line; at no call, an entry at any line) and `hand`, the module's entries of the hand listing
-    (LISTED_BY_HAND), each covering every match on the line whose text, its surrounding whitespace stripped, is the
-    entry's. No proof inside a reader excuses a hit, and no reader carries an exemption keyed on a spelling. Returns
+    (LISTED_BY_HAND), each covering the matches on the line of the module at the entry's line number, when that line's
+    text, its surrounding whitespace stripped, is the entry's (a match lies on one line). No proof inside a reader
+    excuses a hit, and no reader carries an exemption keyed on a spelling. Returns
     (dropped, missed, not_calls, flagged, by_hand): `dropped` the (line, matched text, call text) of every match named
     (for a hit at no call, the line of the regex's call parenthesis and that line's text); `missed` the lines of the
     sites the regex census did not flag, reported and asserting nothing; `not_calls` the lines of every regex hit at no
@@ -1832,7 +1837,8 @@ def _regex_scan_comparison(src, name, scan_all=False, scanned=None, hand=()):
             if any(start <= offset and offset + len(text) <= end for line, node in listed if call is None or line == call.lineno
                    for start, end in [extent(node)]):
                 continue
-            entries = [e for e in hand if e[1] == lines[src.count("\n", 0, offset)].strip()]
+            on = src.count("\n", 0, offset) + 1   # the match's line: a hand entry covers the matches on its own line only
+            entries = [e for e in hand if e[1] == on and e[2] == lines[on - 1].strip()]
             if entries:
                 by_hand += [e for e in entries if e not in by_hand]
                 continue
@@ -3115,13 +3121,14 @@ class HermeticKernelPostal(unittest.TestCase):
         round 8's regex pair copied verbatim) and the scan run over every module the trio test reads and every
         PLANT_TABLE row, under one rule (_regex_scan_comparison): for each call the regex flags, the scan gives a site at
         the call's line, or a listed entry at that line whose expression contains the match (the scan's own entries, and
-        the entries of the hand listing, LISTED_BY_HAND, each covering a match on its line), or refuses the module
-        (UnreadableSpawn, red in the trio test); any other match at a call is named; a regex hit at no call is accounted
-        for when the module has a site, is refused, or has a listed entry containing it, and is named otherwise. No
-        proof inside a reader excuses a hit, and no reader carries an exemption keyed on a spelling. A named match reds
-        the case, naming the module or row, the line and the match, over the tree as over the rows, except in the rows
-        whose label says the comparison names them, and each of those must carry at least one (a launch, or a clean
-        shape the scan neither reads as a site nor lists: the cost of failing closed the module docstring states).
+        the entries of the hand listing, LISTED_BY_HAND, each covering the matches on the line of its module it names by
+        number and text), or refuses the module (UnreadableSpawn, red in the trio test); any other match at a call is
+        named; a regex hit at no call is accounted for when the module has a site, is refused, or has a listed entry
+        containing it, and is named otherwise. No proof inside a reader excuses a hit, and no reader carries an
+        exemption keyed on a spelling. A named match reds the case, naming the module or row, the line and the match,
+        over the tree as over the rows, except in the rows whose label says the comparison names them, and each of those
+        must carry at least one (a launch, or a clean shape the scan neither reads as a site nor lists: the cost of
+        failing closed the module docstring states).
         The rows with a regex hit at no call are held the same way, among them a comment and a docstring (N11, N12) and
         a program held in a string that is exec'd or written to a script file a test runs (N116, N117), named at labels
         that say so, and B71, B74, A35 and A45 (each module has a site) and N89 (its listed program contains the hit),
@@ -3188,7 +3195,7 @@ class HermeticKernelPostal(unittest.TestCase):
                          % {row: (matches, named.get(row)) for row, matches in held.items()})
         self.assertEqual(_hand_entries_covering_nothing(table.compared.values(), LISTED_BY_HAND), [], "entries of the hand "
                          "listing (LISTED_BY_HAND) that cover no match of the round-8 regex census over the tree: the "
-                         "listing holds only lines that exist ((module, line, kind, reason))")
+                         "listing holds only lines that exist ((module, line, text, kind, reason))")
         self.assertEqual(dropped, [], "matches of the round-8 regex census that the scan neither reads as a site nor lists, "
                          "and that no entry of the hand listing covers, each named ((module or row, line, match, call)): at a "
                          "call the regex flags, or at no call in a module with no site that no refusal and no listed entry "
@@ -3236,15 +3243,22 @@ class HermeticKernelPostal(unittest.TestCase):
                              "it: %s" % (what, plant))
 
     def test_a_line_listed_by_hand_covers_the_match_on_it_and_an_entry_that_covers_none_is_named(self):
-        """THE HAND LISTING'S PIN (PR #850's tenth review round). Over a plant directory read by _read_root (the function
-        the real tree's read is): a module whose one clean line the round-8 regex matches at a call and the scan does not
-        read as a site (the CLI with refresh) is named by the comparison with no entry, and with a hand entry for that
-        line the entry covers the match, nothing is named, and --roads prints the entry under `# unresolved:` with its
-        kind and reason; the same entry over a module without that line covers no match, and the check the comparison
-        case runs on LISTED_BY_HAND (_hand_entries_covering_nothing) names it. The red that the comparison reads the
-        entries is the round's mutant run: with that read removed, the covered module is named."""
+        """THE HAND LISTING'S PIN (PR #850's tenth review round; keyed on the module and the line in its eleventh). Over
+        plant directories read by _read_root (the function the real tree's read is). A module whose one clean line the
+        round-8 regex matches at a call and the scan does not read as a site (the CLI with refresh) is named by the
+        comparison with no entry; with a hand entry for that line of that module, the entry covers the match, nothing is
+        named, and --roads prints the entry under `# unresolved:` with its kind and reason. An entry covers the matches
+        on its own line of its own module only: a second line of that module with the same text, where a local of the
+        same name is a helper's return given the kernel's path (a launch the scan neither reads as a site nor lists, the
+        shape of row N111), is named while the entry covers the first; and a second module holding the same text at the
+        same line number, the same launch, is named, since the read hands each module only its own entries (the module
+        filter in _read_root). The same entry over the covered module with that line now holding other text, two real
+        launches of row N105's shape on the entry's line number and the next, covers no match: the check the comparison
+        case runs on LISTED_BY_HAND (_hand_entries_covering_nothing) names it, and both launches are named. The reds are
+        mutant runs: with the comparison's read of the entries removed, the covered module is named; with the line's
+        number or its text not read, the module filter removed, or an entry covering every match, a launch is covered."""
         line = 'subprocess.run(["bin/romp", "refresh"])'
-        entry = ("test_listed.py", line, "the CLI with a verb outside KERNEL_VERBS", "refresh acts through a manager already running")
+        entry = ("test_listed.py", 5, line, "the CLI with a verb outside KERNEL_VERBS", "refresh acts through a manager already running")
         d = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, d, True)
         with open(os.path.join(d, "test_listed.py"), "w", encoding="utf-8") as f:
@@ -3262,15 +3276,40 @@ class HermeticKernelPostal(unittest.TestCase):
             _print_roads(d, listing=(entry,))
         out = printed.getvalue().splitlines()
         opens = out.index(next(o for o in out if o.startswith("# unresolved:")))
-        self.assertEqual(out[opens + 1:-1], ["test_listed.py: %s (%s; listed by hand: %s)" % entry[1:]], "--roads prints the "
-                         "entry under the unresolved heading with its kind and its reason, and the module's scan lists nothing")
+        self.assertEqual(out[opens + 1:-1], ["test_listed.py:%d %s (%s; listed by hand: %s)" % entry[1:]], "--roads prints "
+                         "the entry under the unresolved heading with its line, its kind and its reason, and the module's "
+                         "scan lists nothing")
+        call = 'subprocess.Popen([K, "--serve"])'
+        stub = ("test_twice.py", 8, call, "a stub script", "romp-kernel-stub is a stand-in that starts no kernel")
+        head = "import os\nimport subprocess\nfrom helpers import HERE, staged\n\n\n"
+        launch = 'def test_launch():\n    K = staged("bin/romp-kernel")\n    %s\n' % call
+        twice = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, twice, True)
+        with open(os.path.join(twice, "test_twice.py"), "w", encoding="utf-8") as f:
+            f.write(head + 'def test_stub():\n    K = os.path.join(HERE, "romp-kernel-stub")\n    %s\n\n\n' % call + launch)
+        with open(os.path.join(twice, "test_other.py"), "w", encoding="utf-8") as f:
+            f.write(head + launch)
+        bare = _read_root(twice, listing=()).table
+        self.assertEqual({m: ([(n, x) for n, x, _ in bare.compared[m][0]], bare.roads[m][1]) for m in ("test_twice.py", "test_other.py")},
+                         {"test_twice.py": ([(8, "K"), (8, "K"), (13, "K"), (13, "K")], ()), "test_other.py": ([(8, "K")], ())},
+                         "with no entry, each match of the three lines with the same text is named (in the module that binds "
+                         "K twice, the regex's two bindings of K match each line twice) and the scan reads no site")
+        read = _read_root(twice, listing=(stub,)).table
+        self.assertEqual({m: ([(n, x) for n, x, _ in read.compared[m][0]], read.compared[m][4]) for m in ("test_twice.py", "test_other.py")},
+                         {"test_twice.py": ([(13, "K"), (13, "K")], (stub,)), "test_other.py": ([(8, "K")], ())},
+                         "the entry covers its own line of its own module only: the launch on a second line with the same "
+                         "text, and the launch in another module holding that text on the same line number, are named")
         stale = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, stale, True)
         with open(os.path.join(stale, "test_listed.py"), "w", encoding="utf-8") as f:
-            f.write('import subprocess\n\n\ndef test_a():\n    subprocess.run(["true"])\n')
+            f.write('import subprocess\n\n\ndef test_a():\n    subprocess.run("bin/romp help; eval \'bin/romp up\'", shell=True)\n'
+                    '    subprocess.run("bin/romp status; bash -c \'bin/romp up\'", shell=True)\n')
         table = _read_root(stale, listing=(entry,)).table
-        self.assertEqual(_hand_entries_covering_nothing(table.compared.values(), (entry,)), [entry], "the same entry over a "
-                         "module without its line covers no match, and the comparison case's check names it")
+        self.assertEqual(_hand_entries_covering_nothing(table.compared.values(), (entry,)), [entry], "the same entry over the "
+                         "module with its line now holding other text covers no match, and the comparison case's check names it")
+        self.assertEqual([(n, m) for n, m, _ in table.compared["test_listed.py"][0]],
+                         [(5, "bin/romp"), (5, "bin/romp"), (6, "bin/romp"), (6, "bin/romp")], "the two launches in that "
+                         "module, on the entry's line number and on the next, are named: the entry covers neither")
 
     def test_every_kernel_verb_is_a_verb_bin_romp_dispatches(self):
         """Existence only: each verb in KERNEL_VERBS is one bin/romp's top-level dispatch has (_bin_romp_verbs, read from
