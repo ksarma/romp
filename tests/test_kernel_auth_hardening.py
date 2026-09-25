@@ -369,6 +369,7 @@ class ResponseHardeningHeaders(unittest.TestCase):
         self.assertIn('"X-Frame-Options", "SAMEORIGIN"', src)
         self.assertIn("frame-ancestors 'self'", src)
         self.assertIn('"Referrer-Policy", "same-origin"', src)   # executed by TokenLeavesTheUrl below
+        self.assertIn('"Cross-Origin-Opener-Policy", "same-origin"', src)   # executed by OpenerIsolation below
 
     def test_remote_relay_derives_its_own_mime_and_discards_the_remotes(self):
         # the /remote/<host>/file relay must decide the Content-Type from the requested extension
@@ -467,6 +468,48 @@ class TokenLeavesTheUrl(unittest.TestCase):
                 status, sent, _ = _serve_get_full(path, headers={"X-Romp-Token": TOK})
                 self.assertEqual(status, 200)
                 self.assertEqual(sent.get("Referrer-Policy"), "same-origin")
+
+
+class OpenerIsolation(unittest.TestCase):
+    """Every document the kernel serves declares Cross-Origin-Opener-Policy: same-origin (2026-09-25), so a page on
+    another origin that opens a dashboard page gets no live handle to it, and a handle is what a window message
+    needs. It rides _send, so every page carries it, and so do the dashboard's own tabs: a /file image or PDF it opens
+    with window.open is a same-origin document with the same policy, so window.open still returns a handle
+    (ui/webview/preview.ts openFileTab reads only that). Executed on the shell, every pane page, the sign-in page, a
+    static asset and a served /file image."""
+
+    def test_every_page_the_kernel_serves_carries_coop_same_origin(self):
+        status, sent, _ = _serve_get_full("/?token=" + TOK)
+        self.assertEqual(status, 200)
+        self.assertEqual(sent.get("Cross-Origin-Opener-Policy"), "same-origin", "the shell")
+        for path in ("/chat", "/feed", "/fleet", "/waiting", "/files", "/timeline", "/settings",
+                     "/media/romp-swirl-glyph.svg"):
+            with self.subTest(path=path):
+                status, sent, _ = _serve_get_full(path, headers={"X-Romp-Token": TOK})
+                self.assertEqual(status, 200)
+                self.assertEqual(sent.get("Cross-Origin-Opener-Policy"), "same-origin")
+
+    def test_the_sign_in_page_carries_it_too(self):
+        # an unauthorized browser load of the shell gets the token sign-in page: a top-level document as well
+        status, sent, body = _serve_get_full("/")
+        self.assertEqual(status, 200)
+        self.assertEqual(body, km._TOKEN_LOGIN_HTML, "no credential: the sign-in page, not the dashboard")
+        self.assertEqual(sent.get("Cross-Origin-Opener-Policy"), "same-origin")
+
+    def test_a_file_the_dashboard_opens_in_its_own_tab_carries_the_same_policy(self):
+        png = bytes.fromhex(
+            "89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c489"
+            "0000000d49444154789c626001000000ffff03000006000557bfabd40000000049454e44ae426082")
+        with tempfile.TemporaryDirectory() as d:
+            p = os.path.join(d, "plot.png")
+            with open(p, "wb") as f:
+                f.write(png)
+            from urllib.parse import quote
+            status, sent, _ = _serve_get_full("/file?path=" + quote(p), headers={"X-Romp-Token": TOK})
+        self.assertEqual(status, 200)
+        self.assertEqual(sent.get("Content-Type"), "image/png")
+        self.assertEqual(sent.get("Cross-Origin-Opener-Policy"), "same-origin",
+                         "the tab matches its opener's policy, so window.open still returns a handle")
 
 
 class _DrainSpy:

@@ -73228,6 +73228,16 @@ class Handler(BaseHTTPRequestHandler):
         # Phone and tailnet frame the kernel's own origin, which 'self' permits.
         self.send_header("X-Frame-Options", "SAMEORIGIN")
         self.send_header("Content-Security-Policy", "frame-ancestors 'self'")
+        # Opener isolation (2026-09-25): a page on another origin that opens a dashboard page with window.open keeps
+        # a handle to it, and a handle is what lets that page post window messages to it. same-origin puts every
+        # top-level document this origin serves in a browsing context group of its own: an opener on another origin
+        # gets a closed handle and the page gets no opener. The dashboard's own tabs (a /file image or PDF it opens
+        # with window.open) are documents on this origin carrying the same policy, so window.open still returns a
+        # handle and the in-app view does not take over (preview.ts openFileTab reads only whether it got one).
+        # Browsers enforce it only on secure contexts (https, localhost); on a plain-http tailnet address it is
+        # ignored, and the sender checks in the pages' own listeners are the defence everywhere. Browsers read it on
+        # document navigations only, so it is inert on JSON, assets and sockets.
+        self.send_header("Cross-Origin-Opener-Policy", "same-origin")
         # Referrer policy: a document's URL is what its requests send as Referer, and the shell's URL is
         # `/?token=` on its first load (the address scrub in _landing's head script drops it; a pane page
         # opened bare as `/chat?token=` keeps it). same-origin sends the full Referer on requests to this

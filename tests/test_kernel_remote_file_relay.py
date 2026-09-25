@@ -242,6 +242,16 @@ class RemoteFileRelay(unittest.TestCase):
         self.assertIn("path=%2Ftmp%2Fplot.png", req)
         self.assertIn("sid=11111111-2222-3333-4444-555555555555", req)
 
+    def test_a_relayed_file_carries_the_openers_policy_like_a_local_one(self):
+        # a remote session's figure opened in a tab of its own is a document on this origin too, so it declares
+        # Cross-Origin-Opener-Policy: same-origin as the local /file route does (the relay answers through _send,
+        # tests/test_kernel_auth_hardening.py OpenerIsolation), so the dashboard's window.open still returns a handle
+        self._register("gpu1", self.fake.server_address[1])
+        status, body, headers = self._get("/remote/gpu1/file?path=%2Ftmp%2Fplot.png")
+        self.assertEqual(status, 200)
+        self.assertEqual(body, PNG_BYTES)
+        self.assertEqual(headers.get("Cross-Origin-Opener-Policy"), "same-origin")
+
     def test_a_remote_pdf_is_served_inline_with_its_own_name_derived_here_never_the_remotes(self):
         # a remote session's PDF opens in its own browser tab too (2026-09-06): the tab's title and a Save's
         # name ride Content-Disposition, which the local route sends — so the relay must as well, from the
