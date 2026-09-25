@@ -73396,12 +73396,14 @@ class Handler(BaseHTTPRequestHandler):
         design set it, and its value WAS the serve token). It is cleared only when its value is THIS
         kernel's token, and only when the browser is signed in without it: this response sets the session
         cookie (the sign-in that migrates it), or the request already carries a valid session cookie of
-        this kernel (the migration happened earlier, and the browser kept the old cookie although that
-        response cleared it). Every response that holds, of any route class, a refusal and a socket
-        upgrade included, carries the clear. A request with no valid session is never answered with it,
-        so a dashboard that has not migrated keeps the cookie it still signs in with (its polls and socket
-        redials carry no session, and the reload that migrates it finds the cookie), and a romp_token
-        holding any other value (a second, older kernel on the same host) is never touched."""
+        this kernel beside it (the browser signed in earlier; a request carries both when an earlier
+        version, run after this one, set the old cookie again and this version then came back with the
+        same token). Every response that holds, of any route class, a refusal and a socket upgrade
+        included, carries the clear. Apart from the response that signs the browser in, a request with no
+        valid session is never answered with it, so a dashboard that has not migrated keeps the cookie it
+        still signs in with (its polls and socket redials carry no session, and the reload that migrates
+        it finds the cookie), and a romp_token holding any other value (a second, older kernel on the same
+        host) is never touched."""
         return bool(getattr(self, "_legacy_ours", False)
                     and (getattr(self, "_legacy_signed_in", False) or getattr(self, "_set_cookie", None)))
 

@@ -153,9 +153,10 @@ upgrade signs it in and clears `romp_token` in that same response, and any
 later response to a request that still carries `romp_token` beside a valid
 session cookie clears it as well. Either way the kernel clears `romp_token`
 only when its value is this kernel's token, so a `romp_token` that belongs to
-another romp kernel on the same host is left alone. A response to a request
-without a valid session cookie never clears it, so a browser that has not yet
-signed in with it keeps it until it does. Every browser that signs
+another romp kernel on the same host is left alone. Apart from the response
+that signs the browser in, a response to a request without a valid session
+cookie never clears it, so a browser that has not yet signed in with it keeps
+it until it does. Every browser that signs
 in this way gets the same session, so tabs that reopen together after the
 upgrade all end signed in; each of those browsers held the serve token itself,
 and the session ends, like every session, when the token is rotated. A
@@ -167,8 +168,10 @@ has restarted. A browser that never loads the dashboard again keeps
 rotated. Rotate the token after upgrading to retire every such cookie. The
 steps, and what a rotation signs out, are under "Rotating the token" in the
 guide's Security and trust section (`docs/guide.md`). Going back to an earlier
-version signs browsers in with `romp_token` again, so pair a rollback with a
-rotation once this version is back.
+version signs browsers in with `romp_token` again. Once this version is back
+with the same token, a browser that kept its session cookie sends both, and
+the first response clears `romp_token`; a browser that does not come back
+keeps it, so pair a rollback with a rotation once this version is back.
 
 ## Residual cautions on shared machines
 
