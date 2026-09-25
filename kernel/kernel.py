@@ -66581,7 +66581,12 @@ if(ws.readyState===3&&Date.now()-connT>8000){connect();}},5000);
 // 2026-09-18: before this the word reached the six pane frames alone, and the others ended their await on the 5 s
 // backstop poll below). Only ends an await with no socket; stamps linkUpMs (foreground->link-up) onto the pending
 // return-fresh.
-try{window.addEventListener("message",function(e){var m=e&&e.data;if(!m||(m.romp!=="panes"&&m.romp!=="link"))return;
+// [fork] Both of the shell's words are heard from the shell alone (2026-09-25): fromShell admits a message only when its
+// source is this frame's parent on this page's origin, the one window that posts them (_LANDING_COLLAPSE_JS tell). A
+// window that opened this page, a frame inside it, a sandboxed frame (origin "null") and a pane page open on its own
+// (its parent is itself) are not the shell, and their words are ignored. tests/test_pane_shim_return.py runs both.
+function fromShell(e){return !!e&&window.parent!==window&&e.source===window.parent&&e.origin===location.origin;}
+try{window.addEventListener("message",function(e){if(!fromShell(e))return;var m=e&&e.data;if(!m||(m.romp!=="panes"&&m.romp!=="link"))return;
 if(m.link==="up"&&awaitLink&&!ws){awaitLink=false;if(returnAt&&linkUpMs<0)linkUpMs=Date.now()-foregroundedAt;connect();}});}catch(e){}
 // the link backstop: re-read the shell's link every 5 s while awaiting with no socket. An `up` we missed the word for
 // dials; a link whose loop-alive stamp (connT: the later of the shell's last dial and its watchdog's last tick with a
@@ -66605,7 +66610,7 @@ if(L.connT&&Date.now()-L.connT>25000){awaitLink=false;if(returnAt&&linkUpMs<0)li
 // return-fresh that follows says parked) and dials once through D3's link rule: now if the link is up or unknown (an older
 // shell), else on the link-up word (awaitLink; the listener and the backstop above end it). A layout no longer the phone's
 // (a rotation, a resize across the breakpoint) ends a park too: the desktop keeps its background redial.
-try{window.addEventListener("message",function(e){var m=e&&e.data;if(!m||m.romp!=="panes"||!m.on)return;onScreen=m.on[APP];
+try{window.addEventListener("message",function(e){if(!fromShell(e))return;var m=e&&e.data;if(!m||m.romp!=="panes"||!m.on)return;onScreen=m.on[APP];
 if(parked&&(onScreen===true||parentMobile()!==true)){parked=false;foregroundedAt=Date.now();eagerDial=true;returnAt=foregroundedAt;returnBytes=0;returnRedialed=false;returnRow=null;awaitLink=false;linkUpMs=-1;
 try{window.dispatchEvent(new Event("romp:wsdown"));}catch(e2){}
 var L=parentLink();if(L===undefined||L.up){if(L!==undefined)linkUpMs=Date.now()-foregroundedAt;connect();}else{awaitLink=true;}}});}catch(e){}

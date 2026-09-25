@@ -57,10 +57,11 @@ get __rompMobileOn(){return parentMobileVal===undefined?undefined:function(){ret
 addEventListener:function(t,f){(winL[t]=winL[t]||[]).push(f);},
 dispatchEvent:function(e){winEvents.push(e.type);return true;},sessionStorage:{getItem:function(){return "";}},
 __rompFed:{inbound:function(h,m){delivered.push(m);}}};
-function fireWin(t,data){(winL[t]||[]).forEach(function(f){f({data:data});});}   // D3: hand the pane a window message (the shell's panes word)
+function fireFrom(source,origin,t,data){(winL[t]||[]).forEach(function(f){f({data:data,source:source,origin:origin});});}   // a window message from any sender
+function fireWin(t,data){fireFrom(window.parent,location.origin,t,data);}   // D3: hand the pane a window message from the shell, its parent (the shell's panes word)
 function word(on,link){fireWin("message",{romp:"panes",on:on,avail:{files:false},link:link||"up"});}   // D2: the shell's panes word (on[k] per pane, the link)
 function states(){return parentPosts.filter(function(p){return p.romp==="wsState";}).map(function(p){return p.state;});}   // the wsState words this pane told the shell, in order
-var location={protocol:"http:",host:"TESTHOST",search:""};
+var location={protocol:"http:",host:"TESTHOST",search:"",origin:"http://TESTHOST"};
 var localStorage={getItem:function(){return null;},setItem:function(){}};
 var sockets=[];function WebSocket(url){this.url=url;this.readyState=0;this.sent=[];sockets.push(this);}
 WebSocket.prototype.send=function(s){this.sent.push(s);};WebSocket.prototype.close=function(){this.readyState=3;};
@@ -1530,6 +1531,71 @@ out({atPark:atPark,afterLink:afterLink,atTap:{sockets:sockets.length,parked:park
         self.assertEqual(js.count('netState("parked")'), 1, "one place says parked")
         self.assertIn("function parentMobile(){try{return (window.parent!==window&&typeof window.parent.__rompMobileOn===\"function\")?!!window.parent.__rompMobileOn():undefined;}catch(e){return undefined;}}", js,
                       "the shell is present when its probe is a function, as parentLink() reads the link (the ruling of 2026-09-18)")
+
+
+class ShellWordsFromTheShellOnly(unittest.TestCase):
+    """The shell's two words to a pane (the panes word and the link word, _LANDING_COLLAPSE_JS tell) are heard from the
+    shell alone (2026-09-25): the pane's parent, on the page's origin, the one window that posts them. fromShell gates
+    both listeners, so the link word ends a return's wait and the panes word moves the on-screen flag (and un-parks)
+    only when the shell says so; a pane page open on its own (its parent is itself) hears neither word from anyone."""
+
+    # [source, origin] of every sender that is not the shell: a page on another origin that opened this pane page, a
+    # sandboxed frame (origin "null"), a same-origin window that is not the parent (a popup, a sibling pane), this page
+    # itself, this page's own dispatch (no source, no origin), and the parent speaking from another origin
+    FOREIGN = r"""
+var OTHER="https://elsewhere.example",FOREIGN={opener:[{},OTHER],sandboxed:[{},"null"],sameOriginStranger:[{},location.origin],
+itself:[window,location.origin],dispatch:[null,""],parentOtherOrigin:[window.parent,OTHER]};
+function fromEach(t,data){Object.keys(FOREIGN).forEach(function(k){fireFrom(FOREIGN[k][0],FOREIGN[k][1],t,data);});}
+"""
+
+    def test_a_link_word_from_anyone_but_the_shell_neither_ends_the_wait_nor_dials(self):
+        for word in ('{romp:"link",link:"up"}', '{romp:"panes",on:{},avail:{files:false},link:"up"}'):
+            with self.subTest(word=word):
+                r = _run(self.FOREIGN + r"""
+open();recv({type:"ka"});hide();NOW+=46000;
+parentLinkVal={up:false,connT:NOW};show();
+var atReturn={sockets:sockets.length,awaiting:awaitLink};
+NOW+=300;parentLinkVal={up:true,connT:NOW};
+fromEach("message",WORD);
+var afterForeign={sockets:sockets.length,awaiting:awaitLink};
+fireWin("message",WORD);
+out({atReturn:atReturn,afterForeign:afterForeign,afterShell:{sockets:sockets.length,awaiting:awaitLink}});""".replace("WORD", word))
+                self.assertEqual(r["atReturn"], {"sockets": 1, "awaiting": True}, "the return waits for the shell's link")
+                self.assertEqual(r["afterForeign"], {"sockets": 1, "awaiting": True},
+                                 "no sender but the shell ends the wait: nothing dialed")
+                self.assertEqual(r["afterShell"], {"sockets": 2, "awaiting": False}, "the shell's own word dials once")
+
+    def test_a_panes_word_from_anyone_but_the_shell_neither_unparks_nor_moves_the_on_screen_flag(self):
+        r = _run(self.FOREIGN + r"""
+parentMobileVal=true;parentLinkVal={up:true,connT:NOW};open();recv({type:"ka"});word({test:false},"up");
+hide();NOW+=46000;sock().readyState=3;show();
+var atPark={sockets:sockets.length,parked:parked,onScreen:onScreen};
+NOW+=1000;fromEach("message",{romp:"panes",on:{test:true},avail:{files:false},link:"up"});
+var afterForeign={sockets:sockets.length,parked:parked,onScreen:onScreen};
+word({test:true},"up");
+out({atPark:atPark,afterForeign:afterForeign,afterShell:{sockets:sockets.length,parked:parked,onScreen:onScreen}});""")
+        self.assertEqual(r["atPark"], {"sockets": 1, "parked": True, "onScreen": False})
+        self.assertEqual(r["afterForeign"], {"sockets": 1, "parked": True, "onScreen": False},
+                         "a word from any other sender is not the shell's: the pane stays parked and its flag stands")
+        self.assertEqual(r["afterShell"], {"sockets": 2, "parked": False, "onScreen": True}, "the shell's tap dials once")
+
+    def test_a_pane_page_open_on_its_own_hears_neither_word_even_from_itself(self):
+        # a standalone pane page's parent is itself: a word "from the parent" is then a word from the page, not a shell's
+        r = _run(r"""
+window.parent=window;
+fireFrom(window,location.origin,"message",{romp:"panes",on:{test:true},avail:{files:false},link:"up"});
+out({onScreen:onScreen===undefined?"unset":onScreen});""")
+        self.assertEqual(r["onScreen"], "unset", "no shell, so no panes word is heard")
+
+    def test_source_both_listeners_open_with_the_shell_check(self):
+        js = km._shim("feed", 3)
+        self.assertIn('function fromShell(e){return !!e&&window.parent!==window&&e.source===window.parent&&e.origin===location.origin;}', js)
+        self.assertIn('try{window.addEventListener("message",function(e){if(!fromShell(e))return;var m=e&&e.data;'
+                      'if(!m||(m.romp!=="panes"&&m.romp!=="link"))return;', js, "the link listener")
+        self.assertIn('try{window.addEventListener("message",function(e){if(!fromShell(e))return;var m=e&&e.data;'
+                      'if(!m||m.romp!=="panes"||!m.on)return;onScreen=m.on[APP];', js, "the on-screen listener")
+        self.assertEqual(js.count('window.addEventListener("message",'), 2,
+                         "the shim's window message listeners are these two; a third decides its senders here")
 
 
 if __name__ == "__main__":
