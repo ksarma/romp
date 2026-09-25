@@ -17,11 +17,11 @@ assembly entry reading a released slot again) belong to an index nothing release
 dead until the cap or a new list registering the same row under their id, and on a large machine the cap (MemTotal /
 32 KiB) had not come after 73 hours: 6.15 million entries against a 7.73 million cap, most of them for freed lists. When
 a list holding entries is freed, its own weak reference now queues itself, and the next registration or release removes
-that list's entries, counted `collected` and `expired`, with one residual on CPython 3.13.13 and later and 3.14.4 and later:
-entries a finalizer registers during the collection that frees their list hold a reference that is never queued, and stand
-dead until the cap or a new list registering the same row under their id (FinalizerRead below, which pins the trim and skips
-where the interpreter runs that reference's callback). A list a finalizer resurrects gets a fresh reference at its next
-registration (Resurrected below).
+that list's entries, counted `collected` and `expired`, with one residual on CPython 3.13 from 3.13.13 and on 3.14.4 and
+later: entries a finalizer registers during the collection that frees their list hold a reference that is never queued, and
+stand dead until the cap or a new list registering the same row under their id (FinalizerRead below, which pins the trim and
+skips where the interpreter runs that reference's callback). A list a finalizer resurrects gets a fresh reference at its
+next registration (Resurrected below).
 Synthetic documents only."""
 import copy
 import gc
@@ -102,9 +102,10 @@ class _Reader:
         self.fresh.append(la._ref)
 
 
-def _collector_skips_a_finalizers_fresh_callback():
-    """Whether this interpreter clears, without running its callback, a weak reference a finalizer creates to an object
-    the same collection frees (the residual's premise), by doing it once."""
+def _probe_a_finalizers_fresh_reference():
+    """Mints, from a finalizer, a weak reference to an object the same collection frees (the residual's premise), and
+    returns what it saw: whether the finalizer made the reference, whether the collection freed the object, and whether
+    the reference's callback ran."""
     hits, fresh = [], []
 
     class _O:
@@ -125,7 +126,8 @@ def _collector_skips_a_finalizers_fresh_callback():
     finally:
         if was:
             gc.enable()
-    return bool(fresh) and fresh[0]() is None and not hits
+    made, freed, called = bool(fresh), bool(fresh) and fresh[0]() is None, bool(hits)
+    return made, freed, called
 
 
 def _reset():
@@ -487,8 +489,8 @@ class DroppedEntries(T.Harness):
 
 class CollectionEvent(Synthetic):
     """A freed list's entries leave the LRU at the next registration or release, whether it dies by its last decref or in
-    a cycle, whether or not it was read after a release, and on whichever thread it dies; the residual on CPython 3.13.13
-    and later and 3.14.4 and later, entries a finalizer registers during the collection that frees the list, is
+    a cycle, whether or not it was read after a release, and on whichever thread it dies; the residual on CPython 3.13
+    from 3.13.13 and on 3.14.4 and later, entries a finalizer registers during the collection that frees the list, is
     FinalizerRead below. Each test that frees a list holding entries asserts the LRU's (live, dead) before `collected`,
     so that on a source without the event its red is the dead entries themselves. On such a source the other tests red on
     what they add: the no-entry case on the missing `collected` key, the in-place case on the TypeError that is not
@@ -910,19 +912,21 @@ class Resurrected(Synthetic):
 
 
 class FinalizerRead(Synthetic):
-    """The collection event's residual, on CPython 3.13.13 and later and 3.14.4 and later: a list a finalizer reads,
+    """The collection event's residual, on CPython 3.13 from 3.13.13 and on 3.14.4 and later: a list a finalizer reads,
     without keeping it, during the collection that frees it. The collector clears the list's reference, and runs its
     callback, before it runs finalizers, so the finalizer's reads mint the list a fresh reference (_mat_register) and
     register their entries under it; the interpreter then clears that reference without running its callback, so the list
     dies holding entries that no drain removes, and they leave at the cap's trim, counted `expired` without `collected`. It
     skips on an interpreter other than CPython, and where the interpreter runs the callback of such a reference (among them
-    3.10 to 3.12, 3.13 before 3.13.13 and 3.14 before 3.14.4), which _collector_skips_a_finalizers_fresh_callback finds out
-    by minting one."""
+    3.10 to 3.12, 3.13 before 3.13.13 and 3.14 before 3.14.4), which _probe_a_finalizers_fresh_reference finds out by
+    minting one."""
 
     def test_entries_a_finalizer_registers_on_a_list_its_collection_frees_leave_at_the_trim_not_at_a_drain(self):
         if sys.implementation.name != "cpython":
             self.skipTest("this interpreter is not CPython, the only implementation the residual was measured on")
-        if not _collector_skips_a_finalizers_fresh_callback():
+        made, freed, called = _probe_a_finalizers_fresh_reference()
+        self.assertTrue(made and freed, "the probe's finalizer ran in its collection and the collection freed its object")
+        if called:
             self.skipTest("this interpreter runs the callback of a weak reference a finalizer creates to an object the same "
                           "collection frees (among them CPython 3.10 to 3.12, 3.13 before 3.13.13 and 3.14 before 3.14.4)")
         ix, la = _mint(2, "F")
@@ -939,10 +943,11 @@ class FinalizerRead(Synthetic):
         finally:
             if was:
                 gc.enable()
-        self.assertIsNone(wl(), "the collection freed the list: the finalizer read it and did not keep it")
+        self.assertIsNone(wl(), "a weak reference taken before the collection reads None after it")
         self.assertEqual(seen, [(True, True, True)],
                          "the finalizer found the list's reference cleared and queued, and its reads left the list holding a "
                          "fresh one")
+        self.assertIsNone(fresh[0](), "the collection freed the list: the finalizer read it and did not keep it")
         self.assertEqual(_entries(), (0, 2), "the two entries the finalizer's reads registered stand dead")
         self.assertFalse(any(r is fresh[0] for r in em._MAT_COLLECTED.copy()), "the fresh reference is not queued")
         st = em.asm_index_stats()

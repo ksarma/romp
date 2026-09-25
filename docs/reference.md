@@ -3171,8 +3171,8 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   dropped, never a field in place), `collected` (entries the collection event
   removed: when a list holding entries is freed, its weak reference queues
   itself, and the next build, re-registration or release removes that list's
-  entries, with one residual: on CPython 3.13.13 and later and
-  3.14.4 and later, entries that a finalizer (such as a `__del__` or
+  entries, with one residual: on CPython 3.13 from 3.13.13 and
+  on 3.14.4 and later, entries that a finalizer (such as a `__del__` or
   a generator's close) registers during the collection that frees
   their list hold a reference that is never queued, so no removal
   takes them, and they wait for the cap or for a list registering
