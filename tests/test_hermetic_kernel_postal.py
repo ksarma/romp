@@ -3426,7 +3426,7 @@ def _conftest_reasserted_names(src=None, where=None):
     proof refuses an unconditional removal of a counted fixture's re-assert (from every test), the class of the bug, and
     any removal keyed on a fact of the first tier. The second and third tiers are what it grants although pytest may not
     run the re-assert in a test of a real run, each granted where the filter counts it (the unsafe side, as above).
-    FIRST, MATCHED, by construction and at no added cost, the child's context: V1, a directory named tests; the package;
+    FIRST, MATCHED, by construction, the child's context: V1, a directory named tests; the package;
     the start, the conftest loaded when pytest starts; V3, the first module collected and the fourth, and so a condition
     on a module's place that holds at either (the fourth is third or later, where the verifier's X7 keyed its road); V4,
     in each, function tests and a unittest TestCase; V5, a run with no xdist worker, none of this process's
@@ -3444,7 +3444,11 @@ def _conftest_reasserted_names(src=None, where=None):
     and on each option of either form given and not given; and the copy test's roads, keyed on the verifier's three
     facts of the package, on every entry of the checkout in its place in the copy, on the child's command line in each
     form (_proof_command_roads), and on a test module's place in the order: the first, the third or later (the
-    verifier's X7) and the second to the six-hundredth (its Y1)).
+    verifier's X7) and the second to the six-hundredth (its Y1)). The pair adds runs: the developer's form doubles each
+    case's runs, and serially this module took 2.6 s longer on 3.10 and 3.4 s on 3.12 at the forty-fifth commit of
+    fork PR #894 than at the forty-third where no run has -n 2, as in CI's pytest job, which does not install
+    pytest-xdist, and 7.1 s and 7.8 s longer where the -n 2 runs are made (means of three runs each, side by side;
+    measured at those heads, not enforced).
     SECOND, MATCHABLE AT A COST AND NOT MATCHED HERE: the rest of the collection, finite but open-ended in count up to
     the number of test modules under tests/, where the child collects its four added modules. A condition on a module's
     place that holds at neither the first nor the fourth: exactly the third, where a dummy module stands (the verifier's
@@ -3929,11 +3933,12 @@ def _reassert_proof(cases, real=False):
     test_the_added_modules_names_sort_in_the_order_of_proof_module_files); of that run's order the probe modules' places
     are read, by _proof_context_roads' roads on the first module collected and on the fourth, and which dummy module
     comes second no read tells apart, the two being the same text. The child's environment is _proof_child_env's, with
-    a TMPDIR of each run's own under the scratch directory, which is removed after (the one copy's by tearDownModule):
-    runs at once that share one directory race in pytest's clean-up of the numbered temporary directories a -n 2 run
-    makes (a child's run ended in FileNotFoundError on another run's pytest-current link when the two forms' -n 2 runs
-    shared one; test_each_run_of_the_proof_has_a_temporary_directory_of_its_own). Returns ({label: _proof_verdicts
-    over the case's reports}, 0 or the first nonzero return code of the runs, their output)."""
+    a TMPDIR of each run's own, made before the child starts (the child's tempfile passes over a TMPDIR that is not a
+    directory, for one every run shares), under the scratch directory, which is removed after (the one copy's by
+    tearDownModule): runs at once that share one directory race in pytest's clean-up of the numbered temporary
+    directories a -n 2 run makes (a child's run ended in FileNotFoundError on another run's pytest-current link when
+    the two forms' -n 2 runs shared one; test_each_run_of_the_proof_has_a_temporary_directory_of_its_own). Returns
+    ({label: _proof_verdicts over the case's reports}, 0 or the first nonzero return code of the runs, their output)."""
     modes = _proof_modes()
     options = {"ci": _proof_options(), "developer": _proof_developer_options()}
     forms = sorted({_PROOF_MODE_RUNS[mode][0] for mode in modes})
@@ -6922,21 +6927,31 @@ class HermeticKernelPostal(unittest.TestCase):
             self.assertEqual(sorted(names), names, "case %d: the added modules' names sort in the order the child collects them" % n)
 
     def test_each_run_of_the_proof_has_a_temporary_directory_of_its_own(self):
-        """EACH RUN'S OWN TMPDIR (the builder's red while making every run in both forms of command line, round 2's
-        forty-fourth commit of fork PR #894: a child of the facets' proof ended in FileNotFoundError on another run's
-        pytest-current link, where the two forms' -n 2 runs, at once, shared one TMPDIR and pytest's clean-up of the
-        numbered temporary directories a -n 2 run makes raced). Every pytest child that one call of _reassert_proof
-        makes, synthetic (two cases, each run in a directory of its own) or `real` (the runs of one case in the one
-        copy, at once), is handed a TMPDIR no other run of the call has, a `real` run's under the one copy's scratch
-        directory; read by a spy on subprocess.run that answers the pytest children alone and hands every other call to
-        the real one (the copy is made first, whose file list runs git)."""
+        """EACH RUN'S OWN TEMPORARY DIRECTORY (the builder's red while making every run in both forms of command line,
+        round 2's forty-fourth commit of fork PR #894: a child of the facets' proof ended in FileNotFoundError on
+        another run's pytest-current link, where the two forms' -n 2 runs, at once, shared one TMPDIR and pytest's
+        clean-up of the numbered temporary directories a -n 2 run makes raced; and the verifier's F1 at that commit:
+        with each run's TMPDIR handed and never made, a child's tempfile passed it over for the next of its candidates,
+        /tmp where TEMP and TMP are unset, which every run shares, and the test as it stood passed). Every pytest child
+        that one call of _reassert_proof makes, synthetic (two cases, each run in a directory of its own) or `real` (the
+        runs of one case in the one copy, at once), is handed a TMPDIR no other run of the call has, a `real` run's
+        under the one copy's scratch directory, and that TMPDIR is what tempfile.gettempdir(), under which pytest makes
+        its temporary root, returns in the child's environment when the child starts, read by running Python at that
+        moment with the child's environment and working directory. Read by a spy on subprocess.run that answers the
+        pytest children alone and hands every other call to the real one (the copy is made first, whose file list runs
+        git). Not read: pytest's two overrides of where it puts its temporary root, PYTEST_DEBUG_TEMPROOT and
+        --basetemp, which neither form's options give; either reaches a child only from outside the proof, from this
+        process's environment, which _proof_child_env passes on, or from an ini file above the run's directory."""
         from unittest import mock
         scratch, _checkout = _proof_checkout()
         real_run, seen = subprocess.run, []
 
         def spy(cmd, *args, **kwargs):
             if list(cmd[:3]) == [sys.executable, "-m", "pytest"]:
-                seen.append(kwargs["env"]["TMPDIR"])
+                resolved = real_run([sys.executable, "-c", "import tempfile; print(tempfile.gettempdir())"],
+                                    cwd=kwargs["cwd"], env=kwargs["env"], stdin=subprocess.DEVNULL, capture_output=True,
+                                    text=True, timeout=60)
+                seen.append((kwargs["env"]["TMPDIR"], resolved.stdout.strip() or resolved.stderr))
                 return subprocess.CompletedProcess(cmd, 0, "", "")
             return real_run(cmd, *args, **kwargs)
         sites = {"ROMP_PROBE_TMPDIR": frozenset({("_f", 4, "pop")})}
@@ -6948,10 +6963,17 @@ class HermeticKernelPostal(unittest.TestCase):
                 _reassert_proof(cases, real=real)
                 got[label] = list(seen)
         modes = _proof_modes()
-        self.assertEqual({label: (len(tmps), len(set(tmps))) for label, tmps in got.items()},
+        handed = {label: [tmp for tmp, _resolved in pairs] for label, pairs in got.items()}
+        self.assertEqual({label: (len(tmps), len(set(tmps))) for label, tmps in handed.items()},
                          {"synthetic": (2 * len(modes), 2 * len(modes)), "real": (len(modes), len(modes))},
-                         "each pytest child of one call has a TMPDIR of its own: %s" % got)
-        self.assertTrue(all(t.startswith(scratch + os.sep) for t in got["real"]), got["real"])
+                         "each pytest child of one call has a TMPDIR of its own: %s" % handed)
+        self.assertTrue(all(t.startswith(scratch + os.sep) for t in handed["real"]), handed["real"])
+        wrong = {label: [(tmp, resolved) for tmp, resolved in pairs if resolved != tmp] for label, pairs in got.items()}
+        self.assertEqual(wrong, {"synthetic": [], "real": []},
+                         "each child's tempfile resolves the TMPDIR it is handed when the child starts (one that is "
+                         "not a directory it can write in is passed over for the next of tempfile's candidates, which "
+                         "the runs share); resolved instead: %s"
+                         % sorted({r for pairs in wrong.values() for _t, r in pairs}))
 
     def test_the_proofs_disclosed_limit_a_road_keyed_on_a_mark_is_granted_and_a_real_run_of_it_reads_the_module_level_write(self):
         """THE PROOF'S THIRD TIER, UNMATCHABLE, WITNESSED (the reviewer's rulings of 2026-09-24 23:17Z, (4), and

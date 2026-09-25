@@ -188,20 +188,25 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   `-p no:cacheprovider -k reassert`, which blocks the cache plugin and
   deselects none of the four. The run's limit comes in three tiers. It refuses
   an unconditional removal of the fixture (from every test), which is the class
-  of the bug, and any removal keyed on a fact of the first tier. First, matched by construction at no added cost: the
-  conftest and the probe modules in a directory named `tests`, which is a
-  package, so the conftest imports as `tests.conftest` and each probe module as
-  a module of `tests`; the conftest loaded when pytest starts; the first module
-  collected and the fourth, so a hook keyed on a place third or later is caught;
-  function tests and a `unittest.TestCase` in each; a run with no xdist worker
-  (and none of the variables pytest-xdist sets in one) and, where pytest-xdist
-  is installed, one with `-n 2`; and the pair of forms, each of those runs made
-  in both: whether each option that one form gives and the other does not is
-  given (CI's `-q`, `--durations`, `--timeout` and `--timeout-method`, the
-  developer's `-p no:cacheprovider` and `-k`). The pair covers whether an option
-  is given, not its value. Code that stops the fixture from running in any of
-  those tests, keyed on those facts alone or on facts one run has together,
-  named or not, is refused by the run.
+  of the bug, and any removal keyed on a fact of the first tier. First, matched
+  by construction: the conftest and the probe modules in a directory named
+  `tests`, which is a package, so the conftest imports as `tests.conftest` and
+  each probe module as a module of `tests`; the conftest loaded when pytest
+  starts; the first module collected and the fourth, so a hook keyed on a place
+  third or later is caught; function tests and a `unittest.TestCase` in each; a
+  run with no xdist worker (and none of the variables pytest-xdist sets in one)
+  and, where pytest-xdist is installed, one with `-n 2`; and the pair of forms,
+  each of those runs made in both: whether each option that one form gives and
+  the other does not is given (CI's `-q`, `--durations`, `--timeout` and
+  `--timeout-method`, the developer's `-p no:cacheprovider` and `-k`). The pair
+  covers whether an option is given, not its value. Code that stops the fixture
+  from running in any of those tests, keyed on those facts alone or on facts one
+  run has together, named or not, is refused by the run. The pair doubles each
+  case's runs, which adds to the time of `tests/test_hermetic_kernel_postal.py`
+  run serially: 2.6 s on 3.10 and 3.4 s on 3.12 where no run has `-n 2`, as in
+  CI's pytest job, and 7.1 s and 7.8 s where the `-n 2` runs are made (means of
+  three runs each, measured at the forty-third and forty-fifth commits of fork
+  PR #894, not enforced).
   Second, matchable at a cost and not matched here: the rest of the collection,
   meaning a module's exact place, which modules come before a test's module and
   after it, and how many (the child collects its four; a real run collects every
