@@ -19,7 +19,6 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import util from 'node:util';
 import vm from 'node:vm';
 import { CENSUS, census } from './romp-track-bash-guard-census.mjs';
 
@@ -247,8 +246,9 @@ const ledger = read('upstream', '2026-09-18-track-guard-non-literal-targets.md')
 // each conditioned on a unit the witnesses never put beside that form). SIGNAL_UPPER reads a name in upper case, or SIG and an upper-case run (a
 // name another system's list adds), anywhere in a word (nonINT, INThandlers, unSIGTHR). A name in lower or mixed case glued to letters beyond
 // an inflection is not read, since in lower case a name opens or ends many English words (print, still, interrupt, terminal, pipeline): the
-// third boundary the README pin states. signalNamesIn, the one reader every witness and the README pin call, is the union of the two runs and
-// nothing else, which THE READER pin in the test below holds together with the names, the objects and the built-ins on its path.
+// third boundary the README pin states. signalNamesIn's text, the union of the two runs and nothing else, is the one reader every witness and
+// the README pin run: freshSignalReading, below, compiles it in a realm the test that reads makes, and THE READER pin in the test below holds
+// the text and the realm.
 const SIGNAL_NAMES = ['HUP', 'INT', 'QUIT', 'ILL', 'TRAP', 'ABRT', 'IOT', 'BUS', 'FPE', 'KILL', 'USR1', 'SEGV', 'USR2', 'PIPE', 'ALRM', 'TERM',
   'STKFLT', 'CHLD', 'CLD', 'CONT', 'STOP', 'TSTP', 'TTIN', 'TTOU', 'URG', 'XCPU', 'XFSZ', 'VTALRM', 'PROF', 'WINCH', 'IO', 'POLL', 'PWR', 'SYS',
   'RTMIN', 'RTMAX', 'EMT', 'INFO', 'EXIT', 'ERR', 'DEBUG', 'RETURN', 'ZERR'];
@@ -257,6 +257,28 @@ const SIGNAL_INFLECTION = '(?:e?s|e?d|ing|(?<=([A-Za-z]))\\1(?:es|ed|ing))?';   
 const SIGNAL_WORD = new RegExp(`(?<![A-Za-z])(?:sig)?(?:${SIGNAL_NAMES.map((n) => (n.endsWith('E') ? `${n}|${n.slice(0, -1)}(?=ing)` : n)).join('|')})(?:[+-]\\d+)?${SIGNAL_INFLECTION}(?![A-Za-z])`, 'gi');
 const SIGNAL_UPPER = new RegExp(`[A-Za-z0-9_]*(?:SIG[A-Z0-9]+|${SIGNAL_NAMES.join('|')})[A-Za-z0-9_]*`, 'g');
 const signalNamesIn = (text) => [...new Set([...(text.match(SIGNAL_WORD) || []), ...(text.match(SIGNAL_UPPER) || [])])];
+// freshSignalReading (round 7 of fork PR #780 review, forty-fourth commit): a test that reads through signalNamesIn calls this. It makes a
+// realm (node:vm) and copies SIGNAL_WORD and SIGNAL_UPPER into it with that realm's own source and flag getters, which read a pattern's
+// internal source and flags and no property of it (a pattern that is not a RegExp, a proxy among them, has none, and the copy throws). It
+// then compiles signalNamesIn's text, as that realm's Function.prototype.toString prints it, in that realm, over the two copies and that
+// realm's Set. The context's object, which node's vm consults for a global name before the realm's own built-ins, is an object literal with
+// no prototype, so a property set on this realm's Object.prototype cannot stand in for a global name there (a context made from a plain
+// object, as vm.runInNewContext makes it, resolves such a name to that property, in the realm and from outside it). No code of this realm
+// runs while the copies are made, and the reader runs none: a text is a primitive, so text.match, the spreads and new Set are that realm's.
+// THE READER in the README pin's test says what that holds
+const freshSignalReading = () => {
+  const context = vm.createContext({ __proto__: null });
+  const realm = vm.runInContext('globalThis', context);
+  const copy = vm.runInContext(`(re) => {
+    const own = (key) => Reflect.apply(Object.getOwnPropertyDescriptor(RegExp.prototype, key).get, re, []);
+    const flags = [['hasIndices', 'd'], ['global', 'g'], ['ignoreCase', 'i'], ['multiline', 'm'], ['dotAll', 's'], ['unicode', 'u'], ['unicodeSets', 'v'], ['sticky', 'y']];
+    return new RegExp(own('source'), flags.filter(([key]) => own(key)).map(([, flag]) => flag).join(''));
+  }`, context);
+  const word = copy(SIGNAL_WORD);
+  const upper = copy(SIGNAL_UPPER);
+  const text = realm.Reflect.apply(realm.Function.prototype.toString, signalNamesIn, []);
+  return { context, realm, text, word, upper, read: vm.runInContext(`(SIGNAL_WORD, SIGNAL_UPPER, Set) => ${text}`, context)(word, upper, realm.Set) };
+};
 
 test('the install guide, the hook\'s README row and the ledger entry say a name built from $RANDOM or $SECONDS is refused inside a tracked project, in every shell, and the hook\'s numeric set is the process id alone; the README row states what passes unread as the residual property does', () => {
   assert.ok(installDoc.includes('A temp file named only by the shell\'s process id (`$$`), at an absolute path where no tracked file could land'), 'docs/install.md: the exception, as the code allows it');
@@ -312,16 +334,55 @@ test('the install guide, the hook\'s README row and the ledger entry say a name 
     rest = rest.split(phrase).join(' ');
   }
   assert.deepEqual(rest.match(/[a-z]*(?:eval|trap|signal)[a-z]*/gi) || [], [], 'hooks/README.md: outside THE RESIDUAL PROPERTY and CLAUSE no clause names eval, trap or a signal in any spelling, an inflected or prefixed form included (a text the guard reads in either is refused where it names a tracked file: EV-eval, EV-eval-var, EV-trap; a text it cannot read passes only as CLAUSE says: RT-read-var-head, RT-xargs)');
+  // THE READER (the forty-third commit, after the reviewer's verifier found two rewrites placed in signalNamesIn, U+00A0 before sig and
+  // U+2026 after ts each turned into a letter, green with the premise pin; and the forty-fourth, after the verifier found the forty-third
+  // commit's check of this realm's built-ins green three ways: a built-in replaced by an accessor that returns the native function when the
+  // check reads it through the prototype and a rewriting function when the reading reads it, on RegExp.prototype[Symbol.match], its exec
+  // and String.prototype.match; the source getter, which the premise pin read through and the check did not hold; and a built-in replaced
+  // after the check. Deriving that population found four more ways, green under the forty-third commit and under the verifier's fix shape as
+  // well: a built-in set to another that prints the same (Set.prototype[Symbol.iterator] set to Array.prototype.values); a built-in taken
+  // from another realm; a global constructor replaced, so that the check read a prototype the reading never reaches; and a property set on
+  // this realm's Object.prototype, which a context made by vm.runInNewContext resolves as a global name of its realm, so that the check's own
+  // FRESH.Function was that property). The reading therefore runs no built-in of this realm. This test calls freshSignalReading (above);
+  // every witness and the README pin call the reader it returns, namesIn, and take its result through that realm's includes, the array's
+  // own length or a spread, which runs that realm's iterator; and the premise pin and the flag assertion read the copies, WORD and UPPER,
+  // through that realm's getters, which gives them the source and flags of the patterns the reader runs. A built-in of this realm replaced,
+  // by an accessor or otherwise, before, between or after any check, is then off the path. So are the other objects the forty-third commit
+  // checked: the patterns' own properties and prototype, since the copies take a pattern's internal source and flags alone (a proxy has
+  // none, and the copy throws), and the names around signalNamesIn, since the reader binds its three names itself. The assertions below hold
+  // the rest: the realm is not this one, and the context's object, which node's vm consults for a global name before the realm's own
+  // built-ins, holds nothing and inherits nothing; signalNamesIn's text and the reader's, printed by that realm's Function.prototype.toString
+  // (an own toString, a bound function or a proxy cannot answer for it), are READER, the union of the two runs and nothing else, so a
+  // statement before, between or after them reds; the reader, the array it returns and the copies are that realm's; and the copies carry the
+  // flags stated. Beyond this pin, stated: which function a call site reaches, which text it hands in, and the instruments. A witness builds
+  // its text in its own line and the README pin hands in rest, cut from the row above with this realm's string built-ins; a declaration that
+  // shadows freshSignalReading or a name bound here (namesIn, WORD, UPPER) at a call site, or a statement that rewrites the row or rest or
+  // replaces a built-in that cuts it, changes the test's own call or input, as an edit to an assertion's expected side does. node:vm, which
+  // makes the realm, node:assert, the stem pin above (eval, trap, signal), the premise's assertion reader and the witnesses' populations run
+  // this realm's built-ins, as every assertion here does, and a statement that replaces one they run changes that pin or instrument in the
+  // same way; so does a statement in this test that reaches the fresh realm through a name bound here
+  const { context: CONTEXT, realm: FRESH, text: READ_TEXT, word: WORD, upper: UPPER, read: namesIn } = freshSignalReading();
+  assert.ok(FRESH !== globalThis && FRESH.Function !== Function && FRESH.Object !== Object, 'THE READER reads code through a fresh realm, whose built-ins no statement outside this test reaches');
+  assert.deepEqual({ prototype: FRESH.Object.getPrototypeOf(CONTEXT), own: FRESH.Reflect.ownKeys(CONTEXT).length }, { prototype: null, own: 0 },
+    'THE READER: the context\'s object, which node\'s vm consults for a global name before the fresh realm\'s own built-ins, holds nothing and inherits nothing, so each global name the reader and the copies resolve is that realm\'s built-in; a context made from an object that inherits Object.prototype resolves a name set there, and reds here');
+  const READER = '(text) => [...new Set([...(text.match(SIGNAL_WORD) || []), ...(text.match(SIGNAL_UPPER) || [])])]';
+  const show = (f) => FRESH.Reflect.apply(FRESH.Function.prototype.toString, f, []);
+  assert.deepEqual({ signalNamesIn: READ_TEXT, reader: show(namesIn) }, { signalNamesIn: READER, reader: READER },
+    'THE READER: signalNamesIn is the union of SIGNAL_WORD\'s and SIGNAL_UPPER\'s matches, in that order, and nothing else, and the reader every witness and the README pin call is that text compiled in the fresh realm, so what the witnesses and the premise pin hold of the two patterns is what the README pin reads; a rewrite of the text before or between the two runs, or of the names after them, reds here');
+  const inFresh = (x, proto) => FRESH.Object.getPrototypeOf(x) === proto;
+  assert.deepEqual({ reader: inFresh(namesIn, FRESH.Function.prototype), result: inFresh(namesIn(''), FRESH.Array.prototype), word: inFresh(WORD, FRESH.RegExp.prototype), upper: inFresh(UPPER, FRESH.RegExp.prototype), flags: [WORD.flags, UPPER.flags] },
+    { reader: true, result: true, word: true, upper: true, flags: ['gi', 'g'] },
+    'THE READER: the reader, the array it returns and the copies of the two patterns are the fresh realm\'s, so the reading runs that realm\'s built-ins and none of this one, and the copies carry the flags stated; a reader compiled, or a copy made, in this realm reds here');
   // the witnesses of the two patterns' reach (the thirty-ninth commit): every name in each inflected form, bare and with SIG, as spelled and in
   // lower case, is read by SIGNAL_WORD, and every name glued to letters on either side in upper case by SIGNAL_UPPER, so a mutation that drops
   // an ending, the doubled letter, the dropped e or the glued reading reds here even while the committed row holds no such word
   for (const n of SIGNAL_NAMES) {
     const last = /[A-Z]$/.test(n) ? n.slice(-1).toLowerCase() : '';
     const forms = [...['s', 'es', 'd', 'ed', 'ing', ...(last ? [`${last}es`, `${last}ed`, `${last}ing`] : [])].map((end) => n + end), ...(n.endsWith('E') ? [`${n.slice(0, -1)}ing`] : [])];
-    for (const f of forms.flatMap((x) => [x, x.toLowerCase(), `SIG${x}`, `sig${x.toLowerCase()}`])) assert.ok(signalNamesIn(` handlers for ${f} pass; `).includes(f), `the README pin reads ${f}, the name ${n} inflected (SIGNAL_WORD, SIGNAL_INFLECTION)`);
-    for (const f of [`non${n}`, `${n}handlers`, `re${n}ed`, `unSIG${n}`]) assert.ok(signalNamesIn(` handlers for ${f} pass; `).includes(f), `the README pin reads ${f}, the name ${n} in upper case glued to letters (SIGNAL_UPPER)`);
+    for (const f of forms.flatMap((x) => [x, x.toLowerCase(), `SIG${x}`, `sig${x.toLowerCase()}`])) assert.ok(namesIn(` handlers for ${f} pass; `).includes(f), `the README pin reads ${f}, the name ${n} inflected (SIGNAL_WORD, SIGNAL_INFLECTION)`);
+    for (const f of [`non${n}`, `${n}handlers`, `re${n}ed`, `unSIG${n}`]) assert.ok(namesIn(` handlers for ${f} pass; `).includes(f), `the README pin reads ${f}, the name ${n} in upper case glued to letters (SIGNAL_UPPER)`);
   }
-  assert.ok(signalNamesIn(' a handler for unSIGTHR passes; ').includes('unSIGTHR'), 'the README pin reads SIG and an upper-case run glued to letters, a name another system adds (SIGNAL_UPPER)');
+  assert.ok(namesIn(' a handler for unSIGTHR passes; ').includes('unSIGTHR'), 'the README pin reads SIG and an upper-case run glued to letters, a name another system adds (SIGNAL_UPPER)');
   // the boundary witness (the fortieth commit; the forty-first derives its population from the rule it pins, after the reviewer's verifier
   // found the fortieth commit's, the printable ASCII characters that are not letters, green with U+2026, the one character outside ASCII the
   // row holds, U+2019 or the tab read as a letter). The rule: a letter is [A-Za-z], and any other character beside a name is a boundary.
@@ -335,9 +396,9 @@ test('the install guide, the hook\'s README row and the ledger entry say a name 
   // each of the six spellings SIGNAL_SPELLINGS makes, with each printable joiner (a space, a digit, an underscore, punctuation) before it, after
   // it and on both sides, is read as that spelling (on_exit, sigint_handler, sigint2, SigInt_handler). A boundary class that stops at any unit
   // that is not an ASCII letter, or reads a name in lower case glued to one, reds here even while the committed row holds no such word, a
-  // condition on a unit outside the match placed anywhere else in either pattern reds the premise pin, and one placed on the reader's path
-  // outside the two patterns (signalNamesIn's body, the names it uses, the pattern objects, the built-ins it runs) reds THE READER pin
-  assert.ok(!SIGNAL_WORD.unicode && !SIGNAL_WORD.unicodeSets, 'the boundary witness runs every UTF-16 code unit, the units SIGNAL_WORD reads while it has no u or v flag; with either flag it reads a character above U+FFFF as one unit, and the witness must run those');
+  // condition on a unit outside the match placed anywhere else in either pattern reds the premise pin, and one placed in signalNamesIn's
+  // body reds THE READER pin, whose reader runs no name, pattern object or built-in of this realm
+  assert.ok(!WORD.unicode && !WORD.unicodeSets, 'the boundary witness runs every UTF-16 code unit, the units SIGNAL_WORD reads while it has no u or v flag; with either flag it reads a character above U+FFFF as one unit, and the witness must run those');
   // THE PREMISE the witnesses rely on for every form but the lower-case name (the forty-second commit, after the reviewer's verifier found
   // the forty-first commit's witnesses green under three mutants that each leave a README word unread: a SIG spelling unread after U+00A0, an
   // inflected form unread before U+2026, and a lookahead that reads two units. The six spellings run beside printable ASCII alone and the
@@ -377,57 +438,14 @@ test('the install guide, the hook\'s README row and the ledger entry say a name 
   const READER_FIXTURE = '^a$\\bb\\B(?=c)(?!d)(?<=e)(?<!f)[\\b^$(?=]\\(?=g\\)(?<n>h)(?:i)\\\\b';
   assert.ok(new RegExp(READER_FIXTURE), 'the reader\'s fixture is a pattern');
   assert.deepEqual(assertionsIn(READER_FIXTURE).map((a) => a.text), ['^', '$', '\\b', '\\B', '(?=c)', '(?!d)', '(?<=e)', '(?<!f)'], 'the assertion reader finds each of the eight assertions ECMAScript has, and none in a character class, after an escaped parenthesis, in a named or non-capturing group, or after an escaped backslash');
-  const wordAssertions = assertionsIn(SIGNAL_WORD.source);
+  const wordAssertions = assertionsIn(WORD.source);
   const [lead, trail] = [wordAssertions[0], wordAssertions[wordAssertions.length - 1]];
   const endsHold = wordAssertions.length >= 2 && lead.at === 0 && /^\(\?<!\[(?:[^\\\]]|\\.)*\]\)$/.test(lead.text)
-    && trail.at + trail.text.length === SIGNAL_WORD.source.length && /^\(\?!\[(?:[^\\\]]|\\.)*\]\)$/.test(trail.text);
+    && trail.at + trail.text.length === WORD.source.length && /^\(\?!\[(?:[^\\\]]|\\.)*\]\)$/.test(trail.text);
   const ENDS = 'a (?<! at the start and a (?! at the end, each over one character class';
-  assert.deepEqual({ ends: endsHold ? ENDS : [lead, trail], inside: wordAssertions.slice(1, -1).map((a) => a.text), upper: assertionsIn(SIGNAL_UPPER.source).map((a) => a.text) },
+  assert.deepEqual({ ends: endsHold ? ENDS : [lead, trail], inside: wordAssertions.slice(1, -1).map((a) => a.text), upper: assertionsIn(UPPER.source).map((a) => a.text) },
     { ends: ENDS, inside: [...SIGNAL_NAMES.filter((n) => n.endsWith('E')).map(() => '(?=ing)'), '(?<=([A-Za-z]))'], upper: [] },
     'THE PREMISE: SIGNAL_WORD reads a unit outside its match only through its leading (?<! and trailing (?!, each over one character class whose units the full-unit witness holds, and SIGNAL_UPPER through none; every other assertion in either source (^, $, \\b, \\B or a lookaround) looks inside the match, the E-dropped stems\' (?=ing) and the inflection\'s (?<=([A-Za-z])), as the comment argues; a form the witnesses run beside a space or printable ASCII alone is read beside every joiner only while this holds');
-  // THE READER (the forty-third commit, after the reviewer's verifier found two rewrites placed in signalNamesIn, U+00A0 before sig and
-  // U+2026 after ts each turned into a letter, green with the premise pin, which holds the two patterns while every witness and the README
-  // pin read through this function). Between a text and the names read, the two sources aside, run: the function's body; the names it uses
-  // and does not declare, SIGNAL_WORD, SIGNAL_UPPER and Set; the two pattern objects, whose reading is their source, their flags and
-  // RegExp.prototype's methods; and the built-ins the language runs for the body, String.prototype.match, RegExp.prototype's
-  // [Symbol.match], its exec, its flags getter and each flag getter that reads, Set with its add and its iterator, and the array iterator a
-  // spread takes. The assertions below hold them. The body's text, printed by a fresh realm's Function.prototype.toString (an own toString,
-  // a bound function or a proxy cannot answer for it), is the union of the two runs and nothing else, so a statement before, between or
-  // after them reds. Each pattern is a plain RegExp, no proxy, its prototype RegExp.prototype, no own property but lastIndex, its flags the
-  // ones stated, so a subclass, a proxy or an own exec or [Symbol.match] reds. Each built-in prints as the same built-in of that fresh
-  // realm prints, which no statement here reaches, so a replaced one (its own source), a bound or a proxied one (no name) reds. And one
-  // call with String.prototype.match and Set spied on reaches the two objects the premise pin reads, with the text as given, and the global
-  // Set, so a name shadowed around the body (a parameter, a block, a wrapper object) reds. Beyond this pin, stated: which function a call
-  // site reaches and which text it hands in. A witness builds its text in its own line and the README pin hands in rest, cut from the row
-  // above; a declaration that shadows signalNamesIn at a call site, or a statement that rewrites the row or rest before the reading,
-  // changes the test's own call or input, as an edit to an assertion's expected side does, and no assertion holds a statement that runs
-  // after it
-  const FRESH = vm.runInNewContext('globalThis');
-  const show = FRESH.Function.prototype.toString;
-  assert.ok(FRESH !== globalThis && FRESH.Function !== Function && FRESH.Object !== Object, 'THE READER reads code through a fresh realm, whose built-ins no statement in this module replaces');
-  const READER = '(text) => [...new Set([...(text.match(SIGNAL_WORD) || []), ...(text.match(SIGNAL_UPPER) || [])])]';
-  assert.equal(show.call(signalNamesIn), READER, 'THE READER: signalNamesIn is the union of SIGNAL_WORD\'s and SIGNAL_UPPER\'s matches, in that order, and nothing else, so what the witnesses and the premise pin hold of the two patterns is what the README pin reads; a rewrite of the text before or between the two runs, or of the names after them, reds here');
-  const plain = (re) => ({ regexp: util.types.isRegExp(re), proxy: util.types.isProxy(re), prototype: FRESH.Object.getPrototypeOf(re) === RegExp.prototype, own: [...FRESH.Reflect.ownKeys(re)], flags: re.flags });
-  assert.deepEqual({ SIGNAL_WORD: plain(SIGNAL_WORD), SIGNAL_UPPER: plain(SIGNAL_UPPER) },
-    { SIGNAL_WORD: { regexp: true, proxy: false, prototype: true, own: ['lastIndex'], flags: 'gi' }, SIGNAL_UPPER: { regexp: true, proxy: false, prototype: true, own: ['lastIndex'], flags: 'g' } },
-    'THE READER: each pattern is a plain RegExp (no proxy, its prototype RegExp.prototype, no own property but lastIndex) with the flags stated, so it reads by its source, its flags and RegExp.prototype\'s methods alone; a subclass, a proxy or an own exec or [Symbol.match] reads otherwise and reds here');
-  const getter = (proto, key) => FRESH.Object.getOwnPropertyDescriptor(proto, key).get;
-  const builtIns = (G) => [['String.prototype.match', G.String.prototype.match], ['RegExp.prototype[Symbol.match]', G.RegExp.prototype[Symbol.match]], ['RegExp.prototype.exec', G.RegExp.prototype.exec],
-    ...['flags', 'hasIndices', 'global', 'ignoreCase', 'multiline', 'dotAll', 'unicode', 'unicodeSets', 'sticky'].map((key) => [`the ${key} getter`, getter(G.RegExp.prototype, key)]),
-    ['Set', G.Set], ['Set.prototype.add', G.Set.prototype.add], ['Set.prototype[Symbol.iterator]', G.Set.prototype[Symbol.iterator]],
-    ['the set iterator\'s next', FRESH.Object.getPrototypeOf(G.Set.prototype[Symbol.iterator].call(new G.Set())).next],
-    ['Array.prototype[Symbol.iterator]', G.Array.prototype[Symbol.iterator]], ['the array iterator\'s next', FRESH.Object.getPrototypeOf(G.Array.prototype[Symbol.iterator].call(new G.Array())).next]];
-  const [here, there] = [builtIns(globalThis), builtIns(FRESH)];
-  assert.deepEqual(here.filter(([, f], i) => typeof f !== 'function' || show.call(f) !== show.call(there[i][1])).map(([label]) => label), [],
-    'THE READER: each built-in the body runs (String.prototype.match; RegExp.prototype\'s [Symbol.match], exec, flags getter and each flag getter it reads; Set, its add and its iterator; the array iterator) prints as the same built-in of a fresh realm prints; a replaced one prints its own source and a bound or proxied one no name, and reds here (the labels listed)');
-  const PROBE = ' handlers for SIGINT and hup pass; ';
-  const [realMatch, RealSet, calls, sets] = [String.prototype.match, globalThis.Set, [], []];
-  let probed;
-  String.prototype.match = function match(re) { calls.push([re === SIGNAL_WORD ? 'SIGNAL_WORD' : re === SIGNAL_UPPER ? 'SIGNAL_UPPER' : `another object, ${String(re)}`, `${this}`]); return realMatch.call(this, re); };
-  globalThis.Set = class Set extends RealSet { constructor(items) { sets.push([...items]); super(items); } };
-  try { probed = signalNamesIn(PROBE); } finally { String.prototype.match = realMatch; globalThis.Set = RealSet; }
-  assert.deepEqual({ calls, sets, probed }, { calls: [['SIGNAL_WORD', PROBE], ['SIGNAL_UPPER', PROBE]], sets: [['SIGINT', 'hup', 'SIGINT']], probed: ['SIGINT', 'hup'] },
-    'THE READER: one call of signalNamesIn with String.prototype.match and Set spied on matches SIGNAL_WORD and then SIGNAL_UPPER, the objects the premise pin and the assertions above read, each on the text as given, and builds one Set of the global Set from their matches, so the names the body uses are those objects and the language\'s Set; a name shadowed around the body (a parameter, a block, a wrapper object) reds here');
   const UNITS = Array.from({ length: 0x10000 }, (_, u) => String.fromCharCode(u));
   const JOINERS = UNITS.filter((c) => !/[A-Za-z]/.test(c));
   const LETTERS = UNITS.filter((c) => /[A-Za-z]/.test(c));
@@ -439,27 +457,27 @@ test('the install guide, the hook\'s README row and the ledger entry say a name 
   let ran = 0;
   for (const n of SIGNAL_NAMES) {
     const s = n.toLowerCase();
-    for (const c of JOINERS) { ran++; if (!signalNamesIn(` handlers for x${c}${s}${c}x pass; `).includes(s)) offRule.push(`${s} unread with ${unit(c)} on both sides`); }
-    for (const c of LETTERS) for (const f of [`x${c}${s}`, `${s}${c}x`]) { ran++; if (signalNamesIn(` handlers for ${f} pass; `).includes(s)) offRule.push(`${s} read in ${f}`); }
+    for (const c of JOINERS) { ran++; if (!namesIn(` handlers for x${c}${s}${c}x pass; `).includes(s)) offRule.push(`${s} unread with ${unit(c)} on both sides`); }
+    for (const c of LETTERS) for (const f of [`x${c}${s}`, `${s}${c}x`]) { ran++; if (namesIn(` handlers for ${f} pass; `).includes(s)) offRule.push(`${s} read in ${f}`); }
   }
   assert.equal(ran, SIGNAL_NAMES.length * (JOINERS.length + 2 * LETTERS.length), 'the boundary witness ran every name against every code unit, each joiner once and each letter on each side');
   assert.deepEqual(offRule.slice(0, 12), [], `the README pin reads every name in lower case beside each of the ${JOINERS.length} code units that are not ASCII letters, and none glued to an ASCII letter (SIGNAL_WORD's boundaries: ${offRule.length} readings off the rule, the first listed)`);
   const PRINTABLE = JOINERS.filter((c) => c >= ' ' && c <= '~');
   assert.ok(PRINTABLE.length === 0x7f - 0x20 - 52 && ['_', ' ', '-', ...'0123456789'].every((c) => PRINTABLE.includes(c)), 'the spelling witness runs every printable ASCII character that is not a letter, the underscore, each digit, the space and the hyphen among them');
   for (const n of SIGNAL_NAMES) for (const s of SIGNAL_SPELLINGS(n)) for (const c of PRINTABLE) for (const f of [`x${c}${s}`, `${s}${c}x`, `x${c}${s}${c}x`]) {
-    assert.ok(signalNamesIn(` handlers for ${f} pass; `).includes(s), `the README pin reads ${s} in ${JSON.stringify(f)}, the name ${n} joined to ${JSON.stringify(c)}, a character that is not a letter (SIGNAL_WORD's boundaries)`);
+    assert.ok(namesIn(` handlers for ${f} pass; `).includes(s), `the README pin reads ${s} in ${JSON.stringify(f)}, the name ${n} joined to ${JSON.stringify(c)}, a character that is not a letter (SIGNAL_WORD's boundaries)`);
   }
   // the case witness (the fortieth commit): every name in every mix of upper and lower case, bare and after SIG in every mix, is read as
   // spelled, so a pattern that reads the six spellings and not every mix reds here
   const caseMixes = (w) => [...new Set(Array.from({ length: 2 ** w.length }, (_, m) => [...w].map((ch, i) => ((m >> i) & 1 ? ch.toLowerCase() : ch.toUpperCase())).join('')))];
   assert.ok(caseMixes('int').includes('iNt') && caseMixes('SIG').length === 8, 'the case witness runs every mix, iNt among them');
   for (const n of SIGNAL_NAMES) for (const s of [...caseMixes(n), ...caseMixes('SIG').flatMap((p) => caseMixes(n).map((b) => p + b))]) {
-    assert.ok(signalNamesIn(` handlers for ${s} pass; `).includes(s), `the README pin reads ${s}, the name ${n} in a mix of upper and lower case (SIGNAL_WORD ignores case)`);
+    assert.ok(namesIn(` handlers for ${s} pass; `).includes(s), `the README pin reads ${s}, the name ${n} in a mix of upper and lower case (SIGNAL_WORD ignores case)`);
   }
   const TRAP_ROWS = ['EV-trap', 'EV-trap-INT', 'EV-trap-SIGTERM', 'EV-trap-lower', 'EV-trap-sigint-lower', 'EV-trap-num', 'EV-trap-zero', 'EV-trap-ERR', 'EV-trap-ZERR', 'EV-trap-DEBUG', 'EV-trap-RETURN', 'EV-trap-SIGEXIT', 'EV-trap-CLD'];
-  assert.deepEqual(signalNamesIn(rest), [], `hooks/README.md: outside THE RESIDUAL PROPERTY and CLAUSE no clause names a signal by its name, bare or with SIG, in any case, inflected, joined to any character that is not an ASCII letter, or in upper case anywhere in a word (a trap's action the guard reads is refused where it names a tracked file, for the signal word each of ${TRAP_ROWS.join(', ')} in tools/romp-track-bash-guard.test.mjs carries, and for each spelling a present shell's trap takes among the names and spellings the signal census in this file derives; a word used in another sense joins the phrases set aside above with its context)`);
+  assert.deepEqual([...namesIn(rest)], [], `hooks/README.md: outside THE RESIDUAL PROPERTY and CLAUSE no clause names a signal by its name, bare or with SIG, in any case, inflected, joined to any character that is not an ASCII letter, or in upper case anywhere in a word (a trap's action the guard reads is refused where it names a tracked file, for the signal word each of ${TRAP_ROWS.join(', ')} in tools/romp-track-bash-guard.test.mjs carries, and for each spelling a present shell's trap takes among the names and spellings the signal census in this file derives; a word used in another sense joins the phrases set aside above with its context)`);
   assert.ok(/(?<![\w.-])(?:6[0-4]|[1-5]?[0-9])(?![\w.])/.test(rest), 'hooks/README.md: the witness of the number boundary, a number a trap takes (0 to 64) standing in the row in another sense, so a pin on numbers would red the committed row; with none left, a signal given by its number can join the pin');
-  const lowerGlued = (rest.match(/[A-Za-z0-9_]+/g) || []).filter((t) => !signalNamesIn(` ${t} `).length && SIGNAL_NAMES.some((n) => t.toLowerCase().includes(n.toLowerCase())));
+  const lowerGlued = (rest.match(/[A-Za-z0-9_]+/g) || []).filter((t) => !namesIn(` ${t} `).length && SIGNAL_NAMES.some((n) => t.toLowerCase().includes(n.toLowerCase())));
   assert.ok(lowerGlued.length > 0, 'hooks/README.md: the witness of the glued boundary, a word in lower or mixed case holding a name glued to letters beyond an inflection (pipeline, into, error) standing in the row, so a pin reading a name in any case inside a word would red the committed row; with none left, that reading can join the pin');
   const guardTestSrc = read('tools', 'romp-track-bash-guard.test.mjs');
   for (const id of ['EV-eval', 'EV-eval-var', ...TRAP_ROWS]) assert.ok(guardTestSrc.includes(`['${id}', 'nad', `), `the executed row ${id} the clause's message points at stands in the guard's test`);
@@ -496,6 +514,7 @@ const TRAP_TAKES = 'for n in "$@"; do (trap : "$n") 2>/dev/null && printf \'%s\\
 const notRunWhy = (r, none) => (r.error ? `did not start (${r.error.code})` : r.status !== 0 ? `exited ${r.status ?? r.signal}` : none);
 
 test('round 7, thirty-eighth and thirty-ninth commits: the signal names the README pin reads include every name each present shell prints for its trap and each spelling its trap takes of the candidate names the census derives, bare and with SIG, as printed, in lower case and in title case, and the hook refuses a trap set with each spelling taken whose action names a tracked file', async () => {
+  const { read: namesIn } = freshSignalReading();   // the README pin's reader, compiled in a realm this test makes (THE READER, in the README pin's test)
   const listed = [];
   const candidates = new Set([...SIGNAL_NAMES, ...Object.keys(os.constants.signals).map((k) => k.replace(/^SIG/, ''))]);
   for (const [sh, argv] of Object.entries(SIGNAL_LISTS)) {
@@ -509,7 +528,7 @@ test('round 7, thirty-eighth and thirty-ninth commits: the signal names the READ
     for (const name of names) {
       const bare = name.replace(/^SIG/, '');
       candidates.add(bare);
-      for (const s of SIGNAL_SPELLINGS(bare)) assert.ok(signalNamesIn(` ${s} `).includes(s), `${sh} prints ${name} for its trap, and the README pin reads ${s} (a name SIGNAL_NAMES lacks)`);
+      for (const s of SIGNAL_SPELLINGS(bare)) assert.ok(namesIn(` ${s} `).includes(s), `${sh} prints ${name} for its trap, and the README pin reads ${s} (a name SIGNAL_NAMES lacks)`);
     }
   }
   assert.ok(listed.length > 0, 'no shell printed its signal list, so the census read nothing');
@@ -529,7 +548,7 @@ test('round 7, thirty-eighth and thirty-ninth commits: the signal names the READ
     }
     measured.push(sh);
     for (const s of took) {
-      assert.ok(signalNamesIn(` ${s} `).includes(s), `${sh}'s trap takes ${s}, and the README pin does not read it (a name SIGNAL_NAMES lacks)`);
+      assert.ok(namesIn(` ${s} `).includes(s), `${sh}'s trap takes ${s}, and the README pin does not read it (a name SIGNAL_NAMES lacks)`);
       taken.add(s);
     }
   }
