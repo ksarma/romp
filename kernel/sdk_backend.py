@@ -4241,13 +4241,30 @@ def _bg_row(*, type, desc, since, toolUseId="", lastTool="") -> dict:
             "lastTool": str(lastTool or "")}
 
 
-def _bg_row_is_agent(row) -> bool:
-    """Whether a _bg_tasks row, or a row of the reg's bgTasks mirror, is a Task agent's own lifecycle row: its type is
-    local_agent (a mirror an earlier build wrote with the report's label is normalised, _bg_type_discriminant), and its
-    task id is then the agent's id, the name of the agent's transcript. Applied wherever an agent's end is queued from a
-    row for the record cache's release at an agent's end (SdkBackend.note_agent_live lists the sites). A row of any other
-    type, or of a type never learned, names no agent this test can vouch for, so no end is queued from it."""
-    return isinstance(row, dict) and _bg_type_discriminant(row.get("type")) == "local_agent"
+def _bg_row_may_be_agent(row) -> bool:
+    """Whether a _bg_tasks row, or a row of the reg's bgTasks mirror, may be a Task agent's own lifecycle row, whose
+    task id is then the agent's id, the name of the agent's transcript: a row of type local_agent (a mirror an earlier
+    build wrote with the report's label is normalised, _bg_type_discriminant), or a row whose type was never learned
+    (absent or empty). Applied wherever an agent's end is queued from a row for the record cache's release at an agent's
+    end (SdkBackend.note_agent_live lists the sites). A row of any other type names no agent, so no end is queued from
+    it.
+    The untyped row(PR 913 round 1, the coordinator's decision 6) is the one an object that reattached after a kernel
+    restart mints from an agent's first progress frame, which carries no type, when the reg's mirror lacked the agent's
+    row (_on_task_event); a mirror written from it carries it untyped to the next attach and to the boot reconcile. Its
+    end is queued by (sid, agent id) like any other, and the kernel resolves the id at the drain as it resolves every
+    end (_path_of, _subagent_file): an id not in an agent id's shape resolves to nothing with no walk, an agent's file
+    in the session's own subagents tree is found there (0.12 to 0.15 ms measured), and an id that tree lacks walks every
+    sibling session's subagents tree in the project directory. On the largest project directory measured (2026-09-25,
+    the decision-6 measurement logs kept with the PR's round-1 notes), that walk cost 87 to 134 ms the first time
+    (thirteen runs), once after a restart, and a median of 21 to 49 ms at each later cycle (three runs of ten walks)
+    with every session that has a subagents tree there alive, as on the measured box, since the jobs pass
+    (_subagent_trees_forget) keeps an alive session's tree. A tree no alive session owns is dropped by that pass and
+    walked again at each later cycle's miss: with no sibling alive, a later cycle cost a median of 88 to 97 ms in the
+    same measurement. The 50 ms bound set for one cycle's resolution governs the steady cycle (the coordinator's
+    reading), and the measured steady cycle is inside it; the first walk is paid once, and only after a kernel restart,
+    on the roads where this kernel never saw the agent start. So the row's end is queued rather than left as a residual.
+    Each id's resolution, a miss included, is memoized until a directory it read changes (_subagent_file)."""
+    return isinstance(row, dict) and _bg_type_discriminant(row.get("type")) in ("local_agent", "")
 
 
 # The marker only SDK-driven claude CLIs carry (the kernel drives them over stdin); a tmux session's
@@ -12102,16 +12119,17 @@ class SdkSession:
 
     def _known_agents_locked(self) -> list:
         """Under _sub_lock: every agent this object knows is running, through any of the three structures that name one:
-        the live set (_subagents), a Task agent's own lifecycle row in _bg_tasks (_bg_row_is_agent: its task id is the
-        agent's id), and each Workflow run's roster (_wf_agents) less the agents whose end the run already queued
-        (_wf_ended). Each id once, in that order. The object that reattached after a kernel restart knows an agent already
-        running only through the second (a row seeded from the reg's mirror, or adopted from a turn-end report) or the third
-        (a roster a progress frame named), never through _subagents, whose adds are the start hook's alone. Read where the
-        CLI's end ends every agent inside it (_drop_live_work, SdkBackend._on_session_gone): that premise, not an absence,
-        is what queues these ends."""
+        the live set (_subagents), a row in _bg_tasks that may be a Task agent's own lifecycle row
+        (_bg_row_may_be_agent: a local_agent row or one whose type was never learned, its task id then the agent's id),
+        and each Workflow run's roster (_wf_agents) less the agents whose end the run already queued (_wf_ended). Each
+        id once, in that order. The object that reattached after a kernel restart knows an agent already running only
+        through the second (a row seeded from the reg's mirror, adopted from a turn-end report, or minted untyped from
+        the agent's progress frame) or the third (a roster a progress frame named), never through _subagents, whose adds
+        are the start hook's alone. Read where the CLI's end ends every agent inside it (_drop_live_work,
+        SdkBackend._on_session_gone): that premise, not an absence, is what queues these ends."""
         out = dict.fromkeys(self._subagents)
         for tid, row in self._bg_tasks.items():
-            if _bg_row_is_agent(row):
+            if _bg_row_may_be_agent(row):
                 out.setdefault(tid)
         for tid, roster in self._wf_agents.items():
             done = self._wf_ended.get(tid) or ()
@@ -12370,11 +12388,15 @@ class SdkSession:
             if ended and self._subagents.pop(tid, None) is not None:
                 sub_changed = True   # a Task agent's own task ended — with or without its SubagentStop
         # a Task agent's end is queued for the kernel's record cache when this object held the agent, or when the row it
-        # ended is an agent's (an object that reattached after a kernel restart holds the agent only through the row seeded
-        # from the reg's mirror, which carries a Task agent under its agent id). Never for another task type, nor for a row
-        # of a type never learned (_bg_row_is_agent): its id need not name an agent transcript, and on a miss resolving it
-        # costs the kernel a walk of the project directory (_subagent_file); note_agent_live states that residual
-        if sub_changed or (ended and _bg_row_is_agent(gone)):
+        # ended may be an agent's (_bg_row_may_be_agent). An object that reattached after a kernel restart holds the
+        # agent only through a row: one seeded from the reg's mirror, which carries a Task agent under its agent id, or,
+        # when the mirror lacked it, the row minted above from the agent's progress frame, whose type is never learned.
+        # That end is queued by (sid, agent id) and the kernel resolves the id at the drain; when the id is not in the
+        # session's own subagents tree the resolution walks the project directory's sibling subagents trees, 87 to 134
+        # ms the first time after a restart and a median of 21 to 49 ms at a later cycle on the largest directory
+        # measured (_bg_row_may_be_agent states the measurement and its conditions). Never for another task type: its id
+        # names no agent transcript
+        if sub_changed or (ended and _bg_row_may_be_agent(gone)):
             self._note_live_agents([tid], False)
         if wf and (ended or isinstance(d.get("workflow_progress"), list)):
             # pokes when it retires anything; a progress event without the list (a throttled
@@ -12684,12 +12706,12 @@ class SdkSession:
                     elif tid in listed:
                         retired_listed.append(tid)      # the report's own word that it ended
                         self._bg_tasks.pop(tid, None)   # an end frame may have popped it already: nothing to pop twice
-                        if _bg_row_is_agent(row):
+                        if _bg_row_may_be_agent(row):
                             retired_agents.append(tid)
                     elif report_absence_decides(kind):
                         retired_omitted.append(tid)     # a shell the report leaves off its list, the one type it enumerates completely
                         self._bg_tasks.pop(tid, None)
-                        if _bg_row_is_agent(row):       # never true while only a shell reaches here; the test holds if that widens
+                        if _bg_row_may_be_agent(row):   # never true while only a shell reaches here; the test holds if that widens
                             retired_agents.append(tid)
                     else:
                         held.append(tid)
@@ -15426,7 +15448,7 @@ class SdkBackend:
                     # and the file released at the first cycle after a read holds it). It follows the cut's stamp, which
                     # it does not touch: the end is an in-memory event, the stamp a durable write.
                     for t in dead_tasks:
-                        if _bg_row_is_agent(t) and t.get("taskId"):
+                        if _bg_row_may_be_agent(t) and t.get("taskId"):
                             self.note_agent_live(sid, t.get("taskId"), False)
                     resumed += 1 if cut else 0
                     notified += 1 if dead_tasks else 0
@@ -17612,7 +17634,7 @@ class SdkBackend:
                         + (["%d dead background task(s)" % len(dead_tasks)] if dead_tasks else []))))
                     # a Task agent of the dead life ended with its CLI: queued for the record cache beside the notice
                     for t in dead_tasks:
-                        if _bg_row_is_agent(t) and t.get("taskId"):
+                        if _bg_row_may_be_agent(t) and t.get("taskId"):
                             self.note_agent_live(sid, t.get("taskId"), False)
             s = SdkSession(self, reg)
             s.on_boot_settled = on_boot_settled
@@ -20918,9 +20940,9 @@ class SdkBackend:
         that adds (the SubagentStart hook), and at each end, outside the session's lock:
         - an exact end event, whether or not the session object held the agent (an object that reattached after a kernel
           restart never saw the starts of the agents already running): the SubagentStop; a Task agent's own task end, for an
-          agent the object held or a row that is a Task agent's (_bg_row_is_agent); a turn-end report that lists a Task
-          agent's row as ended (_reconcile_seeded_with_report); the workflow slot's done or error state, its re-minted slot
-          or the run's end;
+          agent the object held or a row that may be a Task agent's (_bg_row_may_be_agent); a turn-end report that lists
+          a Task agent's row as ended (_reconcile_seeded_with_report); the workflow slot's done or error state, its
+          re-minted slot or the run's end;
         - where a CLI's agents end with it, every agent the session object knows through its live set, a Task agent's row or
           a Workflow run's roster (SdkSession._known_agents_locked): the reconnect teardown (_drop_live_work) and the CLI's
           end (_on_session_gone when the session is not detached);
@@ -20931,19 +20953,16 @@ class SdkBackend:
         No end is queued for an agent no structure of the object names: a Workflow run's agents when the object holds no
         roster for the run (a run seeded from the mirror that a turn-end report retires, since a roster exists only after a
         progress frame and a frame takes the row out of the report's population; a run that ends, or loses its CLI, before
-        any progress frame); a subagent the old kernel knew only by its start hook, whose stop is lost; and a Task agent
-        whose row the object minted from a progress frame that carried no type (the mirror lacked the row), since a row of
-        a type never learned is no Task agent's by _bg_row_is_agent. That last one is left on purpose: resolving an id no
-        type vouches for walks every sibling session's subagents tree in the project directory when the file is not in
-        the session's own, and on the largest project directory measured (2026-09-25) such a miss cost 101 to 134 ms at its
-        first walk (thirteen runs), more than the 50 ms bound set for a cycle's resolution. A later cycle's walk cost a
-        median of 84 to 89 ms when no sibling session was alive, so the jobs pass (_subagent_trees_forget) had dropped
-        every sibling tree (three runs of ten walks); an alive sibling's tree stays held, and with every sibling alive, as
-        on the measured box on 2026-09-25, each later cycle cost a median of 27 to 41 ms (three runs of ten walks), a range
-        that overlaps the median of 19 to 34 ms a further new id in the same cycle cost with the trees still held
-        (thirteen runs). The witness: tests/test_record_cache_agent_end.py,
-        test_residual_a_task_agent_row_of_a_type_never_learned_queues_no_end. Their entries fall to the quiescent drop,
-        the count cap or the byte budget.
+        any progress frame); and a subagent the old kernel knew only by its start hook, whose stop is lost. Their
+        entries fall to the quiescent drop, the count cap or the byte budget.
+        A row whose type was never learned counts as a Task agent's row on every road above that reads a row
+        (_bg_row_may_be_agent): the object that reattached after a kernel restart mints one from the agent's progress
+        frame when the mirror lacked the agent's row, and a mirror written from it carries it untyped. Its end is queued
+        by (sid, agent id), and the kernel resolves the id at the drain. When the id is not in the session's own
+        subagents tree the resolution walks every sibling session's subagents tree in the project directory: on the
+        largest one measured, 87 to 134 ms the first time, once after a restart, and a median of 21 to 49 ms at each
+        later cycle with every session that has a tree there alive, inside the 50 ms bound set for one cycle's
+        resolution (_bg_row_may_be_agent states the measurement and its conditions).
         An agent can be queued as ended more than once (its stop and its task's end). In one batch the kernel acts on the
         agent's last event only. A later end, in a later cycle, finds the entry gone or a restored tail weighing nothing when
         the earlier release was taken, unless a reader pulled the file whole in between (the end then releases that read's

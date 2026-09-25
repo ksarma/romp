@@ -393,32 +393,66 @@ class AgentEnd(unittest.TestCase):
         again._reconcile_seeded_with_report([{"id": AID, "status": "completed", "type": "subagent"}])
         self._released_at_the_next_cycle(AID, self.agent, size)
 
-    def test_residual_a_task_agent_row_of_a_type_never_learned_queues_no_end(self):
-        """THE WITNESS of a residual SdkBackend.note_agent_live states (PR 913 round 1, the coordinator's decision 6): the
-        reattached object's mirror lacked the agent's row, so the row is minted from the agent's first progress frame, which
-        carries no type, and its end queues nothing. Queuing it was measured first (2026-09-25): the kernel would resolve
-        the id at the drain, and on a miss that walks every sibling session's subagents tree in the project directory: on
-        the largest project directory measured, 101 to 134 ms at the first walk (thirteen runs), over the 50 ms bound set for
-        one cycle's resolution. A later cycle's walk cost a median of 84 to 89 ms when no sibling session was alive, so the
-        jobs pass (_subagent_trees_forget) had dropped every sibling tree (three runs of ten walks); an alive sibling's tree
-        stays held, and with every sibling alive, as on the measured box on 2026-09-25, each later cycle cost a median of 27
-        to 41 ms (three runs of ten walks), a range that overlaps the median of 19 to 34 ms a further new id in the same
-        cycle cost with the trees still held (thirteen runs). Green while the residual stands; queuing the end turns it red,
-        and the texts that name the residual must change with it."""
+    # ---- a row whose type was never learned (PR 913 round 1, the coordinator's decision 6) ----
+    # The reattached object's mirror lacked the agent's row, so the object mints it from the agent's first progress frame,
+    # which carries no type, and a mirror written from that row carries it untyped. Such a row counts as a Task agent's on
+    # every road that queues an end from a row (sdk_backend._bg_row_may_be_agent, whose docstring states the measured cost
+    # of resolving its id at the drain); one pin per place the predicate is read.
+
+    def _untyped_row(self, sess, aid=AID):
+        before = list(self.be._agent_live_q)
+        sess._on_task_event("task_progress", {"task_id": aid, "description": "check the notes-api routes"})
+        self.assertEqual(sess._bg_tasks[aid]["type"], "", "precondition: a row of a type never learned")
+        self.assertEqual(list(self.be._agent_live_q), before, "precondition: a progress frame ends nothing")
+
+    def test_a_reattached_objects_untyped_agent_row_ends_at_its_task_end(self):
+        """The row's own end frame queues the agent's end by (sid, agent id), and the drain resolves the agent's file as it
+        resolves every end (_path_of, _subagent_file) and releases it at the next cycle. Before decision 6 was built the end
+        queued nothing and the finished agent's records stayed whole."""
         again, size = self._reattached(AID, self.agent)
-        again._on_task_event("task_progress", {"task_id": AID, "description": "check the notes-api routes"})
-        self.assertEqual(again._bg_tasks[AID]["type"], "", "precondition: a row of a type never learned")
+        self._untyped_row(again)
         again._on_task_event("task_notification", {"task_id": AID, "status": "completed"})
-        self.assertEqual(list(self.be._agent_live_q), [], "no end is queued for the row")
+        self._released_at_the_next_cycle(AID, self.agent, size)
+
+    def test_a_reattached_objects_untyped_agent_row_ends_when_its_cli_dies(self):
+        again, size = self._reattached(AID, self.agent)
+        self._untyped_row(again)
+        self._no_wake()
+        self._session_gone(again)                                        # neither ended nor detached: a crash
+        self._released_at_the_next_cycle(AID, self.agent, size)
+
+    def test_a_reattached_objects_seeded_untyped_agent_row_ends_when_the_report_lists_it_ended(self):
+        again, size = self._reattached(AID, self.agent)
+        self.assertEqual(again._seed_live_work_from_reg({"bgTasks": [      # a mirror written from an untyped row
+            {"taskId": AID, "type": "", "desc": "check the notes-api routes", "since": 100}]}), 1, "precondition: seeded")
+        again._reconcile_seeded_with_report([{"id": AID, "status": "completed", "type": "subagent"}])
+        self.assertNotIn(AID, again._bg_tasks, "precondition: the report retired the row")
+        self._released_at_the_next_cycle(AID, self.agent, size)
+
+    def test_an_untyped_row_whose_id_names_no_agent_file_releases_and_counts_nothing(self):
+        """The guard: an untyped row need not be an agent's. Its end is queued, and the drain resolves it to nothing and
+        counts nothing: an id not in an agent id's shape with no walk (it never enters _subagent_file's memo), an
+        agent-shaped id whose file exists nowhere after the walk. The running agent's records are untouched."""
+        size = self._fold_while_running(AID, self.agent)
+        km._begin_checkpoint_cycle()                                     # drains the start
+        monitor, orphan = "m0000000000000001", "a4444444444444444"
+        for tid in (monitor, orphan):
+            self._untyped_row(self.s, tid)
+            self.s._on_task_event("task_notification", {"task_id": tid, "status": "completed"})
+        self.assertEqual(list(self.be._agent_live_q), [(SID, monitor, False), (SID, orphan, False)], "both ends queued")
         km._begin_checkpoint_cycle()
-        self.assertEqual(self._weight(self.agent), size, "the finished agent's records stay whole, left to the quiescent drop, "
-                         "the count cap or the byte budget")
+        self.assertNotIn((self.leaf, monitor), km._SUBAGENT_FILE_CACHE, "an id not in an agent id's shape is not resolved")
+        self.assertIsNone(km._SUBAGENT_FILE_CACHE[(self.leaf, orphan)][1], "the agent-shaped id resolved to nothing")
+        self.assertEqual(self._weight(self.agent), size, "the running agent keeps its records")
+        self.assertEqual((self._stat("released"), self._stat("releaseDeferred"), self._stat("releaseLost")),
+                         (NOTHING_RELEASED, 0, 0), "nothing released and nothing counted")
+        self.assertEqual((km._AGENT_RELEASED, km._AGENT_ENDED_UNHELD), ({}, {}), "nothing recorded or remembered")
 
     # ---- the reg's mirror names the Task agents of a CLI that died with the old kernel ----
 
-    def _dead_mirror_reg(self, **extra):
+    def _dead_mirror_reg(self, agent_type="local_agent", **extra):
         reg = {"sid": SID, "alive": True, "name": "api", "cwd": self.root, "bgTasks": [
-            {"taskId": AID, "type": "local_agent", "desc": "check the notes-api routes", "since": 100},
+            {"taskId": AID, "type": agent_type, "desc": "check the notes-api routes", "since": 100},
             {"taskId": "b0000000000000001", "type": "local_bash", "desc": "run the notes-api tests", "since": 100}], **extra}
         sb.write_reg(self.state, SID, reg)
         return reg
@@ -427,7 +461,13 @@ class AgentEnd(unittest.TestCase):
         """The boot reconcile with no surviving CLI: the mirror's Task agent died with the old kernel's CLI. Nothing is held at
         boot, so the end finds nothing to release; the kernel remembers it, and a read that holds the file afterwards is
         released at the next cycle."""
-        reg = self._dead_mirror_reg()
+        self._boot_over_a_dead_mirror("local_agent")
+
+    def test_a_dead_mirrors_untyped_agent_row_at_boot_is_released_after_a_read_holds_its_file(self):
+        self._boot_over_a_dead_mirror("")                                # a mirror written from an untyped row
+
+    def _boot_over_a_dead_mirror(self, agent_type):
+        reg = self._dead_mirror_reg(agent_type)
         self.be._ensure = lambda sid, on_boot_settled=None: None         # the resume starts no CLI
         self.be._start_test_root_sweep = lambda: None                    # nor any sweep of this box's test roots
         with contextlib.redirect_stderr(io.StringIO()):
@@ -445,9 +485,15 @@ class AgentEnd(unittest.TestCase):
         self.assertEqual(self._stat("released"), {"agentEnded": {"count": 1, "bytes": size}})
 
     def test_a_threads_wake_over_a_dead_mirrors_agent_row_releases_its_held_file(self):
+        self._wake_over_a_dead_mirror("local_agent")
+
+    def test_a_threads_wake_over_a_dead_mirrors_untyped_agent_row_releases_its_held_file(self):
+        self._wake_over_a_dead_mirror("")                                # a mirror written from an untyped row
+
+    def _wake_over_a_dead_mirror(self, agent_type):
         size = self._fold_while_running(AID, self.agent)                 # the file is held
         km._begin_checkpoint_cycle()                                     # drains the start
-        self._dead_mirror_reg(threadOf="11111111-2222-3333-4444-000000000000")   # a dormant comment thread, its CLI dead
+        self._dead_mirror_reg(agent_type, threadOf="11111111-2222-3333-4444-000000000000")   # a dormant thread, its CLI dead
 
         class _NoCli:                                                    # the woken thread's object starts no CLI
             def __init__(self, backend, reg):

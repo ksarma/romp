@@ -3088,27 +3088,31 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   events even on a session object that never saw it start, as after a
   kernel restart under a session host, where the object knows an agent
   already running only through a Task agent's row (seeded from the
-  registry's mirror, or adopted from a turn-end report) or a Workflow run's
-  roster; a turn-end report that lists a Task agent's row as ended; where
-  the CLI's end ends every agent inside it (the reconnect teardown, and the
-  CLI's end when the session is not detached), every agent the object knows
-  through its live set, a Task agent's row or a run's roster; and, at a
-  boot or a comment thread's wake that finds the mirror naming a CLI that
-  died with an earlier kernel, each Task agent's row of that mirror. No end
-  is queued for an agent none of those names: a Workflow run's agents when
-  the object holds no roster for the run (one the report retires before any
-  progress frame, or one that ends or loses its CLI before any), a subagent
-  the old kernel knew only by its start hook whose stop is lost, and a Task
-  agent whose row was minted from a progress frame that carried no type,
-  left out because resolving an id no type vouches for walks every sibling
-  session's subagents tree on a miss (on the largest project directory
-  measured, on 2026-09-25: 101 to 134 ms at the first walk, thirteen runs;
-  at a later cycle's walk, a median of 84 to 89 ms when no sibling session
-  is alive, so the jobs pass has dropped every sibling tree, three runs of
-  ten walks, and a median of 27 to 41 ms with every sibling alive, as on
-  the measured box, since an alive sibling's tree stays held, three runs of
-  ten walks); their entries fall to the quiescent drop, the count cap or
-  the byte budget. The pusher, at each
+  registry's mirror, adopted from a turn-end report, or, when the mirror
+  lacked it, minted from the agent's progress frame, which carries no type)
+  or a Workflow run's roster; a turn-end report that lists a Task agent's
+  row as ended; where the CLI's end ends every agent inside it (the
+  reconnect teardown, and the CLI's end when the session is not detached),
+  every agent the object knows through its live set, a Task agent's row or
+  a run's roster; and, at a boot or a comment thread's wake that finds the
+  mirror naming a CLI that died with an earlier kernel, each Task agent's
+  row of that mirror. A row whose type was never learned counts as a Task
+  agent's row on each of those roads, and the kernel resolves its id when it
+  drains the end. When the id is not in the session's own subagents tree,
+  the resolution walks every sibling session's subagents tree in the project
+  directory: on the largest one measured, on 2026-09-25, 87 to 134 ms the
+  first time, thirteen runs, once after a restart, and a median of 21 to 49
+  ms at each later cycle, three runs of ten walks, with every session that
+  has a subagents tree there alive, as on the measured box, since the jobs
+  pass keeps an alive session's tree; a tree no alive session owns is
+  dropped and walked again, and with no sibling alive a later cycle cost a
+  median of 88 to 97 ms. The measured steady cycle is inside the 50 ms bound
+  set for one cycle's resolution. No end is queued for an agent none of
+  those names: a Workflow run's agents when the object holds no roster for
+  the run (one the report retires before any progress frame, or one that
+  ends or loses its CLI before any), and a subagent the old kernel knew only
+  by its start hook whose stop is lost; their entries fall to the quiescent
+  drop, the count cap or the byte budget. The pusher, at each
   cycle's start, writes an ended
   agent's checkpoint document when it lacks what the cache holds, then
   drops its records, so a later fold whose cursor the document records
