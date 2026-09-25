@@ -320,8 +320,8 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   three postal legs and the kernel's `BUS_PORT` (read at import) set in the setUp of
   every class that attaches or detaches, its `_ensure_postal_bus` revive road stubbed
   there with a recorder, all put back by cleanups, none at module level (a probe runs
-  the stub: a revive after the setUp lands in the recorder, the cleanups fail on it and
-  put the road back). The same shape leaked `ROMP_SESSIONS_FILE` from `test_postal_bus_lifetime.py`
+  the stub: a call of the stubbed road after the setUp lands in the recorder, the
+  cleanups fail on it and put the road back). The same shape leaked `ROMP_SESSIONS_FILE` from `test_postal_bus_lifetime.py`
   (a tearDown that put back only a prior value; fixed 2026-09-18 with a cleanup and a
   pin that runs the case). conftest's `_shared_state_restored` names such a leftover
   in any run, since no module writes the seam at import, and it watches the bus-name
