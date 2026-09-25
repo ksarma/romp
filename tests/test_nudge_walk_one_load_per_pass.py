@@ -3793,7 +3793,14 @@ class TheCountersOneSite(unittest.TestCase):
         the read and missed a read that raised out of the look; extra5-1: a one-line `if` around the bump passed the line
         check); the load the call a statement of the look's own body evaluates, so the read runs at most once per call of the
         look (a verifier of the round-9 fixes: a retry loop or a try around the bump and the read, on a raise or a fault no case
-        drives, kept the one site and the bump's adjacency and took two loads per look with the module green); and the gate
+        drives, kept the one site and the bump's adjacency and took two loads per look with the module green); the writer door's
+        sites in the look (those the needle jd.load_goals, which both doors' spellings contain, finds, less the shared door's) held
+        to the rows the case lists, the reads under the look's `if to_fire:` blocks, each keyed by its line and by the header line
+        and clause of each compound statement of the look around it, the keys compared in source order, so a writer-door site
+        added anywhere in the look is named by line, as is a listed row whose line or whose statements around it change, while a
+        listed row moved with its line, those statements and its order kept is not seen (review round 11, fresh-1: the census
+        read the shared door alone, and a writer-door load planted in the look beside a jd.load_goals call site removed elsewhere
+        in the kernel, the birth pin's count per spelling unmoved, left the module green); and the gate
         around the look reads no store (a skipped look needs no data), scanned by the same rule. The bump
         is read as a statement too, an augmented `+= 1` on `_NUDGE_WALK_STATS["loads"]`, never as a line of text (review round
         2, correctness-3: a comment quoting the statement counted as a second bump). Each object is first checked to be the
@@ -4058,6 +4065,40 @@ class TheCountersOneSite(unittest.TestCase):
                          "site count and the bump's adjacency holding: the load at %s; statements of the look's body whose value calls "
                          "the shared door: %s" % (kline(at[0]), "; ".join("line %d: %s" % (st.lineno, lines[st.lineno - 1].strip())
                                                                            for st in holders) or "none"))
+        # the writer door in the look's own source (review round 11, fresh-1: the count above reads the shared door's spelling alone,
+        # so a jd.load_goals call planted in the look, with a jd.load_goals call site removed elsewhere in the kernel so the birth
+        # pin's count per spelling held, left the module green): every site _loader_sites finds in the look for the needle
+        # jd.load_goals, which both doors' spellings contain, less the shared door's sites, is a writer-door site, keyed by its line
+        # and by the compound statements of the look around it, each by its header line and the clause holding the site; the keys,
+        # in source order, must be the rows below, the reads under the look's `if to_fire:` blocks (_nudge_fire_list's last-moment
+        # re-read, the redundancy gate's node read and the send-moment freshness read)
+        writer = _loader_sites(km._auto_nudge_session, "jd.load_goals")
+        for site in _loader_sites(km._auto_nudge_session, "jd.load_goals_shared"):
+            writer.remove(site)
+        compound = [n for n in nodes if isinstance(n, (ast.stmt, ast.excepthandler, ast.match_case)) and n is not looks[0]
+                    and isinstance(getattr(n, "body", None), list) and looks[0].lineno < n.lineno <= n.end_lineno <= looks[0].end_lineno]
+
+        def around(ln):                               # the compound statements of the look holding the kernel's line ln, outermost first
+            out = []
+            for st in sorted((c for c in compound if c.lineno <= ln <= c.end_lineno), key=lambda c: (c.lineno, -c.end_lineno)):
+                clause = [f for f in ("body", "orelse", "finalbody", "handlers", "cases")
+                          if any(x.lineno <= ln <= x.end_lineno for x in getattr(st, f, None) or ())]
+                out.append((lines[st.lineno - 1].strip(), clause[0] if clause else "header"))
+            return out
+        fire = [('to_fire = _nudge_fire_list(jd.load_goals(sid), to_fire, arm_t=arm.get("t") or 0,',
+                 [("if to_fire:", "body"), ("try:", "body")]),
+                ('_nodes = jd.load_goals(sid).get("nodes", {})', [("if to_fire:", "body"), ("if recent:", "body"), ("try:", "body")]),
+                ("_fr = jd.load_goals(sid)", [("if to_fire:", "body"), ("try:", "body")])]
+        found = [(ln.strip(), around(first + i)) for i, ln in writer]
+        self.assertEqual(found, fire,
+                         "the look's own source names the writer door (a spelling holding jd.load_goals and not jd.load_goals_shared, by "
+                         "_loader_sites' rule) only at the rows listed, each keyed by its line, stripped, and by the compound statements of "
+                         "the look around it, outermost first, each by its header line and the clause holding the site, the keys compared "
+                         "in source order: a writer-door site added anywhere in the look reds here, and so does a listed row whose line or "
+                         "whose statements around it change, or which is removed (review round 11, fresh-1: a writer-door load planted in "
+                         "the look beside a jd.load_goals call site removed elsewhere in the kernel left the module green); the look's "
+                         "writer-door sites: %s" % ("; ".join("%s, within %s" % (kline(i), " > ".join("%s (%s)" % h for h in around(first + i))
+                                                                              or "the look's body") for i, _ln in writer) or "none"))
         self._the_named_def("_nudge_look_gated", km._nudge_look_gated, "_nudge_look_gated")
         gated = [ln.strip() for _i, ln in _loader_sites(km._nudge_look_gated, "load_goals")]
         self.assertEqual(gated, [], "the gate around the look reads no store: a skipped look loads through neither mechanism: %s" % "; ".join(gated))
