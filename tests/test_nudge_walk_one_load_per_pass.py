@@ -3820,9 +3820,10 @@ class TheCountersOneSite(unittest.TestCase):
         _NUDGE_WALK_STATS is one of the admitted forms (the one module-level assignment of its dict display with "loads" among
         its keys, a plain or augmented store to a constant key, `.get` with a constant key, a `dict(...)` copy), any other form
         named by line, and exactly one of them writes the "loads" key: the look's bump; the admitted forms' pin, the rule run first
-        in this case over synthetic texts, admits the four and names by line each other form it lists, a call on the Name of every
-        name dir(dict) gives but get among them, so a form dropped, or any listed form admitted as a fifth, reds (review round 11,
-        tests-3 and extra6-1). The counter's name has no other spelling
+        in this case over synthetic texts, admits the four and names by line each other form it lists, among them a call on the
+        Name of each name dir(dict) gives but get, with no, one and two arguments, and `.get` with none or three, so a form
+        dropped, or any listed form admitted as a fifth, reds (review round 11, tests-3 and extra6-1). The counter's name has no
+        other spelling
         in the files the glob kernel/*.py matches in the kernel's real directory, non-recursive, whose text holds it in any letter
         case (each of those files read as text, and each whose text holds the name parsed and walked with _walk, so the kernel is
         among them or the case reds): no node names it in an
@@ -4218,7 +4219,8 @@ class TheCountersOneSite(unittest.TestCase):
                          "are each admitted, the augmented store the one write of the loads key, so a form dropped from the census reds "
                          "here and not only where the kernel happens to use it (review round 11, tests-3); (references, lines outside, "
                          "loads writes): %r" % ((len(a_refs), [n.lineno for n in a_outside], [t.lineno for t in a_writes]),))
-        refused = (["%s.%s('loads')" % (name, m) for m in dir(dict) if m != "get"]
+        refused = (["%s.%s(%s)" % (name, m, a) for m in dir(dict) if m != "get" for a in ("", "'loads'", "'loads', 1")]
+                   + ["%s.get()" % name, "%s.get('loads', 0, 1)" % name]
                    + ["%s[k] = 1" % name, "%s['lo' + 'ads'] += 1" % name, "s = %s" % name, "print(%s)" % name, "%s.get(k)" % name,
                       "dict(%s, loads=1)" % name, "dict(%s, {})" % name])
         text = "%s = {'loads': 0}\ndef f(k):\n%s" % (name, "".join("    %s\n" % r for r in refused))
@@ -4226,7 +4228,8 @@ class TheCountersOneSite(unittest.TestCase):
         want = list(range(3, 3 + len(refused)))
         self.assertEqual(r_outside, want,
                          "and every other form listed is refused, named by its line: a call on the Name of each name dir(dict) gives "
-                         "but get (among them __setitem__, pop, update and setdefault), a store to a name key and an augmented store to "
+                         "but get (among them __setitem__, pop, update and setdefault) with no argument, with one ('loads') and with "
+                         "two ('loads', 1), `.get` with no argument and with three, a store to a name key and an augmented store to "
                          "a concatenation key, an alias by plain assignment (`s = %s`), the Name handed to print, `.get` with a name "
                          "key, and `dict(...)` with a keyword or a second argument, so admitting any listed row's form as a fifth form "
                          "reds here (review round 11, tests-3 and extra6-1); refused and not named: %s; named and not refused: %s"
