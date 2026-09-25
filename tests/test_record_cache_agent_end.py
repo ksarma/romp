@@ -394,8 +394,8 @@ class AgentEnd(unittest.TestCase):
         reattached object's mirror lacked the agent's row, so the row is minted from the agent's first progress frame, which
         carries no type, and its end queues nothing. Queuing it was measured first (2026-09-25): the kernel would resolve
         the id at the drain, and on a miss that walks every sibling session's subagents tree in the project directory: on
-        the largest project directory measured, 105 to 134 ms at the first walk and a median of 22 to 33 ms for each new id
-        after it (seven runs), over the 50 ms bound set for one cycle's resolution. Green while the residual stands;
+        the largest project directory measured, 101 to 134 ms at the first walk and a median of 19 to 33 ms for each new id
+        after it (ten runs), over the 50 ms bound set for one cycle's resolution. Green while the residual stands;
         queuing the end turns it red, and the texts that name the residual must change with it."""
         again, size = self._reattached(AID, self.agent)
         again._on_task_event("task_progress", {"task_id": AID, "description": "check the notes-api routes"})

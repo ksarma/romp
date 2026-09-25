@@ -3100,8 +3100,8 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   start hook whose stop is lost, and a Task agent whose row was minted from
   a progress frame that carried no type, left out because resolving an id
   no type vouches for walks every sibling session's subagents tree on a miss
-  (105 to 134 ms at the first walk on the largest project directory
-  measured, 2026-09-25); their entries fall to the quiescent drop, the count
+  (101 to 134 ms at the first walk on the largest project directory
+  measured, ten runs on 2026-09-25); their entries fall to the quiescent drop, the count
   cap or the byte budget. The pusher, at each cycle's start, writes an ended
   agent's checkpoint document when it lacks what the cache holds, then
   drops its records, so a later fold whose cursor the document records
