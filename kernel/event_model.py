@@ -666,8 +666,10 @@ _JSONL_CACHE_MAX = 1024           # bounds MEMORY only (384 → 1024 on 2026-09-
 # names (SdkBackend.note_agent_live), a release given up (releaseLost), an end remembered while nothing was held and then
 # forgotten past that memory's bound, and a whole re-read of a file after its release was taken (the agent viewer's), which
 # holds it whole until the count cap, the byte budget or a quiescent drop at a stepping fold reaches it (releasedReread
-# counts the read that starts each such hold), since releasing it after every whole read would make a reader that reads it
-# whole at each render read it whole at each render. That hold starts only after the agent's later ends: an end of the same
+# counts the first whole read after a release when no other pop of the path came between and the path's mark was not
+# dropped past the marks' bound; a hold that starts after an eviction, of a restored tail or of the counted hold, is not
+# counted), since releasing it after every whole read would make a reader that reads it whole at each render read it
+# whole at each render. That hold starts only after the agent's later ends: an end of the same
 # agent acted on after that release was taken (its task's end or its workflow slot's done state after its stop, in a later
 # cycle, or in the cycle whose owed pay took a deferred release) releases a re-read that holds the file at that end, and
 # when nothing is held it is remembered like any other end, so the first whole re-read after it is released at the next
