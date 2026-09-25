@@ -8620,15 +8620,18 @@ viewer takes off every element of a file's author markup what would let a press 
 pointer-events on at any value but auto, the inert attribute and a pointer-events declaration of its style (`dropPressThrough` over
 `SHEET_PRESS_THROUGH_CLASSES`, held to the sheets both ways by file-figure-open.test.ts; the file review's round 16, extra5-1: an
 author's div of locate-toast, fixed, opaque and letting a press through, painted over the control while a gesture opened the tab, and
-elementsFromPoint skips such an element as elementFromPoint does, measured in Chromium, Firefox and WebKit); a same-origin parent's own
+elementsFromPoint skips such an element as elementFromPoint does, measured in Chromium, Firefox and WebKit); author content the hit test
+does not see stays below the control, the viewer having taken off the classes the sheets would raise it to the control's stacking level
+(`dropStackClasses`, below); a same-origin parent's own
 chrome over the frame is not read), read at the gesture's start, at the press in the window's capture phase, before the popover's own capture listener closes it,
 and at the first keydown (repeat false) of Enter or Space, the press's verdict taken by its click through the pointerId they share;
 a refused gesture opens nothing and scrolls the sign into view (`revealSign`, block and inline "nearest", the same-origin frames and
 a pinch zoom's visual viewport included), moving no focus, so the next gesture opens; where the reveal cannot put the sign on the
 screen the gate stays closed, stated limits measured in Chromium: the chat page's modal framed by the dashboard under a pinch zoom of
 the top page (the viewer's card is fixed in its frame, and scrollIntoView from it pans no visual viewport of the top page, while
-the viewer as the top page and the Files pane's frame pan), until the reader pans by hand; and an author's element laid over the
-figure that the reader cannot dismiss, which keeps that picture from opening at all; a refused key closes the viewer's own text-size
+the viewer as the top page and the Files pane's frame pan), until the reader pans by hand; an author's element of a page class laid over
+the figure no longer keeps that picture from opening, since `dropStackClasses` takes off the classes the sheets would raise it to the
+control's stacking level, so it falls into the flow below the control (the file review's round 16, extra5-1); a refused key closes the viewer's own text-size
 flyout as well, which no other key but Escape closes, so the next key opens where the flyout had covered the control; the later events of one gesture take its
 verdict by their own fields and never by time, a click whose detail is above 1 after a refused click of its run, a held key's
 repeats after a refused keydown, and Space's release, which also reads the control in view at the release; out of view a Space
@@ -8652,7 +8655,9 @@ class the sheets dim off the author's markup there before the dress is laid (`dr
 the sheets both ways by file-figure-open.test.ts; the file review's round 16, extra5-2: an author's span of tag-chip-off, 0.45, had
 painted the dress at 2.00:1 dark and 1.86:1 light while a tap opened the tab), while an author's element laid over the figure is the
 one gate's to read, which refuses a sign where a press would reach such an element, the viewer taking off it what would let a press
-pass through it (`dropPressThrough`), and an author's own link opens its address with no dress, as before this follow-on; the painted-contrast ask of 2026-09-23, the press cue on the maintainer's ruling within it,
+pass through it (`dropPressThrough`) and the classes the sheets would raise it to the control's stacking level, so author content the
+hit test does not see stays below the control (`dropStackClasses` over `SHEET_STACK_CLASSES`, held to the sheets both ways by
+file-figure-open.test.ts; the file review's round 16, extra5-1), and an author's own link opens its address with no dress, as before this follow-on; the painted-contrast ask of 2026-09-23, the press cue on the maintainer's ruling within it,
 where at 0.8 the control read 2.46:1 by pixels on a
 VS Code editor ground of #404040 and, at 0.8 x 0.7 inside a captioned dead link, 2.47:1 dark and 2.40:1 light), measured in its own
 CSS pixels from the loaded picture's laid-out box while it is in the document (the box divided by the picture's zoom, so a body zoom
@@ -9049,8 +9054,8 @@ open's, still fails), and at the merge of the fork's main and in the file review
 ui/webview/file-view-seam.test.ts (its re-parse census: the callee list gained addFigureControls, this follow-on's pass,
 with the local functions it reaches, and since the landing round the walk follows a reached local's imported callees and
 every import form transitively, judging the sites it finds per module, with the whole file's count in its one home, and since the
-fixes for the file review's round 16 its inertness premise names the file kind's two drops, dropDimmingClasses and dropPressThrough,
-among the calls the sanitizer's body reaches before the adoption) and
+fixes for the file review's round 16 its inertness premise names the file kind's three drops, dropDimmingClasses, dropPressThrough and
+dropStackClasses, among the calls the sanitizer's body reaches before the adoption) and
 tools/markdown-viewer-plan-gate-adopt.test.mjs (main's pin of the "Fix: the gate before adoption (2026-09-20)" section: its
 held copy of that section's re-parse paragraph, re-derived, with the derived figures filled from the seam test's pins), and
 in the landing round ui/webview/anchor-map.test.ts (the control at the box's top level is no block's node, executed beside
@@ -9072,7 +9077,7 @@ classList.add, the control's float side read off the figure's align, and dressFi
 declared by a concatenation the census's constant reader does not fold, and since the fixes for the file review's round 16,
 extra5-2, dropDimmingClasses's classList.remove, the classes the sheets dim read at run time off an author's markup around a
 figure, and since its extra5-1, dropPressThrough's, the classes that let a press pass through read the same way off every author
-element) and ui/webview/spacer-measure.test.ts (its roster of
+element, and dropStackClasses's, the classes the sheets would raise to the control's stacking level read the same way) and ui/webview/spacer-measure.test.ts (its roster of
 the modules under ui/webview that no page bundle loads names css-rules.mjs, host-sheets.mjs and source-units.ts, the readers
 this follow-on's tests import, and its closed multiset of the writes of a view property names the trail's two, trailSetView's
 and moveTrail's, each kept in the page's trail state and never posted), and since the fixes for the file review's round 16,
