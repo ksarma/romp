@@ -1316,6 +1316,7 @@ _PARSES = collections.Counter()   # _text_key(text) -> the parses _parse_text ma
 _TREES = []                       # (filename, weak reference) for every tree _parse_text returned in this module run
 _BINDINGS = []                    # (filename, weak reference) for every Bindings _bindings_of built in this module run
 _READS = [0]                      # the reads of the real tree made in this module run (_tree_read)
+_ABORTED = []                     # (the file it stopped at, its cause) for each read of the tree that raised (_tree_read)
 _TREE_READ = {}                   # "tree" -> the real tree's read while the module runs (_TreeRead: plain values only)
 _PLACEMENT_PARSES = collections.Counter()   # _text_key(text) -> the placement test's parses of that text (the tunnels module)
 _FILE_TREES = []                  # weak references to the file trees _parse built that were alive at its last call
@@ -1399,6 +1400,16 @@ _RoadsTable = collections.namedtuple("_RoadsTable", "roads hermetic compared pat
 _TreeRead = collections.namedtuple("_TreeRead", "table env_writes paths root keys most_trees born")
 
 
+class ReadAborted(AssertionError):
+    """A read of a directory (_read_root) stopped by an exception, raised in its place and from it: `where` the file
+    under the directory the read stopped at (None when it stopped before its first file) and `cause` the exception, both
+    named in the message, so the tree's read records where it aborted and why (_tree_read, _ABORTED)."""
+
+    def __init__(self, where, cause):
+        super().__init__("the read stopped at %s: %s: %s" % (where or "its start", type(cause).__name__, cause))
+        self.where, self.cause = where, cause
+
+
 def _roads_row(name, src, tree, hand=()):
     """One module's reading for the roads table: ((road, sites, unresolved), whether its text carries the trio
     (_hermetic), its comparison values or None). The comparison values are _regex_scan_comparison's, read with the same
@@ -1448,8 +1459,9 @@ def _read_root(root, skip=(), listing=None, count=False):
     that carry the trio; `compared` {name: comparison values}; `paths` the table's files), `env_writes` {path under
     `root`: keys or the refusal's message}, `paths` the walked files, `root`, `keys` {path: the text key (_text_key) of
     every file the read parsed, as it parsed it}, which the parse check holds the counter to (_parse_count_faults),
-    `most_trees`, and `born` ({class name: count}; None without `count`). A file that does not parse raises from the
-    read with its name. Nothing is memoised here: over tests/ the module run's one read is _tree_read's, and a plant is read again on
+    `most_trees`, and `born` ({class name: count}; None without `count`). A read that raises, a file that does not
+    parse or one removed mid-read among the causes, raises ReadAborted naming the file it stopped at and the cause,
+    chained from the cause. Nothing is memoised here: over tests/ the module run's one read is _tree_read's, and a plant is read again on
     each call."""
     listing = LISTED_BY_HAND if listing is None else listing
     paths = _tree_module_paths(root)
@@ -1458,36 +1470,48 @@ def _read_root(root, skip=(), listing=None, count=False):
     roads, hermetic, compared, table_paths, env_writes, keys = {}, set(), {}, [], {}, {}
     before = _held_alive() if count else None             # held to the loop's end, so none of it dies and no id is reused
     _MOST_FILE_TREES[0] = 0                                # the window the read's most_trees measures starts here
-    for path in sorted(in_walk | in_table):
-        rel = os.path.relpath(path, root)
-        src, tree = _parse(path, rel)
-        keys[path] = _text_key(src)                        # the text as parsed: the parse check holds _PARSES to it
-        if path in in_walk:
-            try:
-                env_writes[rel] = frozenset(_module_level_env_writes(tree, rel))
-            except UnreadableEnvWrite as e:
-                env_writes[rel] = str(e)
-        if path in in_table:
-            table_paths.append(path)
-            roads[rel], carries, comparison = _roads_row(rel, src, tree, tuple(e for e in listing if e[0] == rel))
-            if carries:
-                hermetic.add(rel)
-            if comparison is not None:
-                compared[rel] = comparison
-        del src, tree                     # dropped before the next parse: one file tree alive at a time (most_trees)
+    at = None                                              # the file the read is on, named if it stops there
+    try:
+        for path in sorted(in_walk | in_table):
+            rel = at = os.path.relpath(path, root)
+            src, tree = _parse(path, rel)
+            keys[path] = _text_key(src)                        # the text as parsed: the parse check holds _PARSES to it
+            if path in in_walk:
+                try:
+                    env_writes[rel] = frozenset(_module_level_env_writes(tree, rel))
+                except UnreadableEnvWrite as e:
+                    env_writes[rel] = str(e)
+            if path in in_table:
+                table_paths.append(path)
+                roads[rel], carries, comparison = _roads_row(rel, src, tree, tuple(e for e in listing if e[0] == rel))
+                if carries:
+                    hermetic.add(rel)
+                if comparison is not None:
+                    compared[rel] = comparison
+            del src, tree                     # dropped before the next parse: one file tree alive at a time (most_trees)
+    except Exception as e:
+        raise ReadAborted(at, e) from e
     born = None if before is None else _born(before)   # the loop has ended: what the read made and something still holds
     before = None
     table = _RoadsTable(roads, frozenset(hermetic), compared, tuple(table_paths))
     return _TreeRead(table, env_writes, tuple(paths), root, keys, _MOST_FILE_TREES[0], born)
 
 
-def _tree_read():
+def _tree_read(root=None):
     """The real tree's read for this module run (_read_root over tests/ with TREE_SKIP), made by the first caller and
     answered from _TREE_READ after, so the trio test, the guard test, the comparison case, the --roads arm and the
-    peers test share one parse of each file; _READS counts the reads made. tearDownModule empties it (_release)."""
+    peers test share one parse of each file; _READS counts the reads made. A read that raises is recorded in _ABORTED,
+    the file it stopped at and the cause (ReadAborted's), before the exception goes on, so the parse check expects no
+    count and the module end reports the abort (PR #850's eleventh review round). `root` stands for tests/ in the
+    aborted read's pin alone, which saves the module's state and puts it back. tearDownModule empties it (_release)."""
     if "tree" not in _TREE_READ:
         _READS[0] += 1
-        _TREE_READ["tree"] = _read_root(HERE, TREE_SKIP, count=True)
+        try:
+            _TREE_READ["tree"] = _read_root(HERE if root is None else root, TREE_SKIP, count=True)
+        except BaseException as e:
+            where, cause = (e.where, e.cause) if isinstance(e, ReadAborted) else (None, e)
+            _ABORTED.append((where, "%s: %s" % (type(cause).__name__, cause)))
+            raise
     return _TREE_READ["tree"]
 
 
@@ -1533,16 +1557,24 @@ def _parse_count_faults(read=None, reads=None):
     """(file, parses, expected) for every text the module's counter (_PARSES) holds other than expected in this module
     run, over the texts as they were parsed: each file's text key as `read` recorded it at its parse (_read_root's
     `keys`; by default the module run's read of the tree, _TREE_READ) and the tunnels module's key as the placement test
-    parsed it (_PLACEMENT_PARSES). When no read was made in this process (no `read` handed and none in _TREE_READ, as on
-    an xdist worker that ran none of the module's tests that read the tree), the files under tests/ (_tree_module_paths)
-    are read here at their current text, no tree built, and each text is expected at the placement test's parses alone
-    (_READS is 0 then), so a file of the tree parsed outside a read is still named. Expected otherwise: one parse for
+    parsed it (_PLACEMENT_PARSES). When a read of the tree aborted in this module run (_ABORTED) and no `read` is
+    handed, there are no rows: the aborted read parsed the files before the one it stopped at and none after, so no
+    count can be expected of a file, and the module end reports the abort, with the file and the cause, in their place
+    (PR #850's eleventh review round: the no-read branch ran after an aborted read and named every file it never
+    reached as parsed 0 times against 1, and a later read that completed would leave those files at once against
+    twice). When no read was made in this process (no `read` handed and none in _TREE_READ, as on an xdist worker that
+    ran none of the module's tests that read the tree), the files under tests/ (_tree_module_paths) are read here at
+    their current text, no tree built, and each text is expected at the placement test's parses alone (_READS is 0
+    then: every read made either completed or aborted), so a file of the tree parsed outside a read is still named.
+    Expected otherwise: one parse for
     each file of the read that holds the text, for each of the `reads` reads of it (by default _READS, the reads of the
     tree the run made), and the placement test's parses of that text besides. A file of the read parsed again through
     _parse_text moves its key past the expected count and is named; a file edited after the read is held to the text the
     read parsed, not to the text on disk now (PR #850's tenth review round: a check that re-read the files at check time
     named a file edited during the run as parsed 0 times against 1). No tree is built here. The parse pin reads it in
     its test and tearDownModule at the module's end."""
+    if read is None and _ABORTED:
+        return []   # a read of the tree aborted in this module run: no count is expected, and the module end says why
     read = _TREE_READ.get("tree") if read is None else read
     reads = _READS[0] if reads is None else reads
     keys = dict(read.keys) if read is not None else {p: _text_key(_source(p)) for p in _tree_module_paths()}
@@ -1557,7 +1589,8 @@ def _parse_count_faults(read=None, reads=None):
 
 def _module_end_faults():
     """The module end's checks (tearDownModule), a message for each that fails: a tree or a Bindings the module recorded
-    still alive, an object of _HELD_TYPES made in the module's run and alive, or no start list (_still_held), and
+    still alive, an object of _HELD_TYPES made in the module's run and alive, or no start list (_still_held), a read of
+    the tree that aborted, with the file it stopped at and the cause (_ABORTED), and
     texts of the tree's read, as it parsed them, parsed other than expected (_parse_count_faults). Each is read over the
     whole
     module run in this process, so a test that keeps a tree or re-parses a file is seen whatever its place in the run's
@@ -1574,6 +1607,9 @@ def _module_end_faults():
         faults.append("%d tree nodes and ast_bindings objects (ast.AST, Bindings, Scope, Declaration) made in this "
                       "module's run are alive at its end (gc.get_objects() against setUpModule's list, no collection), by "
                       "class: %s" % (sum(born.values()), ", ".join("%s %d" % kv for kv in sorted(born.items()))))
+    if _ABORTED:
+        faults.append("the tree's read aborted in this module run, so no parse count is expected of it: %s"
+                      % "; ".join("stopped at %s (%s)" % (where or "its start", cause) for where, cause in _ABORTED))
     parses = _parse_count_faults()
     if parses:
         faults.append("texts of the tree's read, as it parsed them (or, when this process made no read of the tree, of "
@@ -1584,17 +1620,42 @@ def _module_end_faults():
 
 
 def _release():
-    """What the module holds, dropped when it ends (tearDownModule): the tree's read, the counters, the weak references
-    and the start count (_AT_START). No tree or Bindings is among them."""
+    """What the module holds, dropped when it ends (tearDownModule): the tree's read, the counters, the aborts, the weak
+    references and the start list (_AT_START). No tree or Bindings is held here but in that list, whose objects were
+    alive before the module started."""
     _TREE_READ.clear()
     _PARSES.clear()
     _READS[0] = 0
+    del _ABORTED[:]
     _PLACEMENT_PARSES.clear()
     del _FILE_TREES[:]
     _MOST_FILE_TREES[0] = 0
     del _TREES[:]
     del _BINDINGS[:]
     del _AT_START[:]
+
+
+def _module_state_put_back():
+    """A function that puts the module's state back as it stands now (the tree's read, the counters, the aborts, the
+    weak references, the start list and the file-tree count), dropping what a test made of it first (_release): the
+    release pin and the aborted read's pin read the module end's checks over a state of their own and put it back, so
+    the later tests of the run read the same read."""
+    saved = (dict(_TREE_READ), collections.Counter(_PARSES), _READS[0], list(_TREES), list(_BINDINGS),
+             collections.Counter(_PLACEMENT_PARSES), list(_AT_START), list(_FILE_TREES), _MOST_FILE_TREES[0], list(_ABORTED))
+
+    def put_back():
+        _release()
+        _TREE_READ.update(saved[0])
+        _PARSES.update(saved[1])
+        _READS[0] = saved[2]
+        _TREES[:] = saved[3]
+        _BINDINGS[:] = saved[4]
+        _PLACEMENT_PARSES.update(saved[5])
+        _AT_START[:] = saved[6]
+        _FILE_TREES[:] = saved[7]
+        _MOST_FILE_TREES[0] = saved[8]
+        _ABORTED[:] = saved[9]
+    return put_back
 
 
 def tearDownModule():
@@ -3406,6 +3467,54 @@ class HermeticKernelPostal(unittest.TestCase):
                          "in this module run, by the module's counter (_PARSES): (file, parses, expected: one per file that "
                          "holds the text for each read of the tree, and the placement test's parses of that text besides)")
 
+    def test_an_aborted_read_of_the_tree_reports_where_it_stopped_and_expects_no_parse_count(self):
+        """D (PR #850's eleventh review round): a read of the tree that raises is reported with the file it stopped at
+        and the cause, and the parse check expects no count of it, where the check's no-read branch had named every
+        file the read never reached as parsed 0 times against 1. Over a scratch directory standing for tests/
+        (_tree_read's root): test_a.py parses, test_b.py does not, and test_c.py, after it in the read's order, is never
+        reached. With the module's state emptied (_release) and put back after, and setUpModule's list kept for the
+        module end's other checks: the read raises ReadAborted naming test_b.py and a SyntaxError; the module end's
+        checks (_module_end_faults) report that abort and nothing else; and the parse check (_parse_count_faults) names
+        nothing. Then test_b.py is made to parse and the tree read again in the same run: the read completes, and the
+        checks still report the first read's abort alone (the two reads, the first stopped partway, would otherwise
+        leave test_b.py and test_c.py at one parse against two). The red at the round-11 review head is the module run
+        over a scratch copy of the checkout with a file under its tests/ that does not parse, whose teardown named every
+        file the read never reached; here, a mutant that takes the abort out of the parse check reds this test with
+        such rows."""
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, True)
+        scratch = os.path.join(d, "tests")
+        os.mkdir(scratch)
+        for name, text in (("test_a.py", "A = 1\n"), ("test_b.py", "def broken(:\n"), ("test_c.py", "C = 3\n")):
+            with open(os.path.join(scratch, name), "w", encoding="utf-8") as f:
+                f.write(text)
+        at_start = list(_AT_START)
+        self.addCleanup(_module_state_put_back())
+        _release()
+        _AT_START[:] = at_start
+        with self.assertRaises(ReadAborted) as caught:
+            _tree_read(scratch)
+        self.assertEqual((caught.exception.where, type(caught.exception.cause).__name__), ("test_b.py", "SyntaxError"),
+                         "the read raises ReadAborted naming the file it stopped at and the cause")
+        aborted = ("the tree's read aborted in this module run, so no parse count is expected of it: stopped at test_b.py "
+                   "(SyntaxError: ")
+        faults = _module_end_faults()
+        self.assertEqual(([f[:len(aborted)] for f in faults], len(faults)), ([aborted], 1), "the module end's checks after "
+                         "an aborted read: the abort, with the file it stopped at and the cause, and nothing else: %r"
+                         % [f[:600] for f in faults])
+        self.assertEqual(_parse_count_faults(), [], "the parse check after an aborted read names no file")
+        with open(os.path.join(scratch, "test_b.py"), "w", encoding="utf-8") as f:
+            f.write("B = 2\n")
+        read = _tree_read(scratch)
+        self.assertEqual((_READS[0], sorted(os.path.relpath(p, scratch) for p in read.paths)), (2, ["test_a.py", "test_b.py", "test_c.py"]),
+                         "the second read of the run completes over every file")
+        faults = _module_end_faults()
+        self.assertEqual(([f[:len(aborted)] for f in faults], len(faults)), ([aborted], 1), "the module end's checks after "
+                         "an aborted read and a read that completed: the first read's abort and nothing else: %r"
+                         % [f[:600] for f in faults])
+        self.assertEqual(_parse_count_faults(), [], "the parse check after an aborted read and a read that completed names "
+                         "no file")
+
     def test_the_tree_read_keeps_no_tree_and_no_bindings_and_leaves_plain_values(self):
         """THE RELEASE PIN (PR #850's review round 9, E ruled again: no tree and no Bindings object of the module
         outlives it, and the table is left as plain values). Every tree and Bindings the module builds by a road it
@@ -3463,25 +3572,12 @@ class HermeticKernelPostal(unittest.TestCase):
                 foreign[type(value).__name__] += 1
         self.assertEqual(dict(foreign), {}, "the tree's read holds values other than tuples, strings, numbers, None, dicts "
                          "and frozensets (type: count)")
-        saved = (dict(_TREE_READ), collections.Counter(_PARSES), _READS[0], list(_TREES), list(_BINDINGS),
-                 collections.Counter(_PLACEMENT_PARSES), list(_AT_START), list(_FILE_TREES), _MOST_FILE_TREES[0])
-
-        def put_back():
-            _release()
-            _TREE_READ.update(saved[0])
-            _PARSES.update(saved[1])
-            _READS[0] = saved[2]
-            _TREES[:] = saved[3]
-            _BINDINGS[:] = saved[4]
-            _PLACEMENT_PARSES.update(saved[5])
-            _AT_START[:] = saved[6]
-            _FILE_TREES[:] = saved[7]
-            _MOST_FILE_TREES[0] = saved[8]
+        put_back = _module_state_put_back()
 
         def sizes():
             return {"_TREE_READ": len(_TREE_READ), "_PARSES": len(_PARSES), "_READS": _READS[0], "_TREES": len(_TREES),
                     "_BINDINGS": len(_BINDINGS), "_PLACEMENT_PARSES": len(_PLACEMENT_PARSES), "_AT_START": len(_AT_START),
-                    "_FILE_TREES": len(_FILE_TREES), "_MOST_FILE_TREES": _MOST_FILE_TREES[0]}
+                    "_FILE_TREES": len(_FILE_TREES), "_MOST_FILE_TREES": _MOST_FILE_TREES[0], "_ABORTED": len(_ABORTED)}
 
         try:
             tearDownModule()                                           # the check: raises on any fault it reads
