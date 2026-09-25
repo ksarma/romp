@@ -144,8 +144,9 @@ loop or a file of mode 000 at the store path) loads once through the walk, is co
 The wake sweep, `_awaiting_wake_outcomes`, is the store's third reader on the pass. It runs after the per-session loop,
 in the same pass and outside the toggle guard, and takes one shared load per wake record it owns: a record that is
 wake-set; not failed, moot or answered; not under a journaled muted gate; and whose sid is not alive this pass or whose
-journaled walk gate is a wedge gate (the journaled gate keyed by gid when present and else by sid, and for a sid the walk's
-yield deferred, the gate from its last visit). It keeps no memo, so it reads again every pass, and `memos.nudgeWalk.loads` does not count it. The harness holds it to
+journaled walk gate is a wedge gate (the journaled gate keyed by gid when present and else by sid, the gid lookup pinned by
+tests/test_walk_gate_journal.py, SweepOwnership.test_a_per_goal_skip_gate_counts_as_wedge, which reds with that lookup
+dropped, and for a sid the walk's yield deferred, the gate from its last visit). It keeps no memo, so it reads again every pass, and `memos.nudgeWalk.loads` does not count it. The harness holds it to
 that bound per sid per pass (`owned_records`, the records the seeding helper gave it): the first cases' ledger holds no
 wake record, so the sweep reads nothing there, and TheSweepIsItsOwnBoundedReader drives both of its constituencies: one
 record for an unwalked private sid, with one sweep load on each of two passes, once with a store whose nodes lack the goal
@@ -2704,7 +2705,8 @@ class _WalkHarness(unittest.TestCase):
             self.assertLessEqual(n, self.owned_records.get(sid, 0),
                                  "sid ..%s: the sweep takes at most one shared load per wake record it owns per pass (a record that is "
                                  "wake-set, not failed, moot or answered, not under a journaled muted gate, and whose sid is not alive "
-                                 "this pass or whose journaled walk gate, keyed by gid when present and else by sid, is a wedge gate), "
+                                 "this pass or whose journaled walk gate, keyed by gid when present and else by sid, is a wedge gate; the "
+                                 "gid lookup's pin is tests/test_walk_gate_journal.py, SweepOwnership.test_a_per_goal_skip_gate_counts_as_wedge), "
                                  "none for a sid with no owned record; it runs after the per-session loop in the "
                                  "same pass and memos.nudgeWalk.loads does not count it; its records for this sid: %s" % (sid[-4:], recs))
         foreign = ["%s (%s:%d, sid ..%s)" % (c, f, ln, s[-4:]) for s, c, f, ln in self.calls if c in WALK + GATE and s not in SIDS]
