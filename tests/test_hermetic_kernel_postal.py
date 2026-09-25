@@ -3512,7 +3512,7 @@ class HermeticKernelPostal(unittest.TestCase):
         faults = _module_end_faults()
         self.assertEqual(([f[:len(aborted)] for f in faults], len(faults)), ([aborted], 1), "the module end's checks after "
                          "an aborted read: the abort, with the file it stopped at and the cause, and nothing else: %r"
-                         % [f[:600] for f in faults])
+                         % [f[:1000] for f in faults])
         self.assertEqual(_parse_count_faults(), [], "the parse check after an aborted read names no file")
         with open(os.path.join(scratch, "test_b.py"), "w", encoding="utf-8") as f:
             f.write("B = 2\n")
@@ -3522,7 +3522,7 @@ class HermeticKernelPostal(unittest.TestCase):
         faults = _module_end_faults()
         self.assertEqual(([f[:len(aborted)] for f in faults], len(faults)), ([aborted], 1), "the module end's checks after "
                          "an aborted read and a read that completed: the first read's abort and nothing else: %r"
-                         % [f[:600] for f in faults])
+                         % [f[:1000] for f in faults])
         self.assertEqual(_parse_count_faults(), [], "the parse check after an aborted read and a read that completed names "
                          "no file")
 
