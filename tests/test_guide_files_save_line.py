@@ -105,7 +105,9 @@ class TheSaveSentencesNameEveryGestureThatEndsTheLine(unittest.TestCase):
         land = self.panel[self.panel.index("private landSaved("):self.panel.index("private cardWhere(")]
         for call in ("scrollCard", "scrollBoth", "scrollIntoView", "centerOn", "showLoose", "scrollTop"):
             self.assertNotIn(call, land, "the landing of a save must not scroll (decision 43): %s" % call)
-        self.assertIn("if (this.margin) this.focusOn(key);", land, "the card is the focus for the layout all the same")
+        self.assertIn("if (this.margin && (!this.composer || this.composer === c)) this.focusOn(key);", land,
+                      "the card is the focus for the layout all the same, while no composer is open or the saving one is (a pin on "
+                      "where the code lives; the focus's condition is executed by file-comments-margin-fixes.test.ts \"a reply open on its card while another comment's reply lands…\", red when any landing takes the focus, and \"a reply's save out, its box cancelled, then the landing…\", red when a landing takes it only for the saving composer still open)")
 
     def test_the_line_says_above_or_below_in_the_models_words(self):
         self.assertIn('return "Saved · the card is " + side;', self.model)

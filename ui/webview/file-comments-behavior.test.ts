@@ -482,7 +482,7 @@ test("rawTarget: the refused block's own occurrence wins over an earlier copy; t
 
 // ── the close ask: what the panel tells the viewer is at stake ──────────────────────────────────────
 
-test("the panel's draft ask (guardClose) names the unsaved comment for the viewer to ask about, and nothing when the composer is empty, closed or a re-place; the viewer, not the panel, puts the question (a confirm on the web, the notice bar in the VS Code webview)", async (t: TestContext) => {
+test("the panel's draft ask (guardClose) names the unsaved comment for the viewer to ask about, and nothing when the composer is empty or closed; the viewer, not the panel, puts the question (a confirm on the web, the notice bar in the VS Code webview)", async (t: TestContext) => {
   const w = world(); t.after(() => w.close());
   const { aside } = await openPanel(w);
   assert.ok(w.closeAsk, "registered at mount, through the seam");

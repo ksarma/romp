@@ -929,19 +929,27 @@ export function followPassage(oldText: string, range: SourceRange, newText: stri
  *  (holdHead, heldNote) — one sentence for both, so the pointer and the touch read the same words. */
 const HOLD_WORDS = "The card stays open while its reply is written; Save or Cancel the reply first";
 /** Why a composer's Save is disabled while another composer's save is out (renderComposer): one write at a time, as mutate's
- *  slot guard requires. The button's title, and the words of the line with the loader in the chord hint's place (waitLine). */
+ *  slot guard requires. The button's title, and the words of the line with the loader in the chord hint's place (waitLine),
+ *  a reply's save named as a reply (SAVE_WAITS_REPLY). */
 const SAVE_WAITS = "The previous comment is still saving";
-/** Why a refused comment's Bring it back waits (heldBlockedWhy): the open composer holds the person's input, which bringing the
- *  comment back would replace. Words in a comment's box, or in a reply's; a rectangle drawn (a region composer, words typed or
- *  not: clearing its box leaves the rectangle, so the reason says to save or cancel); a pending Re-place; or the open
- *  composer's own save out, when neither Save nor clearing the box can be done and the comment comes back once that save
- *  lands (closeComposer). The button's title, and on a coarse pointer a line under the note. */
+const SAVE_WAITS_REPLY = "The previous reply is still saving";
+/** Why a refused comment's Bring it back waits (heldBlockedWhy), worded by what the open composer shows, so the reason names
+ *  only buttons on screen. Words in a comment's box, or in a reply's, freed by Save or by clearing the box; words in a comment
+ *  that shows no Save (its mapping refused, or the change it was about gone), freed by clearing the box or by Cancel; a
+ *  rectangle drawn (a region composer, words typed or not: clearing its box leaves the rectangle), freed by Save or Cancel, or
+ *  by Cancel alone on a figure with no embed line, which shows no Save; a pending Re-place, freed by the drag or Cancel. While
+ *  the open composer's own save is out neither Save nor clearing the box can be done: the first waiting comment comes back
+ *  when that save lands (closeComposer brings back one), and each later one waits its turn behind the one above it, since the
+ *  landing brings back the first only. The button's title, and on a coarse pointer a line in the note. */
 const HELD_BACK_BLOCKED = "Save or clear this comment first";
 const HELD_BACK_REPLY = "Save or clear this reply first";
-const HELD_BACK_REGION = "Save or cancel this comment first";
-const HELD_BACK_REPLACE = "Draw the new place or cancel the re-place first";
+const HELD_BACK_NO_SAVE = "Clear or Cancel this comment first";
+const HELD_BACK_REGION = "Save or Cancel this comment first";
+const HELD_BACK_REGION_NO_SAVE = "Cancel this comment first";
+const HELD_BACK_REPLACE = "Draw the new place or Cancel the re-place first";
 const HELD_BACK_SAVING = "It comes back when this comment has saved";
 const HELD_BACK_SAVING_REPLY = "It comes back when this reply has saved";
+const HELD_BACK_BEHIND = "It waits its turn behind the one above";
 /** A change named by what it did, for a refused comment's note (refusedWhat): the verb outside the quote marks and only the
  *  change's words inside them ("the change that removed “still”", "the change that added “…”", "the change that replaced
  *  “reduced” with “cut”"), each text bounded as the change card's one line bounds it (changeRef: 60 characters, 30 a side for
@@ -2454,28 +2462,57 @@ class Panel {
    *  close or a replace-open (a link followed inside the file, a Files-pane row, the shell's relay) used to drop it with
    *  the panel, silently (the 2026-09-07 review). The panel names what is at stake; the VIEWER puts the ask, the way it
    *  puts the editor's own (file-view.ts askDiscard: a confirm on the web, the notice bar in the VS Code webview, where
-   *  window.confirm shows nothing and answers false; the round-2 review). A re-place takes a drag, not words, and an
-   *  empty input has nothing to lose: null lets the close go. A comment whose save is out is asked about too, and so is a
-   *  refused comment waiting in its note (heldRows): the words of either are not saved. */
+   *  window.confirm shows nothing and answers false; the round-2 review). An empty input has nothing to lose: null lets the
+   *  close go. The typed words are the box's whatever composer is open (boxHoldsTyped), so words a Re-place hides, and words
+   *  its drag left in the hidden box with no composer open, are asked about too, and the kept text says how to see them (the
+   *  review of 2026-09-25; before it a Re-place's close asked nothing about them, on main too). A comment whose save is out is
+   *  asked about, and so is a refused comment waiting in its note (heldRows): the words of either are not saved. The ask
+   *  names every comment a yes would drop, a reply as a reply, and while a save is out the kept text says to try again once
+   *  it has finished. */
   draftAsk(): CloseAsk | null {
     const c = this.composer;
-    // words typed in the box: not under a re-place (a drag, not words), and not the saving comment's own, which its save holds
-    const typed = !!c && c.kind !== "replace" && c !== this.savingFor && !!this.input.value.trim();
-    const held = this.heldRefusals.length;
-    if (!typed && !this.savingFor && !held) return null;
+    const typed = this.boxHoldsTyped();
+    const held = this.heldRefusals, n = held.length, saving = this.savingFor;
+    if (!typed && !saving && !n) return null;
     const p = this.ctx.path, name = p.slice(p.lastIndexOf("/") + 1);
+    const cap = (s: string): string => s[0].toUpperCase() + s.slice(1);
     // a save out: a refusal after the close has no panel to come back to, so its words would be lost with no ask and no row.
     // The box's words do not tell of it: a Cancel during the save empties the box, and so does a composer opened under the
-    // save (releaseSavingBox)
-    const also = this.savingFor ? " Another comment on " + name + " is still saving; if it is not saved, its words are lost too." : "";
-    // a refused comment held in its note under the box (heldRows) is words the person has not saved either. The ask names every
-    // comment a yes would drop, the typed one and the refused ones alike, so a yes never discards a comment the ask left out
-    const refused = held === 1 ? "the comment that was not saved" : "the " + held + " comments that were not saved";
-    if (typed && held) return { question: "Discard the comment typed on " + name + " and " + refused + "?" + also, kept: "This file stays open: the comment typed on " + name + " and " + refused + " are still here. Save or clear the box, and bring back or dismiss " + (held === 1 ? "the one that was not saved" : "the ones that were not saved") + ", then try again." };
-    if (typed) return { question: "Discard the unsaved comment on " + name + "?" + also, kept: "This file stays open: the comment typed on " + name + " is not saved. Save it, or clear the box, then try again." };
-    if (held === 1) return { question: "Discard the unsaved comment on " + name + "?" + also, kept: "This file stays open: a comment on " + name + " was not saved. Bring it back and save it, or dismiss it, then try again." };
-    if (held) return { question: "Discard the " + held + " unsaved comments on " + name + "?" + also, kept: "This file stays open: " + held + " comments on " + name + " were not saved. Bring each back and save it, or dismiss it, then try again." };
-    return { question: "A comment on " + name + " is still saving. Close anyway? If it is not saved, its words are lost.", kept: "This file stays open: a comment on " + name + " is still saving. Try again when it has finished." };
+    // save (releaseSavingBox). "A", not "another": the save out can be the open composer's own
+    const savingWords = saving ? (saving.kind === "reply" ? "a reply to a comment on " : "a comment on ") + name : "";
+    const also = saving ? " " + cap(savingWords) + " is still saving; if it is not saved, its words are lost too." : "";
+    if (!typed && !n) return { question: cap(savingWords) + " is still saving. Close anyway? If it is not saved, its words are lost.", kept: "This file stays open: " + savingWords + " is still saving. Try again when it has finished." };
+    // the typed words: a reply's named as a reply; words not on screen (behind a pending Re-place, or left by its drag with no
+    // composer open) named as words, with the way to see them: any opener shows them, Comment on this file among them
+    const hidden = typed && (!c || c.kind === "replace");
+    const typedThe = hidden ? "the words typed on " + name : (c && c.kind === "reply" ? "the reply typed to a comment on " : "the comment typed on ") + name;
+    const before = hidden && c ? " before the re-place" : "";
+    const reveal = !hidden ? "" : (c ? "Draw the new place and open Comment on this file" : "Open Comment on this file") + ": the words are in its box. ";
+    // a refused comment held in its note under the box (heldRows) is words the person has not saved either, a reply named as a
+    // reply, and a count over both kinds named as both
+    const replies = held.filter((h) => h.c.kind === "reply").length;
+    const kinds = replies === 0 ? "comments" : replies === n ? "replies" : "comments and replies";
+    const heldThe = n === 1 ? "the " + (replies ? "reply" : "comment") + " that was not saved" : "the " + n + " " + kinds + " that were not saved";
+    const heldOn = (n === 1 ? (replies ? "reply to a comment" : "comment") : kinds + (replies === n ? " to comments" : "")) + " on " + name;
+    // the facts, then what to do: while a save is out, once it has finished (Save waits until then)
+    let question: string, facts: string, steps: string;
+    if (typed && n) {
+      question = "Discard " + typedThe + " and " + heldThe + "?";
+      facts = typedThe + before + " and " + heldThe + " are still here";
+      steps = reveal + (hidden ? "Save them or clear the box" : "Save or clear the box") + ", and bring back or dismiss " + (n === 1 ? "the one that was not saved" : "the ones that were not saved");
+    } else if (typed) {
+      question = hidden ? "Discard the unsaved words typed on " + name + "?" : "Discard the unsaved " + (c && c.kind === "reply" ? "reply to a comment" : "comment") + " on " + name + "?";
+      facts = typedThe + before + (hidden ? " are not saved" : " is not saved");
+      steps = reveal + (hidden ? "Save them or clear the box" : saving ? "Save the typed " + (c && c.kind === "reply" ? "reply" : "comment") + " or clear the box" : "Save it, or clear the box");
+    } else {
+      question = n === 1 ? "Discard the unsaved " + heldOn + "?" : "Discard the " + n + " unsaved " + heldOn + "?";
+      facts = (n === 1 ? "a " : n + " ") + heldOn + (n === 1 ? " was not saved" : " were not saved");
+      steps = n === 1 ? (saving ? "Bring back the " + (replies ? "reply" : "comment") + " that was not saved and save it, or dismiss it" : "Bring it back and save it, or dismiss it")
+        : saving ? "Bring back each one that was not saved and save it, or dismiss it" : "Bring each back and save it, or dismiss it";
+    }
+    const lower = (s: string): string => s[0].toLowerCase() + s.slice(1);
+    return { question: question + also,
+      kept: "This file stays open: " + facts + (saving ? ", and " + savingWords + " is still saving. When that save has finished, " + lower(steps) : ". " + steps) + ", then try again." };
   }
   /** The second close ask: words typed in the Send confirm's box are a note the person has not sent, and a close or a
    *  replace-open dropped them with the panel, silently — the one gap decision 40 recorded (the arrivals follow-on's review,
@@ -3362,14 +3399,33 @@ class Panel {
    *  (savingFor), those words are the save's (saveComposer keeps them in `note`), so the box is emptied for the new composer.
    *  Any other time the words carry on to the next composer, as they always have: Comment on this file keeps the ids-only
    *  box's note, a tied passage is fixed by selecting it again, and words typed in a composer opened during the save carry
-   *  on to the next one too. */
+   *  on to the next one too, and so do words a Re-place's drag left in the box with no composer open. The box is emptied
+   *  only when it holds text the one predicate says is not the person's (boxHoldsTyped), never by the composer's identity
+   *  alone: with no composer open and no save out that identity matches too, and dropped the carried words. */
   private releaseSavingBox(): void {
-    if (this.savingFor && this.composer === this.savingFor) { this.input.value = ""; this.input.style.height = ""; this.sizedTo = null; }
+    if (this.input.value.trim() && !this.boxHoldsTyped()) { this.input.value = ""; this.input.style.height = ""; this.sizedTo = null; }
+  }
+  /** Whether the box holds words the person typed: its text is not blank, and it is not the saving composer's own text shown
+   *  read-only under Saving, which that save already holds (saveComposer's `note`). The one predicate every writer of the box
+   *  asks before it writes: restoreRefused's callers (settleAway, bringBack and a Re-place's drag, through heldBlockedWhy and
+   *  the drag's carry), the openers (releaseSavingBox), and the viewer's close (draftAsk). It reads the box and the save mark,
+   *  never whether a composer is open: a Re-place's drag ends its composer and leaves the words in the hidden box, and a
+   *  refusal that arrived then wrote the refused words over them. Its ground is the user's decision of 2026-09-24, read by
+   *  its purpose, that words the person typed are never lost: a refused comment comes back when the box is empty or no
+   *  composer is open, and a box that holds typed words with no composer open is not empty. closeComposer does not ask it: it
+   *  empties the box only on the person's own close (Cancel, Escape, the panel closed on a pending Re-place) or when its own
+   *  save lands, never on a refusal; its Re-place roads drop words hidden in the box, as on main. The decision's record lists
+   *  a Re-place's Cancel as a disclosed edge; Escape and the panel's close on a pending Re-place drop them the same way, and
+   *  the ledger entry discloses all three. */
+  private boxHoldsTyped(): boolean {
+    return !!this.input.value.trim() && !(this.savingFor !== null && this.composer === this.savingFor);
   }
   closeComposer(): void {
     const was = this.composer;
     const held = this.composerBox.contains(document.activeElement);   // the keyboard is in the box (the textarea, Save, Cancel)
     this.composer = null;
+    // the box emptied without asking boxHoldsTyped: every road here is the person's own close (Cancel, Escape, the panel closed
+    // on a pending Re-place) or this composer's own save landing, never a refusal (the predicate's comment says why)
     this.input.value = "";
     this.input.style.height = ""; this.sizedTo = null;   // the next comment starts at COMPOSER_ROWS, autosized again
     this.errors.delete("composer"); this.ownRefusal = null;
@@ -3523,31 +3579,50 @@ class Panel {
   /** A save settled after its box was handed on: another composer opened during the write (releaseSavingBox emptied the box
    *  for it), or Cancel closed this one. A save that landed leaves the open composer as it is, its Save free again. A refused
    *  one takes its row out of the slot, which belongs to the open composer now, and its words come back: into the box when the
-   *  open composer holds none of the person's input (none open, or one with nothing typed, drawn or pending: heldBlockedWhy),
-   *  with the composer and the row, as a refusal shows when nothing was opened; into a note under the box otherwise
-   *  (heldRows), so what the person put there stays as it is: typed words, a rectangle drawn, a pending Re-place. Before
+   *  box holds none of the person's input (no composer open and the box empty, or one open with nothing typed, drawn or
+   *  pending: boxHoldsTyped, heldBlockedWhy), with the composer and the row, as a refusal shows when nothing was opened; into a
+   *  note under the box otherwise (heldRows), so what the person put there stays as it is: typed words (shown as a comment on
+   *  the file when a Re-place's drag left them hidden), a rectangle drawn, a pending Re-place. Before
    *  this the words stayed in the new box, and Save filed them on the new target: a reply on another comment, or a comment on
    *  another passage; and after a Cancel the row went to the hidden box, and the words were lost with no word said. */
   private settleAway(c: Composer, note: string, r: Status | null): void {
-    if (r) { this.renderComposer(); return; }
+    // the whole render, not the composer alone: it puts the keyboard back on the control it was on (focusKey; the composer's
+    // rows and buttons are rebuilt), and a reply that landed shows its saved line now, which saveComposer's own render leaves
+    // to the reply's close
+    if (r) { this.render(); return; }
     const err = this.errors.get("composer") || null;
     this.errors.delete("composer");
     const h = { id: ++this.heldSeq, c, note, err };
+    // no composer open but the person's words in the box: a Re-place's drag ended its composer and left them there, hidden.
+    // They open as a comment on the file in the panel's slot, as the drag's carry opens them, and the refused comment waits in
+    // a note under them, so the refusal writes nothing over them (boxHoldsTyped says why). A save that lands after the drag
+    // leaves them hidden, carried to the next composer; nothing moves before a refusal arrives
+    if (!this.composer && this.boxHoldsTyped()) {
+      this.composer = { kind: "comment", range: null, quote: null, refusal: null };
+      this.heldRefusals.push(h);
+      this.repaintPresel();
+      this.render();
+      return;
+    }
     if (!this.heldBlockedWhy()) this.restoreRefused(h, false);
-    else { this.heldRefusals.push(h); this.renderComposer(); }
+    else { this.heldRefusals.push(h); this.render(); }
   }
   /** A refused comment back in the box (settleAway, bringBack, closeComposer, a Re-place's drag): its composer, its words and
-   *  its refusal row, as a refusal shows when it lands with its composer still open. Every caller has checked that no composer
-   *  is open or that the open one holds none of the person's input (heldBlockedWhy). The row is the comment's own record
-   *  (ownRefusal), shown whatever the shared slot holds for another comment's save. Its
-   *  passage and the changes it is about are the ones it was saved with: the next repaint follows the passage into the text
-   *  shown (retargetComposer) and the next status drops a change it no longer holds (pruneAbout), as for any open composer,
-   *  and a Save before then hands the host the saved anchor to rule on. The keyboard comes to the box when it was in the box
-   *  already, or when the person asked for the comment back (`focus`). */
+   *  its refusal row, as a refusal shows when it lands with its composer still open. Every caller has asked first whether the
+   *  box holds the person's words (boxHoldsTyped), and calls this only when it holds none: settleAway and bringBack through
+   *  heldBlockedWhy, which also keeps a drawn rectangle or a pending Re-place, and a Re-place's drag through its carry;
+   *  closeComposer empties the box before it. No early return here: one would drop the refused comment with no note. The
+   *  row is the comment's own record (ownRefusal), shown whatever the shared slot holds for another comment's save. Its
+   *  passage is the one it was saved with: the next repaint follows it into the text shown (retargetComposer), and a Save
+   *  before then hands the host the saved anchor to rule on. The changes it is about are pruned now against the status
+   *  already applied (pruneAbout), so a change that has gone since shows as gone at once, with Comment on this file, not as
+   *  its id with a Save that posts it. The keyboard comes to the box when it was in the box already, or when the person
+   *  asked for the comment back (`focus`). */
   private restoreRefused(h: { c: Composer; note: string; err: Err | null }, focus: boolean): void {
     const was = this.composer;
     const had = focus || this.composerBox.contains(document.activeElement);
     this.composer = h.c;
+    this.pruneAbout();
     this.input.value = h.note;
     this.input.style.height = ""; this.sizedTo = null;
     this.ownRefusal = h.err ? { c: h.c, err: h.err } : null;
@@ -3571,61 +3646,91 @@ class Panel {
     const had = this.composerBox.contains(document.activeElement);
     this.heldRefusals = this.heldRefusals.filter((x) => x.id !== id);
     this.renderComposer();
-    if (had) this.input.focus();                       // the dismiss went with its note: the keyboard stays in the box
+    // the dismiss went with its note: the keyboard stays in the box, on the input, or on Cancel while a pending Re-place hides
+    // the input, which cannot take it then (the keyboard fell to the page's body)
+    if (had) ((this.input.hidden ? this.composerActs.querySelector('[data-act="fccancel"]') : this.input) as HTMLElement | null)?.focus();
+  }
+  /** Whether the composer shows no Save (renderComposer; heldBlockedWhy words Bring it back's reason by it): a re-place saves
+   *  nothing (the drawn region is the action); a refused mapping or a refused region has nothing to save to, and a Save would
+   *  silently write a whole-file comment; and neither has an ids-only box whose change is gone (pruneAbout), whose way on is
+   *  Comment on this file or Cancel. */
+  private composerNoSave(c: Composer): boolean {
+    return c.kind === "replace" || ((c.kind === "comment" || c.kind === "region") && !!c.refusal)
+      || (c.kind === "comment" && !!c.about && c.about.only && !c.about.ids.length);
   }
   /** Why a refused comment's Bring it back waits, or null when it may act (bringBack, heldRows, syncHeldBack, settleAway): the
-   *  open composer holds the person's input, which bringing the comment back would replace. Words in the box; a rectangle
-   *  drawn (a region composer) or a pending Re-place, each the person's own gesture as much as typed words are (the review,
-   *  2026-09-24: a refusal replaced them silently). No composer open holds nothing. The reason is in the terms of the
-   *  composer open: a reply's words are the reply's; a region's rectangle stays when its box is cleared, so its reason names
-   *  Save or Cancel whether or not words are typed, as a Re-place's names the drag or Cancel; and while that composer's own
-   *  save is out (read-only, Saving) neither Save nor clearing the box can be done, so the reason says when the comment comes
-   *  back instead. */
-  private heldBlockedWhy(): string | null {
+   *  open composer holds the person's input, which bringing the comment back would replace. Words in the box (boxHoldsTyped);
+   *  a rectangle drawn (a region composer) or a pending Re-place, each the person's own gesture as much as typed words are
+   *  (the review, 2026-09-24: a refusal replaced them silently). No composer open holds nothing here; settleAway asks the box
+   *  itself for that case. The reason names only what the composer shows (composerNoSave): a reply's words are the reply's; a
+   *  comment with no Save is freed by clearing or Cancel; a region's rectangle stays when its box is cleared, so its reason
+   *  names Save and Cancel whether or not words are typed, or Cancel alone with no Save; a Re-place's names the drag or
+   *  Cancel. While that composer's own save is out (read-only, Saving) neither Save nor clearing the box can be done, so the
+   *  reason says when the comment comes back: `at`, the note's place among the waiting ones, since the landing brings back
+   *  the first alone (closeComposer) and a later one waits its turn behind the one above it. */
+  private heldBlockedWhy(at = 0): string | null {
     const c = this.composer;
     if (!c) return null;
-    if (c === this.savingFor) return c.kind === "reply" ? HELD_BACK_SAVING_REPLY : HELD_BACK_SAVING;
+    if (c === this.savingFor) return at > 0 ? HELD_BACK_BEHIND : c.kind === "reply" ? HELD_BACK_SAVING_REPLY : HELD_BACK_SAVING;
     if (c.kind === "replace") return HELD_BACK_REPLACE;
-    if (c.kind === "region") return HELD_BACK_REGION;
-    if (this.input.value.trim()) return c.kind === "reply" ? HELD_BACK_REPLY : HELD_BACK_BLOCKED;
+    const noSave = this.composerNoSave(c);
+    if (c.kind === "region") return noSave ? HELD_BACK_REGION_NO_SAVE : HELD_BACK_REGION;
+    if (this.boxHoldsTyped()) return noSave ? HELD_BACK_NO_SAVE : c.kind === "reply" ? HELD_BACK_REPLY : HELD_BACK_BLOCKED;
     return null;
   }
-  /** Bring it back follows the box on every keystroke (the input listener): enabled only while the open composer holds no input,
-   *  and saying why it waits otherwise, in its title and, on a coarse pointer, in the line under its note (heldRows). */
+  /** Bring it back follows the box on every keystroke (the input listener) and at a save's unmarking (writeFor): enabled only
+   *  while the open composer holds no input, and saying why it waits otherwise, in its title and, on a coarse pointer, in the
+   *  line in its note (heldRows), each note by its own place (heldBlockedWhy's `at`), as heldRows words it. */
   private syncHeldBack(): void {
-    const why = this.heldBlockedWhy();
-    for (const b of Array.from(this.composerErr.querySelectorAll('[data-act="fcheldback"]')) as HTMLButtonElement[]) { b.disabled = why !== null; b.title = why || ""; }
-    for (const l of Array.from(this.composerErr.querySelectorAll(".fc-held-why")) as HTMLElement[]) { l.hidden = why === null; l.textContent = why ? why + "." : ""; }
+    for (const row of Array.from(this.composerErr.querySelectorAll(".fc-held-save")) as HTMLElement[]) {
+      const b = row.querySelector('[data-act="fcheldback"]') as HTMLButtonElement | null;
+      if (!b) continue;
+      const why = this.heldBlockedWhy(this.heldRefusals.findIndex((h) => String(h.id) === b.dataset.held));
+      b.disabled = why !== null; b.title = why || "";
+      const l = row.querySelector(".fc-held-why") as HTMLElement | null;
+      if (l) { l.hidden = why === null; l.textContent = why ? why + "." : ""; }
+    }
   }
   /** The notes under the box for the refused comments waiting there (settleAway): what each was on and its words, Bring it
    *  back and a dismiss. Never the refusal's own row: that is the refused comment's, and comes back with it. The words are the
    *  part that matters and show whole, wrapped on their own line with their line breaks (.fc-held-words; the reference row's
-   *  .fc-quote clips to one line, and its title reaches no touch pointer). A waiting Bring it back says why in its title,
-   *  which never reaches a touch pointer: on a coarse one the same words stand under the note as a line (isCoarsePointer, as
-   *  the held head's line does: heldNote). */
+   *  .fc-quote clips to one line, and its title reaches no touch pointer). Each note's Bring it back says why it waits, in its
+   *  own terms (heldBlockedWhy, by the note's place), in its title, which never reaches a touch pointer: on a coarse one the
+   *  same words stand as a line inside the note (isCoarsePointer, as the held head's line does: heldNote), wrapped onto a line
+   *  of its own (.fc-held-why), so the parts of one note stand closer together than two notes do (.fc-held-save's padding).
+   *  Both buttons carry the comment they act on as data-id, so render's focus restore (focusKey, findControl) puts the keyboard
+   *  back on this note's button, not on the first note's button of that kind; the handlers read data-held. The dismiss names
+   *  what it drops, since its words go with it; the refusal row's ✕, which only hides a message, keeps "Dismiss". */
   private heldRows(): HTMLElement[] {
-    const why = this.heldBlockedWhy();
     const touch = isCoarsePointer();
-    return this.heldRefusals.flatMap((h) => {
+    return this.heldRefusals.map((h, i) => {
+      const why = this.heldBlockedWhy(i);
       const row = el("div", "fc-row fc-held-save");
       row.appendChild(el("span", "fc-note fc-refused", this.refusedWhat(h.c) + " was not saved:"));
       row.appendChild(el("span", "fc-held-words", h.note));
       const back = btn("Bring it back", "fcheldback");
-      back.dataset.held = String(h.id);
+      back.dataset.held = String(h.id); back.dataset.id = "held:" + h.id;
       back.disabled = why !== null;
       if (why) back.title = why;
       row.appendChild(back);
-      const x = btn("✕", "fcheldx", "fileview-btn fc-x"); x.dataset.held = String(h.id); x.setAttribute("aria-label", "Dismiss"); row.appendChild(x);
-      if (!touch) return [row];
-      const line = el("div", "fc-note fc-held-why", why ? why + "." : "");
-      line.hidden = why === null;
-      return [row, line];
+      const x = btn("✕", "fcheldx", "fileview-btn fc-x"); x.dataset.held = String(h.id); x.dataset.id = "held:" + h.id;
+      const drops = "Dismiss the " + (h.c.kind === "reply" ? "reply" : "comment") + " that was not saved; its words go with it";
+      x.setAttribute("aria-label", drops); x.title = drops;
+      row.appendChild(x);
+      if (touch) {
+        const line = el("div", "fc-note fc-held-why", why ? why + "." : "");
+        line.hidden = why === null;
+        row.appendChild(line);
+      }
+      return row;
     });
   }
   /** What a refused comment was on, for its note (heldRows), in the words the composer's reference row uses. A passage is
    *  named as its card names it: on one line, cut to 72 characters (cardModel's bound), in quote marks, so a long selection
    *  no longer makes a label of any length above the refused words' own line. A change is named by what it did, the verb
-   *  outside the quote marks and only the change's words inside them (changeByDeed: "the change that removed “still”"). A
+   *  outside the quote marks and only the change's words inside them (changeByDeed: "the change that removed “still”"),
+   *  while the change view holds its card; once it has gone (decided, or taken into a new change by the session's next
+   *  edit), by that state in the panel's words for it (ABOUT_GONE: no longer pending), never by the change's internal id. A
    *  reply names the comment it answers by that comment's first words, bounded and quoted as a passage is, whatever the
    *  comment is on: a card's reference alone ("this file", a region's corners) says nothing of which comment. */
   private refusedWhat(c: Composer): string {
@@ -3634,7 +3739,7 @@ class Panel {
     if (c.kind === "comment" && c.quote) return "Your comment on “" + oneLine(c.quote, 72) + "”";
     if (c.kind === "comment" && c.about && c.about.only && c.about.ids.length) {
       const id = c.about.ids[0], ch = this.changeView().cards.find((x) => x.id === id);
-      return "Your comment about " + (ch ? changeByDeed(ch) : "the change “" + id + "”");   // the change's card gone: its id is all the panel holds
+      return "Your comment about " + (ch ? changeByDeed(ch) : "a change that is no longer pending");
     }
     return "Your comment on this file";
   }
@@ -3675,7 +3780,10 @@ class Panel {
     const saved = c.kind === "reply" ? c.commentId : savedCommentId(had, r, note);
     if (saved === null) return false;
     const key = this.cardKey(saved);
-    if (this.margin) this.focusOn(key);
+    // the focus only while no composer is open (a Cancel during the save, as on main) or the saving one still is: another
+    // composer open is where the person is typing, and its card moved down the track under their words when the landed card
+    // took the focus (the review, 2026-09-25)
+    if (this.margin && (!this.composer || this.composer === c)) this.focusOn(key);
     const side = this.cardWhere(key);
     if (side === null) return false;                   // whole in view, or no card to point at
     this.savedOut = { key, side };
@@ -4980,8 +5088,9 @@ class Panel {
       // a refused comment waiting in its note under the re-place (heldRows; heldBlockedWhy) keeps a home in view. With the box
       // empty it comes back now, as closeComposer brings one back when the composer closes. Words a composer before the
       // re-place left in the box are the person's too, and a closed box is hidden with the note in it: they stand in the
-      // panel's slot as a comment on the file (as Comment on this file keeps a box's words), the note under them
-      const carried = this.heldRefusals.length > 0 && !!this.input.value.trim();
+      // panel's slot as a comment on the file (as Comment on this file keeps a box's words), the note under them. With no note
+      // waiting they stay hidden, carried to the next composer; a refusal that arrives later opens them the same way (settleAway)
+      const carried = this.heldRefusals.length > 0 && this.boxHoldsTyped();
       if (carried) this.composer = { kind: "comment", range: null, quote: null, refusal: null };
       this.repaintPresel();
       this.renderComposer();
@@ -6139,11 +6248,11 @@ class Panel {
    *  wrapping beside the loader where it does not). The saving composer's own loader is not on screen while another composer
    *  holds the box, the Save's title reaches no touch pointer, and the hint would name a chord that does nothing meanwhile. No
    *  data-slot: the slot's wait is the saving composer's (strayRows reads that attribute). */
-  private waitLine(): HTMLElement {
+  private waitLine(words: string): HTMLElement {
     const w = el("span", "fileview-load fc-load fc-wait");
     w.innerHTML = '<img src="/media/romp-swirl-glyph.svg" alt=""><span>romp</span>'
       + '<i class="fileview-dot"></i><i class="fileview-dot"></i><i class="fileview-dot"></i>';
-    w.appendChild(el("span", "fc-wait-words", SAVE_WAITS));
+    w.appendChild(el("span", "fc-wait-words", words));   // SAVE_WAITS, or SAVE_WAITS_REPLY for a reply's save (renderComposer)
     return w;
   }
   /** The rows and loaders of slots whose control the list no longer shows: a by-id Accept or Reject refused after the
@@ -6445,18 +6554,18 @@ class Panel {
     const saving = this.busy.has("composer") && !waits;
     const save = btn(saving ? "Saving…" : "Save", "fcsave");
     save.disabled = saving || waits;                   // posts-and-waits: disabled and relabeled for the round trip (ui/CLAUDE.md)
-    if (waits) save.title = SAVE_WAITS;
+    const waitWords = this.savingFor && this.savingFor.kind === "reply" ? SAVE_WAITS_REPLY : SAVE_WAITS;   // a reply's save named as a reply
+    if (waits) save.title = waitWords;
     this.input.readOnly = saving;                     // what is typed during the round trip would be lost with the note that lands
-    // a refused mapping has nothing to save to — Raw or Cancel; Save would silently write a whole-file comment; a
-    // refused region likewise, and a re-place saves nothing (the drawn region is the action)
-    const noSave = c.kind === "replace" || ((c.kind === "comment" || c.kind === "region") && !!c.refusal)
-      || (c.kind === "comment" && !!c.about && c.about.only && !c.about.ids.length);   // the change the box was about is gone (pruneAbout): Comment on this file or Cancel
+    // a refused mapping has nothing to save to (Raw or Cancel), nor a refused region, nor an ids-only box whose change is gone,
+    // and a re-place saves nothing: composerNoSave, which heldBlockedWhy reads too
+    const noSave = this.composerNoSave(c);
     // the hint names the chord in the platform's words and sits at the row's left (fc-hint), the buttons at its right
     const hint = el("span", "fc-note fc-hint", composerHint(IS_MAC));
     // a Save waiting on another comment's save: the chord does nothing meanwhile, so the hint gives way to the loader and the
     // reason (waitLine), on every pointer, until the save settles and the next render puts the hint back. The line comes after
     // Cancel, on a row of its own under the two buttons (.fc-wait), so Save and Cancel stay together at any width
-    acts.replaceChildren(...(noSave ? [] : waits ? [save] : [hint, save]), btn("Cancel", "fccancel"), ...(!noSave && waits ? [this.waitLine()] : []));
+    acts.replaceChildren(...(noSave ? [] : waits ? [save] : [hint, save]), btn("Cancel", "fccancel"), ...(!noSave && waits ? [this.waitLine(waitWords)] : []));
     const err = this.composerErr;
     // the slot's loader and row are the saving composer's while its write is out: a refusal filed then is its own, and
     // settleAway moves it to that comment (a row under a composer it does not belong to reads as that composer refused). A

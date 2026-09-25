@@ -10,25 +10,24 @@
 // saving composer's alone, a second composer's Save waits with the reason in its title and in a line with the romp loader
 // in place of the chord hint, under Save and Cancel, and the settle acts on its own comment (settleAway): a refused comment
 // comes back into an empty box (after a Cancel too), or waits in a note under a composer holding the person's input (words
-// typed, a rectangle drawn, a pending Re-place), its words whole, with Bring it back once it holds none; a comment that
-// comes back is used up there, and its refusal row is its own, shown under it alone; while a save is out the viewer's close
-// asks, and the ask names every comment a yes would drop. With no save out the box still carries its
-// words from one composer to the next. Driven through the DOM stand-in the reply-keep test uses, the write held by
+// typed, a rectangle drawn, a pending Re-place; words a Re-place's drag left in the hidden box open as a comment on the file
+// to hold it), its words whole, with Bring it back once it holds none; a comment that comes back is used up there, and its
+// refusal row is its own, shown under it alone; the viewer's close asks while a save is out and about words a Re-place
+// hides, and the ask names every comment a yes would drop. With no save out the box still carries its words from one
+// composer to the next. Driven through the DOM stand-in the reply-keep test uses, the write held by
 // answering it only when the test says; the figure world at the end (a rendered report with a figure and changes, the
 // stand-in given the region test's rects, pointer fields and matchMedia) reaches the openers a view with no text cannot, and
 // the composers whose input is a drawn rectangle or a pending Re-place. Synthetic fixtures only: the notes-api world,
 // placeholder ids.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
-import { inspect } from "node:util";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { FileViewActionCtx, TrackedEdit } from "./file-view";
-import type { Status, StoreComment, Hunk, LogEntry } from "./file-comments-model";
-import { hideEdges, staysEnumerable } from "../test-dom-shim";
+import type { Status, StoreComment, Hunk } from "./file-comments-model";
+import { hideEdges } from "../test-dom-shim";
 
 const web = (f: string) => fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", f), "utf8");
-const SRC = web("file-comments.ts");
 
 // ── the DOM stand-in ───────────────────────────────────────────────────────────────────────────────
 class Doc {
@@ -83,6 +82,9 @@ type Rect = { left: number; top: number; right: number; bottom: number; width: n
 const rectOf = (left: number, top: number, width: number, height: number): Rect => ({ left, top, width, height, right: left + width, bottom: top + height });
 // a figure drawn at half its 600x400 size, 100px in and 200px down
 const IMG_RECT = rectOf(100, 200, 300, 200);
+/** A card's client rect by its comment id, which a test gives when where the card stands matters (the saved line reads it:
+ *  cardWhere), kept across the renders that rebuild the card's node; a card not listed measures nothing, as before. */
+const cardRects = new Map<string, Rect>();
 type Init = { key?: string; ctrlKey?: boolean; metaKey?: boolean; shiftKey?: boolean; isComposing?: boolean; clientX?: number; clientY?: number; pointerId?: number; button?: number };
 type Ev = Init & { type: string; target: N; currentTarget: N | null; defaultPrevented: boolean; preventDefault(): void; stopPropagation(): void };
 const kebab = (k: string | symbol): string => String(k).replace(/[A-Z]/g, (c) => "-" + c.toLowerCase());
@@ -206,6 +208,7 @@ class E extends N {
   /** The rect a test gave the element; a figure's wrapper hugs its picture (the sheet's inline-block around a block img). */
   getBoundingClientRect(): Rect {
     if (this.rect) return this.rect;
+    if (this.classList.contains("fc-card") && cardRects.has(this.dataset.id)) return cardRects.get(this.dataset.id)!;
     if (this.classList.contains("fc-imgwrap")) { const img = this.childNodes.find((c) => c instanceof E && c.tagName === "IMG") as E | undefined; if (img) return img.getBoundingClientRect(); }
     return this.tagName === "IMG" ? IMG_RECT : rectOf(0, 0, 0, 0);
   }
@@ -295,14 +298,6 @@ const passage: StoreComment = {
   resolved: false,
 };
 const whole: StoreComment = { id: T0 + "-119", author: "you", ts: T0 + 4000, body: "Lead with the numbers.", replies: [], resolved: false };
-// a pending change and a comment the change answered (suggestionId, the format's own field): its own card in the list,
-// wearing the "answered by a change" tag (before the about follow-on, 2026-09-10, it was drawn inside the change's card)
-const cut = DOC.indexOf("cut");
-const h1: Hunk = { id: "h1", author: "api", ts: T0 - 90000, kind: "sub", curFrom: cut, curTo: cut + 3, baseFrom: cut, baseTo: cut + 7, oldText: "reduced", newText: "cut", anchor: null };
-const SUGG = [{ id: "h1", author: "api", authorId: SID, ts: T0 - 90000, kind: "sub", from: cut, oldText: "reduced", newText: "cut" }];
-const bound: StoreComment = { id: T0 + 1000 + "-5", author: "you", ts: T0 + 1000, body: "Say cut, not reduced.", suggestionId: "h1",
-  replies: [{ author: "api", authorId: SID, ts: T0 + 3000, body: "Done." }], resolved: false };
-const ACCEPT_LOG: LogEntry = { ts: "2026-09-06T08:01:00Z", kind: "accept", author: "you", changes: [{ id: "h1", oldText: "reduced", newText: "cut" }] };
 const unsent = (...ids: string[]) => ({ comments: ids, replies: [], accepted: 0, rejected: 0, watermark: null });
 function status(over: Partial<Status> = {}): Status {
   return {
@@ -314,16 +309,10 @@ function status(over: Partial<Status> = {}): Status {
     ...over,
   };
 }
-/** The world with the change h1 pending and the comment it answered: the change card first, then the comment's own card. */
-const WITH_CHANGE: Partial<Status> = { store: { v: 3, path: "docs/report.md", suggestions: SUGG, comments: [passage, bound] }, hunks: [h1], unsent: unsent(passage.id, bound.id) };
-/** The same world after the change was accepted: the change card is gone, and the comment's card wears the decision. */
-const ACCEPTED: Partial<Status> = { store: { v: 3, path: "docs/report.md", suggestions: [], comments: [passage, bound] }, hunks: [], log: [ACCEPT_LOG],
-  storeMtimeNs: "1757145600000000006", unsent: { comments: [passage.id, bound.id], replies: [], accepted: 1, rejected: 0, watermark: null } };
 
 // ── the harness: a mounted panel inside the viewer's body row ──────────────────────────────────────
 type Posted = Record<string, any>;
 const SLOT = ["fc-sec-head", "fc-composer", "fc-sec-cards", "fc-sec-send", "fc-sec-log"];   // the panel's sections with the box in its slot
-const NO_SLOT = ["fc-sec-head", "fc-sec-cards", "fc-sec-send", "fc-sec-log"];              // …and with the box away in a card
 /** `fig`: the rendered report with a figure (the figure world below), its source the view's text, for the openers a text-less
  *  view cannot reach: a selection's Comment, the figure's Comment, a drag on the figure, Re-place, a spanned change's Comment. */
 async function harness(over: Partial<FileViewActionCtx> = {}, fig: { html: string; src: string } | null = null) {
@@ -367,15 +356,8 @@ async function harness(over: Partial<FileViewActionCtx> = {}, fig: { html: strin
     box: (): E => { const b = main.querySelector("textarea.fc-input"); assert.ok(b, "the comment box is a textarea"); return b!; },
     composer: (): E => { const c = main.querySelector(".fc-composer"); assert.ok(c, "the composer box"); return c!; },
     card: (id: string): E | null => main.querySelector('.fc-card[data-id="' + id + '"]'),
-    /** The head's tags of a card, in order (a comment's about tag, its decision, resolved, the reply count while collapsed). */
-    tags: (card: E): string[] => card.querySelectorAll(".fc-card-head .fc-tag").map((t) => t.textContent),
-    replyBtn: (id: string): E | null => main.querySelectorAll('[data-act="fcreply"]').find((b) => b.dataset.id === id) || null,
-    cardBy: (id: string): E | null => main.querySelectorAll('.fc-card').find((c) => c.dataset.id === id) || null,   // by the id as data: it may hold a quote
     /** The slot's reference row, class:text per span. */
     row: (): string[] => h.q('.fc-composer-ref')!.childNodes.map((n) => (n as E).className + ':' + n.textContent),
-    /** The detaches since `mark` that took the textarea, or a node holding it, out of the document. Read by length: a failed
-     *  deepEqual over stand-in nodes inspects the whole cyclic tree for its message and never returns. */
-    outOfDoc: (mark: number): N[] => doc.detached.slice(mark).filter((n) => n === h.box() || (n instanceof E && n.contains(h.box()))),
     key: (init: Init): Ev => h.box().dispatch("keydown", init),
     chord: (): Ev => h.key({ key: "Enter", ctrlKey: true }),
     /** Open the panel on a status. */
@@ -383,7 +365,7 @@ async function harness(over: Partial<FileViewActionCtx> = {}, fig: { html: strin
     /** Expand a card (by its expand key) and press the Reply of a comment on it. */
     startReply: (key: string, id: string) => { if (!h.card(key)!.classList.contains("open")) h.click('.fc-card[data-id="' + key + '"] .fc-card-head'); h.click('[data-act="fcreply"][data-id="' + id + '"]'); },
     /** The poll's path: a save elsewhere re-asks status, and the reply rebuilds every section. */
-    repoll: async (over: Partial<Status> = {}) => { saved[0]({ mtimeNs: "9", logged: true }); await tick(); assert.equal(last().verb, "status"); await h.ok(over); },
+    repoll: async (over: Partial<Status> = {}) => { saved[0]({ mtimeNs: "9", logged: true }); await tick(); assert.equal(last().verb, "status", "the precondition: a save elsewhere re-asks the status"); await h.ok(over); },
     dispose: () => { for (const cb of closers) cb(); },
     /** A drag on a figure's overlay: press, move, release, then the click a browser synthesizes after it. */
     drag: (overlay: E, from: [number, number], to: [number, number]) => {
@@ -403,20 +385,8 @@ function draft(box: E, text: string, caret: number, scrollHeight: number): void 
   box.scrollHeight = scrollHeight; box.offsetHeight = scrollHeight + 2; box.clientHeight = scrollHeight; box.dispatch("input");
 }
 
-// ── more fixtures: four paragraphs with a change each (GROUP_LIMIT is 3), a comment the last one answered ─────────────
-const sub = (id: string, word: string, was: string, ts: number): Hunk => {
-  const at = DOC.indexOf(word);
-  return { id, author: "api", ts, kind: "sub", curFrom: at, curTo: at + word.length, baseFrom: at, baseTo: at + was.length, oldText: was, newText: word, anchor: null };
-};
+/** A pending change as the store lists it (the figure world's changes below). */
 const sugg = (x: Hunk) => ({ id: x.id, author: x.author, authorId: SID, ts: x.ts, kind: x.kind, from: x.curFrom, oldText: x.oldText, newText: x.newText });
-const hA = sub("hA", "cut", "reduced", T0 - 90000), hB = sub("hB", "shipping", "releasing", T0 - 80000);
-const hC = sub("hC", "Risks", "Hazards", T0 - 70000), hD = sub("hD", "measure", "check", T0 - 60000);
-const onD: StoreComment = { id: T0 + 2000 + "-9", author: "you", ts: T0 + 2000, body: "Measure what, exactly?", suggestionId: "hD", replies: [], resolved: false };
-/** Three paragraphs with a change each: every group shows. */
-const THREE: Partial<Status> = { store: { v: 3, path: "docs/report.md", suggestions: [hB, hC, hD].map(sugg), comments: [whole, onD] }, hunks: [hB, hC, hD], unsent: unsent(whole.id, onD.id) };
-/** …and a fourth change in the FIRST paragraph with one: the last group folds behind "… 1 more change". */
-const FOUR: Partial<Status> = { store: { v: 3, path: "docs/report.md", suggestions: [hA, hB, hC, hD].map(sugg), comments: [whole, onD] }, hunks: [hA, hB, hC, hD], unsent: unsent(whole.id, onD.id), storeMtimeNs: "1757145600000000011" };
-const CHANGES_LINE = "fc-note:The comment's card is hidden while Changes is chosen above (All or Comments shows it); the reply still goes to it.";
 
 // ── a comment's save held open ────────────────────────────────────────────────────────────────────
 const FIRST = "Which fallback? Name it in the text.";
@@ -558,6 +528,10 @@ test("a comment refused after the person typed in a reply started under its save
   assert.equal(note!.querySelector(".fc-held-words")?.textContent, FIRST, "…quoting its words, in the note's own element");
   assert.equal(bringBack(h).disabled, true, "Bring it back waits while the reply's box holds words: nothing typed is overwritten");
   assert.equal(bringBack(h).title, "Save or clear this reply first", "…and says why, in the reply's terms");
+  const drop = note!.querySelector('[data-act="fcheldx"]')!;
+  assert.equal(drop.textContent, "✕", "the note's dismiss keeps its glyph");
+  assert.equal(drop.getAttribute("aria-label"), "Dismiss the comment that was not saved; its words go with it", "…and its name says what it drops, since the words go with it");
+  assert.equal(drop.title, "Dismiss the comment that was not saved; its words go with it", "…and so does its title");
   bringBack(h).dispatch("click");                     // a browser sends a disabled button no click; one that arrives anyway changes nothing
   await tick();
   assert.equal(h.box().value, "The stale-read fallback.", "a click on the waiting Bring it back leaves the reply's words where they are");
@@ -568,7 +542,7 @@ test("a comment refused after the person typed in a reply started under its save
   draft(h.box(), "x", 1, 20);
   assert.equal(bringBack(h).disabled, true, "a word typed again: it waits again");
   draft(h.box(), "", 0, 20);
-  bringBack(h).focus();                               // a press or the keyboard puts the focus on the button first
+  doc.activeElement = doc.body;                       // the press left the keyboard on the page: Safari gives a clicked button no focus
   bringBack(h).dispatch("click");
   await tick();
   assert.equal(h.box().placeholder, "Your comment", "Bring it back puts the refused comment in the box");
@@ -576,9 +550,11 @@ test("a comment refused after the person typed in a reply started under its save
   assert.deepEqual(h.row(), ["fc-note:On this file"], "…on its own target");
   assert.equal(slotRows(h).length, 1, "…and its refusal row");
   assert.ok(slotRows(h)[0].includes(REFUSAL), "…the refusal's words: " + slotRows(h)[0]);
+  const rowX = h.composer().querySelectorAll(".fc-err").find((e) => e.dataset.slot === "composer")!.querySelector('[data-act="fcerrx"]')!;
+  assert.equal(rowX.getAttribute("aria-label"), "Dismiss", "the refusal row's ✕, which only hides the message, keeps its name");
   assert.equal(heldNote(h), null, "the note is used up");
   assert.equal(h.box().readOnly, false, "the comment's box takes typing");
-  assert.equal(doc.activeElement, h.box(), "…and has the keyboard: the person asked for the comment back");
+  assert.equal(doc.activeElement, h.box(), "…and has the keyboard, though the press left it on the page: the person asked for the comment back");
   h.dispose();
 });
 
@@ -603,9 +579,11 @@ test("the refused comment's note stays through a re-render until it is used or d
   g.startReply(passage.id, passage.id);
   draft(g.box(), "The stale-read fallback.", 24, 20);
   await refused(reqId);
+  g.q('[data-act="fcheldx"]')!.focus();              // the keyboard on the dismiss itself, which goes with its note
   g.click('[data-act="fcheldx"]');
   assert.equal(heldNote(g), null, "dismissed: the note is gone");
   assert.equal(g.box().value, "The stale-read fallback.", "…and the reply's words stay");
+  assert.equal(doc.activeElement, g.box(), "…and the keyboard, on the dismiss that went with the note, is in the box, not on the page");
   g.click('[data-act="fccancel"]');
   assert.equal(g.composer().hidden, true, "the reply cancelled after the dismiss: nothing comes back, the comment was dropped on purpose");
   g.dispose();
@@ -639,9 +617,9 @@ test("the close names every comment a yes would drop: the one typed and each ref
   draft(h.box(), "The stale-read fallback.", 24, 20);
   await refused(first);
   assert.ok(heldNote(h), "the precondition: the refused comment waits in a note under the reply, whose words stay");
-  assert.deepEqual(put(), [{ question: "Discard the comment typed on report.md and the comment that was not saved?",
-    kept: "This file stays open: the comment typed on report.md and the comment that was not saved are still here. Save or clear the box, and bring back or dismiss the one that was not saved, then try again." }],
-    "words typed and a refused comment waiting, no save out: the ask names both");
+  assert.deepEqual(put(), [{ question: "Discard the reply typed to a comment on report.md and the comment that was not saved?",
+    kept: "This file stays open: the reply typed to a comment on report.md and the comment that was not saved are still here. Save or clear the box, and bring back or dismiss the one that was not saved, then try again." }],
+    "words typed and a refused comment waiting, no save out: the ask names both, the typed reply as a reply");
   h.click('[data-act="fcsave"]');                      // the reply's save, then a new comment typed under it, and the reply refused too
   await tick(); await tick();
   const second = h.last();
@@ -650,12 +628,58 @@ test("the close names every comment a yes would drop: the one typed and each ref
   draft(h.box(), "Cite the p99 too.", 17, 20);
   await answer({ type: "fileCommentsFailed", reqId: second.reqId, verb: "reply", code: "failed", error: REFUSAL });
   assert.equal(h.composer().querySelectorAll(".fc-held-save").length, 2, "the precondition: two refused comments wait in notes");
-  assert.deepEqual(put(), [{ question: "Discard the comment typed on report.md and the 2 comments that were not saved?",
-    kept: "This file stays open: the comment typed on report.md and the 2 comments that were not saved are still here. Save or clear the box, and bring back or dismiss the ones that were not saved, then try again." }],
-    "…and with two waiting, the ask counts them");
+  assert.deepEqual(put(), [{ question: "Discard the comment typed on report.md and the 2 comments and replies that were not saved?",
+    kept: "This file stays open: the comment typed on report.md and the 2 comments and replies that were not saved are still here. Save or clear the box, and bring back or dismiss the ones that were not saved, then try again." }],
+    "…and with two waiting, a comment and a reply, the ask counts them in words that fit both");
   draft(h.box(), "", 0, 20);
-  assert.deepEqual(put(), [{ question: "Discard the 2 unsaved comments on report.md?", kept: "This file stays open: 2 comments on report.md were not saved. Bring each back and save it, or dismiss it, then try again." }],
-    "the box emptied: the ask names the two refused comments, not one");
+  assert.deepEqual(put(), [{ question: "Discard the 2 unsaved comments and replies on report.md?", kept: "This file stays open: 2 comments and replies on report.md were not saved. Bring each back and save it, or dismiss it, then try again." }],
+    "the box emptied: the ask names the two refused ones, not one");
+  h.dispose();
+});
+
+test("while a save is out, each ask's kept text says a comment or a reply on the file is still saving, and to act once it has finished: words typed with a refused comment waiting, one waiting, several, and a refused reply named as a reply", async () => {
+  type Ask = { question: string; kept: string };
+  const asks: Array<() => Ask | null> = [];
+  const h = await harness({ guardClose: (a) => { asks.push(a); } });
+  await h.open();
+  const put = () => asks.map((a) => a()).filter((q): q is Ask => q !== null);
+  const first = await heldSave(h);
+  h.startReply(passage.id, passage.id);
+  draft(h.box(), "The stale-read fallback.", 24, 20);
+  await refused(first);
+  assert.ok(heldNote(h), "the precondition: the refused comment waits in a note under the reply");
+  h.click('[data-act="fcsave"]');                      // the reply's save out, then a new comment typed under it
+  await tick(); await tick();
+  const second = h.last();
+  assert.equal(second.verb, "reply", "the precondition: the reply's write is out");
+  h.click('[data-act="fcfile"]');
+  draft(h.box(), "Cite the p99 too.", 17, 20);
+  const REPLY_OUT = " A reply to a comment on report.md is still saving; if it is not saved, its words are lost too.";
+  assert.deepEqual(put(), [{ question: "Discard the comment typed on report.md and the comment that was not saved?" + REPLY_OUT,
+    kept: "This file stays open: the comment typed on report.md and the comment that was not saved are still here, and a reply to a comment on report.md is still saving. When that save has finished, save or clear the box, and bring back or dismiss the one that was not saved, then try again." }],
+    "words typed and a refused comment waiting while a reply saves: the kept text says the reply is still saving, and to act once it has finished");
+  draft(h.box(), "", 0, 20);
+  assert.deepEqual(put(), [{ question: "Discard the unsaved comment on report.md?" + REPLY_OUT,
+    kept: "This file stays open: a comment on report.md was not saved, and a reply to a comment on report.md is still saving. When that save has finished, bring back the comment that was not saved and save it, or dismiss it, then try again." }],
+    "one refused comment waiting while a reply saves: the same");
+  draft(h.box(), "Cite the p99 too.", 17, 20);
+  await answer({ type: "fileCommentsFailed", reqId: second.reqId, verb: "reply", code: "failed", error: REFUSAL });
+  assert.equal(h.composer().querySelectorAll(".fc-held-save").length, 2, "the precondition: the reply refused too, two wait in notes");
+  h.click('[data-act="fcsave"]');                      // the new comment's own save out over the two notes
+  await tick(); await tick();
+  const third = h.last();
+  assert.equal(third.args.note, "Cite the p99 too.", "the precondition: the new comment's save is out");
+  assert.deepEqual(put(), [{ question: "Discard the 2 unsaved comments and replies on report.md? A comment on report.md is still saving; if it is not saved, its words are lost too.",
+    kept: "This file stays open: 2 comments and replies on report.md were not saved, and a comment on report.md is still saving. When that save has finished, bring back each one that was not saved and save it, or dismiss it, then try again." }],
+    "several waiting while the open comment's own save is out: the same, a comment and a reply counted in words that fit both");
+  await answer({ type: "fileCommentsResult", reqId: third.reqId, ...status(AFTER) });
+  assert.equal(h.box().value, FIRST, "the precondition: the save landed and the first refused comment came back");
+  assert.deepEqual(put(), [{ question: "Discard the comment typed on report.md and the reply that was not saved?",
+    kept: "This file stays open: the comment typed on report.md and the reply that was not saved are still here. Save or clear the box, and bring back or dismiss the one that was not saved, then try again." }],
+    "the comment back in the box and the reply waiting: the refused reply named as a reply");
+  draft(h.box(), "", 0, 20);
+  assert.deepEqual(put(), [{ question: "Discard the unsaved reply to a comment on report.md?", kept: "This file stays open: a reply to a comment on report.md was not saved. Bring it back and save it, or dismiss it, then try again." }],
+    "the box emptied: the one refused reply, as a reply");
   h.dispose();
 });
 
@@ -697,8 +721,9 @@ test("while a comment saves, the viewer's close asks, a new comment's empty box 
   assert.equal(h.box().value, "", "the precondition: the new comment's box is empty");
   assert.deepEqual(put(), [SAVING], "an empty new comment open while the other saves: the close asks about the comment saving");
   draft(h.box(), "Cite the p99 too.", 17, 20);
-  assert.deepEqual(put(), [{ question: "Discard the unsaved comment on report.md? Another comment on report.md is still saving; if it is not saved, its words are lost too.", kept: "This file stays open: the comment typed on report.md is not saved. Save it, or clear the box, then try again." }],
-    "words typed in the new box as well: the ask names both");
+  assert.deepEqual(put(), [{ question: "Discard the unsaved comment on report.md? A comment on report.md is still saving; if it is not saved, its words are lost too.",
+    kept: "This file stays open: the comment typed on report.md is not saved, and a comment on report.md is still saving. When that save has finished, save the typed comment or clear the box, then try again." }],
+    "words typed in the new box as well: the ask names both, and the kept text says to act once the save has finished, since Save waits until then");
   h.click('[data-act="fccancel"]');
   assert.deepEqual(put(), [SAVING], "the new comment cancelled, no box open: the close still asks about the comment saving");
   await landed(reqId);
@@ -710,6 +735,21 @@ test("while a comment saves, the viewer's close asks, a new comment's empty box 
   await heldSave(g);
   assert.deepEqual(gAsks.map((a) => a()).filter((q): q is Ask => q !== null), [SAVING], "the saving comment's own box open, its words the save's: the ask is the save's too");
   g.dispose();
+  // a reply as the saving one: named as a reply, alone and beside a comment typed under it
+  const rAsks: Array<() => Ask | null> = [];
+  const r = await harness({ guardClose: (a) => { rAsks.push(a); } });
+  await r.open();
+  const rPut = () => rAsks.map((a) => a()).filter((q): q is Ask => q !== null);
+  await heldFrom(r, (x) => x.startReply(passage.id, passage.id), "The response cache.");
+  assert.equal(r.last().verb, "reply", "the precondition: the reply's write is out");
+  assert.deepEqual(rPut(), [{ question: "A reply to a comment on report.md is still saving. Close anyway? If it is not saved, its words are lost.", kept: "This file stays open: a reply to a comment on report.md is still saving. Try again when it has finished." }],
+    "a reply saving: the ask names it as a reply, to a comment on the file");
+  r.click('[data-act="fcfile"]');
+  draft(r.box(), "Cite the p99 too.", 17, 20);
+  assert.deepEqual(rPut(), [{ question: "Discard the unsaved comment on report.md? A reply to a comment on report.md is still saving; if it is not saved, its words are lost too.",
+    kept: "This file stays open: the comment typed on report.md is not saved, and a reply to a comment on report.md is still saving. When that save has finished, save the typed comment or clear the box, then try again." }],
+    "…and beside a comment typed under it, still as a reply");
+  r.dispose();
 });
 
 test("Cancel during a comment's save, then a refusal: the comment comes back in the box with its words and its refusal row", async () => {
@@ -832,25 +872,34 @@ test("while a comment saves, a new comment's Save waits with the reason in its t
 
 const MAC = typeof navigator !== "undefined" && /Mac|iP(?:hone|ad|od)/.test(navigator.platform || "");
 const SAVE_WAITS = "The previous comment is still saving";
-/** Under a composer waiting on another comment's save, one line in place of the chord hint, with the romp loader and the reason,
- *  on a fine pointer and on a coarse one: a title reaches no touch pointer, the saving composer's loader is not on screen, and
- *  the hint would say the chord saves while it does nothing. The line stands on a row of its own under Save and Cancel, never
- *  between them: at a phone's width the row wrapped with the line first, and Cancel fell to a row below Save. */
-for (const [pointer, touch, name, start] of [
-  ["a fine pointer", null, "a new comment", (h: H) => h.click('[data-act="fcfile"]')],
-  ["a coarse pointer", true, "a reply", (h: H) => h.startReply(passage.id, passage.id)],
-] as Array<[string, boolean | null, string, (h: H) => void]>) {
-  test("on " + pointer + ", " + name + " whose Save waits on another comment's save shows one line with the romp loader and the reason in place of the chord hint, on a row of its own under Save and Cancel, and the hint comes back once the save settles", async () => {
+/** Under a composer waiting on another save, one line in place of the chord hint, with the romp loader and the reason, on a
+ *  fine pointer and on a coarse one: a title reaches no touch pointer, the saving composer's loader is not on screen, and the
+ *  hint would say the chord saves while it does nothing. A reply's save is named as a reply. The line stands on a row of its
+ *  own under Save and Cancel, never between them: at a phone's width the row wrapped with the line first, and Cancel fell to a
+ *  row below Save. */
+const SAVE_WAITS_REPLY = "The previous reply is still saving";
+const holdComment = (h: H): Promise<number> => heldSave(h);
+const holdReply = async (h: H): Promise<number> => (await heldFrom(h, (x) => x.startReply(passage.id, passage.id), "The response cache.")).reqId as number;
+/** The rules of a sheet whose selector names `cls` as a class, with their bodies: a rule pin reads them. */
+const rulesNaming = (css: string, cls: string): Array<{ sel: string; body: string }> =>
+  Array.from(css.replace(/\/\*[\s\S]*?\*\//g, "").matchAll(/([^{}]+)\{([^{}]*)\}/g)).map((m) => ({ sel: m[1].trim(), body: m[2] }))
+    .filter((r) => new RegExp("\\." + cls + "(?![\\w-])").test(r.sel));
+for (const [pointer, touch, name, start, hold, words] of [
+  ["a fine pointer", null, "a new comment under a comment's save", (h: H) => h.click('[data-act="fcfile"]'), holdComment, SAVE_WAITS],
+  ["a coarse pointer", true, "a reply under a comment's save", (h: H) => h.startReply(passage.id, passage.id), holdComment, SAVE_WAITS],
+  ["a fine pointer", null, "a new comment under a reply's save", (h: H) => h.click('[data-act="fcfile"]'), holdReply, SAVE_WAITS_REPLY],
+] as Array<[string, boolean | null, string, (h: H) => void, (h: H) => Promise<number>, string]>) {
+  test("on " + pointer + ", " + name + ", whose Save waits on that save, shows one line with the romp loader and the reason in place of the chord hint, on a row of its own under Save and Cancel (a rule pin on both sheets), and the hint comes back once the save settles", async () => {
     coarse = touch;
     try {
       const h = await harness();
       await h.open();
-      const reqId = await heldSave(h);
+      const reqId = await hold(h);
       start(h);
       const acts = () => h.composer().querySelector(".fc-actions")!;
       const wait = acts().querySelector(".fc-wait");
-      assert.ok(wait, "a line in the hint's place under the waiting composer: the previous comment's save is out");
-      assert.equal(wait!.querySelector(".fc-wait-words")?.textContent, SAVE_WAITS, "…saying so in the Save's words");
+      assert.ok(wait, "a line in the hint's place under the waiting composer: the previous save is out");
+      assert.equal(wait!.querySelector(".fc-wait-words")?.textContent, words, "…saying so in the Save's words, a reply's save named as a reply");
       assert.ok(wait!.querySelector('img[src="/media/romp-swirl-glyph.svg"]'), "…with the romp loader's swirl");
       assert.equal(wait!.querySelectorAll(".fileview-dot").length, 3, "…and its three dots");
       assert.equal(h.composer().querySelector(".fc-hint"), null, "the chord hint gives its place: the chord saves nothing meanwhile");
@@ -858,13 +907,22 @@ for (const [pointer, touch, name, start] of [
       assert.deepEqual(row.map((n) => n.dataset.act || n.className), ["fcsave", "fccancel", "fileview-load fc-load fc-wait"],
         "Save and Cancel side by side, then the line after both: never between the two buttons");
       for (const f of ["styles.css", "feed.css"]) {
+        // a rule pin: the stand-in lays nothing out, so the row of its own is held by the two rules it needs in each sheet (a
+        // Chromium check at 390 and 320 px, made by hand and not committed, saw the line on its own row under the buttons)
         const rule = web(f).split("\n").find((l) => l.startsWith(".fc-wait {"));
         assert.ok(rule, f + ": a rule for the line");
         assert.match(rule!, /\{[^}]*\bflex: 1 1 100%;/, f + ": the line takes the full width of the buttons' row, so it wraps onto a row of its own under Save and Cancel: " + rule);
         assert.doesNotMatch(rule!, /\{[^}]*(?:white-space: nowrap|margin-right: auto|order:)/, f + ": nothing keeps it on the buttons' row or moves it before them: " + rule);
+        const actsRules = rulesNaming(web(f), "fc-actions");
+        const base = actsRules.filter((r) => r.sel === ".fc-actions");
+        assert.equal(base.length, 1, f + ": one rule for the buttons' row: " + JSON.stringify(base));
+        assert.match(base[0].body, /\bdisplay: flex;/, f + ": the buttons' row is a flex row (a rule pin): " + base[0].body);
+        assert.match(base[0].body, /\bflex-wrap: wrap;/, f + ": …that wraps, which the line's row of its own needs (a rule pin; with the wrap gone, a Chromium render put the line back on the buttons' row at every width tried, 390, 320 and 1000 px): " + base[0].body);
+        const over = actsRules.filter((r) => r !== base[0] && /\bflex-wrap\s*:/.test(r.body));
+        assert.deepEqual(over.map((r) => r.sel), [], f + ": no other rule sets flex-wrap on the buttons' row (a rule pin)");
       }
       assert.equal(h.composer().querySelectorAll(".fc-wait-words").length, 1, "…and the reason once under the box, not a second time elsewhere");
-      assert.equal(h.q('[data-act="fcsave"]')!.title, SAVE_WAITS, "the waiting Save keeps its title");
+      assert.equal(h.q('[data-act="fcsave"]')!.title, words, "the waiting Save keeps its title, in the same words");
       await landed(reqId);
       assert.equal(h.composer().querySelector(".fc-wait"), null, "the save landed: the line goes");
       const hint = h.composer().querySelector(".fc-hint");
@@ -875,7 +933,7 @@ for (const [pointer, touch, name, start] of [
   });
 }
 
-test("on a coarse pointer, where a title never reaches, a waiting Bring it back's reason stands as a line under its note; a fine pointer keeps the title alone", async () => {
+test("on a coarse pointer, where a title never reaches, a waiting Bring it back's reason stands as a line inside its note; a fine pointer keeps the title alone", async () => {
   coarse = true;
   try {
     const h = await harness();
@@ -887,11 +945,12 @@ test("on a coarse pointer, where a title never reaches, a waiting Bring it back'
     const backWhy = () => { const l = h.composer().querySelector(".fc-held-why"); assert.ok(l, "a line under the note"); return l!; };
     assert.equal(backWhy().hidden, false, "Bring it back waits: its reason shows");
     assert.equal(backWhy().textContent, "Save or clear this reply first.", "…in the title's words");
+    assert.equal(backWhy().parentElement, heldNote(h), "…as a line inside its note, so it stands closer to its own note than to the next one");
     draft(h.box(), "", 0, 20);
     assert.equal(backWhy().hidden, true, "the box emptied: Bring it back acts, and the line hides");
     draft(h.box(), "x", 1, 20);
     assert.equal(backWhy().hidden, false, "a word typed again: the line again");
-    assert.equal(backWhy().textContent, "Save or clear this reply first.");
+    assert.equal(backWhy().textContent, "Save or clear this reply first.", "…in the same words, kept in step by the keystroke");
     h.dispose();
   } finally { coarse = null; }
   const g = await harness();
@@ -901,7 +960,7 @@ test("on a coarse pointer, where a title never reaches, a waiting Bring it back'
   draft(g.box(), "The stale-read fallback.", 24, 20);
   await refused(reqId);
   assert.equal(g.composer().querySelector(".fc-held-why"), null, "a fine pointer: Bring it back's title alone");
-  assert.equal(bringBack(g).title, "Save or clear this reply first");
+  assert.equal(bringBack(g).title, "Save or clear this reply first", "…which says why it waits, in the reply's terms");
   g.dispose();
 });
 
@@ -974,7 +1033,10 @@ const OPENERS: Array<[string, (h: H) => void | Promise<void>, string]> = [
   ["startReplace (Re-place)", (h) => { if (!h.card(figRegion.id)!.classList.contains("open")) h.click('.fc-card[data-id="' + figRegion.id + '"] .fc-card-head'); h.click('.fc-card[data-id="' + figRegion.id + '"] [data-act="fcreplace"]'); }, "Your comment"],
 ];
 for (const [name, open, placeholder] of OPENERS) {
-  test("while a comment saves, " + name + " opens an empty box that takes typing: the saving comment's words stay the save's", async () => {
+  // a Re-place takes a drag on the picture, not words: its box is hidden, and emptied all the same, since the saving words
+  // left in it would carry to the next composer
+  const replace = name.startsWith("startReplace");
+  test("while a comment saves, " + name + (replace ? " opens with its box hidden and emptied" : " opens an empty box that takes typing") + ": the saving comment's words stay the save's", async () => {
     const h = await harness({}, FIG);
     await h.open(FIG_STATUS);
     await heldSave(h);
@@ -982,7 +1044,8 @@ for (const [name, open, placeholder] of OPENERS) {
     assert.equal(h.composer().hidden, false, "the composer is open");
     assert.equal(h.box().placeholder, placeholder, "…the opener's own");
     assert.equal(h.box().value, "", name + " during the save opens empty: the saving comment's words are not its box's");
-    assert.equal(h.box().readOnly, false, "…and its box takes typing");
+    if (replace) assert.equal(h.box().hidden, true, "…its box hidden: a Re-place takes a drag on the picture, not words");
+    else assert.equal(h.box().readOnly, false, "…and its box takes typing");
     h.dispose();
   });
 }
@@ -1018,6 +1081,11 @@ for (const [name, start, label] of LABELS) {
     const WORDS = "Say which figure, and cite the run it came from.";
     const m = await heldFrom(h, start, WORDS);
     h.click('[data-act="fcfile"]');
+    // the box at the opening, before a word is typed in it: the held write is this row's kind (a region's among them), and the
+    // opener hands on an empty box only when that write marked its composer as the one saving (writeFor)
+    assert.equal(h.box().value, "", "Comment on this file during the save opens empty: the saving comment's words are not its box's");
+    assert.equal(h.box().readOnly, false, "…and its box takes typing");
+    assert.equal(h.q('[data-act="fcsave"]')!.textContent, "Save", "…its Save its own, not reading Saving");
     draft(h.box(), "Lead with the numbers.", 22, 20);
     await refuseWrite(m);
     const note = heldNote(h);
@@ -1037,6 +1105,24 @@ for (const [name, start, label] of LABELS) {
     h.dispose();
   });
 }
+
+test("a region comment's save held: Comment on this file opens empty and takes typing, its Save its own; with that box left empty, the refusal brings the region's comment back in its own composer, with its own refusal row", async () => {
+  const h = await harness({}, FIG);
+  await h.open(FIG_STATUS);
+  const WORDS = "The axis starts at zero.";
+  const m = await heldFrom(h, (x) => { x.drag(overlayOf(x), [150, 240], [250, 300]); }, WORDS);
+  assert.ok(m.args.target, "the precondition: the region's write is out, with its target: " + JSON.stringify(m.args));
+  h.click('[data-act="fcfile"]');
+  assert.equal(h.box().value, "", "Comment on this file during the region's save opens empty: the region's words are not its box's");
+  assert.equal(h.box().readOnly, false, "…and its box takes typing");
+  assert.equal(h.q('[data-act="fcsave"]')!.textContent, "Save", "…its Save its own, not reading Saving");
+  await refuseWrite(m);
+  assert.deepEqual(h.row().slice(0, 1), ["fc-note:On the region at 0.17, 0.20, 0.33, 0.30"], "the box left empty: the refused region comment is back in its own composer, its reference row naming the region");
+  assert.equal(h.box().value, WORDS, "…with its words");
+  assert.ok(slotRows(h).length === 1 && slotRows(h)[0].includes(REFUSAL), "…and its own refusal row: " + slotRows(h).join(" | "));
+  assert.equal(heldNote(h), null, "no note: the comment itself is back");
+  h.dispose();
+});
 
 /** A reply's note names the comment it answers by that comment's first words whatever the comment is on: a comment on the whole
  *  file (the card's reference alone reads "this file"), and a comment whose words run past a card's bound or over lines. */
@@ -1077,7 +1163,7 @@ test("a refused comment, the box handed on to a region just drawn: the region st
   assert.ok(note, "the refused comment waits in a note under it");
   assert.ok(note!.textContent.startsWith("Your comment on this file was not saved:"), note!.textContent);
   assert.equal(bringBack(h).disabled, true, "Bring it back waits: it would replace the region");
-  assert.equal(bringBack(h).title, "Save or cancel this comment first", "…and says why");
+  assert.equal(bringBack(h).title, "Save or Cancel this comment first", "…and says why");
   assert.deepEqual(slotRows(h), [], "no refusal row under the region, which it does not belong to");
   h.click('[data-act="fccancel"]');
   assert.equal(h.box().placeholder, "Your comment", "the region cancelled: the refused comment comes back");
@@ -1099,7 +1185,7 @@ test("a refused comment, the box handed on to a pending Re-place: the Re-place s
   assert.ok(note, "the refused comment waits in a note under it");
   assert.ok(note!.textContent.startsWith("Your comment on this file was not saved:"), note!.textContent);
   assert.equal(bringBack(h).disabled, true, "Bring it back waits: it would end the Re-place");
-  assert.equal(bringBack(h).title, "Draw the new place or cancel the re-place first", "…and says why");
+  assert.equal(bringBack(h).title, "Draw the new place or Cancel the re-place first", "…and says why");
   h.drag(overlayOf(h), [110, 210], [190, 260]);
   await tick();
   assert.equal(h.last().verb, "retarget", "the precondition: the drag placed the region");
@@ -1274,34 +1360,8 @@ for (const [pointer, name, start, words, saving, reason, touch] of [
   });
 }
 
-test("a composer whose own save lands with two refused comments' notes under it: the first comes back, and the other's reason is at once the words of the comment now open, not the save that just landed", async () => {
-  const g = await harness();
-  await g.open();
-  const first = await heldSave(g);
-  g.startReply(passage.id, passage.id);
-  draft(g.box(), "The stale-read fallback.", 24, 20);
-  await refused(first);
-  g.click('[data-act="fcsave"]');
-  await tick(); await tick();
-  const second = g.last();
-  assert.equal(second.verb, "reply", "the precondition: the reply's write is out");
-  g.click('[data-act="fcfile"]');
-  draft(g.box(), "Cite the p99 too.", 17, 20);
-  await answer({ type: "fileCommentsFailed", reqId: second.reqId, verb: "reply", code: "failed", error: REFUSAL });
-  assert.equal(g.composer().querySelectorAll(".fc-held-save").length, 2, "the precondition: two refused comments wait in notes");
-  g.click('[data-act="fcsave"]');
-  await tick(); await tick();
-  const third = g.last();
-  assert.equal(third.args.note, "Cite the p99 too.", "the precondition: the new comment's save is out");
-  await answer({ type: "fileCommentsResult", reqId: third.reqId, ...status(AFTER) });
-  assert.equal(g.box().value, FIRST, "the new comment's save landed: the first refused comment comes back");
-  assert.equal(g.composer().querySelectorAll(".fc-held-save").length, 1, "…and the reply still waits in its note");
-  assert.equal(bringBack(g).title, "Save or clear this comment first", "…whose reason is at once the words of the comment now open");
-  g.dispose();
-});
-
 test("a refused comment's note under a region drawn and typed in: Bring it back says to save or cancel the region whether or not words are typed, since clearing the box leaves the rectangle holding it; a pending Re-place's reason is its own, words or not", async () => {
-  const REGION_WHY = "Save or cancel this comment first";
+  const REGION_WHY = "Save or Cancel this comment first";
   const h = await harness({}, FIG);
   await h.open(FIG_STATUS);
   const reqId = await heldSave(h);
@@ -1326,7 +1386,7 @@ test("a refused comment's note under a region drawn and typed in: Bring it back 
   g.click('.fc-card[data-id="' + figRegion.id + '"] [data-act="fcreplace"]');
   await refused(again);
   assert.ok(heldNote(g), "the precondition: the refused comment waits in a note under the Re-place");
-  assert.equal(bringBack(g).title, "Draw the new place or cancel the re-place first", "a pending Re-place over words an earlier composer left: its reason is the Re-place's, which has no Save and no box of its own");
+  assert.equal(bringBack(g).title, "Draw the new place or Cancel the re-place first", "a pending Re-place over words an earlier composer left: its reason is the Re-place's, which has no Save and no box of its own");
   g.dispose();
 });
 
@@ -1337,4 +1397,334 @@ test("a change is named by what it did: the verb outside the quote marks and the
   assert.equal(fc.changeByDeed({ kind: "ins", oldText: "", newText: LONG }), "the change that added “once the fallback path has been measured again under the fu…”", "cut to 60 characters, as the card cuts it");
   assert.equal(fc.changeByDeed({ kind: "sub", oldText: "Hazards", newText: "Risks" }), "the change that replaced “Hazards” with “Risks”", "a replacement: both texts, each in its own quote marks");
   assert.equal(fc.changeByDeed({ kind: "sub", oldText: "The api session reduced p95 latency by forty percent", newText: "cut" }), "the change that replaced “The api session reduced p95 l…” with “cut”", "each side cut to 30 characters");
+});
+
+// ── words a Re-place's drag leaves in the hidden box are the person's (boxHoldsTyped) ─────────────────────
+/** Re-place on the figure's region comment (its card opened first), and the drag that places it. */
+const rePlace = (h: H): void => { h.click('.fc-card[data-id="' + figRegion.id + '"] .fc-card-head'); h.click('.fc-card[data-id="' + figRegion.id + '"] [data-act="fcreplace"]'); };
+async function placeDrag(h: H): Promise<void> {
+  h.drag(overlayOf(h), [110, 210], [190, 260]);
+  await tick();
+  assert.equal(h.last().verb, "retarget", "the precondition: the drag placed the region");
+}
+for (const [name, start, words] of [
+  ["Comment on this file", (h: H) => h.click('[data-act="fcfile"]'), "Cite the p99 too."],
+  ["a reply", (h: H) => h.startReply(figPassage.id, figPassage.id), "The stale-read fallback."],
+] as Array<[string, (h: H) => void, string]>) {
+  test("a refusal after a Re-place's drag, the words typed in " + name + " opened under the save still in the hidden box: they stay, shown as a comment on the file, and the refused comment waits in a note under them", async () => {
+    const h = await harness({}, FIG);
+    await h.open(FIG_STATUS);
+    const reqId = await heldSave(h);
+    start(h);
+    draft(h.box(), words, words.length, 20);
+    rePlace(h);
+    await placeDrag(h);
+    assert.equal(h.composer().hidden, true, "the precondition: the drag ended the Re-place with no composer open, the words hidden in the box");
+    await refused(reqId);
+    assert.equal(h.composer().hidden, false, "the refusal: the words typed are in view");
+    assert.deepEqual(h.sections(), SLOT, "…in the panel's slot");
+    assert.equal(h.box().hidden, false, "…in a box that shows");
+    assert.equal(h.box().value, words, "…the words typed, as they were: the refused comment's words are not written over them");
+    assert.deepEqual(h.row(), ["fc-note:On this file"], name === "a reply"
+      ? "…as a comment on the file, not as the reply they were typed for: the reply's composer ended at the Re-place, and the refusal opens words carried from a reply through a Re-place's drag as a comment on the file, an edge disclosed with the user's decision of 2026-09-24, not a comment acted on in error"
+      : "…as a comment on the file, which Save files and Cancel drops");
+    const note = heldNote(h);
+    assert.ok(note, "the refused comment waits in a note under them");
+    assert.equal(note!.querySelector(".fc-note")!.textContent, "Your comment on this file was not saved:", "…naming what it was on");
+    assert.equal(note!.querySelector(".fc-held-words")?.textContent, FIRST, "…with its words whole");
+    assert.equal(bringBack(h).disabled, true, "…and its Bring it back waits on the words typed");
+    assert.equal(bringBack(h).title, "Save or clear this comment first", "…saying why, in a comment's terms");
+    assert.deepEqual(slotRows(h), [], "the refusal's row is not under the words typed, which it does not belong to");
+    h.dispose();
+  });
+}
+
+test("a Re-place's drag with words typed in a composer opened under a save, then that save lands: the words stay hidden where the drag left them, nothing opens for them, and the next composer shows them", async () => {
+  const h = await harness({}, FIG);
+  await h.open(FIG_STATUS);
+  const reqId = await heldSave(h);
+  h.click('[data-act="fcfile"]');
+  draft(h.box(), "Cite the p99 too.", 17, 20);
+  rePlace(h);
+  await placeDrag(h);
+  assert.equal(h.composer().hidden, true, "the drag with no refusal waiting: nothing opens for the words, which stay where the drag left them");
+  await answer({ type: "fileCommentsResult", reqId, ...status(FIG_AFTER) });
+  assert.equal(h.composer().hidden, true, "the save landed: still nothing opens, the landing moves nothing");
+  h.click('[data-act="fcfile"]');
+  assert.equal(h.box().value, "Cite the p99 too.", "the next composer shows the words typed, carried to it as a box's words always are");
+  h.dispose();
+});
+
+test("with no save out, words typed, then a Re-place and its drag: the words stay in the box with no composer open, and Comment on this file opens with them", async () => {
+  const h = await harness({}, FIG);
+  await h.open(FIG_STATUS);
+  h.click('[data-act="fcfile"]');
+  draft(h.box(), "Lead with the p95.", 18, 20);
+  rePlace(h);
+  await placeDrag(h);
+  assert.equal(h.composer().hidden, true, "the precondition: the drag ended the Re-place, no composer open");
+  h.click('[data-act="fcfile"]');
+  assert.equal(h.box().value, "Lead with the p95.", "no save out: the words carry from the box the drag left into Comment on this file, as a box's words always carry");
+  h.dispose();
+});
+
+test("the viewer's close asks about words a Re-place hides, typed in a composer opened while a save was out: behind the pending Re-place and after its drag, named as the words typed, with the way to see them", async () => {
+  type Ask = { question: string; kept: string };
+  const asks: Array<() => Ask | null> = [];
+  const h = await harness({ guardClose: (a) => { asks.push(a); } }, FIG);
+  await h.open(FIG_STATUS);
+  const put = () => asks.map((a) => a()).filter((q): q is Ask => q !== null);
+  await heldSave(h);
+  h.click('[data-act="fcfile"]');
+  draft(h.box(), "Cite the p99 too.", 17, 20);
+  rePlace(h);
+  const OUT = " A comment on report.md is still saving; if it is not saved, its words are lost too.";
+  assert.deepEqual(put(), [{ question: "Discard the unsaved words typed on report.md?" + OUT,
+    kept: "This file stays open: the words typed on report.md before the re-place are not saved, and a comment on report.md is still saving. When that save has finished, draw the new place and open Comment on this file: the words are in its box. Save them or clear the box, then try again." }],
+    "a save out, words typed, then a Re-place: the close names the words it hides as well as the save, and says how to see them");
+  await placeDrag(h);
+  assert.deepEqual(put(), [{ question: "Discard the unsaved words typed on report.md?" + OUT,
+    kept: "This file stays open: the words typed on report.md are not saved, and a comment on report.md is still saving. When that save has finished, open Comment on this file: the words are in its box. Save them or clear the box, then try again." }],
+    "…and after its drag, no composer open and the words hidden in the box: named the same, with the way to them from there");
+  h.click('[data-act="fcfile"]');
+  assert.equal(h.box().value, "Cite the p99 too.", "the way the kept text gives: Comment on this file shows the words");
+  h.dispose();
+});
+
+test("with no save out, the viewer's close asks about words a Re-place hides, behind the pending Re-place and after its drag, where it asked nothing before", async () => {
+  type Ask = { question: string; kept: string };
+  const asks: Array<() => Ask | null> = [];
+  const h = await harness({ guardClose: (a) => { asks.push(a); } }, FIG);
+  await h.open(FIG_STATUS);
+  const put = () => asks.map((a) => a()).filter((q): q is Ask => q !== null);
+  h.click('[data-act="fcfile"]');
+  draft(h.box(), "Lead with the p95.", 18, 20);
+  rePlace(h);
+  assert.deepEqual(put(), [{ question: "Discard the unsaved words typed on report.md?",
+    kept: "This file stays open: the words typed on report.md before the re-place are not saved. Draw the new place and open Comment on this file: the words are in its box. Save them or clear the box, then try again." }],
+    "words typed, then a Re-place: the close names the words it hides, and says how to see them");
+  await placeDrag(h);
+  assert.deepEqual(put(), [{ question: "Discard the unsaved words typed on report.md?",
+    kept: "This file stays open: the words typed on report.md are not saved. Open Comment on this file: the words are in its box. Save them or clear the box, then try again." }],
+    "…and after its drag, no composer open and the words hidden in the box: the close names them, with the way to them from there");
+  h.click('[data-act="fcfile"]');
+  assert.equal(h.box().value, "Lead with the p95.", "the way the kept text gives: Comment on this file shows the words");
+  assert.deepEqual(put(), [{ question: "Discard the unsaved comment on report.md?", kept: "This file stays open: the comment typed on report.md is not saved. Save it, or clear the box, then try again." }],
+    "…where the ask is the typed comment's, as on main");
+  h.dispose();
+});
+
+// ── the keyboard stays on the control it was on ──────────────────────────────────────────────────────
+/** Enter on a focused button: its click. */
+const press = (): void => { (doc.activeElement as E).dispatch("click"); };
+/** Two refused comments waiting in notes under a comment typed in, the first a comment and the second a reply. */
+async function twoNotes(): Promise<H> {
+  const h = await harness();
+  await h.open();
+  const first = await heldSave(h);
+  h.startReply(passage.id, passage.id);
+  draft(h.box(), "The stale-read fallback.", 24, 20);
+  await refused(first);
+  h.click('[data-act="fcsave"]');
+  await tick(); await tick();
+  const second = h.last();
+  assert.equal(second.verb, "reply", "the precondition: the reply's write is out");
+  h.click('[data-act="fcfile"]');
+  draft(h.box(), "Cite the p99 too.", 17, 20);
+  await answer({ type: "fileCommentsFailed", reqId: second.reqId, verb: "reply", code: "failed", error: REFUSAL });
+  assert.equal(h.composer().querySelectorAll(".fc-held-save").length, 2, "the precondition: two refused comments wait in notes, a comment and then a reply");
+  return h;
+}
+const notesOf = (h: H): E[] => h.composer().querySelectorAll(".fc-held-save");
+
+test("with two notes, the keyboard on the second note's dismiss stays on it through a re-render, and Enter dismisses that note, not the first; with the box empty, the same for its Bring it back, which brings back the second", async () => {
+  const h = await twoNotes();
+  const ids = notesOf(h).map((n) => n.querySelector('[data-act="fcheldx"]')!.dataset.held);
+  notesOf(h)[1].querySelector('[data-act="fcheldx"]')!.focus();
+  await h.repoll();
+  assert.equal((doc.activeElement as E).dataset.act, "fcheldx", "a re-render keeps the keyboard on a note's dismiss");
+  assert.equal((doc.activeElement as E).dataset.held, ids[1], "…the second note's, the one it was on, not the first note's");
+  press();
+  assert.deepEqual(notesOf(h).map((n) => n.querySelector('[data-act="fcheldx"]')!.dataset.held), [ids[0]], "Enter dismissed the second note, the one the keyboard was on: the first still waits");
+  h.dispose();
+  const g = await twoNotes();
+  draft(g.box(), "", 0, 20);
+  const back2 = notesOf(g)[1].querySelector('[data-act="fcheldback"]')!;
+  assert.equal(back2.disabled, false, "the precondition: the box emptied, Bring it back acts");
+  const held2 = back2.dataset.held;
+  back2.focus();
+  await g.repoll();
+  assert.equal((doc.activeElement as E).dataset.act, "fcheldback", "a re-render keeps the keyboard on a note's Bring it back");
+  assert.equal((doc.activeElement as E).dataset.held, held2, "…the second note's, not the first note's");
+  press();
+  assert.equal(g.box().placeholder, "Your reply", "Enter brings back the second note's comment, the reply");
+  assert.equal(g.box().value, "The stale-read fallback.", "…with its words");
+  g.dispose();
+});
+
+for (const [what, typed, settle] of [
+  ["lands", "", (reqId: number) => landed(reqId)],
+  ["is refused into a note", "Cite the p99 too.", (reqId: number) => refused(reqId)],
+] as Array<[string, string, (reqId: number) => Promise<void>]>) {
+  test("the keyboard on the open composer's Cancel stays there when another comment's save " + what, async () => {
+    const h = await harness();
+    await h.open();
+    const reqId = await heldSave(h);
+    h.click('[data-act="fcfile"]');
+    if (typed) draft(h.box(), typed, typed.length, 20);
+    h.q('[data-act="fccancel"]')!.focus();
+    await settle(reqId);
+    if (typed) assert.ok(heldNote(h), "the precondition: the refused comment waits in a note");
+    assert.equal((doc.activeElement as E).dataset.act, "fccancel", "the other comment's save " + what + ": the keyboard stays on the open composer's Cancel");
+    assert.ok(h.composer().contains(doc.activeElement as E), "…the Cancel in the open box");
+    h.dispose();
+  });
+}
+
+test("with two notes standing, a reply's save landing keeps the keyboard on the second note's dismiss, and shows that reply's saved line at the landing", async () => {
+  const h = await twoNotes();
+  // the words typed carry into a reply, whose save goes out; a new comment opens under it, the two notes with it
+  h.startReply(passage.id, passage.id);
+  assert.equal(h.box().value, "Cite the p99 too.", "the precondition: the words carried into the reply");
+  h.click('[data-act="fcsave"]');
+  await tick(); await tick();
+  const m = h.last();
+  assert.equal(m.verb, "reply", "the precondition: the reply's write is out");
+  h.click('[data-act="fcfile"]');
+  assert.equal(notesOf(h).length, 2, "the precondition: the two notes stand under the new comment");
+  const x2 = notesOf(h)[1].querySelector('[data-act="fcheldx"]')!;
+  x2.focus();
+  cardRects.set(passage.id, rectOf(0, 900, 300, 60));   // the reply's card below the view: its landing raises the saved line
+  try {
+    const answered: StoreComment = { ...passage, replies: [...(passage.replies || []), { author: "you", ts: T0 + 9000, body: "Cite the p99 too." }] };
+    await answer({ type: "fileCommentsResult", reqId: m.reqId, ...status({ store: { v: 3, path: "docs/report.md", suggestions: [], comments: [answered, whole] }, storeMtimeNs: "1757145600000000008" }) });
+    const line = h.q('[data-act="fcsavedgo"]');
+    // both read at the landing and asserted together, so the record shows each
+    assert.deepEqual({ keyboard: (doc.activeElement as E).dataset.held === x2.dataset.held, savedLine: line ? line.textContent : null },
+      { keyboard: true, savedLine: "Saved · the card is below" },
+      "the reply landed: the keyboard stays on the second note's dismiss, and the reply's saved line shows now, not at the next render");
+  } finally { cardRects.clear(); }
+  h.dispose();
+});
+
+test("a note dismissed under a pending Re-place: the keyboard goes to the Re-place's Cancel, since the hidden box cannot take it", async () => {
+  const h = await harness({}, FIG);
+  await h.open(FIG_STATUS);
+  const reqId = await heldSave(h);
+  rePlace(h);
+  await refused(reqId);
+  assert.ok(heldNote(h), "the precondition: the refused comment waits in a note under the Re-place");
+  assert.equal(h.box().hidden, true, "the precondition: the Re-place hides the box");
+  const x = h.composer().querySelector('[data-act="fcheldx"]')!;
+  x.focus();
+  x.dispatch("click");
+  assert.equal(heldNote(h), null, "the precondition: dismissed");
+  assert.equal((doc.activeElement as E).dataset.act, "fccancel", "the keyboard, on the dismiss that went with its note, goes to the Re-place's Cancel: the hidden box cannot take it");
+  h.dispose();
+});
+
+// ── Bring it back's reason names only buttons the composer shows ────────────────────────────────────
+// a second figure the source holds no embed line for: a region on it has nothing to anchor to, and its Comment no passage
+const FIG2 = { html: FIG_HTML + '<p><img src="chart.png" alt="Chart"></p>\n', src: FIG_SRC };
+const overlay2 = (h: H): E => { const o = h.body.querySelectorAll(".fileview-md .fc-overlay"); assert.equal(o.length, 2, "the two figures' overlays"); return o[1]; };
+const NO_HX: Partial<Status> = { ...FIG_STATUS, store: { v: 3, path: "docs/report.md", suggestions: [hR, hL].map(sugg), comments: [figRegion, figPassage] }, hunks: [hR, hL], storeMtimeNs: "1757145600000000009" };
+for (const [name, fig, open, words, gone, reason] of [
+  ["a region drawn on a figure with no embed line", FIG2, (h: H) => { h.drag(overlay2(h), [150, 240], [250, 300]); }, "", false, "Cancel this comment first"],
+  ["a comment typed on a figure with no embed line, its passage refused as it opened", FIG2, (h: H) => {
+    const o = overlay2(h);
+    o.dispatch("pointerdown", { clientX: 150, clientY: 240, pointerId: 8, button: 0 });
+    o.dispatch("pointerup", { clientX: 150, clientY: 240, pointerId: 8 });
+    h.float().dispatch("click");
+  }, "Which run is this?", false, "Clear or Cancel this comment first"],
+  ["a comment typed about a change that has gone since", FIG, (h: H) => h.click('[data-act="fcchangecomment"][data-id="hX"]'), "Say why it went.", true, "Clear or Cancel this comment first"],
+] as Array<[string, { html: string; src: string }, (h: H) => void, string, boolean, string]>) {
+  test("a refused comment's note under " + name + ", which shows no Save: Bring it back's reason names only what frees it, in its title and, on a coarse pointer, in its line", async () => {
+    try {
+      const h = await harness({}, fig);
+      await h.open(FIG_STATUS);
+      const reqId = await heldSave(h);
+      open(h);
+      if (words) draft(h.box(), words, words.length, 20);
+      // the pointer a finger from here on: a figure takes a drag or a Comment from a fine pointer only (paintRegions arms its
+      // overlay then), so the finger comes after, as on a laptop's touch screen, and the note is rendered for it
+      coarse = true;
+      await refused(reqId);
+      if (gone) await h.repoll(NO_HX);
+      assert.ok(heldNote(h), "the precondition: the refused comment waits in a note under it");
+      assert.equal(h.q('[data-act="fcsave"]'), null, "the precondition: the composer shows no Save");
+      assert.equal(bringBack(h).disabled, true, "Bring it back waits");
+      assert.equal(bringBack(h).title, reason, "…and its reason names only buttons on screen, no Save");
+      const line = heldNote(h)!.querySelector(".fc-held-why");
+      assert.ok(line && !line.hidden, "…and on a coarse pointer the line in the note shows");
+      assert.equal(line!.textContent, reason + ".", "…in the title's words");
+      h.dispose();
+    } finally { coarse = null; }
+  });
+}
+
+// ── each note's reason is true for that note ─────────────────────────────────────────────────────────
+for (const [pointer, touch] of [["a fine pointer", null], ["a coarse pointer", true]] as Array<[string, boolean | null]>) {
+  test("on " + pointer + ", two notes under a composer whose own save is out: the first says it comes back when that save has saved, the other that it waits its turn behind the one above; the landing brings back the first, and the other's reason is at once the words of the comment now open", async () => {
+    coarse = touch;
+    try {
+      const g = await twoNotes();
+      g.click('[data-act="fcsave"]');
+      await tick(); await tick();
+      const third = g.last();
+      assert.equal(third.args.note, "Cite the p99 too.", "the precondition: the new comment's own save is out");
+      // each note's title, and on a coarse pointer the lines in order under the box (where the line stands is the test above's)
+      const lines = () => g.composer().querySelectorAll(".fc-held-why").map((l) => l.textContent);
+      const whys = () => notesOf(g).map((n, i) => ({ title: n.querySelector('[data-act="fcheldback"]')!.title, line: touch ? lines()[i] ?? null : null }));
+      const dot = (s: string) => (touch ? s + "." : null);
+      assert.deepEqual(whys(), [
+        { title: "It comes back when this comment has saved", line: dot("It comes back when this comment has saved") },
+        { title: "It waits its turn behind the one above", line: dot("It waits its turn behind the one above") },
+      ], "during the save each note says what is true for it: the landing brings back the first alone");
+      await answer({ type: "fileCommentsResult", reqId: third.reqId, ...status(AFTER) });
+      assert.equal(g.box().value, FIRST, "the new comment's save landed: the first refused comment comes back");
+      assert.equal(notesOf(g).length, 1, "…and the reply still waits in its note");
+      assert.equal(bringBack(g).title, "Save or clear this comment first", "…whose reason is at once the words of the comment now open");
+      g.dispose();
+    } finally { coarse = null; }
+  });
+}
+
+// ── a comment about a change that has gone: named by that state, never by its id ─────────────────────
+const GONE_LABEL = "Your comment about a change that is no longer pending was not saved:";
+test("a refused comment about a change that went while its save was out is named in its note as a change no longer pending, never by the change's id", async () => {
+  const h = await harness({}, FIG);
+  await h.open(FIG_STATUS);
+  const m = await heldFrom(h, (x) => x.click('[data-act="fcchangecomment"][data-id="hX"]'), "Say why it went.");
+  h.click('[data-act="fcfile"]');
+  draft(h.box(), "Lead with the numbers.", 22, 20);
+  await h.repoll(NO_HX);                               // the change decided while the save was out
+  await refuseWrite(m);
+  const label = heldNote(h)!.querySelector(".fc-note")!.textContent;
+  assert.equal(label, GONE_LABEL, "the note names the change by its state, in the panel's words for it");
+  assert.doesNotMatch(label, /hX/, "…and never by its id");
+  h.dispose();
+});
+
+test("a refused comment about a change waits in its note named by what the change did; when the change goes, the same note names it as no longer pending, and brought back it shows the change gone, never its id", async () => {
+  const h = await harness({}, FIG);
+  await h.open(FIG_STATUS);
+  const m = await heldFrom(h, (x) => x.click('[data-act="fcchangecomment"][data-id="hX"]'), "Say why it went.");
+  h.click('[data-act="fcfile"]');
+  draft(h.box(), "Lead with the numbers.", 22, 20);
+  await refuseWrite(m);
+  const label = () => heldNote(h)!.querySelector(".fc-note")!.textContent;
+  assert.equal(label(), "Your comment about the change that removed “still” was not saved:", "the precondition: the note names the change by what it did");
+  await h.repoll(NO_HX);                               // the change decided while the note stands
+  assert.equal(label(), GONE_LABEL, "the change gone: the same note names it by its state");
+  assert.doesNotMatch(label(), /hX/, "…never by its id");
+  draft(h.box(), "", 0, 20);
+  bringBack(h).dispatch("click");
+  await tick();
+  assert.equal(h.box().value, "Say why it went.", "the precondition: brought back with its words");
+  const row = h.row();
+  assert.equal(row[0], "fc-note fc-refused:The change this comment was about is no longer pending: it was accepted or rejected, or the session's next edit took it into a new one.",
+    "brought back, the composer says at once that its change is gone, as any open composer does at the next status");
+  assert.doesNotMatch(row.join(" | "), /hX/, "…and shows no id: " + row.join(" | "));
+  assert.equal(h.q('[data-act="fcsave"]'), null, "…with no Save that would post the gone change's id");
+  h.dispose();
 });

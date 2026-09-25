@@ -748,13 +748,60 @@ test("the saved comment is read off the reply's store: the one comment the statu
   w.close();
 });
 
+// ── a landing while another composer is open ──────────────────────────────────────────────────────
+// A second comment on the passage, earlier in the list than the passage's own: its card stands above the passage's, so when
+// it is the layout's focus the passage's card is pushed below it.
+const twinP: StoreComment = { id: (T0 - 1000) + "-3", author: "you", ts: T0 - 1000, body: "Name the cache here too.", anchor: { quote: QUOTE, prefix: "We recommend ", suffix: "." }, replies: [], resolved: false };
+const withTwin = (twin: StoreComment = twinP, verb = "status"): Status => status({ verb, storeMtimeNs: verb === "status" ? "1757145600000000002" : NS9, store: { v: 3, path: "docs/report.md", suggestions: [], comments: [whole, detached, replied, twin, passage, closing] } });
+const TWIN_REPLIED: StoreComment = { ...twinP, replies: [{ author: "you", ts: T0 + 6000, body: "Which one?" }] };
+/** Reply on the twin's card, typed, the save chord: the reply's write is out, not answered. */
+async function twinReplyOut(w: World, last: () => Posted): Promise<void> {
+  headOf(w, twinP.id).click(); await tick();
+  actIn(w.card(twinP.id)!, "fcreply")!.click(); await tick();
+  const input = w.aside().querySelector(".fc-input")!;
+  input.value = "Which one?";
+  input.dispatchEvent(new Ev("keydown", { key: "Enter", ctrlKey: true })); await tick();
+  assert.equal(last().verb, "reply", "the precondition: the twin's reply is out");
+  assert.equal(last().args.commentId, twinP.id, "…on the twin");
+}
+
+test("a reply open on its card while another comment's reply lands: the open card keeps its place under the words being typed, since the landed card becomes the layout's focus only with no composer open or the saving one still open (before: the open card dropped 128 px, from 240 to 368)", async (t) => {
+  const { w, ok, last } = await open(t, textWorld(), withTwin());
+  await twinReplyOut(w, last);
+  headOf(w, passage.id).click(); await tick();          // the passage's card opens, the layout's focus, level with its mark
+  actIn(w.card(passage.id)!, "fcreply")!.click(); await tick();
+  const input = w.aside().querySelector(".fc-input")!;
+  assert.ok(w.card(passage.id)!.contains(input), "the precondition: the reply's box stands in the passage's card");
+  assert.equal(w.top(passage.id), desired(5), "the precondition: the card level with its mark");
+  input.value = "Which cache do you mean?";
+  await ok(withTwin(TWIN_REPLIED, "reply"));
+  assert.ok(w.card(passage.id)!.contains(input), "the twin's reply landed: the reply's box still stands in the passage's card");
+  assert.equal(w.top(passage.id), desired(5), "…and the card keeps its place: the landed card did not take the layout's focus from the one being typed in");
+  assert.equal(input.value, "Which cache do you mean?", "…the words as typed");
+  w.close();
+});
+
+test("a reply's save out, its box cancelled, then the landing: with no composer open the landed card is the layout's focus, as before (decision 43), level with its mark, and the card below it is pushed down", async (t) => {
+  const { w, ok, last } = await open(t, textWorld(), withTwin());
+  await twinReplyOut(w, last);
+  actIn(w.aside(), "fccancel")!.click(); await tick();
+  headOf(w, passage.id).click(); await tick();          // the passage's card opens and takes the focus; the twin's, open, stands above it
+  assert.equal(w.aside().querySelector(".fc-composer")!.hidden, true, "the precondition: no composer open");
+  assert.equal(w.top(passage.id), desired(5), "the precondition: the passage's card is the focus, level with its mark");
+  assert.ok(w.top(twinP.id)! < desired(5), "…the twin's above it: " + w.top(twinP.id));
+  await ok(withTwin(TWIN_REPLIED, "reply"));
+  assert.equal(w.top(twinP.id), desired(5), "the landing: the twin's card is the layout's focus, level with its mark");
+  assert.equal(w.top(passage.id), desired(5) + OPEN + 8, "…and the passage's card, below it, pushed down");
+  w.close();
+});
+
 // ── at source ──────────────────────────────────────────────────────────────────────────────────────
 
 test("at source: the scroll that shows a card's end is track content (no header term); the save sets the focus and raises the line BEFORE the composer closes, and scrolls nothing (decision 43); the line's click reaches a loose card through both scrollers", () => {
   assert.match(SRC, /const showCard = p\.top \+ p\.height \+ CARD_GAP - track\.clientHeight;/, "the least scroll that shows the card's bottom, in the track's content");
   assert.doesNotMatch(SRC, /const showCard = [^;\n]*offset[^;\n]*;/, "no header term in it");
   assert.match(SRC, /const lined = r !== null && this\.landSaved\(c, had, r, note\);[^\n]*\n\s*if \(r && this\.composer === c\) this\.closeComposer\(\);/, "the landing, then the close (a pin on where the lines stand; the close's condition, the saving composer only, is executed by file-comments-save-held-composer.test.ts \"a reply started while a comment saves opens empty…\", \"a new comment started while a comment saves opens empty…\", \"while a comment saves, a new comment's Save waits…\" and \"with no save out the box still carries its words…\", each red when a landing closes whatever composer is open)");
-  assert.match(SRC, /const saved = c\.kind === "reply" \? c\.commentId : savedCommentId\(had, r, note\);\n\s*if \(saved === null\) return false;\n\s*const key = this\.cardKey\(saved\);\n\s*if \(this\.margin\) this\.focusOn\(key\);\n\s*const side = this\.cardWhere\(key\);/, "a reply's card by its comment, a new comment's off the reply's store; the focus and the card's side, never a scroll (decision 43, 2026-09-09)");
+  assert.match(SRC, /const saved = c\.kind === "reply" \? c\.commentId : savedCommentId\(had, r, note\);\n\s*if \(saved === null\) return false;\n\s*const key = this\.cardKey\(saved\);\n(?:\s*\/\/[^\n]*\n)*\s*if \(this\.margin && \(!this\.composer \|\| this\.composer === c\)\) this\.focusOn\(key\);\n\s*const side = this\.cardWhere\(key\);/, "a reply's card by its comment, a new comment's off the reply's store; the focus while no composer is open or the saving one is, and the card's side, never a scroll (decision 43, 2026-09-09). A pin on where the code lives; the focus's condition is executed by this file's \"a reply open on its card while another comment's reply lands…\", red when any landing takes the focus, and \"a reply's save out, its box cancelled, then the landing…\", red when the landing takes it only for the saving composer still open");
   assert.doesNotMatch(SRC.slice(SRC.indexOf("private landSaved("), SRC.indexOf("private cardWhere(")), /scrollCard|scrollBoth|scrollIntoView|centerOn|showLoose/, "nothing in the landing scrolls");
   assert.match(SRC, /if \(this\.margin && this\.focusOn\(id\) && \(this\.centerOn\(id\) \|\| this\.showLoose\(id\)\)\) return;/, "a loose card is scrolled to by both scrollers at once, never by scrollIntoView alone (the card the focus first: the focus follow-on, 2026-09-08) — the line's click comes through here");
   assert.match(SRC, /const had = new Set\(\(this\.status && this\.status\.store \? this\.status\.store\.comments : \[\]\)\.map\(\(x\) => x\.id\)\);/, "the baseline is the status the write is fenced on");
