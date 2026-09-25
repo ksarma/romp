@@ -57,8 +57,11 @@
 # that counts; its failure outside a todo, a lost browser's included, is red by node's status without the lost-browser
 # remedy; and a leg whose bundle has neither a pass that counts nor a failure outside a todo is red as unrun, the red's
 # tally counting none of that file's results. One pass over the record (awk), linear in its length, executed by the tree
-# test's post-run and composition cases. An empty roster prints "no legs in the roster" and exits 0 without starting
-# node --test: with no file arguments node --test runs its default glob, the whole suite again.
+# test's post-run and composition cases. From a checkout whose path holds a backslash, node refuses to load the reporter
+# (ERR_INVALID_MODULE_SPECIFIER, the backslash percent-encoded in the reporter's module path) and exits 7 before any leg
+# runs, so every rostered leg is red as unrun with a zero tally and the step exits 7 (executed under node 22). An empty
+# roster prints "no legs in the roster" and exits 0 without starting node --test: with no file arguments node --test runs
+# its default glob, the whole suite again.
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 ROOT=$(cd .. && pwd)
