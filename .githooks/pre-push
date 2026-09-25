@@ -37,7 +37,12 @@
 #                     main between a string landing there and its redaction
 #                     inherits it that way, and a per-commit TREE scan refuses
 #                     them all, over files the branch never touched, when the
-#                     only exposure any of them could add is its tip.
+#                     only exposure any of them could add is its tip. A merge
+#                     of 64 or more parents is refused as unread, naming it:
+#                     git's combined diff prints no hunk for the lines it adds
+#                     at 64 parents and prints each with a space in its last
+#                     column at 65, so no line of it reads as one in none of
+#                     its parents (the credential scan refuses it too).
 #   each new commit   the ADDRESSES it is authored and committed under: the part
 #                     after the @, grepped like a line of content. A commit is
 #                     published with its metadata, and the two checks above read
@@ -157,8 +162,9 @@
 # commit stamped under a banned domain; the r8b2 audit and round 8b3,
 # 2026-09-23). The END is held by a TAIL marker the read asks for after its
 # answer (the message and address logs, the diff's second --stdin line, each
-# commit's second --stdin line in the credential feed), by a count or a byte
-# count read apart (the commit count, a size, a count the tool records, the
+# commit's second --stdin line in the credential feed, each commit's name
+# again after its parents in the parent counts), by a count or a byte count
+# read apart (the commit count, a size, a count the tool records, the
 # scanner's byte figure against the bytes the feed's awk wrote), by a
 # terminator each item needs (a NUL, the newline after an address, the tab
 # that ends a listing entry's size column), by equality with a whole name or
@@ -287,12 +293,19 @@
 #       name, a hex run shorter than a whole name refused naming the read
 #   the PARENT COUNT of a commit
 #       the commit named first in the answer: an answer that does not begin
-#       with it is refused naming the read, and the count is left empty. Its
-#       end: a cut after the commit names fewer parents, never more, so a
-#       merge read as one parent or none meets no numstat row for its
-#       post-images, a short read refused, and its added lines are read in
-#       fewer columns, a superset of the lines in no parent (a cut inside the
-#       last parent's name counts that parent all the same)
+#       with it is refused naming the read, and the count is left empty; a
+#       count of 64 or more refuses the commit by name (round 10a: git's
+#       combined diff prints no hunk for the lines such a merge adds at 64
+#       parents and prints each with a space in its last column at 65, and a
+#       65-parent merge published a banned line through a real push). Its end:
+#       a cut after the commit names fewer parents, never more, so a merge
+#       read as one parent or none meets no numstat row for its post-images, a
+#       short read refused, and its added lines are read in fewer columns, a
+#       superset of the lines in no parent (a cut inside the last parent's
+#       name counts that parent all the same); a merge of 64 or more parents
+#       read as fewer escapes the refusal by name and is refused all the same,
+#       its lines read in fewer columns at 65 parents and its header-only
+#       sections judged by their bytes at 64 (round 10a, by execution)
 #   the ADDED LINES diff of a commit
 #       the head marker (--always: the commit's own sha ahead of the diff),
 #       then the count the awk records: no marker, or no count, refuses naming
@@ -441,21 +454,82 @@
 #       other answer refuses. Its end: asked only beside a 0-byte count, the
 #       empty blob's, whose size 0 has no proper prefix but the empty answer,
 #       a non-count refused
+#   the PARENT COUNTS of the pushed commits
+#       each commit the credential scan feeds, answered once in the order
+#       given with repeats dropped (rev-list --no-walk=unsorted, in
+#       parent_counts): its header line, commit and its name, which rev-list
+#       prints ahead of its format, in that order, read from the list file
+#       rev-list reads, a missing, foreign or out-of-order line refused naming
+#       the read, and the count of the list's lines the awk read compared with
+#       the count fed, another number refused naming both; each commit of 64
+#       or more parents refused by name, the awk's count of those compared
+#       with the lines it printed (round 10a: git's combined diff prints no
+#       hunk for the lines such a merge adds at 64 parents and prints each
+#       with a space in its last column at 65, so the feed could not read
+#       them, and merges of 64 and 65 parents published a credential through
+#       real pushes); its record, three counts or the word that says where the
+#       read fell short, refused when it is neither. Its end: each commit's
+#       name printed again after its parents, the tail marker its format asks
+#       for, without which the awk records untailed, refused naming the read,
+#       so a cut inside the parents of a merge of 64 or more, which would read
+#       as fewer, is refused
 #   the CREDENTIAL FEED of the push
 #       each listed commit's head marker, its own name ahead of its diff
 #       (--always), in the order fed, read from the list file diff-tree reads:
 #       a missing, foreign or out-of-order line is refused naming the read,
 #       and the awk's count of commits read whole is compared with the count
-#       fed, another number refused naming both; its record, four counts or
-#       the word that says where the read fell short, refused when it is
-#       neither. Its end: each commit's TAIL marker, its name printed again
-#       after its diff for its second --stdin line (<rev> <rev>, an empty
-#       diff), without which the awk records untailed, refused naming the
-#       read, and a line after the last tail is refused too; the tr ahead of
-#       the awk carries both markers, so a tr silent or cut short loses them
-#       (round 8: the stream gitleaks' own git read for the scan, cut inside a
-#       commit, published a credential through a real push, the read inside
-#       gitleaks with no row until round 9 made it the hook's own)
+#       fed, another number refused naming both; every line between a commit's
+#       two names is one of the shapes the awk reads or recognizes
+#       (credential_feed lists them), any other refused naming the read and
+#       the commit (round 10a: until then a line the awk did not read passed
+#       silently, and a credential in the bytes such a line stood for
+#       published with every count agreeing); a merge's combined diff applies
+#       git's binary verdict whatever --text says, printing Binary files
+#       differ and no hunk for a path git calls binary in the result or in any
+#       parent, and the awk routes that line, in a diff --combined section
+#       with its path, to merge_binary_reads, which reads the merge's own
+#       version of the path whole (at the cost of refusing a merge whose
+#       binary path holds a credential a remote already published), and
+#       refuses it anywhere else; a commit of 64 or more parents is refused
+#       apart (the PARENT COUNTS read); its record, five counts or the word
+#       that says where the read fell short, refused when it is neither. Its
+#       end: each commit's TAIL marker, its name printed again after its diff
+#       for its second --stdin line (<rev> <rev>, an empty diff), without
+#       which the awk records untailed, refused naming the read, and a line
+#       after the last tail is refused too; the tr ahead of the awk carries
+#       both markers, so a tr silent or cut short loses them (round 8: the
+#       stream gitleaks' own git read for the scan, cut inside a commit,
+#       published a credential through a real push, the read inside gitleaks
+#       with no row until round 9 made it the hook's own)
+#   the RESULT listing of a merge
+#       the path the merge's diff --combined section named when it printed
+#       Binary files differ, git's quoted form, compared as a string with the
+#       path field of the merge's combined raw listing, read without -z so the
+#       field is quoted the same way (merge_binary_reads): exactly one record
+#       must name it, and its last mode before the object names and its last
+#       object name before the status letters, a whole hex name, are the
+#       result's mode and blob; no record, two, or one without those fields
+#       refuses naming the read. Its end: the path is a record's last field,
+#       so a cut inside the record that names it leaves it matching nothing,
+#       refused, and a cut in another record leaves that record whole
+#   the SIZE of a merge's binary blob
+#       a digit run, compared with the bytes the content read counted
+#       (merge_binary_reads): a non-count refuses naming the read, and another
+#       number refuses naming both. Its end: a cut size is a prefix of its
+#       digits, another number than the bytes read
+#   the CONTENT of a merge's binary blob
+#       the blob's SIZE, read apart: the bytes blob_pieces' awk counted must
+#       be the size and one, the newline it appends after cat-file's answer
+#       when cat-file exited 0, another count refused naming both (round 10a:
+#       a credential in a merge's own lines in a path git calls binary was
+#       published with every count agreeing, for each of five causes, a NUL in
+#       the first 8000 bytes, a committed -diff, .git/info/attributes,
+#       core.attributesFile and a diff driver whose binary key is true, and is
+#       read whole since, from the result blob, pieced as the feed pieces
+#       added lines); its record, four counts, refused when it is not. Its
+#       end: the size, so any cut counts short, the last byte of a blob with
+#       no final newline included, since the newline appended ends every whole
+#       answer
 #   the ERR line of the scanner log
 #       the answer is always a word: none for a log with no ERR line, or
 #       error, a tab and the first such line, the awk stripping colour codes
@@ -469,13 +543,14 @@
 #       which refuses however short
 #   the BYTE COUNT line of the scanner log
 #       the bytes the feed's awk recorded writing (the pieces for the scan of
-#       record, the path-scoped copies for the additive run), compared with
-#       the one scanned ~N bytes line gitleaks logs, which the awk answers as
-#       a word, a tab and digits: no such line, or two, is refused naming the
-#       count of lines, any other answer naming it, and another number naming
-#       both (round 9: the commit count it replaces held a scan whole at the
-#       granularity of commits alone). Its end: a cut figure is a prefix of
-#       its digits, another number than the record's
+#       record, a merge's binary path read whole among them, the path-scoped
+#       copies for the additive run), compared with the one scanned ~N bytes
+#       line gitleaks logs, which the awk answers as a word, a tab and digits:
+#       no such line, or two, is refused naming the count of lines, any other
+#       answer naming it, and another number naming both (round 9: the commit
+#       count it replaces held a scan whole at the granularity of commits
+#       alone). Its end: a cut figure is a prefix of its digits, another
+#       number than the record's
 # Reads whose empty answer is the object's own (own=):
 #   the ADDRESS DOMAIN grep
 #       safe: the answer is the status alone (-q) and exit 0 is the hit, so a
@@ -670,11 +745,13 @@
 # where the round 4 text passed it (the widening, disclosed here and in
 # tests/pre-push-hook.bats' newline case; the round 5 refuter, 2026-09-22).
 # The credential scan's files live in the same directory: the commits it
-# feeds (creds.list), the pieces (creds.d) and the path-scoped copies
-# (creds.p), each directory made by mkdir, a writer like the others, the two
-# indexes that name each piece's commit and file (creds.index,
-# creds.pindex), the feed's record (creds.record), the report template and
-# the two reports.
+# feeds (creds.list, and once each in creds.revs for their parent counts,
+# whose record is creds.parents), the pieces (creds.d) and the path-scoped
+# copies (creds.p), each directory made by mkdir, a writer like the others,
+# the two indexes that name each piece's commit and file (creds.index,
+# creds.pindex), the feed's record (creds.record), the merges' binary paths
+# the feed routes (creds.binary) and the record of each one's whole read
+# (creds.brecord), the report template and the two reports.
 #
 # The credential scan reads the same new commits through the same listing and
 # its gates (list_commits), and a range this clone cannot resolve (a
@@ -684,19 +761,56 @@
 # none of its parents (-c), where a line typed into a conflict resolution
 # lands, so a merge that brings in content a remote already holds adds
 # nothing; a rename by its edits (-M), so a pure rename adds nothing; every
-# blob as text (--text), its NUL bytes mapped to 0x01 so any awk carries the
-# line; and no textconv, no colour and no porcelain key, since diff-tree is
-# plumbing given each option explicitly, with core.quotePath=true on its
-# command line (git -c), so a path comes in git's quoted form whatever the
-# clone sets (under false a name with a byte over 127 printed raw, and one
-# gitleaks' allowlist case-folds to a name it skips, pnpm-loc<U+212A>.yaml
-# with the Kelvin sign, was selected for the path-scoped run below and
-# skipped by gitleaks, refusing a clean push). The read is whole when each
-# commit's name arrives ahead of its diff and again after it (the two lines
-# --always prints for a commit fed as <rev> and again as <rev> <rev>), in the
-# order fed, and the awk's count of commits read whole equals the count fed: a
-# missing, foreign or out-of-order name line, a line after the last tail, or a
-# count short of the one fed refuses the push as unscanned naming the read.
+# blob of a root or one-parent commit as text (--text), its NUL bytes mapped
+# to 0x01 so any awk carries the line; and no textconv, no colour and no
+# porcelain key, since diff-tree is plumbing given each option explicitly,
+# with core.quotePath=true on its command line (git -c), so a path comes in
+# git's quoted form whatever the clone sets (under false a name with a byte
+# over 127 printed raw, and one gitleaks' allowlist case-folds to a name it
+# skips, pnpm-loc<U+212A>.yaml with the Kelvin sign, was selected for the
+# path-scoped run below and skipped by gitleaks, refusing a clean push). The
+# read is whole when each commit's name arrives ahead of its diff and again
+# after it (the two lines --always prints for a commit fed as <rev> and again
+# as <rev> <rev>), in the order fed, and the awk's count of commits read whole
+# equals the count fed: a missing, foreign or out-of-order name line, a line
+# after the last tail, or a count short of the one fed refuses the push as
+# unscanned naming the read.
+# The awk also accounts for every line between a commit's two names: a line
+# that is none of the shapes it reads (a diff header, the +++ target, a hunk
+# header, a line whose columns are all +) or recognizes as carrying nothing
+# it needs (the header lines git prints under these options, the no-newline
+# notice, a line whose columns are not all +) refuses the push as a read the
+# feed could not make, naming the commit, so no line the awk does not read
+# stands for bytes that go unscanned while every count agrees (the shapes are
+# listed at credential_feed; the round 9 refuters, 2026-09-25).
+# A merge's combined diff applies git's binary verdict whatever --text says
+# (combine-diff.c computes it without reading the text flag): for a path git
+# calls binary in the merge's result or in any parent (a NUL in the first
+# 8000 bytes, a -diff or binary attribute in .gitattributes,
+# .git/info/attributes or the file core.attributesFile names, or a diff
+# driver whose binary key is true) it prints Binary files differ and no hunk,
+# and a credential in the merge's own lines in such a path was published with
+# every count agreeing, for each of those five causes (the round 9 refuters,
+# 2026-09-25). So the awk routes that notice, with the merge and the path its
+# section's header names, and the hook reads the merge's own version of the
+# path WHOLE (merge_binary_reads, blob_pieces): the result blob the merge's
+# combined raw listing names for the path, its size, and its bytes, NUL
+# mapped as the feed maps it, pieced exactly as the added lines are and added
+# to the bytes the scanner's figure is checked against; a path the
+# path-scoped selection below takes joins that run too, and a deletion or a
+# gitlink transfers no bytes of its own and is skipped. A Binary notice the
+# awk cannot route so (in a diff --git section, where --text keeps a real git
+# from printing one, or in a combined section with no path) refuses the push
+# as a foreign line. The cost: that path is read whole, not by the lines the
+# merge adds, so a merge whose binary path holds a credential a remote has
+# already published refuses the push.
+# A commit of 64 or more parents refuses the push, naming it, in both scans
+# (parent_counts here, the PARENT COUNT read in the identifier scan): git's
+# combined diff prints no hunk for the lines such a merge adds at 64 parents
+# and prints each with a space in its last column at 65, so no line of it
+# reads as one in none of its parents, and merges of 64 and 65 parents
+# published a credential through the feed that way (the round 9 rulings,
+# 2026-09-25).
 # The awk writes each file's added lines, commit by commit, to scratch files
 # called pieces, each at most 98,304 bytes, a continuation repeating the last
 # 16,384 bytes (a line too long for one piece is cut into windows that overlap
@@ -719,8 +833,9 @@
 # file's path (pkcs12-file, nuget-config-password, kubernetes-secret-yaml,
 # hashicorp-tf-password, freemius-secret-key), which the pieces' digit names
 # cannot trigger: each piece of a file whose name ends in .p12, .pfx,
-# nuget.config, .yaml, .yml, .tf, .hcl or .php (in any case) is copied under
-# that basename, and gitleaks scans the copies with those rules alone
+# nuget.config, .yaml, .yml, .tf, .hcl or .php (in any case), a merge's
+# binary path read whole among them, is copied under that basename, and
+# gitleaks scans the copies with those rules alone
 # (--enable-rule), its byte figure checked the same way against the bytes
 # copied. A file gitleaks' global path allowlist would skip under that name is
 # left out of this run, by the rule stated here, so the figure can be exact: a
@@ -2567,6 +2682,16 @@ scan_identifiers() {
                     unscanned "the ADDED LINES of commit ${rev:0:10} could not be read (git rev-list --parents exited 0 and answered \"$read_out\", not the commit and its parents)"
                 fi
             fi
+            # A merge of 64 or more parents (the header): git's combined diff
+            # prints no hunk for the lines it adds at 64 parents and prints each
+            # with a space in its last column at 65, so added_lines reads none
+            # of them, and a 65-parent merge published a banned line through a
+            # real push (the round 9 rulings, 2026-09-25): refused by name. A
+            # count cut short of 64 reads such a merge in fewer columns, as the
+            # table's row says.
+            if [ -n "$n" ] && [ "$n" -ge 64 ]; then
+                unscanned "the ADDED LINES of commit ${rev:0:10} cannot be read for the identifier scan: it has $n parents, and git's combined diff of a merge of 64 or more parents prints no hunk for the lines it adds, or prints them with a space in their last column"
+            fi
             rev_counts="$rev_counts$rev $n"$'\n'
             if make_scratch; then
                 # The diff's awk records the count of lines it printed, in a file
@@ -2962,58 +3087,91 @@ scan_identifiers() {
 # merge by the lines in none of its parents (a combined hunk carries one
 # column per parent, the hunk header's @ count less one); --root, a root
 # commit against the empty tree (plumbing reads no log.showRoot); --text,
-# every blob as text, whatever its bytes, its path's diff attribute or
-# core.bigFileThreshold say; --no-color, --no-textconv and --no-ext-diff
-# (color.ui and color.diff, a textconv driver, an external diff);
-# --ignore-submodules=none and --submodule=short (a gitlink change stays its
-# Subproject line); and git -c core.quotePath=true, which sets on the
-# command line the key that shapes a path's text, so each path comes in
-# git's quoted form whatever the clone sets and no key moves the paths
-# either (under core.quotePath=false a name with a byte over 127 printed
-# raw, and pnpm-loc<U+212A>.yaml, the Kelvin sign in place of lock's k, a
-# name the path-scoped selection below takes and gitleaks' case-folding
-# allowlist skips, refused a clean push on that run's figure; the round 9d
-# audit, 2026-09-24). tr maps NUL to 0x01, byte for byte, ahead of the awk:
-# an awk that ends a record at a NUL would lose the rest of the line while
-# every count stayed consistent, and no default rule names either byte. The
-# awk reads the list file diff-tree reads (through the environment, never a -v
-# operand: awk escape-processes a -v value, and a path may carry a backslash
-# pair), checks each commit's head marker in the order fed and its tail
-# marker, and compares names as strings ($0 "" == sha: two all-digit names
-# compare as numbers otherwise); a commit two refs share is fed twice and its
-# lines written once (the seen set). Each file's added lines in one commit
-# start a new piece, a file named by its sequence number in the piece
-# directory, whose first line holds ~; a piece holds at most CAP bytes, and
-# the line that would pass it starts a new piece that first repeats the last
-# V bytes of the file's lines (the ring keeps whole lines, the oldest cut to
-# its tail); a line longer than LW = CAP - V - 4 bytes is cut into windows of
-# LW bytes starting every LW - V, each after the first a piece of its own.
-# The index names each piece's commit and file (the path as git quotes it,
-# without git's trailing tab after a name holding a space), with a closing
-# field of its own, so a line cut inside is not used. A file the path-scoped
-# run selects (its name's suffix, less the names gitleaks' global path
-# allowlist skips: the header) is listed again, piece by piece, in the second
-# index under its basename (a quoted path's escapes kept), and the bytes of
-# its pieces are counted apart. The record is one line: a word that says
-# where the read fell short (unmarked <n>, untailed <n>, short <done>, or
-# nolist, the list file unread), or four counts (commits read whole, pieces,
-# bytes written, bytes of the path-scoped pieces). The awk keeps draining
-# after a bad marker, so diff-tree is never cut off mid-write and the record
+# every blob of a root or one-parent commit as text, whatever its bytes, its
+# path's diff attribute or core.bigFileThreshold say (a merge's combined diff
+# applies git's binary verdict whatever --text says: below); --no-color,
+# --no-textconv and --no-ext-diff (color.ui and color.diff, a textconv
+# driver, an external diff); --ignore-submodules=none and --submodule=short
+# (a gitlink change stays its Subproject line); and git -c
+# core.quotePath=true, which sets on the command line the key that shapes a
+# path's text, so each path comes in git's quoted form whatever the clone
+# sets and no key moves the paths either (under core.quotePath=false a name
+# with a byte over 127 printed raw, and pnpm-loc<U+212A>.yaml, the Kelvin
+# sign in place of lock's k, a name the path-scoped selection below takes and
+# gitleaks' case-folding allowlist skips, refused a clean push on that run's
+# figure; the round 9d audit, 2026-09-24). tr maps NUL to 0x01, byte for
+# byte, ahead of the awk: an awk that ends a record at a NUL would lose the
+# rest of the line while every count stayed consistent, and no default rule
+# names either byte. The awk reads the list file diff-tree reads (through the
+# environment, never a -v operand: awk escape-processes a -v value, and a
+# path may carry a backslash pair), checks each commit's head marker in the
+# order fed and its tail marker, and compares names as strings ($0 "" == sha:
+# two all-digit names compare as numbers otherwise); a commit two refs share
+# is fed twice and its lines written once (the seen set). Each file's added
+# lines in one commit start a new piece, a file named by its sequence number
+# in the piece directory, whose first line holds ~; a piece holds at most CAP
+# bytes, and the line that would pass it starts a new piece that first
+# repeats the last V bytes of the file's lines (the ring keeps whole lines,
+# the oldest cut to its tail); a line longer than LW = CAP - V - 4 bytes is
+# cut into windows of LW bytes starting every LW - V, each after the first a
+# piece of its own (the piecing is CRED_PIECES_AWK, below, which blob_pieces
+# shares). The index names each piece's commit and file (the path as git
+# quotes it, without git's trailing tab after a name holding a space), with a
+# closing field of its own, so a line cut inside is not used. A file the
+# path-scoped run selects (its name's suffix, less the names gitleaks' global
+# path allowlist skips: the header) is listed again, piece by piece, in the
+# second index under its basename (a quoted path's escapes kept), and the
+# bytes of its pieces are counted apart.
+# Inside a commit, between its two name lines, the awk accounts for every
+# line, by the lines this diff-tree prints (derived by running it over root,
+# one-parent and merge commits, renames with and without edits, mode and type
+# changes, empty files, symlinks, a gitlink added, changed and removed, a
+# missing final newline, quoted, spaced and tab names and a three-parent
+# octopus; git 2.43.0). It READS a diff header, the +++ target a header just
+# opened, a hunk header inside a section (1 to 63 columns: a commit of 64 or
+# more parents is refused apart, parent_counts) and a content line, its
+# columns all + (in a commit two refs share, recognized and not written
+# again). It RECOGNIZES AND IGNORES, between a header and its first hunk, the
+# --- source line and the index, old mode, new mode, mode, new file mode,
+# deleted file mode, similarity index, rename from and rename to lines, and
+# inside a hunk the no-newline notice and a line whose columns are a run of
+# -, + and space not all + (a context, removed or added-against-one-parent
+# line, which the content rule skips on purpose). And in a diff --combined
+# section it ROUTES the line Binary files differ: a merge's combined diff
+# applies git's binary verdict whatever --text says (combine-diff.c computes
+# it without reading the text flag), printing that line and no hunk for a
+# path git calls binary in the result or in any parent, so the awk writes the
+# merge and the path the section's header names (git's quoted form) to the
+# binary file, a line each, counted in the record, and scan_credentials reads
+# that path whole from the merge's result blob (merge_binary_reads; the cost,
+# in the header: a merge whose binary path holds a credential a remote already
+# published refuses the push). Any other line is foreign: a copy or
+# dissimilarity line, which only -C and -B print; a bare Subproject line; a
+# Binary notice in a diff --git section, which --text keeps a real git from
+# printing, or in a combined section with no path; anything else. The feed
+# cannot account for what a foreign line stands for, so it refuses the push
+# naming the commit (until round 10 the awk passed every line it did not
+# read, and a credential in a merge's binary path was published with every
+# count agreeing; the round 9 refuters, 2026-09-25). The record is one line: a
+# word that says where the read fell short (unmarked <n>, untailed <n>, short
+# <done>, foreign <n> <commit>, or nolist, the list file unread), or five
+# counts (commits read whole, pieces, bytes written, bytes of the path-scoped
+# pieces, binary notices routed). The awk keeps draining after a bad marker
+# or a foreign line, so diff-tree is never cut off mid-write and the record
 # names the cause rather than a SIGPIPE status. Its status, under pipefail,
 # is diff-tree's, tr's or the awk's (a kill included).
-credential_feed() {   # <list file> <record file> <piece directory> <index file> <path-scoped index file>
-    git -c core.quotePath=true diff-tree --stdin -p -U0 -r -M -c --root --always --text --no-color --no-textconv --no-ext-diff --ignore-submodules=none --submodule=short < "$1" \
-    | LC_ALL=C tr '\000' '\001' \
-    | LC_ALL=C ROMP_LIST_FILE=$1 ROMP_RECORD_FILE=$2 ROMP_PIECE_DIR=$3 ROMP_INDEX_FILE=$4 ROMP_PATH_INDEX_FILE=$5 awk '
-        BEGIN {
-            list = ENVIRON["ROMP_LIST_FILE"]; rec = ENVIRON["ROMP_RECORD_FILE"]; dir = ENVIRON["ROMP_PIECE_DIR"]
-            idx = ENVIRON["ROMP_INDEX_FILE"]; pidx = ENVIRON["ROMP_PATH_INDEX_FILE"]
-            while ((r = (getline l < list)) > 0) if (index(l, " ") == 0) want[++nwant] = l ""
-            if (r < 0) bad = "nolist"
-            close(list)
-            bytes = 0; pbytes = 0; done = 0; state = 0; pieces = 0; cur = ""; curq = 0; q = 0; rh = 1; rt = 0; rb = 0
+# The piecing, one awk text for the two reads that write pieces
+# (credential_feed's awk, from the feed's added lines, and blob_pieces', from
+# a merge's binary path read whole), so both cut, replay and index alike: the
+# constants CAP, V and LW, put (a line written and counted), the ring (keep
+# and forget), newpiece (the ~ line, the index lines, the replay), emit (a
+# line, or the windows of a long one), shut, and choose, the path-scoped
+# selection by a path's basename (the header). Each awk program is this text
+# followed by its own rules.
+CRED_PIECES_AWK='
+        function pieces_begin() {
+            bytes = 0; pbytes = 0; pieces = 0; cur = ""; curq = 0; q = 0; rh = 1; rt = 0; rb = 0
             CAP = 98304; V = 16384; LW = CAP - V - 4
-            pluses = "++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++"
         }
         function put(s,   k) { print s > cur; k = length(s) + 1; pb += k; bytes += k }
         function forget() { for (; rh <= rt; rh++) delete rl[rh]; rh = rt + 1; rb = 0 }
@@ -3037,35 +3195,146 @@ credential_feed() {   # <list file> <record file> <piece directory> <index file>
             }
             forget(); keep(w)
         }
+        function choose(p) {
+            f = p; base = f
+            if (substr(base, 1, 1) == "\"") { base = substr(base, 2); sub(/"$/, "", base) }
+            sub(/.*\//, "", base); lb = tolower(base)
+            q = (lb ~ /(\.p12|\.pfx|nuget\.config|\.yaml|\.yml|\.tf|\.hcl|\.php)$/) && base !~ /gitleaks\.toml/ && lb !~ /verification-metadata\.xml|database.refactorlog/ && lb != "pnpm-lock.yaml"
+        }'
+credential_feed() {   # <list file> <record file> <piece directory> <index file> <path-scoped index file> <binary paths file>
+    git -c core.quotePath=true diff-tree --stdin -p -U0 -r -M -c --root --always --text --no-color --no-textconv --no-ext-diff --ignore-submodules=none --submodule=short < "$1" \
+    | LC_ALL=C tr '\000' '\001' \
+    | LC_ALL=C ROMP_LIST_FILE=$1 ROMP_RECORD_FILE=$2 ROMP_PIECE_DIR=$3 ROMP_INDEX_FILE=$4 ROMP_PATH_INDEX_FILE=$5 ROMP_BINARY_FILE=$6 awk "$CRED_PIECES_AWK"'
+        BEGIN {
+            list = ENVIRON["ROMP_LIST_FILE"]; rec = ENVIRON["ROMP_RECORD_FILE"]; dir = ENVIRON["ROMP_PIECE_DIR"]
+            idx = ENVIRON["ROMP_INDEX_FILE"]; pidx = ENVIRON["ROMP_PATH_INDEX_FILE"]; bin = ENVIRON["ROMP_BINARY_FILE"]
+            while ((r = (getline l < list)) > 0) if (index(l, " ") == 0) want[++nwant] = l ""
+            if (r < 0) bad = "nolist"
+            close(list)
+            pieces_begin(); done = 0; state = 0; nbin = 0
+            pluses = "++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++"
+        }
         bad != ""                        { next }
         state == 0 {
             if (done >= nwant || $0 "" != want[done + 1]) { bad = "unmarked " (done + 1); next }
-            sha = $0 ""; state = 1; hdr = 0; n = 0; f = ""; base = ""; q = 0; open = 0
+            sha = $0 ""; state = 1; hdr = 0; n = 0; kind = ""; hp = ""; f = ""; base = ""; q = 0; open = 0
             skip = (sha in seen); seen[sha] = 1; next
         }
         $0 "" == sha                     { state = 0; done++; next }
-        /^diff --(git|combined) /        { hdr = 1; f = ""; base = ""; q = 0; open = 0; next }
+        /^diff --git /                   { hdr = 1; kind = "git"; hp = ""; n = 0; f = ""; base = ""; q = 0; open = 0; next }
+        /^diff --combined /              { hdr = 1; kind = "combined"; hp = substr($0, 17); n = 0; f = ""; base = ""; q = 0; open = 0; next }
         hdr && /^\+\+\+ / {
             f = substr($0, 5); sub(/\t$/, "", f)
             if (substr(f, 1, 2) == "b/") f = substr(f, 3)
             else if (substr(f, 1, 3) == "\"b/") f = "\"" substr(f, 4)
-            base = f
-            if (substr(base, 1, 1) == "\"") { base = substr(base, 2); sub(/"$/, "", base) }
-            sub(/.*\//, "", base); lb = tolower(base)
-            q = (lb ~ /(\.p12|\.pfx|nuget\.config|\.yaml|\.yml|\.tf|\.hcl|\.php)$/) && base !~ /gitleaks\.toml/ && lb !~ /verification-metadata\.xml|database.refactorlog/ && lb != "pnpm-lock.yaml"
+            choose(f); next
+        }
+        hdr && /^(--- |index |old mode |new mode |mode |new file mode |deleted file mode |similarity index |rename from |rename to )/ { next }
+        hdr && kind == "combined" && hp != "" && $0 == "Binary files differ" {
+            if (!skip) { printf "%s\t%s\t.\n", sha, hp >> bin; nbin++ }
             next
         }
-        /^@/                             { hdr = 0; match($0, /^@+/); n = RLENGTH - 1; plus = substr(pluses, 1, n); next }
-        !hdr && !skip && n > 0 && substr($0, 1, n) == plus {
-            if (!open) { open = 1; forget(); newpiece(0) }
-            emit(substr($0, n + 1))
+        kind != "" && /^@/ {
+            match($0, /^@+/); n = RLENGTH - 1
+            if (n < 1 || n > 63) { bad = "foreign " (done + 1) " " sha; next }
+            hdr = 0; plus = substr(pluses, 1, n); next
         }
+        !hdr && n > 0 && $0 == "\\ No newline at end of file" { next }
+        !hdr && n > 0 && substr($0, 1, n) == plus {
+            if (!skip) { if (!open) { open = 1; forget(); newpiece(0) } emit(substr($0, n + 1)) }
+            next
+        }
+        !hdr && n > 0 { pre = substr($0, 1, n); if (length(pre) == n && pre !~ /[^-+ ]/) next }
+        { bad = "foreign " (done + 1) " " sha }
         END {
             shut()
             if (bad != "")          print bad > rec
             else if (state != 0)    print "untailed " (done + 1) > rec
             else if (done != nwant) print "short " done > rec
-            else                    print done, pieces, bytes, pbytes > rec
+            else                    print done, pieces, bytes, pbytes, nbin > rec
+        }'
+}
+
+# A merge's binary path read whole (merge_binary_reads, the header): the
+# blob's bytes, NUL mapped to 0x01 as the feed maps them, pieced exactly as
+# the feed pieces a file's added lines (CRED_PIECES_AWK: each piece opens
+# with the ~ line and holds at most CAP bytes, a continuation replays the
+# last V bytes, a line longer than LW is cut into overlapping windows),
+# numbered after the pieces already written, indexed to the merge and the
+# path, and listed in the path-scoped index when choose takes the path's
+# name. Why pieces and not the blob as one file: gitleaks reads a file of
+# more than 100,000 bytes in chunks, so a credential across its cut
+# published (a 140,000-byte merged path with the token at byte 124,990), and
+# it skips a file that opens with an archive or document signature, so a
+# clean merge of a zip or a pdf path was refused on the byte figure (the
+# round 9 rulings, 2026-09-25). The group appends one newline after
+# cat-file's answer, only when cat-file exited 0, so the stream always ends
+# with a newline the blob did not have: the awk drops the empty last line
+# that newline makes, or keeps a last line the blob left without one (read
+# as a line and a newline, as the feed reads a missing final newline), and
+# the bytes it read are the blob's size and one when cat-file answered
+# whole, so any cut, the last byte of a blob with no final newline included,
+# counts short. The record: four counts (bytes read, pieces written, bytes
+# written, bytes of those pieces the path-scoped index lists). Its status,
+# under pipefail, is cat-file's, tr's or the awk's.
+blob_pieces() {   # <blob> <record file> <piece directory> <index file> <path-scoped index file> <merge> <path, as git quotes it> <pieces already written>
+    { git cat-file -p "$1" && printf '\n'; } \
+    | LC_ALL=C tr '\000' '\001' \
+    | LC_ALL=C ROMP_BLOB_RECORD_FILE=$2 ROMP_PIECE_DIR=$3 ROMP_INDEX_FILE=$4 ROMP_PATH_INDEX_FILE=$5 ROMP_BLOB_MERGE=$6 ROMP_BLOB_PATH=$7 ROMP_BLOB_PIECES=$8 awk "$CRED_PIECES_AWK"'
+        BEGIN {
+            rec = ENVIRON["ROMP_BLOB_RECORD_FILE"]; dir = ENVIRON["ROMP_PIECE_DIR"]
+            idx = ENVIRON["ROMP_INDEX_FILE"]; pidx = ENVIRON["ROMP_PATH_INDEX_FILE"]
+            pieces_begin(); first = ENVIRON["ROMP_BLOB_PIECES"] + 0; pieces = first
+            sha = ENVIRON["ROMP_BLOB_MERGE"] ""; choose(ENVIRON["ROMP_BLOB_PATH"] "")
+            got = 0; held = 0; open = 0
+        }
+        function line(t) { if (!open) { open = 1; forget(); newpiece(0) } emit(t) }
+        { got += length($0) + 1; if (held) line(last); last = $0; held = 1 }
+        END {
+            if (held && last != "") line(last)
+            shut()
+            print got, pieces - first, bytes, pbytes > rec
+        }'
+}
+
+# The parent count of every commit the credential scan feeds (the header: a
+# commit of 64 or more parents refuses the push, since git's combined diff
+# cannot show the lines such a merge adds): ONE rev-list over the list file,
+# --no-walk=unsorted, so each commit is answered once, in the order given, a
+# repeat dropped, in a format of three lines per commit: the header rev-list
+# prints ahead of a format (commit <name>), the parents, and the name again,
+# the tail marker. The awk reads the list file rev-list reads (through the
+# environment, as the feed's awk does), drops repeats the same way, and
+# checks each commit's header and its tail in the order given, so a cut
+# inside a commit's parents loses its tail and is refused; it prints each
+# commit of 64 or more parents with its count, and records one line: a word
+# that says where the read fell short (unmarked <n>, untailed <n>, short
+# <done>, or nolist), or three counts (commits read whole, lines of the list
+# read, commits of 64 or more parents printed), which scan_credentials
+# compares with the count it fed and the lines it read back. Its status,
+# under pipefail, is rev-list's or the awk's.
+parent_counts() {   # <list file: one commit per line> <record file>: prints "<commit> <parent count>" for each commit of 64 or more parents
+    git rev-list --no-walk=unsorted --stdin --format='%P%n%H' < "$1" \
+    | LC_ALL=C ROMP_REVS_FILE=$1 ROMP_COUNTS_FILE=$2 awk '
+        BEGIN {
+            list = ENVIRON["ROMP_REVS_FILE"]; rec = ENVIRON["ROMP_COUNTS_FILE"]; listed = 0
+            while ((r = (getline l < list)) > 0) { listed++; if (!((l "") in seen)) { seen[l ""] = 1; want[++nwant] = l "" } }
+            if (r < 0) bad = "nolist"
+            close(list); done = 0; state = 0; big = 0
+        }
+        bad != ""  { next }
+        state == 0 { if (done >= nwant || ($0 "") != ("commit " want[done + 1])) { bad = "unmarked " (done + 1); next } state = 1; next }
+        state == 1 { np = split($0, w, " "); state = 2; next }
+        {
+            if (($0 "") != want[done + 1]) { bad = "untailed " (done + 1); next }
+            if (np >= 64) { print want[done + 1], np; big++ }
+            done++; state = 0
+        }
+        END {
+            if (bad != "")          print bad > rec
+            else if (state != 0)    print "untailed " (done + 1) > rec
+            else if (done != nwant) print "short " done > rec
+            else                    print done, listed, big > rec
         }'
 }
 
@@ -3189,20 +3458,114 @@ scanner_run() {   # <gitleaks> <the scan's name, for its lines> <directory> <byt
     fi
 }
 
+# A merge's binary paths (the header's credential paragraph): each merge and
+# path the feed's awk routed to the binary file, read WHOLE from the merge's
+# own version of the path by three judged reads. The merge's combined raw
+# listing (git diff-tree -c --raw, read once per merge, WITHOUT -z: its path
+# field is git's quoted form, the form the section's header gave, and the
+# two are compared as strings, one stated rule; a -z listing gives the raw
+# path, which never equals a quoted one, so a clean merge of a binary path
+# git quotes would be refused): the recorded path must name exactly one
+# record, whose last object name before the status letters is the result
+# blob and whose last mode before the object names is the result's mode, and
+# no record or two refuse naming the read. The blob's size (git cat-file -s),
+# a digit run. Its bytes (blob_pieces), whose count of bytes read must be the
+# size and one, the newline blob_pieces appends. A zero result blob (the
+# merge deletes the path) and a gitlink (mode 160000: a commit, no blob of
+# its own) transfer no bytes of their own and are skipped. The pieces are
+# numbered after the feed's, and their bytes are added to the figures the
+# two scanner runs are checked against. Called with the count of routed paths
+# the feed recorded, compared with the lines read back. A content read that
+# fails, or records no four counts, leaves the pieces' numbering unknown, so
+# the paths after it are not read, and no figure is compared (the push is
+# refused already). Sets rpieces, rbytes, rpbytes and failed_creds, the
+# caller's.
+merge_binary_reads() {   # <count of routed paths the feed recorded>
+    local want="$1" seen_n=0 bsha bpath bterm lsha="" lread=0 listing="" line matches k rmode rblob size brec bgot bp bb bpb rest
+    local -a words
+    while IFS=$'\t' read -r -u 6 bsha bpath bterm; do
+        [ "$bterm" = . ] || continue
+        seen_n=$((seen_n + 1))
+        if [ "$bsha" != "$lsha" ]; then
+            lsha=$bsha; lread=0; listing=""
+            if judged_read gate="the RESULT listing of a merge" 0 "the RESULT listing of merge ${bsha:0:10}, whose binary paths the credential scan reads whole, could not be read (git diff-tree exited {rc})" -- git -c core.quotePath=true diff-tree -c --raw --no-commit-id --no-abbrev "$bsha"; then
+                listing=$read_out; lread=1
+            fi
+        fi
+        if [ "$lread" -eq 0 ]; then failed_creds=1; continue; fi
+        matches=0; rmode=""; rblob=""
+        while IFS= read -r line; do
+            case "$line" in *$'\t'*) ;; *) continue ;; esac
+            [ "${line#*$'\t'}" = "$bpath" ] || continue
+            matches=$((matches + 1))
+            read -r -a words <<< "${line%%$'\t'*}"
+            k=${#words[@]}
+            if [ "$k" -ge 7 ] && [ $((k % 2)) -eq 1 ]; then rmode=${words[$(( (k - 1) / 2 - 1 ))]}; rblob=${words[$((k - 2))]}; fi
+        done <<< "$listing"
+        if [ "$matches" -ne 1 ]; then
+            unscanned "the RESULT listing of merge ${bsha:0:10} names $matches records for $bpath, a path its combined diff calls binary, where a merge's listing holds one (git diff-tree exited 0), so that path cannot be read whole for the credential scan"
+            failed_creds=1; continue
+        fi
+        case "$rmode" in [0-7][0-7][0-7][0-7][0-7][0-7]) ;; *) rblob="" ;; esac
+        case "$rblob" in ''|*[!0-9a-f]*) rblob="" ;; *) [ "${#rblob}" -eq "${#bsha}" ] || rblob="" ;; esac
+        if [ -z "$rblob" ]; then
+            unscanned "the RESULT listing of merge ${bsha:0:10} answered a record for $bpath that names no result mode and blob (git diff-tree exited 0), so that path cannot be read whole for the credential scan"
+            failed_creds=1; continue
+        fi
+        [ "$rmode" != 160000 ] || continue              # a gitlink: a commit, no blob of its own to transfer
+        [ -n "${rblob//0/}" ] || continue               # the merge deletes the path: nothing transferred
+        size=""
+        judged_read gate="the SIZE of a merge's binary blob" 0 "the SIZE of $bpath in merge ${bsha:0:10}, a path the credential scan reads whole, could not be read (git cat-file -s exited {rc})" -- git cat-file -s "$rblob" || { failed_creds=1; continue; }
+        size=$read_out
+        if [ -z "$size" ] || [ -n "${size//[0-9]/}" ]; then
+            unscanned "the SIZE of $bpath in merge ${bsha:0:10}, a path the credential scan reads whole, could not be read (git cat-file -s exited 0 and answered \"$size\", not a count)"
+            failed_creds=1; continue
+        fi
+        : > "$scratch/creds.brecord"
+        if ! judged_read gate="the CONTENT of a merge's binary blob" 0 "the CONTENT of $bpath in merge ${bsha:0:10} could not be read whole for the credential scan (a stage of git cat-file -p, tr and awk exited {rc})" -- blob_pieces "$rblob" "$scratch/creds.brecord" "$scratch/creds.d" "$scratch/creds.index" "$scratch/creds.pindex" "$bsha" "$bpath" "$rpieces"; then
+            failed_creds=1; rbytes=""; rpbytes=""; return 0
+        fi
+        brec=""
+        { IFS= read -r brec || :; } < "$scratch/creds.brecord"
+        bgot=""; bp=""; bb=""; bpb=""; rest=""
+        read -r bgot bp bb bpb rest <<< "$brec" || :
+        case "$bgot:$bp:$bb:$bpb:${rest:+x}" in
+            *[!0-9:]*|:*|*::*)
+                unscanned "the CONTENT of $bpath in merge ${bsha:0:10} could not be read whole for the credential scan (its awk exited 0 and recorded \"$brec\", not four counts)"
+                failed_creds=1; rbytes=""; rpbytes=""; return 0 ;;
+        esac
+        rpieces=$((rpieces + bp))
+        if [ -n "$rbytes" ]; then rbytes=$((rbytes + bb)); rpbytes=$((rpbytes + bpb)); fi
+        if [ "$bgot" -ne $((size + 1)) ]; then
+            unscanned "the CONTENT of $bpath in merge ${bsha:0:10} was read short for the credential scan (git cat-file -p exited 0 and answered $((bgot - 1)) bytes of the $size its SIZE read names)"
+            failed_creds=1
+        fi
+    done 6< "$scratch/creds.binary"
+    if [ "$seen_n" -ne "$want" ]; then
+        unscanned "the binary paths the CREDENTIAL FEED of the push routed were read back short ($seen_n of the $want its awk recorded), so the rest cannot be read whole"
+        failed_creds=1
+    fi
+}
+
 # The credential scan (the header's paragraph): the ref loop lists each
 # pushed ref's commits through list_commits and appends each commit twice to
-# the feed's list, one redirect for the whole loop; then ONE feed over the
-# push (credential_feed, judged as the CREDENTIAL FEED read: its status, then
-# its record, the commits read whole against the count fed); then the scan of
-# record over the pieces, and when the push adds a file the path-scoped
-# rules name, the additive run over its copies (scanner_run, each judged by
-# its exit, its ERR line and its byte figure). The scanner runs unless the
-# feed wrote nothing (no new commit, or commits that add no line: 0 bytes and
-# no piece); after a feed refused as short it still runs over the pieces
-# written, for their findings, with no figure to compare.
+# the feed's list and once to the parent counts' list, one redirect each for
+# the whole loop; then the parent counts (parent_counts, judged as the PARENT
+# COUNTS read: its status, then its record, the list's lines read against the
+# count fed, each commit of 64 or more parents refused by name); then ONE
+# feed over the push (credential_feed, judged as the CREDENTIAL FEED read:
+# its status, then its record, the commits read whole against the count fed,
+# a foreign line refused naming its commit); then, when the feed's record is
+# whole, each merge's binary path it routed, read whole (merge_binary_reads);
+# then the scan of record over the pieces, and when the push adds a file the
+# path-scoped rules name, the additive run over its copies (scanner_run, each
+# judged by its exit, its ERR line and its byte figure). The scanner runs
+# unless the feed wrote nothing (no new commit, or commits that add no line:
+# 0 bytes and no piece); after a feed refused as short it still runs over the
+# pieces written, for their findings, with no figure to compare.
 scan_credentials() {
     local gl local_ref local_sha _remote_ref remote_sha revs rev peeled peeled_read nfed record n what
-    local rdone rpieces rbytes rpbytes rest piece fsha fpath fterm data
+    local rdone rpieces rbytes rpbytes rbin rest piece fsha fpath fterm data pdone plisted pbig nbig pcount
     local -a cfg ix_sha ix_path pdirs
     if ! credential_scan_armed; then
         [ -n "${ROMP_NO_GITLEAKS:-}" ] && return 0     # a skip asked for: silent
@@ -3234,7 +3597,7 @@ scan_credentials() {
         # current one, and no scan would read them (a git silent with exit 0
         # on the range probe this loop ran until round 9, reading its stdin,
         # published a second ref's credential through a real push; round 8b).
-        : > "$scratch/creds.list"
+        : > "$scratch/creds.list"; : > "$scratch/creds.revs"
         nfed=0
         while read -r -u 5 local_ref local_sha _remote_ref remote_sha; do
             [ -n "${local_sha:-}" ] || continue
@@ -3243,18 +3606,70 @@ scan_credentials() {
             list_commits "$local_ref" "$local_sha" "$remote_sha" credential || { failed_creds=1; continue; }
             for rev in $revs; do
                 printf '%s\n%s %s\n' "$rev" "$rev" "$rev"
+                printf '%s\n' "$rev" >&4
                 nfed=$((nfed + 1))
-            done >> "$scratch/creds.list"
+            done >> "$scratch/creds.list" 4>> "$scratch/creds.revs"
         done 5<<< "$refs"
         mkdir "$scratch/creds.d" "$scratch/creds.p"
-        : > "$scratch/creds.index"; : > "$scratch/creds.pindex"; : > "$scratch/creds.record"
-        rbytes=""; rpbytes=""
+        : > "$scratch/creds.index"; : > "$scratch/creds.pindex"; : > "$scratch/creds.record"; : > "$scratch/creds.binary"; : > "$scratch/creds.parents"
+        # The parent counts (parent_counts): a commit of 64 or more parents
+        # refuses the push by name, since git's combined diff cannot show the
+        # lines such a merge adds (the header); the lines of the list read are
+        # compared with the count fed, and the commits printed with the count
+        # the awk recorded.
+        if [ "$nfed" -gt 0 ]; then
+            if judged_read gate="the PARENT COUNTS of the pushed commits" 0 "the PARENT COUNTS of the pushed commits could not be read for the credential scan (a stage of git rev-list and awk exited {rc})" -- parent_counts "$scratch/creds.revs" "$scratch/creds.parents"; then
+                record=""
+                { IFS= read -r record || :; } < "$scratch/creds.parents"
+                case "$record" in
+                    "unmarked "*)
+                        unscanned "the PARENT COUNTS of the pushed commits were read short for the credential scan (git rev-list exited 0 and did not open commit ${record#unmarked } of those it was given with the line naming it, the header its format prints)"
+                        failed_creds=1 ;;
+                    "untailed "*)
+                        unscanned "the PARENT COUNTS of the pushed commits were read short for the credential scan (git rev-list exited 0 and did not close commit ${record#untailed } of those it was given with the line naming it again, the tail marker its format asks for after the parents)"
+                        failed_creds=1 ;;
+                    "short "*)
+                        unscanned "the PARENT COUNTS of the pushed commits were read short for the credential scan (git rev-list exited 0 and ended after ${record#short } of the commits it was given)"
+                        failed_creds=1 ;;
+                    *)
+                        pdone=""; plisted=""; pbig=""; rest=""
+                        read -r pdone plisted pbig rest <<< "$record" || :
+                        case "$pdone:$plisted:$pbig:${rest:+x}" in
+                            *[!0-9:]*|:*|*::*)
+                                unscanned "the PARENT COUNTS of the pushed commits could not be read for the credential scan (its awk exited 0 and recorded \"$record\", not three counts)"
+                                failed_creds=1 ;;
+                            *)
+                                nbig=0
+                                while read -r fsha pcount; do
+                                    [ -n "$fsha" ] || continue
+                                    nbig=$((nbig + 1))
+                                    unscanned "the ADDED LINES of commit ${fsha:0:10} cannot be read for the credential scan: it has $pcount parents, and git's combined diff of a merge of 64 or more parents prints no hunk for the lines it adds, or prints them with a space in their last column"
+                                    failed_creds=1
+                                done <<< "$read_out"
+                                if [ "$plisted" -ne "$nfed" ]; then
+                                    unscanned "the PARENT COUNTS of the pushed commits were read short for the credential scan (its awk read $plisted of the $nfed lines of its list)"
+                                    failed_creds=1
+                                elif [ "$nbig" -ne "$pbig" ]; then
+                                    unscanned "the PARENT COUNTS of the pushed commits were read short for the credential scan (its awk recorded $pbig commits of 64 or more parents and printed $nbig)"
+                                    failed_creds=1
+                                fi ;;
+                        esac ;;
+                esac
+            else
+                failed_creds=1
+            fi
+        fi
+        rbytes=""; rpbytes=""; rbin=""
         if [ "$nfed" -eq 0 ]; then
             rbytes=0; rpbytes=0
-        elif judged_read gate="the CREDENTIAL FEED of the push" 0 "the CREDENTIAL FEED of the push could not be read (a stage of git diff-tree, tr and awk exited {rc})" -- credential_feed "$scratch/creds.list" "$scratch/creds.record" "$scratch/creds.d" "$scratch/creds.index" "$scratch/creds.pindex"; then
+        elif judged_read gate="the CREDENTIAL FEED of the push" 0 "the CREDENTIAL FEED of the push could not be read (a stage of git diff-tree, tr and awk exited {rc})" -- credential_feed "$scratch/creds.list" "$scratch/creds.record" "$scratch/creds.d" "$scratch/creds.index" "$scratch/creds.pindex" "$scratch/creds.binary"; then
             record=""
             { IFS= read -r record || :; } < "$scratch/creds.record"
             case "$record" in
+                "foreign "*)
+                    n=${record#foreign }; fsha=${n#* }; n=${n%% *}
+                    unscanned "the CREDENTIAL FEED of the push could not be read whole (git diff-tree exited 0 and printed a line inside commit $n of the $nfed it was given, ${fsha:0:10}, that is none of the shapes the feed reads or recognizes, so what that line stands for went unread)"
+                    failed_creds=1 ;;
                 "unmarked "*)
                     n=${record#unmarked }
                     if [ "$n" -gt "$nfed" ] 2>/dev/null; then
@@ -3271,11 +3686,11 @@ scan_credentials() {
                     unscanned "the CREDENTIAL FEED of the push was read short (git diff-tree exited 0 and ended after ${record#short } of the $nfed commits it was given)"
                     failed_creds=1 ;;
                 *)
-                    rdone=""; rpieces=""; rbytes=""; rpbytes=""; rest=""
-                    read -r rdone rpieces rbytes rpbytes rest <<< "$record" || :
-                    case "$rdone:$rpieces:$rbytes:$rpbytes:${rest:+x}" in
+                    rdone=""; rpieces=""; rbytes=""; rpbytes=""; rbin=""; rest=""
+                    read -r rdone rpieces rbytes rpbytes rbin rest <<< "$record" || :
+                    case "$rdone:$rpieces:$rbytes:$rpbytes:$rbin:${rest:+x}" in
                         *[!0-9:]*|:*|*::*)
-                            unscanned "the CREDENTIAL FEED of the push could not be read (its awk exited 0 and recorded \"$record\", not four counts)"
+                            unscanned "the CREDENTIAL FEED of the push could not be read (its awk exited 0 and recorded \"$record\", not five counts)"
                             failed_creds=1; rbytes=""; rpbytes="" ;;
                         *)
                             if [ "$rdone" -ne "$nfed" ]; then
@@ -3286,6 +3701,12 @@ scan_credentials() {
             esac
         else
             failed_creds=1
+        fi
+        # Each merge's binary path the feed routed, read whole
+        # (merge_binary_reads), when the feed's record is whole: its pieces
+        # join the index and the figures before either is read below.
+        if [ -n "$rbytes" ] && [ -n "$rbin" ] && [ "$rbin" -gt 0 ]; then
+            merge_binary_reads "$rbin"
         fi
         # The index, read once by the shell: each piece's commit and file, for
         # the lines that name a finding (scanner_run).

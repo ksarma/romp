@@ -4277,7 +4277,7 @@ silent_content_grep() { git_refusing '[ "${1:-}" = grep ] && [ "${3:-}" = -i ]' 
 # successor, the feed's awk recording nothing (an awk silent on the program that
 # names the record file in its environment).
 
-@test "the feed's awk answering NOTHING (exit 0, no record written) is refused as unscanned naming the feed and the empty record: an empty record is not four counts (round 9d: this slot held the hook's own commit count answering nothing, a read retired in round 9)" {
+@test "the feed's awk answering NOTHING (exit 0, no record written) is refused as unscanned naming the feed and the empty record: an empty record is not five counts (four until round 10a, which counts the binary notices the awk routes; round 9d: this slot held the hook's own commit count answering nothing, a read retired in round 9)" {
     r9d_base
     commit_file k.py "k = \"$(probe_token)\"" "a credential"
     awk_silent_on_program 'ENVIRON["ROMP_RECORD_FILE"]'
@@ -4285,7 +4285,7 @@ silent_content_grep() { git_refusing '[ "${1:-}" = grep ] && [ "${3:-}" = -i ]' 
     [ "$output" = "status 0" ]                          # the shim as the feed meets it: nothing printed, exit 0
     push_main_through_hook_with_shim
     [ "$status" -ne 0 ]
-    [[ "$output" == *"romp pre-push: the CREDENTIAL FEED of the push could not be read (its awk exited 0 and recorded \"\", not four counts); the scan is incomplete, so the push is refused"* ]]
+    [[ "$output" == *"romp pre-push: the CREDENTIAL FEED of the push could not be read (its awk exited 0 and recorded \"\", not five counts); the scan is incomplete, so the push is refused"* ]]
     [[ "$output" == *"gitleaks could not scan"* ]]
     at_base
 }
@@ -5958,11 +5958,12 @@ descriptor_loops() {   # <bash file>: the count of while-read loops that read th
     run stdin_loops_running_tools "$HOOK"
     [ "$status" -eq 0 ]
     [ -z "$output" ]
-    # the loops that run tools read on a descriptor 1 to 9: six in the hook (the two ref loops, the symlink loop, the
-    # commit loop, the byte judge's and, since round 9b, the addresses loop, whose IFS=$'\t' the count reads), and
+    # the loops that run tools read on a descriptor 1 to 9: seven in the hook (the two ref loops, the symlink loop, the
+    # commit loop, the byte judge's, since round 9b the addresses loop, whose IFS=$'\t' the count reads, and since
+    # round 10a the loop over a merge's binary paths, merge_binary_reads, whose reads are judged_read calls), and
     # since round 9d four loops of the credential scan that run no tool but read on a descriptor all the same (the
-    # index read into arrays, the two passes over the path-scoped index, the report's findings): ten
-    [ "$(descriptor_loops "$HOOK")" -eq 10 ]
+    # index read into arrays, the two passes over the path-scoped index, the report's findings): eleven
+    [ "$(descriptor_loops "$HOOK")" -eq 11 ]
     { sed -n '1p' "$HOOK"; printf '%s\n' 'while read -r x; do' '    git cat-file -t "$x"' 'done <<< "$refs"'; sed -n '2,$p' "$HOOK"; } > "$TEST_DIR/loop-a.sh"
     run stdin_loops_running_tools "$TEST_DIR/loop-a.sh"
     [ "$output" = "2-4: git" ]
@@ -8993,5 +8994,551 @@ r9d_witness_case() {   # <rule>: the witness committed and pushed for real: refu
     [ "$status" -ne 0 ]
     [[ "$output" == *"romp pre-push: the CREDENTIAL scan under the path-scoped rules read 3 of the 222 bytes of added lines it was fed; the scan is incomplete, so the push is refused"* ]]
     [[ "$output" != *"gitleaks found a credential"* ]]
+    at_base
+}
+
+# ── round 10a (the round 9 rulings' A, with the coordinator's decisions 1 to 3): every line of the feed accounted for, a merge's binary path read whole, a commit of 64 or more parents refused ──
+# The round 9 refuters found the feed's awk passing, silently, every line it did not read (correctness-1): a merge's
+# combined diff applies git's binary verdict whatever --text says, printing Binary files differ and no hunk for a
+# path git calls binary in the result or in any parent, and a credential in the merge's own lines there published
+# through real pushes for each of five causes with the byte figure agreeing; merges of 64 and 65 parents published
+# the same way (the rulings' A.5). The cases below hold the fix. A.1: a foreign line and a Binary notice injected
+# into a diff --git section are refused, and each shape the awk recognizes passes through a clean push. A.2: a
+# merge's binary path is read whole (a witness per cause, the sixth trigger, the large blob across gitleaks' cut, a
+# quoted name, the two path-scoped rules; the must-pass merges; a deletion and a gitlink read nothing; the three
+# new reads' table and short cases). A.3: the one-parent witnesses, refused at both heads (--text holds there).
+# A.5: the parent counts, in both scans, with the new read's table and short cases. A title that says a witness
+# published at eee3938a8 records the push made against that head's hook for the round's log; every
+# credential-shaped string is assembled at run time.
+
+r10a_cause() {   # <nul|attr|info|afile|driver>: the setting that makes git call evil.txt binary, committed on the remote's base (BASE moves) or configured in REPO (nul: none, the file's own NUL)
+    case "$1" in
+        nul) ;;
+        attr) attributes 'evil.txt -diff'; git -C "$REPO" push -q origin main; BASE="$(git -C "$REPO" rev-parse HEAD)" ;;
+        info) mkdir -p "$REPO/.git/info"; printf 'evil.txt -diff\n' >> "$REPO/.git/info/attributes" ;;
+        afile) printf 'evil.txt -diff\n' > "$TEST_DIR/attributes-file"; git -C "$REPO" config core.attributesFile "$TEST_DIR/attributes-file" ;;
+        driver) attributes 'evil.txt diff=opaque'; git -C "$REPO" config diff.opaque.binary true; git -C "$REPO" push -q origin main; BASE="$(git -C "$REPO" rev-parse HEAD)" ;;
+        *) echo "r10a_cause: no cause $1" >&2; return 1 ;;
+    esac
+}
+r10a_evil() {   # <cause>: evil.txt holding a credential line, a NUL ahead of it for the nul cause
+    if [ "$1" = nul ]; then printf 'x\0y\nk = "%s"\n' "$(probe_token)"; else printf 'k = "%s"\n' "$(probe_token)"; fi > "$REPO/evil.txt"
+}
+r10a_merge_open() {   # side and main branches over the current main, each adding a file of its own, and the merge of side into main left open (--no-commit) for the case's own change
+    git -C "$REPO" checkout -q -b side
+    commit_file side.txt "the web session's line" "side"
+    git -C "$REPO" checkout -q main
+    commit_file main.txt "the api session's line" "main side"
+    git -C "$REPO" merge -q --no-ff --no-commit side > /dev/null 2>&1 || :
+}
+r10a_merge_commit() {   # <path>...: the open merge committed with those paths added; merge is its sha, and its combined diff prints exactly one Binary notice, whatever --text says
+    git -C "$REPO" add -- "$@"
+    git -C "$REPO" commit -qm "the merge, with a change of its own"
+    merge="$(git -C "$REPO" rev-parse HEAD)"
+    is_merge "$merge"
+    [ "$(git -C "$REPO" diff-tree -p -c --text "$merge" | grep -c '^Binary files differ$')" -eq 1 ]
+}
+r10a_merge_witness() {   # <cause>: the merge adds evil.txt with a credential, binary by the cause, pushed for real: refused naming the merge and the file, the remote at its base
+    r9d_base
+    r10a_cause "$1"
+    r10a_merge_open
+    r10a_evil "$1"
+    r10a_merge_commit evil.txt
+    push_main_through_hook_with_shim
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: commit ${merge:0:10} ADDS a credential (github-pat) in: evil.txt"* ]]
+    [[ "$output" != *"the scan is incomplete"* ]]
+    [[ "$output" != *"$(probe_token)"* ]]
+    at_base
+}
+r10a_one_parent_witness() {   # <cause>: a one-parent commit adds evil.txt with a credential, binary by the cause (its pairwise diff without --text prints a Binary notice), pushed for real: refused naming the commit and the file
+    r9d_base
+    r10a_cause "$1"
+    r10a_evil "$1"
+    git -C "$REPO" add evil.txt
+    git -C "$REPO" commit -qm "a file git calls binary"
+    sha="$(git -C "$REPO" rev-parse HEAD)"
+    [ "$(git -C "$REPO" diff-tree -p "$sha" | grep -c '^Binary files ')" -eq 1 ]
+    push_main_through_hook_with_shim
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: commit ${sha:0:10} ADDS a credential (github-pat) in: evil.txt"* ]]
+    [[ "$output" != *"the scan is incomplete"* ]]
+    at_base
+}
+r10a_feed_git_rewriting() {   # <awk program>: a git whose feed answer (the one diff-tree given --text) is rewritten by the program, its status kept, the call recorded in calls.rewrite; the real git for every other command
+    local real_git real_awk
+    real_git="$(PATH=${PATH//"$TEST_DIR/shim:"/} command -v git)"
+    real_awk="$(PATH=${PATH//"$TEST_DIR/shim:"/} command -v awk)"
+    mkdir -p "$TEST_DIR/shim"
+    {
+        printf '#!/usr/bin/env bash\n'
+        printf 'if %s; then\n' "$FEED_GIT"
+        printf '    w=$(mktemp %q); %q "$@" > "$w"; s=$?\n' "$TEST_DIR/rewrite.XXXXXX" "$real_git"
+        printf '    LC_ALL=C %q %q "$w"\n' "$real_awk" "$1"
+        printf '    printf "%%s\\n" "git $*" >> %q; rm -f "$w"; exit "$s"\n' "$TEST_DIR/calls.rewrite"
+        printf 'fi\n'
+        printf 'exec %q "$@"\n' "$real_git"
+    } > "$TEST_DIR/shim/git"
+    chmod 755 "$TEST_DIR/shim/git"
+    export PATH="$TEST_DIR/shim:$PATH"
+}
+r10a_passes() {   # the push of main just made passed: status 0, no romp line, the remote holding main's tip
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"romp pre-push"* ]]
+    [ "$(git -C "$TEST_DIR/remote.git" rev-parse refs/heads/main)" = "$(git -C "$REPO" rev-parse main)" ]
+}
+r10a_octopus() {   # <parents>: a base on the remote (BASE), that many parents over it, each adding a file of its own, all on the remote, and main moved to a merge of them all that adds evil.txt holding a credential line and a line naming the host, then a commit removing evil.txt; merge is the merge's sha
+    local n=$1 i blob tree c base_tree
+    local -a parents=() entries=()
+    add_remote
+    commit_file base.txt "notes-api" "base"
+    git -C "$REPO" push -q origin main
+    BASE="$(git -C "$REPO" rev-parse HEAD)"
+    base_tree="$(git -C "$REPO" ls-tree "$BASE")"
+    for ((i = 1; i <= n; i++)); do
+        blob="$(printf 'side %d\n' "$i" | git -C "$REPO" hash-object -w --stdin)"
+        entries+=("$(printf '100644 blob %s\tp%d.txt' "$blob" "$i")")
+        tree="$(printf '%s\n' "$base_tree" "${entries[$((i - 1))]}" | git -C "$REPO" mktree)"
+        c="$(git -C "$REPO" commit-tree -p "$BASE" -m "side $i" "$tree")"
+        parents+=(-p "$c")
+        git -C "$REPO" update-ref "refs/heads/p$i" "$c"
+    done
+    git -C "$REPO" push -q origin 'refs/heads/p*:refs/heads/p*'
+    blob="$(printf 'k = "%s"\nseen on TESTHOST\n' "$(probe_token)" | git -C "$REPO" hash-object -w --stdin)"
+    tree="$(printf '%s\n' "$base_tree" "${entries[@]}" "$(printf '100644 blob %s\tevil.txt' "$blob")" | git -C "$REPO" mktree)"
+    merge="$(git -C "$REPO" commit-tree "${parents[@]}" -m "a merge of $n parents" "$tree")"
+    git -C "$REPO" update-ref refs/heads/main "$merge"
+    git -C "$REPO" reset -q --hard main
+    [ "$(git -C "$REPO" rev-list --parents -n 1 "$merge" | wc -w)" -eq $((n + 1)) ]
+    remove_file evil.txt "remove it"
+}
+r10a_octopus_scans() {   # <parents>: r10a_octopus, pushed twice for real, once with the credential scan alone and once with the identifier scan alone; each result in cred_status/cred_output and id_status/id_output, the remote at its base after each
+    r10a_octopus "$1"
+    mkdir -p "$TEST_DIR/shim"
+    real_gitleaks
+    export ROMP_PRIVATE_STRINGS="$TEST_DIR/no-denylist"
+    push_main_through_hook_with_shim
+    cred_status=$status; cred_output=$output
+    at_base
+    export ROMP_NO_GITLEAKS=1 ROMP_PRIVATE_STRINGS="$STRINGS"
+    push_main_through_hook_with_shim
+    id_status=$status; id_output=$output
+    at_base
+}
+
+@test "round 10a (A.1): a synthesized foreign line inside a section is refused naming the read and the commit: a feed git that rewrites the credential's added line with a tilde in place of its plus, a line of none of the shapes the awk reads or recognizes, through a real push, is refused as a read the feed could not make, and the remote stays at its base (at eee3938a8 the awk skipped the line silently, nothing was fed, and the credential published)" {
+    r9d_base
+    commit_file k.py "k = \"$(probe_token)\"" "a credential"
+    sha="$(git -C "$REPO" rev-parse HEAD)"
+    r10a_feed_git_rewriting '/^\+k = / { print "~" substr($0, 2); next } { print }'
+    push_main_through_hook_with_shim
+    [ -s "$TEST_DIR/calls.rewrite" ]
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: the CREDENTIAL FEED of the push could not be read whole (git diff-tree exited 0 and printed a line inside commit 1 of the 1 it was given, ${sha:0:10}, that is none of the shapes the feed reads or recognizes, so what that line stands for went unread); the scan is incomplete, so the push is refused"* ]]
+    [[ "$output" == *"gitleaks could not scan"* ]]
+    at_base
+}
+
+@test "round 10a (A.1, A.3): a Binary notice injected into a diff --git section, which --text keeps a real git from printing there, is refused as a foreign line: a feed git that replaces a one-parent commit's hunk for k.py with Binary files /dev/null and b/k.py differ, through a real push of a credential, is refused naming the read and the commit, and the remote stays at its base (at eee3938a8 the awk passed the notice silently and the credential published)" {
+    r9d_base
+    commit_file k.py "k = \"$(probe_token)\"" "a credential"
+    sha="$(git -C "$REPO" rev-parse HEAD)"
+    r10a_feed_git_rewriting '/^(--- |\+\+\+ |@@|\+)/ { next } { print } /^index / { print "Binary files /dev/null and b/k.py differ" }'
+    push_main_through_hook_with_shim
+    [ -s "$TEST_DIR/calls.rewrite" ]
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: the CREDENTIAL FEED of the push could not be read whole (git diff-tree exited 0 and printed a line inside commit 1 of the 1 it was given, ${sha:0:10}, that is none of the shapes the feed reads or recognizes"* ]]
+    at_base
+}
+
+@test "round 10a (A.1): each shape the feed's awk recognizes passes through a clean push that produces it, the byte figure agreeing: a new file, an empty file, a missing final newline added and edited, a pure rename and a rename with an edit, a mode change, a deleted file, a symlink and a type change, a gitlink added, changed and removed, names with a space, a tab and a byte past ASCII, and a two-parent merge whose combined hunk carries lines added against one parent and a mode line (a shape dropped from the recognized set refuses its push)" {
+    r9d_base
+    printf 'one\n' > "$REPO/new.txt"; : > "$REPO/empty.txt"; printf 'no newline' > "$REPO/nonl.txt"
+    printf 'a spaced name, line one\n' > "$REPO/a b.txt"; printf 'tabbed\n' > "$REPO/$(printf 't\tb.txt')"; printf 'quoted\n' > "$REPO/$(printf 'na\303\257ve.txt')"
+    printf 'mode\n' > "$REPO/run.sh"; printf 'keep\n' > "$REPO/gone.txt"; ln -s new.txt "$REPO/link"
+    git -C "$REPO" add -A
+    git -C "$REPO" commit -qm "new files: empty, no final newline, spaced, tab and quoted names, a symlink"
+    push_main_through_hook_with_shim
+    r10a_passes
+    [[ "$output" == *"scanned ~"* ]]
+    printf 'still no newline' > "$REPO/nonl.txt"
+    git -C "$REPO" mv new.txt moved.txt
+    git -C "$REPO" mv "a b.txt" "c d.txt"; printf 'a spaced name, line one\nedited\n' > "$REPO/c d.txt"
+    chmod +x "$REPO/run.sh"
+    git -C "$REPO" rm -q gone.txt
+    rm "$REPO/link"; printf 'a file now\n' > "$REPO/link"
+    git -C "$REPO" add -A
+    git -C "$REPO" commit -qm "an edit without a final newline, renames, a mode change, a deletion, a type change"
+    [ "$(git -C "$REPO" diff-tree -M -r --no-commit-id --name-status HEAD | cut -c1 | sort | tr -d '\n')" = "DMMRRT" ]
+    push_main_through_hook_with_shim
+    r10a_passes
+    sub="$(git -C "$REPO" rev-parse HEAD)"
+    git -C "$REPO" update-index --add --cacheinfo "160000,$sub,sub"
+    git -C "$REPO" commit -qm "a gitlink added"
+    push_main_through_hook_with_shim
+    r10a_passes
+    git -C "$REPO" update-index --cacheinfo "160000,$BASE,sub"
+    git -C "$REPO" commit -qm "the gitlink changed"
+    git -C "$REPO" update-index --force-remove sub
+    git -C "$REPO" commit -qm "the gitlink removed"
+    push_main_through_hook_with_shim
+    r10a_passes
+    commit_file m.txt "$(printf 'a\nb\nc')" "a file both sides edit"
+    git -C "$REPO" push -q origin main
+    git -C "$REPO" checkout -q -b two
+    commit_file m.txt "$(printf 'a side\nb\nc')" "one side"
+    git -C "$REPO" checkout -q main
+    commit_file m.txt "$(printf 'a\nb\nc other')" "the other side"
+    git -C "$REPO" merge -q --no-ff --no-commit two > /dev/null 2>&1 || :
+    printf 'a side\nb\nc other\nresolved\n' > "$REPO/m.txt"; chmod +x "$REPO/m.txt"
+    git -C "$REPO" add m.txt
+    git -C "$REPO" commit -qm "the merge, with lines of its own and a mode change"
+    is_merge "$(git -C "$REPO" rev-parse HEAD)"
+    git -C "$REPO" diff-tree -p -c "$(git -C "$REPO" rev-parse HEAD)" > "$TEST_DIR/combined"
+    grep -q '^mode ' "$TEST_DIR/combined"
+    grep -q '^++resolved$' "$TEST_DIR/combined"
+    grep -qE '^( \+|\+ )' "$TEST_DIR/combined"
+    push_main_through_hook_with_shim
+    r10a_passes
+}
+
+@test "round 10a (A.2): a merge's binary path by a NUL in its first 8000 bytes: the merge adds evil.txt with a NUL and a credential line, its combined diff prints Binary files differ whatever --text says, and the hook reads the merge's own version of the path whole, so the push is refused naming the merge and the file, the remote at its base (published at eee3938a8)" {
+    r10a_merge_witness nul
+}
+
+@test "round 10a (A.2): a merge's binary path by a committed -diff attribute: refused naming the merge and the file, the remote at its base (published at eee3938a8)" {
+    r10a_merge_witness attr
+}
+
+@test "round 10a (A.2): a merge's binary path by .git/info/attributes: refused naming the merge and the file, the remote at its base (published at eee3938a8)" {
+    r10a_merge_witness info
+}
+
+@test "round 10a (A.2): a merge's binary path by the file core.attributesFile names: refused naming the merge and the file, the remote at its base (published at eee3938a8)" {
+    r10a_merge_witness afile
+}
+
+@test "round 10a (A.2): a merge's binary path by a diff driver whose binary key is true: refused naming the merge and the file, the remote at its base (published at eee3938a8)" {
+    r10a_merge_witness driver
+}
+
+@test "round 10a (A.2, the coordinator's sixth trigger): a NUL on a parent's side with a text result: the merge resolves evil.txt, binary on one parent, to a text line holding a credential, its combined diff prints Binary files differ for the pair, and the push is refused naming the merge and the file, the remote at its base (published at eee3938a8)" {
+    r9d_base
+    git -C "$REPO" checkout -q -b side
+    printf 'x\0y\n' > "$REPO/evil.txt"
+    git -C "$REPO" add evil.txt
+    git -C "$REPO" commit -qm "a binary evil.txt on one side"
+    git -C "$REPO" checkout -q main
+    commit_file evil.txt "the api session's line" "a text evil.txt on the other"
+    git -C "$REPO" merge -q --no-ff --no-commit side > /dev/null 2>&1 || :
+    printf 'k = "%s"\n' "$(probe_token)" > "$REPO/evil.txt"
+    r10a_merge_commit evil.txt
+    [ "$(git -C "$REPO" cat-file -p "$merge:evil.txt" | tr -cd '\0' | wc -c)" -eq 0 ]    # the result is text
+    push_main_through_hook_with_shim
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: commit ${merge:0:10} ADDS a credential (github-pat) in: evil.txt"* ]]
+    [[ "$output" != *"the scan is incomplete"* ]]
+    at_base
+}
+
+@test "round 10a (A.2): a merge's binary path of 140,000 bytes with the credential at byte 124,990, across gitleaks' 125,000-byte cut of one file: the whole read is pieced as the feed pieces added lines, so the credential lies whole in a window, and the push is refused naming the merge and the file, the remote at its base (published at eee3938a8; read as one unpieced file it published too, the round 9 rulings)" {
+    r9d_base
+    r10a_merge_open
+    { printf 'x\0\n'; head -c 124986 /dev/zero | tr '\0' .; printf ' %s ' "$(probe_token)"; head -c 14968 /dev/zero | tr '\0' .; printf '\n'; } > "$REPO/big.txt"
+    [ "$(wc -c < "$REPO/big.txt")" -eq 140000 ]
+    [ "$(grep -abo 'ghp_' "$REPO/big.txt" | cut -d: -f1)" -eq 124990 ]
+    r10a_merge_commit big.txt
+    push_main_through_hook_with_shim
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: commit ${merge:0:10} ADDS a credential (github-pat) in: big.txt"* ]]
+    [[ "$output" != *"the scan is incomplete"* ]]
+    at_base
+}
+
+@test "round 10a (A.2, the coordinator's decision 1): a merge's binary path whose name git quotes (a byte past ASCII) is matched to the merge's listing by its quoted form, read whole, and refused naming the merge and the quoted path, the remote at its base (published at eee3938a8)" {
+    r9d_base
+    r10a_merge_open
+    q="$(printf 'na\303\257ve.txt')"
+    printf 'x\0\nk = "%s"\n' "$(probe_token)" > "$REPO/$q"
+    r10a_merge_commit "$q"
+    push_main_through_hook_with_shim
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: commit ${merge:0:10} ADDS a credential (github-pat) in: \"na\\303\\257ve.txt\""* ]]
+    at_base
+}
+
+@test "round 10a (A.2, the coordinator's decision 1): a merge's cert.p12 binary by a NUL joins the path-scoped run under its name: refused naming pkcs12-file, the merge and the file, two scanner runs logged, the remote at its base (published at eee3938a8)" {
+    r9d_base
+    r10a_merge_open
+    { printf '\0'; head -c 600 /dev/zero | tr '\0' '\301'; } > "$REPO/cert.p12"
+    r10a_merge_commit cert.p12
+    push_main_through_hook_with_shim
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: commit ${merge:0:10} ADDS a credential (pkcs12-file) in: cert.p12"* ]]
+    [ "$(grep -c 'INF scanned ~' <<< "$output")" -eq 2 ]
+    [[ "$output" != *"the scan is incomplete"* ]]
+    at_base
+}
+
+@test "round 10a (A.2, the coordinator's decision 1): a merge's nuget.config under a committed -diff attribute joins the path-scoped run under its name: refused naming nuget-config-password, the merge and the file, two scanner runs logged, the remote at its base (published at eee3938a8)" {
+    r9d_base
+    attributes 'nuget.config -diff'
+    git -C "$REPO" push -q origin main
+    BASE="$(git -C "$REPO" rev-parse HEAD)"
+    r10a_merge_open
+    r9d_witness nuget-config-password
+    r10a_merge_commit nuget.config
+    push_main_through_hook_with_shim
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: commit ${merge:0:10} ADDS a credential (nuget-config-password) in: nuget.config"* ]]
+    [ "$(grep -c 'INF scanned ~' <<< "$output")" -eq 2 ]
+    [[ "$output" != *"the scan is incomplete"* ]]
+    at_base
+}
+
+@test "round 10a (A.2, the coordinator's decision 3, must pass): a clean auto-merge of a -diff file edited on different lines by two branches passes, its path read whole: the byte figure is the two sides' pieces and the whole result blob's, and the remote holds the merge" {
+    r9d_base
+    printf 'a\nb\nc\nd\ne\nf\ng\n' > "$REPO/lock.dat"
+    printf 'lock.dat -diff\n' > "$REPO/.gitattributes"
+    git -C "$REPO" add lock.dat .gitattributes
+    git -C "$REPO" commit -qm "a -diff file"
+    git -C "$REPO" push -q origin main
+    git -C "$REPO" checkout -q -b side
+    printf 'a\nB side\nc\nd\ne\nf\ng\n' > "$REPO/lock.dat"; git -C "$REPO" commit -qam "one line on one side"
+    git -C "$REPO" checkout -q main
+    printf 'a\nb\nc\nd\ne\nF main\ng\n' > "$REPO/lock.dat"; git -C "$REPO" commit -qam "another line on the other"
+    git -C "$REPO" merge -q --no-ff --no-edit side > /dev/null 2>&1
+    merge="$(git -C "$REPO" rev-parse HEAD)"
+    is_merge "$merge"
+    [ "$(git -C "$REPO" diff-tree -p -c --text "$merge" | grep -c '^Binary files differ$')" -eq 1 ]
+    size="$(git -C "$REPO" cat-file -s "$merge:lock.dat")"
+    push_main_through_hook_with_shim
+    r10a_passes
+    [[ "$output" == *"scanned ~$((9 + 9 + 2 + size)) bytes"* ]]              # each side's piece (~ and its line), and the whole result behind its ~ line
+}
+
+@test "round 10a (A.2, must pass): clean merges of a zip path and of a pdf path, each resolved to a new version that opens with its signature and holds a NUL, pass: the whole read's pieces open with the ~ line, so gitleaks reads them and the byte figure agrees, and the remote holds each merge (read as one unpieced file, gitleaks skipped it and the byte figure refused the clean push: the round 9 rulings)" {
+    r9d_base
+    for kind in zip pdf; do
+        if [ "$kind" = zip ]; then sig='PK\003\004'; else sig='%%PDF-1.4\n'; fi
+        printf "$sig"'\0base\n' > "$REPO/x.$kind"
+        git -C "$REPO" add "x.$kind"
+        git -C "$REPO" commit -qm "a $kind"
+        git -C "$REPO" push -q origin main
+        git -C "$REPO" checkout -q -b "side-$kind"
+        printf "$sig"'\0side\n' > "$REPO/x.$kind"; git -C "$REPO" commit -qam "one side"
+        git -C "$REPO" checkout -q main
+        printf "$sig"'\0main\n' > "$REPO/x.$kind"; git -C "$REPO" commit -qam "the other"
+        git -C "$REPO" merge -q --no-ff --no-commit "side-$kind" > /dev/null 2>&1 || :
+        printf "$sig"'\0resolved\nclean text\n' > "$REPO/x.$kind"
+        r10a_merge_commit "x.$kind"
+        push_main_through_hook_with_shim
+        r10a_passes
+    done
+}
+
+@test "round 10a (A.2, the coordinator's decision 3): a merge's Binary notices for a path it deletes and for a path whose result is a gitlink read nothing: a zero result blob transfers nothing, and a gitlink (mode 160000) is a commit with no blob of its own, so the push passes with the byte figure of the sides' pieces alone (reading either would ask git for an object the clone lacks and refuse the push)" {
+    r9d_base
+    printf 'bin\0x\n' > "$REPO/tolink.bin"; printf 'bin\0y\n' > "$REPO/del.bin"
+    git -C "$REPO" add tolink.bin del.bin
+    git -C "$REPO" commit -qm "two binary files"
+    git -C "$REPO" push -q origin main
+    git -C "$REPO" checkout -q -b side
+    printf 'bin\0y side\n' > "$REPO/del.bin"; git -C "$REPO" commit -qam "one side"
+    git -C "$REPO" checkout -q main
+    printf 'bin\0y main\n' > "$REPO/del.bin"; git -C "$REPO" commit -qam "the other"
+    git -C "$REPO" merge -q --no-ff --no-commit side > /dev/null 2>&1 || :
+    git -C "$REPO" rm -q -f del.bin
+    git -C "$REPO" rm -q -f --cached tolink.bin
+    absent="$(printf 'a commit this clone lacks\n' | git -C "$REPO" hash-object --stdin)"
+    run git -C "$REPO" cat-file -e "$absent"
+    [ "$status" -ne 0 ]
+    git -C "$REPO" update-index --add --cacheinfo "160000,$absent,tolink.bin"
+    git -C "$REPO" commit -qm "the merge deletes one and makes the other a gitlink"
+    merge="$(git -C "$REPO" rev-parse HEAD)"
+    [ "$(git -C "$REPO" diff-tree -p -c --text "$merge" | grep -c '^Binary files differ$')" -eq 2 ]
+    push_main_through_hook_with_shim
+    r10a_passes
+    [[ "$output" == *"scanned ~26 bytes"* ]]                                  # the two sides' pieces alone: each a ~ line and bin, 0x01, y and its side's word
+}
+
+@test "round 10a (A.3): a one-parent commit adding a file binary by a NUL is read as text (--text), and its credential refused naming the commit and the file (refused at eee3938a8 too: --text holds on a one-parent commit)" {
+    r10a_one_parent_witness nul
+}
+
+@test "round 10a (A.3): a one-parent commit adding a file under a committed -diff attribute: refused naming the commit and the file (refused at eee3938a8 too)" {
+    r10a_one_parent_witness attr
+}
+
+@test "round 10a (A.3): a one-parent commit adding a file under .git/info/attributes: refused naming the commit and the file (refused at eee3938a8 too)" {
+    r10a_one_parent_witness info
+}
+
+@test "round 10a (A.3): a one-parent commit adding a file under the file core.attributesFile names: refused naming the commit and the file (refused at eee3938a8 too)" {
+    r10a_one_parent_witness afile
+}
+
+@test "round 10a (A.3): a one-parent commit adding a file under a diff driver whose binary key is true: refused naming the commit and the file (refused at eee3938a8 too)" {
+    r10a_one_parent_witness driver
+}
+
+@test "round 10a (A.5): a merge of 63 parents adding a credential and a line naming the host, removed at the tip, is refused in both scans on what it adds, through real pushes, the remote at its base after each (refused at eee3938a8 too: the feed's awk reads 63 columns)" {
+    r10a_octopus_scans 63
+    [ "$cred_status" -ne 0 ]
+    [[ "$cred_output" == *"romp pre-push: commit ${merge:0:10} ADDS a credential (github-pat) in: evil.txt"* ]]
+    [[ "$cred_output" != *"parents, and git's combined diff"* ]]
+    [ "$id_status" -ne 0 ]
+    [[ "$id_output" == *"romp pre-push: commit ${merge:0:10} ADDS a personal identifier in:"* ]]
+    [[ "$id_output" != *"parents, and git's combined diff"* ]]
+}
+
+@test "round 10a (A.5, the coordinator's decision 2): a merge of 64 parents, whose combined diff prints no hunk for what it adds, is refused by name in both scans, through real pushes, the remote at its base after each (at eee3938a8 the credential published, and the identifier scan refused it only as a hidden file)" {
+    r10a_octopus_scans 64
+    [ "$cred_status" -ne 0 ]
+    [[ "$cred_output" == *"romp pre-push: the ADDED LINES of commit ${merge:0:10} cannot be read for the credential scan: it has 64 parents, and git's combined diff of a merge of 64 or more parents prints no hunk for the lines it adds, or prints them with a space in their last column; the scan is incomplete, so the push is refused"* ]]
+    [ "$id_status" -ne 0 ]
+    [[ "$id_output" == *"romp pre-push: the ADDED LINES of commit ${merge:0:10} cannot be read for the identifier scan: it has 64 parents"* ]]
+}
+
+@test "round 10a (A.5, the coordinator's decision 2): a merge of 65 parents, whose combined diff prints each line it adds with a space in its last column, is refused by name in both scans, through real pushes, the remote at its base after each (at eee3938a8 both scans published it)" {
+    r10a_octopus_scans 65
+    [ "$cred_status" -ne 0 ]
+    [[ "$cred_output" == *"romp pre-push: the ADDED LINES of commit ${merge:0:10} cannot be read for the credential scan: it has 65 parents"* ]]
+    [ "$id_status" -ne 0 ]
+    [[ "$id_output" == *"romp pre-push: the ADDED LINES of commit ${merge:0:10} cannot be read for the identifier scan: it has 65 parents"* ]]
+}
+
+@test "round 10a (A.5): the identifier scan's PARENT COUNT of a commit cut short over merges of 64 and 65 parents (a git whose rev-list --parents answers the merge and 63 of its parents, exit 0) escapes the refusal by name and is refused all the same: at 64 its header-only section is judged by its bytes, at 65 its lines are read in fewer columns, each through a real push, the remote at its base" {
+    for n in 64 65; do
+        rm -rf "$REPO" "$TEST_DIR/remote.git"
+        rm -f "$TEST_DIR/shim/git"; hash -r                    # the first pass's shim: the fixture's own git is the real one
+        git -C "$TEST_DIR" init -q repo
+        git -C "$REPO" symbolic-ref HEAD refs/heads/main
+        git -C "$REPO" config user.email t@example.invalid
+        git -C "$REPO" config user.name Tester
+        git -C "$REPO" config core.hooksPath "$TEST_DIR/no-hooks"
+        r10a_octopus "$n"
+        export ROMP_NO_GITLEAKS=1 ROMP_PRIVATE_STRINGS="$STRINGS"
+        calls_short_on git idcount '[ "${1:-}" = rev-list ] && [ "${2:-}" = --parents ] && [ "${3:-}" = -n ]' "bytes:$((41 * 64 - 1))"
+        push_main_through_hook_with_shim
+        fired_short idcount "--parents"
+        [ "$status" -ne 0 ]
+        [[ "$output" != *"parents, and git's combined diff"* ]]
+        if [ "$n" -eq 64 ]; then
+            [[ "$output" == *"romp pre-push: evil.txt in commit ${merge:0:10} is text that git calls binary"* ]]
+        else
+            [[ "$output" == *"romp pre-push: commit ${merge:0:10} ADDS a personal identifier in:"* ]]
+        fi
+        at_base
+    done
+}
+
+@test "round 10a table case: the PARENT COUNTS of the pushed commits: a git silent on the parent counts' rev-list alone (--no-walk=unsorted, exit 0, its stdin drained), the identifier scan off, through a real push of a credential, is refused naming the commits it ended short of, and the remote stays at its base" {
+    r9d_base
+    commit_file k.py "k = \"$(probe_token)\"" "a credential"
+    calls_silent_on git parents '[[ " $* " == *" --no-walk=unsorted "* ]]'
+    push_main_through_hook_with_shim
+    fired parents "--no-walk=unsorted"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: the PARENT COUNTS of the pushed commits were read short for the credential scan (git rev-list exited 0 and ended after 0 of the commits it was given); the scan is incomplete, so the push is refused"* ]]
+    at_base
+}
+
+@test "round 10a short case: the PARENT COUNTS of the pushed commits: a git whose parent counts' rev-list answers a merge's header and its parents cut inside the second parent's name (exit 0, the tail marker lost), through a real push of the merge, is refused naming the tail marker, and the remote stays at its base: a cut there reads a merge as fewer parents, which would pass a merge of 64 or more" {
+    r9d_base
+    r10a_merge_open
+    git -C "$REPO" push -q origin main side                  # both parents on the remote: the merge is the push's one commit, its parents the answer's last line
+    BASE="$(git -C "$REPO" rev-parse main)"
+    printf 'k = "%s"\n' "$(probe_token)" > "$REPO/own.txt"
+    git -C "$REPO" add own.txt
+    git -C "$REPO" commit -qm "the merge, with a file of its own"
+    is_merge "$(git -C "$REPO" rev-parse HEAD)"
+    calls_short_on git parents '[[ " $* " == *" --no-walk=unsorted "* ]]' less:60
+    push_main_through_hook_with_shim
+    fired_short parents "--no-walk=unsorted"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: the PARENT COUNTS of the pushed commits were read short for the credential scan (git rev-list exited 0 and did not close commit 1 of those it was given with the line naming it again, the tail marker its format asks for after the parents); the scan is incomplete, so the push is refused"* ]]
+    at_base
+}
+
+@test "round 10a table case: the RESULT listing of a merge: a git silent on the merge's combined raw listing alone (-c --raw --no-commit-id --no-abbrev), through a real push of a merge whose binary path holds a credential, is refused naming the path the listing named no record for, and the remote stays at its base" {
+    r9d_base
+    r10a_merge_open
+    r10a_evil nul
+    r10a_merge_commit evil.txt
+    calls_silent_on git rlist '[[ " $* " == *" -c --raw --no-commit-id --no-abbrev "* ]]'
+    push_main_through_hook_with_shim
+    fired rlist "--no-abbrev"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: the RESULT listing of merge ${merge:0:10} names 0 records for evil.txt, a path its combined diff calls binary, where a merge's listing holds one (git diff-tree exited 0), so that path cannot be read whole for the credential scan; the scan is incomplete, so the push is refused"* ]]
+    at_base
+}
+
+@test "round 10a short case: the RESULT listing of a merge: a git whose combined raw listing answers its one record cut inside the path (exit 0), through a real push of a merge whose binary path holds a credential, is refused naming the path that matched no record, and the remote stays at its base" {
+    r9d_base
+    r10a_merge_open
+    r10a_evil nul
+    r10a_merge_commit evil.txt
+    calls_short_on git rlist '[[ " $* " == *" -c --raw --no-commit-id --no-abbrev "* ]]' less:3
+    push_main_through_hook_with_shim
+    fired_short rlist "--no-abbrev"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: the RESULT listing of merge ${merge:0:10} names 0 records for evil.txt, a path its combined diff calls binary"* ]]
+    at_base
+}
+
+@test "round 10a table case: the SIZE of a merge's binary blob: a git silent on cat-file -s alone, through a real push of a merge whose binary path holds a credential, is refused naming the empty answer, not a count, and the remote stays at its base" {
+    r9d_base
+    r10a_merge_open
+    r10a_evil nul
+    r10a_merge_commit evil.txt
+    calls_silent_on git bsize '[ "${1:-}" = cat-file ] && [ "${2:-}" = -s ]'
+    push_main_through_hook_with_shim
+    fired bsize "cat-file -s"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: the SIZE of evil.txt in merge ${merge:0:10}, a path the credential scan reads whole, could not be read (git cat-file -s exited 0 and answered \"\", not a count); the scan is incomplete, so the push is refused"* ]]
+    at_base
+}
+
+@test "round 10a short case: the SIZE of a merge's binary blob: a git whose cat-file -s answers the first digit of the size (exit 0), through a real push of a merge whose binary path holds a credential, is refused naming both counts, the bytes read and the cut size, and the remote stays at its base" {
+    r9d_base
+    r10a_merge_open
+    r10a_evil nul
+    r10a_merge_commit evil.txt
+    size="$(git -C "$REPO" cat-file -s "$merge:evil.txt")"
+    calls_short_on git bsize '[ "${1:-}" = cat-file ] && [ "${2:-}" = -s ]' bytes:1
+    push_main_through_hook_with_shim
+    fired_short bsize "cat-file -s"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: the CONTENT of evil.txt in merge ${merge:0:10} was read short for the credential scan (git cat-file -p exited 0 and answered $size bytes of the ${size:0:1} its SIZE read names); the scan is incomplete, so the push is refused"* ]]
+    at_base
+}
+
+@test "round 10a table case: the CONTENT of a merge's binary blob: a git silent on cat-file -p alone (exit 0, nothing printed), the identifier scan off, through a real push of a merge whose binary path holds a credential, is refused naming the bytes it answered against the blob's size, and the remote stays at its base" {
+    r9d_base
+    r10a_merge_open
+    r10a_evil nul
+    r10a_merge_commit evil.txt
+    size="$(git -C "$REPO" cat-file -s "$merge:evil.txt")"
+    calls_silent_on git bcontent '[ "${1:-}" = cat-file ] && [ "${2:-}" = -p ]'
+    push_main_through_hook_with_shim
+    fired bcontent "cat-file -p"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: the CONTENT of evil.txt in merge ${merge:0:10} was read short for the credential scan (git cat-file -p exited 0 and answered 0 bytes of the $size its SIZE read names); the scan is incomplete, so the push is refused"* ]]
+    at_base
+}
+
+@test "round 10a short case: the CONTENT of a merge's binary blob: a git whose cat-file -p answers all but its last five bytes (exit 0, the credential cut with them), through a real push of a merge whose binary path holds a credential, is refused naming the bytes it answered against the blob's size, and the remote stays at its base" {
+    r9d_base
+    r10a_merge_open
+    r10a_evil nul
+    r10a_merge_commit evil.txt
+    size="$(git -C "$REPO" cat-file -s "$merge:evil.txt")"
+    calls_short_on git bcontent '[ "${1:-}" = cat-file ] && [ "${2:-}" = -p ]' less:5
+    push_main_through_hook_with_shim
+    fired_short bcontent "cat-file -p"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: the CONTENT of evil.txt in merge ${merge:0:10} was read short for the credential scan (git cat-file -p exited 0 and answered $((size - 5)) bytes of the $size its SIZE read names); the scan is incomplete, so the push is refused"* ]]
+    [[ "$output" != *"ADDS a credential"* ]]                                  # the cut took the credential: the refusal is the read's alone
     at_base
 }
