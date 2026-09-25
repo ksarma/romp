@@ -3127,7 +3127,7 @@ const GATE_INSTALL = (): void => {
  *  for `touch`, the helpers installed, `body` run with the scene, and the cells asserted once at the end; the record goes to the test's
  *  diagnostic whatever happens. `theme` is CSS inlined after the surface's sheet (openViewer's option), for the body zoom in the VS Code
  *  extension's zoomStyle shape. */
-async function gateCase(t: any, device: GateDevice, surface: Surface, text: string, rec: Record<string, unknown>, body: (g: GateScene) => Promise<void>, size: [number, number] = [900, 700], theme = ""): Promise<void> {
+async function gateCase(t: any, device: GateDevice, surface: Surface, text: string, rec: Record<string, unknown>, body: (g: GateScene) => Promise<void>, size: [number, number] = [900, 700], theme = "", forced = 0): Promise<void> {
   const docReqs: string[] = [];
   const cells: Array<[string, unknown, unknown]> = [];
   let ran = false;
@@ -3142,7 +3142,8 @@ async function gateCase(t: any, device: GateDevice, surface: Surface, text: stri
       });
     };
     const serve = (u: URL): { status: number; type: string; body: string } | null => (u.pathname === "/file" && u.searchParams.get("path") === GATE_LOCAL ? { status: 200, type: "image/svg+xml", body: sized(300, 1400, "#456") } : null);
-    const { page, errors } = await openViewer(device === "phone" ? phonePages(browser) : browser, surface, size[0], size[1], { docs: { [REPORT]: text, [GATE_LOCAL]: sized(300, 1400, "#456") }, before, serve, theme });
+    const host = forced > 0 ? { newPage: () => browser.newPage({ viewport: null }) } : device === "phone" ? phonePages(browser) : browser;   // a forced device scale lays the page out in the window, with no viewport emulation over it
+    const { page, errors } = await openViewer(host, surface, size[0], size[1], { docs: { [REPORT]: text, [GATE_LOCAL]: sized(300, 1400, "#456") }, before, serve, theme });
     try {
       for (let i = 0; i < 20 && await page.evaluate(() => !!document.querySelector('.fileview-md [data-act="fv-load"]')); i++) { await page.evaluate(() => { (document.querySelector('.fileview-md [data-act="fv-load"]') as HTMLElement).click(); }); await frames(page, 3); }
       await page.waitForFunction(() => Array.from(document.querySelectorAll(".fileview-md img")).every((i) => (i as HTMLImageElement).complete && (i as HTMLImageElement).naturalWidth > 0), null, { timeout: 15000 });
@@ -3193,7 +3194,7 @@ async function gateCase(t: any, device: GateDevice, surface: Surface, text: stri
       await page.close();
     }
     assert.deepEqual(errors, [], "no page errors");
-  }, device === "laptop" ? { args: [LAPTOP] } : {});
+  }, device === "laptop" ? { args: [LAPTOP] } : forced > 0 ? { args: ["--force-device-scale-factor=" + forced, "--window-size=" + size.join(",")] } : {});
   if (!ran) return;   // no browser: inBrowser skipped the case loudly
   assert.ok(cells.length > 0, "the case ran its cells");
   assert.deepEqual(cells.map(([what, , got]) => [what, got]), cells.map(([what, want]) => [what, want]), "each cell's reading, [cell, reading] (property pins read off the page)");
@@ -3517,7 +3518,8 @@ for (const [host, mode] of [["top", "chat"], ["same", "pane"], ["same", "chat"]]
 // The one gate and the key gate read one predicate (controlInView), so a misread refuses an honest gesture or opens from a hidden
 // control. Two corrections, each read in cases of their own; "the round-16 head" below is the head the file review's round 16 read,
 // where every red named here was executed.
-// - An ancestor on which overflow clips nothing, display: contents or display: inline, is passed over whatever its overflow reads.
+// - An ancestor on which overflow clips nothing, display: contents or a display overflow does not apply to (inline, ruby, ruby-text,
+//   a table's row or column and their groups), is passed over whatever its overflow reads.
 //   (a) The dashboard's narrow and touch layout in the real shape: the viewer's page (the chat page's modal, the Files pane) in a
 //   same-origin iframe inside the kernel's pane wrapper, div.pane under the kernel's own rules, which compute overflow hidden and,
 //   under the narrow layout's query, display: contents (paneCss lifts both rules and the query from kernel/kernel.py at run time),
@@ -3531,7 +3533,10 @@ for (const [host, mode] of [["top", "chat"], ["same", "pane"], ["same", "chat"]]
 //   hidden (sub-head-waits: display inline, a client size of 0 by 0), and a span of that class and one that sets display: contents
 //   (followup-wrap), each holding a remote picture whose control is on the screen: Enter, Space, a click on the picture and one on
 //   the control each open once; the keys red at the round-16 head (0 opens, the span read as a clip), every cell red under the one
-//   gate without the skip.
+//   gate without the skip. Beside them, an author's ruby of that class, a ruby text (rt) of it and a table row of it holding a cell
+//   that spans the row below, whose content stands past the row's own height: the same four cells open once each; red on every
+//   gesture under a skip of contents and inline alone, which read each of the three as a clip, and the keys red at the round-16
+//   head.
 // - Every read is in one coordinate space under a body zoom in the VS Code extension's zoomStyle shape (`body{zoom:1.2500;}`), on a
 //   harness page without the webviews' policy (in VS Code no figure with a target stands under a zoom, as controlInView's docstring
 //   says; these cells hold the predicate's geometry). At 1.25 on both surfaces a control wholly visible in the body's bottom band
@@ -3606,6 +3611,12 @@ for (const [label, shape, narrow] of PANE_SHAPES) for (const mode of ["chat", "p
 }
 const WRAP_TEXT = "# Report\n\n" + PARA(1) + "\n\n" + 'Gist words <span class="sub-head-waits"><img src="' + WEB + '/gi.svg" alt="gi"></span> after.' + "\n\n" + Array.from({ length: 8 }, (_, i) => PARA(i + 2)).join("\n\n")
   + "\n\n" + 'Wrap words <span class="followup-wrap sub-head-waits"><img src="' + WEB + '/gc.svg" alt="gc"></span> after.' + "\n\n" + Array.from({ length: 12 }, (_, i) => PARA(i + 10)).join("\n\n") + "\n";
+/** The displays overflow does not apply to beyond inline, each an author's element of the same page class around a remote picture:
+ *  a ruby, a ruby text, and a table row holding a cell that spans the row below, whose picture stands past the row's own height. */
+const WRAP_MORE_TEXT = "# Report\n\n" + PARA(1) + "\n\n" + 'Ruby words <ruby class="sub-head-waits"><img src="' + WEB + '/gr.svg" alt="gr"><rt>r</rt></ruby> after.' + "\n\n" + Array.from({ length: 8 }, (_, i) => PARA(i + 2)).join("\n\n")
+  + "\n\n" + 'Ruby text words <ruby>base<rt class="sub-head-waits"><img src="' + WEB + '/gt.svg" alt="gt"></rt></ruby> after.' + "\n\n" + Array.from({ length: 8 }, (_, i) => PARA(i + 10)).join("\n\n")
+  + "\n\n" + '<table><tr class="sub-head-waits"><td rowspan="2"><img src="' + WEB + '/gw.svg" alt="gw"></td><td>x</td></tr><tr><td>' + Array.from({ length: 14 }, (_, i) => "line " + i).join("<br>") + "</td></tr></table>"
+  + "\n\n" + Array.from({ length: 12 }, (_, i) => PARA(i + 18)).join("\n\n") + "\n";
 /** The keyboard on the control of `alt` with the control where `place` puts it: Tab to it from the report's first paragraph if the
  *  keyboard is elsewhere (an open's popup can take the page's focus), then `place`; returns the read after it. */
 async function keyOnControl(g: GateScene, alt: string, place: () => Promise<GateRead>): Promise<GateRead> {
@@ -3623,6 +3634,38 @@ for (const surface of ["chat", "pane"] as Surface[]) {
         const st = await g.page.evaluate((a: string) => { const w = window as any, img = w.__img(a), s = img.parentElement as HTMLElement, cs = getComputedStyle(s), r = s.getBoundingClientRect(); return { cls: s.getAttribute("class"), display: cs.display, overflow: cs.overflowX, client: [s.clientWidth, s.clientHeight], box: [Math.round(r.width), Math.round(r.height)], control: !!w.__ctl(a) }; }, alt);
         rec[alt] = st;
         assert.ok(st.display === display && st.overflow === "hidden" && st.client[0] === 0 && st.client[1] === 0 && st.control, alt + ": the author's span computes display " + display + ", overflow hidden and a client size of 0 by 0, and the picture wears its control (a precondition): " + JSON.stringify(st));
+        const mid = await keyOnControl(g, alt, () => g.place(alt, 200));
+        rec[alt + "Mid"] = mid;
+        assert.ok(mid.inView && mid.signHit && mid.active === "the sign", alt + ": the control holding the keyboard, in view and uncovered (a precondition): " + JSON.stringify(mid));
+        await g.page.keyboard.press("Enter");
+        g.cell(alt + " (display " + display + "): Enter's opens", [1, 1], opensOf(await g.opens()));
+        await keyOnControl(g, alt, () => g.place(alt, 200));
+        await g.page.keyboard.press("Space");
+        g.cell(alt + " (display " + display + "): Space's opens", [1, 1], opensOf(await g.opens()));
+        const r = await g.place(alt, 200);
+        assert.equal(r.hit2, "the picture", alt + ": the click's point on the picture (a precondition): " + JSON.stringify(r));
+        await g.gesture("fine", r.pt2.x, r.pt2.y);
+        g.cell(alt + " (display " + display + "): a click on the picture, its opens", [1, 1], opensOf(await g.opens()));
+        const c = await g.place(alt, 200);
+        await g.gesture("fine", Math.round((c.sign[0] + c.sign[2]) / 2), Math.round((c.sign[1] + c.sign[3]) / 2));
+        g.cell(alt + " (display " + display + "): a click on the control, its opens", [1, 1], opensOf(await g.opens()));
+      }
+    });
+  });
+}
+for (const surface of ["chat", "pane"] as Surface[]) {
+  test("in a browser " + gateOn("fine", surface).replace("a fine click", "a fine pointer") + ", the predicate's accuracy, the other displays overflow does not apply to: a remote picture inside an author's ruby of a page class that sets overflow hidden (sub-head-waits, display ruby, a client size of 0 by 0), one inside a ruby text of that class (display ruby-text, 0 by 0), and one in a table cell that spans two rows, inside a table row of that class (display table-row, its box one row tall, the picture and its control past it), each control on the screen and uncovered: Enter, Space, a click on the picture and one on the control each open once (the file review's round 16, regression-1 with the coordinator's decision 1, which passes over every ancestor on which overflow clips nothing: every cell red under a skip of contents and inline alone, which read each element as a clip and refused the picture on every gesture, and the keys red at the head the file review's round 16 read, 0 opens, where its clicks opened with no gate)", { timeout: 180000 }, async (t) => {
+    const rec: Record<string, unknown> = { scene: "author wrapper, more displays" };
+    await gateCase(t, "fine", surface, WRAP_MORE_TEXT, rec, async (g) => {
+      for (const [alt, display, sel] of [["gr", "ruby", "ruby"], ["gt", "ruby-text", "rt"], ["gw", "table-row", "tr"]] as const) {
+        const st = await g.page.evaluate(([a, s]: [string, string]) => {
+          const w = window as any, img = w.__img(a) as HTMLElement, el = img.closest(s) as HTMLElement, cs = getComputedStyle(el), r = el.getBoundingClientRect(), c = w.__ctl(a) as HTMLElement | null;
+          const cr = c ? c.getBoundingClientRect() : null, x0 = r.left + el.clientLeft, y0 = r.top + el.clientTop;
+          const meets = !!cr && Math.min(cr.right, x0 + el.clientWidth) > Math.max(cr.left, x0) && Math.min(cr.bottom, y0 + el.clientHeight) > Math.max(cr.top, y0);
+          return { tag: el.localName, cls: el.getAttribute("class"), display: cs.display, overflow: cs.overflowX, client: [el.clientWidth, el.clientHeight], box: [Math.round(r.width), Math.round(r.height)], control: !!c, outsideClient: !!cr && !meets };
+        }, [alt, sel]);
+        rec[alt] = st;
+        assert.ok(st.cls === "sub-head-waits" && st.display === display && st.overflow === "hidden" && st.control && st.outsideClient && (display === "table-row" || (st.client[0] === 0 && st.client[1] === 0)), alt + ": the author's " + sel + " computes display " + display + " and overflow hidden, the picture wears its control, and the control stands outside the element's client box" + (display === "table-row" ? " (the row one line tall, the spanning cell's picture below it)" : " (a client size of 0 by 0)") + ", where a read of the element as a clip leaves it out of view (a precondition): " + JSON.stringify(st));
         const mid = await keyOnControl(g, alt, () => g.place(alt, 200));
         rec[alt + "Mid"] = mid;
         assert.ok(mid.inView && mid.signHit && mid.active === "the sign", alt + ": the control holding the keyboard, in view and uncovered (a precondition): " + JSON.stringify(mid));
@@ -3747,7 +3790,7 @@ for (const [zoom, surface, scenes] of ZOOM_CASES) {
   const reds = zoom === 1 ? "the key cells green at the head the file review's round 16 read by design, and the clicks dispatched on a control out of view red there by group A's open"
     : zoom === 14 / 13 ? "the 47.6's floor cell red at the head the file review's round 16 read by a control, and the 48's red under a floor that divides by the zoom without rounding, where it measured 47.9965 CSS px"
     : zoom > 1 ? "the band's and the right edge's keys red at the head the file review's round 16 read, 0 opens, the 40's and the 47.6's floor cells red there by a control, the dispatched click above the body red there by group A's open, and the keys above the body green there by design"
-    : "the past cells' keys red at the head the file review's round 16 read by one open each, the direction that opens a tab with the control hidden, their dispatched clicks and the one above the body red there by group A's open, the 48's and the 50's floor cells red there by the mark in place of a control, the 48's red too under a floor that divides by the zoom without rounding, and the keys above the body green there by design";
+    : "the past cells' keys red at the head the file review's round 16 read by one open each, the direction that opens a tab with the control hidden, their dispatched clicks and the one above the body red there by group A's open, the 48's and the 50's floor cells red there by the mark in place of a control, the 48's red too under a floor that divides by the zoom without rounding, and the keys above the body green there by design; the past cells hold the gate's composition, the predicate or the hit test, since elementFromPoint does not reach a clipped control, so under a region that reads the client size unscaled they stay green, and the node guard in file-view-outline.test.ts alone holds the 0.8 scaling";
   test("in a browser " + gateOn("fine", surface).replace("a fine click", "a fine pointer") + ", the predicate's accuracy, " + what + " (a harness page without the VS Code webviews' policy, which loads no remote picture: the cells hold the predicate's geometry): " + scenes.map((sc) => ZOOM_SCENE_WORDS[sc]).join("; ") + " (the file review's round 16, fresh-1: " + reds + "; the 47.6's cell red at every zoom under a floor read from offsetWidth)", { timeout: 240000 }, async (t) => {
     const rec: Record<string, unknown> = { scene: "zoom", zoom };
     await gateCase(t, "fine", surface, ZOOM_TEXT, rec, async (g) => {
@@ -3758,6 +3801,20 @@ for (const [zoom, surface, scenes] of ZOOM_CASES) {
     }, [900, 700], zoom === 1 ? "" : "body{zoom:" + zoom.toFixed(4) + ";}");
   });
 }
+
+// The browser's own zoom, which the web dashboard's reader sets (Chromium's zoom is in the device scale, so a forced device scale lays
+// the page out as that zoom does, with no viewport emulation over it; playwright's deviceScaleFactor does not enter the layout's zoom
+// and reads the floor exactly): the floor at 90%. The layout snaps a box to 1/64 of a layout pixel, here 0.9 of a CSS pixel, so a
+// picture laid out at 48 CSS px measures 47.986 and, unrounded, fell under the floor.
+test("in a browser (a fine pointer, the chat modal), the floor under the browser's own zoom of 90% (a forced device scale of 0.9, the layout zoom the web dashboard's reader sets): pictures laid out at 40, 48, 50 and 47.6 CSS px get the zoom-1 control verdict, a control for the 48 and the 50 and the mark for the others (the file review's round 16, fresh-1: the 48's cell red at the head the file review's round 16 read, where it measured 47.986 CSS px and wore the mark in place of a control, and red under a floor that divides by the zoom without rounding; the others green there by design)", { timeout: 240000 }, async (t) => {
+  const rec: Record<string, unknown> = { scene: "browser zoom", forced: 0.9 };
+  await gateCase(t, "fine", "chat", ZOOM_TEXT, rec, async (g) => {
+    const dpr: number = await g.page.evaluate(() => devicePixelRatio);
+    rec.dpr = dpr;
+    assert.ok(Math.abs(dpr - 0.9) < 1e-4, "the page's device pixel ratio is the forced 0.9, the layout zoom the browser's own zoom gives (a precondition): " + dpr);
+    await zoomScenes(g, 1, ["floor"], rec);
+  }, [900, 700], "", 0.9);
+});
 
 // ── the dimming classes off a figure's ancestors, on the paint (the file review's round 16, extra5-2) ── Under CDP touch emulation, where
 // the web control and the mark stand at rest and a tap opens the tab from that state: an author's span of tag-chip-off (an opacity of

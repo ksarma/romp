@@ -5370,8 +5370,9 @@ function figureControlOf(target: Element | null, within: Element): HTMLElement |
  *  regions, in order: the viewer's layout viewport (in VS Code the webview's); the scrollports of the control's ancestors
  *  (clipToScrollports), so the viewer's body counts and so does a table that scrolls on its own, while the Rendered box, which
  *  clips nothing, does not, and neither does an ancestor on which overflow clips nothing whatever its computed value, one with
- *  display: contents or display: inline, which is passed over (the file review's round 16, regression-1 with the coordinator's
- *  decision 1: read as a clip, the dashboard's pane wrapper, display: contents in its narrow and touch layout, put every web
+ *  display: contents, or one whose display overflow does not apply to (inline, ruby, ruby-text, a table's row or column and
+ *  their groups; clipToScrollports), which is passed over (the file review's round 16, regression-1 with the coordinator's
+ *  decision 1, which passes over every ancestor on which overflow clips nothing: read as a clip, the dashboard's pane wrapper, display: contents in its narrow and touch layout, put every web
  *  control of the chat column and the Files pane out of view, and an author's inline span of a page class that sets overflow
  *  hidden kept the picture inside it from opening on any gesture); then, for each same-origin frame that hosts this window,
  *  walked up while the frame element can be read (the dashboard hosts the viewer in same-origin iframes), the box moved into
@@ -5390,7 +5391,11 @@ function figureControlOf(target: Element | null, within: Element): HTMLElement |
  *  viewport pixels: an ancestor's and a frame element's border and client size, which are in the element's own CSS pixels, are
  *  scaled by its zoom (cssScale), since under a body zoom, the one VS Code's webviews apply for an editor font over 13px, they
  *  were read unscaled against a scaled box, so a control wholly visible in the body's bottom band or at its right edge read out
- *  at 1.25 and one past the body's edge, clipped, read in at 0.8 (the file review's round 16, fresh-1). A zoomed same-origin
+ *  at 1.25 and one past the body's edge, clipped, read in at 0.8 (the file review's round 16, fresh-1). A transform is not read:
+ *  a scale or a turn on a scrollport or above it changes its box and not its zoom (cssScale), so under one the client size and the
+ *  box fall in two spaces, and the read errs both ways; a clip read too large counts a hidden sign in, which the hit test at the
+ *  gesture's start refuses (signUncovered: elementFromPoint does not reach a clipped sign), and one read too small refuses a sign
+ *  on the screen, a stated limit (a table inside a page class's quarter turn, measured in Chromium, opened on no gesture). A zoomed same-origin
  *  parent would need the box moved into it scaled as well, which the walk does not do: no page of either host zooms one (in VS
  *  Code the walk stops at the webview's own window, and the kernel writes no zoom). Reachability: the zoomed pages are VS
  *  Code's webviews alone, whose policy loads no remote picture (img-src the webview's own source and data:) and whose origin
@@ -5432,15 +5437,19 @@ type ViewBox = { x0: number; y0: number; x1: number; y1: number };
  *  scrollport with any scrollbar left out, of every ancestor of `el` whose computed overflow on that axis is not visible. Passed
  *  over: the document's body and root, since their overflow is the viewport's, which controlInView reads itself; and an
  *  ancestor on which overflow clips nothing whatever its computed value, one with display: contents, which generates no box, and
- *  one with display: inline, to which overflow does not apply; either reads a client size of 0 by 0 (and display: contents a box
- *  of 0 by 0), so read as a clip it would put every control inside it out of view. The padding box is read in the window's viewport
- *  pixels: the ancestor's box as getBoundingClientRect gives it, and its border and client size, which are in the ancestor's own
- *  CSS pixels, scaled by cssScale, since under a body zoom the two spaces differ. */
+ *  one whose display overflow does not apply to, since it applies to block, flex and grid containers alone: inline, ruby and
+ *  ruby-text, and a table's row, row group, header group, footer group, column and column group. An inline or ruby box reads a
+ *  client size of 0 by 0 (and display: contents a box of 0 by 0), and a table row reads its own height while a cell that spans the
+ *  rows below it lays its content past it, so read as a clip each put a control on the screen inside it out of view (measured in
+ *  Chromium: an author's ruby, ruby text or table row of a page class that sets overflow hidden kept the picture inside it from
+ *  opening on any gesture). A table's cell and caption are block containers and clip. The padding box is read in the window's
+ *  viewport pixels: the ancestor's box as getBoundingClientRect gives it, and its border and client size, which are in the
+ *  ancestor's own CSS pixels, scaled by cssScale, since under a body zoom the two spaces differ. */
 function clipToScrollports(el: Element, view: Window, box: ViewBox): void {
   const d = view.document;
   for (let a = el.parentElement; a && a !== d.body && a !== d.documentElement; a = a.parentElement) {
     const cs = view.getComputedStyle(a);
-    if (cs.display === "contents" || cs.display === "inline") continue;   // overflow clips nothing on either (the docstring)
+    if (/^(?:contents|inline|ruby|ruby-text|table-(?:row|row-group|header-group|footer-group|column|column-group))$/.test(cs.display)) continue;   // overflow clips nothing on any of these (the docstring)
     const clipX = cs.overflowX !== "visible", clipY = cs.overflowY !== "visible";
     if (!clipX && !clipY) continue;
     const ar = a.getBoundingClientRect(), [zx, zy] = cssScale(a, ar), padLeft = ar.left + a.clientLeft * zx, padTop = ar.top + a.clientTop * zy;
@@ -5450,9 +5459,11 @@ function clipToScrollports(el: Element, view: Window, box: ViewBox): void {
 }
 /** The factor on each axis from an element's own CSS pixels, the space of its clientLeft, clientTop, clientWidth and
  *  clientHeight, to its window's viewport pixels, the space of its getBoundingClientRect (`r`): its effective zoom
- *  (currentCSSZoom, Chromium 128 and later) where the browser gives one; else the ratio of its rendered box to its layout box
- *  (r's size over offsetWidth and offsetHeight), which measures the same relation and reads 1 where the two reads agree; else 1,
- *  where neither can be read (a stand-in outside a browser). */
+ *  (currentCSSZoom, Chromium 128 and later), which Chromium gives for every element, 1 where nothing zooms it, so in a browser
+ *  this first road always answers; else, where no zoom is given (the node suites' stand-ins), the ratio of its rendered box to its
+ *  layout box (r's size over offsetWidth and offsetHeight), which reads the zoom the same way while no transform stands; else 1,
+ *  where neither can be read. A transform is not read: a scale or a turn on the element or above it changes its rendered box and
+ *  not its zoom, so under one the two spaces this factor joins still differ (controlInView states what that costs). */
 function cssScale(el: Element, r: DOMRect): [number, number] {
   const z = el.currentCSSZoom;
   if (z > 0) return [z, z];
@@ -5555,7 +5566,8 @@ function figureHasPicture(state: FigureState): boolean {
  *  round 1). Their plain click still opens them where no link holds them. The floor is read in the figure's own CSS pixels at
  *  every zoom, the space the control's box is laid out in (figureBox divides the laid-out box by the figure's zoom; the file
  *  review's round 16, fresh-1: under a body zoom of 1.25 a 40 CSS px picture measured 50 and got a control, and at 0.8 a 48 and
- *  a 50 measured 38.4 and 40 and got none). */
+ *  a 50 measured 38.4 and 40 and got none), rounded to 1/16 of a pixel, which the browser's own zoom on the web dashboard needs:
+ *  at 90% a picture laid out at 48 CSS px measured 47.986 and wore the mark in place of a control (figureBox). */
 const FIGOPEN_MIN_PX = 48;
 /** A LOADED figure's box (figureState): its laid-out box while it is in the document, whatever that box is (the width the
  *  author or the column gave it; 0 by 0 for a figure with no box, an author's `hidden` or `width="0"`, or with the viewer
@@ -5570,15 +5582,21 @@ const FIGOPEN_MIN_PX = 48;
  *  its own size and kept a control the sheets lay 28 px into the prose before it, where it took the click meant for those
  *  words and opened a picture the author hid. The box is in the figure's own CSS pixels, the floor's space: the laid-out box,
  *  which getBoundingClientRect gives in the window's viewport pixels, divided by the figure's zoom (currentCSSZoom, Chromium
- *  128 and later, and 1 where the browser gives none), so under a body zoom the floor holds as at zoom 1 (the file review's
- *  round 16, fresh-1), and rounded to 1/16 of a CSS pixel, since the layout puts a box's edges on a grid of 1/64 of a window
- *  pixel and under a zoom that grid falls between CSS pixels: laid out at 48 CSS px, a picture measures 38.390625 window pixels
- *  at a zoom of 0.8 (47.988 CSS px) and 51.6875 at 14/13, VS Code's zoom for its default editor font of 14px (47.9965), and
- *  each would fall under the floor unrounded (measured in Chromium); rounded to 1/16, the grid's error is absorbed at every
- *  zoom above 0.5 (VS Code's run from 1 to 2), and a picture no more than 1/32 of a pixel under the floor gets a control. Not
- *  offsetWidth and offsetHeight, which round to an integer, so a picture laid out at 47.6 px would read 48 and get a control at
- *  every zoom, 1 included. Reachability, as controlInView's docstring states it: no figure with a target stands under a zoom
- *  today (VS Code's zoomed webviews load no remote picture and have no /file route for a local one). */
+ *  128 and later, and 1 where the browser gives none), so a body zoom does not move the floor (the file review's round 16,
+ *  fresh-1), and rounded to 1/16 of a CSS pixel, since the layout puts a box's edges on a grid of 1/64 of a layout pixel, whose
+ *  size is the device scale times the CSS zoom, and wherever that product is not 1 the grid falls between CSS pixels. The browser's
+ *  own zoom reaches that on the web dashboard (its zoom is in the device scale): laid out at 48 CSS px, a picture measured 47.988
+ *  CSS px at a device scale of 0.8, 47.986 at 0.9 and 47.997 at 1.1, and wore the mark with no control at the head the file
+ *  review's round 16 read (measured in Chromium, the device scale forced); under a body zoom it measures 38.390625 window pixels at
+ *  0.8 (47.988 CSS px) and 51.6875 at 14/13, VS Code's zoom for its default editor font of 14px (47.9965). Rounded to 1/16, the
+ *  grid's error is absorbed wherever the product is above 0.5 (a 48 px picture's box, snapped at most one step of the grid under it, rounds back to 48), and the verdict on a picture laid out within 1/32 of a pixel under
+ *  the floor depends on the zoom: laid out at 47.97 px one gets a control at zoom 1 and at a device scale of 0.9, and none at a
+ *  body zoom of 1.25 or a device scale of 1.25 (measured). A transform on the figure or above it is not taken off, as the box read
+ *  it before the zoom was: a picture under a scale is measured at its scaled size (40 CSS px under scale(1.5) reads 60 and gets a
+ *  control, 60 under scale(0.6) reads 36 and wears the mark). Not offsetWidth and offsetHeight, which round to an integer, so a
+ *  picture laid out at 47.6 px would read 48 and get a control at every zoom, 1 included. Reachability: a CSS zoom stands on VS
+ *  Code's webviews alone, where no figure has a target (controlInView's docstring), and the browser's own zoom on the web
+ *  dashboard wherever a reader sets one, which is where the rounding is needed. */
 function figureBox(img: Element): { w: number; h: number } | null {
   if (figureState(img) !== "loaded") return null;
   const i = img as HTMLImageElement;
