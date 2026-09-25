@@ -17,7 +17,9 @@ assembly entry reading a released slot again) belong to an index nothing release
 dead until the cap or a new list registering the same row under their id, and on a large machine the cap (MemTotal /
 32 KiB) had not come after 73 hours: 6.15 million entries against a 7.73 million cap, most of them for freed lists. When
 a list holding entries is freed, its own weak reference now queues itself, and the next registration or release removes
-that list's entries, counted `collected` and `expired`. A list a finalizer resurrects gets a fresh reference at its next
+that list's entries, counted `collected` and `expired`, with one residual on CPython 3.13 and later: entries a finalizer
+registers during the collection that frees their list hold a reference that is never queued, and leave at the cap's trim
+(FinalizerRead below, which skips on earlier versions). A list a finalizer resurrects gets a fresh reference at its next
 registration (Resurrected below).
 Synthetic documents only."""
 import copy
@@ -80,6 +82,23 @@ class _Resurrector:
         ref = self.la._ref
         self.seen.append((ref() is None, any(q is ref for q in em._MAT_COLLECTED)))
         self.keep.append(self.la)
+
+
+class _Reader:
+    """A finalizer in a garbage cycle (it refers to itself) holding a two-row list: its __del__ records in `seen` whether
+    the list's reference read None and whether the queue held it, reads slot 0 (built before, so a re-registration) and
+    slot 1 (unbuilt, so a build), records whether the reads left the list holding another reference that reads it, puts
+    that reference in `fresh`, and does not keep the list, so the collection that runs it frees the list."""
+
+    def __init__(self, la, seen, fresh):
+        self.la, self.seen, self.fresh, self.cycle = la, seen, fresh, self
+
+    def __del__(self):
+        la, own = self.la, self.la._ref
+        before = (own() is None, any(q is own for q in em._MAT_COLLECTED))
+        la[0]; la[1]
+        self.seen.append(before + (la._ref is not own and la._ref() is la,))
+        self.fresh.append(la._ref)
 
 
 def _reset():
@@ -441,11 +460,13 @@ class DroppedEntries(T.Harness):
 
 class CollectionEvent(Synthetic):
     """A freed list's entries leave the LRU at the next registration or release, whether it dies by its last decref or in
-    a cycle, however it came to hold entries, and on whichever thread it dies. Each test that frees a list holding entries
-    asserts the LRU's (live, dead) before `collected`, so that on a source without the event its red is the dead entries
-    themselves. On such a source the other tests red on what they add: the no-entry case on the missing `collected` key,
-    the in-place case on the TypeError that is not raised, the order tests on the missing _ListRef, the default-argument
-    case on the missing queue, the lock test on the missing _mat_drain, and the live-list test on the missing _ref."""
+    a cycle, whether or not it was read after a release, and on whichever thread it dies; the residual on CPython 3.13
+    and later, entries a finalizer registers during the collection that frees the list, is FinalizerRead below. Each test
+    that frees a list holding entries asserts the LRU's (live, dead) before `collected`, so that on a source without the
+    event its red is the dead entries themselves. On such a source the other tests red on what they add: the no-entry
+    case on the missing `collected` key, the in-place case on the TypeError that is not raised, the order tests on the
+    missing _ListRef, the default-argument case on the missing queue, the lock test on the missing _mat_drain, and the
+    live-list test on the missing _ref."""
 
     def _read_after_release(self, k, tag):
         """An index and one list of k rows: every slot built, the index released (its assembly entry dropped), then every
@@ -859,6 +880,52 @@ class Resurrected(Synthetic):
         st = em.asm_index_stats()
         self.assertEqual((_entries(), st["collected"]), ((0, 0), k + 1),
                          "the list's free queued its fresh reference and the drain removed the one entry it held")
+
+
+class FinalizerRead(Synthetic):
+    """The collection event's residual, on CPython 3.13 and later: a list a finalizer reads, without keeping it, during the
+    collection that frees it. The collector clears the list's reference, and runs its callback, before it runs finalizers,
+    so the finalizer's reads mint the list a fresh reference (_mat_register) and register their entries under it; 3.13 and
+    later then clear that reference without running its callback, so the list dies holding entries that no drain removes,
+    and they leave at the cap's trim, counted `expired` without `collected`. It skips on 3.10 to 3.12, which run that
+    callback when the list is freed."""
+
+    @unittest.skipUnless(sys.implementation.name == "cpython" and sys.version_info >= (3, 13),
+                         "the residual needs CPython 3.13 or later, which clears a weak reference a finalizer created to an "
+                         "object the same collection frees without running its callback; 3.10 to 3.12 run the callback")
+    def test_entries_a_finalizer_registers_on_a_list_its_collection_frees_leave_at_the_trim_not_at_a_drain(self):
+        ix, la = _mint(2, "F")
+        la[0]                                                      # slot 0 built and registered, slot 1 unbuilt
+        ixb, lb = _mint(2, "G")                                    # minted while the list lives: it cannot take the list's id
+        seen, fresh = [], []
+        wl = weakref.ref(la)
+        res = _Reader(la, seen, fresh)                             # the cycle holds the list's one other reference
+        was = gc.isenabled()
+        gc.disable()                                               # the finalizer takes _MAT_LOCK: no collection but the one below
+        try:
+            del ix, la, res
+            gc.collect()
+        finally:
+            if was:
+                gc.enable()
+        self.assertIsNone(wl(), "the collection freed the list: the finalizer read it and did not keep it")
+        self.assertEqual(seen, [(True, True, True)],
+                         "the finalizer found the list's reference cleared and queued, and its reads left the list holding a "
+                         "fresh one")
+        self.assertEqual(_entries(), (0, 2), "the two entries the finalizer's reads registered stand dead")
+        self.assertFalse(any(r is fresh[0] for r in em._MAT_COLLECTED.copy()), "the fresh reference is not queued")
+        st = em.asm_index_stats()
+        self.assertEqual((st["expired"], st["collected"]), (1, 1),
+                         "a drain removed one entry, counted expired and collected")
+        lb[0]                                                      # a registration: its drain removes nothing
+        self.assertEqual(_entries(), (1, 2), "the dead entries stand past the drain")
+        em._MAT_CAP = 2
+        lb[1]                                                      # two over the cap: the trim drops the two dead entries
+        self.assertEqual(_entries(), (2, 0), "the dead entries left at the trim, and both live entries stand")
+        st = em.asm_index_stats()
+        self.assertEqual((st["expired"], st["collected"], st["evictions"]), (3, 1, 0),
+                         "the trim counted the two dead entries expired, not collected, and evicted no live entry")
+
 
 if __name__ == "__main__":
     unittest.main()

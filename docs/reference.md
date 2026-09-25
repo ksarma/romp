@@ -3151,10 +3151,12 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   over 32 KiB, never under 500,000; the LRU holds each turn's atom list by a
   weak reference, and a freed list's entries leave at the next build,
   re-registration or release, so `resident` is the live entries plus those
-  of lists freed since the last of those. A list a finalizer resurrects (no
-  kernel path does) can keep built slots whose entries left as dead ones,
-  and `resident` does not count those slots until a read registers them
-  again, as it did not before 2026-09-24. Before 2026-09-15 a strong
+  of lists freed, or brought back by a finalizer, since the last of those,
+  and the entries of the residual named under `collected` below. A list a
+  finalizer resurrects (no kernel path does) can keep built slots whose
+  entries left as dead ones, and `resident` does not count those slots until
+  a read registers them again, as it did not before 2026-09-24. Before
+  2026-09-15 a strong
   reference kept every superseded generation's atoms, and its whole index
   behind them, resident until they aged past the cap, about 1.2 GiB on a box
   whose LRU sat at its cap of a million entries, and live atoms
@@ -3169,22 +3171,27 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   dropped, never a field in place), `collected` (entries the collection event
   removed: when a list holding entries is freed, its weak reference queues
   itself, and the next build, re-registration or release removes that list's
-  entries), `expired` (an entry whose list has been collected, dropped in
-  one of three ways, no slot touched in any case: by that removal, so every
-  `collected` entry counts here too; by the cap; or when a live list
-  registers a slot under the id the dead one held. Every registration first
-  removes the entries of the lists already queued, so the third way drops
-  only an entry whose list's callback never queued it. `expired` minus
-  `collected` counts the last two ways. While `resident` has stayed under
-  the cap, it counts only the third; once the cap binds, it also counts
-  entries of lists freed, or brought back by a finalizer, since the last
-  build, re-registration or release that the cap dropped before a removal
-  could, with no callback missed. A `resident` that keeps rising while
-  `evictions` stays flat is the sign of a leak), `released` (entries popped
-  the moment the assembly entry that owned their index was dropped or
-  replaced, rather than a million entries later at the cap), `rowDecodes`
-  (document rows decoded, a build's or a light read's), `userFacts` (below),
-  and `restoredTurns`.
+  entries, with one residual: on CPython 3.13 and later, entries that a
+  finalizer (such as a `__del__` or a generator's close) registers during the
+  collection that frees their list hold a reference that is never queued,
+  so no removal takes them, and they wait for the cap or for a list
+  registering the same row under their id; no kernel code defines a
+  `__del__` or a `weakref.finalize`), `expired` (an entry whose list has
+  been collected, dropped in one of three ways, no slot touched in any case:
+  by that removal, so every `collected` entry counts here too; by the cap; or
+  when a live list registers a slot under the id the dead one held. Every
+  registration first removes the entries of the lists already queued, so the
+  third way drops only an entry whose list's callback never queued it.
+  `expired` minus `collected` counts the last two ways. While `resident` has
+  stayed under the cap, it counts only the third; once the cap binds, it
+  also counts entries of lists freed, or brought back by a finalizer, since
+  the last build, re-registration or release that the cap dropped before a
+  removal could, and entries of the residual named under `collected` that
+  the cap dropped. A `resident` that keeps rising while `evictions` stays flat is
+  the sign of a leak), `released` (entries popped the moment the assembly
+  entry that owned their index was dropped or replaced, rather than a
+  million entries later at the cap), `rowDecodes` (document rows decoded, a
+  build's or a light read's), `userFacts` (below), and `restoredTurns`.
 - `skillLoadIndex`: the judge's skill-load boot pass (the tops older stores minted from
   the harness's own skill load): `filesRead` and `bytesRead` (transcripts read raw this
   boot, appended tails only once the persisted index holds a file), `filesIndexed`, and
