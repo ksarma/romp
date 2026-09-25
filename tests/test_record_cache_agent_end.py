@@ -553,6 +553,7 @@ class AgentEnd(unittest.TestCase):
                          "the re-released path's mark is the newer one kept; the other path's is dropped")
 
     def test_a_resumed_agent_is_a_false_end_and_appends_to_its_tail(self):
+        """And that tail's release is charged at the tail's weight, not the file's size (PR 913 round 1, group F)."""
         size = self._fold_while_running(AID, self.agent)
         self._stop(AID)
         km._begin_checkpoint_cycle()
@@ -568,6 +569,11 @@ class AgentEnd(unittest.TestCase):
         self.assertEqual(self._whole_reads(), w0, "no whole read")
         self.assertEqual(self._stat("falseEnds"), 1, "the released agent entered the live set again")
         self.assertEqual(self._stat("released")["agentEnded"]["bytes"], size)
+        tailw, held = em._entry_weight(ent), self._stat("bytes")
+        self._stop(AID)
+        km._begin_checkpoint_cycle()
+        self.assertEqual(self._stat("released"), {"agentEnded": {"count": 2, "bytes": size + tailw}}, "the tail at its weight")
+        self.assertEqual(self._stat("bytes"), held - tailw, "the held bytes fell by the tail's weight")
 
     def test_a_second_end_over_a_restored_tail_leaves_it_alone(self):
         self._fold_while_running(AID, self.agent)
