@@ -171,6 +171,17 @@ const LOADED = {
     return !!v && /notes-api latency plot/.test(v.textContent || "") && !!i && i.complete && i.naturalWidth > 0; },
   Settings: () => { const s = document.getElementById("rs-judgemodel"); return !!s && s.options.length > 1; },
 };
+/** Close the settings modal the way the shell's Escape chain does (the settings frame's own __rompSettingsClose), until
+ *  the shell's body drops settings-open, which lifts the frame over the whole window. The frame reports the modal's state
+ *  by message, so one close can race a late "open" report: ask again until the class is gone. True when it is gone. */
+async function closeSettings(page) {
+  for (let i = 0; i < 40; i++) {
+    if (!(await page.evaluate(() => document.body.classList.contains("settings-open")))) return true;
+    await page.evaluate(() => { const f = document.getElementById("f-settings"); try { const w = f && f.contentWindow; if (w && w.__rompSettingsClose) w.__rompSettingsClose(); } catch (e) {} });
+    await page.waitForTimeout(250);
+  }
+  return false;
+}
 /** Every pane on, then each one's data check: {label: true | false | "no check"}. The Files pane is checked after a chat
  *  file link opens a note into it; Settings is opened through the shell's own opener and closed again. */
 async function panesLoaded(page, table) {
@@ -183,10 +194,7 @@ async function panesLoaded(page, table) {
     if (p.label === "Settings") await page.evaluate(() => window.__rompOpenSettings());
     const fr = await frameAt(page, p.route);
     res[p.label] = await waitIn(fr, LOADED[p.label], cfg.sid);
-    if (p.label === "Settings" && fr) {
-      await fr.evaluate(() => window.__rompSettingsClose && window.__rompSettingsClose()).catch(() => {});
-      await page.waitForFunction(() => !document.body.classList.contains("settings-open"), null, { timeout: cfg.deadline }).catch(() => {});
-    }
+    if (p.label === "Settings") await closeSettings(page);
   }
   return res;
 }
@@ -194,6 +202,7 @@ async function panesLoaded(page, table) {
 const wordOf = (table, route) => route === "/" ? "shell" : ((table.find((p) => p.route === route) || {}).label || route);
 /** The notification switch's own POST, clicked the way a person does: the bell, then its main row. */
 async function bellPost(page) {
+  const settingsClosed = await closeSettings(page);   // the settings frame, lifted over the window while open, would take the click
   await page.click("#rail-bell");
   await page.waitForFunction(() => { const b = document.getElementById("rbell-back"); return !!b && !b.hidden; }, null, { timeout: cfg.deadline });
   const was = await page.evaluate(() => document.querySelector('#rbell-pop [data-act="all"]').getAttribute("aria-checked"));
@@ -203,7 +212,7 @@ async function bellPost(page) {
   const flipped = await page.waitForFunction((w) => document.querySelector('#rbell-pop [data-act="all"]').getAttribute("aria-checked") !== w, was, { timeout: cfg.deadline }).then(() => true, () => false);
   const readBack = await page.evaluate(async () => { const r = await fetch("/notify-all"); return r.ok ? (await r.json()).on : "HTTP " + r.status; });
   await page.keyboard.press("Escape").catch(() => {});
-  return { status: r ? r.status() : null, flipped, held: readBack === (was !== "true") };
+  return { status: r ? r.status() : null, flipped, held: readBack === (was !== "true"), settingsClosed };
 }
 /** A summary of a request log: the kernel-bound fetch/xhr requests by the key they carried, the refusals, and the kinds
  *  seen. */

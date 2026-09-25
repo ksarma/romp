@@ -19,12 +19,21 @@ the REAL chat page of a hermetic kernel in playwright's Chromium and checks ever
      frame's and when it is a pane's (a pane never navigates itself: it sends the top frame). A page with no key at all
      goes to /login too. Signing in again through the /login form brings the page back.
   3. Two sign-ins racing in one browser end, in each tab, either signed in or on /login, never on a page whose requests
-     are all refused.
+     are all refused. Two tabs of a browser that still holds the cookie of the version before this one, opened at the
+     same moment (tabs restored after the upgrade), both end signed in: each is handed the same session and key.
+  4. A same-origin /file address typed where no markdown renderer runs carries the cap and opens: a code span holding
+     one URL, a user todo's text and its link chip (in the chat and in the Waiting pane), and, in the viewer, a figure
+     and a link the note writes with the scheme.
+  5. Nothing the session cookie alone reads (every page route, /sw.js, every file under /dist/ and /media/) carries the
+     page key, the session id, the serve token, or the planted session's id, folder or message; the page key is in a
+     sign-in response once and nowhere else.
 
 Nothing here prints a token, a session id, a key or a cap: the driver compares them in memory and reports booleans,
-statuses and lengths. The lab token is minted at run time. Skips LOUDLY without the extension deps or a playwright
-browser; the CI extension job installs Chromium and runs served files with ROMP_SERVED_TESTS_REQUIRE=1, which turns any
+statuses and lengths. The lab token is minted at run time. Chromium by default; FILE_CAPS_ENGINE=firefox or webkit runs
+the same scenes on another engine, and fails rather than skips when that engine is missing (a record for a person, not a
+CI leg). Skips LOUDLY without the extension deps or a playwright browser; the CI extension job installs Chromium and runs served files with ROMP_SERVED_TESTS_REQUIRE=1, which turns any
 skip into a failure there. SYNTHETIC fixtures only (session web, the notes-api demo world, placeholder uuids)."""
+import ast
 import json
 import os
 import re
@@ -37,6 +46,7 @@ import sys
 import tempfile
 import time
 import unittest
+import urllib.error
 import urllib.request
 import zlib
 from pathlib import Path
@@ -51,6 +61,7 @@ sys.path.insert(0, HERE)
 import test_ship_reship_served as _lab   # noqa: E402  the lab kernel's environment (the module, not its classes)
 
 SID = "aaaaaaaa-1111-2222-3333-444444444444"
+ENGINE = os.environ.get("FILE_CAPS_ENGINE") or "chromium"
 U_UUID = "11111111-2222-3333-4444-555555555555"
 A_UUID = "22222222-3333-4444-5555-666666666666"
 
@@ -91,10 +102,10 @@ HEAD = r"""
 import { createRequire } from "node:module";
 import fs from "node:fs";
 const require = createRequire(process.env.EXT_PKG);
-const { chromium } = require("playwright");
+const pw = require("playwright");
 const cfg = JSON.parse(fs.readFileSync(process.env.CFG, "utf8"));
 let browser;
-try { browser = await chromium.launch(); }
+try { browser = await pw[cfg.engine].launch(); }
 catch (e) { console.error("browser-launch-failed: " + e); process.exit(3); }
 const VIEW = { viewport: { width: 1100, height: 760 } };
 const sessionCookie = async (ctx) => (await ctx.cookies(cfg.origin)).filter((c) => c.name.startsWith("romp_s_"));
@@ -280,6 +291,80 @@ process.exit(0);
 """
 
 
+MIGRATE = HEAD + r"""
+// two tabs of one browser that still holds the cookie the version before this one set (its value is the serve token),
+// opened at the same moment: each tab's request carries the old cookie, each response migrates it. Each tab must end
+// signed in (a fetch reads /sessions), since both responses hand the browser the same session and the same key.
+const runs = [];
+for (let i = 0; i < cfg.rounds; i++) {
+  const ctx = await browser.newContext(VIEW);
+  await ctx.addCookies([{ name: "romp_token", value: cfg.token, url: cfg.origin }]);
+  const p1 = await ctx.newPage(), p2 = await ctx.newPage();
+  await Promise.all([p1.goto(cfg.origin + "/"), p2.goto(cfg.origin + "/")]);
+  const ends = [];
+  for (const p of [p1, p2]) {
+    await p.waitForFunction(() => !!window.__rompPaneToggle || location.pathname === "/login", null, { timeout: cfg.deadline }).catch(() => {});
+    let st = onLogin(p) ? "login" : await p.evaluate(async () => (await fetch("/sessions")).status).catch(() => "navigated");
+    if (st !== 200 && st !== "login") st = (await waitLogin(p)) ? "login" : st;
+    ends.push(st);
+  }
+  const jar = await ctx.cookies(cfg.origin);
+  runs.push({ ends, legacyLeft: jar.some((c) => c.name === "romp_token"), sessions: jar.filter((c) => c.name.startsWith("romp_s_")).length });
+  await ctx.close();
+}
+out.runs = runs;
+fs.writeSync(1, "RESULT:" + JSON.stringify(out) + "\n");
+await browser.close();
+process.exit(0);
+"""
+
+TYPED_LINKS = HEAD + r"""
+// a same-origin /file address typed where no markdown renderer runs: each anchor's href carries the cap, and a click
+// opens it (the new tab's /file request is answered, capped)
+const ctx = await browser.newContext({ ...VIEW, viewport: { width: 1500, height: 950 }, acceptDownloads: true });
+const docs = [];
+ctx.on("response", (r) => { try { const u = new URL(r.url()); if (u.origin === cfg.origin && u.pathname === "/file") docs.push({ kind: r.request().resourceType(), status: r.status(), cap: u.searchParams.has("cap"), at: Date.now() }); } catch (e) {} });
+const page = await ctx.newPage();
+await page.goto(cfg.origin + "/chat?token=" + encodeURIComponent(cfg.token));
+await page.waitForSelector('#tabs .tab[data-id="' + cfg.sid + '"]', { timeout: cfg.deadline });
+await page.click('#tabs .tab[data-id="' + cfg.sid + '"]');
+await page.waitForFunction(() => { const i = document.querySelector('#content img[alt="authored figure"]'); return !!i && i.complete; }, null, { timeout: cfg.deadline }).catch(() => {});
+async function open(pg, handle) {
+  const r = { found: !!handle };
+  if (!handle) return r;
+  r.hrefCap = await handle.evaluate((a) => { try { return new URL(a.getAttribute("href") || "", location.href).searchParams.has("cap"); } catch (e) { return null; } });
+  r.hrefAbsolute = await handle.evaluate((a) => /^https?:\/\//.test(a.getAttribute("href") || ""));
+  const t = Date.now();
+  const popup = ctx.waitForEvent("page", { timeout: 8000 }).catch(() => null);
+  const dl = pg.waitForEvent("download", { timeout: 8000 }).catch(() => null);
+  await handle.click().catch((e) => { r.clickErr = String(e).slice(0, 80); });
+  const tab = await popup;
+  for (let i = 0; i < 80 && !docs.some((d) => d.at >= t); i++) await pg.waitForTimeout(100);
+  r.fileRequests = docs.filter((d) => d.at >= t).map((d) => ({ kind: d.kind, status: d.status, cap: d.cap }));
+  if (tab) { await pg.waitForTimeout(300); await tab.close().catch(() => {}); }   // a download's tab may close itself (Firefox)
+  void dl;
+  return r;
+}
+out.codeSpan = await open(page, await page.$("#content a.url-code-link"));
+out.todoText = await open(page, await page.$(".ut-text a.url-link"));
+out.todoChip = await open(page, await page.$("a.ut-link"));
+await page.click('#content .file-uri-link[data-path="docs/note.md"]');
+await page.waitForSelector("#romp-fileview", { timeout: cfg.deadline });
+await page.waitForFunction(() => { const i = document.querySelector('#romp-fileview img[alt="abs figure"]'); return !!i && i.complete; }, null, { timeout: cfg.deadline }).catch(() => {});
+out.viewerFigure = await page.evaluate(() => { const i = document.querySelector('#romp-fileview img[alt="abs figure"]'); if (!i) return null; let cap = null, absolute = null; try { cap = new URL(i.getAttribute("src") || "", location.href).searchParams.has("cap"); absolute = /^https?:\/\//.test(i.getAttribute("src") || ""); } catch (e) {} return { loaded: i.naturalWidth > 0, cap, absolute }; });
+out.viewerLink = await open(page, await page.$('#romp-fileview a:text-is("dashboard address")'));
+await page.keyboard.press("Escape").catch(() => {});
+const w = await ctx.newPage();
+await w.goto(cfg.origin + "/waiting");
+await w.waitForSelector("a.wt-link", { timeout: cfg.deadline }).catch(() => {});
+out.waitingText = await open(w, await w.$("a.url-link:not(.wt-link)"));
+out.waitingChip = await open(w, await w.$("a.wt-link"));
+fs.writeSync(1, "RESULT:" + JSON.stringify(out) + "\n");
+await browser.close();
+process.exit(0);
+"""
+
+
 class ServedFileCapsAndPageKey(unittest.TestCase):
     maxDiff = None
 
@@ -293,14 +378,22 @@ class ServedFileCapsAndPageKey(unittest.TestCase):
 
     @classmethod
     def _boot(cls):
+        explicit = "FILE_CAPS_ENGINE" in os.environ          # an engine asked for by name fails when it is missing
         if not os.path.isdir(os.path.join(EXT, "node_modules", "playwright")):
+            if explicit:
+                raise AssertionError("FILE_CAPS_ENGINE is set but the extension deps are absent")
             raise unittest.SkipTest("extension deps absent (npm ci not run here): the served lab needs them; CI's extension job has them and requires this file to run")
-        probe = subprocess.run(["node", "-e", "const p=require(process.argv[1]);process.stdout.write(p.chromium.executablePath())",
-                                os.path.join(EXT, "node_modules", "playwright")], capture_output=True, text=True)
+        probe = subprocess.run(["node", "-e", "const p=require(process.argv[1]);process.stdout.write(p[process.argv[2]].executablePath())",
+                                os.path.join(EXT, "node_modules", "playwright"), ENGINE], capture_output=True, text=True)
         if probe.returncode != 0 or not os.path.exists(probe.stdout.strip()):
+            if explicit:
+                raise AssertionError("FILE_CAPS_ENGINE=%s is not installed on this box" % ENGINE)
             raise unittest.SkipTest("no playwright browser on this box: the served lab needs one; CI's extension job installs Chromium and requires this file to run")
         cls.lab = tempfile.mkdtemp(prefix="file-caps-")
+        cls.port, cls.token = _free_port(), secrets.token_urlsafe(24)   # minted at run time, never printed
+        origin = "http://127.0.0.1:%d" % cls.port
         dist = os.path.join(cls.lab, "dist")
+        cls.dist = dist
         lab_dist.copy_dist(dist)   # the checkout's ONE build of the bundles, copied under its lock (tests/lab_dist.py)
         state = os.path.join(cls.lab, "xdg", "romp")
         cwd = os.path.join(cls.lab, "proj")
@@ -312,10 +405,14 @@ class ServedFileCapsAndPageKey(unittest.TestCase):
         Path(cwd, "plots", "figure.png").write_bytes(cls.png)
         Path(cwd, "docs", "paper.pdf").write_bytes(_pdf())
         Path(cwd, "plots", "diagram.svg").write_text('<svg xmlns="http://www.w3.org/2000/svg" width="4" height="4"><rect width="4" height="4" fill="#3c78c8"/></svg>\n')
-        cls.note = ("# Note\n\nThe notes-api latency plot:\n\n![note figure](../plots/figure.png)\n\n"
-                    "And [the diagram](../plots/diagram.svg).\n").encode()
-        Path(cwd, "docs", "note.md").write_bytes(cls.note)
         fig = os.path.join(cwd, "plots", "figure.png")
+        q = "path=%s&sid=%s" % (urllib.request.quote(fig, safe=""), SID)
+        cls.note = ("# Note\n\nThe notes-api latency plot:\n\n![note figure](../plots/figure.png)\n\n"
+                    "And [the diagram](../plots/diagram.svg).\n\n"
+                    "The same figure by its [dashboard address](%s/file?%s).\n\n![abs figure](%s/file?%s)\n"
+                    % (origin, q, origin, q)).encode()
+        Path(cwd, "docs", "note.md").write_bytes(cls.note)
+        cls.cwd = cwd
         Path(state, "names", SID).write_text("web\t%s\t#9cd2ff\t#0c1a2e\n" % cwd)
         Path(state, "sdk", SID + ".json").write_text(json.dumps(
             {"sid": SID, "name": "web", "cwd": cwd, "mode": "auto", "effort": "high", "lastSid": SID, "alive": True,
@@ -323,15 +420,18 @@ class ServedFileCapsAndPageKey(unittest.TestCase):
         claude = os.path.join(cls.lab, "claude")
         proj = os.path.join(claude, "projects", re.sub(r"[^A-Za-z0-9]", "-", os.path.realpath(cwd)))
         os.makedirs(proj, exist_ok=True)
-        q = "path=%s&sid=%s" % (urllib.request.quote(fig, safe=""), SID)
         reply = ("The latency plot is at plots/figure.png, the write-up at docs/paper.pdf and the notes at docs/note.md.\n\n"
-                 "![authored figure](/file?%s)\n\n[the plot as a file](/file?%s&download=1)\n" % (q, q))
+                 "![authored figure](/file?%s)\n\n[the plot as a file](/file?%s&download=1)\n\n"
+                 "The figure's dashboard address: `%s/file?%s`\n" % (q, q, origin, q))
+        Path(state, "user-todos-enabled.json").write_text(json.dumps({"enabled": True, "gt": 1}))
+        Path(state, "user-todos.json").write_text(json.dumps({SID: [{"id": "t1", "createdT": 1757000000000,
+            "text": "Check the plot at %s/file?%s before the notes-api release." % (origin, q),
+            "link": "%s/file?%s&download=1" % (origin, q)}]}))
         Path(proj, SID + ".jsonl").write_text(
             json.dumps({"type": "user", "uuid": U_UUID, "parentUuid": None, "timestamp": "2026-09-05T00:00:00.000Z", "sessionId": SID,
                         "message": {"role": "user", "content": "Where is the notes-api latency plot?"}}) + "\n" +
             json.dumps({"type": "assistant", "uuid": A_UUID, "parentUuid": U_UUID, "timestamp": "2026-09-05T00:00:05.000Z", "sessionId": SID,
                         "message": {"role": "assistant", "model": "claude-opus-5", "content": [{"type": "text", "text": reply}], "stop_reason": "end_turn"}}) + "\n")
-        cls.port, cls.token = _free_port(), secrets.token_urlsafe(24)   # minted at run time, never printed
         env = _lab.kernel_env(cls.lab, claude, dist, cls.port, cls.token, ROMP_HOST_NAME="TESTHOST")
         cls.klog = os.path.join(cls.lab, "kernel.log")
         cls.kernel = subprocess.Popen([os.path.join(BIN, "romp-kernel")], stdout=open(cls.klog, "w"), stderr=subprocess.STDOUT, env=env)
@@ -361,7 +461,8 @@ class ServedFileCapsAndPageKey(unittest.TestCase):
     def _drive(self, src, **extra):
         cfg = os.path.join(self.lab, "cfg.json")
         with open(cfg, "w") as f:
-            json.dump(dict({"origin": "http://127.0.0.1:%d" % self.port, "token": self.token, "sid": SID, "deadline": 30000}, **extra), f)
+            json.dump(dict({"origin": "http://127.0.0.1:%d" % self.port, "token": self.token, "sid": SID, "deadline": 30000,
+                            "engine": ENGINE}, **extra), f)
         driver = os.path.join(self.lab, "driver.mjs")
         with open(driver, "w") as f:
             f.write(src)
@@ -369,6 +470,8 @@ class ServedFileCapsAndPageKey(unittest.TestCase):
                            env=dict(os.environ, EXT_PKG=os.path.join(EXT, "package.json"), CFG=cfg))
         os.unlink(cfg)
         if p.returncode == 3:
+            if "FILE_CAPS_ENGINE" in os.environ:
+                self.fail("the %s engine did not launch" % ENGINE)
             raise unittest.SkipTest("no playwright browser on this box: the served lab needs one; CI's extension job installs Chromium and requires this file to run")
         mask = lambda s: s.replace(self.token, "<token>")
         self.assertEqual(p.returncode, 0, "driver failed:\n" + mask(p.stdout[-3000:] + p.stderr[-3000:]) + "\nkernel:\n" + self._klog_tail())
@@ -376,7 +479,7 @@ class ServedFileCapsAndPageKey(unittest.TestCase):
         self.assertIsNotNone(line, "driver printed no result:\n" + mask(p.stdout[-3000:]))
         self.assertNotIn(self.token, line, "the driver's report carries no credential")
         if os.environ.get("FILE_CAPS_REPORT"):     # a directory: each scene's report (booleans, statuses, lengths) for the record
-            with open(os.path.join(os.environ["FILE_CAPS_REPORT"], self._testMethodName + ".json"), "w") as f:
+            with open(os.path.join(os.environ["FILE_CAPS_REPORT"], ENGINE + "-" + self._testMethodName + ".json"), "w") as f:
                 f.write(line[len("RESULT:"):] + "\n")
         return json.loads(line[len("RESULT:"):])
 
@@ -436,6 +539,96 @@ class ServedFileCapsAndPageKey(unittest.TestCase):
         self.assertTrue(r["paneHop"], "a pane's refused fetch sends the TOP frame to /login")
         self.assertTrue(r["paneKeyDropped"], "and drops the stale key")
         self.assertTrue(r["noKeyHop"], "a page with no key goes to /login as it loads")
+
+    def test_two_tabs_migrating_from_the_old_cookie_at_once_both_end_signed_in(self):
+        r = self._drive(MIGRATE, rounds=6)
+        self.assertEqual(len(r["runs"]), 6)
+        for run in r["runs"]:
+            self.assertEqual(run["ends"], [200, 200], "each tab ends signed in, never both on /login: %r" % r["runs"])
+            self.assertFalse(run["legacyLeft"], "the old cookie was cleared by the migrating response: %r" % r["runs"])
+            self.assertEqual(run["sessions"], 1, "one session cookie: %r" % r["runs"])
+
+    def test_a_typed_file_address_carries_the_cap_and_opens(self):
+        r = self._drive(TYPED_LINKS)
+        for where in ("codeSpan", "todoText", "todoChip", "viewerLink", "waitingText", "waitingChip"):
+            got = r[where]
+            self.assertTrue(got["found"], "%s: the anchor was made: %r" % (where, got))
+            self.assertTrue(got["hrefCap"], "%s: its href carries this page's cap: %r" % (where, got))
+            self.assertTrue(got["hrefAbsolute"], "%s: a typed absolute address stays absolute: %r" % (where, got))
+            self.assertTrue(got["fileRequests"], "%s: the click reached /file: %r" % (where, got))
+            self.assertTrue(all(f["status"] == 200 and f["cap"] for f in got["fileRequests"]), "%s: and was answered, capped: %r" % (where, got))
+        self.assertIsNotNone(r["viewerFigure"], "the viewer rendered the note's absolute figure")
+        self.assertTrue(r["viewerFigure"]["cap"] and r["viewerFigure"]["loaded"] and r["viewerFigure"]["absolute"],
+                        "the note's figure written with its scheme loads, capped, and stays absolute: %r" % r["viewerFigure"])
+
+    def _http(self, path, cookie=None, key=None, headers=None):
+        req = urllib.request.Request("http://127.0.0.1:%d%s" % (self.port, path), headers=dict(headers or {}))
+        if cookie:
+            req.add_header("Cookie", cookie)
+        if key:
+            req.add_header("X-Romp-Key", key)
+        try:
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                return resp.status, resp.read(), resp.headers
+        except urllib.error.HTTPError as e:
+            return e.code, e.read(), e.headers
+
+    def test_nothing_the_cookie_alone_reads_carries_session_data_or_a_credential(self):
+        # the page routes and the static class's exact paths, read off the kernel's own route table
+        tree = ast.parse(open(os.path.join(ROOT, "kernel", "kernel.py"), encoding="utf-8").read())
+        consts = {}
+        for n in tree.body:
+            if isinstance(n, ast.Assign) and len(n.targets) == 1 and isinstance(n.targets[0], ast.Name) \
+                    and n.targets[0].id in ("_PAGE_RENDERERS", "_STATIC_EXACT"):
+                v = n.value
+                consts[n.targets[0].id] = [k.value for k in v.keys] if isinstance(v, ast.Dict) else [e.value for e in v.elts]
+        pages = sorted(p for p in consts["_PAGE_RENDERERS"] if p)
+        self.assertIn("/chat", pages, "the route table was read")
+        # a sign-in: the session cookie and the page key, read off the sign-in response (never printed)
+        status, body, headers = self._http("/?token=" + self.token, headers={"Accept": "text/html", "Sec-Fetch-Dest": "document"})
+        self.assertEqual(status, 200)
+        sc = [c for c in (headers.get_all("Set-Cookie") or []) if c.startswith("romp_s_")]
+        self.assertEqual(len(sc), 1, "the sign-in set one session cookie")
+        cname, _, rest = sc[0].partition("=")
+        sess = rest.split(";", 1)[0]
+        cookie = "%s=%s" % (cname, sess)
+        m = re.search(r'localStorage\.setItem\("romp\.pageKey\.%s","([^"]+)"\)' % re.escape(cname), body.decode("utf-8"))
+        self.assertIsNotNone(m, "the sign-in response seeded the page key")
+        key = m.group(1)
+        # the plant took: a keyed read lists the lab's session and its folder
+        status, listing, _ = self._http("/sessions", cookie=cookie, key=key)
+        self.assertEqual(status, 200)
+        self.assertIn(SID.encode(), listing, "the keyed listing names the planted session")
+        self.assertIn(self.cwd.encode(), listing, "and its folder")
+        forbidden = (("the page key", key), ("the session id", sess), ("the serve token", self.token),
+                     ("the session's id", SID), ("the session's folder", self.cwd),
+                     ("the session's message", "Where is the notes-api latency plot?"))
+        statics = list(consts["_STATIC_EXACT"])
+        for top, tree_dir in (("/dist/", self.dist), ("/media/", os.path.join(ROOT, "vscode-extension", "media"))):
+            for d, _dirs, files in os.walk(tree_dir):
+                for f in files:
+                    if f.startswith("."):
+                        continue
+                    statics.append(top + os.path.relpath(os.path.join(d, f), tree_dir).replace(os.sep, "/"))
+        self.assertGreater(len([x for x in statics if x.startswith("/dist/")]), 10, "the census reads the built bundles")
+        for path in pages + statics:
+            status, body, headers = self._http(path, cookie=cookie)
+            self.assertEqual(status, 200, "the cookie alone serves %s" % path)
+            text = body.decode("latin-1")
+            for what, value in forbidden:
+                self.assertFalse(value in text, "%s carries %s" % (path, what))
+            self.assertFalse(headers.get_all("Set-Cookie"), "%s sets no cookie" % path)
+        # the sign-in path: the page key once, in the response that sets the cookie
+        for path in pages:
+            status, body, headers = self._http(path + "?token=" + self.token, headers={"Accept": "text/html", "Sec-Fetch-Dest": "document"})
+            text = body.decode("utf-8", "replace")
+            sc = [c for c in (headers.get_all("Set-Cookie") or []) if c.startswith("romp_s_")]
+            self.assertEqual((status, len(sc)), (200, 1), "%s: a sign-in" % path)
+            m = re.search(r'localStorage\.setItem\("romp\.pageKey\.[^"]+","([^"]+)"\)', text)
+            self.assertIsNotNone(m, "%s: the sign-in seeds a page key" % path)
+            self.assertEqual(text.count(m.group(1)), 1, "%s: the page key appears once" % path)
+            for what, value in forbidden[2:]:
+                self.assertFalse(value in text, "%s's sign-in response carries %s" % (path, what))
 
     def test_two_concurrent_sign_ins_never_leave_a_silent_dead_page(self):
         r = self._drive(RACE, rounds=4)
