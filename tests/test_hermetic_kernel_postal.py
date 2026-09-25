@@ -982,10 +982,11 @@ class _SpawnScan:
     def _program_calls(self, elts, j, scope):
         """What the -c program at elts[j] calls, over every text the scan assembles for it (_program_texts), with whether
         a text mentions the kernel or the CLI (KERNEL_MENTION): "unread" when a text is missing, does not parse, or reads
-        an opaque placeholder as code; else "starts" when a callee is a process starter, "dynamic" when, short of that,
-        a callee is one the scan cannot name or a dynamic road, "named" when every callee is named and none is either
-        (_callee_reading). Reading the texts leaves the road as it found it (a %r placeholder's value is read, not a
-        site)."""
+        an opaque placeholder as code; else "starts" when a callee reads as a starter (_callee_reading: a name
+        PROCESS_FUNCTIONS holds, or any name it denotes whose last part PROCESS_SPELLINGS holds, asyncio.run among
+        them), "dynamic" when, short of that, a callee is one the scan cannot name or a dynamic road, "named" when every
+        callee is named and none is either (_callee_reading). Reading the texts leaves the road as it found it (a %r
+        placeholder's value is read, not a site)."""
         before = self._bound_paths
         texts, _ = self._program_texts(elts[j], scope)
         self._bound_paths = before
@@ -1590,12 +1591,12 @@ def _parse_count_faults(read=None, reads=None):
     (PR #850's eleventh review round: the no-read branch ran after an aborted read and named every file it never
     reached as parsed 0 times against the reads counted, one per attempt, since each later test that reads the tree
     tried again (0 against 6 in the module's full run at the round-11 review head over a scratch copy with a file under
-    its tests/ that does not parse), and a later read that completed would leave those files at once against one more
-    than the reads that aborted). When no read was made in this process (no `read` handed and none in _TREE_READ, as on
-    an xdist worker that ran none of the module's tests that read the tree), the files under tests/ (_tree_module_paths)
-    are read here at their current text, no tree built, and each text is expected at the placement test's parses
-    alone (_READS is 0 then: every read made either completed or aborted), so a file of the tree parsed outside a read
-    is still named. Expected otherwise: one parse for
+    its tests/ that does not parse), and a later read that completed would leave those files at one parse against one
+    more than the reads that aborted). When no read was made in this process (no `read` handed and none in _TREE_READ,
+    as on an xdist worker that ran none of the module's tests that read the tree), the files under tests/
+    (_tree_module_paths) are read here at their current text, no tree built, and each text is expected at the placement
+    test's parses alone (_READS is 0 then: every read made either completed or aborted), so a file of the tree parsed
+    outside a read is still named. Expected otherwise: one parse for
     each file of the read that holds the text, for each of the `reads` reads of it (by default _READS, the reads of the
     tree the run made), and the placement test's parses of that text besides. A file of the read parsed again through
     _parse_text moves its key past the expected count and is named; a file edited after the read is held to the text the
@@ -1861,9 +1862,8 @@ def _bin_romp_text():
 # whitespace stripped, a kind, and the reason. --roads prints each under `# unresolved:` with its kind and reason, and
 # the comparison reads it as covering the matches on that line of that module only, and only while that line's text is
 # the entry's (PR #850's eleventh review round: keyed on the text alone, an entry covered every line of its module with
-# that text, a launch among them): an entry whose line has moved or changed covers nothing. An entry that covers no
-# match reds the comparison case, naming the entry (_hand_entries_covering_nothing), so the listing holds only lines
-# that exist. Empty: the tree needs no entry.
+# that text, a launch among them). An entry that covers no match reds the comparison case, naming the entry
+# (_hand_entries_covering_nothing), so the listing holds only lines that exist. Empty: the tree needs no entry.
 LISTED_BY_HAND = ()
 
 _Comparison = collections.namedtuple("_Comparison", "dropped missed not_calls flagged by_hand")
