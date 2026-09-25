@@ -1530,13 +1530,16 @@ test('the switch\'s lines in the files the step runs, as switchLines finds them 
   assert.deepEqual(other, [], 'every message read is the script\'s, ' + files[0]);
   // the script's reads change no exit status: over each record and roster below, the stub's node exit beside it, the
   // script exits the status the row states with the switch set to 1, set to yes and unset, the rows that read otherwise
-  // named together
+  // named together. The skip rows reach the branch the skip remedy's choice picks with the status at 0, at 1 from node,
+  // at 1 from the script's own red and at 7 from node
   const { run, rec, A } = syntheticTree(t);
   const PASS = rec(A, 'pass', 'test', '-', 'test', 'leg a opens the page', '', '-'), SKIP = rec(A, 'pass', 'test', 'skip', 'test', 'leg a opens the page', 'why', '-');
   const LOST = SWITCH + ' is set and this leg cannot run: no playwright browser on this box';
   const EXIT_ROWS = [
     ['a pass', A + '\n', { report: PASS }, 0],
     ['a skip beside a pass', A + '\n', { report: PASS + SKIP }, 1],
+    ['a skip beside a pass and a failure, node exiting 1', A + '\n', { report: PASS + SKIP + rec(A, 'fail', 'test', '-', 'test', 'a failing test', 'the leg is broken', 'testCodeFailure'), exit: 1 }, 1],
+    ['a skip alone, node exiting 0 (the script\'s red of a leg with no pass)', A + '\n', { report: SKIP, exit: 0 }, 1],
     ['a skip alone, node exiting 7', A + '\n', { report: SKIP, exit: 7 }, 7],
     ['a leg with no pass', A + '\n', { report: rec(A, 'pass', 'test', '-', 'file-level', A, '', '-') }, 1],
     ['a failure inside a todo beside a pass', A + '\n', { report: PASS + rec(A, 'fail', 'test', 'todo', 'test', 'a swallowed failure', 'the leg is broken', 'testCodeFailure') }, 1],
