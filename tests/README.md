@@ -172,10 +172,12 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   the conftest writes the name at each probe module's import and, in each probe
   test, reads it and sets it again, and sees the counted fixture's own code set or
   pop it in every probe test's setup, with the value re-asserted there. The probe
-  tests reproduce four facts of a real run that a conftest hook can key on: the
-  conftest and the probe modules in a directory named `tests`, a module collected
-  first and one after it, function tests and a `unittest.TestCase` in each, and a
-  run with no xdist worker and, where pytest-xdist is installed, one with `-n 2`.
+  tests reproduce six facts of a real run that a conftest hook can key on: the
+  conftest and the probe modules in a directory named `tests`, which is a package,
+  so the conftest imports as `tests.conftest` and each probe module as a module of
+  `tests`; the conftest loaded when pytest starts; a module collected first and one
+  after it; function tests and a `unittest.TestCase` in each; and a run with no
+  xdist worker and, where pytest-xdist is installed, one with `-n 2`.
   Code that stops the fixture from running in any of those tests, named or not,
   is refused by the run. The run does not read a hook condition outside that
   context (a mark, an environment variable, a host name, or another
