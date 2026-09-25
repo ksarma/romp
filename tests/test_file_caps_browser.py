@@ -294,12 +294,23 @@ process.exit(0);
 MIGRATE = HEAD + r"""
 // two tabs of one browser that still holds the cookie the version before this one set (its value is the serve token),
 // opened at the same moment: each tab's request carries the old cookie, each response migrates it. Each tab must end
-// signed in (a fetch reads /sessions), since both responses hand the browser the same session and the same key.
+// signed in (a fetch reads /sessions), since both responses hand the browser the same session and the same key. Each
+// migrating response (a document request that carried the old cookie and no session) must set the session cookie and
+// clear the old one; whether the browser's jar then still holds the old cookie is the browser's, and is reported.
 const runs = [];
 for (let i = 0; i < cfg.rounds; i++) {
   const ctx = await browser.newContext(VIEW);
   await ctx.addCookies([{ name: "romp_token", value: cfg.token, url: cfg.origin }]);
   const p1 = await ctx.newPage(), p2 = await ctx.newPage();
+  const migrating = [];   // per migrating response: did it set the session cookie, did it clear the old one (booleans)
+  ctx.on("response", async (resp) => { try {
+    const req = resp.request();
+    if (req.resourceType() !== "document" || new URL(resp.url()).origin !== cfg.origin) return;
+    const sent = (await req.allHeaders())["cookie"] || "";
+    if (!/(^|; )romp_token=/.test(sent) || /(^|; )romp_s_/.test(sent)) return;
+    const set = (await resp.headersArray()).filter((h) => h.name.toLowerCase() === "set-cookie").map((h) => h.value).join("\n");
+    migrating.push({ setSession: /(^|\n)romp_s_[^=]*=[^;]+/.test(set), cleared: /(^|\n)romp_token=;/.test(set) });
+  } catch (e) {} });
   await Promise.all([p1.goto(cfg.origin + "/"), p2.goto(cfg.origin + "/")]);
   const ends = [];
   for (const p of [p1, p2]) {
@@ -309,7 +320,7 @@ for (let i = 0; i < cfg.rounds; i++) {
     ends.push(st);
   }
   const jar = await ctx.cookies(cfg.origin);
-  runs.push({ ends, legacyLeft: jar.some((c) => c.name === "romp_token"), sessions: jar.filter((c) => c.name.startsWith("romp_s_")).length });
+  runs.push({ ends, migrating, legacyLeft: jar.some((c) => c.name === "romp_token"), sessions: jar.filter((c) => c.name.startsWith("romp_s_")).length });
   await ctx.close();
 }
 out.runs = runs;
@@ -547,8 +558,15 @@ class ServedFileCapsAndPageKey(unittest.TestCase):
         self.assertEqual(len(r["runs"]), 6)
         for run in r["runs"]:
             self.assertEqual(run["ends"], [200, 200], "each tab ends signed in, never both on /login: %r" % r["runs"])
-            self.assertFalse(run["legacyLeft"], "the old cookie was cleared by the migrating response: %r" % r["runs"])
+            self.assertTrue(run["migrating"], "a document request carried the old cookie and was migrated: %r" % r["runs"])
+            self.assertTrue(all(m["setSession"] and m["cleared"] for m in run["migrating"]),
+                            "each migrating response sets the session cookie and clears the old one: %r" % r["runs"])
             self.assertEqual(run["sessions"], 1, "one session cookie: %r" % r["runs"])
+        # Whether the jar still holds the old cookie after both responses cleared it is the browser's: Firefox kept it in 1
+        # of 20 rounds, and in 1 of 40, with both migrating responses carrying the clear. Reported, not asserted.
+        left = sum(1 for run in r["runs"] if run["legacyLeft"])
+        if left:
+            sys.stderr.write("migration scene: the browser kept the old cookie in %d of %d rounds after it was cleared\n" % (left, len(r["runs"])))
 
     def test_a_typed_file_address_carries_the_cap_and_opens(self):
         r = self._drive(TYPED_LINKS)
