@@ -3095,7 +3095,9 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   whose end the kernel no longer holds) does not cancel the release, and
   when the release is then taken only the first of those counts in
   `falseEnds`):
-  `released` (per reason, today `agentEnded`, with `count` and `bytes`),
+  `released` (per reason, today `agentEnded`, with `count` and `bytes`;
+  `agentEnded` is reported at zero until the first release, so the block
+  carries every key from a new kernel's first read),
   `releaseDeferred` (deferrals of a release to the next cycle, one per
   deferral, so a release refused on N cycles counts N and the figure is not
   the number owed now: its checkpoint budget refused the write, or a read

@@ -47,6 +47,8 @@ WF_AID2 = "a2222222222222222"                          # the slot's retried atte
 WF_TID = "w0000000000000001"                           # the workflow run's task id
 AID3 = "a3333333333333333"                             # a third agent, for a cycle that must still drain its end
 LAUNCH = "toolu_notesapi_bg_tests"                     # the agent's run_in_background Bash: the pending command the rows attribute
+NOTHING_RELEASED = {"agentEnded": {"count": 0, "bytes": 0}}   # recordCache.released before any release: the reason
+#                                                                  reported at zero, so an export carries the key from the first read
 
 
 def _agent_lines(aid, start, n):
@@ -232,7 +234,7 @@ class AgentEnd(unittest.TestCase):
         self.assertEqual(self.be.drain_agent_live_events(), ([], 0), "no end was queued")
         km._begin_checkpoint_cycle()
         self.assertEqual(self._weight(self.agent), size, "the agent keeps its records")
-        self.assertEqual(self._stat("released"), {})
+        self.assertEqual(self._stat("released"), NOTHING_RELEASED)
 
     # ---- an object that reattached after a kernel restart never saw the start, and still queues the end ----
 
@@ -370,7 +372,7 @@ class AgentEnd(unittest.TestCase):
         self._start(AID)                                                 # resumed before the pusher's next cycle
         km._begin_checkpoint_cycle()
         self.assertEqual(self._weight(self.agent), size, "the running agent keeps its records")
-        self.assertEqual((self._stat("released", {}), self._stat("falseEnds", 0)), ({}, 0))
+        self.assertEqual((self._stat("released", {}), self._stat("falseEnds", 0)), (NOTHING_RELEASED, 0))
 
     # ---- false ends: no liveness snapshot ends an agent ----
 
@@ -388,7 +390,7 @@ class AgentEnd(unittest.TestCase):
             km._awaiting_live_rows(SID, self.leaf, row)
             km._begin_checkpoint_cycle()
             self.assertEqual(self._weight(self.agent), size, "the running agent keeps its records")
-        self.assertEqual(self._stat("released", {}), {}, "nothing was released")
+        self.assertEqual(self._stat("released", {}), NOTHING_RELEASED, "nothing was released")
 
     # ---- the release's refusals ----
 
@@ -413,7 +415,7 @@ class AgentEnd(unittest.TestCase):
         grown = os.path.getsize(self.agent)
         self.assertGreater(grown, size)
         self.assertEqual(self._weight(self.agent), grown, "the newer entry stands")
-        self.assertEqual((self._stat("releaseDeferred"), self._stat("releaseLost"), self._stat("released")), (1, 0, {}),
+        self.assertEqual((self._stat("releaseDeferred"), self._stat("releaseLost"), self._stat("released")), (1, 0, NOTHING_RELEASED),
                          "owed, not popped, not lost")
         km._begin_checkpoint_cycle()                                     # the next cycle pays it
         self.assertIsNone(self._weight(self.agent), "released at the next cycle")
@@ -451,7 +453,7 @@ class AgentEnd(unittest.TestCase):
         self.assertFalse(box["reader"].is_alive(), "precondition: the reader finished")
         self.assertGreater(grown, size)
         self.assertEqual(self._weight(self.agent), grown, "the read's entry stands, whole")
-        self.assertEqual((self._stat("releaseDeferred"), self._stat("released")), (1, {}), "the release is owed, not taken")
+        self.assertEqual((self._stat("releaseDeferred"), self._stat("released")), (1, NOTHING_RELEASED), "the release is owed, not taken")
         km._begin_checkpoint_cycle()                                     # the next cycle pays it
         self.assertIsNone(self._weight(self.agent), "released at the next cycle")
         self.assertEqual(self._stat("released"), {"agentEnded": {"count": 1, "bytes": grown}})
@@ -483,7 +485,7 @@ class AgentEnd(unittest.TestCase):
         self._start(AID)                                                 # resumed before the cycle that would pay it
         km._begin_checkpoint_cycle()
         self.assertEqual(self._weight(self.agent), size, "the running agent keeps its records")
-        self.assertEqual((self._stat("released"), self._stat("falseEnds"), self._stat("releaseDeferred")), ({}, 0, 1),
+        self.assertEqual((self._stat("released"), self._stat("falseEnds"), self._stat("releaseDeferred")), (NOTHING_RELEASED, 0, 1),
                          "nothing released, no false end counted, one deferral")
         self.assertEqual(em._RELEASE_OWED, {}, "nothing is owed any more")
 
@@ -521,7 +523,7 @@ class AgentEnd(unittest.TestCase):
         held = (SID, AID) in km._AGENT_RELEASED
         self._start(AID)
         km._begin_checkpoint_cycle()
-        self.assertEqual((self._stat("falseEnds"), self._stat("released")), (0, {}), "no release taken, no false end")
+        self.assertEqual((self._stat("falseEnds"), self._stat("released")), (0, NOTHING_RELEASED), "no release taken, no false end")
         self.assertFalse(held, "the end whose release was not taken was forgotten at the pay")
 
     def test_an_owed_release_paid_as_lost_then_a_start_is_no_false_end(self):
@@ -532,14 +534,14 @@ class AgentEnd(unittest.TestCase):
         self.assertEqual((self._stat("releaseLost"), self._weight(self.agent)), (1, size), "precondition: given up, entry kept")
         self._start(AID)
         km._begin_checkpoint_cycle()
-        self.assertEqual((self._stat("falseEnds"), self._stat("released")), (0, {}), "no release taken, no false end")
+        self.assertEqual((self._stat("falseEnds"), self._stat("released")), (0, NOTHING_RELEASED), "no release taken, no false end")
 
     def test_an_owed_release_forgotten_at_a_rebind_then_a_start_is_no_false_end(self):
         size = self._owed()
         em.set_checkpoint_dir(lambda: Path(os.path.join(self.root, "checkpoints-rebound")))
         self._start(AID)                                                 # a start in the batch of the next cycle
         km._begin_checkpoint_cycle()
-        self.assertEqual((self._stat("falseEnds"), self._stat("released")), (0, {}), "no release taken, no false end")
+        self.assertEqual((self._stat("falseEnds"), self._stat("released")), (0, NOTHING_RELEASED), "no release taken, no false end")
         self.assertEqual(self._weight(self.agent), size, "the entry is whole")
 
     def test_an_owed_release_given_up_at_its_bound_then_a_start_is_no_false_end(self):
@@ -552,7 +554,7 @@ class AgentEnd(unittest.TestCase):
         self.assertEqual(list(em._RELEASE_OWED), [os.path.join(self.root, "owed-other.jsonl")], "precondition: given up")
         self._start(AID)
         km._begin_checkpoint_cycle()
-        self.assertEqual((self._stat("falseEnds"), self._stat("released")), (0, {}), "no release taken, no false end")
+        self.assertEqual((self._stat("falseEnds"), self._stat("released")), (0, NOTHING_RELEASED), "no release taken, no false end")
 
     def test_the_pay_reports_the_outcome_of_every_owed_release(self):
         keys = [os.path.join(self.root, "owed-%d.jsonl" % i) for i in range(2)]
@@ -578,7 +580,7 @@ class AgentEnd(unittest.TestCase):
         self._start(AID)
         km._begin_checkpoint_cycle()
         self.assertEqual(self._weight(self.agent), size, "the running agent keeps its records")
-        self.assertEqual((em._RELEASE_OWED, self._stat("released"), self._stat("falseEnds")), ({}, {}, 0),
+        self.assertEqual((em._RELEASE_OWED, self._stat("released"), self._stat("falseEnds")), ({}, NOTHING_RELEASED, 0),
                          "the release owed under the agent's path is cancelled, none taken, no false end")
 
     def test_an_owed_release_that_raises_loses_neither_the_rest_nor_the_cycle(self):
@@ -634,7 +636,7 @@ class AgentEnd(unittest.TestCase):
             km._begin_checkpoint_cycle()
         self.assertEqual(err.getvalue(), "", "said once per process")
         self.assertEqual(self._weight(self.wf_agent), wf_size)
-        self.assertEqual((self._stat("releaseLost"), self._stat("released")), (2, {}))
+        self.assertEqual((self._stat("releaseLost"), self._stat("released")), (2, NOTHING_RELEASED))
 
     def test_with_no_checkpoint_directory_the_release_keeps_the_entry_and_says_why(self):
         size = self._fold_while_running(AID, self.agent)
@@ -644,7 +646,7 @@ class AgentEnd(unittest.TestCase):
         with contextlib.redirect_stderr(err):
             km._begin_checkpoint_cycle()
         self.assertEqual(self._weight(self.agent), size, "the entry is kept")
-        self.assertEqual((self._stat("releaseLost"), self._stat("released")), (1, {}))
+        self.assertEqual((self._stat("releaseLost"), self._stat("released")), (1, NOTHING_RELEASED))
         self.assertIn("no checkpoint directory", err.getvalue(), "said under the writes-off cause, which names a missing "
                       "directory: %r" % err.getvalue())
 
@@ -660,7 +662,7 @@ class AgentEnd(unittest.TestCase):
         finally:
             em.checkpoint_write = real
         self.assertEqual(self._weight(self.agent), size, "the entry is kept")
-        self.assertEqual((self._stat("releaseLost"), self._stat("released")), (1, {}))
+        self.assertEqual((self._stat("releaseLost"), self._stat("released")), (1, NOTHING_RELEASED))
         self.assertIn("recordCache.releaseLost", err.getvalue())
 
     def test_a_write_that_fails_on_disk_keeps_the_entry(self):
@@ -672,7 +674,7 @@ class AgentEnd(unittest.TestCase):
         with contextlib.redirect_stderr(err):
             km._begin_checkpoint_cycle()
         self.assertEqual(self._weight(self.agent), size, "the entry is kept")
-        self.assertEqual((self._stat("releaseLost"), self._stat("released")), (1, {}))
+        self.assertEqual((self._stat("releaseLost"), self._stat("released")), (1, NOTHING_RELEASED))
         self.assertIn("the file's checkpoint document could not be written", err.getvalue())
 
     def test_a_directory_unbound_after_the_release_checked_it_keeps_the_entry(self):
@@ -692,7 +694,7 @@ class AgentEnd(unittest.TestCase):
         finally:
             em._path_needs_write = real
         self.assertEqual(self._weight(self.agent), size, "the entry is kept")
-        self.assertEqual((self._stat("releaseLost"), self._stat("released")), (1, {}))
+        self.assertEqual((self._stat("releaseLost"), self._stat("released")), (1, NOTHING_RELEASED))
         self.assertIn("the file's checkpoint document could not be written", err.getvalue())
 
     def test_a_release_whose_entry_is_evicted_before_its_write_is_absent_not_lost(self):
@@ -713,7 +715,7 @@ class AgentEnd(unittest.TestCase):
         finally:
             em.checkpoint_write = real
         self.assertIsNone(self._ent(self.agent), "precondition: the eviction took the entry")
-        self.assertEqual((self._stat("releaseLost"), self._stat("releaseDeferred"), self._stat("released")), (0, 0, {}),
+        self.assertEqual((self._stat("releaseLost"), self._stat("releaseDeferred"), self._stat("released")), (0, 0, NOTHING_RELEASED),
                          "nothing given up, nothing owed, nothing released")
         self.assertEqual(err.getvalue(), "", "nothing said on stderr")
         self.assertEqual(km._AGENT_RELEASED, {}, "no release taken or owed for the end")
@@ -738,7 +740,7 @@ class AgentEnd(unittest.TestCase):
             em.checkpoint_write = real
         grown = os.path.getsize(self.agent)
         self.assertEqual(self._weight(self.agent), grown, "the newer entry stands")
-        self.assertEqual((self._stat("releaseDeferred"), self._stat("releaseLost"), self._stat("released")), (1, 0, {}),
+        self.assertEqual((self._stat("releaseDeferred"), self._stat("releaseLost"), self._stat("released")), (1, 0, NOTHING_RELEASED),
                          "owed, not lost")
         self.assertEqual(err.getvalue(), "", "nothing said on stderr")
         km._begin_checkpoint_cycle()                                     # the next cycle pays it
@@ -807,7 +809,7 @@ class AgentEnd(unittest.TestCase):
         with contextlib.redirect_stderr(err):
             km._begin_checkpoint_cycle()
         self.assertEqual(self._weight(self.agent), size, "the entry is kept")
-        self.assertEqual((self._stat("releaseLost"), self._stat("released")), (1, {}))
+        self.assertEqual((self._stat("releaseLost"), self._stat("released")), (1, NOTHING_RELEASED))
         self.assertIn("the file's checkpoint document could not be written", err.getvalue())
 
     def test_a_document_check_that_raises_keeps_the_entry(self):
@@ -825,7 +827,7 @@ class AgentEnd(unittest.TestCase):
         finally:
             em._path_needs_write = real
         self.assertEqual(self._weight(self.agent), size, "the entry is kept")
-        self.assertEqual((self._stat("releaseLost"), self._stat("released")), (1, {}))
+        self.assertEqual((self._stat("releaseLost"), self._stat("released")), (1, NOTHING_RELEASED))
         self.assertIn("the document check raised RuntimeError (counted as recordCache.releaseLost", err.getvalue())
 
     def test_an_owed_release_whose_file_is_gone_is_released(self):
@@ -963,7 +965,7 @@ class AgentEnd(unittest.TestCase):
         em.set_checkpoint_dir(lambda: Path(other))                       # the state is rebound before the owed release is paid
         km.CKPT_CONVERGE_BYTES = 8 * 1024 * 1024
         km._begin_checkpoint_cycle()
-        self.assertEqual(self._stat("released"), {}, "nothing released")
+        self.assertEqual(self._stat("released"), NOTHING_RELEASED, "nothing released")
         self.assertEqual(self._weight(self.agent), size, "the entry is whole")
         for d in (self.ckdir, other):
             self.assertEqual([f for _r, _d, fs in os.walk(d) for f in fs], [], "no document in %s" % os.path.basename(d))
@@ -975,7 +977,7 @@ class AgentEnd(unittest.TestCase):
         for be in (None, False, object()):                               # not built, unavailable, a double without the queue
             km._sdk_backend = be
             km._begin_checkpoint_cycle()
-        self.assertEqual(self._stat("released"), {})
+        self.assertEqual(self._stat("released"), NOTHING_RELEASED)
 
     # ---- /perf ----
 
@@ -985,9 +987,10 @@ class AgentEnd(unittest.TestCase):
                                              "evictedBytes", "budgetEvictions", "dropped", "droppedBytes", "wholeReads",
                                              "wholeReadsByStage", "released", "releaseDeferred", "releaseLost", "falseEnds",
                                              "releasedReread"]))
-        self.assertEqual((st["released"], st["releasedReread"]), ({}, {"count": 0, "bytes": 0}), "tables, even when zeroed")
+        self.assertEqual((st["released"], st["releasedReread"]), (NOTHING_RELEASED, {"count": 0, "bytes": 0}), "tables, even when zeroed")
         self.assertEqual(jd._SERVE_GAUGES["recordCache"], ("entries", "bytes", "bytesMax", "budgetBytes", "countCap"),
                          "bytesMax is the one new gauge")
+
 
 
 if __name__ == "__main__":

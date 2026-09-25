@@ -802,7 +802,11 @@ def record_cache_stats() -> dict:
         bys = _RECORD_CACHE_STATS.get("wholeReadsByStage")             # T401: the same reads per (stage, caller)
         out["wholeReadsByStage"] = {k: dict(v) for k, v in bys.items()} if isinstance(bys, dict) else {}
         rel = _RECORD_CACHE_STATS.get("released")
-        out["released"] = {k: dict(v) for k, v in rel.items()} if isinstance(rel, dict) else {}
+        # agentEnded is reported at zero until the first release (2026-09-25), so an export from a new kernel carries every
+        # key of the block from its first read and a vocabulary regenerated over it admits the key a later release fills in.
+        # The row is added to this copy, not to the table, so a harness that zeroes the counters still reads it
+        out["released"] = {"agentEnded": {"count": 0, "bytes": 0},
+                           **({k: dict(v) for k, v in rel.items()} if isinstance(rel, dict) else {})}
         rr = _RECORD_CACHE_STATS.get("releasedReread")
         out["releasedReread"] = dict(rr) if isinstance(rr, dict) else {"count": 0, "bytes": 0}
         return out
