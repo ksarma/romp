@@ -3101,13 +3101,15 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   drains the end. When the id is not in the session's own subagents tree,
   the resolution walks every sibling session's subagents tree in the project
   directory: on the largest one measured, on 2026-09-25, 87 to 134 ms the
-  first time, thirteen runs, once after a restart, and a median of 21 to 49
-  ms at each later cycle, three runs of ten walks, with every session that
-  has a subagents tree there alive, as on the measured box, since the jobs
-  pass keeps an alive session's tree; a tree no alive session owns is
-  dropped and walked again, and with no sibling alive a later cycle cost a
-  median of 88 to 97 ms. The measured steady cycle is inside the 50 ms bound
-  set for one cycle's resolution. No end is queued for an agent none of
+  first time, sixteen runs, once after a restart, and a median of 21 to 49
+  ms at each later cycle, three runs of ten walks, the longest single walk
+  53.5 ms, with every session that has a subagents tree there alive, as on
+  the measured box, since the jobs pass keeps an alive session's tree; a
+  tree no alive session owns is dropped and walked again, and with no
+  sibling alive a later cycle cost a median of 88 to 97 ms. Each run's
+  median steady cycle is inside the 50 ms bound set for one cycle's
+  resolution; one walk of the thirty exceeded it by 3.5 ms. No end is queued
+  for an agent none of
   those names: a Workflow run's agents when the object holds no roster for
   the run (one the report retires before any progress frame, or one that
   ends or loses its CLI before any), and a subagent the old kernel knew only
