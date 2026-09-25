@@ -182,31 +182,45 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   other: it runs from the copy's root with the options of CI's pytest step (read
   from `.github/workflows/ci.yml`), no `--rootdir` and the cache plugin loaded,
   and is handed the four as files, so it collects the first probe module first,
-  then the two dummy modules, then the second probe module fourth. The probe
-  tests reproduce six facts of a real run that a conftest hook can key on: the
+  then the two dummy modules, then the second probe module fourth. The run's
+  limit comes in three tiers. It refuses an unconditional removal of the fixture
+  (from every test), which is the class of the bug, and any removal keyed on a
+  fact of the first tier. First, matched by construction at no added cost: the
   conftest and the probe modules in a directory named `tests`, which is a
   package, so the conftest imports as `tests.conftest` and each probe module as
   a module of `tests`; the conftest loaded when pytest starts; the first module
-  collected and the fourth; function tests and a `unittest.TestCase` in each;
-  and a run with no xdist worker (and none of the variables pytest-xdist sets in
-  one) and, where pytest-xdist is installed, one with `-n 2`. Code that stops
-  the fixture from running in any of those tests, named or not, is refused by
-  the run. The run does not read a hook condition outside that context (a mark,
-  an environment variable, a host name, or another collection-time signal): a
-  copy of the conftest whose `pytest_collectreport` takes the fixture out of
-  each marked test is granted the licence, and a real run of that copy shows a
-  marked test reading a module-level write (planted). Some such signals differ
-  in the child by construction. One is the rest of the collection: which
-  modules come before a test's module and after it, and how many (the child
-  collects its four; a real run collects every test module under `tests/`,
-  hundreds of them after most modules). Another is the run's arguments (the
-  child hands its four modules as files, where CI's step hands no path and a
-  developer's run may hand `tests/`). A copy of the conftest that keys a hook
-  on a module named `test_kernel_env_floor.py` coming earlier, on a module
-  collected fifth or later, on a module that four or more modules follow, or on
-  a directory among the arguments is granted, and under each road a real run of
-  that copy reads the value a module-level write or an earlier test left
-  (planted). And
+  collected and the fourth, so a hook keyed on a place third or later is caught;
+  function tests and a `unittest.TestCase` in each; a run with no xdist worker
+  (and none of the variables pytest-xdist sets in one) and, where pytest-xdist
+  is installed, one with `-n 2`; and CI's options. Code that stops the fixture
+  from running in any of those tests, named or not, is refused by the run.
+  Second, matchable at a cost and not matched here: the rest of the collection,
+  meaning a module's exact place, which modules come before a test's module and
+  after it, and how many (the child collects its four; a real run collects every
+  test module under `tests/`, hundreds of them after most modules), and the
+  run's arguments (the child hands its four modules as files, where CI's step
+  hands no path and a developer's run may hand `tests/`). Matching them takes a
+  child that collects every test module of `tests/`, about 40 s per child. When
+  the child did that, at the fortieth commit of fork PR #894, this module ran
+  for about six minutes where it had run for about one, which would put CI's
+  slowest cell past its time limit. So this tier stays stated, not matched,
+  until the CI-headroom decision gives that cell more time. A copy of the
+  conftest that keys a hook on a module named `test_kernel_env_floor.py` coming
+  earlier, on the module collected exactly third, on a module collected fifth or
+  later, on a module that four or more modules follow, or on a directory among
+  the arguments is granted, and under each road a real run of that copy reads
+  the value a module-level write or an earlier test left (planted). Third,
+  unmatchable at any cost: a hook condition keyed on an open-valued signal (a
+  mark, an environment variable, a host name, or another collection-time
+  signal), what each clone keeps for itself, and what a real test module's own
+  code does for its own tests. A copy of the conftest whose
+  `pytest_collectreport` takes the fixture out of each marked test is granted
+  the licence, and a real run of that copy shows a marked test reading a
+  module-level write (planted). This tier rests on an untampered run (pytest and
+  its plugins as installed, and no code outside the conftest changing what
+  pytest runs for a test) and on a reviewed conftest: the filter refuses any
+  hook it does not list, so only code it takes on trust can key a removal on
+  such a signal. And
   `ROMP_MODELS_URL` (read at kernel import,
   port 9 of 127.0.0.1 and no other); a check over the table itself holds every
   licence to a per-write condition and every temporary one to a since date and a
