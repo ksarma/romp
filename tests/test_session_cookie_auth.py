@@ -466,27 +466,24 @@ class KeepAliveConnectionReuse(_Server):
         self.assertNotIn(b"Traceback", body, what + ": no traceback")
 
     def test_the_routes_before_the_gate_after_a_sign_in_on_one_connection_set_nothing(self):
-        s = socket.create_connection(("127.0.0.1", self.port), timeout=10)
-        try:
-            self._sign_in(s)
-            s.sendall(("GET /login HTTP/1.1\r\nHost: 127.0.0.1:%d\r\nAccept: text/html\r\n\r\n" % self.port).encode())
-            head, body = self._read_one(s)
-            self.assertIn(b" 200 ", head.split(b"\r\n", 1)[0] + b" ", "the sign-in page")
-            self._assert_clean(head, body, "GET /login")
-            s.sendall(("GET /healthz HTTP/1.1\r\nHost: 127.0.0.1:%d\r\n\r\n" % self.port).encode())
-            head, body = self._read_one(s)
-            self._assert_clean(head, body, "GET /healthz")
-            s.sendall(("POST /push/ack HTTP/1.1\r\nHost: 127.0.0.1:%d\r\nContent-Type: application/json\r\n"
-                       "Content-Length: 2\r\n\r\n{}" % self.port).encode())
-            head, body = self._read_one(s)
-            self.assertIn(b" 400 ", head.split(b"\r\n", 1)[0] + b" ", "a bad ack, answered before the gate")
-            self._assert_clean(head, body, "POST /push/ack")
-            s.sendall(("OPTIONS /sessions HTTP/1.1\r\nHost: 127.0.0.1:%d\r\n\r\n" % self.port).encode())
-            head, body = self._read_one(s)
-            self.assertIn(b" 403 ", head.split(b"\r\n", 1)[0] + b" ", "a preflight with no Origin is refused")
-            self._assert_clean(head, body, "OPTIONS /sessions")
-        finally:
-            s.close()
+        # each case on a connection of its own, straight after the sign-in, so no request between them resets the flags
+        cases = (
+            ("GET /login", "GET /login HTTP/1.1\r\nHost: 127.0.0.1:%d\r\nAccept: text/html\r\n\r\n", b" 200 "),
+            ("GET /healthz", "GET /healthz HTTP/1.1\r\nHost: 127.0.0.1:%d\r\n\r\n", b" 200 "),
+            ("POST /push/ack", "POST /push/ack HTTP/1.1\r\nHost: 127.0.0.1:%d\r\nContent-Type: application/json\r\n"
+                               "Content-Length: 2\r\n\r\n{}", b" 400 "),
+            ("OPTIONS /sessions", "OPTIONS /sessions HTTP/1.1\r\nHost: 127.0.0.1:%d\r\n\r\n", b" 403 "),
+        )
+        for what, raw, want in cases:
+            s = socket.create_connection(("127.0.0.1", self.port), timeout=10)
+            try:
+                self._sign_in(s)
+                s.sendall((raw % self.port).encode())
+                head, body = self._read_one(s)
+                self.assertIn(want, head.split(b"\r\n", 1)[0] + b" ", what + ": answered as it would be on a connection of its own")
+                self._assert_clean(head, body, what)
+            finally:
+                s.close()
 
     def test_a_route_before_the_gate_that_raises_after_a_token_request_on_one_connection_sends_no_traceback(self):
         def _boom(*a, **k):
