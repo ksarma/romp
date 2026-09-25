@@ -1632,8 +1632,11 @@ class FlagWriterPopulation(unittest.TestCase):
     def test_the_census_is_one_derivation_over_one_parse_per_module(self):
         """The census's mechanism, read from counts. It is built once in this module's run however many tests read it
         (_CENSUS_BUILDS, which _flag_census keeps; a build per test reds here, and so that this holds whatever order the
-        tests run in, a second test of the class is run from here first, its whole run with setUp and tearDown), and
-        nothing of it is made before the module's first test: setUpModule read no census built and no kernel module
+        tests run in, a second test of the class is run from here first, its whole run with setUp and tearDown). Of that
+        run this pin reads only that the test ran: its verdict belongs to that test's own run in the module, not to this
+        pin, so under a kernel change that reds it (a new setter) this pin still runs its build, walk and parse checks
+        below, and a build per test made in the same change reds here on the count. Nothing of the census is made before
+        the module's first test: setUpModule read no census built and no kernel module
         parsed (_BUILT_BEFORE), since both counts are the process's and a census built at import would otherwise pass
         as the module's one build while held through every module that sorts before this one. That
         build walks each unit with _facts exactly once: each def in fns, each statement in rest, and each class's parts
@@ -1645,8 +1648,7 @@ class FlagWriterPopulation(unittest.TestCase):
         and 2)."""
         other = unittest.TestResult()
         FlagWriterPopulation("test_the_setters_of_the_flags_store_are_the_two_the_doors_call").run(other)
-        self.assertEqual((other.testsRun, len(other.failures), len(other.errors)), (1, 0, 0),
-                         "a second test of the class ran green beside this one")
+        self.assertEqual(other.testsRun, 1, "a second test of the class ran beside this one")
         self.assertEqual(_BUILT_BEFORE, (0, 0), "(censuses built, kernel modules parsed) before the module's first "
                          "test, as setUpModule read them: none, since a census or a tree made at import is held, "
                          "tracked, through every module that sorts before this one")
