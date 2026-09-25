@@ -530,6 +530,21 @@
 #       end: the size, so any cut counts short, the last byte of a blob with
 #       no final newline included, since the newline appended ends every whole
 #       answer
+#   the VERSION of the scanner
+#       a dotted version on one line, three numbers of at most nine digits (a
+#       release's own answer, 8.30.1; a leading v taken), compared with the
+#       floor 8.25.0 (scanner_version, read where a scan would run, ahead of
+#       the first scanner run, so a push with nothing to scan reads none): an
+#       empty answer, one that is not that shape (a build from source answers
+#       version is set by build process) and a version below the floor each
+#       refuse naming the read, the floor and the three remedies (round 10b:
+#       option (b) raised the gitleaks the hook needs, its options needing
+#       8.24.0 and this repository's [[allowlists]] config 8.25.0, and below
+#       8.21.3 every push with content was refused on an unknown flag, with
+#       gitleaks' own line and no floor named). Its end: a cut leaves fewer
+#       than three numbers, refused as no dotted version, or shortens only the
+#       last number, and the floor's last number is 0, so no such cut moves an
+#       answer across it
 #   the ERR line of the scanner log
 #       the answer is always a word: none for a log with no ERR line, or
 #       error, a tab and the first such line, the awk stripping colour codes
@@ -829,31 +844,64 @@
 # level; and on any exit but 0 (clean) or 2 (a finding). A finding is named
 # with its commit and file, from the piece's name in the index the awk writes;
 # -v's File and Line name the piece, not the file.
+# The scanner must be gitleaks 8.25.0 or later, its version read where a scan
+# would run (scanner_version; a push with nothing to scan reads none): the
+# options the hook passes need 8.24.0 (the report template since 8.21.3, the
+# byte figure since 8.21.4, the pkcs12-file rule since 8.24.0), and this
+# repository's .gitleaks.toml uses the [[allowlists]] form, which 8.24.0 and
+# 8.24.3 ignore and 8.25.0 is the first to read as written (the round 9
+# rulings, 2026-09-25, each release run against the hook). A version below
+# the floor, or an answer that is not a dotted version (empty, cut, or a
+# build from source's), refuses the push as a scan that cannot run, the line
+# naming what was found, the floor and the remedies (upgrade it; point
+# ROMP_GITLEAKS at another binary; ROMP_NO_GITLEAKS=1 for one push). CI's
+# pinned gitleaks, 8.28.0, is above the floor.
 # A second, ADDITIVE run covers the five default rules that fire only on a
 # file's path (pkcs12-file, nuget-config-password, kubernetes-secret-yaml,
 # hashicorp-tf-password, freemius-secret-key), which the pieces' digit names
 # cannot trigger: each piece of a file whose name ends in .p12, .pfx,
 # nuget.config, .yaml, .yml, .tf, .hcl or .php (in any case), a merge's
-# binary path read whole among them, is copied under that basename, and
-# gitleaks scans the copies with those rules alone
-# (--enable-rule), its byte figure checked the same way against the bytes
-# copied. A file gitleaks' global path allowlist would skip under that name is
-# left out of this run, by the rule stated here, so the figure can be exact: a
-# name holding gitleaks.toml as spelled, one holding verification-metadata.xml
-# or Database, any byte, refactorlog, and one that is pnpm-lock.yaml (those
-# three in any case), which gitleaks 8.28.0 and 8.30.1 skip under those names
-# (probed); a file its git mode skips by a directory in its path
-# (node_modules, a vendored tree) has no directory here and is scanned. A
-# repository config whose own path allowlist skips another such copy refuses
-# the push on that figure, and one that drops any of the five rules makes the
-# run fail, refused as a scan that could not complete.
+# binary path read whole among them, is copied under a name made of the
+# piece's number and that suffix, lower-cased (12.yaml, 12.p12), or as
+# nuget.config, each copy in a directory named by its piece, and gitleaks
+# scans the copies with those rules alone (--enable-rule), its byte figure
+# checked the same way against the bytes copied. Each of the five rules'
+# paths matches such a name, and no copy's name is taken from the path: until
+# round 10b a copy took the path's basename as git quotes it, escapes kept,
+# and a selected file whose quoted basename passed 255 bytes (a byte past
+# ASCII costs four, a double quote or a backslash two) ended the hook with
+# bash's File name too long line and no romp line on a clean push (the round
+# 9 refuters, 2026-09-25); a copy named by the decoded basename would be
+# named past ASCII, and gitleaks' directory scan skipped one such copy
+# (pnpm-loc<U+212A>.yaml), refusing a clean push on the figure. A file
+# gitleaks' global path allowlist skips by its name is left out of this run,
+# by the rule stated here: a name holding gitleaks.toml as spelled, one
+# holding verification-metadata.xml or Database, any byte, refactorlog, and
+# one that is pnpm-lock.yaml (those three in any case), which gitleaks 8.28.0
+# and 8.30.1 skip under those names (probed; until round 10b the copy carried
+# the file's name, so gitleaks skipped such a copy and the figure could be
+# exact only with the file left out); a file its git mode skips by a
+# directory in its path (node_modules, a vendored tree) has no directory here
+# and is scanned. A repository config's path allowlist keyed on a file's real
+# name or its directory matches no copy, whose name is the fixed stem, so the
+# copy is scanned instead, the safe side (until round 10b such an allowlist
+# skipped the copy, and the push was refused on the figure); one keyed on a
+# suffix alone still skips the copy and refuses the push on the figure; and a
+# config that drops any of the five rules makes the run fail, refused as a
+# scan that could not complete.
 # What the pieces cost, as three facts: gitleaks' path exemptions (lockfiles,
 # node_modules and vendored trees, images, fonts, documents, go.sum and the
 # rest of its global allowlist, and its per-rule path allowlists) do not reach
 # the main run, so a credential-shaped string in such a file is refused, and a
 # false alarm there is excused in .gitleaks.toml by exact value; a match
-# longer than 16,384 bytes across a piece boundary, in a file whose added
-# lines pass 98,304 bytes, is whole in neither piece; and a piece whose bytes
+# with more than 16,384 of its bytes before a piece boundary, in a file whose
+# added lines pass 98,304 bytes or in a line longer than 81,916 bytes (cut
+# into windows), is whole in neither piece (the replay and the windows'
+# overlap repeat exactly the last 16,384 bytes, so what decides is how many
+# of the match's bytes lie before the boundary, not its length: one with at
+# most 16,384 before it is whole in the next piece; the round 9 rulings,
+# 2026-09-25, and the round 10b witnesses in tests/pre-push-hook.bats, which
+# place a match at the bound and one byte past it); and a piece whose bytes
 # carry a binary type's signature at its fixed offset (DICOM at 128, tar at
 # 257, ISO 9660 at 32,769) is skipped by gitleaks and refused by the byte
 # figure, loudly, never published. The byte figure is a log line gitleaks does
@@ -3120,8 +3168,14 @@ scan_identifiers() {
 # closing field of its own, so a line cut inside is not used. A file the
 # path-scoped run selects (its name's suffix, less the names gitleaks' global
 # path allowlist skips: the header) is listed again, piece by piece, in the
-# second index under its basename (a quoted path's escapes kept), and the
-# bytes of its pieces are counted apart.
+# second index under its copy's name: the piece's number and the suffix the
+# selection matched, lower-cased (12.yaml, 12.p12), or nuget.config alone,
+# which its piece's directory keeps apart, never a name taken from the path
+# (until round 10b the copy took the path's quoted basename, escapes kept,
+# and a selected file whose quoted basename passed 255 bytes ended the hook
+# on a clean push with bash's File name too long line and no romp line; the
+# round 9 refuters, 2026-09-25); and the bytes of its pieces are counted
+# apart.
 # Inside a commit, between its two name lines, the awk accounts for every
 # line, by the lines this diff-tree prints (derived by running it over root,
 # one-parent and merge commits, renames with and without edits, mode and type
@@ -3182,7 +3236,7 @@ CRED_PIECES_AWK='
             shut()
             cur = dir "/" (++pieces); pb = 0; curq = q; put("~")
             printf "%d\t%s\t%s\t.\n", pieces, sha, f >> idx
-            if (q) printf "%d\t%s\t.\n", pieces, base >> pidx
+            if (q) printf "%d\t%s\t.\n", pieces, (sfx == "nuget.config" ? sfx : pieces sfx) >> pidx
             if (replay) { x = rb - V; for (i = rh; i <= rt; i++) { s = rl[i]; if (i == rh && x > 0) s = substr(s, x + 1); put(s) } }
         }
         function emit(t,   L, s, w) {
@@ -3200,6 +3254,7 @@ CRED_PIECES_AWK='
             if (substr(base, 1, 1) == "\"") { base = substr(base, 2); sub(/"$/, "", base) }
             sub(/.*\//, "", base); lb = tolower(base)
             q = (lb ~ /(\.p12|\.pfx|nuget\.config|\.yaml|\.yml|\.tf|\.hcl|\.php)$/) && base !~ /gitleaks\.toml/ && lb !~ /verification-metadata\.xml|database.refactorlog/ && lb != "pnpm-lock.yaml"
+            sfx = ""; if (q && match(lb, /(\.p12|\.pfx|nuget\.config|\.yaml|\.yml|\.tf|\.hcl|\.php)$/)) sfx = substr(lb, RSTART)
         }'
 credential_feed() {   # <list file> <record file> <piece directory> <index file> <path-scoped index file> <binary paths file>
     git -c core.quotePath=true diff-tree --stdin -p -U0 -r -M -c --root --always --text --no-color --no-textconv --no-ext-diff --ignore-submodules=none --submodule=short < "$1" \
@@ -3342,9 +3397,10 @@ parent_counts() {   # <list file: one commit per line> <record file>: prints "<c
 # tests/install-sh.bats pins by substring (--redact -v). dir . is the
 # directory mode over the directory the scanner runs in (scanner_run changes
 # into it), so each finding's File is a path relative to it: a piece's
-# number, or a copy's piece number and basename. -v prints each finding's
-# file, line and rule (here the piece and a line within it: the hook names
-# the commit and the file itself); without it gitleaks reports only a COUNT.
+# number, or a copy's piece number and its name (12/12.yaml). -v prints each
+# finding's file, line and rule (here the piece and a line within it: the hook
+# names the commit and the file itself); without it gitleaks reports only a
+# COUNT.
 # --redact keeps the secret itself out of terminal scrollback: the location is
 # what a fix needs, and the value has to be rotated anyway. --no-color keeps
 # the log lines the hook reads plain. --exit-code 2 tells a finding apart
@@ -3358,6 +3414,46 @@ gitleaks_args() {   # <template> <report> [<option>...]: fills GL_ARGS
     local tpl="$1" rep="$2"
     shift 2
     GL_ARGS=(dir . --no-banner --redact -v --no-color --exit-code 2 -f template --report-template "$tpl" -r "$rep" "$@")
+}
+
+# The scanner's version (the header's credential paragraph): gitleaks 8.25.0
+# or later, read once, where a scan would run (scan_credentials asks it ahead
+# of the first scanner run and nowhere else, so a push with nothing to scan
+# needs no gitleaks). The floor has two reasons: the options the hook passes
+# need 8.24.0 (-f template with --report-template since 8.21.3, the byte
+# figure it logs since 8.21.4, the pkcs12-file rule the additive run enables
+# since 8.24.0), and this repository's .gitleaks.toml uses the [[allowlists]]
+# form, which 8.24.0 and 8.24.3 ignore (a push carrying RFC 6455's published
+# example key was refused under them) and 8.25.0 is the first to read as
+# written (the round 9 rulings, 2026-09-25, each release run against the
+# hook: below 8.21.3 every push with content was refused on an unknown flag,
+# with gitleaks' own line and no floor named). gitleaks version answers a
+# release's dotted version on one line (8.30.1), a leading v taken too, three
+# numbers of at most nine digits. An answer that is empty, cut (fewer than
+# three numbers), or not that shape (a build from source answers "version is
+# set by build process"), and a version below the floor, each refuse the push
+# as a scan that cannot run, one line naming what was found, the floor and
+# the three remedies. Status 0 when the scan may run; 1 when refused here
+# (failed_creds set, and failed_scan by unscanned).
+scanner_version() {   # <gitleaks>
+    local gl="$1" v re='^v?([0-9]{1,9})\.([0-9]{1,9})\.([0-9]{1,9})$' fix="the credential scan needs gitleaks 8.25.0 or later: upgrade it, point ROMP_GITLEAKS at another binary, or set ROMP_NO_GITLEAKS=1 for one push"
+    if ! judged_read gate="the VERSION of the scanner" 0 "the VERSION of gitleaks ($gl) could not be read (gitleaks version exited {rc}), so whether it can run the scan is unknown; $fix" -- "$gl" version; then
+        failed_creds=1; return 1
+    fi
+    v=$read_out
+    if [ -z "$v" ]; then
+        unscanned "the VERSION of gitleaks ($gl) answered nothing (gitleaks version exited 0), where a release answers its dotted version, so whether it can run the scan is unknown; $fix"
+        failed_creds=1; return 1
+    fi
+    if ! [[ "$v" =~ $re ]]; then
+        unscanned "the VERSION of gitleaks ($gl) answered \"${v//$'\n'/ }\" (gitleaks version exited 0), not a dotted version such as 8.30.1, so whether it can run the scan is unknown; $fix"
+        failed_creds=1; return 1
+    fi
+    if [ $((10#${BASH_REMATCH[1]})) -lt 8 ] || { [ $((10#${BASH_REMATCH[1]})) -eq 8 ] && [ $((10#${BASH_REMATCH[2]})) -lt 25 ]; }; then
+        unscanned "gitleaks $v ($gl) is older than 8.25.0, so the scan cannot run; $fix"
+        failed_creds=1; return 1
+    fi
+    return 0
 }
 
 # One run of the scanner over a directory the feed wrote (the pieces, or the
@@ -3375,10 +3471,11 @@ gitleaks_args() {   # <template> <report> [<option>...]: fills GL_ARGS
 # logged before the flag takes effect stays coloured. On exit 2 each finding
 # is named, for the report alone, from the report (a file, a rule and a
 # terminator per line) and the index the caller read into ix_sha and ix_path
-# (the caller's), the piece being the file up to its first slash; a line cut
-# inside, or naming no piece, is skipped, and a report naming fewer findings
-# than the log counts says so. Sets blocked_creds, failed_scan and
-# failed_creds.
+# (the caller's), the piece being the File's leading digits, the whole run
+# before its first slash (a copy lives in its piece's directory, whatever its
+# own name); a line cut inside, or naming no piece, is skipped, and a report
+# naming fewer findings than the log counts says so. Sets blocked_creds,
+# failed_scan and failed_creds.
 scanner_run() {   # <gitleaks> <the scan's name, for its lines> <directory> <bytes written there, or empty when the feed was refused> <report file> [<scanner option>...]
     local gl="$1" what="$2" dir="$3" want="$4" rep="$5" rc log err got start rule term piece line_out seen_lines nrec leaks
     shift 5
@@ -3562,10 +3659,13 @@ merge_binary_reads() {   # <count of routed paths the feed recorded>
 # judged by its exit, its ERR line and its byte figure). The scanner runs
 # unless the feed wrote nothing (no new commit, or commits that add no line:
 # 0 bytes and no piece); after a feed refused as short it still runs over the
-# pieces written, for their findings, with no figure to compare.
+# pieces written, for their findings, with no figure to compare. Ahead of its
+# first run the scanner's version is read (scanner_version), and one older
+# than 8.25.0, or an answer that is no version, refuses the push with neither
+# run made; a push the scanner would not run over reads no version.
 scan_credentials() {
     local gl local_ref local_sha _remote_ref remote_sha revs rev peeled peeled_read nfed record n what
-    local rdone rpieces rbytes rpbytes rbin rest piece fsha fpath fterm data pdone plisted pbig nbig pcount
+    local rdone rpieces rbytes rpbytes rbin rest piece fsha fpath fterm data pdone plisted pbig nbig pcount scanning step pk
     local -a cfg ix_sha ix_path pdirs
     if ! credential_scan_armed; then
         [ -n "${ROMP_NO_GITLEAKS:-}" ] && return 0     # a skip asked for: silent
@@ -3573,7 +3673,7 @@ scan_credentials() {
         # install to push would break every clone that never wanted the
         # scanner, and CI scans the full history regardless.
         echo "romp pre-push: gitleaks not installed, pushing WITHOUT a secret scan." >&2
-        echo "  Install it (brew install gitleaks, or the release .github/workflows/ci.yml pins)." >&2
+        echo "  Install gitleaks 8.25.0 or later (brew install gitleaks, or the release .github/workflows/ci.yml pins)." >&2
         echo "  ROMP_GITLEAKS names a binary that is not on PATH; ROMP_NO_GITLEAKS=1 silences this." >&2
         return 0
     fi
@@ -3717,26 +3817,46 @@ scan_credentials() {
             ix_sha[piece]=$fsha; ix_path[piece]=$fpath
         done 6< "$scratch/creds.index"
         printf '{{range .}}{{.File}}\t{{.RuleID}}\t.\n{{end}}' > "$scratch/creds.template"
+        # The scanner's version (scanner_version) is read here, where a scan
+        # runs, and nowhere else: a push with nothing to scan needs no
+        # gitleaks, whatever its version (the round 9 rulings, 2026-09-25).
+        scanning=0
         if [ "$rbytes" = 0 ] && [ ! -e "$scratch/creds.d/1" ]; then
             :                                           # nothing written: nothing to scan
-        else
+        elif scanner_version "$gl"; then
+            scanning=1
             scanner_run "$gl" "the CREDENTIAL scan" "$scratch/creds.d" "$rbytes" "$scratch/creds.report" ${cfg[@]+"${cfg[@]}"}
         fi
         # The additive run (the header): each piece the second index names,
-        # copied under its basename into a directory of its own (the piece's
-        # number), by the shell alone (read and printf under LC_ALL=C, which
-        # keep every byte: a piece holds no NUL), and scanned with the five
-        # path-scoped rules alone; its figure is compared with the bytes of
-        # those pieces the feed's awk recorded, so a copy written short is
-        # refused there.
-        if [ -s "$scratch/creds.pindex" ]; then
+        # copied under the name that index gives it (the piece's number and
+        # the suffix the selection matched, or nuget.config alone) into a
+        # directory of its own (the piece's number), by the shell alone (read
+        # and printf under LC_ALL=C, which keep every byte: a piece holds no
+        # NUL), and scanned with the five path-scoped rules alone; its figure
+        # is compared with the bytes of those pieces the feed's awk recorded,
+        # so a copy written short is refused there. The directories are made a
+        # bounded number at a time, never one mkdir for every piece: past the
+        # system's argument limit that one mkdir failed (E2BIG, status 126),
+        # and set -e ended the hook with bash's line and no romp line on a
+        # clean push (until round 10b; the round 9 refuters, 2026-09-25). Each
+        # mkdir takes as many as fit in 64 KB at the scratch path's length,
+        # half the 128 KB Linux allows any exec's arguments however low the
+        # stack limit; a mkdir that fails ends the hook under set -e, as every
+        # writer in the scratch directory does (the header's scratch
+        # paragraph).
+        if [ "$scanning" -eq 1 ] && [ -s "$scratch/creds.pindex" ]; then
             pdirs=()
             while IFS=$'\t' read -r -u 6 piece fpath fterm; do
                 [ "$fterm" = . ] || continue
                 case "$piece" in ''|*[!0-9]*) continue ;; esac
                 pdirs+=("$scratch/creds.p/$piece")
             done 6< "$scratch/creds.pindex"
-            [ "${#pdirs[@]}" -eq 0 ] || mkdir -- "${pdirs[@]}"
+            step=$(( 65536 / (${#scratch} + 32) )); [ "$step" -ge 1 ] || step=1
+            pk=0
+            while [ "$pk" -lt "${#pdirs[@]}" ]; do
+                mkdir -- "${pdirs[@]:pk:step}"
+                pk=$((pk + step))
+            done
             while IFS=$'\t' read -r -u 6 piece fpath fterm; do
                 [ "$fterm" = . ] || continue
                 case "$piece" in ''|*[!0-9]*) continue ;; esac
@@ -3758,7 +3878,7 @@ scan_credentials() {
     if [ "$failed_creds" -ne 0 ]; then
         echo "" >&2
         echo "romp pre-push: BLOCKED. gitleaks could not scan; its error is above." >&2
-        echo "  The push is refused rather than published unscanned. Fix the scanner or its config, or set ROMP_NO_GITLEAKS=1 for one push." >&2
+        echo "  The push is refused rather than published unscanned. Fix the scanner (gitleaks 8.25.0 or later) or its config, or set ROMP_NO_GITLEAKS=1 for one push." >&2
     fi
 }
 

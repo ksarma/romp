@@ -976,13 +976,16 @@ fail_diff_tree_stdin() { git_refusing '[[ " $* " == *" diff-tree "*" --text "* ]
 # Since round 9 the hook reads the lines the pushed commits add itself (one git
 # diff-tree over the push, each commit fed twice so its name bounds its diff at
 # both ends; a merge by the lines in none of its parents, a rename by its edits,
-# every blob as text), writes them to pieces of at most 98,304 bytes, and
+# every blob of a root or one-parent commit as text, and since round 10a a
+# merge's binary path read whole from its result blob), writes them to pieces
+# of at most 98,304 bytes, and
 # gitleaks scans that directory from inside it, running no git. The push is
 # refused as unscanned when the feed's markers or its count of commits read
 # whole fall short, on any ERR line, and when gitleaks' one byte figure is not
 # the bytes the feed wrote; a second run, limited to the five rules that fire
-# on a file's path, scans copies of the files those rules name under their
-# basenames, its figure checked the same way. Each finding is named with its
+# on a file's path, scans copies of the files those rules name (since round
+# 10b each named by its piece's number and the suffix the rule keys on, until
+# then by its basename), its figure checked the same way. Each finding is named with its
 # commit and file. The cases below that held the retired reads (the count,
 # the colour strip, the log.showRoot read and its advice arm) are re-aimed in
 # place, each naming what it held, so no case number moves.
@@ -1029,11 +1032,15 @@ FEED_GIT='[[ " $* " == *" --text "* ]]'
 # A scanner of the case's own around the real one: bash lines run first in the
 # scanner's working directory (the piece directory, or the path-scoped copies'),
 # then the real scanner, then, when given, lines run after it with its status in
-# s, which the wrapper exits with.
+# s, which the wrapper exits with. The version read (gitleaks version, which the
+# hook makes ahead of its first scanner run since round 10b, from the work
+# tree's root) goes straight to the real scanner, so the lines act on the runs
+# over the pieces alone.
 scanner_wrapper() {   # <bash lines before> [<bash lines after>]
     mkdir -p "$TEST_DIR/scanner"
     {
         printf '#!/usr/bin/env bash\n'
+        printf 'if [ "${1:-}" = version ]; then exec %q "$@"; fi\n' "$GL"
         printf '%s\n' "$1"
         if [ -n "${2:-}" ]; then
             printf '%q "$@"; s=$?\n' "$GL"
@@ -1215,7 +1222,8 @@ two_files_credential_second() {   # sha is the commit
     commit_file file.txt "nothing to see" "clean"
     unset ROMP_NO_GITLEAKS
     export ROMP_GITLEAKS="$TEST_DIR/gitleaks-stub"      # a scanner that runs, says nothing of what it read, and exits clean
-    printf '#!/usr/bin/env bash\necho "stub scanner ran, reporting no byte figure" >&2\nexit 0\n' > "$ROMP_GITLEAKS"
+    # (its version answered as a release at the floor answers it: the hook reads it ahead of the scan since round 10b)
+    printf '#!/usr/bin/env bash\nif [ "${1:-}" = version ]; then echo 8.25.0; exit 0; fi\necho "stub scanner ran, reporting no byte figure" >&2\nexit 0\n' > "$ROMP_GITLEAKS"
     chmod 755 "$ROMP_GITLEAKS"
     run_hook
     [ "$status" -eq 1 ]
@@ -3968,10 +3976,29 @@ commit_stamped_as() {   # <address> <path> <message>: one clean file, author and
 # Until round 9 the hook read the clone's value of log.showRoot once, at its
 # top, for the credential scan's advice arm, and the case below held that
 # read's failure beside the count arm. Both are retired; the case, re-aimed in
-# place, holds that the credential scan makes no configuration read at all.
-fail_config_showroot() { git_refusing '[ "${1:-}" = config ] && [ "${2:-}" = --type=bool ] && [ "${3:-}" = log.showRoot ]' 128 "fatal: shim: config --type=bool log.showRoot refused"; }   # the hook's one read of the key
+# place, holds that the credential scan makes no configuration read at all, and
+# since round 10b shows it by a POSITIVE record (the round 9 rulings' H,
+# tests-5): the shim appends every git argv it is given to calls.git, whatever
+# it prints, so a read whose stderr the hook swallowed (the retired read was
+# made with 2>/dev/null || true) is recorded all the same, where the absence of
+# the shim's refused line, the case's evidence until then, was left by such a
+# read too.
+fail_config_showroot() {   # a git that appends every argv to calls.git and refuses the log.showRoot read (exit 128, a line on stderr); the real git for every other command
+    local real_git
+    real_git="$(command -v git)"
+    mkdir -p "$TEST_DIR/shim"
+    {
+        printf '#!/usr/bin/env bash\n'
+        printf 'printf "%%s\\n" "git $*" >> %q\n' "$TEST_DIR/calls.git"
+        printf 'if [ "${1:-}" = config ] && [ "${2:-}" = --type=bool ] && [ "${3:-}" = log.showRoot ]; then\n'
+        printf '    echo %q >&2\n    exit 128\nfi\n' "fatal: shim: config --type=bool log.showRoot refused"
+        printf 'exec %q "$@"\n' "$real_git"
+    } > "$TEST_DIR/shim/git"
+    chmod 755 "$TEST_DIR/shim/git"
+    export PATH="$TEST_DIR/shim:$PATH"
+}
 
-@test "a git failing the log.showRoot configuration read (exit 128) changes nothing for the credential scan, which makes no configuration read: the root commit's credential under log.showRoot=false is found and named (round 9d: this slot held that read's failure beside the count arm, both retired in round 9)" {
+@test "a git failing the log.showRoot configuration read (exit 128) changes nothing for the credential scan, which makes no configuration read: the root commit's credential under log.showRoot=false is found and named, and a git recording every argv it runs shows the hook's calls, none reading the key, matched in any case (round 9d: this slot held that read's failure beside the count arm, both retired in round 9; round 10b: the record in place of the absence of the shim's line)" {
     real_gitleaks
     export ROMP_PRIVATE_STRINGS="$TEST_DIR/no-denylist"        # the credential scan alone
     commit_file probe.py "token = \"$(probe_token)\"" "a credential in the root commit"
@@ -3982,12 +4009,17 @@ fail_config_showroot() { git_refusing '[ "${1:-}" = config ] && [ "${2:-}" = --t
     run _hook_in "$REPO" -c 'git config --type=bool log.showRoot'    # the read as the hook made it fails under the shim
     [ "$status" -eq 128 ]
     [[ "$output" == *"shim: config --type=bool log.showRoot refused"* ]]
+    [ "$(grep -ci 'log\.showroot' "$TEST_DIR/calls.git")" -eq 1 ]   # the recorder records the read it refuses
+    rm -f "$TEST_DIR/calls.git"                                     # cleared after the case's own proving call
     run_hook
     [ "$status" -eq 1 ]
     [[ "$output" == *"romp pre-push: commit ${root:0:10} ADDS a credential (github-pat) in: probe.py"* ]]
     [[ "$output" == *"gitleaks found a credential"* ]]
-    [[ "$output" != *"shim:"* ]]                        # the hook never made the read
+    [[ "$output" != *"shim:"* ]]
     [[ "$output" != *"the scan is incomplete"* ]]
+    [ -s "$TEST_DIR/calls.git" ]                                    # a positive record: the hook's git calls went through the recorder
+    grep -q -F -- ' --text ' "$TEST_DIR/calls.git"                  # the feed's own read among them
+    [ "$(grep -ci 'log\.showroot' "$TEST_DIR/calls.git" || true)" -eq 0 ]   # and no argv reads the key, in any case
 }
 
 
@@ -7294,6 +7326,7 @@ feed_git_cut_then() {   # <bash line run after the cut>: a git whose feed answer
     mkdir -p "$TEST_DIR/scanner" "$TEST_DIR/shim"
     {
         printf '#!/usr/bin/env bash\n'
+        printf 'if [ "${1:-}" = version ]; then echo 8.25.0; exit 0; fi\n'          # a release at the floor's answer: the version read precedes the run (round 10b)
         printf 'printf "%%s\\n" "gitleaks $*" >> %q; exit 0\n' "$TEST_DIR/calls.scanner"
     } > "$TEST_DIR/scanner/gitleaks"
     chmod 755 "$TEST_DIR/scanner/gitleaks"
@@ -8032,6 +8065,7 @@ r8b3_scanner_log_short() {   # <cut bytes>: a gitleaks on ROMP_GITLEAKS that run
     {
         printf '#!/usr/bin/env bash\n'
         printf 'if [ "${1:-}" = dir ]; then printf "%%s\\n" "gitleaks $*" >> %q; n=$(cat ./* | wc -c); n=${n//[[:space:]]/}; printf "%%s\\n" "5:17PM ERR a scan dropped partway" "5:17PM INF scanned ~$n bytes ($n bytes) in 1ms" "5:17PM INF no leaks found" >&2; exit 0; fi\n' "$TEST_DIR/calls.scanner"
+        printf 'if [ "${1:-}" = version ]; then echo 8.25.0; exit 0; fi\n'          # a release at the floor's answer: the version read precedes the run (round 10b)
         printf 'exit 1\n'
     } > "$TEST_DIR/scanner/gitleaks"
     chmod 755 "$TEST_DIR/scanner/gitleaks"
@@ -8650,8 +8684,12 @@ r8b5_eleven_parent_merge() {   # a base on the remote (BASE); ten sides from it,
 # three owner points). The feed's row (the CREDENTIAL FEED of the push) is driven by the cases re-aimed into the
 # slots the retired reads held (the table's case and short case, the cut with exit 1 and with a SIGKILL, the tr
 # silent and cut, the awk silent, a line before and after the answer); the cases below hold the rest: each
-# finding named with its commit and file, the ~ line, the cap and the overlap of the pieces (each red under a
-# one-constant mutant of the hook), the changed meaning of a merge and a rename (the owner's item 2: a merge
+# finding named with its commit and file, the ~ line (the zip and PDF witnesses, red under the mutant that drops
+# it), the cap and the overlap of the pieces (the chunk and piece-boundary witnesses, which the round 9 refuters
+# found green under CAP=110000 and 130000 and V=4096 and 2500, far from the bounds: each title names the mutant
+# range it is red for, and since round 10b the witnesses at the bounds, CAP and V read from the hook, hold both
+# bounds, beside the value pins in tests/gitleaks-config.bats; until round 10b this comment said each was red
+# under a one-constant mutant of the hook), the changed meaning of a merge and a rename (the owner's item 2: a merge
 # that brings in content a remote holds and a pure rename of a published file pass), two refs at one commit fed
 # once, the allowlist, and the additive run over the five rules that fire on a file's path (the owner's item 1:
 # each rule's witness refused, silent with the run removed; its figure checked like the main run's, the files
@@ -8736,7 +8774,7 @@ r9d_witness_case() {   # <rule>: the witness committed and pushed for real: refu
     at_base
 }
 
-@test "round 9d: a file whose first line is a zip signature passes clean: the ~ line moves the signature off byte 0, so gitleaks reads the piece whole (a piece that began with it would be read as 0 bytes and refused on the figure)" {
+@test "round 9d: a file whose first line is a zip signature passes clean: the ~ line moves the signature off byte 0, so gitleaks reads the piece whole (a piece that began with it would be read as 0 bytes and refused on the figure: red under the mutant that drops the ~ line)" {
     r9d_base
     printf 'PK\003\004\024\000\nnothing here\n' > "$REPO/aa.zip"
     git -C "$REPO" add aa.zip
@@ -8748,7 +8786,7 @@ r9d_witness_case() {   # <rule>: the witness committed and pushed for real: refu
     [ "$(git -C "$TEST_DIR/remote.git" rev-parse refs/heads/main)" = "$(git -C "$REPO" rev-parse HEAD)" ]
 }
 
-@test "round 9d: a file whose first line is a PDF signature with a credential below it is refused naming the commit and file: behind the ~ line gitleaks reads the piece, where it skips a file that begins with the signature, and the remote stays at its base" {
+@test "round 9d: a file whose first line is a PDF signature with a credential below it is refused naming the commit and file: behind the ~ line gitleaks reads the piece, where it skips a file that begins with the signature, and the remote stays at its base (red under the mutant that drops the ~ line)" {
     r9d_base
     printf '%%PDF-1.4\nk = "%s"\n' "$(probe_token)" > "$REPO/aa.txt"
     git -C "$REPO" add aa.txt
@@ -8761,7 +8799,7 @@ r9d_witness_case() {   # <rule>: the witness committed and pushed for real: refu
     at_base
 }
 
-@test "round 9d: the chunk witness: a credential at byte 124,976 of a 3,000,001-byte line with no blank line is found and named, the line cut into overlapping windows of pieces under gitleaks' 100,000-byte read (a single stream of it, read in chunks, missed the token), and the remote stays at its base" {
+@test "round 9d: the chunk witness: a credential at byte 124,976 of a 3,000,001-byte line with no blank line is found and named, the line cut into overlapping windows of pieces under gitleaks' 100,000-byte read (a single stream of it, read in chunks, missed the token), and the remote stays at its base (red for a CAP of 157,750 or more with V at 16,384, where the next window starts past the token and gitleaks cuts the token's window at its byte 125,000; green under CAP=110000, 130000 and 150000, V=4096, 2500 and 1000 and a one-byte change to the window step or the replay: the round 10b witnesses hold the cap at its bound)" {
     r9d_base
     { head -c 124976 /dev/zero | tr '\0' .; printf ' %s ' "$(probe_token)"; head -c 2874982 /dev/zero | tr '\0' .; printf '\n'; } > "$REPO/bundle.min.js"
     [ "$(wc -c < "$REPO/bundle.min.js")" -eq 3000001 ]
@@ -8774,7 +8812,7 @@ r9d_witness_case() {   # <rule>: the witness committed and pushed for real: refu
     at_base
 }
 
-@test "round 9d: the piece-boundary witness: a PGP private key block that crosses the 98,304-byte cap of a file's first piece, after 97,266 bytes of code lines with no blank line, is found whole in the continuation piece, which repeats the last 16,384 bytes, and named; the remote stays at its base" {
+@test "round 9d: the piece-boundary witness: a PGP private key block that crosses the 98,304-byte cap of a file's first piece, after 97,266 bytes of code lines with no blank line, is found whole in the continuation piece, which repeats the last 16,384 bytes, and named; the remote stays at its base (red for a V of 1,028 or less, whose replay starts past the block's first byte, 1,029 of its bytes lying before the cap; green under CAP=110000, 130000 and 150000, V=4096 and 2500 and a one-byte change to the replay: the round 10b witnesses hold the overlap at its bound)" {
     r9d_base
     k="PGP ""PRIVATE"" KEY BLOCK"
     {
@@ -8931,7 +8969,7 @@ r9d_witness_case() {   # <rule>: the witness committed and pushed for real: refu
     at_base
 }
 
-@test "round 9d: the path-scoped run leaves out a file gitleaks' global path allowlist skips under its name, so its figure is exact: a pnpm-lock.yaml holding a Kubernetes Secret beside a clean ok.yaml passes, the second run reading ok.yaml's copy alone (with the lockfile's copy in it, gitleaks would skip that copy and read fewer bytes than were copied); and a clean file named with the Kelvin sign in place of the lockfile's k passes under core.quotePath=false exactly as under true, since the feed's git quotes every path whatever the clone sets (round 9e)" {
+@test "round 9d: the path-scoped run leaves out a file gitleaks' global path allowlist skips under its name, by the rule the header states: a pnpm-lock.yaml holding a Kubernetes Secret beside a clean ok.yaml passes, the second run reading ok.yaml's copy alone (until round 10b a copy carried the file's name, and gitleaks would have skipped the lockfile's copy and read fewer bytes than were copied; under the fixed stem it would read it); and a clean file named with the Kelvin sign in place of the lockfile's k passes under core.quotePath=false exactly as under true, since the feed's git quotes every path whatever the clone sets (round 9e)" {
     r9d_base
     r9d_witness kubernetes-secret-yaml
     mv "$REPO/secret.yaml" "$REPO/pnpm-lock.yaml"
@@ -9540,5 +9578,475 @@ r10a_octopus_scans() {   # <parents>: r10a_octopus, pushed twice for real, once 
     [ "$status" -ne 0 ]
     [[ "$output" == *"romp pre-push: the CONTENT of evil.txt in merge ${merge:0:10} was read short for the credential scan (git cat-file -p exited 0 and answered $((size - 5)) bytes of the $size its SIZE read names); the scan is incomplete, so the push is refused"* ]]
     [[ "$output" != *"ADDS a credential"* ]]                                  # the cut took the credential: the refusal is the read's alone
+    at_base
+}
+
+# ── round 10b (the round 9 rulings' B, C, E, F, G, H and A.2's cost, with the coordinator's decisions 4 to 7): a spaced path-scoped name, the bounds at the bounds, the scanner's floor, the copies' fixed names, the directories past the argument limit, three arms, the cost ──
+# The round 9 rulings' groups after round 10a. B (tests-1): the feed strips git's trailing tab from a +++ line
+# whose path holds a space, so a spaced path-scoped name reaches the additive run. C (tests-2, decision 5): the
+# cap and the overlap tested at their bounds, CAP and V read from the hook's awk line, never a literal (the value
+# pins, CAP at most 100,000 and V equal to 16,384, live in tests/gitleaks-config.bats); what decides a match
+# across a piece boundary is how many of its bytes lie BEFORE the boundary, so the property witnesses place a
+# match with exactly V there (refused) and one with V + 1 (published: the disclosed limit, outside the stated
+# bound), by the windows of a long line and by the replay between lines; the CAP witnesses are sized by
+# gitleaks' own read (100,000 bytes and a 25,000-byte peek that stops at a blank line), so a CAP past either
+# bound puts a whole witness file in one piece that gitleaks cuts. E (regression-1, decision 6): the scanner's
+# version, read where a scan would run, gitleaks 8.25.0 or later. F (correctness-2, regression-2, decision 4):
+# each path-scoped copy named by its piece's number and the matched suffix, lower-cased, in its piece's
+# directory. G (correctness-3, decision 7): those directories made past the argument limit. H (tests-3, tests-4):
+# the feed's count arm driven by a short list file, the dropped-rule refusal and a relative ROMP_GITLEAKS;
+# tests-5's positive record is the re-aimed log.showRoot case above. And A.2's disclosed cost with its witness.
+# A title that says a witness is red at eee3938a8 or under a mutant records the run made against that hook for
+# the round's log; every credential-shaped string is assembled at run time.
+
+r10b_constants() {   # CAP, V and LW read from the hook's one awk line CAP = <n>; V = <n>; LW = CAP - V - 4, never a literal: no such line, or two, fails the case
+    local line
+    line="$(grep -E '^[[:space:]]*CAP = [0-9]+; V = [0-9]+; LW = CAP - V - 4$' "$HOOK" || true)"
+    [ -n "$line" ] || { echo "the hook holds no line CAP = <n>; V = <n>; LW = CAP - V - 4" >&2; return 1; }
+    [ "$(wc -l <<< "$line")" -eq 1 ] || { echo "the hook holds more than one CAP and V line" >&2; return 1; }
+    CAP="$(sed -E 's/.*CAP = ([0-9]+);.*/\1/' <<< "$line")"
+    V="$(sed -E 's/.*; V = ([0-9]+);.*/\1/' <<< "$line")"
+    LW=$((CAP - V - 4))
+}
+r10b_key() {   # <bytes>: a private key block of exactly that many bytes on one line, its markers and a body of A between them, no newline (the marker words split, so this file holds no block); fewer than 116 bytes (the markers and the rule's 64-byte body) fails
+    local k="PRIVATE"" KEY"
+    [ "$1" -ge 116 ] || { echo "r10b_key: a block of $1 bytes is shorter than the 116 the private-key rule reads" >&2; return 1; }
+    printf -- '-----BEGIN %s-----' "$k"; head -c "$(($1 - 52))" /dev/zero | tr '\0' A; printf -- '-----END %s-----' "$k"
+}
+r10b_window_push() {   # <bytes of the block before the first window's end>: one line longer than LW whose key block, one byte longer than those bytes, ends one byte past the first window's end (LW and V from r10b_constants, the caller's), committed as wide.txt and pushed for real; sha is the commit
+    local before=$1
+    { head -c "$((LW - before))" /dev/zero | tr '\0' .; r10b_key "$((before + 1))"; head -c 1000 /dev/zero | tr '\0' .; printf '\n'; } > "$REPO/wide.txt"
+    [ "$(wc -c < "$REPO/wide.txt")" -eq $((LW + 1002)) ]
+    [ "$(LC_ALL=C grep -abo -- '-----BEGIN' "$REPO/wide.txt" | cut -d: -f1)" -eq $((LW - before)) ]    # the block's first byte, 0-based: before bytes of it lie in the first window
+    git -C "$REPO" add wide.txt
+    git -C "$REPO" commit -qm "a key block across a window's end"
+    sha="$(git -C "$REPO" rev-parse HEAD)"
+    push_main_through_hook_with_shim
+}
+r10b_block_lines() {   # <bytes>: key block lines of exactly that many bytes, newlines counted: the BEGIN line (28 bytes), body lines of 64 A, and two shorter body lines to make the count; fewer than 30 bytes fails
+    local n=$(($1 - 28)) a k="PRIVATE"" KEY"
+    [ "$1" -ge 30 ] || { echo "r10b_block_lines: $1 bytes cannot hold the BEGIN line and a body line" >&2; return 1; }
+    printf -- '-----BEGIN %s-----\n' "$k"
+    while [ "$n" -gt 130 ]; do printf '%064d\n' 0 | tr 0 A; n=$((n - 65)); done
+    if [ "$n" -gt 65 ]; then a=$((n / 2)); head -c "$((a - 1))" /dev/zero | tr '\0' A; printf '\n'; n=$((n - a)); fi
+    [ "$n" -eq 0 ] || { head -c "$((n - 1))" /dev/zero | tr '\0' A; printf '\n'; }
+}
+r10b_replay_push() {   # <bytes of the block before the piece boundary>: code lines and the key block's first lines filling a first piece to exactly CAP bytes with its ~ line (CAP and V from r10b_constants, the caller's), the rest of the block after it, so the block's next line starts the second piece, which replays the last V bytes; committed as keys.pem and pushed for real; sha is the commit
+    local before=$1 p i
+    p=$((CAP - 2 - before))                                          # the code lines' bytes: one line of 100 to 199, then lines of 100
+    {
+        head -c "$((100 + p % 100 - 1))" /dev/zero | tr '\0' x; printf '\n'
+        for ((i = 1; i < p / 100; i++)); do printf 'x_%06d = compute(%06d) # %070d\n' "$i" "$i" 0; done
+        r10b_block_lines "$before"
+        for i in 1 2 3; do printf '%064d\n' 0 | tr 0 A; done
+        printf -- '-----END %s-----\n' "PRIVATE"" KEY"
+    } > "$REPO/keys.pem"
+    [ "$(LC_ALL=C grep -abo -- '-----BEGIN' "$REPO/keys.pem" | cut -d: -f1)" -eq "$p" ]            # the block starts p bytes in: the ~ line, p bytes and before bytes of the block make CAP
+    [ "$(head -c "$((p + before))" "$REPO/keys.pem" | tail -c 1 | od -An -c | tr -d ' ')" = '\n' ]   # the boundary falls between lines
+    git -C "$REPO" add keys.pem
+    git -C "$REPO" commit -qm "a key block across the cap"
+    sha="$(git -C "$REPO" rev-parse HEAD)"
+    push_main_through_hook_with_shim
+}
+r10b_spaced_witness() {   # <rule> <path holding a space>: the rule's witness committed under that path and pushed for real: refused naming the rule, the commit and the path, two scanner runs logged (the path-scoped run happened), the remote at its base
+    r9d_base
+    r9d_witness "$1"
+    mkdir -p "$REPO/$(dirname -- "$2")"
+    mv "$REPO/$wfile" "$REPO/$2"
+    git -C "$REPO" add -- "$2"
+    git -C "$REPO" commit -qm "a path-scoped file under a name holding a space"
+    sha="$(git -C "$REPO" rev-parse HEAD)"
+    [ "$(git -C "$REPO" diff-tree -p --text "$sha" | grep -c $'^+++ b/.*\t$')" -eq 1 ]            # git ends that +++ line with a tab
+    push_main_through_hook_with_shim
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: commit ${sha:0:10} ADDS a credential ($1) in: $2"* ]]
+    [[ "$output" != *"the scan is incomplete"* ]]
+    [ "$(grep -c 'INF scanned ~' <<< "$output")" -eq 2 ]
+    at_base
+}
+r10b_scanner_answering() {   # <answer>: a gitleaks on ROMP_GITLEAKS that answers gitleaks version with that line (exit 0) and runs the real scanner (GL at the first call, from r9d_base) for every other command, each call recorded in calls.scanner
+    : "${R10B_GL:=$GL}"
+    mkdir -p "$TEST_DIR/scanner"
+    {
+        printf '#!/usr/bin/env bash\n'
+        printf 'printf "%%s\\n" "gitleaks $*" >> %q\n' "$TEST_DIR/calls.scanner"
+        printf 'if [ "${1:-}" = version ]; then printf "%%s\\n" %q; exit 0; fi\n' "$1"
+        printf 'exec %q "$@"\n' "$R10B_GL"
+    } > "$TEST_DIR/scanner/gitleaks"
+    chmod 755 "$TEST_DIR/scanner/gitleaks"
+    export ROMP_GITLEAKS="$TEST_DIR/scanner/gitleaks"
+}
+r10b_gitleaks_on_path() {   # the real scanner first on PATH as gitleaks, so the calls_* shims take it for the real tool; the case then names their shim in ROMP_GITLEAKS
+    real_gitleaks
+    mkdir -p "$TEST_DIR/glbin"
+    ln -sf "$GL" "$TEST_DIR/glbin/gitleaks"
+    export PATH="$TEST_DIR/glbin:$PATH"
+}
+R10B_FLOOR_FIX="the credential scan needs gitleaks 8.25.0 or later: upgrade it, point ROMP_GITLEAKS at another binary, or set ROMP_NO_GITLEAKS=1 for one push; the scan is incomplete, so the push is refused"
+r10b_long_name() {   # <suffix>: name, 35 two-byte characters (70 bytes past ASCII) and the suffix, and quoted, the name as git quotes it (four bytes for each of those, and the double quotes)
+    name="$(printf '\303\251%.0s' $(seq 1 35))$1"
+    quoted="\"$(printf '\\303\\251%.0s' $(seq 1 35))$1\""
+}
+r10b_long_witness() {   # <rule> <suffix>: the rule's witness under a long name ending in the suffix, pushed for real: refused naming the rule, the commit and the real path as git quotes it, two scanner runs logged, the remote at its base
+    r9d_base
+    r9d_witness "$1"
+    r10b_long_name "$2"
+    mv "$REPO/$wfile" "$REPO/$name"
+    git -C "$REPO" add -- "$name"
+    git -C "$REPO" commit -qm "a path-scoped file under a long name"
+    sha="$(git -C "$REPO" rev-parse HEAD)"
+    [ "${#quoted}" -gt 257 ]                                              # past 255 bytes as git quotes it, its two double quotes aside
+    push_main_through_hook_with_shim
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: commit ${sha:0:10} ADDS a credential ($1) in: $quoted"* ]]
+    [[ "$output" != *"the scan is incomplete"* ]]
+    [[ "$output" != *"File name too long"* ]]
+    [ "$(grep -c 'INF scanned ~' <<< "$output")" -eq 2 ]
+    at_base
+}
+
+@test "round 10b (B, tests-1): a path-scoped credential under a name holding a space, my nuget.config (nuget-config-password, which only the additive run catches), pushed for real, is refused naming the rule, the commit and the file, two scanner runs logged, the remote at its base: the feed strips the tab git ends that +++ line with (red by publication under the mutant deleting the strip, which leaves the name ending in a tab, so the selection skips it)" {
+    r10b_spaced_witness nuget-config-password "my nuget.config"
+}
+
+@test "round 10b (B, tests-1): a path-scoped credential under a path whose DIRECTORY holds a space, prod certs/cert.p12 (pkcs12-file), pushed for real, is refused naming the rule, the commit and the path, two scanner runs logged, the remote at its base: git ends the +++ line with a tab whenever the path holds a space anywhere (red by publication under the mutant deleting the strip)" {
+    r10b_spaced_witness pkcs12-file "prod certs/cert.p12"
+}
+
+@test "round 10b (C, the property pin by windows): a private key block of V + 1 bytes with exactly V of them before the end of a long line's first window (V and LW read from the hook) is whole in the next window, which starts V bytes back, and refused naming it, the remote at its base (red under a mutant whose windows overlap by fewer than V bytes, a window step past LW - V; green under a V mutant, which moves the placement with it and which the value pin catches)" {
+    r9d_base
+    r10b_constants
+    r10b_window_push "$V"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: commit ${sha:0:10} ADDS a credential (private-key) in: wide.txt"* ]]
+    [[ "$output" != *"the scan is incomplete"* ]]
+    at_base
+}
+
+@test "round 10b (C, OUTSIDE the stated bound, the disclosed limit): a private key block of V + 2 bytes with V + 1 of them before the end of a long line's first window, the first loss measured on the hook's own windows, is whole in neither window and PUBLISHED, the byte figure agreeing (published at eee3938a8 too; red, refused, under a mutant whose windows overlap by more than V bytes, which would widen the bound the header states)" {
+    r9d_base
+    r10b_constants
+    r10b_window_push "$((V + 1))"
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"romp pre-push"* ]]
+    [ "$(git -C "$TEST_DIR/remote.git" rev-parse refs/heads/main)" = "$sha" ]
+}
+
+@test "round 10b (C, the property pin by the replay): a private key block with exactly V of its bytes before a piece boundary between lines (a first piece of exactly CAP bytes, CAP and V read from the hook) is whole in the next piece, which replays the last V bytes, and refused naming it, the remote at its base (red under a mutant replaying fewer than V bytes; green under a V mutant, which the value pin catches)" {
+    r9d_base
+    r10b_constants
+    r10b_replay_push "$V"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: commit ${sha:0:10} ADDS a credential (private-key) in: keys.pem"* ]]
+    [[ "$output" != *"the scan is incomplete"* ]]
+    at_base
+}
+
+@test "round 10b (C, OUTSIDE the stated bound, the disclosed limit): a private key block with V + 1 of its bytes before a piece boundary between lines is whole in neither piece and PUBLISHED, the byte figure agreeing (published at eee3938a8 too; red, refused, under a mutant replaying more than V bytes)" {
+    r9d_base
+    r10b_constants
+    r10b_replay_push "$((V + 1))"
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"romp pre-push"* ]]
+    [ "$(git -C "$TEST_DIR/remote.git" rev-parse refs/heads/main)" = "$sha" ]
+}
+
+@test "round 10b (C, the CAP witness at gitleaks' 125,000-byte cut): a 125,101-byte file with no blank line, a token across its byte 125,000, is pieced at CAP (read from the hook) with the token whole in the second piece and refused naming it, the figure the file, two ~ lines and V replayed bytes, the remote at its base (red by publication for any CAP of 125,103 or more, where the file and its ~ line make one piece gitleaks cuts at byte 125,000: the CAP=130000 mutant)" {
+    r9d_base
+    r10b_constants
+    {
+        awk 'BEGIN { for (i = 0; i < 1249; i++) printf "x_%06d = compute(%06d) # %070d\n", i, i, 0 }'
+        head -c 89 /dev/zero | tr '\0' .; printf ' %s ' "$(probe_token)"; head -c 69 /dev/zero | tr '\0' .; printf '\n'
+    } > "$REPO/long.txt"
+    [ "$(wc -c < "$REPO/long.txt")" -eq 125101 ]
+    [ "$(grep -abo 'ghp_' "$REPO/long.txt" | cut -d: -f1)" -eq 124990 ]
+    git -C "$REPO" add long.txt
+    git -C "$REPO" commit -qm "a token across byte 125,000"
+    sha="$(git -C "$REPO" rev-parse HEAD)"
+    push_main_through_hook_with_shim
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: commit ${sha:0:10} ADDS a credential (github-pat) in: long.txt"* ]]
+    [[ "$output" == *"scanned ~$((125101 + 4 + V)) bytes"* ]]                    # two pieces, the second replaying V bytes
+    [[ "$output" != *"the scan is incomplete"* ]]
+    at_base
+}
+
+@test "round 10b (C, the blank-line witness for the band from 100,000 to 125,000): a PGP private key block whose blank line falls at byte 100,000 of a one-piece reading (a 100,035-byte file) is pieced at CAP (read from the hook) with the block whole in the second piece and refused naming it, the figure the file, two ~ lines and V replayed bytes, the remote at its base (red by publication for any CAP of 100,037 or more, where the file and its ~ line make one piece that gitleaks cuts at that blank line inside its 25,000-byte peek: the CAP=110000 and CAP=130000 mutants; the 36 values above 100,000 below that are the value pin's)" {
+    r9d_base
+    r10b_constants
+    k="PGP ""PRIVATE"" KEY BLOCK"
+    {
+        awk 'BEGIN { for (i = 0; i < 998; i++) printf "x_%06d = compute(%06d) # %070d\n", i, i, 0 }'
+        printf -- '-----BEGIN %s-----\nVersion: probe\nComment: ' "$k"; head -c 135 /dev/zero | tr '\0' c; printf '\n\n'
+        printf -- '-----END %s-----\n' "$k"
+    } > "$REPO/keys.asc"
+    [ "$(wc -c < "$REPO/keys.asc")" -eq 100035 ]
+    [ "$(LC_ALL=C grep -ab -x '' "$REPO/keys.asc" | head -n 1 | cut -d: -f1)" -eq 99998 ]   # the blank line: byte 100,000 behind the ~ line
+    git -C "$REPO" add keys.asc
+    git -C "$REPO" commit -qm "a key block whose blank line falls past byte 100,000"
+    sha="$(git -C "$REPO" rev-parse HEAD)"
+    push_main_through_hook_with_shim
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: commit ${sha:0:10} ADDS a credential (private-key) in: keys.asc"* ]]
+    [[ "$output" == *"scanned ~$((100035 + 4 + V)) bytes"* ]]
+    [[ "$output" != *"the scan is incomplete"* ]]
+    at_base
+}
+
+@test "round 10b table case: the VERSION of the scanner: a gitleaks silent on its version alone (exit 0, nothing printed), through a real push of a credential, is refused naming the empty answer, the floor and the three remedies, neither scanner run made, and the remote stays at its base" {
+    r9d_base
+    commit_file k.py "k = \"$(probe_token)\"" "a credential"
+    r10b_gitleaks_on_path
+    calls_silent_on gitleaks gversion '[ "${1:-}" = version ]'
+    export ROMP_GITLEAKS="$TEST_DIR/shim/gitleaks"
+    push_main_through_hook_with_shim
+    fired gversion "gitleaks version"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: the VERSION of gitleaks ($ROMP_GITLEAKS) answered nothing (gitleaks version exited 0), where a release answers its dotted version, so whether it can run the scan is unknown; $R10B_FLOOR_FIX"* ]]
+    [[ "$output" != *"scanned ~"* ]]
+    [[ "$output" == *"gitleaks could not scan"* ]]
+    at_base
+}
+
+@test "round 10b short case: the VERSION of the scanner: a gitleaks whose version answer is cut to its first four bytes (exit 0: a release's 8.30.1 read as 8.30), through a real push of a credential, is refused naming the cut answer, not a dotted version, neither scanner run made, and the remote stays at its base" {
+    r9d_base
+    commit_file k.py "k = \"$(probe_token)\"" "a credential"
+    r10b_gitleaks_on_path
+    calls_short_on gitleaks gversion '[ "${1:-}" = version ]' bytes:4
+    export ROMP_GITLEAKS="$TEST_DIR/shim/gitleaks"
+    push_main_through_hook_with_shim
+    fired_short gversion "gitleaks version"
+    [ "$status" -ne 0 ]
+    cut="$("$GL" version | head -c 4)"
+    [[ "$output" == *"romp pre-push: the VERSION of gitleaks ($ROMP_GITLEAKS) answered \"$cut\" (gitleaks version exited 0), not a dotted version such as 8.30.1, so whether it can run the scan is unknown; $R10B_FLOOR_FIX"* ]]
+    [[ "$output" != *"scanned ~"* ]]
+    at_base
+}
+
+@test "round 10b (E): a gitleaks older than the floor is refused by name at the version gate: a scanner answering 8.24.3, 8.9.0 (a floor compared as text would take 9 for more than 25) or 7.30.0 to its version, the real scanner otherwise, through a real push of a clean commit, is refused naming the version, the floor 8.25.0 and the three remedies, neither scanner run made, the remote at its base (red at eee3938a8, which reads no version: the clean push published there)" {
+    r9d_base
+    commit_file ok.txt "nothing to see" "a clean commit"
+    for old in 8.24.3 8.9.0 7.30.0; do
+        rm -f "$TEST_DIR/calls.scanner"
+        r10b_scanner_answering "$old"
+        push_main_through_hook_with_shim
+        [ "$status" -ne 0 ]
+        [[ "$output" == *"romp pre-push: gitleaks $old ($ROMP_GITLEAKS) is older than 8.25.0, so the scan cannot run; $R10B_FLOOR_FIX"* ]]
+        [[ "$output" == *"gitleaks could not scan"* ]]
+        [[ "$output" == *"Fix the scanner (gitleaks 8.25.0 or later) or its config"* ]]
+        [[ "$output" != *"scanned ~"* ]]
+        [ "$(grep -c '^gitleaks dir ' "$TEST_DIR/calls.scanner" || true)" -eq 0 ]
+        at_base
+    done
+}
+
+@test "round 10b (E): a gitleaks at the floor proceeds: a scanner answering 8.25.0, or v8.25.0 (a leading v taken), runs both scans as the real one does, so a clean push passes with the byte figure agreeing and a credential is refused naming it, each through a real push" {
+    r9d_base
+    for answer in 8.25.0 v8.25.0; do
+        rm -f "$TEST_DIR/calls.scanner"
+        r10b_scanner_answering "$answer"
+        commit_file "ok-$answer.txt" "nothing to see" "a clean commit"
+        push_main_through_hook_with_shim
+        r10a_passes
+        [[ "$output" == *"scanned ~"* ]]
+        grep -q '^gitleaks version$' "$TEST_DIR/calls.scanner"
+        grep -q '^gitleaks dir ' "$TEST_DIR/calls.scanner"
+        BASE="$(git -C "$REPO" rev-parse HEAD)"
+    done
+    commit_file k.py "k = \"$(probe_token)\"" "a credential"
+    sha="$(git -C "$REPO" rev-parse HEAD)"
+    push_main_through_hook_with_shim
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: commit ${sha:0:10} ADDS a credential (github-pat) in: k.py"* ]]
+    at_base
+}
+
+@test "round 10b (E): an answer that is not a dotted version is refused naming it: a scanner answering version is set by build process, a build from source's answer, the real scanner otherwise, through a real push of a clean commit, is refused naming the answer, the floor and the three remedies, neither scanner run made, the remote at its base" {
+    r9d_base
+    commit_file ok.txt "nothing to see" "a clean commit"
+    r10b_scanner_answering "version is set by build process"
+    push_main_through_hook_with_shim
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: the VERSION of gitleaks ($ROMP_GITLEAKS) answered \"version is set by build process\" (gitleaks version exited 0), not a dotted version such as 8.30.1, so whether it can run the scan is unknown; $R10B_FLOOR_FIX"* ]]
+    [[ "$output" != *"scanned ~"* ]]
+    at_base
+}
+
+@test "round 10b (E): the version is read where a scan would run, and nowhere else: under a scanner answering 8.24.3, a push that feeds no bytes (a pure rename of a published file, then a commit deleting it) passes with no gitleaks call at all, where a push with content is then refused at the gate" {
+    r9d_base
+    commit_file old.txt "published" "a file, published"
+    git -C "$REPO" push -q origin main
+    BASE="$(git -C "$REPO" rev-parse HEAD)"
+    r10b_scanner_answering 8.24.3
+    git -C "$REPO" mv old.txt new.txt
+    git -C "$REPO" commit -qm "a pure rename"
+    git -C "$REPO" rm -q new.txt
+    git -C "$REPO" commit -qm "remove it"
+    push_main_through_hook_with_shim
+    r10a_passes
+    [ ! -e "$TEST_DIR/calls.scanner" ]
+    BASE="$(git -C "$REPO" rev-parse HEAD)"
+    commit_file ok.txt "nothing to see" "a clean commit"
+    push_main_through_hook_with_shim
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: gitleaks 8.24.3 ($ROMP_GITLEAKS) is older than 8.25.0"* ]]
+    at_base
+}
+
+@test "round 10b (F): a clean push of a selected file whose quoted basename passes 255 bytes, 35 two-byte characters and .yaml (70 bytes past ASCII, 285 bytes as git quotes them), passes: its copy is named by its piece's number and .yaml, so both runs read it and the byte figures agree (red at eee3938a8: the copy took the quoted basename, and the redirect failed with File name too long, status 1, no romp line)" {
+    r9d_base
+    r10b_long_name .yaml
+    printf 'name: probe\n' > "$REPO/$name"
+    git -C "$REPO" add -- "$name"
+    git -C "$REPO" commit -qm "a long name past ASCII"
+    push_main_through_hook_with_shim
+    r10a_passes
+    [ "$(grep -o 'INF scanned ~[0-9]* bytes' <<< "$output")" = "$(printf 'INF scanned ~14 bytes\nINF scanned ~14 bytes')" ]
+    [[ "$output" != *"File name too long"* ]]
+}
+
+@test "round 10b (F): a clean push of an all-ASCII selected name of 253 bytes holding three double quotes (256 as git quotes it, each quote costing two) passes, both byte figures agreeing (red at eee3938a8: File name too long, status 1, no romp line)" {
+    r9d_base
+    name="$(printf '"a"b"%s.yaml' "$(head -c 243 /dev/zero | tr '\0' c)")"
+    [ "${#name}" -eq 253 ]
+    printf 'name: probe\n' > "$REPO/$name"
+    git -C "$REPO" add -- "$name"
+    git -C "$REPO" commit -qm "a long name with quotes"
+    push_main_through_hook_with_shim
+    r10a_passes
+    [ "$(grep -o 'INF scanned ~[0-9]* bytes' <<< "$output")" = "$(printf 'INF scanned ~14 bytes\nINF scanned ~14 bytes')" ]
+    [[ "$output" != *"File name too long"* ]]
+}
+
+@test "round 10b (F, the coordinator's decision 4): pkcs12-file under a fixed stem: a keystore under a long name ending .p12 is refused naming the rule and the real path as git quotes it (red at eee3938a8: File name too long, no rule named)" {
+    r10b_long_witness pkcs12-file .p12
+}
+
+@test "round 10b (F, the coordinator's decision 4): pkcs12-file under a fixed stem: a keystore under a long name ending .pfx is refused naming the rule and the real path (red at eee3938a8: File name too long, no rule named)" {
+    r10b_long_witness pkcs12-file .pfx
+}
+
+@test "round 10b (F, the coordinator's decision 4): nuget-config-password under its fixed name: a password in a file under a long name ending nuget.config, copied as nuget.config in its piece's directory, is refused naming the rule and the real path (red at eee3938a8: File name too long, no rule named)" {
+    r10b_long_witness nuget-config-password nuget.config
+}
+
+@test "round 10b (F, the coordinator's decision 4): kubernetes-secret-yaml under a fixed stem: a Secret under a long name ending .yaml is refused naming the rule and the real path (red at eee3938a8: File name too long, no rule named)" {
+    r10b_long_witness kubernetes-secret-yaml .yaml
+}
+
+@test "round 10b (F, the coordinator's decision 4): kubernetes-secret-yaml under a fixed stem: a Secret under a long name ending .yml is refused naming the rule and the real path (red at eee3938a8: File name too long, no rule named)" {
+    r10b_long_witness kubernetes-secret-yaml .yml
+}
+
+@test "round 10b (F, the coordinator's decision 4): hashicorp-tf-password under a fixed stem: a password under a long name ending .tf is refused naming the rule and the real path (red at eee3938a8: File name too long, no rule named)" {
+    r10b_long_witness hashicorp-tf-password .tf
+}
+
+@test "round 10b (F, the coordinator's decision 4): hashicorp-tf-password under a fixed stem: a password under a long name ending .hcl is refused naming the rule and the real path (red at eee3938a8: File name too long, no rule named)" {
+    r10b_long_witness hashicorp-tf-password .hcl
+}
+
+@test "round 10b (F, the coordinator's decision 4): freemius-secret-key under a fixed stem: a secret key under a long name ending .php is refused naming the rule and the real path (red at eee3938a8: File name too long, no rule named)" {
+    r10b_long_witness freemius-secret-key .php
+}
+
+@test "round 10b (G): the path-scoped copies' directories are made past the argument limit: 4,000 one-line .yaml files in one commit, pushed for real with the stack limit lowered to 512 KB in the case's own subshell (an exec's arguments then capped at 128 KB), pass, both byte figures agreeing (red at eee3938a8: one mkdir took every directory, exited 126 on Argument list too long, and set -e ended the hook with no romp line)" {
+    r9d_base
+    mkdir -p "$REPO/k8s"
+    for ((i = 1; i <= 4000; i++)); do printf 'name: probe\n' > "$REPO/k8s/f$i.yaml"; done
+    git -C "$REPO" add k8s
+    git -C "$REPO" commit -qm "4,000 yaml files"
+    mkdir -p "$TEST_DIR/hooks"
+    {
+        printf '#!/usr/bin/env bash\n'
+        printf 'export PATH=%q:"$PATH"\n' "$TEST_DIR/shim"
+        printf 'exec %q "$@"\n' "$HOOK"
+    } > "$TEST_DIR/hooks/pre-push"
+    chmod 755 "$TEST_DIR/hooks/pre-push"
+    git -C "$REPO" config core.hooksPath "$TEST_DIR/hooks"
+    run bash -c 'ulimit -s 512 && exec git -C "$1" push origin main' _ "$REPO"
+    git -C "$REPO" config core.hooksPath "$TEST_DIR/no-hooks"
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"romp pre-push"* ]]
+    [[ "$output" != *"Argument list too long"* ]]
+    [ "$(grep -o 'INF scanned ~[0-9]* bytes' <<< "$output")" = "$(printf 'INF scanned ~56000 bytes\nINF scanned ~56000 bytes')" ]   # 4,000 pieces of 14 bytes, then their copies
+    [ "$(git -C "$TEST_DIR/remote.git" rev-parse refs/heads/main)" = "$(git -C "$REPO" rev-parse HEAD)" ]
+}
+
+@test "round 10b (H, tests-3): the feed's count arm guards its list file: two commits pushed (a credential, then a clean tip) while both of the list file's readers see only the tip (a git whose parent counts' rev-list first cuts the feed's list file to the tip's two lines) is refused naming the awk's count of commits read whole against the count fed, and the remote stays at its base (red by publication under the mutant that neutralizes the arm: the scanner reads the tip's piece alone, clean)" {
+    r9d_base
+    commit_file k.py "k = \"$(probe_token)\"" "a credential"
+    commit_file ok.txt "nothing to see" "a clean tip"
+    tip="$(git -C "$REPO" rev-parse HEAD)"
+    mkdir -p "$TEST_DIR/tmp"
+    export TMPDIR="$TEST_DIR/tmp"
+    git_shim "$(printf 'if [[ " $* " == *" --no-walk=unsorted "* ]]; then\n    for l in %q/romp-pre-push.*/creds.list; do [ -e "$l" ] || continue; printf "%%s\\n%%s %%s\\n" %q %q %q > "$l"; printf "%%s\\n" "$l" >> %q; done\nfi' "$TEST_DIR/tmp" "$tip" "$tip" "$tip" "$TEST_DIR/calls.shortlist")"
+    push_main_through_hook_with_shim
+    [ "$(wc -l < "$TEST_DIR/calls.shortlist")" -eq 1 ]
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: the CREDENTIAL FEED of the push was read short (its awk recorded 1 commits read whole of the 2 it was given); the scan is incomplete, so the push is refused"* ]]
+    at_base
+}
+
+@test "round 10b (H, tests-4, flag 118): a repository config dropping a path-scoped rule (disabledRules holding pkcs12-file) makes the additive run fail on a pushed cert.p12, refused as a scan that could not complete, gitleaks' FTL line naming the missing rule (the path-scoped run's own failure: the exit arm is shared with the main run), the remote at its base (red under the other option, the run returning clean on not found in rules: the keystore published)" {
+    r9d_base
+    printf '[extend]\nuseDefault = true\ndisabledRules = ["pkcs12-file"]\n' > "$REPO/.gitleaks.toml"
+    git -C "$REPO" add .gitleaks.toml
+    git -C "$REPO" commit -qm "a config dropping a path-scoped rule"
+    git -C "$REPO" push -q origin main
+    BASE="$(git -C "$REPO" rev-parse HEAD)"
+    r9d_witness pkcs12-file
+    git -C "$REPO" add cert.p12
+    git -C "$REPO" commit -qm "a keystore"
+    push_main_through_hook_with_shim
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"FTL"*"pkcs12-file not found in rules"* ]]
+    [[ "$output" == *"gitleaks could not scan"* ]]
+    [[ "$output" != *"gitleaks found a credential"* ]]
+    at_base
+}
+
+@test "round 10b (H, tests-4, flag 122): a relative ROMP_GITLEAKS (.tools/gitleaks, from the work tree's root, where git runs the hook) is made absolute before the scanner runs from the piece directory: a credential is refused naming it, and a clean push passes, each through a real push (red under the mutant deleting that line, which refuses both: the relative name resolves nowhere from the piece directory)" {
+    r9d_base
+    mkdir -p "$REPO/.tools" "$REPO/.git/info"
+    ln -s "$GL" "$REPO/.tools/gitleaks"
+    printf '.tools/\n' >> "$REPO/.git/info/exclude"
+    export ROMP_GITLEAKS=.tools/gitleaks
+    commit_file k.py "k = \"$(probe_token)\"" "a credential"
+    sha="$(git -C "$REPO" rev-parse HEAD)"
+    push_main_through_hook_with_shim
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: commit ${sha:0:10} ADDS a credential (github-pat) in: k.py"* ]]
+    at_base
+    git -C "$REPO" reset -q --hard "$BASE"
+    commit_file ok.txt "nothing to see" "a clean commit"
+    push_main_through_hook_with_shim
+    r10a_passes
+}
+
+@test "round 10b (A.2's disclosed cost, with its witness): a merge whose binary path's whole result blob holds a credential a remote already holds is refused: d.dat, under a committed -diff attribute and carrying a credential main already published, auto-merged by a merge whose own lines add nothing to it, is read whole from the merge's result blob, so the published credential is named with the merge, and the remote stays at its base (published at eee3938a8, which read no line of the path; the cost the header discloses)" {
+    r9d_base
+    printf 'd.dat -diff\n' > "$REPO/.gitattributes"
+    { printf 'row %d\n' 1 2 3 4 5 6 7 8; printf 'token = "%s"\n' "$(probe_token)"; } > "$REPO/d.dat"
+    git -C "$REPO" add .gitattributes d.dat
+    git -C "$REPO" commit -qm "a -diff file carrying a credential, published"
+    git -C "$REPO" push -q origin main
+    BASE="$(git -C "$REPO" rev-parse HEAD)"
+    git -C "$REPO" checkout -q -b side
+    { printf 'row 1\nrow two, side\n'; printf 'row %d\n' 3 4 5 6 7 8; printf 'token = "%s"\n' "$(probe_token)"; } > "$REPO/d.dat"
+    git -C "$REPO" commit -qam "one line on one side"
+    git -C "$REPO" checkout -q main
+    { printf 'row %d\n' 1 2 3 4 5 6; printf 'row seven, main\nrow 8\n'; printf 'token = "%s"\n' "$(probe_token)"; } > "$REPO/d.dat"
+    git -C "$REPO" commit -qam "another line on the other"
+    git -C "$REPO" merge -q --no-ff --no-edit side                        # an auto-merge: no line of the merge's own
+    merge="$(git -C "$REPO" rev-parse HEAD)"
+    is_merge "$merge"
+    [ "$(git -C "$REPO" diff-tree -p -c --text "$merge" | grep -c '^Binary files differ$')" -eq 1 ]
+    [ "$(git -C "$REPO" diff-tree -p -U0 --text "$merge^1" "$merge^2" | grep -c -F "$(probe_token)" || true)" -eq 0 ]   # the two sides differ by their own lines alone
+    push_main_through_hook_with_shim
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: commit ${merge:0:10} ADDS a credential (github-pat) in: d.dat"* ]]
+    [ "$(grep -c 'ADDS a credential' <<< "$output")" -eq 1 ]             # the merge alone: its parents' own lines hold no credential
+    [[ "$output" != *"the scan is incomplete"* ]]
     at_base
 }
