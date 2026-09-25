@@ -115,21 +115,26 @@ once its row is read (the bindings released, Bindings.release, so reference coun
 tree at a time, and two counts the read's value carries pin it: `most_trees`, the most file trees alive at any file
 parse, read through weak references to the trees' roots (_parse), and `born`, the tree nodes and ast_bindings objects
 (ast.AST, Bindings, Scope, Declaration) made during the read and alive when its loop ends, by class, read through
-gc.get_objects() by identity against the list of those alive when the read started (_held_alive, _born), which sees a
-node kept without its root, a tree's statements kept on a list among them (PR #850's eleventh review round, as in fork
-PR #894's pin by live objects). Neither count collects, freezes or disables the collector. The cycle test holds both
+gc.get_objects() by identity against the list of those gc.get_objects() listed when the read started (_born; _held_alive
+states what such a list omits), which sees a node kept without its root, a tree's statements kept on a list among them
+(PR #850's eleventh review round, as in fork PR #894's pin by live objects). Neither count collects, freezes or
+disables the collector. The cycle test holds both
 over its plant read and the release pin over the tree's read: one file tree at most, and nothing born. Neither sees a
 node kept without its root past the next file's parse and let go before the read's loop ends. The read's value is
 tuples, strings, numbers, None and the dicts and frozensets that index them, among them each file's text key as the
 read parsed it. Once the module's tests have run here, tearDownModule fails on a tree or a Bindings the module built
 that is still alive, on a tree node or an ast_bindings object made in the module's run and alive at its end (by class,
-through gc.get_objects() by identity against setUpModule's list of those alive at the module's start, held to the end,
-so a node kept without its tree's root is counted), and on a text of the tree's read, as the read recorded it at its
-parse, parsed other than the parse pin expects over the whole module run, and then drops that value (_release). No
-check of the teardown collects: every scan the module builds has its bindings released before it is dropped, so no
-cycle holds a tree the module made, and one that did would red those checks. The release pin holds the release, the plain value and the teardown's first two
-checks; the parse pin holds the third. This is an EXCEPTION to tests/parse_cache.py's rule that the AST censuses under
-tests/ parse through its one process-wide cache, and the reason is a measurement (PR #850's review round 9, E ruled
+through gc.get_objects() by identity against setUpModule's list of those gc.get_objects() listed at the module's start,
+held to the end, so a node kept without its tree's root is counted), on a read of the tree that aborted in the module
+run, reported with the file it stopped at and the cause (_ABORTED), and on a text of the tree's read, as the read
+recorded it at its parse, parsed other than the parse pin expects over the whole module run, and then drops that value
+(_release). No check of the teardown collects: every scan the module builds has its bindings released before it is
+dropped, so no cycle holds a tree the module made, and one that did would red those checks. The release pin holds the
+release, the plain value and the checks on a tree or a Bindings still alive and on the objects made in the module's run;
+the aborted read's pin (test_an_aborted_read_of_the_tree_reports_where_it_stopped_and_expects_no_parse_count) holds the
+check on an aborted read, and that the parse check then names no file; the parse pin holds the parse check. This is an
+EXCEPTION to tests/parse_cache.py's rule that the AST censuses under tests/ parse through its one process-wide cache,
+and the reason is a measurement (PR #850's review round 9, E ruled
 again, from CI's Python cells): that cache keeps every tree it parsed for the rest of the process and its derived()
 freezes the heap, and with this module's table built there, the modules after it that read the kernel's perf snapshot,
 whose gc.get_freeze_count() read walks the frozen objects, took 93 to 113 s longer than on main on every cell with a
@@ -142,11 +147,11 @@ the scan cannot split) or to none at all (an attribute of an imported module, sy
 function defined in the module or of a name no scope binds (a helper's return, a star import's), a passthrough's
 splatted argv, and a keywords splat a spawn is handed alone; and, for a spawn with no site (_SpawnScan._list_unread), a
 Python child's -c program the rule at DYNAMIC_CALLS lists (it mentions the kernel and calls a callee the scan cannot
-name or a dynamic road and no process starter, over texts the scan reads whole; a child that runs the kernel as __main__
-through runpy or an exec of its source among them; N79 to N91, N93, N103, N126), and a text in the argv or executable=,
-outside such a program, that spells a name one of whose declarations holds romp-kernel as text (what a run-time lookup
-reads by name, among them globals()[...], a %-mapping over locals(), eval, getattr, string.Template and a shell's
-environment variable; N67 to N78, N101, N102). A listed entry requires no trio, and those
+name or a dynamic road and no callee the scan reads as a starter, over texts the scan reads whole; a child that runs the
+kernel as __main__ through runpy or an exec of its source among them; N79 to N91, N93, N103, N126), and a text in the
+argv or executable=, outside such a program, that spells a name one of whose declarations holds romp-kernel as text
+(what a run-time lookup reads by name, among them globals()[...], a %-mapping over locals(), eval, getattr,
+string.Template and a shell's environment variable; N67 to N78, N101, N102). A listed entry requires no trio, and those
 two kinds hold real launches, among them exec of a constant program (N89), __import__ (N80), getattr (N87),
 globals()[...] (N70) and runpy.run_path with run_name '__main__' (N82). What it does not list, in the classes found so
 far, each held by a
@@ -299,11 +304,13 @@ SHELL_OPERATOR = set("();<>|&")    # a word of these alone is an operator: a red
 # resolves to, among them the spawn functions and the rest of the subprocess module's, os's system, popen, exec, spawn,
 # posix_spawn and fork families, pty.spawn, asyncio's subprocess starters and multiprocessing's Process. No such list is
 # complete. The listing of a Python child's -c program reads its callees for any of them (_callee_reading's "starts";
-# PROCESS_SPELLINGS: the bare spelling of an unbound callee, and the method name of asyncio's loop-level starters, whose
-# receiver no binding reaches) and lists no program that calls one, whatever else it calls (_program_calls "starts"; row
-# N112, beside exec, is named). A starter outside them, among them _posixsubprocess.fork_exec, is read as any named
-# callee is, so whether its program is listed is the rule at DYNAMIC_CALLS below: beside getattr it is listed (row
-# N126), and alone its match is named by the comparison (row N108)
+# PROCESS_SPELLINGS: matched against the last part of every name a callee denotes (_callee_names), bound or not, as the
+# module docstring's read of a callee by the last part of its name says, among them an unbound callee's bare spelling
+# (a star import's run, row N113, beside exec; an unbound loop's subprocess_exec), and asyncio.run and platform.system,
+# which start no process) and lists no program with a callee read as a starter, whatever else it calls (_program_calls
+# "starts"; row N112, beside exec, is named). A starter outside them whose last part PROCESS_SPELLINGS does not hold,
+# among them _posixsubprocess.fork_exec, is read as any named callee is, so whether its program is listed is the rule at
+# DYNAMIC_CALLS below: beside getattr it is listed (row N126), and alone its match is named by the comparison (row N108)
 PROCESS_FUNCTIONS = (SPAWN_FUNCTIONS | {"subprocess.getoutput", "subprocess.getstatusoutput", "pty.spawn",
                                         "asyncio.create_subprocess_exec", "asyncio.create_subprocess_shell", "multiprocessing.Process"}
                      | {"os." + f for f in ("system", "popen", "posix_spawn", "posix_spawnp", "execl", "execle", "execlp", "execlpe", "execv",
@@ -315,10 +322,13 @@ PROCESS_SPELLINGS = {f.rsplit(".", 1)[-1] for f in PROCESS_FUNCTIONS} | {"subpro
 # module it comes from (importlib, runpy), an alias of one included (_callee_reading's "dynamic", as is a callee the scan
 # names only in part or not at all). The rule, _program_calls "dynamic", for a spawn with no site and a Python child the
 # scan can name: a program is listed when it mentions the kernel, the scan assembles its texts and each parses with no
-# placeholder read as code (rows N114 and N115, which fail that, are named), no callee is a starter PROCESS_FUNCTIONS
-# holds (row N112 is named), and some callee reads as dynamic, whatever else it calls (row N126). A road outside them,
-# among them a function that runs a text (row N109) or a starter handed over as a value (row N106), makes no program
-# dynamic: alone, its match is named by the comparison; beside a road they hold, the program is listed (row N126).
+# placeholder read as code (rows N114 and N115, which fail that, are named), no callee reads as a starter
+# (_callee_reading "starts": a name PROCESS_FUNCTIONS holds, or any name a callee denotes whose last part
+# PROCESS_SPELLINGS holds, bound or not, asyncio.run and platform.system among them; rows N112 and N113 are named), and
+# some callee reads as dynamic, whatever else it calls (row N126). A road outside them that the scan names in full,
+# among them a function that runs a text through the class or as the module's function (row N109) or a starter handed
+# over as a value (row N106), makes no program dynamic: alone, its match is named by the comparison; beside a road they
+# hold, the program is listed (row N126).
 DYNAMIC_CALLS = {"exec", "eval", "compile", "__import__", "getattr", "partial"}
 DYNAMIC_MODULES = {"importlib", "runpy"}
 KERNEL_MENTION = re.compile(r"romp-kernel|bin/romp(?![\w-])")   # a -c program's text that names the kernel or the CLI
@@ -363,8 +373,9 @@ class _SpawnScan:
     attribute of an imported module), a call of a function defined in the module or of a name no scope binds (a helper's
     return, a star import's), the argv of a passthrough (`run(*a)`) and a keywords splat a spawn is handed alone; and,
     for a spawn with no site, a Python child's -c program the rule at DYNAMIC_CALLS lists (it mentions the kernel and
-    calls a callee it cannot name or a dynamic road and no process starter, over texts it reads whole), and a text
-    spelling a name bound to the kernel's name (_list_unread); what it does not list is the module docstring's residual."""
+    calls a callee it cannot name or a dynamic road and no callee it reads as a starter, over texts it reads whole), and
+    a text spelling a name bound to the kernel's name (_list_unread); what it does not list is the module docstring's
+    residual."""
 
     def __init__(self, tree, filename="<src>"):
         self.filename = filename
@@ -455,10 +466,10 @@ class _SpawnScan:
     def _list_unread(self, call, nodes):
         """For a spawn with no site, list what the scan reads no value for where a run-time reading may reach the
         kernel: each Python -c program met in the argv that the rule at DYNAMIC_CALLS lists (_program_calls "dynamic":
-        it mentions the kernel and calls a callee the scan cannot name or a dynamic road and no process starter, over
-        texts the scan reads whole; a dynamic road by DYNAMIC_CALLS or DYNAMIC_MODULES, among them exec of any text,
-        eval, a dynamic import, runpy, getattr and functools.partial), listed as the program element when
-        it sits in the call, else as the argv that reached it; and each string in the argv or the executable= (an
+        it mentions the kernel and calls a callee the scan cannot name or a dynamic road and no callee the scan reads
+        as a starter, over texts the scan reads whole; a dynamic road by DYNAMIC_CALLS or DYNAMIC_MODULES, among them
+        exec of any text, eval, a dynamic import, runpy, getattr and functools.partial), listed as the program element
+        when it sits in the call, else as the argv that reached it; and each string in the argv or the executable= (an
         f-string whole), outside a Python child's program, that spells, as a whole word, a name a declaration of which,
         in any scope of the module, holds the kernel's name as text (_kernel_named): the scan reads it as text and a
         run-time lookup reads it as that name (among them globals()[...], a %-mapping over locals(), eval, getattr,
@@ -1319,7 +1330,8 @@ def _hermetic(src):
 # -- one file's tree at a time (_parse counts the file trees alive at each parse, and the read counts the objects it
 # -- made that are alive when its loop ends, by class; the cycle test and the release pin hold them to one and none);
 # -- tearDownModule fails on a tree or Bindings still alive, on their objects made in the module's run and alive at its
-# -- end (against setUpModule's list), and on a text of the read, as it parsed it, parsed other than expected --------
+# -- end (against setUpModule's list), on a read of the tree that aborted (the file it stopped at and the cause), and
+# -- on a text of the read, as it parsed it, parsed other than expected -------------------------------------------
 _PARSES = collections.Counter()   # _text_key(text) -> the parses _parse_text made of that text in this module run
 _TREES = []                       # (filename, weak reference) for every tree _parse_text returned in this module run
 _BINDINGS = []                    # (filename, weak reference) for every Bindings _bindings_of built in this module run
@@ -1386,8 +1398,9 @@ def _parse(path, rel):
     one: a weak reference to each (_FILE_TREES, the dead dropped at each call) and the most alive at any call, the new
     one among them (_MOST_FILE_TREES), which a read resets at its start and carries in its value (_read_root), so the
     cycle test and the release pin hold the read to one file tree at a time. It counts roots: a node kept without its
-    root is not counted here, and the read's `born` sees it (_read_root). A -c program's tree, parsed by _parse_text
-    alone inside one file's scan, is not a file tree and is not counted."""
+    root is not counted here, and the read's `born` sees it if it is still alive when the read's loop ends (_read_root,
+    with count). A -c program's tree, parsed by _parse_text alone inside one file's scan, is not a file tree and is not
+    counted."""
     with open(path, encoding="utf-8") as f:
         text = f.read()
     tree = _parse_text(text, rel)
@@ -1456,11 +1469,11 @@ def _read_root(root, skip=(), listing=None, count=False):
     file parse, the read resets that count's maximum when it starts and carries it as `most_trees`; with `count`, the
     read also takes the list of the objects of _HELD_TYPES alive when it starts (_held_alive) and, when its loop ends,
     carries as `born` those alive then that are not in that list, by class (_born: through gc.get_objects(), no
-    collection), so a tree's node kept past its file, root or not, is seen (PR #850's eleventh review round). The cycle
-    test holds `most_trees` to one and `born` to none over its plant read, and the release pin over the tree's read
-    (_tree_read counts); the other plant reads do not count, which saves two walks of every object the collector tracks
-    for each. From that one parse: each walked
-    file's module-level environment writes (_module_level_env_writes: the set of keys, or the message of the
+    collection), so a tree's node still alive when the loop ends, root or not, is seen (one let go before then is not;
+    the module docstring states it; PR #850's eleventh review round). The cycle test holds `most_trees` to one and
+    `born` to none over its plant read, and the release pin over the tree's read (_tree_read counts); the other plant
+    reads do not count, which saves two walks of every object gc.get_objects() lists for each. From that one parse: each
+    walked file's module-level environment writes (_module_level_env_writes: the set of keys, or the message of the
     UnreadableEnvWrite raised for a file whose keys the scan cannot read, which _peers_writers raises again), and each
     table module's roads row (_roads_row), its comparison read with the module's entries of `listing`, the hand listing
     (LISTED_BY_HAND unless a plant hands its own). The value is a _TreeRead of plain values: `table` the _RoadsTable
@@ -1525,11 +1538,16 @@ def _tree_read(root=None):
 
 
 def _held_alive():
-    """Every object of _HELD_TYPES (a tree's nodes, ast.AST, and ast_bindings' Bindings, Scope and Declaration) alive in
-    the process, whoever made it, as a list, read through gc.get_objects(), which lists every object the collector
-    tracks (each of these types is one) and changes no collector state (no collection, no freeze, no threshold): the
-    list a read takes when it starts (_read_root's `count`) and the module's at its start (setUpModule), each held until
-    _born reads against it."""
+    """Every object of _HELD_TYPES (a tree's nodes, ast.AST, and ast_bindings' Bindings, Scope and Declaration) that
+    gc.get_objects() lists, whoever made it, as a list: every object the collector tracks (each of these types is one)
+    but those gc.freeze() has moved to the permanent generation, which gc.get_objects() does not list. In this repo only
+    tests/parse_cache.py's derived() freezes, after each build it keeps, and nothing unfreezes; its one caller,
+    tests/test_thread_stop_census.py, sorts after this module, so in the suite's order nothing is frozen when this
+    module runs, and a run that puts the census first in the same process leaves the objects it froze out of every list
+    this module takes, and so out of `born`. This module freezes nothing, so each object its run makes is listed.
+    Reading the list changes no collector state (no collection, no freeze, no threshold): the list a read takes when it
+    starts (_read_root's `count`) and the module's at its start (setUpModule), each held until _born reads against
+    it."""
     return [o for o in gc.get_objects() if isinstance(o, _HELD_TYPES)]
 
 
@@ -1570,12 +1588,14 @@ def _parse_count_faults(read=None, reads=None):
     handed, there are no rows: the aborted read parsed the files before the one it stopped at and none after, so no
     count can be expected of a file, and the module end reports the abort, with the file and the cause, in their place
     (PR #850's eleventh review round: the no-read branch ran after an aborted read and named every file it never
-    reached as parsed 0 times against 1, and a later read that completed would leave those files at once against
-    twice). When no read was made in this process (no `read` handed and none in _TREE_READ, as on an xdist worker that
-    ran none of the module's tests that read the tree), the files under tests/ (_tree_module_paths) are read here at
-    their current text, no tree built, and each text is expected at the placement test's parses alone (_READS is 0
-    then: every read made either completed or aborted), so a file of the tree parsed outside a read is still named.
-    Expected otherwise: one parse for
+    reached as parsed 0 times against the reads counted, one per attempt, since each later test that reads the tree
+    tried again (0 against 6 in the module's full run at the round-11 review head over a scratch copy with a file under
+    its tests/ that does not parse), and a later read that completed would leave those files at once against one more
+    than the reads that aborted). When no read was made in this process (no `read` handed and none in _TREE_READ, as on
+    an xdist worker that ran none of the module's tests that read the tree), the files under tests/ (_tree_module_paths)
+    are read here at their current text, no tree built, and each text is expected at the placement test's parses
+    alone (_READS is 0 then: every read made either completed or aborted), so a file of the tree parsed outside a read
+    is still named. Expected otherwise: one parse for
     each file of the read that holds the text, for each of the `reads` reads of it (by default _READS, the reads of the
     tree the run made), and the placement test's parses of that text besides. A file of the read parsed again through
     _parse_text moves its key past the expected count and is named; a file edited after the read is held to the text the
@@ -3485,10 +3505,11 @@ class HermeticKernelPostal(unittest.TestCase):
     def test_an_aborted_read_of_the_tree_reports_where_it_stopped_and_expects_no_parse_count(self):
         """D (PR #850's eleventh review round): a read of the tree that raises is reported with the file it stopped at
         and the cause, and the parse check expects no count of it, where the check's no-read branch had named every
-        file the read never reached as parsed 0 times against 1. Over a scratch directory standing for tests/
-        (_tree_read's root): test_a.py parses, test_b.py does not, and test_c.py, after it in the read's order, is never
-        reached. With the module's state emptied (_release) and put back after, and setUpModule's list kept for the
-        module end's other checks: the read raises ReadAborted naming test_b.py and a SyntaxError; the module end's
+        file the read never reached as parsed 0 times against the reads counted, one per attempt, since each later test
+        that reads the tree tried again (0 against 6 in the red named below). Over a scratch directory standing for
+        tests/ (_tree_read's root): test_a.py parses, test_b.py does not, and test_c.py, after it in the read's order,
+        is never reached. With the module's state emptied (_release) and put back after, and setUpModule's list kept for
+        the module end's other checks: the read raises ReadAborted naming test_b.py and a SyntaxError; the module end's
         checks (_module_end_faults) report that abort and nothing else; and the parse check (_parse_count_faults) names
         nothing. Then test_b.py is made to parse and the tree read again in the same run: the read completes, and the
         checks still report the first read's abort alone (the two reads, the first stopped partway, would otherwise
@@ -3560,10 +3581,11 @@ class HermeticKernelPostal(unittest.TestCase):
         is put back after each call so the later tests of the run read the same read. Over the state as it stands it
         raises nothing and leaves every container empty: every tree and Bindings recorded in the module run so far, the
         read's and those of every test that ran before this one in the process, is gone, no tree node or ast_bindings
-        object made in the module's run so far is alive, and no text of the tree's read, as the read parsed it, was
-        parsed other than expected (_module_end_faults; _still_held reads each weak reference and the objects of those
-        types alive now that are not in setUpModule's list, by class, with no collection: a weak reference sees only the
-        tree root or the Bindings it refers to, the count by class also a node kept without its root). With a planted
+        object made in the module's run so far is alive, no read of the tree aborted in the module run, and no text of
+        the tree's read, as the read parsed it, was parsed other than expected (_module_end_faults; _still_held reads
+        each weak reference and the objects of those types alive now that are not in setUpModule's list, by class, with
+        no collection: a weak reference sees only the tree root or the Bindings it refers to, the count by class also a
+        node kept without its root). With a planted
         tree held, and planted statements held whose tree's root is dead, it raises naming the tree and not the
         statements' file, counts among the Assign nodes made and alive at least the statements held, and leaves the
         containers empty too. At the module's end tearDownModule runs the same checks over the whole run, so a tree kept
