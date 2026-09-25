@@ -3970,7 +3970,8 @@ class TheCountersOneSite(unittest.TestCase):
         containing the name at a subscript key and at a call of each name of the two lists and none at a call of print, on neither);
         the counter census's population, the files the glob
         kernel/*.py matches in the kernel's real directory, non-recursive, each read as text, the case failing by name on any whose
-        text as the interpreter decodes it (importlib.util.decode_source over its bytes) differs from that read, and each whose text
+        text as importlib.util.decode_source gives it differs from that read (a file whose first line opens with a lone CR above a
+        utf-7 declaration passes that check: the module docstring's limit, under the precondition of an honest source), and each whose text
         holds the counter's name in any letter case parsed and walked, so a module in a file that glob does not match is outside the counter census
         whatever its text spells, in cli/, postal/ or any other directory, in a subdirectory of kernel/, or in a file of kernel/ not
         named *.py, which load_source loads just as well, and a write of the counter from such a module is caught only by execution,
@@ -4253,9 +4254,10 @@ class TheCountersOneSite(unittest.TestCase):
         # arguments and the keyword values walked with _walk, each constant reported once, before the whole-text rule reads it)
         files = sorted(Path(os.path.realpath(km.__file__)).parent.glob("*.py"))
         texts = {p.name: p.read_text(encoding="utf-8") for p in files}
-        # the refusal, over every file the glob matches and before the population filter below: the file's text as the interpreter
-        # decodes it must equal the UTF-8 read the census parses (review round 10, extra5-1: in a utf-7-declared file, a counter write
-        # the interpreter runs was a comment to the UTF-8 read)
+        # the refusal, over every file the glob matches and before the population filter below: the file's text as
+        # importlib.util.decode_source gives it must equal the UTF-8 read the census parses, the module docstring stating the lone-CR
+        # limit (review round 10, extra5-1: in a utf-7-declared file, a counter write the interpreter runs was a comment to the UTF-8
+        # read)
         undecoded = []
         for p in files:
             try:
@@ -4263,12 +4265,13 @@ class TheCountersOneSite(unittest.TestCase):
                     undecoded.append(p.name)
             except (SyntaxError, ValueError, LookupError) as e:
                 undecoded.append("%s (%s: %s)" % (p.name, type(e).__name__, e))
-        self.assertEqual(undecoded, [], "every file the glob kernel/*.py matches reads the same as the interpreter decodes it "
-                                        "(importlib.util.decode_source over its bytes, which honours a PEP 263 encoding declaration) "
-                                        "as by the UTF-8 read this census parses, checked before the population filter: a file whose "
-                                        "decoded text differs, or whose decode raises, is refused, since the census would parse text "
-                                        "other than the code the interpreter runs (a utf-7 declaration can turn a line the UTF-8 read "
-                                        "parses as a comment into a write of the counter): %s" % ", ".join(undecoded))
+        self.assertEqual(undecoded, [], "every file the glob kernel/*.py matches reads the same by importlib.util.decode_source over "
+                                        "its bytes (which honours a PEP 263 declaration it finds on the first two lines split at LF; "
+                                        "the module docstring states the lone-CR limit) as by the UTF-8 read this census parses, "
+                                        "checked before the population filter: a file whose decoded text differs, or whose decode "
+                                        "raises, is refused, since the census would parse text other than decode_source's (a utf-7 "
+                                        "declaration can turn a line the UTF-8 read parses as a comment into a write of the counter): "
+                                        "%s" % ", ".join(undecoded))
         population = [f for f, text in texts.items() if name.lower() in text.lower()]
         self.assertIn(KERNEL_FILE, population, "the census reads each file the glob kernel/*.py matches in the kernel's directory, "
                                                "non-recursive, whose text holds %s in any case, and the kernel defines it (a derived "
