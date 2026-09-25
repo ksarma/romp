@@ -1533,7 +1533,8 @@ def _loader_births(path, judge):
     `vars(jd)[f"load_goals_shared"]` in a replaced helper passed every witness); it holds the dotted strings handed to exec, eval
     and compile (`"jd.load_goals_shared"`) and the concatenations that keep the needle in one piece (`"load_goals_" + "shared"`,
     `vars(jd)["load_goals_" + "shared"]`), which spell no door whole, and it names in the message the door a constant went
-    through. Each constant is reported once, by the clause that reaches it first (the walk is breadth-first, so a Call or a
+    through (the dict-read kind's pin is the enumeration's row F30i, `jd.__dict__.get('load_goals_' + 'shared')`, which reds with
+    that kind dropped; review round 11, tests-2). Each constant is reported once, by the clause that reaches it first (the walk is breadth-first, so a Call or a
     Subscript is visited before its constant). The first cut read a dynamic lookup's arguments alone, and a verifier of the
     consolidation pass planted both subscript forms and `jd.__dict__.get(...)` as a real load inside a replaced helper's body with
     the module green. The limit that remains is what the two clauses' boundary leaves out, stated by that boundary and not by a
@@ -4644,7 +4645,8 @@ class TheCountersOneSite(unittest.TestCase):
 # concatenation that keeps the needle in one piece); a verifier of the round-4 fixes added seven (F68 to F71, on the string side: a
 # cased, a padded and a bytes constant the pin's three normalisations read as the name, at a listed lookup, bound first or as a
 # subscript key; F72 to F74, on the assembled side: a needle-keeping concatenation handed to two unlisted callables and a reversed
-# literal, transforms the pin does not undo). The bodies' `romp_judge` is the stub's name when loaded. For a form of the string or
+# literal, transforms the pin does not undo); review round 11, tests-2, added one (F30i, on the string side: a needle-keeping concatenation
+# handed to a dict read, which the consumer clause's dict-read kind alone refuses). The bodies' `romp_judge` is the stub's name when loaded. For a form of the string or
 # the assembled class the enumeration also runs _loader_births over the form's file and expects a birth from
 # the first and none from the second, so each class is held on the side it falls.
 _STUB_JUDGE, _STUB_KERNEL = "romp_judge_c7pin_stub", "romp_kernel_c7pin_stub"
@@ -4839,6 +4841,11 @@ _LOADER_FORMS = [
      "def f(sid):\n    return vars(jd)[(k := 'load_goals_shared')](sid)\n", 'f', None, [], 0, 'string'),
     ('F30h', 'concatenation as a subscript key that keeps the needle in one piece (the slice walk alone catches it)',
      "def f(sid):\n    return vars(jd)['load_goals_' + 'shared'](sid)\n", 'f', None, [], 0, 'string'),
+    # The consumer clause's dict-read kind (review round 11, tests-2: F30d, the one dict-read row before it, spells the door whole, so
+    # the value rule held it with `or last in _DICT_READS` dropped from _loader_births and the module green). This row keeps the
+    # needle in one piece and spells no door whole, so that kind alone holds it.
+    ('F30i', 'concatenation handed to a dict read that keeps the needle in one piece (the dict-read kind alone catches it)',
+     "def f(sid):\n    return jd.__dict__.get('load_goals_' + 'shared')(sid)\n", 'f', None, [], 0, 'string'),
     ('F31', 'keyword argument NAMED like the loader (no loader referenced)',
      'def g(**k):\n    return k\ndef f(sid):\n    return g(load_goals_shared=sid)\n', 'f', None, [], 0, 'none'),
     ('F32', 'a PARAMETER named like the loader, called (not the loader)',
@@ -5047,7 +5054,7 @@ class TheCensusOverEveryForm(unittest.TestCase):
 
     def test_every_loader_form_is_a_site_where_the_table_says_or_a_stated_limit(self):
         here = sys.version.split()[0]
-        self.assertEqual(len(_LOADER_FORMS), 122, "the table carries the lens's 95 loader forms, a consolidation-pass verifier's four, the "
+        self.assertEqual(len(_LOADER_FORMS), 123, "the table carries the lens's 95 loader forms, a consolidation-pass verifier's four, the "
                                                   "round-3 fixes' three (a t-string interpolation, a type-parameter bound and a type-parameter "
                                                   "default), the round-4 fixes' ten (methodcaller, itemgetter over vars(jd), a partial of "
                                                   "getattr, a match-mapping key, an f-string handed to getattr with and without a piece "
@@ -5056,8 +5063,9 @@ class TheCensusOverEveryForm(unittest.TestCase):
                                                   "padded and a bytes constant at a listed lookup or bound first, a bytes subscript key, and three "
                                                   "completions of the name the pin does not undo), and the round-5 consolidation's three (a bytes "
                                                   "literal in another codec at getattr, a chars-strip at an unlisted receiver and a casefold at "
-                                                  "getattr, the three completions the round-5 recaps name as not undone)")
-        self.assertEqual(len({row[0] for row in _LOADER_FORMS}), 122, "with distinct ids")
+                                                  "getattr, the three completions the round-5 recaps name as not undone), and review round "
+                                                  "11's one, tests-2 (a concatenation that keeps the needle in one piece, handed to a dict read)")
+        self.assertEqual(len({row[0] for row in _LOADER_FORMS}), 123, "with distinct ids")
         counted, limits, gated = 0, {}, []
         for fid, form, body, dotted, needs, sites, jds, limit in _LOADER_FORMS:
             self.assertEqual(limit is None, bool(sites), "%s (%s): a form the census counts names no limit and a form it misses names one" % (fid, form))
@@ -5092,8 +5100,8 @@ class TheCensusOverEveryForm(unittest.TestCase):
                 counted += 1
             else:
                 limits[limit] = limits.get(limit, 0) + 1
-        self.assertEqual(counted + sum(limits.values()) + len(gated), 122, "every row was counted, a limit, or gated: %d, %r, %r" % (counted, limits, gated))
-        self.assertEqual(limits, {"string": 26, "assembled": 9, "outside": 9, "wrapper": 2, "none": 5},
+        self.assertEqual(counted + sum(limits.values()) + len(gated), 123, "every row was counted, a limit, or gated: %d, %r, %r" % (counted, limits, gated))
+        self.assertEqual(limits, {"string": 27, "assembled": 9, "outside": 9, "wrapper": 2, "none": 5},
                          "the missed forms by limit: the lens's classification with its string class split by what the pin refuses "
                          "(the round-4 fixes moved F07d and F45 into the string class, a constant spelling a door whole being refused wherever "
                          "it appears, and added nine string rows, four for the doors the round found on no list, one for the f-string of the "
@@ -5101,7 +5109,8 @@ class TheCensusOverEveryForm(unittest.TestCase):
                          "f-string that splits the needle; a verifier of the round-4 fixes added four string rows, the cased, the padded and the "
                          "bytes constants the pin's three normalisations read as the name, and three assembled rows, a needle-keeping "
                          "concatenation at two unlisted receivers and a reversed literal; the round-5 consolidation added three assembled "
-                         "rows, a bytes literal in another codec at getattr, a chars-strip at an unlisted receiver and a casefold at getattr)")
+                         "rows, a bytes literal in another codec at getattr, a chars-strip at an unlisted receiver and a casefold at getattr; review "
+                         "round 11, tests-2, added one string row, a concatenation that keeps the needle in one piece handed to a dict read)")
 
     def test_every_bump_form_reads_as_the_table_says(self):
         self.assertEqual(len(_BUMP_FORMS), 20, "the table carries the lens's bump forms")
