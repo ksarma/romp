@@ -141,8 +141,8 @@ argv that resolves to a declaration with no readable value (a parameter, an impo
 the scan cannot split) or to none at all (an attribute of an imported module, sys.executable most of all), a call of a
 function defined in the module or of a name no scope binds (a helper's return, a star import's), a passthrough's
 splatted argv, and a keywords splat a spawn is handed alone; and, for a spawn with no site (_SpawnScan._list_unread), a
-Python child's -c program that mentions the kernel and calls a callee the scan cannot name or a dynamic road (a child
-that runs the kernel as __main__ through runpy or an exec of its source among them; N79 to N91, N93, N103), and a text
+Python child's -c program that mentions the kernel and calls a callee the scan cannot name or a dynamic road, and no
+process starter PROCESS_FUNCTIONS holds (a child that runs the kernel as __main__ through runpy or an exec of its source among them; N79 to N91, N93, N103, N126), and a text
 in the argv or executable=, outside such a program, that spells a name one of whose declarations holds romp-kernel as
 text (what a run-time lookup reads by name, among them globals()[...], a %-mapping over locals(), eval, getattr,
 string.Template and a shell's environment variable; N67 to N78, N101, N102). A listed entry requires no trio, and those
@@ -297,10 +297,12 @@ SHELL_OPERATOR = set("();<>|&")    # a word of these alone is an operator: a red
 # calls that start a process that the listing of a Python child's -c program reads, by the canonical name a callee
 # resolves to, among them the spawn functions and the rest of the subprocess module's, os's system, popen, exec, spawn,
 # posix_spawn and fork families, pty.spawn, asyncio's subprocess starters and multiprocessing's Process. No such list is
-# complete. A starter outside it, among them _posixsubprocess.fork_exec (row N108), is named by the comparison under its
-# rule. The listing of a Python child's -c program reads its callees for any of them (_callee_reading's "starts";
+# complete. The listing of a Python child's -c program reads its callees for any of them (_callee_reading's "starts";
 # PROCESS_SPELLINGS: the bare spelling of an unbound callee, and the method name of asyncio's loop-level starters, whose
-# receiver no binding reaches), and takes no program that calls one (_program_calls)
+# receiver no binding reaches) and takes no program that calls one, whatever else it calls (_program_calls; row N112,
+# beside exec, is named). A starter outside them, among them _posixsubprocess.fork_exec, is read as any named callee is:
+# a program that mentions the kernel and calls it is listed when another of its callees reads as dynamic (DYNAMIC_CALLS
+# below; row N126, beside getattr), and its match is named by the comparison otherwise (row N108)
 PROCESS_FUNCTIONS = (SPAWN_FUNCTIONS | {"subprocess.getoutput", "subprocess.getstatusoutput", "pty.spawn",
                                         "asyncio.create_subprocess_exec", "asyncio.create_subprocess_shell", "multiprocessing.Process"}
                      | {"os." + f for f in ("system", "popen", "posix_spawn", "posix_spawnp", "execl", "execle", "execlp", "execlpe", "execv",
@@ -309,9 +311,12 @@ PROCESS_FUNCTIONS = (SPAWN_FUNCTIONS | {"subprocess.getoutput", "subprocess.gets
 PROCESS_SPELLINGS = {f.rsplit(".", 1)[-1] for f in PROCESS_FUNCTIONS} | {"subprocess_exec", "subprocess_shell"}
 # dynamic roads the listing reads among those a Python -c child's callee may take to code or a function the scan cannot
 # read: by the last part of the name it denotes (exec, eval, compile, __import__, getattr, functools.partial) or by the
-# module it comes from (importlib, runpy), an alias of one included (_callee_reading's "dynamic", which _program_calls
-# reports to the listing). A road outside them, among them a function that runs a text (row N109) or a starter handed over
-# as a value (row N106), is named by the comparison.
+# module it comes from (importlib, runpy), an alias of one included (_callee_reading's "dynamic", as is a callee the scan
+# names only in part or not at all). A program that mentions the kernel, calls one, and calls no starter PROCESS_FUNCTIONS
+# holds is listed, whatever else it calls (_program_calls "dynamic"; row N126). A road outside them, among them a function
+# that runs a text (row N109) or a starter handed over as a value (row N106), makes no program dynamic: a program whose
+# callees are all named is not listed, and its match is named by the comparison; beside a road they hold, it is listed
+# (row N126).
 DYNAMIC_CALLS = {"exec", "eval", "compile", "__import__", "getattr", "partial"}
 DYNAMIC_MODULES = {"importlib", "runpy"}
 KERNEL_MENTION = re.compile(r"romp-kernel|bin/romp(?![\w-])")   # a -c program's text that names the kernel or the CLI
@@ -356,8 +361,8 @@ class _SpawnScan:
     attribute of an imported module), a call of a function defined in the module or of a name no scope binds (a helper's
     return, a star import's), the argv of a passthrough (`run(*a)`) and a keywords splat a spawn is handed alone; and,
     for a spawn with no site, a Python child's -c program that mentions the kernel and calls a callee it cannot name or
-    a dynamic road, and a text spelling a name bound to the kernel's name (_list_unread); what it does not list is the
-    module docstring's residual."""
+    a dynamic road and no process starter PROCESS_FUNCTIONS holds, and a text spelling a name bound to the kernel's name
+    (_list_unread); what it does not list is the module docstring's residual."""
 
     def __init__(self, tree, filename="<src>"):
         self.filename = filename
@@ -448,7 +453,7 @@ class _SpawnScan:
     def _list_unread(self, call, nodes):
         """For a spawn with no site, list what the scan reads no value for where a run-time reading may reach the
         kernel: each Python -c program met in the argv that mentions the kernel and calls a callee the scan cannot name
-        or a dynamic road (_program_calls "dynamic"; a dynamic road by DYNAMIC_CALLS or DYNAMIC_MODULES, among them exec
+        or a dynamic road, and no process starter PROCESS_FUNCTIONS holds (_program_calls "dynamic"; a dynamic road by DYNAMIC_CALLS or DYNAMIC_MODULES, among them exec
         of any text, eval, a dynamic import, runpy, getattr and functools.partial), listed as the program element when
         it sits in the call, else as the argv that reached it; and each string in the argv or the executable= (an
         f-string whole), outside a Python child's program, that spells, as a whole word, a name a declaration of which,
@@ -2980,6 +2985,12 @@ PLANT_TABLE = (
     ('N125 the CLI joined by a str.join over a literal list from its directory beside up, the directory an imported name: an '
      'entry the scan lists holds the start of the match and not its end (the comparison names it)', 'no-spawn', None,
      'from helpers import BIN\nsubprocess.run(["/".join([BIN, "romp"]), "up"])'),
+    ("N126 a Python -c child calling a process starter PROCESS_FUNCTIONS does not hold (_posixsubprocess.fork_exec), and one "
+     "handing a starter to map as a value, each beside getattr (a dynamic road, listed)", 'no-spawn', None,
+     'subprocess.run([sys.executable, "-c", "import _posixsubprocess; _posixsubprocess.fork_exec([\'bin/romp-kernel\']); '
+     'getattr(SRC, \'x\')"])\n'
+     'subprocess.run([sys.executable, "-c", "import subprocess; list(map(subprocess.run, [[\'bin/romp-kernel\']])); '
+     'getattr(SRC, \'x\')"])'),
     ('R1 a rebinding in one function', 'refused-loud', (4, 2, 3),
      'def t():\n    k = os.path.join(BIN, "romp-kernel")\n    k = [sys.executable, "-m", "pytest", "-k", "boot"]\n    subprocess.run(k)'),
     ('R2 two module-level bindings that disagree', 'refused-loud', (3, 1, 2),
