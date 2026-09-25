@@ -17,7 +17,8 @@ assembly entry reading a released slot again) belong to an index nothing release
 dead until the cap or a new list registering the same row under their id, and on a large machine the cap (MemTotal /
 32 KiB) had not come after 73 hours: 6.15 million entries against a 7.73 million cap, most of them for freed lists. Each
 list's own weak reference now queues itself when the list is freed, and the next registration or release removes that
-list's entries, counted `collected` and `expired`.
+list's entries, counted `collected` and `expired`. A list a finalizer resurrects gets a fresh reference at its next
+registration (Resurrected below).
 Synthetic documents only."""
 import copy
 import gc
@@ -146,9 +147,11 @@ class Accounting(Synthetic):
         del ixb, lb
         gc.collect()
         self.assertEqual(_entries(), (2, 2), "B's entries stand dead at the old end until the next build, re-registration or release")
-        la[2]                                                      # the next build: both of B's dead entries leave at once,
-        st = em.asm_index_stats()                                  #  at the drain before the registration, and no live entry is
-        self.assertEqual((st["expired"], st["evictions"]), (2, 0))  #  evicted for them
+        la[2]                                                      # the next build: both of B's dead entries leave at once, at
+        #                                                            the drain before the registration
+        self.assertEqual(_entries(), (3, 0), "both of B's dead entries left at the drain")
+        st = em.asm_index_stats()                                  # ...and no live entry is evicted for them
+        self.assertEqual((st["expired"], st["evictions"]), (2, 0))
         self.assertEqual(_built(la), [0, 1, 2], "no slot of the live list is touched for a dead entry")
         la[3]
         st = em.asm_index_stats()
@@ -438,8 +441,8 @@ class CollectionEvent(Synthetic):
     a cycle, however it came to hold entries, and on whichever thread it dies. Each test that frees a list holding entries
     asserts the LRU's (live, dead) before `collected`, so that on a source without the event its red is the dead entries
     themselves. On such a source the other tests red on what they add: the no-entry case on the missing `collected` key,
-    the in-place case on the TypeError that is not raised, the order tests on the missing _ListRef, and the
-    default-argument case on the missing queue."""
+    the in-place case on the TypeError that is not raised, the order tests on the missing _ListRef, the default-argument
+    case on the missing queue, and the lock test on the missing _mat_drain."""
 
     def _read_after_release(self, k, tag):
         """An index and one list of k rows: every slot built, the index released (its assembly entry dropped), then every
@@ -690,6 +693,32 @@ class CollectionEvent(Synthetic):
         st = em.asm_index_stats()
         self.assertEqual(st["materialized"], m0, "nothing was built")
         self.assertEqual((st["expired"], st["collected"]), (1, 1), "the freed entry left through the drain, counted collected")
+
+    def test_each_road_drains_under_the_lock(self):
+        """The drain reads and deletes LRU entries, so each of its three roads runs it under _MAT_LOCK: the build, the hit
+        road (a built slot with no entry registering again) and the release. A spy on _mat_drain records _MAT_LOCK.locked()
+        at each call, per road. locked() reports a hold by any thread, and this test starts no thread."""
+        real, seen, road = em._mat_drain, {}, [None]
+
+        def spy():
+            seen.setdefault(road[0], []).append(em._MAT_LOCK.locked())
+            real()
+        em._mat_drain = spy
+        try:
+            ix, la = _mint(1, "L")
+            road[0] = "build"
+            la[0]
+            with em._MAT_LOCK:
+                em._MAT_LRU.pop((id(la), 0))                       # the slot stays built with no entry of its own
+            road[0] = "hit"
+            la[0]
+            road[0] = "release"
+            ix.release()
+        finally:
+            em._mat_drain = real
+        for name in ("build", "hit", "release"):
+            self.assertTrue(seen.get(name), "the %s road called the drain" % name)
+            self.assertTrue(all(seen[name]), "the %s road's drain ran with _MAT_LOCK held" % name)
 
     def test_a_freed_list_with_no_entry_changes_nothing(self):
         ix, la = _mint(6, "h")
