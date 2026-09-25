@@ -3898,13 +3898,17 @@ _CHILDREN_AT_ONCE = max(4, min(8, len(os.sched_getaffinity(0)) if hasattr(os, "s
 #   children at once changes only when each child runs. It changes neither what a child reads nor what a test asserts
 #   about it: each test asserts over the results after every child has ended, in the order the test lists them
 #   (_at_once).
+_AT_ONCE_THREADS = "hermetic-at-once"
+#   the name _at_once's pool gives its threads (<this>_<n>), by which the at-once test counts them: THE UPPER BOUND
 
 
 def _at_once(calls):
     """The results of `calls` (callables that take no argument, each running one child process to its end), in the
-    order of `calls`, run on threads, _CHILDREN_AT_ONCE at a time. A call that raised raises here, after every call has
+    order of `calls`, run on threads, _CHILDREN_AT_ONCE at a time: the pool starts at most _CHILDREN_AT_ONCE threads,
+    named for _AT_ONCE_THREADS, and each runs one call at a time. A call that raised raises here, after every call has
     ended; where several raised, the first in the order of `calls` is the one raised."""
-    with concurrent.futures.ThreadPoolExecutor(max_workers=_CHILDREN_AT_ONCE) as pool:
+    pool = concurrent.futures.ThreadPoolExecutor(max_workers=_CHILDREN_AT_ONCE, thread_name_prefix=_AT_ONCE_THREADS)
+    with pool:
         futures = [pool.submit(call) for call in calls]
     return [f.result() for f in futures]
 
@@ -5379,7 +5383,15 @@ class HermeticKernelPostal(unittest.TestCase):
         event this test sets once the exception reaches it, the exception is raised only after the last has ended: a
         raise before the last call ended would set the event while that call still waits, and when the raise comes
         after every call the half second decides nothing, since this test cannot set the event before the call
-        returns. _CHILDREN_AT_ONCE is at least four and at most eight."""
+        returns. _CHILDREN_AT_ONCE is at least four and at most eight.
+        THE UPPER BOUND (the verifier's finding at round 2's forty-ninth commit of fork PR #894: a pool as wide as the
+        calls it is handed passed every test here, the barrier holding only the lower bound): _CHILDREN_AT_ONCE + 2
+        calls, each waiting until _at_once has submitted the last of them (a list that sets an event when its iteration
+        passes its last item), so no call ends while the pool is being filled. A ThreadPoolExecutor then starts a thread
+        for each call it submits until it has max_workers of them, since it reuses a thread only once that thread has
+        ended a call, so when the submitting ends the pool's threads alive (_AT_ONCE_THREADS) are exactly as many as
+        the calls it may run at once: _CHILDREN_AT_ONCE here, and every call ran on one of them. Red under a pool of
+        any other width; the count is read at one moment the submitting fixes, not timed."""
         import threading
         self.assertTrue(4 <= _CHILDREN_AT_ONCE <= 8, _CHILDREN_AT_ONCE)
 
@@ -5432,6 +5444,23 @@ class HermeticKernelPostal(unittest.TestCase):
             caught = (str(e), sorted(ended), early)
         self.assertEqual(caught, ("call 0 raised", [0, 1, 2], [False]),
                          "the first call raised at once, and the exception came after the last call had ended")
+        submitted, alive, ran = threading.Event(), [], []
+
+        class Submitted(list):
+            def __iter__(self):
+                yield from list.__iter__(self)
+                alive.append(sorted(t.name for t in threading.enumerate() if t.name.startswith(_AT_ONCE_THREADS + "_")))
+                submitted.set()
+
+        def held():
+            ran.append(threading.current_thread().name)
+            self.assertTrue(submitted.wait(30), "the call ended only after _at_once submitted the last call")
+            return True
+        many = _CHILDREN_AT_ONCE + 2
+        self.assertEqual(_at_once(Submitted([held] * many)), [True] * many, "every call ran")
+        self.assertEqual((len(alive[0]), sorted(set(ran) - set(alive[0]))), (_CHILDREN_AT_ONCE, []),
+                         "of %d calls, the pool ran %d at once, on threads it started for them: %s, the calls ran on %s"
+                         % (many, _CHILDREN_AT_ONCE, alive, sorted(set(ran))))
 
     _FRESH_RUNNER = textwrap.dedent("""\
         import sys, unittest
@@ -5441,15 +5470,17 @@ class HermeticKernelPostal(unittest.TestCase):
     """) % os.path.splitext(os.path.basename(__file__))[0]
     #   the child _in_a_fresh_interpreter starts: it imports this module from the checkout as the package's module and
     #   runs one method of one class of it through unittest's runner, which sets the module up before it and tears it
-    #   down after it (setUpModule, tearDownModule and the pins tearDownModule holds)
+    #   down after it (setUpModule, tearDownModule and the pins tearDownModule holds; the fresh-road test plants both
+    #   ends, red under a suite that runs no module fixture)
 
     def _in_a_fresh_interpreter(self, body, env=None):
         """Runs this class's method `body` as a test, alone, in a fresh interpreter (_FRESH_RUNNER), from the checkout,
         with this process's environment less PYTEST_CURRENT_TEST and with `env` added. The body's name does not start
         with test, so no run collects it as a test of its own and it runs only in that child. Fails with the
         child's output unless the child's return code is 0 and its output has the line `OK` alone, which a failure, an
-        error (in the body or in tearDownModule) and a skip each leave out (`FAILED (...)`, `OK (skipped=1)`); planted
-        by test_a_body_run_in_a_fresh_interpreter_passes_here_only_where_it_passes_there."""
+        error (in the body or in tearDownModule) and a skip each leave out (`FAILED (...)`, `OK (skipped=1)`); planted,
+        with setUpModule's run before the body and tearDownModule's pins after it, by
+        test_a_body_run_in_a_fresh_interpreter_passes_here_only_where_it_passes_there."""
         child = {k: v for k, v in os.environ.items() if k != "PYTEST_CURRENT_TEST"}
         child.update(env or {})
         r = subprocess.run([sys.executable, "-c", self._FRESH_RUNNER, type(self).__name__, body],
@@ -5461,9 +5492,12 @@ class HermeticKernelPostal(unittest.TestCase):
 
     def _the_fresh_plant_body(self):
         """The body test_a_body_run_in_a_fresh_interpreter_passes_here_only_where_it_passes_there runs in a fresh
-        interpreter: as ROMP_TEST_HERMETIC_FRESH_PLANT says, it fails, skips, or passes and ends its process with code 3
-        by an exit handler; passing, it first writes its pid in the marker ROMP_TEST_HERMETIC_FRESH_MARKER names."""
+        interpreter: as ROMP_TEST_HERMETIC_FRESH_PLANT says, it fails, skips, passes and ends its process with code 3 by
+        an exit handler, or passes and has the census parse one file twice, which tearDownModule's parse-once pin reds;
+        passing, it writes in the marker ROMP_TEST_HERMETIC_FRESH_MARKER names its pid and whether setUpModule ran
+        before it (_FREEZE_AT_START holds setUpModule's one read until tearDownModule takes it)."""
         plant = os.environ.get("ROMP_TEST_HERMETIC_FRESH_PLANT")
+        marker = os.environ["ROMP_TEST_HERMETIC_FRESH_MARKER"]
         if plant == "fail":
             self.fail("the planted failure in the fresh interpreter")
         if plant == "skip":
@@ -5471,20 +5505,31 @@ class HermeticKernelPostal(unittest.TestCase):
         if plant == "exit":
             import atexit
             atexit.register(os._exit, 3)
-        with open(os.environ["ROMP_TEST_HERMETIC_FRESH_MARKER"], "w", encoding="utf-8") as f:
-            f.write(str(os.getpid()))
+        if plant == "teardown":
+            with open(marker + ".py", "w", encoding="utf-8") as f:
+                f.write("X = 1\n")
+            _own_tree(marker + ".py", hold=False)
+            _own_tree(marker + ".py", hold=False)
+        with open(marker, "w", encoding="utf-8") as f:
+            json.dump({"pid": os.getpid(), "set up": len(_FREEZE_AT_START) == 1}, f)
 
     def test_a_body_run_in_a_fresh_interpreter_passes_here_only_where_it_passes_there(self):
         """THE FRESH-INTERPRETER ROAD (_in_a_fresh_interpreter, the cost cut of round 2 of fork PR #894), planted: the
-        road runs _the_fresh_plant_body four times, each with a plant of its own. Planted to pass, the child writes its
-        pid in a marker this process made, and the pid is not this process's: the body ran in another process. Planted
-        to fail (the body's own failure), to skip (unittest's `OK (skipped=1)`, return code 0) and to pass and then exit
-        with code 3 (the line `OK` printed, an exit handler ending the child after it), the road fails, naming the
-        child's failure where it has one. So a road that returned without starting the child, one that read no result
-        of it, and one that read the return code alone or the line alone are each red here. The four children run at
-        once (_at_once). The exiting child ends by os._exit, which skips the tests package's removal of the child's own
-        temporary root, so that child is handed a system temporary directory inside this test's scratch directory
-        (TMPDIR and ROMP_TESTS_SYSTEM_TMPDIR), where it mints its root and where this test's clean-up removes it."""
+        road runs _the_fresh_plant_body five times, each with a plant of its own. Planted to pass, the child writes its
+        pid in a marker this process made, and the pid is not this process's: the body ran in another process; the
+        marker also says that this module's setUpModule ran in the child before the body. Planted to fail (the body's
+        own failure), to skip (unittest's `OK (skipped=1)`, return code 0), to pass and then exit with code 3 (the line
+        `OK` printed, an exit handler ending the child after it) and to pass with a file parsed twice by the census
+        (tearDownModule's parse-once pin, which runs after the body in the child), the road fails, naming the child's
+        failure where it has one, the last naming that pin. So a road that returned without starting the child, one
+        that read no result of it, and one that read the return code alone or the line alone are each red here, and so
+        is a child whose runner sets up no module fixture (the verifier's finding at round 2's forty-ninth commit of
+        fork PR #894: unittest's BaseTestSuite in _FRESH_RUNNER, which runs neither setUpModule nor tearDownModule, left
+        every test green), red on each half alone: with no setUpModule the marker says it did not run, and with no
+        tearDownModule the twice-parsed file passes. The five children run at once (_at_once). The exiting child ends
+        by os._exit, which skips the tests package's removal of the child's own temporary root, so that child is handed
+        a system temporary directory inside this test's scratch directory (TMPDIR and ROMP_TESTS_SYSTEM_TMPDIR), where
+        it mints its root and where this test's clean-up removes it."""
         d = os.path.realpath(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, d, True)
         system = os.path.join(d, "exit-tmp")
@@ -5502,15 +5547,20 @@ class HermeticKernelPostal(unittest.TestCase):
                     return str(e)
                 return None
             return call
-        plants = ("pass", "fail", "skip", "exit")
+        plants = ("pass", "fail", "skip", "exit", "teardown")
         got = dict(zip(plants, _at_once([road(plant) for plant in plants])))
         self.assertIsNone(got["pass"], "planted to pass, the road passes")
         with open(os.path.join(d, "pass"), encoding="utf-8") as f:
-            self.assertNotEqual(int(f.read()), os.getpid(), "the body ran in another process")
+            wrote = json.load(f)
+        self.assertNotEqual(wrote["pid"], os.getpid(), "the body ran in another process")
+        self.assertTrue(wrote["set up"], "this module's setUpModule ran in the child before the body")
         self.assertEqual({plant: got[plant] is not None for plant in plants[1:]}, dict.fromkeys(plants[1:], True),
-                         "planted to fail, to skip and to exit with code 3 after the line OK, the road fails: %s" % got)
+                         "planted to fail, to skip, to exit with code 3 after the line OK and to parse a file twice, "
+                         "the road fails: %s" % got)
         self.assertIn("the planted failure in the fresh interpreter", got["fail"], "the road names the child's failure")
         self.assertIn("OK (skipped=1)", got["skip"], "the road names the child's skip")
+        self.assertIn("the parse-once pin over the module's run", got["teardown"],
+                      "the road names the failure of the child's tearDownModule")
 
     def test_the_drops_count_by_every_node_sees_each_part_a_road_keeps_of_a_dropped_tree(self):
         """THE DROP BY LIVE OBJECTS' read, planted (the verifier's finding at round 2's thirty-first commit of fork PR
@@ -5546,8 +5596,9 @@ class HermeticKernelPostal(unittest.TestCase):
         collector tracks, and in this module's own process, after the whole tree's census, those include every object
         the census holds until tearDownModule, which made the reads most of the test's time there; a fresh interpreter
         has few objects to list. The body, this module's setUpModule and tearDownModule, and the pins tearDownModule
-        holds all run in that interpreter as they would here, and this test fails with the child's output unless the
-        child's run of its body passed (_in_a_fresh_interpreter says what it reads)."""
+        holds all run in that interpreter as they would here (the fresh-road test plants setUpModule's run and a red of
+        tearDownModule's parse-once pin), and this test fails with the child's output unless the child's run of its body
+        passed (_in_a_fresh_interpreter says what it reads)."""
         self._in_a_fresh_interpreter("_the_drops_count_body")
 
     def _the_drops_count_body(self):
