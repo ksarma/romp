@@ -1038,7 +1038,7 @@ test('after node --test the script derives per rostered leg that a test of its b
   assert.deepEqual(skipped.node, ['--test', A], 'the leg ran (the skip is read from the run, not refused before it)');
   assert.ok(skipped.err.includes('ci-browser-legs: skipped with ' + SWITCH + '=1: \'leg a keeps the slice\\nwhole # 2\' # SKIP no playwright chromium on this box (' + A + ')'), 'the skip names the test as the record spells it (a newline written \\n), its reason and its leg:\n' + skipped.err);
   assert.ok(skipped.err.includes('a rostered leg skipped a test with ' + SWITCH + '=1, so the step claims coverage it did not run'), 'the skip\'s red says the step claims coverage it did not run:\n' + skipped.err);
-  assert.ok(skipped.err.includes('only inBrowser in ui/webview/real-viewer-leg.ts turns a launch it cannot make into a failure here') && skipped.err.includes('until every test of the leg runs here, take its line out of ' + ROSTER), 'the skip\'s red carries the set-switch remedy (only inBrowser turns a launch it cannot make into a failure) and the remedy that takes the line out of the roster:\n' + skipped.err);
+  assert.ok(skipped.err.includes('under the switch, inBrowser in ui/webview/real-viewer-leg.ts fails a launch it cannot make instead of skipping') && skipped.err.includes('until every test of the leg runs here, take its line out of ' + ROSTER), 'the skip\'s red carries the set-switch reason (under the switch, inBrowser fails a launch it cannot make instead of skipping) and the remedy that takes the line out of the roster:\n' + skipped.err);
   assert.ok(!skipped.err.includes('no test of this leg passed'), 'a leg with a pass beside its skip is not called unrun:\n' + skipped.err);
   // the same skip with the switch unset, as a local run may have it: still red, and the message says the switch is unset
   // and that the step sets it, instead of claiming a state the run did not have
@@ -1115,7 +1115,7 @@ test('after node --test the script derives per rostered leg that a test of its b
   const yes = run(A + '\n', { report: PASS + rec(A, 'pass', 'test', 'skip', 'test', 'leg a opens the page', 'why', '-'), switch: 'yes' });
   assert.equal(yes.status, 1, 'a skip under the switch set to yes is red; stderr: ' + yes.err);
   assert.ok(yes.err.includes('skipped with ' + SWITCH + '=yes: \'leg a opens the page\' # SKIP why (' + A + ')'), 'the skip names the switch\'s value as the run had it (yes):\n' + yes.err);
-  assert.ok(yes.err.includes('a rostered leg skipped a test with ' + SWITCH + '=yes, so the step claims coverage it did not run') && yes.err.includes('only inBrowser in ui/webview/real-viewer-leg.ts turns a launch it cannot make into a failure here'), 'the set-switch remedy under the switch set to yes, not the unset one:\n' + yes.err);
+  assert.ok(yes.err.includes('a rostered leg skipped a test with ' + SWITCH + '=yes, so the step claims coverage it did not run') && yes.err.includes('under the switch, inBrowser in ui/webview/real-viewer-leg.ts fails a launch it cannot make instead of skipping'), 'the set-switch remedy under the switch set to yes, not the unset one:\n' + yes.err);
   const both = run(A + '\n', { report: rec(A, 'pass', 'test', 'skip', 'test', 'leg a opens the page', 'why', '-'), exit: 7 });
   assert.equal(both.status, 7, 'with a failure and a skip node\'s own status (7) stands, not overwritten by the skip\'s status=1, and the skip is still named');
   assert.ok(both.err.includes('skipped with ' + SWITCH + '=1'), 'with node\'s own failure status (7) the skip is still named:\n' + both.err);

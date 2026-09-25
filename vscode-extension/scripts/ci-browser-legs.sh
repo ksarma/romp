@@ -11,6 +11,7 @@
 #   - a line whose source (ui/webview/<name>.test.ts for out-tests/ui/webview/<name>.test.js) is not in the tree, because
 #     the source moved or was deleted: fix the line;
 #   - a line whose bundle is not under out-tests/ (the Test step's npm test builds it; locally, node esbuild.js --tests).
+# The tree test's case "the script refuses" runs each of these reds.
 # The roster rule: under the switch, a rostered leg passes only when inBrowser has launched Chromium, and the leg does
 # nothing that lets it pass otherwise (for example: it launches no browser of its own; nothing catches or settles
 # inBrowser's rejection, so the rejection fails its test; it does not change ROMP_BROWSER_LEGS_REQUIRE, and hands inBrowser
@@ -193,7 +194,7 @@ while IFS=$'\t' read -r kind leg a b c d e f g; do
 done <<<"$report"
 if [ "$skipped" -ne 0 ]; then
   if [ -n "${!SWITCH:-}" ]; then
-    echo "ci-browser-legs: a rostered leg skipped a test with $switch_state, so the step claims coverage it did not run: the test skips for a reason of its own (only inBrowser in ui/webview/real-viewer-leg.ts turns a launch it cannot make into a failure here); until every test of the leg runs here, take its line out of $ROSTER" >&2
+    echo "ci-browser-legs: a rostered leg skipped a test with $switch_state, so the step claims coverage it did not run: the test skips for a reason of its own (under the switch, inBrowser in ui/webview/real-viewer-leg.ts fails a launch it cannot make instead of skipping); until every test of the leg runs here, take its line out of $ROSTER" >&2
   else
     echo "ci-browser-legs: a rostered leg skipped a test with $switch_state, so this run claims coverage it did not run: the step sets $SWITCH=1, under which inBrowser in ui/webview/real-viewer-leg.ts fails a launch it cannot make instead of skipping; run with it set, and a test that still skips there skips for a reason of its own" >&2
   fi
