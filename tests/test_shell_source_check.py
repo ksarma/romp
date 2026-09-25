@@ -17,7 +17,8 @@ them reds; recompute the recorded digest from that commit, never from the fork's
 
 The rest runs the served landing: the census of every window message listener in its inline scripts, and node
 executing those scripts in a stand-in browser that forges a message from each sender the shell must refuse (a page
-that opened it, a sandboxed frame, a window it does not hold, itself, its own dispatch) and from a pane. Synthetic
+that opened it, a sandboxed frame, a window it does not hold, itself, its own dispatch, a sourceless post with the
+opaque origin) and from a pane, and reads which function the check is when each message is delivered. Synthetic
 only: no session data, a loopback origin.
 """
 import hashlib
@@ -106,6 +107,11 @@ class AdoptedCheck(unittest.TestCase):
         html = km._landing()
         self.assertEqual(html.count(REGION_HEAD), 1)
         self.assertEqual(html.count("window.__rompPaneSourceOk="), 1, "one definition, no second copy to drift")
+        # every mention of the name on the page is the definition or one listener's fail-closed read (two mentions
+        # each), so no assignment in another spelling, and no other reader, sits anywhere in the served shell
+        self.assertEqual(html.count("__rompPaneSourceOk"), 1 + 2 * len(LISTENERS),
+                         "the name appears only in the adopted definition and in each named listener's gate")
+        self.assertEqual(html.count(GATE), len(LISTENERS), "each named listener's gate, once")
         scripts = _inline_scripts(html)
         where = [n for n, s in enumerate(scripts) if REGION_HEAD in s]
         self.assertEqual(len(where), 1)
@@ -196,6 +202,13 @@ const document = stubbed({
 });
 const LISTENERS = [];
 const target = {};
+// every value the scripts assign to the check, whatever the assignment's spelling (window.x=, window['x']=, a bare
+// global, a defineProperty): each lands on the context's global, so each is heard here. vm reports one assignment as
+// more than one trap (creating the property is a set, a define and a set again), so a value is kept once, by identity,
+// in the order first heard; an accessor's descriptor is kept as itself
+const CHECK = '__rompPaneSourceOk', ASSIGNED = [];
+function heard(v) { if (!ASSIGNED.includes(v)) ASSIGNED.push(v); }
+function textOf(v) { return typeof v === 'function' ? Function.prototype.toString.call(v) : typeof v; }
 const BUILTINS = new Set(['Object', 'Array', 'JSON', 'Math', 'Date', 'String', 'Number', 'Boolean', 'RegExp', 'Error',
   'TypeError', 'RangeError', 'SyntaxError', 'ReferenceError', 'Map', 'Set', 'WeakMap', 'WeakSet', 'Symbol', 'Promise',
   'parseInt', 'parseFloat', 'isNaN', 'isFinite', 'encodeURIComponent', 'decodeURIComponent', 'encodeURI', 'decodeURI',
@@ -203,8 +216,8 @@ const BUILTINS = new Set(['Object', 'Array', 'JSON', 'Math', 'Date', 'String', '
 const G = new Proxy(target, {
   has() { return true; },
   get(t, k) { if (k in t) return t[k]; if (typeof k === 'symbol') return undefined; if (BUILTINS.has(k)) return globalThis[k]; return STUB; },
-  set(t, k, v) { t[k] = v; return true; },
-  defineProperty(t, k, d) { Object.defineProperty(t, k, d); return true; },
+  set(t, k, v) { if (k === CHECK) heard(v); t[k] = v; return true; },
+  defineProperty(t, k, d) { if (k === CHECK) heard('value' in d ? d.value : d); Object.defineProperty(t, k, d); return true; },
   getOwnPropertyDescriptor(t, k) { return Object.getOwnPropertyDescriptor(t, k); },
   deleteProperty(t, k) { delete t[k]; return true; },
 });
@@ -228,18 +241,23 @@ SCRIPTS.forEach((body, n) => {
   try { vm.runInContext(body, ctx, { filename: 'landing-script-' + n + '.js', timeout: 5000 }); }
   catch (e) { ERRORS.push([n, String(e && e.message || e).slice(0, 200)]); }
 });
+// the check the listeners will read, as the scripts left it
+const AFTER_BOOT = textOf(target.__rompPaneSourceOk);
 // the senders: [name, source, origin]
 const SENDERS = {
   opener: [OPENER, ELSEWHERE],             // a page on another origin that opened the dashboard
   sandboxedFrame: [SANDBOXED, 'null'],    // a sandboxed iframe of the shell (opaque origin)
   otherOriginFrame: [XFRAME, ELSEWHERE],  // an iframe of the shell showing another origin
   strayWindow: [STRAY, ORIGIN],           // same origin, but not a frame of this document (a popup, a nested frame)
-  shellItself: [G, ORIGIN],               // the shell's own window
+  shellItself: [vm.runInContext('window', ctx), ORIGIN],   // the shell's own window, as its scripts see it
   dispatch: [null, ''],                    // no source, no origin: an event this document dispatched
   sourcelessElsewhere: [null, ELSEWHERE], // no source, another origin
+  sourcelessOpaque: [null, 'null'],       // no source, the opaque origin: a sandboxed frame gone after it posted
   pane: [CHAT, ORIGIN],                    // a pane of the shell: the one sender heard
 };
+const IN_EFFECT = new Set();   // the check's text at every delivery
 function deliver(l, source, origin, data) {
+  IN_EFFECT.add(textOf(target.__rompPaneSourceOk));
   let reads = 0;
   const e = { type: 'message', source, origin, get data() { reads++; return data; } };
   target.__b5f = l.f; target.__b5e = e;
@@ -248,7 +266,8 @@ function deliver(l, source, origin, data) {
   return { reads, threw };
 }
 const MODE = process.env.ROMP_TEST_MODE || 'reads';
-const out = { errors: ERRORS, listeners: LISTENERS.map((l) => ({ src: l.src, checkDefined: l.checkDefined })) };
+const out = { errors: ERRORS, listeners: LISTENERS.map((l) => ({ src: l.src, checkDefined: l.checkDefined })),
+              assigns: ASSIGNED.map(textOf), afterBoot: AFTER_BOOT };
 if (MODE === 'reads' || MODE === 'nocheck') {
   // the check missing (held as undefined: a name the context lacks answers with a stub): fail-closed hears nothing
   if (MODE === 'nocheck') target.__rompPaneSourceOk = undefined;
@@ -277,6 +296,7 @@ if (MODE === 'reads' || MODE === 'nocheck') {
     out.effects[k] = { toChat: POSTED.filter((p) => p[0] === 'chat').map((p) => p[1]), notes: NOTES.slice() };
   });
 }
+out.inEffect = [...IN_EFFECT];
 process.stdout.write('\n' + JSON.stringify(out));
 """
 
@@ -311,7 +331,7 @@ class ShellListenersExecuted(unittest.TestCase):
     """The served shell's scripts, run: no listener reads a message from a sender that is not one of its panes."""
 
     REFUSED = ("opener", "sandboxedFrame", "otherOriginFrame", "strayWindow", "shellItself", "dispatch",
-               "sourcelessElsewhere")
+               "sourcelessElsewhere", "sourcelessOpaque")
 
     @classmethod
     def setUpClass(cls):
@@ -333,6 +353,19 @@ class ShellListenersExecuted(unittest.TestCase):
                     self.assertEqual(reads[sender], 0, "%s read a message from %s" % (name, sender))
             with self.subTest(listener=name, sender="pane"):
                 self.assertGreater(reads["pane"], 0, "%s still hears its panes" % name)
+
+    def test_the_check_every_listener_reads_is_the_adopted_function(self):
+        # whatever spelling a second assignment used (window['...']=, a bare global, a defineProperty), it lands on the
+        # page's global: the scripts assign the check once, the adopted function, and it is the function in effect at
+        # every delivery, so a later wrapper that widens it for some senders cannot stand in for it
+        html = km._landing()
+        i = html.index(REGION_HEAD)
+        region = html[i:html.index(REGION_TAIL, i) + len(REGION_TAIL)]
+        fn = region[len("window.__rompPaneSourceOk="):-1]
+        self.assertTrue(fn.startswith("function(e){") and fn.endswith("}"), "the adopted region assigns one function expression")
+        self.assertEqual(self.run_["assigns"], [fn], "the scripts assign the check once, and assign the adopted function")
+        self.assertEqual(self.run_["afterBoot"], fn, "after the scripts run, the check is the adopted function")
+        self.assertEqual(self.run_["inEffect"], [fn], "at every delivery, the check is the adopted function")
 
     def test_without_the_check_no_listener_reads_anything(self):
         run = _run_landing("nocheck")
@@ -387,6 +420,7 @@ const rows = {
   itself: ok({ source: window, origin: ORIGIN }),
   noSource: ok({ source: null, origin: ORIGIN }),
   noSourceNoOrigin: ok({ source: null, origin: '' }),
+  noSourceOpaqueOrigin: ok({ source: null, origin: 'null' }),
   noEvent: ok(null),
 };
 THROW = true; rows.throws = ok({ source: pane, origin: ORIGIN });
@@ -418,7 +452,7 @@ class AdoptedCheckExecuted(unittest.TestCase):
         self.assertEqual(rows, {
             "pane": True, "paneOtherOrigin": False, "paneOpaqueOrigin": False, "urlPaneMarkedNone": False,
             "nestedFrame": False, "strayWindow": False, "itself": False, "noSource": False, "noSourceNoOrigin": False,
-            "noEvent": False, "throws": False,
+            "noSourceOpaqueOrigin": False, "noEvent": False, "throws": False,
         })
 
 
