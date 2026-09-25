@@ -7,8 +7,11 @@ merge kept BOTH sides' copies of three branches (tagEditAck/viewsAck, caps, unkn
 settingRefused line: dead in an else-if chain (the first match wins), but a chain that matched neither
 parent, read as two intended handlers, and would re-conflict on the next fold. Pinned here: every frame
 type has one branch, the chain is upstream's, and the fork's fed-direct registration follows it."""
+import json
 import os
 import re
+import shutil
+import subprocess
 import tempfile
 import unittest
 from romp_load import load_source
@@ -52,6 +55,71 @@ class TimelineBootDispatch(unittest.TestCase):
         self.assertEqual(boot.count('window.addEventListener("message",frameListener);'), 1)
         self.assertEqual(boot.count('if(window.__rompFed&&window.__rompFed.onFrame)window.__rompFed.onFrame(frameListener);'), 1)
         self.assertLess(boot.index("_openViewsDialog(null);};"), boot.index("__rompFed.onFrame(frameListener)"))
+
+
+# The boot, run in node: stand-ins for the few browser names it touches (HTMLElement for the DOM shims, the host
+# bridge acquireVsCodeApi, the shell as window.parent), a fake panel, and the one window message listener it registers.
+_BOOT_HARNESS = r"""
+'use strict';
+const ORIGIN = 'http://127.0.0.1:7777', OTHER = 'https://elsewhere.example';
+const LISTENERS = [], UPDATES = [];
+global.HTMLElement = function () {};
+global.window = global;
+const SHELL = { name: 'shell' };
+global.parent = SHELL;
+global.location = { origin: ORIGIN };
+global.acquireVsCodeApi = () => ({ postMessage() {} });
+global.addEventListener = (t, f) => { if (t === 'message') LISTENERS.push(f); };
+BOOT
+window.__rompConnectTimeline({ update: (d) => UPDATES.push(d.from) });
+const SENDERS = {
+  dispatch: [null, ''],          // the shim's and federation.js's frames: a MessageEvent with no source and no origin
+  fedDirect: [undefined, undefined],   // federation.js's direct call with a bare event
+  self: [window, ORIGIN],
+  embedder: [SHELL, ORIGIN],      // the shell, this frame's parent
+  peer: [{}, ORIGIN],             // another window on this origin
+  opener: [{}, OTHER],            // a page on another origin that opened /timeline
+  sandboxed: [{}, 'null'],        // a sandboxed frame
+  sourcelessElsewhere: [null, OTHER],
+};
+Object.keys(SENDERS).forEach((k) => {
+  const e = { data: { type: 'data', data: { from: k } } };
+  if (SENDERS[k][0] !== undefined) { e.source = SENDERS[k][0]; e.origin = SENDERS[k][1]; }
+  LISTENERS.forEach((f) => f(e));
+});
+process.stdout.write(JSON.stringify({ listeners: LISTENERS.length, updates: UPDATES }));
+"""
+
+
+class TimelineBootSenders(unittest.TestCase):
+    """The browser timeline's frame listener acts on a frame only from the senders windowSender hears
+    (ui/webview/window-sender.ts): this page's own dispatch, this window, its parent (the shell), a window on this
+    origin (2026-09-25). A frame from any other sender (a page on another origin, a sandboxed frame) is ignored."""
+
+    def test_a_data_frame_is_drawn_from_every_heard_sender_and_from_no_other(self):
+        node = shutil.which("node")
+        if not node:
+            raise unittest.SkipTest("node not installed")
+        fx = tempfile.mkdtemp()
+        try:
+            path = os.path.join(fx, "boot.js")
+            with open(path, "w") as f:
+                f.write(_BOOT_HARNESS.replace("BOOT", km._TIMELINE_BOOT))
+            r = subprocess.run([node, path], capture_output=True, text=True, timeout=60)
+        finally:
+            shutil.rmtree(fx, ignore_errors=True)
+        self.assertEqual(r.returncode, 0, r.stderr[-2000:])
+        got = json.loads(r.stdout)
+        self.assertEqual(got["listeners"], 1, "the boot registers one window message listener")
+        self.assertEqual(got["updates"], ["dispatch", "fedDirect", "self", "embedder", "peer"],
+                         "drawn once from each heard sender, never from a page on another origin, a sandboxed frame "
+                         "or a sourceless post that names another origin")
+
+    def test_source_the_check_heads_the_frame_listener(self):
+        boot = km._TIMELINE_BOOT
+        self.assertIn('var onFrame=function(ev){if(!heardSender(ev))return;var m=ev.data;if(!m||!panel)return;', boot)
+        self.assertEqual(boot.count("function heardSender(e){"), 1)
+        self.assertLess(boot.index("function heardSender(e){"), boot.index("var onFrame=function(ev){"))
 
 
 if __name__ == "__main__":

@@ -56,7 +56,7 @@ class BuildGating(unittest.TestCase):
         # hover/activeChat/revealEvent/models handling is not left inside federation's fed:<type> bracket
         # (2026-09-06); without a collector the plain listener is registered.
         boot = km._TIMELINE_BOOT
-        self.assertIn("var onFrame=function(ev){var m=ev.data;if(!m||!panel)return;", boot)
+        self.assertIn("var onFrame=function(ev){if(!heardSender(ev))return;var m=ev.data;if(!m||!panel)return;", boot)   # the sender check heads it (tests/test_timeline_boot_shim.py TimelineBootSenders runs it)
         self.assertIn('var frameListener=(window.__rompPerf&&window.__rompPerf.wrapFrameHandler)'
                       "?window.__rompPerf.wrapFrameHandler(onFrame):onFrame;", boot)
         self.assertIn('window.addEventListener("message",frameListener);', boot)
