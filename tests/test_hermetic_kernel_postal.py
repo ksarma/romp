@@ -141,11 +141,12 @@ argv that resolves to a declaration with no readable value (a parameter, an impo
 the scan cannot split) or to none at all (an attribute of an imported module, sys.executable most of all), a call of a
 function defined in the module or of a name no scope binds (a helper's return, a star import's), a passthrough's
 splatted argv, and a keywords splat a spawn is handed alone; and, for a spawn with no site (_SpawnScan._list_unread), a
-Python child's -c program that mentions the kernel and calls a callee the scan cannot name or a dynamic road, and no
-process starter PROCESS_FUNCTIONS holds (a child that runs the kernel as __main__ through runpy or an exec of its source among them; N79 to N91, N93, N103, N126), and a text
-in the argv or executable=, outside such a program, that spells a name one of whose declarations holds romp-kernel as
-text (what a run-time lookup reads by name, among them globals()[...], a %-mapping over locals(), eval, getattr,
-string.Template and a shell's environment variable; N67 to N78, N101, N102). A listed entry requires no trio, and those
+Python child's -c program the rule at DYNAMIC_CALLS lists (it mentions the kernel and calls a callee the scan cannot
+name or a dynamic road and no process starter, over texts the scan reads whole; a child that runs the kernel as __main__
+through runpy or an exec of its source among them; N79 to N91, N93, N103, N126), and a text in the argv or executable=,
+outside such a program, that spells a name one of whose declarations holds romp-kernel as text (what a run-time lookup
+reads by name, among them globals()[...], a %-mapping over locals(), eval, getattr, string.Template and a shell's
+environment variable; N67 to N78, N101, N102). A listed entry requires no trio, and those
 two kinds hold real launches, among them exec of a constant program (N89), __import__ (N80), getattr (N87),
 globals()[...] (N70) and runpy.run_path with run_name '__main__' (N82). What it does not list, in the classes found so
 far, each held by a
@@ -299,10 +300,10 @@ SHELL_OPERATOR = set("();<>|&")    # a word of these alone is an operator: a red
 # posix_spawn and fork families, pty.spawn, asyncio's subprocess starters and multiprocessing's Process. No such list is
 # complete. The listing of a Python child's -c program reads its callees for any of them (_callee_reading's "starts";
 # PROCESS_SPELLINGS: the bare spelling of an unbound callee, and the method name of asyncio's loop-level starters, whose
-# receiver no binding reaches) and takes no program that calls one, whatever else it calls (_program_calls; row N112,
-# beside exec, is named). A starter outside them, among them _posixsubprocess.fork_exec, is read as any named callee is:
-# a program that mentions the kernel and calls it is listed when another of its callees reads as dynamic (DYNAMIC_CALLS
-# below; row N126, beside getattr), and its match is named by the comparison otherwise (row N108)
+# receiver no binding reaches) and lists no program that calls one, whatever else it calls (_program_calls "starts"; row
+# N112, beside exec, is named). A starter outside them, among them _posixsubprocess.fork_exec, is read as any named
+# callee is, so whether its program is listed is the rule at DYNAMIC_CALLS below: beside getattr it is listed (row
+# N126), and alone its match is named by the comparison (row N108)
 PROCESS_FUNCTIONS = (SPAWN_FUNCTIONS | {"subprocess.getoutput", "subprocess.getstatusoutput", "pty.spawn",
                                         "asyncio.create_subprocess_exec", "asyncio.create_subprocess_shell", "multiprocessing.Process"}
                      | {"os." + f for f in ("system", "popen", "posix_spawn", "posix_spawnp", "execl", "execle", "execlp", "execlpe", "execv",
@@ -312,11 +313,12 @@ PROCESS_SPELLINGS = {f.rsplit(".", 1)[-1] for f in PROCESS_FUNCTIONS} | {"subpro
 # dynamic roads the listing reads among those a Python -c child's callee may take to code or a function the scan cannot
 # read: by the last part of the name it denotes (exec, eval, compile, __import__, getattr, functools.partial) or by the
 # module it comes from (importlib, runpy), an alias of one included (_callee_reading's "dynamic", as is a callee the scan
-# names only in part or not at all). A program that mentions the kernel, calls one, and calls no starter PROCESS_FUNCTIONS
-# holds is listed, whatever else it calls (_program_calls "dynamic"; row N126). A road outside them, among them a function
-# that runs a text (row N109) or a starter handed over as a value (row N106), makes no program dynamic: a program whose
-# callees are all named is not listed, and its match is named by the comparison; beside a road they hold, it is listed
-# (row N126).
+# names only in part or not at all). The rule, _program_calls "dynamic", for a spawn with no site and a Python child the
+# scan can name: a program is listed when it mentions the kernel, the scan assembles its texts and each parses with no
+# placeholder read as code (rows N114 and N115, which fail that, are named), no callee is a starter PROCESS_FUNCTIONS
+# holds (row N112 is named), and some callee reads as dynamic, whatever else it calls (row N126). A road outside them,
+# among them a function that runs a text (row N109) or a starter handed over as a value (row N106), makes no program
+# dynamic: alone, its match is named by the comparison; beside a road they hold, the program is listed (row N126).
 DYNAMIC_CALLS = {"exec", "eval", "compile", "__import__", "getattr", "partial"}
 DYNAMIC_MODULES = {"importlib", "runpy"}
 KERNEL_MENTION = re.compile(r"romp-kernel|bin/romp(?![\w-])")   # a -c program's text that names the kernel or the CLI
@@ -360,9 +362,9 @@ class _SpawnScan:
     LISTS under `unresolved` a name or target with no readable declaration (a parameter, an import, a loop target, an
     attribute of an imported module), a call of a function defined in the module or of a name no scope binds (a helper's
     return, a star import's), the argv of a passthrough (`run(*a)`) and a keywords splat a spawn is handed alone; and,
-    for a spawn with no site, a Python child's -c program that mentions the kernel and calls a callee it cannot name or
-    a dynamic road and no process starter PROCESS_FUNCTIONS holds, and a text spelling a name bound to the kernel's name
-    (_list_unread); what it does not list is the module docstring's residual."""
+    for a spawn with no site, a Python child's -c program the rule at DYNAMIC_CALLS lists (it mentions the kernel and
+    calls a callee it cannot name or a dynamic road and no process starter, over texts it reads whole), and a text
+    spelling a name bound to the kernel's name (_list_unread); what it does not list is the module docstring's residual."""
 
     def __init__(self, tree, filename="<src>"):
         self.filename = filename
@@ -452,9 +454,10 @@ class _SpawnScan:
 
     def _list_unread(self, call, nodes):
         """For a spawn with no site, list what the scan reads no value for where a run-time reading may reach the
-        kernel: each Python -c program met in the argv that mentions the kernel and calls a callee the scan cannot name
-        or a dynamic road, and no process starter PROCESS_FUNCTIONS holds (_program_calls "dynamic"; a dynamic road by DYNAMIC_CALLS or DYNAMIC_MODULES, among them exec
-        of any text, eval, a dynamic import, runpy, getattr and functools.partial), listed as the program element when
+        kernel: each Python -c program met in the argv that the rule at DYNAMIC_CALLS lists (_program_calls "dynamic":
+        it mentions the kernel and calls a callee the scan cannot name or a dynamic road and no process starter, over
+        texts the scan reads whole; a dynamic road by DYNAMIC_CALLS or DYNAMIC_MODULES, among them exec of any text,
+        eval, a dynamic import, runpy, getattr and functools.partial), listed as the program element when
         it sits in the call, else as the argv that reached it; and each string in the argv or the executable= (an
         f-string whole), outside a Python child's program, that spells, as a whole word, a name a declaration of which,
         in any scope of the module, holds the kernel's name as text (_kernel_named): the scan reads it as text and a
