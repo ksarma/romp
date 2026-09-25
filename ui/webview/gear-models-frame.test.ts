@@ -8,6 +8,7 @@ import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { windowSender } from "./window-sender";
 
 const GEAR = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "gear.js"), "utf8");
 const tick = () => new Promise((r) => setImmediate(r));
@@ -36,8 +37,9 @@ const DOC = { createElement: (tag: string): Opt => { assert.equal(tag, "option")
 const SELECTS = ["jm", "im", "je", "ie", "jc", "dm", "de", "cmm", "cme"] as const;   // jc: the judge concurrency select (T277)
 
 // The block, evaluated with the closure variables it reads passed in: `window` (the listener's target),
-// `document` (the injected option), `fetch`/`ku` (the read), and the nine <select>s — real stand-ins by
-// default, or null (the guards).
+// `document` (the injected option), `fetch`/`ku` (the read), the nine <select>s — real stand-ins by
+// default, or null (the guards) — and `windowSender`, the real helper (window-sender.ts) reading that same window: a
+// frame here has no source and no origin, this document's own dispatch, as the pane shim delivers the kernel's frames.
 function lift(withSelects = true) {
   const start = GEAR.indexOf("  var choices = null");
   const at = GEAR.indexOf("m.type !== 'models'", start);
@@ -52,9 +54,9 @@ function lift(withSelects = true) {
     return new Promise<any>((res) => pending.push((d: any) => res({ json: async () => d })));
   };
   const S: Record<(typeof SELECTS)[number], Sel | null> = Object.fromEntries(SELECTS.map((k) => [k, withSelects ? sel() : null])) as any;
-  const fn = new Function("window", "document", "fetch", "ku", ...SELECTS,
+  const fn = new Function("window", "document", "fetch", "ku", "windowSender", ...SELECTS,
     src + "\n  return { fillChoices: fillChoices, choices: function () { return choices; } };");
-  const api = fn(win, DOC, fetchStub, (p: string) => p, ...SELECTS.map((k) => S[k]));
+  const api = fn(win, DOC, fetchStub, (p: string) => p, (e: { source?: unknown; origin?: unknown }) => windowSender(e, win as { parent?: unknown }), ...SELECTS.map((k) => S[k]));
   const frame = (rev: number) => listeners.forEach((l) => l({ data: { type: "models", rev } }));
   return { api, listeners, pending, frame, S };
 }

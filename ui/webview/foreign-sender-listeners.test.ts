@@ -1,0 +1,389 @@
+// Every window "message" listener in the webview bundles ignores a message from a foreign sender (window-sender.ts): a
+// window that is not this document, not its embedder (the romp shell), not on this document's origin, and not this
+// document's own dispatch of a kernel frame. The chat's frame handler got that check first (chat-foreign-frame.test.ts);
+// this file holds it for the rest of the population:
+//   - frame-listener.ts listenForFrames, the one window install every pane's frame handler shares (the feed, the Outline,
+//     Waiting on you, the chat and the VS Code timeline): the window path hands the handler no message from a foreign
+//     sender. The federation registry path is unchanged: only federation.js calls it, with a MessageEvent it built.
+//   - every other window listener, each with its own check at its head: the Waiting pane's panes cache, the VS Code
+//     settings sync, the shared file viewer, the file browser, the file-comments panel's replies, the gear's six
+//     listeners, the shell palette's two, and the VS Code strip's.
+// Each listener hears every class windowSender does not name foreign, which covers each one's real senders: the shell
+// (the embedder of a pane; to the shell's own page, its panes are windows on its origin), this document (self), a window
+// on the origin (a second chat column, a pane posting up to the shell, the VS Code webview host, which posts from its own
+// window on the webview's origin) and this document's dispatch (the pane shim's and federation.js's kernel frames).
+//
+// Executed legs: every listener is run against the same senders. Four run as installed, over a stand-in window: the real
+// listenForFrames, installSettingsSync, initFileView and initFileBrowse, each with that stand-in as the global window
+// (which is also the window windowSender reads by default). The rest live inside modules that boot a page on import (the
+// Waiting pane, the shell palette), behind module state (the comments panel's live panel) or inside a closure (the gear,
+// the strip), so each is lifted out of its file by the TypeScript parser, from its function to its closing brace,
+// transpiled and run over stubs: every free identifier it reads is an inert stub except the effect it is tested for, which
+// counts, windowSender, which is the real helper, and window, which is the stand-in the helper reads. A representative arm
+// per listener reaches its effect once from every heard sender and never from a foreign one; the head check sits before
+// every arm, which the census below pins at source for every listener in ui/.
+//
+// The census reads the population instead of a list: every addEventListener("message", …) call in a ui/ source file
+// (tests excluded) must open with the check, preceded by nothing but reads of the message, and must be one of the gated
+// sites below, each with an executed leg here. A new window listener anywhere in ui/ fails it until it is gated and given
+// a leg. Synthetic world only: the notes-api demo, placeholder ids.
+import { test } from "node:test";
+import * as assert from "node:assert/strict";
+import * as fs from "node:fs";
+import * as path from "node:path";
+import { createRequire } from "node:module";
+import { hideEdges, staysEnumerable, defineHidden } from "../test-dom-shim";
+import { windowSender } from "./window-sender";
+import { listenForFrames } from "./frame-listener";
+import { installSettingsSync } from "./settings";
+import { initFileView } from "./file-view";
+import { initFileBrowse } from "./file-browse";
+
+const EXT = process.cwd();                                        // npm test runs in vscode-extension
+const requireCjs = createRequire(path.join(EXT, "package.json"));   // esbuild and typescript from the extension
+const UI = path.resolve(EXT, "..", "ui");
+const ts = requireCjs("typescript");
+
+const SID = "11111111-2222-3333-4444-555555555555";
+const ORIGIN = "http://127.0.0.1:1";
+const VSCODE_ORIGIN = "vscode-webview://11111111-2222-3333-4444-555555555555";
+const OTHER_ORIGIN = "https://example.invalid";
+
+type Listener = (e: unknown) => void;
+/** A receiving window: what windowSender reads (its parent, its location's origin), the target a listener under test is
+ *  added to, and the methods those listeners call on window. Its edges and every object it holds are non-enumerable
+ *  (hideEdges), so a dump of it is its name and serial. */
+class Receiver {
+  parent: unknown;
+  location: { origin: string };
+  listeners: Array<[string, Listener]> = [];
+  dispatched: string[] = [];
+  constructor(public name: string, parent: unknown, origin: string) {
+    this.parent = parent;
+    this.location = { origin };
+    hideEdges(this);
+  }
+  addEventListener(type: string, fn: Listener): void { this.listeners.push([type, fn]); }
+  dispatchEvent(ev: { type: string }): boolean { this.dispatched.push(ev.type); return true; }
+  messageListeners(): Listener[] { return this.listeners.filter(([t]) => t === "message").map(([, f]) => f); }
+}
+type Ctx = "pane" | "shell" | "vscode" | "vscode, older";
+const SHELL = hideEdges({ name: "the romp shell" });
+/** A fresh receiving window of each kind: a pane in the romp shell (its parent is the shell), the shell's own top-level
+ *  page (its parent is itself), and VS Code's webview frame, whose script sets window.parent to the frame itself (1.103 on)
+ *  or deletes it (1.88 to 1.102). */
+function receiver(ctx: Ctx): Receiver {
+  if (ctx === "pane") return new Receiver("a pane in the romp shell", SHELL, ORIGIN);
+  if (ctx === "shell") { const w = new Receiver("the romp shell's page", null, ORIGIN); w.parent = w; return w; }
+  if (ctx === "vscode") { const w = new Receiver("a VS Code webview frame", null, VSCODE_ORIGIN); w.parent = w; return w; }
+  return new Receiver("a VS Code webview frame, window.parent deleted", undefined, VSCODE_ORIGIN);
+}
+const SECOND_COLUMN = hideEdges({ name: "a second chat column" });
+const CHILD_PANE = hideEdges({ name: "a pane of the shell" });
+const VSCODE_HOST = hideEdges({ name: "the VS Code webview host" });
+const OTHER_PAGE = hideEdges({ name: "a page on another origin" });
+const sandboxed = (parent: unknown) => hideEdges({ name: "a sandboxed frame", parent });
+
+type Row = { who: string; ctx: Ctx; source: (w: Receiver) => unknown; origin: string };
+const HEARD: Row[] = [
+  { who: "this document", ctx: "pane", source: (w) => w, origin: ORIGIN },
+  { who: "its embedder, the romp shell", ctx: "pane", source: (w) => w.parent, origin: ORIGIN },
+  { who: "a second chat column on this origin", ctx: "pane", source: () => SECOND_COLUMN, origin: ORIGIN },
+  { who: "a pane posting up to the shell's page", ctx: "shell", source: () => CHILD_PANE, origin: ORIGIN },
+  { who: "the shell's page itself", ctx: "shell", source: (w) => w, origin: ORIGIN },
+  { who: "the VS Code webview host (the frame's window.parent replaced)", ctx: "vscode", source: () => VSCODE_HOST, origin: VSCODE_ORIGIN },
+  { who: "the VS Code webview host (the frame's window.parent deleted)", ctx: "vscode, older", source: () => VSCODE_HOST, origin: VSCODE_ORIGIN },
+  { who: "this document's own dispatch of a kernel frame (no source, no origin)", ctx: "pane", source: () => null, origin: "" },
+  { who: "a sourceless post on this document's origin", ctx: "pane", source: () => null, origin: ORIGIN },
+];
+const FOREIGN: Row[] = [
+  { who: "a sandboxed frame beside the pane in the shell (opaque origin)", ctx: "pane", source: (w) => sandboxed(w.parent), origin: "null" },
+  { who: "a sandboxed frame inside the shell's page (opaque origin)", ctx: "shell", source: (w) => sandboxed(w), origin: "null" },
+  { who: "a page on another origin that opened the pane", ctx: "pane", source: () => OTHER_PAGE, origin: OTHER_ORIGIN },
+  { who: "a page on another origin that opened the shell", ctx: "shell", source: () => OTHER_PAGE, origin: OTHER_ORIGIN },
+  { who: "a sandboxed frame inside the VS Code webview", ctx: "vscode", source: (w) => sandboxed(w), origin: "null" },
+  { who: "a sandboxed frame that is gone (no source, opaque origin)", ctx: "pane", source: () => null, origin: "null" },
+  { who: "a page on another origin that is gone (no source)", ctx: "shell", source: () => null, origin: OTHER_ORIGIN },
+];
+
+// ── the stand-ins stay small in a dump ──
+
+test("the stand-ins inspect as their primitives: every enumerable key of a receiving window and of each sending window holds a primitive", () => {
+  const all: object[] = [SHELL, SECOND_COLUMN, CHILD_PANE, VSCODE_HOST, OTHER_PAGE, sandboxed(SHELL),
+    receiver("pane"), receiver("shell"), receiver("vscode"), receiver("vscode, older")];
+  for (const o of all) {
+    for (const k of Object.keys(o)) assert.ok(staysEnumerable((o as any)[k]), k + " is enumerable and holds a " + typeof (o as any)[k]);
+  }
+  assert.ok(windowSender({ source: SHELL, origin: ORIGIN }, receiver("pane")) === "embedder", "a hidden parent is still read");
+});
+
+// ── the listeners run as installed ──
+
+/** Runs `fn` with each key of `vals` set on globalThis, restoring every one after. */
+function withGlobals<T>(vals: Record<string, unknown>, fn: () => T): T {
+  const g: any = globalThis;
+  const saved: Array<[string, boolean, unknown]> = Object.keys(vals).map((k) => [k, k in g, g[k]]);
+  try {
+    for (const k of Object.keys(vals)) g[k] = vals[k];
+    return fn();
+  } finally {
+    for (const [k, had, v] of saved) { if (had) g[k] = v; else delete g[k]; }
+  }
+}
+type Installed = { site: string; data: unknown; what: string; setup: (effect: () => void) => { globals?: Record<string, unknown>; install: () => void } };
+const INSTALLED: Installed[] = [
+  { site: "webview/frame-listener.ts", what: "a kernel-shaped feed frame reaching a pane's frame handler through listenForFrames",
+    data: { type: "feed", ledgers: [{ id: SID, name: "api" }] },
+    setup: (effect) => ({ install: () => { listenForFrames(() => effect()); } }) },
+  { site: "webview/settings.ts", what: "a settingsSync that replaces the settings store (installSettingsSync)",
+    data: { type: "settingsSync", settings: { theme: "classic", figureHosts: ["example.invalid"] } },
+    setup: (effect) => ({ globals: { localStorage: { setItem: (k: string) => { if (k === "romp:settings") effect(); } } },
+                          install: () => installSettingsSync() }) },
+  { site: "webview/file-view.ts", what: "a viewFile relay that opens a file in the viewer (initFileView)",
+    data: { romp: "viewFile", path: "docs/design.md", sid: SID },
+    setup: (effect) => ({ globals: { document: { addEventListener: () => { /* the viewer's press watch */ } } },
+                          install: () => initFileView(() => { /* the kernel poster */ }, () => effect()) }) },
+  { site: "webview/file-browse.ts", what: "a browseFiles relay that lists a directory (initFileBrowse)",
+    data: { romp: "browseFiles", path: "docs", sid: SID },
+    setup: (effect) => ({ install: () => initFileBrowse(() => { /* the kernel poster */ }, { onRelay: () => effect() }) }) },
+];
+/** Installs the listener for real over a fresh receiving window of the row's kind (the global window while it installs
+ *  and while the message is delivered), delivers the message from the row's sender, and returns the effect's count. */
+function runInstalled(leg: Installed, row: Row): number {
+  const w = receiver(row.ctx);
+  let n = 0;
+  const { globals, install } = leg.setup(() => { n++; });
+  withGlobals({ ...(globals || {}), window: w }, () => {
+    install();
+    const ls = w.messageListeners();
+    assert.equal(ls.length, 1, leg.site + ": the install added one window message listener");
+    ls[0]({ data: leg.data, source: row.source(w), origin: row.origin });
+  });
+  return n;
+}
+
+for (const leg of INSTALLED) {
+  test(leg.site + ": " + leg.what + " from a foreign sender reaches nothing", () => {
+    const reached = FOREIGN.filter((row) => runInstalled(leg, row) !== 0).map((row) => row.who);
+    assert.deepEqual(reached, [], leg.site + ": a foreign sender reached the effect: " + reached.join("; "));
+  });
+  test(leg.site + ": " + leg.what + " from every sender that is not foreign reaches the effect once", () => {
+    const missed = HEARD.map((row) => [row.who, runInstalled(leg, row)] as const).filter(([, n]) => n !== 1).map(([who, n]) => who + " (" + n + ")");
+    assert.deepEqual(missed, [], leg.site + ": a heard sender did not reach the effect once: " + missed.join("; "));
+  });
+}
+
+// ── the listeners lifted out of their files ──
+
+type Site = { file: string; line: number; receiver: string; fn: any; text: string };
+const parsed = new Map<string, Site[]>();
+/** Every addEventListener("message", fn) call in a ui/ file, read by the TypeScript parser (so a spelling in a comment
+ *  or a string is no call): where it is, what it is called on, and the listener's node and text. One parse per file. */
+function messageSites(file: string): Site[] {
+  const had = parsed.get(file);
+  if (had) return had;
+  const src = fs.readFileSync(path.join(UI, file), "utf8");
+  const sf = ts.createSourceFile(file, src, ts.ScriptTarget.Latest, true, file.endsWith(".ts") ? ts.ScriptKind.TS : ts.ScriptKind.JS);
+  const out: Site[] = [];
+  const visit = (n: any): void => {
+    if (ts.isCallExpression(n) && n.arguments.length >= 2 && ts.isStringLiteralLike(n.arguments[0]) && n.arguments[0].text === "message") {
+      const callee = n.expression;
+      const name = ts.isPropertyAccessExpression(callee) ? callee.name.text : ts.isIdentifier(callee) ? callee.text : "";
+      if (name === "addEventListener") {
+        out.push({ file, line: sf.getLineAndCharacterOfPosition(n.getStart(sf)).line + 1,
+                   receiver: ts.isPropertyAccessExpression(callee) ? callee.expression.getText(sf) : "",
+                   fn: n.arguments[1], text: n.arguments[1].getText(sf) });
+      }
+    }
+    ts.forEachChild(n, visit);
+  };
+  visit(sf);
+  parsed.set(file, out);
+  return out;
+}
+/** The one message listener in `file` whose text holds `marker`. */
+function siteOf(file: string, marker: string): Site {
+  const hits = messageSites(file).filter((s) => s.text.includes(marker));
+  assert.equal(hits.length, 1, file + ": exactly one window message listener holds " + JSON.stringify(marker) + " (found " + hits.length + "); re-anchor");
+  return hits[0];
+}
+
+/** The inert stub every unbound free identifier of a lifted listener resolves to: any read on it is the stub again, a
+ *  call returns undefined, a write is dropped. */
+const stub: any = new Proxy(function () { /* inert */ }, {
+  get: (_t, k) => (k === Symbol.toPrimitive ? () => "" : stub),
+  apply: () => undefined,
+  set: () => true,
+});
+const chain: any = { then: () => chain, catch: () => chain };   // a fetch's promise chain that never settles
+
+type Lifted = { file: string; marker: string; what: string; data: unknown;
+                named: (hit: () => void, w: Receiver) => Record<string, unknown>;   // the effect's binding, counting through hit
+                writes?: string };   // or: the effect is a write to this free name
+const LIFTED: Lifted[] = [
+  { file: "webview/waiting.ts", marker: 'm.romp !== "panes"', what: "the shell's panes word replacing the Waiting pane's pane-routing cache",
+    data: { romp: "panes", on: { files: true }, avail: { files: true } }, named: () => ({}), writes: "panesAvail" },
+  { file: "webview/file-comments.ts", marker: '"fileCommentsResult"', what: "a fileCommentsResult settling the live panel's request",
+    data: { type: "fileCommentsResult", reqId: 1, store: { comments: [] } }, named: (hit) => ({ live: { settle: hit, failAll: () => { /* not this arm */ } } }) },
+  { file: "webview/gear.js", marker: "'taskTracking'", what: "the gear's taskTracking echo, which tells the shell",
+    data: { type: "taskTracking", on: false }, named: (hit) => ({ tellShellTracking: hit }) },
+  { file: "webview/gear.js", marker: "'browseResult'", what: "the gear's browseResult, which fills the default directory and persists it",
+    data: { type: "browseResult", target: "gear", path: "/srv/notes-api" }, named: (hit) => ({ dd: { value: "", dispatchEvent: hit } }) },
+  { file: "webview/gear.js", marker: "'settingStale'", what: "the gear's settingStale toast, which advances the gesture clock",
+    data: { type: "settingStale", setting: "judge-model", storedGt: 2000, gt: 1000, kept: "fable" }, named: (hit) => ({ gclock: { learn: hit, stamp: () => 0 } }) },
+  { file: "webview/gear.js", marker: "'models'", what: "the gear's models frame, which re-reads /models",
+    data: { type: "models", rev: 2 }, named: (hit) => ({ fetch: () => { hit(); return chain; } }) },
+  { file: "webview/gear.js", marker: "'openSettings'", what: "the gear's openSettings ask, which opens the modal",
+    data: { romp: "openSettings", tab: "tasks" }, named: (hit) => ({ openSettings: hit }) },
+  { file: "webview/gear.js", marker: "'logUnseen'", what: "the gear's logUnseen count, which sets the Open log badge",
+    data: { romp: "logUnseen", n: 3 }, named: (hit, w) => { defineHidden(w, "__rompSetLogCount", hit); return {}; } },
+  { file: "webview/palette-main.ts", marker: '"openKeys"', what: "the shell's openKeys ask, which opens the shortcuts dialog",
+    data: { romp: "openKeys" }, named: (hit) => ({ keys: { open: hit } }) },
+  { file: "webview/palette-main.ts", marker: '"hotkeyConfigure"', what: "the shell's hotkeyConfigure ask, which binds a tab's hot key",
+    data: { romp: "hotkeyConfigure", sid: SID, name: "web" }, named: (hit) => ({ configureHotkey: hit }) },
+  { file: "webview/strip.ts", marker: '"stripShow"', what: "the VS Code strip's usage push, which repaints the bars",
+    data: { type: "usage", usage: { fiveHour: { pct: 10 } } }, named: (hit) => ({ render: hit }) },
+];
+
+const compiled = new Map<string, (scope: unknown) => Listener>();
+/** The lifted listener as a function of its scope (compiled once per site): sloppy-mode code, which `with` needs
+ *  (esbuild's transform adds no strict prologue, and a .js listener is used as written). */
+function compile(site: Site): (scope: unknown) => Listener {
+  const key = site.file + ":" + site.line;
+  const hit = compiled.get(key);
+  if (hit) return hit;
+  const src = "const __listener = " + site.text + ";\n";
+  const code = site.file.endsWith(".ts") ? requireCjs("esbuild").transformSync(src, { loader: "ts", target: "es2020" }).code : src;
+  const make = new Function("__scope", "with (__scope) {\n" + code + "\nreturn __listener;\n}") as (s: unknown) => Listener;
+  compiled.set(key, make);
+  return make;
+}
+/** Runs the lifted listener once, over a fresh receiving window of the row's kind, on the message from the row's sender,
+ *  and returns the effect's count. */
+function runLifted(leg: Lifted, row: Row): number {
+  const site = siteOf(leg.file, leg.marker);
+  const w = receiver(row.ctx);
+  let n = 0;
+  const hit = () => { n++; };
+  const named: Record<string, unknown> = {
+    windowSender: (e: { source?: unknown; origin?: unknown }) => windowSender(e, w),
+    window: w,
+    location: w.location,
+    ...leg.named(hit, w),
+  };
+  const scope = new Proxy(named, {
+    has: (t, k) => typeof k === "string" && (k in t || !(k in globalThis)),   // named first; other real globals (JSON, Object, Event) stay real
+    get: (t, k) => (typeof k !== "string" ? undefined : (k in t ? t[k] : stub)),   // Symbol.unscopables reads undefined, so no name is skipped
+    set: (t, k, v) => { if (typeof k === "string") { if (k === leg.writes) hit(); t[k] = v; } return true; },
+  });
+  compile(site)(scope)({ data: leg.data, source: row.source(w), origin: row.origin });
+  return n;
+}
+
+for (const leg of LIFTED) {
+  const label = leg.file + " (" + leg.marker + ")";
+  test(label + ": " + leg.what + " from a foreign sender reaches nothing", () => {
+    const reached = FOREIGN.filter((row) => runLifted(leg, row) !== 0).map((row) => row.who);
+    assert.deepEqual(reached, [], label + ": a foreign sender reached the effect: " + reached.join("; "));
+  });
+  test(label + ": " + leg.what + " from every sender that is not foreign reaches the effect once", () => {
+    const missed = HEARD.map((row) => [row.who, runLifted(leg, row)] as const).filter(([, n]) => n !== 1).map(([who, n]) => who + " (" + n + ")");
+    assert.deepEqual(missed, [], label + ": a heard sender did not reach the effect once: " + missed.join("; "));
+  });
+}
+
+// ── the census: every window message listener in ui/ ──
+
+/** Every ui/ source file the parser should read: .ts, .js and .mjs under ui/ at any depth, tests (*.test.*) excluded. */
+function uiSources(): string[] {
+  const out: string[] = [];
+  const walk = (rel: string): void => {
+    for (const d of fs.readdirSync(path.join(UI, rel), { withFileTypes: true })) {
+      const r = rel ? rel + "/" + d.name : d.name;
+      if (d.isDirectory()) { if (d.name !== "node_modules" && d.name !== "dist") walk(r); continue; }
+      if (/\.(ts|js|mjs)$/.test(d.name) && !/\.test\.(ts|js|mjs)$/.test(d.name) && !d.name.endsWith(".d.ts")) out.push(r);
+    }
+  };
+  walk("");
+  return out.sort();
+}
+/** Where the listener's `if (windowSender(<its event>) === "foreign") return;` is among its body's statements, or why it
+ *  does not count: every statement before it must be a read of the message (a declaration initialised to <event>.data)
+ *  or an early return on a condition that calls, constructs and assigns nothing, so no arm runs before the check. */
+function headCheck(site: Site): string | null {
+  const fn = site.fn;
+  if (!(ts.isArrowFunction(fn) || ts.isFunctionExpression(fn)) || !fn.body || !ts.isBlock(fn.body)) return "the listener is not a function with a body";
+  if (!fn.parameters.length || !ts.isIdentifier(fn.parameters[0].name)) return "the listener names no event parameter";
+  const ev = fn.parameters[0].name.text;
+  const isReturn = (s: any) => ts.isReturnStatement(s) && !s.expression;
+  const isGate = (s: any) => ts.isIfStatement(s) && !s.elseStatement && isReturn(s.thenStatement)
+    && ts.isBinaryExpression(s.expression) && s.expression.operatorToken.kind === ts.SyntaxKind.EqualsEqualsEqualsToken
+    && ts.isCallExpression(s.expression.left) && ts.isIdentifier(s.expression.left.expression) && s.expression.left.expression.text === "windowSender"
+    && s.expression.left.arguments.length === 1 && ts.isIdentifier(s.expression.left.arguments[0]) && s.expression.left.arguments[0].text === ev
+    && ts.isStringLiteralLike(s.expression.right) && s.expression.right.text === "foreign";
+  const inert = (n: any): boolean => {
+    if (ts.isCallExpression(n) || ts.isNewExpression(n) || ts.isTaggedTemplateExpression(n) || ts.isDeleteExpression(n) || ts.isAwaitExpression(n) || ts.isYieldExpression(n)
+        || ts.isPrefixUnaryExpression(n) && (n.operator === ts.SyntaxKind.PlusPlusToken || n.operator === ts.SyntaxKind.MinusMinusToken)
+        || ts.isPostfixUnaryExpression(n) || ts.isBinaryExpression(n) && n.operatorToken.kind >= ts.SyntaxKind.FirstAssignment && n.operatorToken.kind <= ts.SyntaxKind.LastAssignment) return false;
+    let ok = true;
+    ts.forEachChild(n, (c: any) => { if (ok && !inert(c)) ok = false; });
+    return ok;
+  };
+  const readsMessage = (s: any) => ts.isVariableStatement(s) && s.declarationList.declarations.every((d: any) =>
+    d.initializer && ts.isPropertyAccessExpression(d.initializer) && ts.isIdentifier(d.initializer.expression)
+    && d.initializer.expression.text === ev && d.initializer.name.text === "data");
+  const earlyReturn = (s: any) => ts.isIfStatement(s) && !s.elseStatement && isReturn(s.thenStatement) && inert(s.expression);
+  const body = fn.body.statements;
+  for (let i = 0; i < body.length; i++) {
+    if (isGate(body[i])) return null;
+    if (!readsMessage(body[i]) && !earlyReturn(body[i])) return "statement " + (i + 1) + " runs before the foreign-sender check: " + body[i].getText().slice(0, 80);
+  }
+  return "no `if (windowSender(" + ev + ") === \"foreign\") return;` in the listener's body";
+}
+// The gated sites, by file and count. A listener that is not a window listener (a WebSocket's or a MessagePort's, which
+// no other page can post to) would be listed in EXEMPT with its reason; there is none in ui/ today (federation.ts's
+// sockets use onmessage, and the design leaves WebSocket and MessageChannel handlers out).
+const GATED: Array<[string, number]> = [
+  ["webview/file-browse.ts", 1], ["webview/file-comments.ts", 1], ["webview/file-view.ts", 1], ["webview/frame-listener.ts", 1],
+  ["webview/gear.js", 6], ["webview/palette-main.ts", 2], ["webview/settings.ts", 1], ["webview/strip.ts", 1], ["webview/waiting.ts", 1],
+];
+const EXEMPT: Array<[string, number, string]> = [];
+
+test("census: every window message listener in ui/ opens with the foreign-sender check, before any arm, and is one of the gated sites", () => {
+  const sites = uiSources().flatMap(messageSites);
+  const exempt = new Set(EXEMPT.map(([f, line]) => f + ":" + line));
+  const counted = new Map<string, number>();
+  for (const s of sites) if (!exempt.has(s.file + ":" + s.line)) counted.set(s.file, (counted.get(s.file) || 0) + 1);
+  assert.deepEqual([...counted.entries()].sort(), GATED.slice().sort(),
+    "the window message listeners in ui/ are not the gated sites: a new one is gated at its head, given an executed leg in this file and added to GATED");
+  const bad = sites.filter((s) => !exempt.has(s.file + ":" + s.line)).map((s) => [s, headCheck(s)] as const).filter(([, why]) => why !== null)
+    .map(([s, why]) => s.file + ":" + s.line + " (" + s.receiver + "): " + why);
+  assert.deepEqual(bad, [], "a window message listener acts before it rules out a foreign sender:\n" + bad.join("\n"));
+  assert.ok(sites.every((s) => s.receiver === "window"), "every census site is a window listener");
+});
+
+test("census: every gated site has an executed leg in this file (installed, or lifted by its marker)", () => {
+  const legs = new Set<string>();
+  for (const leg of INSTALLED) { const ss = messageSites(leg.site); assert.equal(ss.length, 1, leg.site + " has one window message listener"); legs.add(leg.site + ":" + ss[0].line); }
+  for (const leg of LIFTED) { const s = siteOf(leg.file, leg.marker); legs.add(s.file + ":" + s.line); }
+  const sites = uiSources().flatMap(messageSites).map((s) => s.file + ":" + s.line);
+  assert.deepEqual(sites.filter((s) => !legs.has(s)), [], "a window message listener with no executed leg here");
+  assert.equal(legs.size, INSTALLED.length + LIFTED.length, "no two legs run the same listener");
+});
+
+test("the census rule reads what it claims: a listener that acts before the check, or has none, is refused; the check after reads of the message is accepted", () => {
+  const probe = (text: string) => {
+    const sf = ts.createSourceFile("probe.ts", "window.addEventListener(\"message\", " + text + ");", ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+    const call = (sf.statements[0] as any).expression;
+    return headCheck({ file: "probe.ts", line: 1, receiver: "window", fn: call.arguments[1], text });
+  };
+  assert.equal(probe('(e) => { if (windowSender(e) === "foreign") return; go(e.data); }'), null);
+  assert.equal(probe('(e) => { const m = e.data; if (!m || m.type !== "x") return; if (windowSender(e) === "foreign") return; go(m); }'), null);
+  assert.equal(probe("function (e) { if (windowSender(e) === 'foreign') return; var m = e.data; go(m); }"), null);
+  assert.match(String(probe('(e) => { const m = e.data; go(m); if (windowSender(e) === "foreign") return; }')), /runs before the foreign-sender check/);
+  assert.match(String(probe('(e) => { if (!e.data || note(e.data)) return; if (windowSender(e) === "foreign") return; }')), /runs before/, "a call in an early return's condition is an arm");
+  assert.match(String(probe('(e) => { const m = e.data; if (m) seen = m; if (windowSender(e) === "foreign") return; }')), /runs before/);
+  assert.match(String(probe('(e) => { if (windowSender(e) !== "foreign") go(e.data); }')), /runs before|no `if/);
+  assert.match(String(probe('(e) => { if (windowSender(other) === "foreign") return; go(e.data); }')), /runs before|no `if/, "the check reads this listener's event");
+  assert.match(String(probe("(e) => go(e.data)")), /not a function with a body/);
+});

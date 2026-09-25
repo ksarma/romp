@@ -45,6 +45,7 @@ import { readTextCapped, overCapWords, settleUrlResponse } from "./capped-read";
 import { wrapCodeLines, addCopyBtn } from "./code-block";   // a fence's per-line rows and Copy button, the chat's own
 import { fenceCopyQueue, type Fence } from "./fence-source";   // what Copy copies: the fence's text as the file holds it, tabs and all
 import "./viewer-grammars";   // six more grammars for a viewed file, registered on the bundle's hljs core (rust, go, c, java, sql, toml)
+import { windowSender } from "./window-sender";   // initFileView's window listener hears no foreign sender
 
 // How long the romp loader may stand over a PDF's pages attempt (showPdfPages) before the viewer gives up on it and shows
 // the browser's frame with a line saying so — ui/CLAUDE.md's loading-state rule: the loader fades on the event, with a
@@ -4843,9 +4844,13 @@ export function initFileView(poster: (m: Record<string, unknown>) => void,
   // again). The chat's persistScrollForReload (render.ts) keeps its own place the same way.
   window.addEventListener("pagehide", () => { if (leaveLive) leaveLive(); });
   watchInputKind();   // the kind of the document's last press, for a hand-over of the keyboard with no holder to read the ring from (ringWithNoHolder)
+  // Every sender of these messages is this document, its embedder (the shell's viewFile relay), a window on its origin
+  // (the VS Code webview host) or its own dispatch of a kernel reply; a message from a foreign sender (window-sender.ts)
+  // opens nothing and settles no save or GitHub ask.
   window.addEventListener("message", (e: MessageEvent) => {
     const m = e.data;
     if (!m) return;
+    if (windowSender(e) === "foreign") return;
     if (m.romp === "viewFile" && typeof m.path === "string" && m.path) {
       if (onRelay) { onRelay(m); return; }   // this document's own contract (the Files pane) takes the message whole
       openFileView(m.path, typeof m.sid === "string" ? m.sid : null, { at: readAt(m.at) });

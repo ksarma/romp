@@ -352,8 +352,14 @@ test("feed, Outline, Waiting, chat and the VS Code timeline install their frame 
     assert.match(src, /import \{ listenForFrames(?:, \w+)* \} from "\.\/frame-listener";/, `${file}: imports the helper`);   // the chat also imports the manager-missing check (2026-09-10)
   }
   const helper = fs.readFileSync(path.join(UI, "frame-listener.ts"), "utf8");
-  assert.doesNotMatch(helper, /^import /m, "the helper stays import-free: importing federation.ts would boot a second manager in the pane bundle");
-  assert.ok(helper.indexOf('window.addEventListener("message", handler)') < helper.indexOf("fed.onFrame(handler)"), "window first, the registry after");
+  // the helper stays free of federation.ts, which would boot a second manager in the pane bundle: its one import is the
+  // sender check, and that module imports nothing, so nothing can reach federation.ts through it
+  assert.deepEqual(helper.match(/^import .*$/gm), ['import { windowSender } from "./window-sender";'],
+    "the helper's only import is window-sender.ts");
+  assert.doesNotMatch(fs.readFileSync(path.join(UI, "window-sender.ts"), "utf8"), /^import /m, "window-sender.ts imports nothing");
+  const onWindow = helper.indexOf('window.addEventListener("message", (e: MessageEvent) => { if (windowSender(e) === "foreign") return; handler(e); });');
+  assert.ok(onWindow > 0, "the window install hands the handler every message but a foreign sender's (executed in foreign-sender-listeners.test.ts)");
+  assert.ok(onWindow < helper.indexOf("fed.onFrame(handler)"), "window first, the registry after");
 });
 
 test("the three merged emissions go through emit and no other dispatch does", () => {

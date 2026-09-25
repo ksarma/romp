@@ -26,6 +26,7 @@ import { utDetailHint, utHintFor, applyUtHint, UT_HINT_CLASS } from "./user-todo
 import { linkifyPrRefs, installPrLinkOpener } from "./pr-links";
 import { perfFrameHandler } from "./perf-telemetry";
 import { listenForFrames } from "./frame-listener";
+import { windowSender } from "./window-sender";   // the panes cache hears no foreign sender (the frame handler's check is frame-listener.ts's)
 import { paintHeld, paintReleased } from "./paint-gate";
 import { publishPaneHidden } from "./paint-gate";   // a second line: the one above is the shape the Outline's tests pin
 import { linkifyPathTokens, openPathLink } from "./path-links";
@@ -553,8 +554,10 @@ listenForFrames(perfFrameHandler("waiting", (m) => vscodeApi?.postMessage(m), (e
 window.addEventListener("romp-hosts", () => render());   // a host's link changed → the chips' down-marks repaint
 // the shell's pane set, which panes are on screen by key (panesOn above; the shell posts it on this iframe's load and on
 // every toggle): the cache openTodoPath routes a todo's file link by. Whole-set replace, as render.ts does: a key the
-// shell stopped naming must not linger as on.
+// shell stopped naming must not linger as on. The word comes from the shell, this pane's embedder; a message from a
+// foreign sender (window-sender.ts) never touches the cache.
 window.addEventListener("message", (e: MessageEvent) => {
+  if (windowSender(e) === "foreign") return;
   const m = e.data;
   if (!m || m.romp !== "panes") return;
   if (m.on && typeof m.on === "object") {

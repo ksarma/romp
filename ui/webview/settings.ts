@@ -1,6 +1,7 @@
 import { effectiveDefaultBackend } from "./backend-names";
 import { tabWidgetPrefs, tabCtxOfPrefs, type TabWidgetPrefs } from "./tab-widgets";
 import { statusWidgetPrefs, legacyOfStatusPrefs, type StatusWidgetPrefs } from "./status-widgets";
+import { windowSender } from "./window-sender";   // installSettingsSync applies no store a foreign sender posts
 // Shared, persisted webview settings (the user 2026-06-14): one global settings store, surfaced via a
 // gear → modal. localStorage-backed so same-origin views (the browser's /chat, /feed, /timeline tabs)
 // share ONE setting, and a `storage` event live-syncs a change across the other open tabs. Keep this
@@ -212,11 +213,14 @@ export function onExternalSettingsChange(cb: (s: RompSettings) => void): void {
 // {settingsSync} message (gear.js save() posts it; extension.ts fans it out).
 // Applying = write our copy of the store, then raise the same-document signal so
 // every consumer above reacts. Never re-posts — the host already broadcast it.
+// The host posts from its own window on the webview's origin (window-sender.ts: a peer); a message from a foreign
+// sender writes nothing to the store.
 export function installSettingsSync(): void {
   if (typeof window === "undefined") return;
   window.addEventListener("message", (ev: MessageEvent) => {
     const m = ev.data;
     if (!m || m.type !== "settingsSync" || !m.settings) return;
+    if (windowSender(ev) === "foreign") return;
     try { localStorage.setItem(KEY, JSON.stringify(m.settings)); } catch { /* ignore */ }
     try { window.dispatchEvent(new Event("romp:settings")); } catch { /* ignore */ }
   });

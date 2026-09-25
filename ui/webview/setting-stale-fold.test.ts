@@ -2,7 +2,8 @@
 // refusing kernels (the #879 review's note: N kernels refusing one stale flush drew N identical
 // toasts naming no host). BEHAVIORAL, the gear-models-frame.test.ts way: the toast block of gear.js
 // (STALE_LABELS through the settingStale listener) is lifted out and run against stand-ins for
-// window/document/setTimeout and the closure names it reads (p, fill, post, gclock), then driven
+// window/document/setTimeout and the closure names it reads (p, fill, post, gclock; windowSender is the real helper,
+// reading the same window stand-in, and a frame here has no source and no origin: the document's own dispatch), then driven
 // with frames the way federation hands them to the gear — a remote kernel's frame host-stamped by
 // prefixInbound, the local kernel's without a host. Synthetic hosts only (the notes-api demo world).
 import { test } from "node:test";
@@ -11,6 +12,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { inspect } from "node:util";
 import { hideEdges, staysEnumerable } from "../test-dom-shim";
+import { windowSender } from "./window-sender";
 
 const GEAR = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "gear.js"), "utf8");
 
@@ -66,8 +68,8 @@ function lift() {
   const post = (m: any) => posts.push(m);
   const learned: Array<[string, number]> = [];
   const gclock = { learn: (s: string, gt: number) => learned.push([s, gt]), stamp: (s: string) => { learned.push([s, -1]); return 7777; } };
-  const fn = new Function("window", "document", "p", "fill", "post", "gclock", "setTimeout", src);
-  fn(win, doc, p, fill, post, gclock, setTimeout);
+  const fn = new Function("window", "document", "p", "fill", "post", "gclock", "setTimeout", "windowSender", src);
+  fn(win, doc, p, fill, post, gclock, setTimeout, (e: { source?: unknown; origin?: unknown }) => windowSender(e, win as { parent?: unknown }));
   const frame = (m: any) => listeners.forEach((l) => l({ data: m }));
   const box = () => byId["rs-stale-toasts"];
   const texts = () => (box() ? box().children.map((t) => t.querySelector(".rs-stale-toast-msg")!.textContent) : []);

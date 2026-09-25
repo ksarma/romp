@@ -985,10 +985,12 @@ test("each pane bundle's one frame listener is installed through listenForFrames
     assert.ok(src.includes('listenForFrames(perfFrameHandler("' + app + '", '),
       file + " installs it through perfFrameHandler as app " + app);
   }
-  // the one window install every pane shares, and the registry registration of the same handler beside it
+  // the one window install every pane shares, and the registry registration of the same handler beside it (the window
+  // path calls the handler behind the foreign-sender check, the perf wrapper included, so a frame the collector times
+  // is one the pane acts on; foreign-sender-listeners.test.ts executes the check)
   const fl = readUi("frame-listener.ts");
   assert.equal((fl.match(/window\.addEventListener\("message", /g) || []).length, 1, "frame-listener.ts owns the one window install");
-  assert.match(fl, /window\.addEventListener\("message", handler\);/);
+  assert.match(fl, /window\.addEventListener\("message", \(e: MessageEvent\) => \{ if \(windowSender\(e\) === "foreign"\) return; handler\(e\); \}\);/);
   assert.match(fl, /fed\.onFrame\(handler\);/);
 });
 

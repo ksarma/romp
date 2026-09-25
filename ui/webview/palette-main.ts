@@ -14,6 +14,7 @@ import { hostPrefix } from "./host-prefix";   // pure display helper — safe he
 import { installMenuEcho } from "./tag-menu";   // model deps only (tag-lens/session-views) — no manager, no DOM cost
 import { loadSettings, OPTIONAL_PANES, type PaneSet } from "./settings";   // the gear's store, read at every palette open (no side effects at import)
 import { hotkeyCommandId, loadTabKeys, rememberTabKey, forgetTabKey, tabChord, unboundTabKeys, TABKEYS_KEY } from "./tab-keys";   // per-tab hot keys (2026-09-10)
+import { windowSender } from "./window-sender";   // the shell's two window listeners below hear no foreign sender (imports nothing)
 
 type SessionRow = { id: string; name: string; dir: string; bg: string };
 
@@ -280,7 +281,8 @@ installMenuEcho();
   registerCommand({ id: "keys.open", title: "Keyboard shortcuts", run: () => keys.open() });
   w.__rompKeysOpen = () => keys.open();
   w.__rompKeysClose = () => keys.close();   // false when not open — the Escape chain moves on
-  window.addEventListener("message", (e) => { if (e.data && e.data.romp === "openKeys") keys.open(); });
+  // the ask comes from a pane in this shell (a same-origin window, window-sender.ts); a foreign sender opens nothing
+  window.addEventListener("message", (e) => { if (windowSender(e) === "foreign") return; if (e.data && e.data.romp === "openKeys") keys.open(); });
   // Sessions in the set with no chord bound leave it — never while the dialog is up (the one being recorded
   // has none yet), so the solo dialog's own close runs it too.
   function pruneUnboundHotkeys(): void {
@@ -301,7 +303,10 @@ installMenuEcho();
       try { back!.focus(); back!.postMessage({ type: "focusComposer" }, "*"); } catch (e) { /* the asking pane is gone */ }
     });
   }
+  // the ask comes from a chat column's tab menu, a pane in this shell (a same-origin window, window-sender.ts); a foreign
+  // sender binds no hot key and is never handed the focus back
   window.addEventListener("message", (e) => {
+    if (windowSender(e) === "foreign") return;
     const m = e.data;
     if (!m || m.romp !== "hotkeyConfigure" || typeof m.sid !== "string" || !m.sid) return;
     configureHotkey(m.sid, typeof m.name === "string" ? m.name : "", (e.source as Window | null) || null);
