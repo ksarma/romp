@@ -1,0 +1,535 @@
+#!/usr/bin/env python3
+"""The whole dashboard, signed in, in a real browser: every pane loads its data over the page key, and a tab whose key
+fell out of step with its sign-in is refused and comes back through the sign-in page.
+
+The browser's login cookie holds a session id that opens the page documents and the static bundles. A JSON read, a POST or
+a socket also needs the page key, which the login seeded into this origin's storage: the page-key script (kernel.py
+_PAGE_KEY_JS, first in every page's head) wraps window.fetch so a request to this origin carries it as X-Romp-Key, and
+the socket dials append it as k=. This lab serves the REAL dashboard from a hermetic kernel and drives it in playwright's
+browser (Chromium by default; PAGE_KEY_DASHBOARD_ENGINE=firefox or webkit runs the same scenes on another engine, and
+fails, never skips, when that engine is missing):
+
+  1. The dashboard boots from `/?token=` and every pane loads its data: the chat's session tab, the Outline's session, the
+     Feed's session, the Waiting pane's open request, the timeline's lane, a note opened into the Files pane (its figure
+     too), and the settings page's model lists. Every fetch any frame makes to the kernel carries X-Romp-Key equal to the
+     stored key, every socket carries k= equal to it and hears from the kernel, no request is refused, and no page makes an
+     XMLHttpRequest or an EventSource. The notification switch's POST, clicked in the bell's menu, is answered 200, and the
+     kernel holds the new state.
+  2. The wrapper keys every request form the Fetch API takes (a string, a URL, a Request with its own headers, a Request
+     with init headers, init headers as an object, as pairs and as a Headers, a body), keeps the site's own headers the way
+     the browser's fetch would, and leaves a request to another origin as it was: that origin sees no page key and no
+     preflight asking to send one.
+  3. A stale tab: the dashboard is open and the key in its storage changes to another sign-in's (the state two racing
+     sign-ins can leave). Its next request, a POST, is refused with the re-sign-in 403 and changes nothing; the tab goes to
+     /login and drops the stale key; signing in through the form brings the dashboard back, with every pane loading and the
+     POST answered again.
+
+Nothing here prints a token, a session id or a key: the driver compares them in memory and reports booleans, statuses and
+counts. The lab token is minted at run time. Skips LOUDLY without the extension deps or a Chromium; the CI extension job
+installs Chromium and runs served files with ROMP_SERVED_TESTS_REQUIRE=1, which turns any skip into a failure there.
+SYNTHETIC fixtures only (session web, the notes-api demo world, placeholder uuids)."""
+import json
+import os
+import re
+import secrets
+import shutil
+import socket
+import struct
+import subprocess
+import sys
+import tempfile
+import threading
+import time
+import unittest
+import urllib.request
+import zlib
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+
+import lab_dist
+
+HERE = os.path.dirname(os.path.realpath(__file__))
+ROOT = os.path.dirname(HERE)
+BIN = os.path.join(ROOT, "bin")
+EXT = os.path.join(ROOT, "vscode-extension")
+sys.path.insert(0, HERE)
+import test_ship_reship_served as _lab   # noqa: E402  the lab kernel's environment (the module, not its classes)
+
+SID = "bbbbbbbb-1111-2222-3333-444444444444"
+U_UUID = "11111111-2222-3333-4444-555555555555"
+A_UUID = "22222222-3333-4444-5555-666666666666"
+ENGINE = os.environ.get("PAGE_KEY_DASHBOARD_ENGINE") or "chromium"
+
+
+def _png(w=2, h=2, rgb=(60, 120, 200)):
+    """A tiny valid PNG (RGB, no filter) without a binary fixture."""
+    def chunk(tag, data):
+        return struct.pack(">I", len(data)) + tag + data + struct.pack(">I", zlib.crc32(tag + data) & 0xffffffff)
+    raw = b"".join(b"\x00" + bytes(rgb) * w for _ in range(h))
+    return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0))
+            + chunk(b"IDAT", zlib.compress(raw)) + chunk(b"IEND", b""))
+
+
+def _free_port():
+    s = socket.socket()
+    s.bind(("127.0.0.1", 0))
+    p = s.getsockname()[1]
+    s.close()
+    return p
+
+
+class _OtherOrigin(BaseHTTPRequestHandler):
+    """Another origin: records the NAMES of the headers each request brings (never a value), answers CORS-open."""
+    seen = []
+
+    def log_message(self, *a):
+        pass
+
+    def _answer(self):
+        names = sorted(k.lower() for k in self.headers.keys())
+        asked = [h.strip().lower() for h in (self.headers.get("Access-Control-Request-Headers") or "").split(",") if h.strip()]
+        type(self).seen.append({"method": self.command, "path": self.path.split("?")[0], "names": names, "asked": asked})
+        self.send_response(200)
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Headers", "*")
+        self.send_header("Content-Type", "text/plain")
+        self.send_header("Content-Length", "2")
+        self.end_headers()
+        self.wfile.write(b"ok")
+
+    do_GET = do_POST = do_OPTIONS = _answer
+
+
+# The shared head of every driver: the browser, the config, and the helpers each scene uses. A driver reports one RESULT
+# line of booleans, statuses and counts; no credential value leaves the browser or this process.
+HEAD = r"""
+import { createRequire } from "node:module";
+import fs from "node:fs";
+const require = createRequire(process.env.EXT_PKG);
+const pw = require("playwright");
+const cfg = JSON.parse(fs.readFileSync(process.env.CFG, "utf8"));
+let browser;
+try { browser = await pw[cfg.engine].launch(); }
+catch (e) { console.error("browser-launch-failed: " + e); process.exit(3); }
+const VIEW = { viewport: { width: 1600, height: 1000 } };
+const out = {};
+const pathOf = (u) => { try { return new URL(u).pathname; } catch (e) { return "?"; } };
+const onKernel = (u) => { try { return new URL(u).origin === cfg.origin; } catch (e) { return false; } };
+const sessionCookies = async (ctx) => (await ctx.cookies(cfg.origin)).filter((c) => c.name.startsWith("romp_s_"));
+const slotOf = async (ctx) => { const s = await sessionCookies(ctx); return s.length === 1 ? "romp.pageKey." + s[0].name : ""; };
+const keyIn = (page, slot) => page.evaluate((s) => localStorage.getItem(s), slot);
+// the Files control on, as the gear's setting would have it, so a file link routes into the Files pane
+const filesControl = (ctx) => ctx.addInitScript(() => { try { if (!localStorage.getItem("romp:settings")) localStorage.setItem("romp:settings", JSON.stringify({ showFilesControl: true })); } catch (e) {} });
+/** Every request a context makes to the kernel: its path, kind, method and frame; its X-Romp-Key (held here, in memory
+ *  only: a report names it through `label`, never by value); its status and whether a refusal carried the re-sign-in
+ *  marker. */
+function recorder(ctx, label) {
+  const log = [], pending = [];
+  ctx.on("request", (rq) => { if (!onKernel(rq.url())) return; const t = Date.now(); pending.push((async () => {
+    const h = await rq.allHeaders().catch(() => ({}));
+    let frame = "(none)"; try { frame = pathOf(rq.frame().url()); } catch (e) { frame = "(worker)"; }
+    const resp = await rq.response().catch(() => null);
+    const rh = resp ? await resp.allHeaders().catch(() => ({})) : {};
+    const kv = h["x-romp-key"];
+    log.push({ path: pathOf(rq.url()), type: rq.resourceType(), method: rq.method(), frame, get key() { return label(kv); },
+               status: resp ? resp.status() : null, reauth: !!rh["x-romp-reauth"], t });
+  })()); });
+  return { log, settle: () => Promise.all(pending) };
+}
+/** Every socket a page dials: its route and app, its k= (named through `label`, like the recorder's key), when it was
+ *  dialed, and how many frames the kernel sent on it. */
+function sockets(page, label) {
+  const socks = [];
+  page.on("websocket", (ws) => { let u; try { u = new URL(ws.url()); } catch (e) { return; }
+    const kv = u.searchParams.get("k");
+    const rec = { path: u.pathname, app: u.searchParams.get("app") || "", get key() { return label(kv); }, frames: 0, t: Date.now() };
+    socks.push(rec); ws.on("framereceived", () => { rec.frames++; }); });
+  return socks;
+}
+const frameAt = async (page, p) => { for (let i = 0; i < 300; i++) { const f = page.frames().find((f) => pathOf(f.url()) === p); if (f) return f; await page.waitForTimeout(100); } return null; };
+const waitIn = (frame, fn, arg) => frame ? frame.waitForFunction(fn, arg, { timeout: cfg.deadline }).then(() => true, () => false) : Promise.resolve(false);
+/** The dashboard's panes as its own rail lists them (each toggle's pane key and the word it wears), with the route each
+ *  pane's frame loads, plus the settings page (the gear's frame, which is no pane). Read off the page, so a pane added to
+ *  the rail is one this lab has to give a data check below. */
+async function paneTable(page) {
+  const rail = await page.evaluate(() => Array.from(document.querySelectorAll(".rail-btn[data-pane]")).map((b) => {
+    const key = b.getAttribute("data-pane"), f = document.getElementById("f-" + key);
+    return { key, label: (b.textContent || "").trim(), route: f ? (f.getAttribute("src") || f.getAttribute("data-src") || "") : "" }; }));
+  const st = await page.evaluate(() => { const f = document.getElementById("f-settings"); return f ? (f.getAttribute("src") || f.getAttribute("data-src") || "") : ""; });
+  return rail.concat([{ key: "settings", label: "Settings", route: st }]);
+}
+/** Each pane's proof that it loaded its data, by the word the rail gives it. Chat, Outline, Feed and Waiting name the
+ *  session; Sessions (the timeline) draws its lane; Files shows the note a chat link opened into it, figure and all;
+ *  Settings fills its model lists from /models. */
+const LOADED = {
+  Chat: (sid) => !!document.querySelector('#tabs .tab[data-id="' + sid + '"]'),
+  Outline: (sid) => !!document.querySelector('.fl-head[data-sid="' + sid + '"]'),
+  Feed: (sid) => !!document.querySelector('.feed-sess-head[data-fsid="' + sid + '"]'),
+  Waiting: (sid) => !!document.querySelector('.wt-item[data-sid="' + sid + '"]'),
+  Sessions: () => Array.from(document.querySelectorAll("svg text")).some((t) => t.textContent === "web"),
+  Files: () => { const v = document.getElementById("romp-fileview"); const i = v && v.querySelector('img[alt="note figure"]');
+    return !!v && /notes-api latency plot/.test(v.textContent || "") && !!i && i.complete && i.naturalWidth > 0; },
+  Settings: () => { const s = document.getElementById("rs-judgemodel"); return !!s && s.options.length > 1; },
+};
+/** Every pane on, then each one's data check: {label: true | false | "no check"}. The Files pane is checked after a chat
+ *  file link opens a note into it; Settings is opened through the shell's own opener and closed again. */
+async function panesLoaded(page, table) {
+  const res = {};
+  for (const p of table) if (p.key !== "settings") await page.evaluate((k) => window.__rompPaneToggle(k, true), p.key);
+  const chat = await frameAt(page, (table.find((p) => p.label === "Chat") || {}).route);
+  for (const p of table) {
+    if (!LOADED[p.label]) { res[p.label] = "no check"; continue; }
+    if (p.label === "Files" && chat) await chat.click('#content .file-uri-link[data-path="docs/note.md"]').catch(() => {});
+    if (p.label === "Settings") await page.evaluate(() => window.__rompOpenSettings());
+    const fr = await frameAt(page, p.route);
+    res[p.label] = await waitIn(fr, LOADED[p.label], cfg.sid);
+    if (p.label === "Settings" && fr) {
+      await fr.evaluate(() => window.__rompSettingsClose && window.__rompSettingsClose()).catch(() => {});
+      await page.waitForFunction(() => !document.body.classList.contains("settings-open"), null, { timeout: cfg.deadline }).catch(() => {});
+    }
+  }
+  return res;
+}
+/** A frame's route as the pane word it belongs to ("shell" for the dashboard's own document). */
+const wordOf = (table, route) => route === "/" ? "shell" : ((table.find((p) => p.route === route) || {}).label || route);
+/** The notification switch's own POST, clicked the way a person does: the bell, then its main row. */
+async function bellPost(page) {
+  await page.click("#rail-bell");
+  await page.waitForFunction(() => { const b = document.getElementById("rbell-back"); return !!b && !b.hidden; }, null, { timeout: cfg.deadline });
+  const was = await page.evaluate(() => document.querySelector('#rbell-pop [data-act="all"]').getAttribute("aria-checked"));
+  const resp = page.waitForResponse((r) => pathOf(r.url()) === "/notify-all" && r.request().method() === "POST", { timeout: cfg.deadline }).catch(() => null);
+  await page.click('#rbell-pop [data-act="all"]');
+  const r = await resp;
+  const flipped = await page.waitForFunction((w) => document.querySelector('#rbell-pop [data-act="all"]').getAttribute("aria-checked") !== w, was, { timeout: cfg.deadline }).then(() => true, () => false);
+  const readBack = await page.evaluate(async () => { const r = await fetch("/notify-all"); return r.ok ? (await r.json()).on : "HTTP " + r.status; });
+  await page.keyboard.press("Escape").catch(() => {});
+  return { status: r ? r.status() : null, flipped, held: readBack === (was !== "true") };
+}
+/** A summary of a request log: the kernel-bound fetch/xhr requests by the key they carried, the refusals, and the kinds
+ *  seen. */
+function summary(log, from, table) {
+  const rows = log.filter((r) => r.t >= (from || 0));
+  const data = rows.filter((r) => r.type === "fetch" || r.type === "xhr" || r.type === "eventsource");
+  const byKey = {}; for (const r of data) byKey[r.key] = (byKey[r.key] || 0) + 1;
+  const frames = {}; for (const r of data) { const w = wordOf(table, r.frame); frames[w] = (frames[w] || 0) + 1; }
+  return { data: data.length, byKey, frames, xhr: rows.filter((r) => r.type === "xhr" || r.type === "eventsource").length,
+           refused: rows.filter((r) => r.status === 403).map((r) => r.frame + " " + r.method + " " + r.path + " key=" + r.key),
+           unkeyed: data.filter((r) => r.key !== "mine").map((r) => r.frame + " " + r.method + " " + r.path + " key=" + r.key + " " + r.status) };
+}
+"""
+
+DASHBOARD = HEAD + r"""
+const ctx = await browser.newContext(VIEW);
+await filesControl(ctx);
+let mine = "";
+const label = (k) => k === undefined || k === null ? "none" : (mine && k === mine ? "mine" : "other");
+const rec = recorder(ctx, label);
+const page = await ctx.newPage();
+const socks = sockets(page, label);
+await page.goto(cfg.origin + "/?token=" + encodeURIComponent(cfg.token));
+await page.waitForFunction(() => !!window.__rompPaneToggle, null, { timeout: cfg.deadline });
+const slot = await slotOf(ctx);
+mine = (await keyIn(page, slot)) || "";
+out.keyLen = mine.length;
+out.keyIsToken = mine === cfg.token;
+out.addressClean = !/[?&](token|c)=/.test(page.url());
+const table = await paneTable(page);
+out.panes = await panesLoaded(page, table);
+out.documents = Array.from(new Set(page.frames().map((f) => wordOf(table, pathOf(f.url()))))).sort();
+out.post = await bellPost(page);
+await page.waitForTimeout(1500);   // the panes' own polls after the POST
+await rec.settle();
+out.requests = summary(rec.log, 0, table);
+const appWord = (a) => a === "shell" ? "shell" : ((table.find((p) => p.key === a) || {}).label || a);
+out.sockets = socks.map((s) => ({ pane: appWord(s.app), path: s.path, key: s.key, heard: s.frames > 0 }));
+fs.writeSync(1, "RESULT:" + JSON.stringify(out) + "\n");
+await browser.close();
+process.exit(0);
+"""
+
+FORMS = HEAD + r"""
+const ctx = await browser.newContext(VIEW);
+let mine = "";
+const label = (k) => k === undefined || k === null ? "none" : (mine && k === mine ? "mine" : "other");
+const seen = {};   // the headers each probe's request carried, by probe number: names only, and which key
+ctx.on("request", async (rq) => { let u; try { u = new URL(rq.url()); } catch (e) { return; } const n = u.searchParams.get("probe"); if (!n || u.origin !== cfg.origin) return;
+  const h = await rq.allHeaders().catch(() => ({})); seen[n] = { key: label(h["x-romp-key"]), probe: h["x-probe"] || null, probeInit: h["x-probe-init"] || null, method: rq.method() }; });
+const page = await ctx.newPage();
+await page.goto(cfg.origin + "/chat?token=" + encodeURIComponent(cfg.token));
+await page.waitForSelector('#tabs .tab[data-id="' + cfg.sid + '"]', { timeout: cfg.deadline });
+mine = (await keyIn(page, await slotOf(ctx))) || "";
+out.keyLen = mine.length;
+out.status = await page.evaluate(async (other) => {
+  const s = async (p) => { try { return (await p).status; } catch (e) { return "threw " + String(e).slice(0, 60); } };
+  return {
+    string: await s(fetch("/sessions?probe=1")),
+    url: await s(fetch(new URL("/sessions?probe=2", location.href))),
+    absolute: await s(fetch(location.origin + "/sessions?probe=3")),
+    request: await s(fetch(new Request("/sessions?probe=4", { headers: { "X-Probe": "r" } }))),
+    requestInit: await s(fetch(new Request("/sessions?probe=5", { headers: { "X-Probe": "r" } }), { headers: { "X-Probe-Init": "i" } })),
+    object: await s(fetch("/sessions?probe=6", { headers: { "X-Probe": "o" } })),
+    pairs: await s(fetch("/sessions?probe=7", { headers: [["X-Probe", "p"]] })),
+    headers: await s(fetch("/sessions?probe=8", { headers: new Headers({ "X-Probe": "h" }) })),
+    initNoHeaders: await s(fetch("/sessions?probe=9", { cache: "no-store" })),
+    requestInitNoHeaders: await s(fetch(new Request("/sessions?probe=10", { headers: { "X-Probe": "r" } }), { cache: "no-store" })),
+    post: await s(fetch("/notify-turns?probe=11", { method: "POST", body: JSON.stringify({ on: false }) })),
+    postRequest: await s(fetch(new Request("/notify-turns?probe=12", { method: "POST", body: JSON.stringify({ on: false }) }))),
+    other: await s(fetch(other + "/elsewhere?probe=13")),
+    otherHeaders: await s(fetch(other + "/elsewhere?probe=14", { headers: { "X-Probe": "x" } })),
+    otherRequest: await s(fetch(new Request(other + "/elsewhere?probe=15"))),
+  };
+}, cfg.other);
+await page.waitForTimeout(500);
+out.seen = seen;
+fs.writeSync(1, "RESULT:" + JSON.stringify(out) + "\n");
+await browser.close();
+process.exit(0);
+"""
+
+STALE = HEAD + r"""
+// browser A holds the dashboard; browser B signs in on its own, and B's key is what A's storage ends up holding
+const a = await browser.newContext(VIEW), b = await browser.newContext(VIEW);
+await filesControl(a);
+let keyA = "", keyB = "";
+const label = (k) => k === undefined || k === null ? "none" : (k === keyA ? "mine" : (k === keyB ? "theirs" : "other"));
+const rec = recorder(a, label);
+const pa = await a.newPage(), pb = await b.newPage();
+const socks = sockets(pa, label);
+await pa.goto(cfg.origin + "/?token=" + encodeURIComponent(cfg.token));
+await pa.waitForFunction(() => !!window.__rompPaneToggle, null, { timeout: cfg.deadline });
+const slotA = await slotOf(a);
+keyA = (await keyIn(pa, slotA)) || "";
+const table = await paneTable(pa);
+out.before = await panesLoaded(pa, table);
+await pb.goto(cfg.origin + "/chat?token=" + encodeURIComponent(cfg.token));
+await pb.waitForSelector('#tabs .tab[data-id="' + cfg.sid + '"]', { timeout: cfg.deadline });
+keyB = (await keyIn(pb, await slotOf(b))) || "";
+out.keysDiffer = keyA !== "" && keyB !== "" && keyA !== keyB;
+out.sameSlot = slotA === (await slotOf(b)) && slotA !== "";
+out.switchBefore = await pb.evaluate(async () => (await (await fetch("/notify-all")).json()).on);
+// the key changes under the open dashboard, and the tab's next request is a POST
+await rec.settle();
+const swapT = Date.now();
+out.postStatus = await pa.evaluate(async ([s, k, want]) => { localStorage.setItem(s, k);
+  const r = await fetch("/notify-all", { method: "POST", body: JSON.stringify({ on: want }) });
+  return { status: r.status, reauth: !!r.headers.get("X-Romp-Reauth") }; }, [slotA, keyB, !out.switchBefore]).catch(() => "navigated");
+out.hop = await pa.waitForURL((u) => new URL(u).pathname === "/login", { timeout: cfg.deadline }).then(() => true, () => false);
+out.keyDropped = (await keyIn(pa, slotA)) === null;
+await rec.settle();
+const stale = rec.log.filter((r) => r.t >= swapT && r.key === "theirs");
+out.stale = { count: stale.length, answered: stale.filter((r) => r.status !== 403).map((r) => r.frame + " " + r.method + " " + r.path + " " + r.status),
+              unmarked: stale.filter((r) => r.status === 403 && !r.reauth).map((r) => r.frame + " " + r.method + " " + r.path),
+              post: stale.filter((r) => r.method === "POST" && r.path === "/notify-all").map((r) => ({ status: r.status, reauth: r.reauth })) };
+out.switchAfterRefusal = await pb.evaluate(async () => (await (await fetch("/notify-all")).json()).on);
+// signing in again through the /login form brings the dashboard back
+await pa.fill("#t", cfg.token);
+const backT = Date.now();
+await pa.click("form button");
+out.backAt = await pa.waitForURL((u) => new URL(u).pathname === "/", { timeout: cfg.deadline }).then(() => pathOf(pa.url()), () => pathOf(pa.url()));
+out.backAddressClean = !/[?&](token|c)=/.test(pa.url());
+await pa.waitForFunction(() => !!window.__rompPaneToggle, null, { timeout: cfg.deadline }).catch(() => {});
+out.keyBack = label((await keyIn(pa, slotA)) || undefined);
+out.after = await panesLoaded(pa, await paneTable(pa));
+out.post = await bellPost(pa);
+await pa.waitForTimeout(1500);
+await rec.settle();
+out.afterRequests = summary(rec.log, backT, table);
+out.afterSockets = socks.filter((s) => s.path === "/ws" && s.t >= backT).map((s) => ({ app: s.app, key: s.key, heard: s.frames > 0 }));
+fs.writeSync(1, "RESULT:" + JSON.stringify(out) + "\n");
+await browser.close();
+process.exit(0);
+"""
+
+# Every pane the rail lists, by the word it wears, and the settings page: each has a data check in the driver's LOADED.
+PANES = ("Chat", "Sessions", "Outline", "Feed", "Waiting", "Files", "Settings")
+
+
+class ServedDashboardOverThePageKey(unittest.TestCase):
+    maxDiff = None
+
+    @classmethod
+    def setUpClass(cls):
+        try:
+            cls._boot()
+        except BaseException:          # a skip OR a failure: never leave a kernel or a lab behind
+            cls.tearDownClass()
+            raise
+
+    @classmethod
+    def _boot(cls):
+        explicit = "PAGE_KEY_DASHBOARD_ENGINE" in os.environ    # an engine asked for by name fails when it is missing
+        if not os.path.isdir(os.path.join(EXT, "node_modules", "playwright")):
+            if explicit:
+                raise AssertionError("PAGE_KEY_DASHBOARD_ENGINE is set but the extension deps are absent")
+            raise unittest.SkipTest("extension deps absent (npm ci not run here): the served lab needs them; CI's extension job has them and requires this file to run")
+        probe = subprocess.run(["node", "-e", "const p=require(process.argv[1]);process.stdout.write(p[process.argv[2]].executablePath())",
+                                os.path.join(EXT, "node_modules", "playwright"), ENGINE], capture_output=True, text=True)
+        if probe.returncode != 0 or not os.path.exists(probe.stdout.strip()):
+            if explicit:
+                raise AssertionError("PAGE_KEY_DASHBOARD_ENGINE=%s is not installed on this box" % ENGINE)
+            raise unittest.SkipTest("no playwright browser on this box: the served lab needs one; CI's extension job installs Chromium and requires this file to run")
+        cls.lab = tempfile.mkdtemp(prefix="page-key-dash-")
+        dist = os.path.join(cls.lab, "dist")
+        lab_dist.copy_dist(dist)   # the checkout's ONE build of the bundles, copied under its lock (tests/lab_dist.py)
+        state = os.path.join(cls.lab, "xdg", "romp")
+        cwd = os.path.join(cls.lab, "proj")
+        for d in ("names", "sdk", "states"):
+            os.makedirs(os.path.join(state, d), exist_ok=True)
+        for d in ("docs", "plots"):
+            os.makedirs(os.path.join(cwd, d), exist_ok=True)
+        Path(cwd, "plots", "figure.png").write_bytes(_png())
+        Path(cwd, "docs", "note.md").write_text("# Note\n\nThe notes-api latency plot:\n\n![note figure](../plots/figure.png)\n")
+        Path(state, "names", SID).write_text("web\t%s\t#9cd2ff\t#0c1a2e\n" % cwd)
+        Path(state, "sdk", SID + ".json").write_text(json.dumps(
+            {"sid": SID, "name": "web", "cwd": cwd, "mode": "auto", "effort": "high", "lastSid": SID, "alive": True,
+             "model": "claude-opus-5", "liveModel": "Opus 5"}))
+        # one open request for the Waiting pane to show, with its switch on
+        Path(state, "user-todos-enabled.json").write_text(json.dumps({"enabled": True, "gt": 1}))
+        Path(state, "user-todos.json").write_text(json.dumps(
+            {SID: [{"id": "t1", "text": "Pick the notes-api release date.", "createdT": 1757000000000}]}))
+        claude = os.path.join(cls.lab, "claude")
+        proj = os.path.join(claude, "projects", re.sub(r"[^A-Za-z0-9]", "-", os.path.realpath(cwd)))
+        os.makedirs(proj, exist_ok=True)
+        reply = "The notes-api latency plot is written up in docs/note.md."
+        Path(proj, SID + ".jsonl").write_text(
+            json.dumps({"type": "user", "uuid": U_UUID, "parentUuid": None, "timestamp": "2026-09-05T00:00:00.000Z", "sessionId": SID,
+                        "message": {"role": "user", "content": "Where is the notes-api latency plot?"}}) + "\n" +
+            json.dumps({"type": "assistant", "uuid": A_UUID, "parentUuid": U_UUID, "timestamp": "2026-09-05T00:00:05.000Z", "sessionId": SID,
+                        "message": {"role": "assistant", "model": "claude-opus-5", "content": [{"type": "text", "text": reply}], "stop_reason": "end_turn"}}) + "\n")
+        _OtherOrigin.seen = []
+        cls.other = ThreadingHTTPServer(("127.0.0.1", 0), _OtherOrigin)
+        threading.Thread(target=cls.other.serve_forever, daemon=True).start()
+        cls.port, cls.token = _free_port(), secrets.token_urlsafe(24)   # minted at run time, never printed
+        env = _lab.kernel_env(cls.lab, claude, dist, cls.port, cls.token, ROMP_HOST_NAME="TESTHOST")
+        cls.klog = os.path.join(cls.lab, "kernel.log")
+        cls.kernel = subprocess.Popen([os.path.join(BIN, "romp-kernel")], stdout=open(cls.klog, "w"), stderr=subprocess.STDOUT, env=env)
+        for _ in range(120):
+            try:
+                urllib.request.urlopen("http://127.0.0.1:%d/healthz" % cls.port, timeout=1)
+                break
+            except Exception:
+                time.sleep(0.5)
+        else:
+            raise unittest.SkipTest("hermetic kernel never served /healthz here")
+
+    @classmethod
+    def tearDownClass(cls):
+        k = getattr(cls, "kernel", None)
+        if k:
+            k.kill()
+            k.wait()
+        o = getattr(cls, "other", None)
+        if o:
+            o.shutdown()
+            o.server_close()
+        shutil.rmtree(getattr(cls, "lab", ""), ignore_errors=True)
+
+    def _klog_tail(self):
+        """The kernel log's tail for a failure message, with the lab token masked (it never appears there; belt)."""
+        try:
+            return open(self.klog).read()[-1500:].replace(self.token, "<token>")
+        except OSError:
+            return ""
+
+    def _drive(self, src):
+        cfg = os.path.join(self.lab, "cfg.json")
+        with open(cfg, "w") as f:
+            json.dump({"origin": "http://127.0.0.1:%d" % self.port, "token": self.token, "sid": SID, "deadline": 30000,
+                       "engine": ENGINE, "other": "http://127.0.0.1:%d" % self.other.server_address[1]}, f)
+        driver = os.path.join(self.lab, "driver.mjs")
+        with open(driver, "w") as f:
+            f.write(src)
+        p = subprocess.run(["node", driver], capture_output=True, text=True, timeout=400,
+                           env=dict(os.environ, EXT_PKG=os.path.join(EXT, "package.json"), CFG=cfg))
+        os.unlink(cfg)
+        if p.returncode == 3:
+            if "PAGE_KEY_DASHBOARD_ENGINE" in os.environ:
+                self.fail("the %s engine did not launch" % ENGINE)
+            raise unittest.SkipTest("no playwright browser on this box: the served lab needs one; CI's extension job installs Chromium and requires this file to run")
+        mask = lambda s: s.replace(self.token, "<token>")
+        self.assertEqual(p.returncode, 0, "driver failed:\n" + mask(p.stdout[-3000:] + p.stderr[-3000:]) + "\nkernel:\n" + self._klog_tail())
+        line = next((ln for ln in p.stdout.splitlines() if ln.startswith("RESULT:")), None)
+        self.assertIsNotNone(line, "driver printed no result:\n" + mask(p.stdout[-3000:]))
+        self.assertNotIn(self.token, line, "the driver's report carries no credential")
+        if os.environ.get("PAGE_KEY_DASHBOARD_REPORT"):   # a directory: each scene's report (booleans, statuses, counts) for the record
+            with open(os.path.join(os.environ["PAGE_KEY_DASHBOARD_REPORT"], ENGINE + "-" + self._testMethodName + ".json"), "w") as f:
+                f.write(line[len("RESULT:"):] + "\n")
+        return json.loads(line[len("RESULT:"):])
+
+    def _assert_panes(self, panes, when):
+        self.assertEqual(panes, {k: True for k in PANES}, when + ": every pane the rail lists, and settings, loaded its data "
+                                                                 "(a pane with no check is named \"no check\")")
+
+    def _assert_requests(self, req, when):
+        self.assertGreater(req["data"], 10, when + ": the pages made their data requests: %r" % req)
+        self.assertEqual(req["unkeyed"], [], when + ": every fetch to the kernel carried X-Romp-Key equal to the stored key")
+        self.assertEqual(req["refused"], [], when + ": no request the pages made was refused")
+        self.assertEqual(req["xhr"], 0, when + ": no XMLHttpRequest or EventSource: the wrapper covers fetch alone")
+
+    def test_the_dashboard_boots_and_every_pane_loads_its_data_over_the_page_key(self):
+        r = self._drive(DASHBOARD)
+        self.assertGreater(r["keyLen"], 20, "the login seeded the page key")
+        self.assertFalse(r["keyIsToken"], "the page key is not the serve token")
+        self.assertTrue(r["addressClean"], "the address keeps no token= once the page runs")
+        self._assert_panes(r["panes"], "signed in")
+        docs = ("shell",) + PANES
+        self.assertTrue(set(docs) <= set(r["documents"]), "every pane's document loaded: %r" % r["documents"])
+        self._assert_requests(r["requests"], "signed in")
+        for p in docs:
+            self.assertIn(p, r["requests"]["frames"], "the %s document made its own keyed fetches: %r" % (p, r["requests"]["frames"]))
+        panes = {s["pane"] for s in r["sockets"] if s["path"] == "/ws"}
+        self.assertTrue(set(docs) <= panes, "every pane dialed its socket: %r" % sorted(panes))
+        self.assertEqual([s for s in r["sockets"] if s["key"] != "mine"], [], "every socket carries k= equal to the stored key")
+        self.assertEqual([s for s in r["sockets"] if not s["heard"]], [], "and the kernel answered on every one")
+        self.assertEqual(r["post"]["status"], 200, "the notification switch's POST is answered")
+        self.assertTrue(r["post"]["flipped"], "the switch shows the new state")
+        self.assertTrue(r["post"]["held"], "and the kernel holds it")
+
+    def test_the_fetch_wrapper_keys_every_request_form_for_this_origin_and_no_other(self):
+        _OtherOrigin.seen = []
+        r = self._drive(FORMS)
+        st, seen = r["status"], r["seen"]
+        same = ("string", "url", "absolute", "request", "requestInit", "object", "pairs", "headers", "initNoHeaders",
+                "requestInitNoHeaders", "post", "postRequest")
+        self.assertEqual({k: st[k] for k in same}, {k: 200 for k in same}, "the kernel answers every form of same-origin fetch: %r" % st)
+        self.assertEqual({n: seen.get(str(n), {}).get("key") for n in range(1, 13)}, {n: "mine" for n in range(1, 13)},
+                         "each carried X-Romp-Key equal to the stored key: %r" % seen)
+        self.assertEqual(seen["4"]["probe"], "r", "a Request keeps its own headers")
+        self.assertEqual((seen["5"]["probe"], seen["5"]["probeInit"]), (None, "i"),
+                         "init headers replace a Request's, as the browser's fetch has them")
+        self.assertEqual([seen[n]["probe"] for n in ("6", "7", "8")], ["o", "p", "h"], "init headers as an object, pairs or a Headers are kept")
+        self.assertEqual(seen["10"]["probe"], "r", "a Request with an init that names no headers keeps its own")
+        self.assertEqual([seen[n]["method"] for n in ("11", "12")], ["POST", "POST"])
+        self.assertEqual([st[k] for k in ("other", "otherHeaders", "otherRequest")], [200, 200, 200], "the other origin was reached")
+        other = _OtherOrigin.seen
+        self.assertTrue(other, "the other origin saw the requests")
+        self.assertEqual([x for x in other if "x-romp-key" in x["names"] or "x-romp-key" in x["asked"]], [],
+                         "a request to another origin carries no page key and no preflight asks to send one: %r" % other)
+        self.assertEqual([x for x in other if x["method"] == "OPTIONS" and x["asked"] != ["x-probe"]], [],
+                         "the one preflight is the site's own header's: %r" % other)
+
+    def test_a_stale_dashboard_tab_is_refused_and_signing_in_again_brings_it_back(self):
+        r = self._drive(STALE)
+        self._assert_panes(r["before"], "before the key changed")
+        self.assertTrue(r["keysDiffer"] and r["sameSlot"], "two sign-ins of one kernel: one slot name, two keys")
+        self.assertIn(r["switchBefore"], (True, False))
+        post = r["stale"]["post"]
+        self.assertEqual(post, [{"status": 403, "reauth": True}], "the stale tab's POST is refused with the re-sign-in 403: %r" % r["postStatus"])
+        self.assertEqual(r["stale"]["answered"], [], "no request with the stale key was answered")
+        self.assertEqual(r["stale"]["unmarked"], [], "every refusal carried the re-sign-in marker")
+        self.assertIs(r["switchAfterRefusal"], r["switchBefore"], "the refused POST, which asked for the other state, changed nothing")
+        self.assertTrue(r["hop"], "the tab went to /login")
+        self.assertTrue(r["keyDropped"], "and dropped the stale key")
+        self.assertEqual(r["backAt"], "/", "the /login form signs in and lands the dashboard")
+        self.assertTrue(r["backAddressClean"], "with no token= left in the address")
+        self.assertEqual(r["keyBack"], "mine", "the sign-in kept this browser's session and seeded its own key again")
+        self._assert_panes(r["after"], "signed in again")
+        self._assert_requests(r["afterRequests"], "signed in again")
+        self.assertTrue(r["afterSockets"], "the dashboard dialed its sockets again")
+        self.assertEqual([s for s in r["afterSockets"] if s["key"] != "mine" or not s["heard"]], [], "the sockets carry the key again and are answered")
+        self.assertEqual(r["post"]["status"], 200, "the POST is answered again")
+        self.assertTrue(r["post"]["flipped"] and r["post"]["held"], "and takes effect")
+
+
+if __name__ == "__main__":
+    unittest.main()
