@@ -40,9 +40,10 @@ os.environ.setdefault("ROMP_SERVE_TOKEN", "test-token-DO-NOT-USE")
 # outlived the run (fork PR #813's CI, the 3.10 cell). Peers went per test first, on 2026-09-18: the kernel reads it at
 # call time, and under xdist every worker imports every collected module before it runs a test, so the "0" written here
 # reached every module on every worker (the remote-identity absorb case, red in 5 of 6 full runs; the postal dedupe
-# module's relay case the same way, 2026-09-16). Now _PostalTrio.setUp binds a free port, sets the three names and
-# patches km.BUS_PORT (the import-time read) for the test, and one cleanup registered right after the writes puts all
-# four back. tests/test_hermetic_kernel_postal.py holds the placement and the repo-wide rule.
+# module's relay case the same way, 2026-09-16). Now _PostalTrio.setUp binds a free port, sets the three names,
+# patches km.BUS_PORT (the import-time read) for the test and stubs km._ensure_postal_bus (the revive road), and the
+# cleanups it registers right after the writes put all five back. tests/test_hermetic_kernel_postal.py holds the
+# placement and the repo-wide rule.
 load_source("romp_event_model", os.path.join(BIN, "romp-event-model"))
 load_source("romp_judge", os.path.join(BIN, "romp-judge"))
 km = load_source("romp_kernel", os.path.join(BIN, "romp-kernel"))

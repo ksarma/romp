@@ -21,13 +21,15 @@ the bus itself: `romp-postal-service serve` and `ensure` refuse the fixed port u
 state root under a temporary directory) unless ROMP_POSTAL_PORT names the port as the run's own (ROMP_POSTAL_HERMETIC beside
 it, as the runner, the shell suite's setup and kernel_env set; an inherited name does not count), pinned by
 tests/test_postal_fixed_port_belt.py.
-A module that loads the kernel in-process and exercises the bus still carries the trio, each leg where it is read: the
-port before the load (the kernel reads it at import), client-only before the load, and peers PER TEST, set in the setUp
-of every class that attaches or detaches and put back by a cleanup that setUp registers (the tunnel tests), or all
-three around the one call that provokes the revive, held until that revive has ended (the peer-notify test). Peers is
-never set at import: the kernel reads it at call time, and under xdist every worker imports every collected module
-before it runs a test, so the "0" the tunnel tests once wrote at module level reached every module on every worker,
-and the remote-identity absorb case (a bus notice gated on peers) was red in 5 of 6 full runs (diagnosed 2026-09-18).
+A module that loads the kernel in-process and exercises the bus still carries the trio, all three legs PER TEST and
+none at import: set in the setUp of every class that attaches or detaches, beside the kernel's BUS_PORT (which the
+kernel reads from the port at import) patched to the test's own port and its _ensure_postal_bus revive road stubbed,
+all put back by cleanups that setUp registers (the tunnel tests' _PostalTrio), or all three around the one call that
+provokes the revive, held until that revive has ended, under a scoped fake of subprocess.run (the peer-notify test,
+described below). Peers was the first leg moved off the import: the kernel reads it at call time, and under xdist every
+worker imports every collected module before it runs a test, so the "0" the tunnel tests once wrote at module level
+reached every module on every worker, and the remote-identity absorb case (a bus notice gated on peers) was red in 5
+of 6 full runs (diagnosed 2026-09-18).
 The placement test below reads the module's assignments by position (a fault list, run over the real module and over
 synthetic copies with the leak planted, so it is known to be able to fail), the import-time half of the rule is held
 for EVERY module under tests/, walked recursively, fixtures/ included (941 files on 2026-09-18): no module-level write
@@ -70,8 +72,12 @@ whose own bus listens there a plain run reached that bus; the bus's fixed-port r
 notify runs the ensure once, the opposite of upstream's fix (their PR 1848 returns before the ensure under
 client-only; fork PR #875 folds it with the skip gated on the kernel having ensured no bus of its own), and the
 reviewer's ruling of round 1 removed that assertion: the test asserts nothing about whether the revive runs the
-ensure, so it holds under this kernel, upstream's and fork PR #875's. Its text conflicts with fork PR #875's copy of
-the test, and whichever of the two lands second keeps fork PR #875's assertion beside this wait and fake. The pins
+ensure, so it holds under this kernel, upstream's and fork PR #875's. Its text and fork PR #875's copy of the test
+cannot both stand: a merge of the two heads read on 2026-09-25 writes fork PR #875's lines into this test with no
+conflict marker, its recorder of subprocess.run installed over this test's fake, which
+test_the_peer_notify_guard_test_runs_the_trio_the_wrap_the_wait_and_the_scoped_fake_as_statements_that_run reds; so
+whichever of the two lands second resolves the test by hand and keeps fork PR #875's assertion beside this wait and
+fake. The pins
 below read the test's parts as statements that run (the trio, the wrap and the fake set before the call; the wait
 before the fake and the environment are put back; none after a return, a raise, a skip or an exit, none in the body of a
 try with an except clause), hold every other statement of the test to putting back none of what those set, in any
