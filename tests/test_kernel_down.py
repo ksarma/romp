@@ -112,9 +112,13 @@ class DownRoute(unittest.TestCase):
         self.assertEqual(status, 403)
         self.assertEqual(self.be.quiesced, [], "an unauthenticated POST holds nobody's turns")
 
-    def test_the_ambient_cookie_alone_is_refused(self):
-        # the preamble's _authorize takes the cookie; the route demands the EXPLICIT token on top
-        status, body = self._post("/down", {"wait": 0}, headers={"Cookie": "romp_token=" + km.TOKEN})
+    def test_the_browser_credential_is_refused_the_route_demands_the_explicit_token(self):
+        # the preamble's _authorize takes the browser's session cookie plus its page key; the route
+        # demands the EXPLICIT serve token on top, which no browser holds
+        sess = km._mint_session()
+        status, body = self._post("/down", {"wait": 0},
+                                  headers={"Cookie": "%s=%s" % (km._SESSION_COOKIE, sess),
+                                           "X-Romp-Key": km._page_key(sess)})
         self.assertEqual(status, 403)
         self.assertIn("serve token", body.get("error", ""))
         self.assertEqual(self.be.quiesced, [])

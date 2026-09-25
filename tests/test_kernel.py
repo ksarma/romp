@@ -7328,11 +7328,11 @@ class ServeSecurity(unittest.TestCase):
             return e.code
 
     def test_loopback_needs_token_and_all_forms_work(self):
-        # Loopback is NOT a trust boundary: token-free → 403 even from 127.0.0.1. Every credential
-        # form authorizes: ?token= (browser bootstrap), the cookie it seeds, X-Romp-Token (CLI/hooks).
+        # Loopback is NOT a trust boundary: token-free → 403 even from 127.0.0.1. A page opens on the
+        # serve token (?token=, X-Romp-Token) or, for a signed-in browser, this kernel's session cookie.
         self.assertEqual(self._code("/feed", {}), 403)
         self.assertEqual(self._code("/feed?token=testtok", {}), 200)
-        self.assertEqual(self._code("/feed", {"Cookie": "romp_token=testtok"}), 200)
+        self.assertEqual(self._code("/feed", {"Cookie": "%s=%s" % (km._SESSION_COOKIE, km._mint_session())}), 200)
         self.assertEqual(self._code("/feed", {"X-Romp-Token": "testtok"}), 200)
         self.assertEqual(self._code("/feed", {"X-Romp-Token": "wrong"}), 403)
 
@@ -7805,16 +7805,20 @@ class ServeSecurity(unittest.TestCase):
             "Sec-WebSocket-Key": "x", "Sec-WebSocket-Version": "13"}), 403)
 
     def test_same_origin_ws_passes_gate(self):
-        # same-origin upgrade WITH the cookie passes the gate (101) — the served page always has it
-        # (the page itself required the token to load). urllib can't complete the upgrade, so a 101
-        # surfaces as a non-403 — assert it's NOT rejected. Token-free same-origin is 403 now.
+        # same-origin upgrade WITH the session cookie AND the page key (k= on the dial) passes the gate
+        # (101): the served page carries both. urllib can't complete the upgrade, so a 101 surfaces as
+        # a non-403, so assert it's NOT rejected. The cookie alone (no key) is 403, like a token-free dial.
         ws_headers = {
             "Origin": "http://127.0.0.1:%d" % self.port, "Host": "127.0.0.1:%d" % self.port,
             "Upgrade": "websocket", "Connection": "Upgrade",
             "Sec-WebSocket-Key": "x", "Sec-WebSocket-Version": "13"}
+        sess = km._mint_session()
         self.assertEqual(self._code("/ws?app=chat", dict(ws_headers)), 403)
-        self.assertNotEqual(self._code("/ws?app=chat",
-                                       dict(ws_headers, Cookie="romp_token=testtok")), 403)
+        self.assertEqual(self._code("/ws?app=chat",
+                                    dict(ws_headers, Cookie="%s=%s" % (km._SESSION_COOKIE, sess))), 403,
+                         "the session cookie without the page key is refused on the socket")
+        self.assertNotEqual(self._code("/ws?app=chat&k=" + km._page_key(sess),
+                                       dict(ws_headers, Cookie="%s=%s" % (km._SESSION_COOKIE, sess))), 403)
 
     def test_healthz_exempt(self):
         self.assertEqual(self._code("/healthz", {"Origin": "http://evil.example"}), 200)

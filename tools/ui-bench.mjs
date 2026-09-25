@@ -273,10 +273,10 @@ export async function recordFrames({ app, seconds, out, port, log = console.erro
   const origin = `http://127.0.0.1:${port}`;
   const iid = crypto.randomUUID();
   const caps = APP_CAPS[app];
-  const url = `ws://127.0.0.1:${port}/ws?app=${app}&delta=1&iid=${encodeURIComponent(iid)}&caps=${encodeURIComponent(caps)}`;   // the shim's connect query (kernel.py _shim)
-  // The browser's credential form: the romp_token cookie plus a same-origin Origin header (the kernel's
-  // _authorize accepts the cookie only with an acceptable Origin). No ?token=, no X-Romp-Token.
-  const ws = new WebSocket(url, { origin, headers: { Cookie: `romp_token=${token}` }, maxPayload: 512 * 1024 * 1024 });
+  const url = `ws://127.0.0.1:${port}/ws?app=${app}&delta=1&iid=${encodeURIComponent(iid)}&caps=${encodeURIComponent(caps)}&token=${encodeURIComponent(token)}`;   // the shim's connect query (kernel.py _shim), with the serve token
+  // A non-browser client authenticates with the serve token on the dial (?token=), the form the kernel
+  // accepts from any origin: the browser's session cookie is a per-page credential the bench does not hold.
+  const ws = new WebSocket(url, { origin, maxPayload: 512 * 1024 * 1024 });
   const frames = [];
   const events = [];
   const started = Date.now();

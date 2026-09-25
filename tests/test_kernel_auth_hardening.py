@@ -130,15 +130,21 @@ class TokenRequiredEverywhere(unittest.TestCase):
         ok, _, _ = _auth(peer="127.0.0.1", headers={"Host": "localhost"})
         self.assertFalse(ok, "a local Host on a loopback peer still needs the token")
 
-    def test_query_token_authorizes_and_seeds_cookie(self):
-        ok, cookie, _ = _auth(token=TOK)
+    def test_query_token_authorizes_and_seeds_a_session(self):
+        # ?token= on a page navigation authorizes and seeds a SESSION id cookie (never the serve
+        # token: the session id is what the browser then rides, and it is not the token).
+        h = _inst("127.0.0.1", {"Accept": "text/html"})
+        ok, cookie, _ = h._authorize({"token": [TOK]})
         self.assertTrue(ok)
-        self.assertEqual(cookie, TOK)     # ?token= sets the cookie so the browser never re-prompts
+        self.assertNotEqual(cookie, TOK, "the cookie value is not the serve token")
+        self.assertTrue(km._session_ok(cookie), "the cookie carries a valid session id")
 
-    def test_cookie_authorizes(self):
-        ok, cookie, _ = _auth(headers={"Cookie": "romp_token=" + TOK})
+    def test_the_session_cookie_authorizes_the_page_class(self):
+        # a valid session id in this kernel's own cookie opens the page class on its own (no re-set)
+        h = _inst("127.0.0.1", {"Cookie": "%s=%s" % (km._SESSION_COOKIE, km._mint_session())})
+        ok, cookie, _ = h._authorize({})
         self.assertTrue(ok)
-        self.assertIsNone(cookie)         # already has it — no re-set
+        self.assertIsNone(cookie)         # already signed in, no re-set
 
     def test_cookie_denied_from_a_foreign_origin(self):
         """The loopback-dev-server hole. Cookies are scoped by host and NOT by port
@@ -181,17 +187,18 @@ class TokenRequiredEverywhere(unittest.TestCase):
         ok, _, _ = _auth(headers={"Origin": "http://evil.example", "X-Romp-Token": TOK})
         self.assertTrue(ok)
 
-    def test_a_one_time_handoff_code_authorizes_and_sets_the_cookie(self):
+    def test_a_one_time_handoff_code_authorizes_and_seeds_a_session(self):
         """What `romp` puts in the browser's argv. The URL we open is readable by every other
         account on the machine (/proc/<pid>/cmdline) for the browser's whole lifetime, so it
-        carries a code that does one job — seed the cookie — instead of the long-lived token."""
+        carries a code that does one job, seed the SESSION cookie, instead of the long-lived token."""
         code = km._mint_handoff()
         ok, cookie, _ = _auth(headers={}, token=None)
         self.assertFalse(ok, "sanity: no credential without the code")
-        h = _inst("127.0.0.1", {})
+        h = _inst("127.0.0.1", {"Accept": "text/html"})
         ok, cookie, _ = h._authorize({"c": [code]})
         self.assertTrue(ok)
-        self.assertEqual(cookie, TOK, "the handoff's whole purpose is to seed the cookie")
+        self.assertNotEqual(cookie, TOK, "the handoff seeds a session, not the serve token")
+        self.assertTrue(km._session_ok(cookie), "the seeded cookie carries a valid session id")
 
     def test_a_handoff_code_works_exactly_once(self):
         # The leak this defends against is a URL that persists; a code someone reads later must
@@ -458,9 +465,10 @@ class TokenLeavesTheUrl(unittest.TestCase):
     def test_every_page_the_kernel_serves_carries_referrer_policy_same_origin(self):
         # the shell on its token bootstrap: the response that sets the cookie is the one whose page
         # then drops the token from its address; a pane page a user can open bare; a static asset
-        status, sent, _ = _serve_get_full("/?token=" + TOK)
+        status, sent, _ = _serve_get_full("/?token=" + TOK, headers={"Accept": "text/html"})
         self.assertEqual(status, 200)
-        self.assertTrue(sent.get("Set-Cookie", "").startswith("romp_token="), "the bootstrap response")
+        self.assertTrue(sent.get("Set-Cookie", "").startswith(km._SESSION_COOKIE + "="),
+                        "the bootstrap response seeds the session cookie, not the serve token")
         self.assertEqual(sent.get("Referrer-Policy"), "same-origin")
         for path in ("/chat", "/media/romp-swirl-glyph.svg"):
             with self.subTest(path=path):
@@ -703,11 +711,13 @@ class ApiHealthRouteGate(unittest.TestCase):
         self.assertEqual(out["overall"]["state"], "thrashing")
         self.assertEqual(b["windows"]["300"]["rate429"], 0.4)
 
-    def test_the_cookie_reads_it_from_the_dashboards_own_origin(self):
+    def test_the_session_cookie_and_key_read_it_from_the_dashboards_own_origin(self):
         host = "127.0.0.1:%d" % km.PORT
-        status, _ = _serve_get("/api-health", {"Cookie": "romp_token=" + TOK,
+        sess = km._mint_session()
+        status, _ = _serve_get("/api-health", {"Cookie": "%s=%s" % (km._SESSION_COOKIE, sess),
+                                               "X-Romp-Key": km._page_key(sess),
                                                "Origin": "http://" + host, "Host": host})
-        self.assertEqual(status, 200, "a read: the plain gate, not the stricter write token")
+        self.assertEqual(status, 200, "the session cookie plus the page key reads it (the full class)")
 
     def test_the_route_sits_after_the_gate_in_the_source_too(self):
         # belt to the dispatcher's braces: within do_GET the gate line occurs once, and the route must

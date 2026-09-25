@@ -537,14 +537,17 @@ class ServedTapLanding(unittest.TestCase):
         self.assertNotIn("push-reveal", out["urlAfterBoot"], "the params are stripped once read: %r" % out["urlAfterBoot"])
         self.assertNotIn("push-pid", out["urlAfterBoot"])
         # The token leaves the address too, by a different hand: the shell's head drops ?token= the moment the page runs,
-        # once the response that served it has turned it into the romp_token cookie (the dashboard token scrub, 2026-09-10,
+        # once the response that served it has turned it into the SESSION cookie (the dashboard token scrub, 2026-09-10,
         # which landed on main the same morning as this test and after its pin that "only our params go" was written).
-        # What the user has after a tap is a clean address and a signed-in page: the cookie is what every later request
-        # rides, including the second arrival below. Until this change the line read assertIn, and on main it failed for
-        # that reason alone; the tap itself had landed (every assertion above it passed).
+        # What the user has after a tap is a clean address and a signed-in page: the session cookie is what every later
+        # request rides, including the second arrival below. Until this change the line read assertIn, and on main it
+        # failed for that reason alone; the tap itself had landed (every assertion above it passed).
         self.assertNotIn("token=", out["urlAfterBoot"], "the address keeps no token once the cookie is set: %r" % out["urlAfterBoot"])
-        self.assertEqual([c["value"] for c in out["cookies"] if c["name"] == "romp_token"], [self.token],
-                         "the token must live on as the cookie the page rides, or the clean address is a logout: %r" % out["cookies"])
+        _sess = [c for c in out["cookies"] if c["name"].startswith("romp_s_")]
+        self.assertEqual(len(_sess), 1, "the page rides one session cookie, or the clean address is a logout: %r" % out["cookies"])
+        self.assertNotEqual(_sess[0]["value"], self.token, "the cookie holds a session id, not the serve token: %r" % out["cookies"])
+        self.assertEqual([c["name"] for c in out["cookies"] if c["name"] == "romp_token"], [],
+                         "the legacy token cookie is not set: %r" % out["cookies"])
         self.assertEqual(out["urlAfterBoot"].rstrip("/"), "http://127.0.0.1:%d" % self.port, "nothing else is left on the address: %r" % out["urlAfterBoot"])
         # THE IN-PLACE ARRIVAL: the open page gained the link without a load and landed it live
         self.assertTrue(out["landed2"], "the open page gaining the link must land it; the tab is %r, reveals %r\n  kernel: %s" % (out["after2"], out["later"]["reveals"], self._reveal_lines()))
