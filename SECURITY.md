@@ -149,29 +149,33 @@ and icon list) and the icons are three PNG files.
 
 Before the session cookie, the dashboard kept the serve token itself in a
 cookie named `romp_token`. The first dashboard page a browser loads after the
-upgrade signs it in and clears `romp_token` in that same response, and any
-later response to a request that still carries `romp_token` beside a valid
-session cookie clears it as well. Either way the kernel clears `romp_token`
-only when its value is this kernel's token, so a `romp_token` that belongs to
-another romp kernel on the same host is left alone. Apart from the response
-that signs the browser in, a response to a request without a valid session
-cookie never clears it, so a browser that has not yet signed in with it keeps
-it until it does. Every browser that signs
-in this way gets the same session, so tabs that reopen together after the
-upgrade all end signed in; each of those browsers held the serve token itself,
-and the session ends, like every session, when the token is rotated. A
-dashboard left open across the upgrade keeps running the page it loaded
-before, which has no page key: its requests are refused and its sockets keep
-redialling until it is reloaded, so reload each open dashboard once the kernel
-has restarted. A browser that never loads the dashboard again keeps
-`romp_token`, whose value is the serve token and stays valid until the token is
-rotated. Rotate the token after upgrading to retire every such cookie. The
-steps, and what a rotation signs out, are under "Rotating the token" in the
-guide's Security and trust section (`docs/guide.md`). Going back to an earlier
-version signs browsers in with `romp_token` again. Once this version is back
-with the same token, a browser that kept its session cookie sends both, and
-the first response clears `romp_token`; a browser that does not come back
-keeps it, so pair a rollback with a rotation once this version is back.
+upgrade signs it in and clears `romp_token` in that same response. The kernel
+clears `romp_token` only when its value is this kernel's token, so a
+`romp_token` that belongs to another romp kernel on the same host is left
+alone. Apart from the response that signs the browser in, a response to a
+request without a valid session cookie never clears it, so a browser that has
+not yet signed in with it keeps it until it does. Every browser that signs in
+this way gets the same session, so tabs that reopen together after the upgrade
+end signed in; each of those browsers held the serve token itself, and the
+session ends, like every session, when the token is rotated. Rarely, and in
+testing only in WebKit, one of two tabs that open at the same moment lands on
+the sign-in page instead; opening the dashboard again in that tab signs it in
+without the token. A dashboard left open across the upgrade keeps running the
+page it loaded before, which has no page key: its requests are refused and its
+sockets keep redialling until it is reloaded, so reload each open dashboard
+once the kernel has restarted. A browser that never loads the dashboard again
+keeps `romp_token`, whose value is the serve token and stays valid until the
+token is rotated. Rotate the token after upgrading to retire every such
+cookie. The steps, and what a rotation signs out, are under "Rotating the
+token" in the guide's Security and trust section (`docs/guide.md`).
+
+Going back to an earlier version signs browsers in with `romp_token` again,
+and a browser keeps this version's session cookie beside it. When this version
+comes back with the same token, that browser sends both, and the kernel clears
+`romp_token` in the response to any request that carries it beside a valid
+session cookie, so the first response after the return clears it. A browser
+that does not come back keeps it, so pair a rollback with a rotation once this
+version is back.
 
 ## Residual cautions on shared machines
 
