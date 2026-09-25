@@ -1892,7 +1892,8 @@ here, where it would only be written cold again), before the entry is popped,
 and on a hit or a restore at the witness the entry stays as it always has. The
 write is charged to the pusher cycle's byte budget, which the kernel begins at
 each cycle's start, where the drops an earlier cycle owed, then the releases an
-earlier cycle owed, then the releases at the ends new to the cycle charge it
+earlier cycle owed, then the releases of the ends an earlier cycle saw while
+nothing was held, then the releases at the ends new to the cycle charge it
 before the builds' drops do (whichever runs first gets the room when one
 document fits, so what an earlier cycle deferred is paid before any new end),
 and the pass shares near its end; over the budget the write
@@ -3137,7 +3138,10 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   before the drop or was still reading the file when the drop came),
   `releaseLost` (releases given up, the entry left to the cache's own
   eviction, the count cap or the byte budget, or a later quiescent drop,
-  counted once per path per cycle: no document could be written, as with
+  counted once per path per cycle where the release names a path (an end
+  given up past the bound of the ends the backend keeps, or one whose file
+  never resolved before its resolution raised, counts one each): no
+  document could be written, as with
   `ROMP_CKPT_CONVERGE_MS=0` or `ROMP_CKPT_CONVERGE_MB=0` or when the check
   whether a write was due raised; an owed release was dropped past its
   bound; an agent's end was dropped past the queue's bound and then past the

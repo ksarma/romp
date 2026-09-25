@@ -726,13 +726,15 @@ _RECORD_CACHE_STATS.update({   # the release at an agent's end (release_entry, 2
     #                             its checkpoint budget refused the document write, or a read replaced the entry before the pop or
     #                             was still pulling the file's bytes when the pop came (paid by checkpoint_pay_owed_releases)
     "releaseLost": 0,          #  releases given up, the entry left to the cache's own eviction (the count cap or the byte budget,
-    #                             or a later quiescent drop), counted once per path per cycle as releaseDeferred is: no document
-    #                             could be written (the drop writes off, no checkpoint directory, a write that was due and failed,
-    #                             or the check whether a write was due raised), an owed release was dropped past the owed table's
-    #                             bound, an agent's end was dropped past the queue's bound and then past the bound of the list the
-    #                             backend keeps those ends in (SdkBackend.note_agent_live; one kept in that list is released at the
-    #                             drain like any other end), or resolving or paying one raised. With the drop writes off, an agent
-    #                             whose two ends (its stop and its task's end) reach two cycles counts two
+    #                             or a later quiescent drop), counted once per path per cycle where the release names a path (an
+    #                             end given up past the bound of the ends the backend keeps, or one whose file never resolved
+    #                             before its resolution raised, counts one each): no document could be written (the drop writes
+    #                             off, no checkpoint directory, a write that was due and failed, or the check whether a write was
+    #                             due raised), an owed release was dropped past the owed table's bound, an agent's end was dropped
+    #                             past the queue's bound and then past the bound of the list the backend keeps those ends in
+    #                             (SdkBackend.note_agent_live; one kept in that list is released at the drain like any other end),
+    #                             or resolving or paying one raised. With the drop writes off, an agent whose two ends (its stop
+    #                             and its task's end) reach two cycles counts two
     "falseEnds": 0,            #  agents whose release at their end was taken (the entry popped) that entered their session's live
     #                             set again (a resumed agent, or an end reported early): note_false_end, counted by the kernel; a
     #                             release only owed, then cancelled, forgotten, given up or paid without being taken, counts none
