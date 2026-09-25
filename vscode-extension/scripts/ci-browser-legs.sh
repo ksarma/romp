@@ -97,9 +97,12 @@ well_formed() {
     case "$seg" in ''|.|..) return 1;; esac
   done
 }
-# the lines seen so far, one "bundle<TAB>line number" per line, for the duplicate check
+# the lines seen so far, one "bundle<TAB>line number" per line, for the duplicate check. seen_at hands awk the line in its
+# environment (ENVIRON), so the line is compared as written: a value given with awk's -v has its backslash escapes
+# processed, which would pass a line holding a\b rostered twice and refuse a line holding a\\b beside it as a duplicate.
+# The tree test's case "the script refuses" runs both, in the step's run and under --check.
 roster_seen=""
-seen_at() { awk -v k="$1" -F '\t' '$1 == k { print $2; exit }' <<<"$2"; }
+seen_at() { k="$1" awk -F '\t' '$1 == ENVIRON["k"] { print $2; exit }' <<<"$2"; }
 malformed() {   # $1 the file, $2 the line number, $3 the LINE: red with the whitespace visible
   local shown; shown=$(printf '%q' "$3")
   red "$1 line $2: $shown is not a bundle path (out-tests/<dir>/<name>.test.js in its canonical spelling, no empty, . or .. segment; a trailing space, tab or carriage return counts and is shown here as bash's %q spells it): fix the line"
@@ -143,10 +146,13 @@ node --test --test-timeout=240000 --test-reporter=spec --test-reporter-destinati
 # One pass over the record with the roster on stdin: per rostered leg a TALLY line (passes that count, fails that count,
 # skips, todos, todo failures, suites, file-level results); and one line per result the step reads a red from: SKIP, TODOFAIL,
 # FILEFAIL (the file failed as a whole), LOST (the lost-browser read the header states). Node resolves a bundle from its
-# physical working directory, so the roster's lines are keyed by that path.
+# physical working directory, so the roster's lines are keyed by that path, handed to awk in its environment (ENVIRON) and
+# read as written: awk's -v would process its backslash escapes (a\t in a directory's name read as a tab), and every leg
+# would be red as unrun. The tree test's case "the script runs the rostered legs" runs a tree under a directory whose name
+# holds a backslash.
 here=$(pwd -P)
-report=$(printf '%s\n' "${legs[@]}" | awk -v msg="$SWITCH is set and this leg cannot run" -F '\t' -v here="$here" '
-  NR == FNR { if ($0 != "") { a = here "/" $0; leg[a] = $0; order[++n] = a; p[a] = 0; f[a] = 0; sk[a] = 0; td[a] = 0; tf[a] = 0; su[a] = 0; fl[a] = 0 }; next }
+report=$(printf '%s\n' "${legs[@]}" | here="$here" awk -v msg="$SWITCH is set and this leg cannot run" -F '\t' '
+  NR == FNR { if ($0 != "") { a = ENVIRON["here"] "/" $0; leg[a] = $0; order[++n] = a; p[a] = 0; f[a] = 0; sk[a] = 0; td[a] = 0; tf[a] = 0; su[a] = 0; fl[a] = 0 }; next }
   !($1 in leg) { next }
   {
     if ($2 == "pass" && $3 == "test" && $4 == "-" && $5 == "test") p[$1]++

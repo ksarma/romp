@@ -52,7 +52,9 @@
 //     newline), and so is the composition: the script with the real node and the real reporter over those bundles as
 //     rostered legs, and over a leg whose test passes and whose error comes after the test ended. After one stub run
 //     and after the composition's first real-node run, the record file the script handed its reporter (the path the
-//     stub logged, in the fresh TMPDIR the run was given) is gone and that TMPDIR is empty;
+//     stub logged, in the fresh TMPDIR the run was given) is gone and that TMPDIR is empty. A roster line holding a
+//     backslash is held by seen_at's rows, and a tree under a directory whose name holds one by the post-run key's
+//     row, each read as the script's comment above seen_at or above its awk pass states;
 //   - the phrase the script reads a lost browser by is a literal in ui/webview/real-viewer-leg.ts's source, the SHARED
 //     PHRASE between the helper and the script, so a reword on either side is red here rather than a remedy dropped in
 //     silence. That pin reads text and guards the phrase alone: that inBrowser FAILS with it under the switch and skips
@@ -801,9 +803,11 @@ test('the script exists, is executable, runs node --test over the roster array (
  *  physical path (pwd -P) as node resolves a bundle, is held on a plain temporary directory too (ubuntu, where the Shell
  *  job runs), not only where os.tmpdir() sits behind a link; a key on the logical path reds every leg that passed. `ext` is
  *  the physical path of the tree's vscode-extension, as node spells a bundle in its record, and `rec(bundle, fields...)`
- *  spells one record line for that bundle (the reporter's eight fields, the path first). */
-function syntheticTree(t) {
-  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'cbl-'));
+ *  spells one record line for that bundle (the reporter's eight fields, the path first). `prefix` is the base directory's
+ *  name before the six characters mkdtemp adds: cbl- unless a case names another, as the case of a directory whose name
+ *  holds a backslash does. */
+function syntheticTree(t, prefix = 'cbl-') {
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
   t.after(() => fs.rmSync(base, { recursive: true, force: true }));
   fs.mkdirSync(path.join(base, 'tree'));
   const root = path.join(base, 'link');
@@ -868,7 +872,7 @@ function assertRecordRemoved(r, what) {
   assert.deepEqual(fs.readdirSync(r.tmp), [], what + ': the run\'s fresh TMPDIR is empty after the run, so the run left no file there: ' + JSON.stringify(fs.readdirSync(r.tmp)));
 }
 
-test('the script runs the rostered legs through node --test when the roster is well formed and current, a last line with no newline included, runs the pre-run checks alone under --check as its first argument (which does not require the bundle, and passes a bundle straight under out-tests/) and not under --check as its second, and prints "no legs in the roster" and starts no node on an empty roster; after its first run the record file the script handed its reporter is gone and the run\'s fresh TMPDIR is empty', (t) => {
+test('the script runs the rostered legs through node --test when the roster is well formed and current, a last line with no newline included and a tree under a directory whose name holds a backslash (the post-run key\'s row), runs the pre-run checks alone under --check as its first argument (which does not require the bundle, and passes a bundle straight under out-tests/) and not under --check as its second, and prints "no legs in the roster" and starts no node on an empty roster; after its first run the record file the script handed its reporter is gone and the run\'s fresh TMPDIR is empty', (t) => {
   const { run, root, rec, A, B } = syntheticTree(t);
   // the stub's record: a's one test passed (with no record a rostered leg is red as unrun, the property the post-run test executes)
   const ok = run('# header\n\n' + A + '\n', { report: rec(A, 'pass', 'test', '-', 'test', 'leg a opens the page', '', '-') });
@@ -913,10 +917,17 @@ test('the script runs the rostered legs through node --test when the roster is w
   assert.deepEqual([oneLine.node, twoLines.node], [['--test', A], ['--test', A, B]], 'a roster whose last line has no newline hands node every line, a one-line roster and a two-line roster alike (the exit alone does not tell: the empty-roster path exits 0 too); stdout:\n' + oneLine.out + twoLines.out);
   assert.equal(oneLine.status, 0, 'the one-line roster with no final newline runs clean; stderr:\n' + oneLine.err);
   assert.equal(twoLines.status, 0, 'the two-line roster whose last line has no newline runs clean; stderr:\n' + twoLines.err);
+  // the post-run key's row (the script's comment above its awk pass states the key): a tree under a directory whose name
+  // holds a backslash before a y and before a t, its leg's pass recorded under the physical path as node spells it
+  const odd = syntheticTree(t, 'cbl-x\\y-a\\tb-');
+  assert.ok(odd.ext.includes('cbl-x\\y-a\\tb-'), 'the tree\'s physical path holds the directory name with its two backslashes: ' + odd.ext);
+  const oddRun = odd.run(odd.A + '\n', { report: odd.rec(odd.A, 'pass', 'test', '-', 'test', 'leg a opens the page', '', '-') });
+  assert.equal(oddRun.status, 0, 'a tree under a directory whose name holds a backslash before a y and before a t runs its leg that passed clean, exit 0; stderr:\n' + oddRun.err);
+  assert.equal(oddRun.err, '', 'nothing on stderr for the tree under a directory whose name holds a backslash');
 });
 
-test('the script refuses, naming the line and the remedy, on: a missing roster file, a stale line, a duplicate, a missing bundle, and a malformed line (nine malformed shapes: six shown with their whitespace as bash\'s %q spells it, and three non-canonical spellings, a dot segment, a doubled slash and a dot-dot segment, one of them beside the canonical spelling of the same bundle); every refusal after the roster is read ends with the summary line, and no leg ran; --check refuses a stale line, a duplicate and a malformed line the same way', (t) => {
-  const { run, A, B } = syntheticTree(t);
+test('the script refuses, naming the line and the remedy, on: a missing roster file, a stale line, a duplicate, a missing bundle, and a malformed line (nine malformed shapes: six shown with their whitespace as bash\'s %q spells it, and three non-canonical spellings, a dot segment, a doubled slash and a dot-dot segment, one of them beside the canonical spelling of the same bundle); every refusal after the roster is read ends with the summary line, and no leg ran; --check refuses a stale line, a duplicate and a malformed line the same way; seen_at\'s rows (the script\'s comment above seen_at states how it compares): a line holding a backslash rostered twice is refused as a duplicate, and beside the line holding two backslashes in its place it is not, in the step\'s run and under --check', (t) => {
+  const { run, root, rec, A, B } = syntheticTree(t);
   const C = 'out-tests/ui/webview/c-browser.test.js';
   const SUMMARY = 'ci-browser-legs: the roster is malformed or stale, or a rostered bundle is not built (above); no leg ran';
   const refused = (r, ...needles) => {
@@ -963,6 +974,30 @@ test('the script refuses, naming the line and the remedy, on: a missing roster f
   refusedUnderCheck('# header\n' + A + '\n' + C + '\n', ROSTER + ' line 3: \'' + C + '\' names ui/webview/c-browser.test.ts, which is not in the tree (the source moved or was deleted): fix the roster line');
   refusedUnderCheck(A + '\n' + A + '\n', ROSTER + ' line 2: \'' + A + '\' duplicates line 1: remove one');
   refusedUnderCheck('ui/webview/a-browser.test.ts\n', ROSTER + ' line 1: ui/webview/a-browser.test.ts is not a bundle path');
+  // seen_at's rows (the script's comment above seen_at states how it compares), each in the step's run and under --check:
+  // a line holding a backslash rostered twice, its line 2 refused as a duplicate of line 1; and that line beside the line
+  // holding two backslashes in its place, neither refused, the step's run starting node over both. The sources and the
+  // bundles of both lines are in the tree, so a duplicate is the one red either roster can take. The rows that read
+  // otherwise are collected and asserted once
+  const K1 = 'out-tests/ui/webview/a\\b-browser.test.js', K2 = 'out-tests/ui/webview/a\\\\b-browser.test.js';
+  for (const k of [K1, K2]) {
+    fs.writeFileSync(path.join(root, 'ui', 'webview', path.posix.basename(k, '.test.js') + '.test.ts'), '');
+    fs.writeFileSync(path.join(root, 'vscode-extension', k), '');
+  }
+  const TWICE = ROSTER + ' line 2: \'' + K1 + '\' duplicates line 1: remove one';
+  const BOTH_PASS = rec(K1, 'pass', 'test', '-', 'test', 'leg a opens the page', '', '-') + rec(K2, 'pass', 'test', '-', 'test', 'leg a opens the page', '', '-');
+  const SEEN_ROWS = [
+    ['a line holding a backslash rostered twice, in the step\'s run: line 2 refused as a duplicate of line 1', K1 + '\n' + K1 + '\n', {}, (r) => r.status === 1 && r.err.includes(TWICE) && r.err.includes(SUMMARY) && r.node === null],
+    ['a line holding a backslash rostered twice, under --check: line 2 refused as a duplicate of line 1', K1 + '\n' + K1 + '\n', { check: true }, (r) => r.status === 1 && r.err.includes(TWICE) && r.err.includes(SUMMARY) && r.node === null && !r.out.includes('the roster is well formed')],
+    ['that line beside the line holding two backslashes in its place, in the step\'s run: neither refused, node started over both', K1 + '\n' + K2 + '\n', { report: BOTH_PASS }, (r) => r.status === 0 && r.err === '' && isDeepStrictEqual(r.node, ['--test', K1, K2])],
+    ['that line beside the line holding two backslashes in its place, under --check: neither refused, both rostered', K1 + '\n' + K2 + '\n', { check: true }, (r) => r.status === 0 && r.err === '' && r.out.includes('the roster is well formed and every line names a source in the tree: 2 rostered')],
+  ];
+  const seenWrong = [];
+  for (const [what, roster, stub, holds] of SEEN_ROWS) {
+    const r = run(roster, stub);
+    if (!holds(r)) seenWrong.push(what + ': exit ' + r.status + ', node ' + JSON.stringify(r.node) + ', stdout ' + JSON.stringify(r.out) + ', stderr ' + JSON.stringify(r.err));
+  }
+  assert.deepEqual(seenWrong, [], 'each of seen_at\'s rows reads as the script\'s comment above seen_at states; the rows read otherwise: ' + JSON.stringify(seenWrong));
 });
 
 test('after node --test the script derives per rostered leg that a test of its bundle passed, red as unrun when none did (todo-only, a describe() that registers none, a file that registered nothing, a failure inside a todo, a skip-only record); reds a rostered leg\'s skipped test (the scope the script\'s header states), naming the test, its reason and the switch\'s state; reds a rostered leg\'s failure inside a todo, and a file that failed as a whole, by name; prints the lost-browser remedy beside a leg (the lost-browser read the script\'s header states); passes node\'s status through; the unrun and the skip remedies take the line out of the roster', (t) => {
