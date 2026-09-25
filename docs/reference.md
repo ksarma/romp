@@ -2654,10 +2654,11 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   lazy indexes alive, a weak count), `materializedLruSlots` (the
   materialized-atom LRU's slots, not the atoms: on a kernel whose LRU holds
   its atom lists weakly a collected list's slots stay until the next build,
-  re-registration or release removes them, so
-  this is an upper bound on the live materialized atoms; where the LRU holds
-  the lists strongly the two are equal; it is the same read as
-  `asmIndex.resident`, repeated here so the holders sit together),
+  re-registration or release removes them, or, in the residual named under
+  `asmIndex.collected`, until the cap or a list registering the same row
+  under their id, so this is an upper bound on the live materialized atoms;
+  where the LRU holds the lists strongly the two are equal; it is the same
+  read as `asmIndex.resident`, repeated here so the holders sit together),
   `judgeUsageRows` (the judge-usage reader's rows in memory), `builtChat`
   (`tabs` cached, their `events`, the cached payloads' event counts, a count
   and not bytes, the occupancy measure of that cache, and `serializedBytes`, the sum over the
@@ -3150,13 +3151,14 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   process-wide LRU, `cap` of them across every session: the machine's memory
   over 32 KiB, never under 500,000; the LRU holds each turn's atom list by a
   weak reference, and a freed list's entries leave at the next build,
-  re-registration or release, so `resident` is the live entries plus those
+  re-registration or release, except those of the residual named under
+  `collected` below, which wait for the cap or for a list registering the
+  same row under their id, so `resident` is the live entries plus those
   of lists freed, or brought back by a finalizer, since the last of those,
-  and the entries of the residual named under `collected` below. A list a
-  finalizer resurrects (no kernel path does) can keep built slots whose
-  entries left as dead ones, and `resident` does not count those slots until
-  a read registers them again, as it did not before 2026-09-24. Before
-  2026-09-15 a strong
+  and the residual's entries. A list a finalizer resurrects (no kernel path
+  does) can keep built slots whose entries left as dead ones, and `resident`
+  does not count those slots until a read registers them again, as it did
+  not before 2026-09-24. Before 2026-09-15 a strong
   reference kept every superseded generation's atoms, and its whole index
   behind them, resident until they aged past the cap, about 1.2 GiB on a box
   whose LRU sat at its cap of a million entries, and live atoms

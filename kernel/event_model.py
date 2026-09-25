@@ -5063,7 +5063,8 @@ _MAT_LRU = collections.OrderedDict()  # (id(LazyAtoms), row) → (the list's _Li
 #                                       generations, the resident count times the 1.3 to 2.1 KB an atom measured by tracemalloc over real
 #                                       indexes, and up to 275,385 live atoms evicted by stale ones, each a rebuild on its next read). Now a
 #                                       dropped assembly entry releases its index's entries at once (LazyIndex.release), and a freed list
-#                                       takes the rest with it (the collection event, 2026-09-24): a tree that outlived its entry could read
+#                                       takes the rest with it, but for the residual named in _ListRef (the collection event, 2026-09-24):
+#                                       a tree that outlived its entry could read
 #                                       a released slot again and register it against an index nothing releases again, and when that tree
 #                                       went its entries stood dead until the cap or a new list registering the same row under their id, and
 #                                       on a nine-session machine the cap (MemTotal / 32 KiB) had not come after 73 hours (6.15 million
@@ -5220,14 +5221,17 @@ def _mat_trim():
 
 
 def _mat_drain():
-    """Under _MAT_LOCK: the entries of every list whose reference its callback queued since the last drain (every list freed
-    holding an entry, or brought back by a finalizer, except the residual named in _ListRef) leave the LRU, counted
-    `expired` (entries of a collected list dropped) and `collected`. An entry is removed only when it holds the freed list's
-    own reference, never by id alone (a guard: a list's callback, when it runs, queues it before its id can be reused, and
-    every registration drains first, so no live list's entry sits under a queued list's key; a dead entry the queue never
-    held is left for the trim); no slot is touched (the list is gone, or a finalizer resurrected it: see _ListRef). The cost
-    is one dict lookup per row of each freed list, the walk release() pays for a live index. It runs before each
-    registration and at each release, never in the /perf read (asm_index_stats changes nothing)."""
+    """Under _MAT_LOCK: every entry holding a reference its callback queued since the last drain leaves the LRU, counted
+    `expired` (entries of a collected list dropped) and `collected`. The reference of a list freed holding an entry, or
+    brought back by a finalizer, is queued, except in the residual named in _ListRef: on CPython 3.13 from 3.13.13 and on
+    3.14.4 and later, entries a finalizer registers during the collection that frees their list hold a reference that is
+    never queued, so no drain removes them, and they wait for the cap or a new list registering the same row under their
+    id. An entry is removed only when it holds the freed list's own reference, never by id alone (a guard: a list's
+    callback, when it runs, queues it before its id can be reused, and every registration drains first, so no live list's
+    entry sits under a queued list's key; a dead entry the queue never held is left for the trim); no slot is touched
+    (the list is gone, or a finalizer resurrected it: see _ListRef). The cost is one dict lookup per row of each freed
+    list, the walk release() pays for a live index. It runs before each registration and at each release, never in the
+    /perf read (asm_index_stats changes nothing)."""
     q = _MAT_COLLECTED
     n = 0
     while q:
@@ -5250,7 +5254,9 @@ class LazyIndex:
     parent) stay decoded: they are small and every materialization reads one. The LRU holds the index's atom lists weakly
     and the index knows the lists it minted (_minted), so a dropped assembly entry can give the memo back at once
     (release) and a tree nobody holds takes its entries with it at the next registration or release (measured 2026-09-15,
-    the collection event 2026-09-24, see _MAT_LRU)."""
+    the collection event 2026-09-24, see _MAT_LRU), except in the residual named in _ListRef: on CPython 3.13 from 3.13.13
+    and on 3.14.4 and later, entries a finalizer registers during the collection that frees their list hold a reference
+    that is never queued, and wait for the cap or a new list registering the same row under their id."""
 
     def __init__(self, doc, rompuuid, leaf_path, cache_key=None):
         self.rompuuid = str(rompuuid)
@@ -5319,12 +5325,14 @@ class LazyIndex:
         rather than at the cap, a million entries later. The per-slot atom a consumer already holds is a value and is never
         mutated. A tree that outlives its entry (a parse cache slot, a build in flight) reads a released slot as it reads an
         evicted one: rebuilt through this index, and registered again; that is allowed and needs no retired flag, since under
-        weak ownership the LRU then holds nothing beyond that tree's own lifetime: its entries leave at the next registration
-        or release after it goes (_mat_drain; before 2026-09-24 they waited for the cap or for a new list registering the same
-        row under their id). The walk is over this index's own lists' slots, never the LRU (measured 2026-09-15, a lab
-        process: 20,000 rows with 200 built, 1.3 ms; 200,000 rows with 2,000 built, 9.8 ms; 200,000 rows with 20,000 built,
-        26.5 ms), so a release costs the dropped index its row count in list reads, once, where the cap paid a million-entry
-        residency."""
+        weak ownership the LRU then holds nothing beyond that tree's own lifetime but the residual named in _ListRef: its
+        entries leave at the next registration or release after it goes (_mat_drain; before 2026-09-24 they waited for the
+        cap or for a new list registering the same row under their id), except, on CPython 3.13 from 3.13.13 and on 3.14.4
+        and later, entries a finalizer registers during the collection that frees their list, which hold a reference that is
+        never queued and wait for the cap or a new list registering the same row under their id. The walk is over this index's
+        own lists' slots, never the LRU (measured 2026-09-15, a lab process: 20,000 rows with 200 built, 1.3 ms; 200,000 rows
+        with 2,000 built, 9.8 ms; 200,000 rows with 20,000 built, 26.5 ms), so a release costs the dropped index its row count
+        in list reads, once, where the cap paid a million-entry residency."""
         with _MAT_LOCK:
             _mat_drain()                                  # the queued freed lists' entries first, then this index's own
             n, live = 0, []
@@ -5417,8 +5425,9 @@ class LazyAtoms(list):
     (_MAT_CAP): eviction puts the placeholder back in the slot, the consumer's own reference stays whole. The LRU holds
     this list by a weak reference (see _MAT_LRU), so the list, its index and the document behind it live exactly as long
     as their consumers do; the index's release() empties the list's entries early when its assembly entry is dropped, and
-    the list's collection takes whatever entries it still has (see _ListRef). The list's length is fixed at mint: every
-    in-place list method is refused, since the collection event visits rows 0 to n - 1 with n taken here."""
+    the list's collection takes whatever entries it still has (see _ListRef), except in the residual named there. The
+    list's length is fixed at mint: every in-place list method is refused, since the collection event visits rows 0 to
+    n - 1 with n taken here."""
 
     def __init__(self, index, rows):
         list.__init__(self, [_UNMAT] * len(rows))

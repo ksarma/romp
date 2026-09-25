@@ -5,12 +5,13 @@ the LazyAtoms, and through it to the LazyIndex, its rows and its document, for e
 the cap; every restore mints a new index, so 262 restores over 22 sessions sat the LRU exactly at its cap of 1,026,886
 entries holding mostly superseded generations (about 1.2 GiB at 1.3 to 2.1 KB an atom), and live atoms evicted by stale
 ones were rebuilt (7.4 M row decodes). Pinned here: a tree nobody holds is collected with its index and its entries leave
-at the next registration or release; an assembly entry that is dropped or replaced (the whole parse's put over a full cache,
-the demotion, the refused row) releases its index's entries and the current index's memo is untouched; a retained old view
-rebuilds a released slot through its own index, registers again, and takes nothing with it when it goes; the eviction pass
-tells a live entry (evictions) from a collected list's (expired) and touches no live slot for the latter; the LRU touch
-still orders evictions; an atom handed out is a fixed value across an eviction and a release; two threads building one
-slot share one object and one entry; a dead entry under a reused id is absent to the new list.
+at the next registration or release, except in the residual the next paragraph names (FinalizerRead below); an assembly
+entry that is dropped or replaced (the whole parse's put over a full cache, the demotion, the refused row) releases its
+index's entries and the current index's memo is untouched; a retained old view rebuilds a released slot through its own
+index, registers again, and takes nothing with it when it goes; the eviction pass tells a live entry (evictions) from a
+collected list's (expired) and touches no live slot for the latter; the LRU touch still orders evictions; an atom handed
+out is a fixed value across an eviction and a release; two threads building one slot share one object and one entry; a
+dead entry under a reused id is absent to the new list.
 
 The collection event (2026-09-24, CollectionEvent below): entries registered after a release (a tree that outlived its
 assembly entry reading a released slot again) belong to an index nothing releases again, so when that tree went they stood
