@@ -120,18 +120,31 @@ so there is no list to write. **gitleaks** covers them, in two places:
 - **`.githooks/pre-push`** reads for itself the changes a push would publish:
   the lines the pushed commits add, a merge by its combined diff (the lines in
   none of its parents, so a secret typed into a conflict resolution is read
-  too). It hands exactly those bytes to gitleaks, which runs no git, and
-  refuses the push on a hit. No gitleaks on the machine means a
+  too), and a merge's binary path whole (below). It hands exactly those bytes
+  to gitleaks, which runs no git, and refuses the push on a hit. It needs
+  gitleaks 8.25.0 or later: the hook's flags need 8.24.0, and this
+  repository's `.gitleaks.toml` uses the `[[allowlists]]` form, which gitleaks
+  reads correctly from 8.25.0 on (CI's pinned 8.28.0 is above the floor). A
+  push with something to scan is refused under an older gitleaks, or one whose
+  version the hook cannot read, and the refusal names the floor and the
+  remedies. No gitleaks on the machine means a
   loud notice and no scan (requiring an install to push would break every clone
   that never asked for it); a gitleaks that fails to run refuses the push and
   says so, and so does one that ran but cannot show what it scanned: an error
   line in its own log, or a scanned-byte figure that is not the count of bytes
   the hook handed it, or no figure at all (the two coverage conditions). The
   hook's read carries `--text`, so a diff attribute cannot hide a credential
-  from it: a path git would otherwise call binary (a `-diff` line or the
-  `binary` macro in an attributes file, or a blob over `core.bigFileThreshold`)
-  is diffed as text and scanned like any other, while a plain patch stream
-  prints no hunk for it.
+  in a commit that is not a merge: a path git would otherwise call binary (a
+  `-diff` line or the `binary` macro in an attributes file, or a blob over
+  `core.bigFileThreshold`) is diffed as text and scanned like any other, while
+  a plain patch stream prints no hunk for it. A merge's combined diff applies
+  git's binary verdict whatever `--text` says, so the hook reads a merge's
+  binary path whole from the merge's result blob. That whole read has a cost:
+  a push is now refused when the blob holds a credential already published.
+  The hook also refuses a push on a line of git's answer it cannot read, and a
+  push carrying a commit of 64 or more parents (the identifier scan refuses
+  that too), since git's combined diff drops or garbles the lines such a merge
+  adds.
   `ROMP_NO_GITLEAKS=1` skips the credential scan for one push, and
   `ROMP_GITLEAKS` points at a binary. A clone that carries any replace ref
   (`git replace`) is refused before either scan runs when either scan is armed,

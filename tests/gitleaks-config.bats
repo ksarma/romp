@@ -26,8 +26,8 @@ setup() {
     if [ -z "$GL" ] || [ ! -x "$GL" ]; then
         # ROMP_GITLEAKS_REQUIRE=1 makes the absence a failure naming the reason, not a skip:
         # CI's Linux Shell job installs the pinned gitleaks in the step before it runs bats
-        # and sets the switch, so a skip there would report a broken install as fourteen green
-        # skips (the stance ROMP_SERVED_TESTS_REQUIRE takes in tests/conftest.py). Without
+        # and sets the switch, so a skip there would report a broken install as a green skip
+        # per case (the stance ROMP_SERVED_TESTS_REQUIRE takes in tests/conftest.py). Without
         # the switch the file skips, and a clone that never wanted the scanner stays green.
         # The reason names the property the test above keyed on: [ ! -x ] is true for a path
         # that is absent as well as for one that exists without the execute bit, and the two
@@ -250,16 +250,21 @@ dense_tokens() {
 }
 
 # The five default rules that key on a file's path (the same five in gitleaks 8.28.0 and 8.30.1),
-# each with the file name it needs and a probe it reports.
+# each with the names the hook gives its copies and a probe it reports.
 PATH_RULES="pkcs12-file nuget-config-password kubernetes-secret-yaml hashicorp-tf-password freemius-secret-key"
 
-path_rule_name() {
+# The names the hook's path-scoped run gives a rule's copies, one per suffix its selection takes
+# for that rule: the piece number and the suffix the selection matched, lower-cased, nuget.config
+# whole, in a directory named by the piece number (round 10b, from the round 9 rulings' group F
+# and the coordinator's decision 4; until then each copy took the pushed file's basename, which
+# cert.p12, nuget.config, secret.yaml, main.tf and fs.php stood for here).
+path_rule_copies() {
     case $1 in
-        pkcs12-file) echo cert.p12 ;;
+        pkcs12-file) echo 1.p12 1.pfx ;;
         nuget-config-password) echo nuget.config ;;
-        kubernetes-secret-yaml) echo secret.yaml ;;
-        hashicorp-tf-password) echo main.tf ;;
-        freemius-secret-key) echo fs.php ;;
+        kubernetes-secret-yaml) echo 1.yaml 1.yml ;;
+        hashicorp-tf-password) echo 1.tf 1.hcl ;;
+        freemius-secret-key) echo 1.php ;;
     esac
 }
 
@@ -295,23 +300,45 @@ path_rule_probe() {
         echo "expected one finding for the secret containing the nonce:"; echo "$output"; false; }
 }
 
-@test "round 9d, G2: a piece of the hook's cap, 98,304 bytes, is read whole: each of its dense distinct tokens is found" {
-    # The hook caps a piece at 98,304 bytes because gitleaks reads a file of up to 100,000 bytes in
-    # one chunk and a larger one in chunks, missing a match that crosses a cut (in a 200,000-byte
-    # file of these lines 8.28.0 and 8.30.1 miss 3 of 4,878). A piece of exactly the cap, packed with
-    # distinct github-pat shaped lines behind the ~ line, must be read whole: every token found, and
-    # the byte figure the piece's size. A later gitleaks that reads files in smaller chunks turns
-    # this red, and the hook's cap moves with it.
+# One of the piecing constants, CAP or V, read from the hook's own awk text (the line of
+# CRED_PIECES_AWK that assigns CAP, V and LW), never restated here, so a case keyed on it moves with
+# the hook (round 10b, from the round 9 rulings' group C). Exactly one assignment of the name to a
+# number is expected in the hook; none (a rename, a move) or two (a second site) and the premise is
+# gone, so say so.
+hook_constant() {   # <CAP | V>
+    local hook="$ROMP_DIR/.githooks/pre-push" pat n
+    pat="(^|[;[:space:]])$1 = [0-9]+([;[:space:]]|\$)"
+    n=$(grep -cE "$pat" "$hook" || true)
+    [ "$n" -eq 1 ] || { echo "expected exactly one '$1 = <number>' assignment in the hook's awk text ($hook), found $n" >&2; return 1; }
+    grep -E "$pat" "$hook" | sed -E "s/^(.*[;[:space:]])?$1 = ([0-9]+).*\$/\\2/"
+}
+
+@test "round 9d, G2: a piece of the hook's cap, CAP bytes read from its awk line, is read whole: each of its dense distinct tokens is found (red for a CAP of 125,011 bytes or more, CAP=130000 among them)" {
+    # The hook caps a piece at CAP bytes (98,304 at this writing) because gitleaks reads a file of
+    # up to 100,000 bytes in one chunk and a larger one in chunks, missing a match that crosses a
+    # cut (in a 200,000-byte file of these lines 8.28.0 and 8.30.1 miss 3 of 4,878). A piece of
+    # exactly the cap, packed with distinct github-pat shaped lines behind the ~ line, must be read
+    # whole: every token found, and the byte figure the piece's size. A later gitleaks that reads
+    # files in smaller chunks turns this red, and the hook's cap moves with it.
+    # CAP is read from the hook (hook_constant; round 10b, from the round 9 rulings' group C): until
+    # then this case built a piece of a restated 98,304 bytes and stayed green whatever CAP the hook
+    # held. Its range, measured on this layout under 8.28.0 and 8.30.1: gitleaks' first chunk is its
+    # 100,000-byte read plus a peek of up to 25,000 bytes for a blank line, and this piece holds
+    # none, so a CAP up to 125,010 is still read whole (green) and a CAP of 125,011 or more puts the
+    # token that starts at byte 124,970 across the cut (red, that token missed). The band
+    # above 100,000 that stays green here belongs to the round 10b cap pin below and to the
+    # blank-line witness it names.
+    cap=$(hook_constant CAP)
     mkdir "$TEST_DIR/p"
-    n=$(( (98304 - 2) / 41 ))                     # 41 bytes a line, after the 2-byte ~ line
-    pad=$(( 98304 - 2 - n * 41 ))
-    { printf '~\n'; dense_tokens "$n"; printf '%*s\n' $(( pad - 1 )) '' | tr ' ' x; } > "$TEST_DIR/p/1"
-    [ "$(( $(wc -c < "$TEST_DIR/p/1") ))" -eq 98304 ]
+    n=$(( (cap - 2) / 41 ))                       # 41 bytes a line, after the 2-byte ~ line
+    pad=$(( cap - 2 - n * 41 ))
+    { printf '~\n'; dense_tokens "$n"; [ "$pad" -eq 0 ] || printf '%*s\n' $(( pad - 1 )) '' | tr ' ' x; } > "$TEST_DIR/p/1"
+    [ "$(( $(wc -c < "$TEST_DIR/p/1") ))" -eq "$cap" ]
     [ "$(( $(grep -c '^gh' "$TEST_DIR/p/1") ))" -eq "$n" ]
     [ "$(( $(grep '^gh' "$TEST_DIR/p/1" | sort -u | wc -l) ))" -eq "$n" ]   # distinct
     run scan_pieces "$TEST_DIR/p" --config "$CFG"
     [ "$status" -eq 2 ] || { echo "no finding in the dense piece (exit $status):"; echo "$output"; false; }
-    [[ "$output" == *"scanned ~98304 bytes"* ]] || { echo "the byte figure is not the piece's 98304 bytes:"; echo "$output"; false; }
+    [[ "$output" == *"scanned ~$cap bytes"* ]] || { echo "the byte figure is not the piece's $cap bytes (the hook's CAP):"; echo "$output"; false; }
     [[ "$output" =~ leaks\ found:\ ([0-9]+) ]] && [ "${BASH_REMATCH[1]}" -eq "$n" ] || {
         echo "expected all $n tokens found in a piece of the cap:"; echo "$output"; false; }
 }
@@ -341,23 +368,95 @@ path_rule_probe() {
     done
 }
 
-@test "round 9d, G4: each path-scoped rule fires only under its file's own name, which a piece named by number lacks" {
+@test "round 9d, G4: each path-scoped rule fires under the name the hook gives its copy, the piece number and the suffix the rule keys on, which a piece named by number alone lacks" {
     # Five default rules key on the file's path. A piece named by number carries no such name, so
     # the hook's main run cannot fire them (until round 9 the hook ran gitleaks over git, where the
     # path is real, and they fired), and the hook scans the pushed files whose paths match those
-    # rules a second time, each under its basename, with --enable-rule naming the five. Both halves
-    # per rule, in that second run's shape: the probe under its own name, in a directory named by
-    # number, is reported under the rule; the same bytes named by number give no finding.
+    # rules a second time, each copy named by its piece number and the suffix the selection
+    # matched, lower-cased (1.p12, 1.yaml; nuget.config whole), in a directory named by the piece
+    # number, with --enable-rule naming the five. Until round 10b each copy took the pushed file's
+    # git-quoted basename, and a selected file whose quoted basename passes 255 bytes could not be
+    # written (the round 9 rulings' group F); the fixed name keeps what the five rules' paths key
+    # on and nothing of the pushed name. Both halves per rule, in that second run's shape: the
+    # probe under each of its copy names, in a directory named by number, is reported under the
+    # rule; the same bytes named by number give no finding.
     five=${PATH_RULES// /,}
     for r in $PATH_RULES; do
-        rm -rf "$TEST_DIR/p"; mkdir -p "$TEST_DIR/p/1"
-        path_rule_probe "$r" > "$TEST_DIR/p/1/$(path_rule_name "$r")"
-        run scan_pieces "$TEST_DIR/p" --config "$CFG" --enable-rule "$five" --report-format json --report-path "$TEST_DIR/r.json"
-        [ "$status" -eq 2 ] && grep -q "\"RuleID\": \"$r\"" "$TEST_DIR/r.json" || {
-            echo "$r: not reported for $(path_rule_name "$r") under its own name (exit $status):"; echo "$output"; false; }
+        for c in $(path_rule_copies "$r"); do
+            rm -rf "$TEST_DIR/p" "$TEST_DIR/r.json"; mkdir -p "$TEST_DIR/p/1"
+            path_rule_probe "$r" > "$TEST_DIR/p/1/$c"
+            run scan_pieces "$TEST_DIR/p" --config "$CFG" --enable-rule "$five" --report-format json --report-path "$TEST_DIR/r.json"
+            [ "$status" -eq 2 ] && grep -q "\"RuleID\": \"$r\"" "$TEST_DIR/r.json" || {
+                echo "$r: not reported for its copy named 1/$c (exit $status):"; echo "$output"; false; }
+        done
         rm -rf "$TEST_DIR/p"; mkdir "$TEST_DIR/p"
         path_rule_probe "$r" > "$TEST_DIR/p/1"
         run scan_pieces "$TEST_DIR/p" --config "$CFG" --enable-rule "$five"
         [ "$status" -eq 0 ] || { echo "$r: reported for the same bytes named by number (exit $status):"; echo "$output"; false; }
+    done
+}
+
+# ── round 10b: the piecing constants' values ───────────────────────────────
+# The round 9 rulings (group C, and the coordinator's decision 5) pin the hook's two piecing
+# constants by value beside the witnesses that execute what each stands for: each is read from the
+# hook's awk line (hook_constant, above), never restated, and each case's failure message says it
+# guards the constant's value and names the executed witness that proves the property, a case in
+# tests/pre-push-hook.bats' round 10b section that the pin also requires to be there, once. The
+# cap's pin is red under CAP=110000 and CAP=130000 (G2 above under the second alone), the
+# overlap's under V=4096 and V=2500.
+
+# The count of cases in tests/pre-push-hook.bats whose title begins with round 10b (C, and the
+# given words: a pin below names its executed witness by those words, and a witness renamed or
+# gone would leave the pin's message pointing at nothing, so each pin requires exactly one.
+witness_cases() {   # <the title's words after "round 10b (C, ">
+    awk -v p="@test \"round 10b (C, $1" 'index($0, p) == 1 { n++ } END { print n + 0 }' "$ROMP_DIR/tests/pre-push-hook.bats"
+}
+
+@test "round 10b: the hook's CAP, read from its awk line, is at most 100,000 bytes, gitleaks' single read of a file (a value pin, red for any CAP above 100,000, CAP=110000 and CAP=130000 among them)" {
+    # gitleaks reads a file of more than 100,000 bytes in chunks and misses a match across a cut,
+    # so a piece must fit in one read. The executed proof of that property is elsewhere: the
+    # blank-line witness in tests/pre-push-hook.bats (a PGP private key block whose blank line
+    # falls at byte 100,000 of a one-piece reading, where gitleaks ends its first chunk, found
+    # whole because the hook pieces the file at its CAP), red by publication under CAP=110000 and
+    # CAP=130000, and G2 above for a CAP of 125,011 or more. The values just above 100,000 that the
+    # witness cannot reach, which its title names as this pin's, are the band this pin backs up;
+    # it guards the value only.
+    cap=$(hook_constant CAP)
+    [ "$cap" -le 100000 ] || {
+        echo "the hook's CAP is $cap bytes, above 100,000, the most gitleaks reads of a file in one chunk."
+        echo "This pin guards the constant's value; the executed proof of the property, a piece read whole, is the case"
+        echo "'round 10b (C, the blank-line witness for the band from 100,000 to 125,000)' in tests/pre-push-hook.bats,"
+        echo "with G2 in this file for a CAP of 125,011 or more."
+        false; }
+    n=$(witness_cases "the blank-line witness for the band from 100,000 to 125,000)")
+    [ "$n" -eq 1 ] || {
+        echo "the witness this pin names, 'round 10b (C, the blank-line witness for the band from 100,000 to 125,000)',"
+        echo "is in tests/pre-push-hook.bats $n times, not once: renamed or gone, it leaves the message above pointing at nothing"
+        false; }
+}
+
+@test "round 10b: the hook's V, read from its awk line, is the design value, 16,384 bytes (a value pin, red for any other V, V=4096 and V=2500 among them)" {
+    # A continuation piece replays the last V bytes of its file's lines, and a long line's windows
+    # overlap by V bytes, so a match that crosses a boundary lies whole in the next piece or window
+    # when at most V of its bytes come before the boundary; the header states that bound at 16,384
+    # bytes. The executed proof of the property is in tests/pre-push-hook.bats, placed by the V
+    # those cases read from the hook: the property pin by the replay (a private key block with
+    # exactly V of its bytes before a piece boundary between lines, refused) and the property pin
+    # by windows (one of V + 1 bytes with exactly V before the end of a long line's first window,
+    # refused). A witness placed by the hook's own V moves with it, so this pin is the one that
+    # turns red when V itself changes; it guards the value only.
+    v=$(hook_constant V)
+    [ "$v" -eq 16384 ] || {
+        echo "the hook's V is $v bytes, not the design value 16,384 that the header states as the overlap's bound."
+        echo "This pin guards the constant's value; the executed proof of the property, the largest crossing match read"
+        echo "whole, is the pair of cases 'round 10b (C, the property pin by the replay)' and 'round 10b (C, the property"
+        echo "pin by windows)' in tests/pre-push-hook.bats, placed by the V they read from the hook."
+        false; }
+    for w in "the property pin by the replay)" "the property pin by windows)"; do
+        n=$(witness_cases "$w")
+        [ "$n" -eq 1 ] || {
+            echo "the witness this pin names, 'round 10b (C, $w', is in tests/pre-push-hook.bats $n times, not once:"
+            echo "renamed or gone, it leaves the message above pointing at nothing"
+            false; }
     done
 }
