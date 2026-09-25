@@ -8574,8 +8574,9 @@ pixels at a device scale of 1), and with the f larger than the paragraph's text,
 heading, a `<font>` of size 4 to 7 or nested `<big>`, 40 pixels at a device scale of 1 and 135 device pixels at 2 (FLOOR_LARGE_BOUND
 and FLOOR_D2_BOUND hold those scenes), those pictures 20 by 20, and beside a taller picture, since one under the floor on its width
 alone can be any height, the count grows with the f without a bound (204 pixels and 753 device pixels for an f of 185px beside a
-picture 20 by 200); up and down the ring's width, so the ring
-stands inside the picture's margin box, where at 2px it covered the bottom row of a key on the line above), a line holding such a
+picture 20 by 200), and with the picture in two nested `<small>` the ring covered at most 4 pixels at a device scale of 1 and 5
+device pixels at 2 in that larger-f sweep and beside pictures up to 400 tall with an f up to 185px (the file review's round 16,
+extra8-4); up and down the ring's width, so the ring stands inside the picture's margin box, where at 2px it covered the bottom row of a key on the line above), a line holding such a
 picture up to 6px taller and the text after it 14.97px along at the default size (the file review's round 14, correctness-2 with
 extra5-1 and extra5-2, the margin measured per axis on the two margin rulings of 2026-09-24; the open leg's neighbour pin reads runs
 of f, heading runs, a callout's float and an italic run glued to a picture in two nested `<small>`, held to that bound, at the

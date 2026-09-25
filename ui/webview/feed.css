@@ -2020,9 +2020,11 @@ a.fileview-gh-note { border-style: dashed; }
    box. Those pictures are 20 by 20, and the count stops growing near an f of 33px since the ring reaches no higher than the
    picture's top; a picture under the floor on its width alone can be any height, and beside a taller one the count grows with the
    f without a bound (204 pixels at a device scale of 1 and 753 device pixels at 2 for a bold italic f of 185px in ten nested <big>
-   at 200% beside a picture 20 by 200), no figure bounding it (file-figure-open-browser.test.ts holds the paragraph's scene within 1
-   and 30 pixels at a device scale of 1, FLOOR_BOUND, the heading's within 1 and 40, FLOOR_LARGE_BOUND, and the <big>'s within 1
-   and 135 device pixels at a device scale of 2, FLOOR_D2_BOUND). Up and down 3px, the
+   at 200% beside a picture 20 by 200), no figure bounding it; with the picture in two nested <small>, the ring covered at most 4
+   pixels at a device scale of 1 and 5 device pixels at 2 in that larger-f sweep and beside pictures up to 400 tall with an f up to
+   185px (file-figure-open-browser.test.ts holds the paragraph's scene within 1 and 30 pixels at a device scale of 1, FLOOR_BOUND,
+   the heading's within 1 and 40, FLOOR_LARGE_BOUND, and the <big>'s within 1 and 135 device pixels at a device scale of 2,
+   FLOOR_D2_BOUND). Up and down 3px, the
    ring's width, so the ring stands inside the picture's margin
    box on every side, which the picture's own line holds, and reaches no other line: at 2px it covered the bottom row of a key (kbd)
    on the line above, whose box reaches its line's edge, and painted the page's ground over the tint of the highlight, table row or
