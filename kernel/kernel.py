@@ -15573,12 +15573,15 @@ _AGENT_RELEASED = {}                # (sid, agent id) -> [path, taken] for the e
 #                                     cancels that release, and after one never taken it counts nothing. The pusher thread's alone
 _AGENT_RELEASED_MAX = 4096
 _AGENT_ENDED_UNHELD = {}            # (sid, agent id) -> path for the ends seen while the record cache held nothing for the agent's
-#                                     file (release_entry answered "absent": at the batch, the end drained before any read held the
-#                                     file, or at the owed releases' pay, the entry evicted or popped between the deferral and the
-#                                     pay), oldest first, at most _AGENT_RELEASED_MAX (past it the oldest is forgotten and not
-#                                     counted: it held nothing when it was last paid). Released again at each cycle, so a read that
-#                                     holds the file after the end is released at the first cycle after it; a start for the agent,
-#                                     or any release that pops the path, forgets it. The pusher thread's alone
+#                                     file (release_entry answered "absent", at the batch or at the owed releases' pay: no entry
+#                                     with weight stood for the file, among them an end drained before any read held it, an entry
+#                                     evicted or popped before the release finished, and an agent's later end after its earlier
+#                                     release was taken, as its task's end or its workflow slot's done state after its stop, so
+#                                     the first whole re-read after that end is released at the next cycle), oldest first, at most
+#                                     _AGENT_RELEASED_MAX (past it the oldest is forgotten and not counted: it held nothing when it
+#                                     was last paid). Released again at each cycle, so a read that holds the file after the end is
+#                                     released at the first cycle after it; a start for the agent, a release that pops the path,
+#                                     and every outcome but absent of the pair's own release forget it. The pusher thread's alone
 
 
 def _note_agent_released(pair, path, taken):
@@ -15633,7 +15636,12 @@ def _release_ended_agents():
     - Each agent whose last event in the batch is an end is released. An end followed in the same batch by the agent
       entering the live set again releases nothing. An agent entering the live set after its release was taken is a false
       end, counted (recordCache.falseEnds); after a release that was only owed, it is not. An end that finds nothing held
-      is remembered as unheld; any other outcome forgets a remembered end of the agent.
+      is remembered as unheld; any other outcome forgets a remembered end of the agent. That includes an agent's later end
+      acted on after its earlier release was taken (its task's end or its workflow slot's done state after its stop, in a
+      later cycle, or in this cycle after the owed pay took a deferred release): if a re-read holds the file at that end,
+      the end releases it; if nothing is held, the end is remembered, so the first whole re-read after it is released at
+      the next cycle. A whole re-read after that release, with no later end of the agent, stays whole until the count cap,
+      the byte budget or a quiescent drop reaches it (the residual stated beside em.RECORD_CACHE_BUDGET_FLOOR_BYTES).
     An end, remembered or in the batch, whose resolution or release raises is given up, counted in releaseLost, and
     written to stderr at every raise with the session, the agent, the file when it resolved and the traceback
     (em.say_release_raised), as the pusher's other stage failures are; the rest are still released. The release counters

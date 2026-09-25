@@ -20941,8 +20941,13 @@ class SdkBackend:
         the count cap or the byte budget.
         An agent can be queued as ended more than once (its stop and its task's end). In one batch the kernel acts on the
         agent's last event only. A later end, in a later cycle, finds the entry gone or a restored tail weighing nothing when
-        the earlier release was taken, unless a reader pulled the file whole in between; it finds the entry still whole when
-        the earlier release was deferred or lost, and tries again. The release counters count a path once per cycle
+        the earlier release was taken, unless a reader pulled the file whole in between (the end then releases that read's
+        entry); finding nothing held, it is remembered as an end seen while nothing was held (kernel._release_ended_agents),
+        so a whole re-read of the file before any other event about the agent is released at the next cycle. It can find
+        the entry still whole when the earlier release was lost, or deferred and refused again by the cycle's owed pay, and
+        then tries again. When that pay takes the deferred release first, the later end finds nothing held and is remembered
+        as an end seen while nothing was held (kernel._release_ended_agents), with the same consequence for a whole
+        re-read. The release counters count a path once per cycle
         (recordCache.releaseDeferred and releaseLost count releases, not ends), so with the drop writes off an agent whose two
         ends reach two cycles counts two releaseLost.
         Past _AGENT_LIVE_MAX the oldest event is dropped, so a backend nothing drains stays bounded. A dropped end is kept as

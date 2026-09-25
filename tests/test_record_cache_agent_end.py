@@ -731,6 +731,75 @@ class AgentEnd(unittest.TestCase):
             em.checkpoint_pay_owed_releases = real
         self.assertNotIn((OTHER_SID, AID), km._AGENT_ENDED_UNHELD, "the path's release forgot the remembered end")
 
+    # ---- an agent's later end after its earlier release was taken (PR 913 round 1, the texts' account of two ends) ----
+    # An agent reports two ends (its stop and its task's end, or its workflow slot's done state), and the second can reach a
+    # later cycle than the first's taken release. A re-read holding the file at that end is released by it; an end that finds
+    # nothing held is remembered like any end seen while nothing was held, so the first whole re-read after it is released
+    # at the next cycle. The whole re-reads after that release stay held (the residual event_model states beside
+    # RECORD_CACHE_BUDGET_FLOOR_BYTES).
+
+    def _stop_released_and_taken(self):
+        self.s._on_task_event("task_started", {"task_id": AID, "task_type": "local_agent"})
+        size = self._fold_while_running(AID, self.agent)
+        km._begin_checkpoint_cycle()                                     # drains the start
+        self._stop(AID)
+        km._begin_checkpoint_cycle()                                     # the stop's release
+        self.assertEqual(km._AGENT_RELEASED.get((SID, AID)), [self.agent, True], "precondition: the release was taken")
+        return size
+
+    def _task_end(self):
+        self.s._on_task_event("task_notification", {"task_id": AID, "status": "completed"})
+        self.assertEqual(list(self.be._agent_live_q), [(SID, AID, False)], "precondition: the task's end is queued")
+
+    def test_a_later_end_after_a_taken_release_is_remembered_and_the_next_whole_re_read_released_once(self):
+        size = self._stop_released_and_taken()
+        self._task_end()
+        km._begin_checkpoint_cycle()                                     # a cycle after the release: nothing held
+        self.assertEqual(km._AGENT_ENDED_UNHELD.get((SID, AID)), self.agent, "the later end found nothing held: remembered")
+        em._read_jsonl_incremental(self.agent)                           # a whole reader (the agent viewer) re-reads it
+        self.assertEqual(self._weight(self.agent), size, "precondition: the re-read holds the whole file")
+        km._begin_checkpoint_cycle()
+        self.assertIsNone(self._weight(self.agent), "the first whole re-read after the later end is released at the next "
+                          "cycle (held: %s of %d bytes)" % (self._weight(self.agent), size))
+        self.assertEqual(self._stat("released"), {"agentEnded": {"count": 2, "bytes": 2 * size}})
+        self.assertNotIn((SID, AID), km._AGENT_ENDED_UNHELD, "that release forgot the end")
+        em._read_jsonl_incremental(self.agent)                           # read whole again, with no later end of the agent
+        for _ in range(2):
+            km._begin_checkpoint_cycle()
+        self.assertEqual(self._weight(self.agent), size, "a whole re-read after that release stays whole over two cycles")
+        self.assertEqual(self._stat("released")["agentEnded"]["count"], 2, "and is not released")
+
+    def test_a_later_end_after_a_taken_release_releases_a_re_read_that_holds_the_file(self):
+        size = self._stop_released_and_taken()
+        em._read_jsonl_incremental(self.agent)                           # a whole re-read before the later end
+        self.assertEqual(self._weight(self.agent), size, "precondition: the re-read holds the whole file")
+        self._task_end()
+        km._begin_checkpoint_cycle()
+        self.assertIsNone(self._weight(self.agent), "the later end released the re-read (held: %s of %d bytes)"
+                          % (self._weight(self.agent), size))
+        self.assertEqual(self._stat("released"), {"agentEnded": {"count": 2, "bytes": 2 * size}})
+        self.assertNotIn((SID, AID), km._AGENT_ENDED_UNHELD, "nothing remembered")
+
+    def test_a_later_end_in_the_cycle_whose_owed_pay_takes_the_release_is_remembered(self):
+        self.s._on_task_event("task_started", {"task_id": AID, "task_type": "local_agent"})
+        size = self._fold_while_running(AID, self.agent)
+        km._begin_checkpoint_cycle()
+        km.CKPT_CONVERGE_BYTES = 1                                       # no room for the document
+        self._stop(AID)
+        km._begin_checkpoint_cycle()
+        self.assertEqual(em.owed_release_paths(), {self.agent}, "precondition: the stop's release is owed")
+        self._task_end()
+        km.CKPT_CONVERGE_BYTES = 8 * 1024 * 1024
+        km._begin_checkpoint_cycle()                                     # the owed pay takes it, then the batch's end
+        self.assertIsNone(self._weight(self.agent), "precondition: the owed release was paid")
+        self.assertEqual(km._AGENT_RELEASED.get((SID, AID)), [self.agent, True], "recorded as taken")
+        self.assertEqual(km._AGENT_ENDED_UNHELD.get((SID, AID)), self.agent, "the later end found nothing held: remembered")
+        em._read_jsonl_incremental(self.agent)                           # a whole re-read
+        km._begin_checkpoint_cycle()
+        self.assertIsNone(self._weight(self.agent), "the re-read is released at the next cycle (held: %s of %d bytes)"
+                          % (self._weight(self.agent), size))
+        self.assertEqual(self._stat("released"), {"agentEnded": {"count": 2, "bytes": 2 * size}})
+
     # ---- false ends: no liveness snapshot ends an agent ----
 
     def test_a_staler_snapshot_a_failed_row_and_a_dormant_one_release_nothing(self):

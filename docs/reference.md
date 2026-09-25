@@ -3105,12 +3105,20 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   cap or the byte budget. The pusher, at each cycle's start, writes an ended
   agent's checkpoint document when it lacks what the cache holds, then
   drops its records, so a later fold whose cursor the document records
-  restores a tail from it; an end that finds nothing held (drained before
-  any read held the file, or an owed release whose entry left the cache
-  before its pay) is remembered, and the file released at the first cycle
-  after a read holds it, unless the agent starts again first; a whole
-  re-read of a file after its release was taken is held whole until the
-  count cap, the byte budget or a quiescent drop reaches it; a file no fold holds
+  restores a tail from it; an end whose release finds no entry with weight
+  for the file (among them one drained before any read held the file, one
+  whose entry the cache evicted or dropped before the end or took between
+  the release's document write and its pop, an owed release whose entry
+  left the cache before its pay, and an agent's later end after its
+  earlier release was taken, such as its task's end or its workflow slot's
+  done state after its stop) is remembered, and the file released at the
+  first cycle after a read holds it, unless the agent starts again first;
+  a whole re-read of a file after its release was taken is held whole
+  until the count cap, the byte budget or a quiescent drop reaches it,
+  unless a later end of the agent comes after that release: one that finds
+  the re-read holding the file releases it, and one that finds nothing
+  held is remembered as above, so the first whole re-read after it is
+  released at the next cycle; a file no fold holds
   a recordable cursor for is dropped without a document and read whole at
   its next fold, and a file that no longer exists is dropped with nothing
   written; an agent whose start the cycle drains before a deferred release
