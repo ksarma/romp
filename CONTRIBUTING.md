@@ -147,7 +147,7 @@ it. A Node front server answers the page's WebSocket and proxies everything
 else to the subprocess.
 
 A recording holds real session data. `--record` connects to the running kernel
-as one more pane (the same URL and query, the token as the page's cookie),
+as one more pane (the same URL and query, with the serve token as `?token=`),
 sends the ready handshake and nothing else, and writes only under the system
 temp directory (private to your user: directory 0700, file 0600), refusing a
 path inside a git checkout or through a symlink. Never copy one into the repo;

@@ -1228,11 +1228,14 @@ part of turning it on.
     the existing mapping rather than adding to it.
 
 On the phone, open `https://<machine>.<tailnet>.ts.net/`. Romp answers with a
-page asking for your access token; paste in the one `romp` prints. A
-year-long cookie remembers the phone afterwards. Prefer this to putting
+page asking for your access token; paste in the one `romp` prints. The phone
+stays signed in afterwards, through a year-long session cookie and a key the
+page keeps in the site's storage; neither is the token. Prefer this to putting
 `?token=<token>` in the address, which works but leaves the token in your
-browser history and in anything you share the link through. The cookie is itself
-a credential, so only do this on a phone you control.
+browser history and in anything you share the link through. If the phone loses
+the site's storage (its data cleared, or a browser that clears a site's storage
+after a week without a visit), the page asks for the token again. A signed-in
+phone can reach your sessions, so only do this on a phone you control.
 
 Only devices signed in to your Tailscale account can reach Romp: Tailscale
 checks each device's identity and encrypts the traffic between them, and nothing
@@ -1345,10 +1348,44 @@ replacement nobody else holds. Under the service that refusal repeats in
 back on its own.
 
 A browser cannot read that file, which is why the link `romp` prints carries the
-token in it. The first visit trades it for a year-long cookie, so the bare
-`http://127.0.0.1:29855/` works from then on; `romp url` prints the link again
-for a new browser or after clearing cookies. The cookie is a credential in its
-own right, so treat a machine holding one as signed in.
+token in it. Opening the link signs the browser in: it gets a year-long session
+cookie and a key the page keeps in the site's storage, neither of which is the
+token, so the bare `http://127.0.0.1:29855/` works from then on. The cookie on
+its own opens only the page's code; the page sends the key with each request
+for data or an action, and puts a per-file capability in each file address it
+builds ([SECURITY.md](https://github.com/romp-on/romp/blob/main/SECURITY.md)
+states what each value authenticates). A browser can lose the site's storage while it
+keeps the cookie (cleared site data, a private window, a browser that clears a
+site's storage after a week without a visit); it then lands on the sign-in page.
+Paste the token there, open the link `romp url` prints, or run `romp` on the
+machine to open a signed-in window. A signed-in browser can reach your sessions,
+so treat a machine holding a sign-in as you would one holding the token.
+
+**Rotating the token.** Rotating replaces the token and ends every browser
+sign-in at once. Do it to sign every browser out, and once after upgrading from
+a version that kept the token in the dashboard's cookie, which retires those
+cookies (SECURITY.md, "Upgrading from a version whose cookie held the token").
+Stop Romp, delete the token file and start Romp again, which mints a new token;
+then restart the kernel and the postal bus so that both read it:
+
+```bash
+romp down
+rm ~/.local/state/romp/serve-token
+romp up
+romp refresh
+```
+
+Without a login service, `romp up` runs in the foreground; run `romp refresh`
+from a second terminal. Everything that held the old token then needs the new
+one. Each browser signs in again: `romp url` prints the new link, and an open
+dashboard shows the sign-in page when you reload it. Reload VS Code windows,
+whose panels were handed the token when they opened. A session's messaging
+tools read the token when the session starts, so a session that stays up
+across the rotation cannot reach the bus until it restarts. Every machine that
+attached this one must attach it again, which fetches the new token over ssh.
+A `kernels.json` profile's kernel keeps its own token file in its state
+directory; delete that file as well to rotate it. When `ROMP_SERVE_TOKEN`
+supplies the token, change that value instead of deleting the file.
 
 **Remote machines.** Every machine mints its own token. When you attach a host,
 your machine reads that host's token over ssh and stores it locally (in

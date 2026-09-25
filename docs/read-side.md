@@ -961,9 +961,12 @@ The Python kernel (`kernel/kernel.py`) closes it.
 - **Token REQUIRED on every gated route, loopback included** (Jupyter's model:
   loopback is one network stack shared by every local UID, so the `0600` token
   file — not the socket — is the same-user trust boundary; the gate keeps a
-  same-host co-tenant out of `/send` and the bus). Accepted forms: `?token=`
-  (browser bootstrap, seeds a `SameSite=Strict` cookie so it never re-prompts),
-  the cookie, and `X-Romp-Token` (CLI/hooks/daemons, read from the file). The
+  same-host co-tenant out of `/send` and the bus). Accepted forms: `X-Romp-Token`
+  (CLI/hooks/daemons, read from the file) and `?token=`, from any client; a
+  browser presents `?token=` once, and that response signs it in with a session
+  cookie that opens only the page documents and static files, a page key in site
+  storage sent as `X-Romp-Key` (or `k=` on a socket dial), and a per-file
+  capability in each `/file` URL the page builds (`SECURITY.md` states each). The
   token is baked into how the kernel launches (env/autostart), never a manual
   per-launch flag; a bare browser open of `/` gets a paste-the-token login page
   (bare `romp` prints the link + opens a browser). Two kinds of route are exempt:

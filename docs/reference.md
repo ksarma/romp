@@ -5509,7 +5509,8 @@ The cell's hover and its click detail carry a **History** section read from
 this signal: the shell fetches `GET /api-health` for this machine and `GET
 /remote/<host>/api-health` for every host in the frame's `hosts` when the
 hover or the detail opens, and again when a frame lands on an open one,
-authenticating with the dashboard's own cookie the way its other reads do.
+authenticating the way its other reads do (the browser's session cookie and
+page key).
 Nothing polls; the frame carries no history and is unchanged. Each machine's
 document is read in the plain words of "On the dashboard" above: over the
 longest window of `config.windows`, `requests` plus `noStatus` are the

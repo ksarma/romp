@@ -12,42 +12,88 @@ Two local services run on your machine:
 - the **postal bus** (inter-session messaging) on `127.0.0.1` (a fixed local port).
 
 Both bind **loopback only** (`127.0.0.1`); neither is exposed to your network by
-default. On top of that, **every request requires the serve token — loopback
-included** (the model Jupyter uses, for the same reason: loopback is one network
-stack shared by every local UID, so it cannot be a trust boundary by itself).
+default. On top of that, **every request requires the serve token, loopback
+included**, presented either directly or through a browser sign-in made with it
+(below). This is the model Jupyter uses, for the same reason: loopback is one
+network stack shared by every local UID, so it cannot be a trust boundary by
+itself.
 
 The token (`~/.local/state/romp/serve-token`) is 144-bit random, stored at mode
-`0600`, and compared with a constant-time check — **file permissions are the
-same-user gate**. Same-user clients (the CLI, hooks, the bus, the VS Code
-extension) read the file and send it as an `X-Romp-Token` header; the browser
-presents it once as `?token=` (print the ready-made link with `romp url`, or
-paste the token into the login page a bare open of the dashboard serves) and
-rides an `HttpOnly` cookie afterwards. That cookie authorizes only when the
-request's Origin is one the gate accepts: the dashboard's own origin (the
-`Host` the request arrived at, or the kernel's own port on `127.0.0.1` or
-`localhost`), any `vscode-webview://` origin (every VS Code webview, not
-only romp's own), or no `Origin` header at all. The check protects the
-browser surfaces, the WebSocket upgrade included, against cross-site
-requests. It is needed because cookies are scoped by host and
-**not by port** (RFC 6265 §8.5): every `http://127.0.0.1:<port>` page on your
-machine is same-site with the dashboard, so anything else you run on loopback
-(a dev server in a repo an agent cloned) would otherwise ride your cookie into
-`/ws`, which streams every session and accepts text to send into any of them. A
-request with no `Origin` header passes on its cookie because a same-origin
-navigation and non-browser clients send none; a page on another loopback port
-loading an `<img>` aimed at the kernel sends none either and still carries the
-cookie, which is why the hold behind `/busy?drain=1` arms only for an
-explicitly presented token (a request without one still gets the count and arms
-nothing): while a `romp refresh --quiet` waits for the sessions to finish their
-turns, that hold keeps every session from starting a new turn, a side effect no
-subresource load may trigger. A token presented explicitly, as `?token=` or
-`X-Romp-Token`, is accepted from any Origin: federated (cross-machine) calls
-need it, and a cross-site page cannot obtain it: the dashboard drops `?token=`
-from its address as it loads, and every page the kernel serves carries
-`Referrer-Policy: same-origin`, so the token never reaches another origin in a
-`Referer`.
+`0600`, and compared in constant time: **file permissions are the same-user
+gate**. Same-user clients (the CLI, hooks, the bus, the manager, the VS Code
+extension) read the file and send it as an `X-Romp-Token` header, or as
+`?token=` in the URL (the extension's WebSocket and the requests its webview
+makes); an attached machine presents the other machine's token the same way. A
+token presented explicitly, as `?token=` or `X-Romp-Token`, is accepted from any
+Origin: federated (cross-machine) calls need it, and a cross-site page cannot
+obtain it: a browser sign-in stores no copy of it in the browser (below), the
+dashboard drops `?token=` and the one-time code from its address as it signs
+in, and every page the kernel serves carries `Referrer-Policy: same-origin`, so
+the token never reaches another origin in a `Referer`.
+
+The practical consequence: another local user on a **shared machine** cannot
+reach your kernel or bus. `/send` (which injects text into a live Claude
+session that runs tools as you) and bus mail both require the token only your
+UID can read, or a browser sign-in made with it.
+
+### Browser sign-in: a session cookie, a page key, per-file capabilities
+
+A browser presents the token once, in one of three ways: the link `romp url`
+prints, the sign-in page (`/login`, which a bare open of the dashboard also
+shows) with the token pasted in, or a window `romp` opens, which carries a
+one-time code in place of the token. That page load signs the browser in and
+gives it three kinds of value, each derived from the serve token by HMAC under
+a fixed label of its own:
+
+- A **session cookie**. It holds a random session id and an HMAC tag over it,
+  is `HttpOnly` and `SameSite=Lax`, lasts a year, and is named for this kernel,
+  so two kernels on one host keep separate sessions. On its own it opens only
+  the page documents (the dashboard shell and its pane pages) and the static
+  files (`/dist/`, `/media/` and `/sw.js`), which hold code and no session data.
+- A **page key**. The sign-in response writes it into this origin's local
+  storage; that response is served with `Cache-Control: no-store`, and no other
+  response carries the key. The pages send it as an `X-Romp-Key` header (a
+  wrapper around `fetch` adds it to requests for the page's own origin only)
+  and as `k=` when they open a WebSocket. Every request outside the page
+  documents and static files (every JSON read, every POST, the WebSockets and
+  every other route) needs the session cookie and the page key together, or,
+  for a file, the cookie and that file's capability.
+- A **file capability** in each `/file` or `/remote/<host>/file` URL a page
+  builds: images, previews, PDF frames, a file opened in its own tab,
+  downloads, and the `/file` pictures and links in rendered markdown. These
+  loads cannot carry a header. A capability is an HMAC under the page key over
+  one host, one path and one session id, exactly as spelled, so another
+  spelling of the same file needs its own. It is honoured for `GET` and `HEAD`
+  only, and only with the session cookie of the sign-in that made it.
+
+Because each kind has its own label, a value of one kind is refused wherever
+another is required, the serve token included, and the kernel keeps no store of
+sign-ins. The session cookie is honoured only when the request's Origin is one
+the gate accepts: the dashboard's own origin (the `Host` the request arrived
+at, or the kernel's own port on `127.0.0.1` or `localhost`), any
+`vscode-webview://` origin (every VS Code webview, not only romp's own), or no
+`Origin` header at all, which a same-origin navigation and non-browser clients
+send; the WebSocket upgrade is checked the same way. A page whose stored key no longer matches its session (two sign-ins that
+overlapped, or storage cleared while the tab was open) gets a refusal of its
+own and moves to the sign-in page, as does a page whose origin holds no key.
+
+When the dashboard shows an attached machine through this kernel
+(`/remote/<host>/...`), this kernel checks the browser's sign-in and calls the
+other machine with that machine's own token. It forwards none of the browser's
+cookie, page key or capabilities, and a relayed WebSocket handshake reaches the
+browser with its handshake headers only.
+
+The hold behind `/busy?drain=1` arms only for an explicitly presented token (a
+request without one still gets the count and arms nothing): while a `romp
+refresh --quiet` waits for the sessions to finish their turns, that hold keeps
+every session from starting a new turn, a side effect no subresource load may
+trigger.
+
 The token-exempt routes are the no-side-effect liveness probes (`/healthz`,
-`/version` and `/busy` on the kernel, `/ping` on the bus) and the install files:
+`/version` and `/busy` on the kernel, `/ping` on the bus), the sign-in page
+(`/login`, a static form that reads no state), the push worker's
+acknowledgement (`POST /push/ack`, admitted only by the push's own unguessable
+id and able to stamp only that push's delivery record) and the install files:
 `/manifest.webmanifest` and the three home-screen icons under `/media/`
 (`romp-touch-180.png`, `romp-app-192.png`, `romp-app-512.png`, a fixed allowlist
 of names, not a path prefix). A browser fetches those with credentials omitted
@@ -56,10 +102,51 @@ the install. They are static and read no session state: the manifest is a
 fixed JSON literal (app name and short name, display mode, colors, start URL
 and icon list) and the icons are three PNG files.
 
-The practical consequence: another local user on a **shared machine** cannot
-reach your kernel or bus — `/send` (which injects text into a live Claude
-session that runs tools as you) and bus mail both require a token only your
-UID can read.
+### What a browser sign-in costs, and how it ends
+
+- **Losing the page key signs a browser out.** The key lives in the site's
+  storage, which a browser can lose while it keeps the cookie: cleared site
+  data, a private window, or a browser that clears a site's storage after a
+  week without a visit. That browser signs in again with the token: paste it on
+  the sign-in page, open the link `romp url` prints, or run `romp` on the
+  machine to open a signed-in window. Earlier versions kept a browser signed in
+  on the cookie alone for a year.
+- **A sign-in lasts until the serve token is rotated.** Signing in again in a
+  browser that still holds its cookie keeps its session, and with it the
+  capabilities already in its URLs, and a new session ends no earlier one.
+  Sessions, page keys and capabilities all end when the token is rotated, which
+  signs every browser out at once. There is no per-browser sign-out.
+- **An address with a capability reads that one file.** A file opened in its
+  own tab, a download in the browser's history and a copied image address carry
+  their capability; with the session cookie of the same sign-in, it reads that
+  file and nothing else until the token is rotated.
+- **Whatever records a browser's request headers holds its sign-in.** A proxy
+  you place between the browser and the kernel that logs headers records the
+  session cookie and the page key together, which is a whole sign-in; trust it
+  as you trust the browser.
+- **Rendered markdown keeps its `/file` pictures and links.** The chat, notice
+  cards, a preview provider's HTML and a markdown file's hover preview add a
+  capability to each `/file` URL an author wrote, after sanitizing. A message
+  can therefore show, or offer for download, any file the kernel's `/file`
+  route serves this browser, as it could before; the bytes go only to this
+  browser. Pictures that an SVG or a stylesheet names with `url()` get no
+  capability, so a `/file` URL there draws nothing.
+
+### Upgrading from a version whose cookie held the token
+
+Before the session cookie, the dashboard kept the serve token itself in a
+cookie named `romp_token`. The first dashboard page a browser loads after the
+upgrade signs it in with a session and clears `romp_token` in that same
+response, and only when the cookie's value is this kernel's token: a
+`romp_token` that belongs to another romp kernel on the same host is left
+alone, and a dashboard left open across the upgrade migrates at its next page
+load. A browser that never loads the dashboard again keeps `romp_token`, whose
+value is the serve token and stays valid until the token is rotated. Rotate the
+token after upgrading to retire every such cookie. The steps, and what a
+rotation signs out, are under "Rotating the token" in the guide's Security and
+trust section (`docs/guide.md`). Going back to an earlier version signs browsers
+in with `romp_token` again, so pair a rollback with a rotation once this
+version is back.
 
 ## Residual cautions on shared machines
 
@@ -74,14 +161,22 @@ UID can read.
 - For defense-in-depth on Linux you can still run romp inside a per-user
   **network namespace** (`unshare -n`) or rootless container, so its loopback is
   not even reachable by other users' processes.
+- After upgrading from a version whose dashboard cookie held the serve token,
+  **rotate the token** (see "Upgrading from a version whose cookie held the
+  token" above): a browser that has not loaded the dashboard since still holds
+  that cookie, and only a rotation retires its value.
 
 ## What is already hardened
 
 - **Loopback-only binds** for the kernel and bus (above).
-- **Serve token required on every request, loopback included**: 144-bit random,
-  stored `0600`, constant-time compare; Origin gate on the dashboard and the
-  WS upgrade. Federated (cross-machine) calls authorize with the remote
-  machine's token, carried over ssh tunnels the local machine initiates.
+- **Serve token required on every request, loopback included**, directly or
+  through a browser sign-in made with it: 144-bit random, stored `0600`,
+  constant-time compare. A browser's session cookie opens only the page
+  documents and static files; every other request needs its page key or a
+  per-file capability as well, and the cookie is honoured only from an accepted
+  Origin, the WS upgrade included. Federated (cross-machine) calls authorize
+  with the remote machine's token, carried over ssh tunnels the local machine
+  initiates.
 - **Path-traversal guards** on every id/name/message-id that becomes a filesystem
   path component under the mail and outbox roots (`_safe_id`), so a crafted
   reference like `../../etc` is rejected before any path join.
