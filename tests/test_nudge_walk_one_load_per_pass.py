@@ -3833,7 +3833,10 @@ class TheCountersOneSite(unittest.TestCase):
         clause of _loader_births, copied). Its three receiver kinds have their pin, the clause run first in this case over a
         synthetic file: a constant containing the name is named at a subscript key and at a call of each name of the two lists, and
         by nothing at a call of print, a name on neither, so a kind dropped from the clause reds, and so does the clause widened to
-        read print's arguments, every call's among them (review round 11, tests-1 and extra6-1). That clause fails closed: a constant that only contains the name, in any case, fails
+        read print's arguments, every call's among them (review round 11, tests-1 and extra6-1); the same pin holds the keyword
+        values and the walk: the constant is named at a keyword value of a call of get and inside a concatenation at a subscript
+        key and at a call of getattr, so dropping the keyword values or the walk into sub-expressions reds. That clause fails
+        closed: a constant that only contains the name, in any case, fails
         the case at one of those receivers even when it reaches no counter (os.environ.get of a variable named
         ROMP_NUDGE_WALK_STATS_TRACE, say; a verifier of the clause planted it in the kernel and this case failed naming the line),
         and a legitimate one would need an exemption row with its reason, the shape _loader_births states for its whole-spelling
@@ -4187,14 +4190,16 @@ class TheCountersOneSite(unittest.TestCase):
             module = ast.parse(text)
             return module, list(_walk(module))
         # the contained-name clause's pin: a synthetic file, not the kernel, one constant containing the name per line, at a subscript
-        # key, at a call of each name of _DYNAMIC_LOOKUPS (by bare name) and of _DICT_READS (by attribute), and at a call of a name on
-        # neither list
+        # key, at a call of each name of _DYNAMIC_LOOKUPS (by bare name) and of _DICT_READS (by attribute), at a keyword value of a
+        # call of get, inside a concatenation at a subscript key and at a call of getattr, and at a call of a name on neither list
         held, unlisted = "x" + name, "print"          # held contains the name and reads as it whole under none of _door_text's transforms
         self.assertTrue(_DYNAMIC_LOOKUPS and _DICT_READS and unlisted not in _DYNAMIC_LOOKUPS + _DICT_READS,
                         "each list has a name to plant a row at (a derived population fails on empty), and the unlisted receiver is on "
                         "neither list")
         rows = ([("globals()[%r]" % held, "a subscript key")] + [("%s(%r)" % (m, held), "a call of %s" % m) for m in _DYNAMIC_LOOKUPS]
-                + [("R.%s(%r)" % (m, held), "a call of %s" % m) for m in _DICT_READS] + [("%s(%r)" % (unlisted, held), None)])
+                + [("R.%s(%r)" % (m, held), "a call of %s" % m) for m in _DICT_READS]
+                + [("R.get(k=%r)" % held, "a call of get"), ("globals()['' + %r]" % held, "a subscript key"),
+                   ("getattr('' + %r)" % held, "a call of getattr")] + [("%s(%r)" % (unlisted, held), None)])
         text = "".join(r + "\n" for r, _kind in rows)
         got = sorted((ln, kind) for ln, kind, _entry in other_spellings("c7pin_counter.py", parsed(text)[1], text.splitlines()))
         want = [(i, kind) for i, (_r, kind) in enumerate(rows, 1) if kind is not None]
@@ -4202,7 +4207,10 @@ class TheCountersOneSite(unittest.TestCase):
                                     "at a subscript key and at a call of each name of _DYNAMIC_LOOKUPS and of _DICT_READS, each with the "
                                     "receiver it reaches, and named by nothing at a call of %s, a name on neither list, so a receiver kind "
                                     "dropped from the clause, or the clause widened to read that call's arguments, reds here (review round 11, tests-1 "
-                                    "and extra6-1); (line, receiver) got %r, want %r" % (name, unlisted, got, want))
+                                    "and extra6-1); the constant is also named at a keyword value of a call of get, a dict "
+                                    "read, and inside a concatenation at a subscript key and at a call of getattr, so dropping "
+                                    "the keyword values or the walk into sub-expressions reds here; (line, receiver) got %r, "
+                                    "want %r" % (name, unlisted, got, want))
         # the admitted forms' pin: the four forms admitted in a synthetic module, and each other form listed refused by line
         accept = ("%s = {'loads': 0}\n"
                   "def f():\n"
