@@ -206,11 +206,12 @@ class AgentEnd(unittest.TestCase):
     def test_an_agent_is_released_when_its_cli_is_torn_down(self):
         self._released_at_the_end(AID, self.agent, lambda: self.s._drop_live_work("reconnect"))
 
-    def _session_gone(self, **flags):
+    def _session_gone(self, sess=None, **flags):
+        sess = self.s if sess is None else sess
         for k, v in flags.items():
-            setattr(self.s, k, v)
+            setattr(sess, k, v)
         with contextlib.redirect_stderr(io.StringIO()):
-            self.be._on_session_gone(self.s)
+            self.be._on_session_gone(sess)
 
     def test_an_agent_is_released_when_its_session_is_killed(self):
         self._released_at_the_end(AID, self.agent, lambda: self._session_gone(ended=True))   # a kill or a shutdown ends it
@@ -286,6 +287,169 @@ class AgentEnd(unittest.TestCase):
         self.assertEqual(self.s._wf_ended, {WF_TID: {WF_AID}}, "precondition: the run's end queued is recorded")
         self.s._drop_live_work("reconnect")
         self.assertEqual(self.s._wf_ended, {}, "the teardown forgets it with the run's roster")
+
+    # ---- the CLI's end on a reattached object: the agents it knows only through a row or a roster (PR 913 round 1) ----
+    # The object that reattaches to a surviving CLI after a kernel restart never saw the starts of the agents already
+    # running, so its _subagents lacks them; it knows a Task agent through the row seeded from the reg's mirror (or adopted
+    # from a turn-end report) and a Workflow run's agent through the roster a progress frame named. Each road below ends such
+    # an agent with no end event of the agent's own, and each queues its end and releases its records at the next cycle.
+    # The premise is the one the live object's teardown already rests on: the CLI's end, or its reconnect teardown, ends
+    # every agent inside it.
+
+    def _seed_agent_row(self, sess, shell=True):
+        rows = [{"taskId": AID, "type": "local_agent", "desc": "check the notes-api routes", "since": 100}]
+        if shell:
+            rows.append({"taskId": "b0000000000000001", "type": "local_bash", "desc": "run the notes-api tests", "since": 100})
+        self.assertEqual(sess._seed_live_work_from_reg({"bgTasks": rows}), len(rows), "precondition: the mirror's rows seeded")
+
+    def _roster(self, sess):
+        sess._on_task_event("task_progress", {"task_id": WF_TID, "workflow_progress": [_wf(1, WF_AID, "progress")]})
+        self.assertEqual(sess._wf_agents, {WF_TID: {WF_AID}}, "precondition: a progress frame named the run's agent")
+        self.assertEqual(list(self.be._agent_live_q), [], "precondition: a progress frame ends nothing")
+
+    def _no_wake(self):
+        self.be._ensure = lambda sid, on_boot_settled=None: None    # a death notice's wake and a cut's heal start no CLI
+        self.be._oom_killed_scope = lambda sess: None               # the cut road reads no scope
+
+    def _released_at_the_next_cycle(self, aid, path, size):
+        queued = list(self.be._agent_live_q)
+        km._begin_checkpoint_cycle()
+        self.assertIsNone(self._weight(path), "the finished agent's records are released at the next cycle (held: %s of %d "
+                          "bytes; the ends queued: %r)" % (self._weight(path), size, queued))
+        self.assertEqual(queued, [(SID, aid, False)], "the end was queued, once")
+        self.assertEqual(self._stat("released"), {"agentEnded": {"count": 1, "bytes": size}})
+
+    def test_a_reattached_objects_seeded_agent_row_ends_when_its_cli_dies_while_idle(self):
+        again, size = self._reattached(AID, self.agent)
+        self._seed_agent_row(again)
+        self._no_wake()
+        self._session_gone(again)                                        # neither ended nor detached: a crash
+        self._released_at_the_next_cycle(AID, self.agent, size)
+
+    def test_a_reattached_objects_seeded_agent_row_ends_when_its_session_is_killed(self):
+        again, size = self._reattached(AID, self.agent)
+        self._seed_agent_row(again)
+        self._no_wake()
+        self._session_gone(again, ended=True)                            # a kill or a shutdown
+        self._released_at_the_next_cycle(AID, self.agent, size)
+
+    def test_a_reattached_objects_seeded_agent_row_ends_when_its_cli_is_cut_mid_turn(self):
+        again, size = self._reattached(AID, self.agent)
+        self._seed_agent_row(again)
+        self._no_wake()
+        heals = []
+        real = self.be._heal_cut_session
+        self.be._heal_cut_session = lambda sess, oom: (heals.append(sess), real(sess, oom))
+        self._session_gone(again, inflight=1)                            # died mid-turn: a cut
+        self.assertEqual(heals, [again], "the cut road ran: the heal was called once for this object")
+        self._released_at_the_next_cycle(AID, self.agent, size)
+
+    def test_a_reattached_objects_roster_agent_ends_when_its_cli_dies(self):
+        again, size = self._reattached(WF_AID, self.wf_agent)
+        self._roster(again)
+        self._no_wake()
+        self._session_gone(again)
+        self._released_at_the_next_cycle(WF_AID, self.wf_agent, size)
+
+    def test_a_reattached_objects_seeded_agent_row_ends_when_its_cli_is_torn_down(self):
+        again, size = self._reattached(AID, self.agent)
+        self._seed_agent_row(again)
+        again._drop_live_work("reconnect")
+        self._released_at_the_next_cycle(AID, self.agent, size)
+
+    def test_a_reattached_objects_roster_agent_ends_when_its_cli_is_torn_down(self):
+        again, size = self._reattached(WF_AID, self.wf_agent)
+        self._roster(again)
+        again._drop_live_work("reconnect")
+        self._released_at_the_next_cycle(WF_AID, self.wf_agent, size)
+
+    def test_a_reattached_objects_seeded_agent_row_ends_when_the_report_lists_it_ended(self):
+        """The report road: the agent's end frame never reached this kernel (acknowledged but not processed when the old
+        kernel ended, a journal gap, or a mirror row left stale), no SubagentStop came, and the CLI's turn-end report lists
+        the seeded row as ended. An agent that ends while no kernel is attached is not this road: the host replays its end
+        frame at the attach, ahead of the first report."""
+        again, size = self._reattached(AID, self.agent)
+        self._seed_agent_row(again, shell=False)
+        again._reconcile_seeded_with_report([{"id": AID, "status": "completed", "type": "subagent"}])
+        self.assertNotIn(AID, again._bg_tasks, "precondition: the report retired the row")
+        self._released_at_the_next_cycle(AID, self.agent, size)
+
+    def test_an_adopted_agent_row_ends_when_a_later_report_lists_it_ended(self):
+        again, size = self._reattached(AID, self.agent)
+        again._reconcile_seeded_with_report([{"id": AID, "status": "running", "type": "subagent",
+                                              "description": "check the notes-api routes"}])
+        self.assertEqual(again._bg_tasks[AID]["type"], "local_agent", "precondition: adopted as a Task agent's row")
+        self.assertEqual(list(self.be._agent_live_q), [], "precondition: an adoption ends nothing")
+        again._reconcile_seeded_with_report([{"id": AID, "status": "completed", "type": "subagent"}])
+        self._released_at_the_next_cycle(AID, self.agent, size)
+
+    def test_residual_a_task_agent_row_of_a_type_never_learned_queues_no_end(self):
+        """THE WITNESS of a residual SdkBackend.note_agent_live states (PR 913 round 1, the coordinator's decision 6): the
+        reattached object's mirror lacked the agent's row, so the row is minted from the agent's first progress frame, which
+        carries no type, and its end queues nothing. Queuing it was measured first (2026-09-25): the kernel would resolve
+        the id at the drain, and on a miss that walks every sibling session's subagents tree in the project directory, 106
+        to 130 ms at the first walk and 22 to 33 ms for each new id after it on the largest project directory measured,
+        over the 50 ms bound set for one cycle's resolution. Green while the residual stands; queuing the end turns it red,
+        and the texts that name the residual change with it."""
+        again, size = self._reattached(AID, self.agent)
+        again._on_task_event("task_progress", {"task_id": AID, "description": "check the notes-api routes"})
+        self.assertEqual(again._bg_tasks[AID]["type"], "", "precondition: a row of a type never learned")
+        again._on_task_event("task_notification", {"task_id": AID, "status": "completed"})
+        self.assertEqual(list(self.be._agent_live_q), [], "no end is queued for the row")
+        km._begin_checkpoint_cycle()
+        self.assertEqual(self._weight(self.agent), size, "the finished agent's records stay whole, left to the quiescent drop, "
+                         "the count cap or the byte budget")
+
+    # ---- the reg's mirror names the Task agents of a CLI that died with the old kernel ----
+
+    def _dead_mirror_reg(self, **extra):
+        reg = {"sid": SID, "alive": True, "name": "api", "cwd": self.root, "bgTasks": [
+            {"taskId": AID, "type": "local_agent", "desc": "check the notes-api routes", "since": 100},
+            {"taskId": "b0000000000000001", "type": "local_bash", "desc": "run the notes-api tests", "since": 100}], **extra}
+        sb.write_reg(self.state, SID, reg)
+        return reg
+
+    def test_a_dead_mirrors_agent_row_at_boot_is_released_after_a_read_holds_its_file(self):
+        """The boot reconcile with no surviving CLI: the mirror's Task agent died with the old kernel's CLI. Nothing is held at
+        boot, so the end finds nothing to release; the kernel remembers it, and a read that holds the file afterwards is
+        released at the next cycle."""
+        reg = self._dead_mirror_reg()
+        self.be._ensure = lambda sid, on_boot_settled=None: None         # the resume starts no CLI
+        self.be._start_test_root_sweep = lambda: None                    # nor any sweep of this box's test roots
+        with contextlib.redirect_stderr(io.StringIO()):
+            self.be._boot_reconcile([reg])
+        self.assertIn("cut off", json.dumps(sb.read_reg(self.state, SID).get("queue")), "precondition: the notice was queued")
+        queued = list(self.be._agent_live_q)
+        km._begin_checkpoint_cycle()                                     # the end finds nothing held
+        km._agent_launch_ids(self.agent)                                 # a build reads the finished agent's file
+        size = os.path.getsize(self.agent)
+        self.assertEqual(self._weight(self.agent), size, "precondition: the read holds the whole file")
+        km._begin_checkpoint_cycle()
+        self.assertIsNone(self._weight(self.agent), "released at the cycle after the read (held: %s of %d bytes; the ends "
+                          "queued at boot: %r)" % (self._weight(self.agent), size, queued))
+        self.assertEqual(queued, [(SID, AID, False)], "the Task agent's end was queued at boot, and not the shell's")
+        self.assertEqual(self._stat("released"), {"agentEnded": {"count": 1, "bytes": size}})
+
+    def test_a_threads_wake_over_a_dead_mirrors_agent_row_releases_its_held_file(self):
+        size = self._fold_while_running(AID, self.agent)                 # the file is held
+        km._begin_checkpoint_cycle()                                     # drains the start
+        self._dead_mirror_reg(threadOf="11111111-2222-3333-4444-000000000000")   # a dormant comment thread, its CLI dead
+
+        class _NoCli:                                                    # the woken thread's object starts no CLI
+            def __init__(self, backend, reg):
+                self.thread = threading.Thread(target=lambda: None)
+                self.on_boot_settled = None
+
+            def start(self):
+                pass
+        real = sb.SdkSession
+        sb.SdkSession = _NoCli
+        try:
+            self.be._ensure(SID)
+        finally:
+            sb.SdkSession = real
+        self.assertIn("cut off", json.dumps(sb.read_reg(self.state, SID).get("queue")), "precondition: the notice was queued")
+        self._released_at_the_next_cycle(AID, self.agent, size)
 
     # ---- after the release ----
 

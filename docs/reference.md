@@ -3081,12 +3081,34 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   `countCap`, `inserts`, `evictions`,
   `evictedBytes`, `budgetEvictions`, `dropped` and `droppedBytes` (the
   quiescence drop); the release at an agent's end (the SDK backend queues
-  each agent entering or leaving a session's live set, an agent's own end
-  event even on a session object that never saw it start, as after a kernel
-  restart under a session host, and the pusher, at each cycle's start,
-  writes an ended agent's checkpoint document when it lacks what the cache
-  holds, then drops its records, so a later fold whose
-  cursor the document records restores a tail from it; a file no fold holds
+  each agent entering or leaving a session's live set: an agent's own end
+  events even on a session object that never saw it start, as after a
+  kernel restart under a session host, where the object knows an agent
+  already running only through a Task agent's row (seeded from the
+  registry's mirror, or adopted from a turn-end report) or a Workflow run's
+  roster; a turn-end report that lists a Task agent's row as ended; and,
+  where the CLI's end ends every agent inside it (the reconnect teardown,
+  the CLI's end when the session is not detached, and a boot or a comment
+  thread's wake that finds the mirror naming a CLI that died with an
+  earlier kernel), every agent the object knows through its live set, a Task
+  agent's row or a run's roster. No end is queued for an agent none of those
+  names: a Workflow run's agents when the object holds no roster for the run
+  (one the report retires before any progress frame, or one that ends or
+  loses its CLI before any), a subagent the old kernel knew only by its
+  start hook whose stop is lost, and a Task agent whose row was minted from
+  a progress frame that carried no type, left out because resolving an id
+  no type vouches for walks every sibling session's subagents tree on a miss
+  (106 to 130 ms at the first walk on the largest project directory
+  measured, 2026-09-25); their entries fall to the quiescent drop, the count
+  cap or the byte budget. The pusher, at each cycle's start, writes an ended
+  agent's checkpoint document when it lacks what the cache holds, then
+  drops its records, so a later fold whose cursor the document records
+  restores a tail from it; an end that finds nothing held (drained before
+  any read held the file, or an owed release whose entry left the cache
+  before its pay) is remembered, and the file released at the first cycle
+  after a read holds it, unless the agent starts again first; a whole
+  re-read of a file after its release was taken is held whole until the
+  count cap, the byte budget or a quiescent drop reaches it; a file no fold holds
   a recordable cursor for is dropped without a document and read whole at
   its next fold, and a file that no longer exists is dropped with nothing
   written; an agent whose start the cycle drains before a deferred release
