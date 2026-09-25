@@ -102,6 +102,7 @@ class AgentEnd(unittest.TestCase):
         getattr(em, "_RELEASED_MARKS", {}).clear()
         getattr(em, "_RELEASE_LOST_SAID", set()).clear()
         getattr(km, "_AGENT_RELEASED", {}).clear()
+        getattr(km, "_AGENT_ENDED_UNHELD", {}).clear()
         km._AGENT_LAUNCH_IDS_CACHE.clear(); km._AGENT_GIST_CACHE.clear()
         self._saved = {n: getattr(km, n) for n in ("_bg_live_norm", "_bg_pending", "_path_of", "_sdk_backend",
                                                    "CKPT_CONVERGE_MS", "CKPT_CONVERGE_BYTES")}
@@ -373,6 +374,140 @@ class AgentEnd(unittest.TestCase):
         km._begin_checkpoint_cycle()
         self.assertEqual(self._weight(self.agent), size, "the running agent keeps its records")
         self.assertEqual((self._stat("released", {}), self._stat("falseEnds", 0)), (NOTHING_RELEASED, 0))
+
+    # ---- an end the kernel saw before it held the file (PR 913 round 1, group H) ----
+    # The end finds nothing to release (release_entry answers "absent"), and a read inside the quiescent drop's 120 s window
+    # then holds the finished agent's file whole with every later fold a hit. The kernel remembers such an end and releases
+    # the file at the first cycle after a read holds it; a start for the agent forgets the end.
+
+    def _end_before_any_read(self):
+        """The agent starts and ends with no read of its file in between: the end finds nothing held, and is remembered."""
+        self._start(AID)
+        km._begin_checkpoint_cycle()                                     # drains the start
+        _append(self.agent, _agent_lines(AID, 40, 5))
+        self._stop(AID)
+        km._begin_checkpoint_cycle()                                     # the end finds nothing held
+        self.assertIsNone(self._ent(self.agent), "precondition: nothing held at the end")
+        self.assertEqual(self._stat("released"), NOTHING_RELEASED, "precondition: nothing released at the end")
+
+    def test_an_end_before_any_read_holds_the_file_is_released_at_the_cycle_after_a_read(self):
+        self._end_before_any_read()
+        ids = set(km._agent_launch_ids(self.agent))                      # a build folds the finished agent inside the window
+        size = os.path.getsize(self.agent)
+        self.assertEqual(self._weight(self.agent), size, "precondition: the read holds the whole file")
+        km._begin_checkpoint_cycle()
+        self.assertIsNone(self._weight(self.agent), "released at the first cycle after the read (held: %s of %d bytes)"
+                          % (self._weight(self.agent), size))
+        self.assertEqual(self._stat("released"), {"agentEnded": {"count": 1, "bytes": size}}, "counted as an agent's end")
+        self.assertNotIn((SID, AID), km._AGENT_ENDED_UNHELD, "the end is no longer remembered")
+        self.assertEqual(set(km._agent_launch_ids(self.agent)), ids, "the next fold answers as before")
+        ent = self._ent(self.agent)
+        self.assertTrue(ent is not None and ent[5] > 0 and em._entry_weight(ent) == 0, "a restored tail weighing nothing")
+        self._start(AID)
+        km._begin_checkpoint_cycle()
+        self.assertEqual(self._stat("falseEnds"), 1, "the release was recorded as taken: a start after it is a false end")
+
+    def test_an_owed_release_paid_as_absent_is_released_at_the_cycle_after_a_read(self):
+        size = self._owed()
+        with em._JSONL_CACHE_LOCK:
+            em._cache_pop_locked(self.agent)                             # an eviction between the deferral and the pay
+        km._begin_checkpoint_cycle()                                     # the owed release finds nothing held
+        self.assertEqual(self._stat("released"), NOTHING_RELEASED, "precondition: nothing released at the pay")
+        km._agent_launch_ids(self.agent)                                 # a build reads the file whole again
+        self.assertEqual(self._weight(self.agent), size, "precondition: the read holds the whole file")
+        km._begin_checkpoint_cycle()
+        self.assertIsNone(self._weight(self.agent), "released at the first cycle after the read (held: %s of %d bytes)"
+                          % (self._weight(self.agent), size))
+        self.assertEqual(self._stat("released"), {"agentEnded": {"count": 1, "bytes": size}})
+
+    def test_a_start_after_an_unheld_end_keeps_the_records(self):
+        """The guard: the agent starts again after an end that found nothing held, and its file is read whole while it runs.
+        The start forgets the end in its own cycle, so the running agent keeps its records then and at every later cycle. A
+        start that did not forget it would be caught at the cycle after the start's: in the start's own cycle the batch
+        speaks for the agent, and the remembered end is not paid then either way."""
+        self._end_before_any_read()
+        self.assertIn((SID, AID), km._AGENT_ENDED_UNHELD, "precondition: the end is remembered")
+        self._start(AID)                                                 # resumed
+        km._agent_launch_ids(self.agent)                                 # and read whole while it runs
+        size = os.path.getsize(self.agent)
+        km._begin_checkpoint_cycle()                                     # the start's cycle
+        self.assertEqual(self._weight(self.agent), size, "the running agent keeps its records in the start's cycle")
+        remembered = (SID, AID) in km._AGENT_ENDED_UNHELD
+        km._begin_checkpoint_cycle()
+        self.assertEqual(self._weight(self.agent), size, "and at the cycle after")
+        self.assertEqual((self._stat("released"), self._stat("falseEnds")), (NOTHING_RELEASED, 0))
+        self.assertFalse(remembered, "the start forgot the end in its own cycle")
+
+    def test_an_unheld_end_whose_release_the_budget_refuses_is_owed(self):
+        self._end_before_any_read()
+        km._agent_launch_ids(self.agent)
+        size = os.path.getsize(self.agent)
+        km.CKPT_CONVERGE_BYTES = 1                                       # no room for the document
+        km._begin_checkpoint_cycle()
+        self.assertEqual((self._weight(self.agent), self._stat("releaseDeferred")), (size, 1), "deferred: the entry stays")
+        self.assertNotIn((SID, AID), km._AGENT_ENDED_UNHELD, "the remembered end is carried by the owed release now")
+        self.assertEqual(km._AGENT_RELEASED.get((SID, AID)), [self.agent, False], "recorded as owed")
+        km.CKPT_CONVERGE_BYTES = 8 * 1024 * 1024
+        km._begin_checkpoint_cycle()
+        self.assertIsNone(self._weight(self.agent), "the owed release is paid at the next cycle")
+        self.assertEqual(self._stat("released"), {"agentEnded": {"count": 1, "bytes": size}})
+
+    def test_an_unheld_end_whose_release_is_lost_or_raises_is_given_up(self):
+        self._end_before_any_read()
+        km._agent_launch_ids(self.agent)
+        size = os.path.getsize(self.agent)
+        km.CKPT_CONVERGE_MS = 0                                          # the drop writes off: the release is lost
+        with contextlib.redirect_stderr(io.StringIO()):
+            km._begin_checkpoint_cycle()
+        self.assertEqual((self._weight(self.agent), self._stat("releaseLost")), (size, 1), "lost: the entry stays")
+        self.assertNotIn((SID, AID), km._AGENT_ENDED_UNHELD, "given up, not remembered")
+        km.CKPT_CONVERGE_MS = 150.0
+        km._AGENT_ENDED_UNHELD[(SID, AID)] = self.agent                  # remembered again, and its release raises
+        agent3 = os.path.join(os.path.dirname(self.agent), "agent-%s.jsonl" % AID3)
+        _append(agent3, _agent_lines(AID3, 0, 40))
+        em._read_jsonl_incremental(agent3)
+        self._start(AID3); self._stop(AID3)                              # a batch end in the same cycle
+        real = em.release_entry
+
+        def release(key, reason):
+            if key == self.agent:
+                raise RuntimeError("synthetic")
+            return real(key, reason)
+        em.release_entry = release
+        try:
+            with contextlib.redirect_stderr(io.StringIO()):
+                km._begin_checkpoint_cycle()
+        finally:
+            em.release_entry = real
+        self.assertNotIn((SID, AID), km._AGENT_ENDED_UNHELD, "a raise gives the remembered end up")
+        self.assertEqual(self._stat("releaseLost"), 2, "counted as a release given up")
+        self.assertIsNone(self._weight(agent3), "the batch's end in the same cycle was still released")
+
+    def test_the_unheld_ends_past_their_bound_forget_the_oldest_and_count_nothing(self):
+        saved = km._AGENT_RELEASED_MAX
+        km._AGENT_RELEASED_MAX = 2                                       # the table's bound, shared with _AGENT_RELEASED
+        self.addCleanup(setattr, km, "_AGENT_RELEASED_MAX", saved)
+        agent3 = os.path.join(os.path.dirname(self.agent), "agent-%s.jsonl" % AID3)
+        _append(agent3, _agent_lines(AID3, 0, 40))
+        for aid in (AID, WF_AID, AID3):
+            self._start(aid); self._stop(aid)                            # three ends, none of whose files is held
+        km._begin_checkpoint_cycle()
+        self.assertEqual(list(km._AGENT_ENDED_UNHELD), [(SID, WF_AID), (SID, AID3)], "the two newest, oldest first")
+        self.assertEqual((self._stat("releaseLost"), self._stat("released")), (0, NOTHING_RELEASED),
+                         "the end forgotten past the bound counts nothing: it held nothing when it was last paid")
+
+    def test_an_owed_release_taken_for_a_path_forgets_its_unheld_ends(self):
+        """Any release that pops a remembered end's path forgets that end. The owed pay's road is reached when another end
+        of the same file was owed while this one found nothing held (a concurrent pop in between), so the pay is stubbed to
+        report that release taken."""
+        km._AGENT_ENDED_UNHELD[(OTHER_SID, AID)] = self.agent            # an end remembered for the file
+        real = em.checkpoint_pay_owed_releases
+        em.checkpoint_pay_owed_releases = lambda: {self.agent: "released"}
+        try:
+            km._begin_checkpoint_cycle()
+        finally:
+            em.checkpoint_pay_owed_releases = real
+        self.assertNotIn((OTHER_SID, AID), km._AGENT_ENDED_UNHELD, "the path's release forgot the remembered end")
 
     # ---- false ends: no liveness snapshot ends an agent ----
 

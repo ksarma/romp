@@ -658,9 +658,13 @@ _JSONL_CACHE_MAX = 1024           # bounds MEMORY only (384 → 1024 on 2026-09-
 # a budget below it does not save memory, it thrashes: 18 entries filled the 1 GiB, every build re-read whole
 # transcripts (14.9 GB read in the first 3.5 minutes, 724 evictions, one pusher cycle of 132 s, chat builds of 3 s
 # each), and glibc's arenas kept the churn, 14 GB resident over a 1 GiB cache. What is not needed until looked at
-# (subagent transcripts) leaves by events instead: release_entry at the agent's end (2026-09-24), and drop_after="quiescent"
-# folds for a file whose end the kernel never saw; the budget is the backstop, not the mechanism.
-# ROMP_RECORD_CACHE_BUDGET_MB still sets it outright.
+# (subagent transcripts) leaves by events instead: release_entry at the agent's end (2026-09-24; an end the kernel saw
+# before any read held the file is remembered, and the file released at the first pusher cycle after a read holds it), and
+# drop_after="quiescent" folds for a file whose end the kernel never saw; the budget is the backstop, not the mechanism. One
+# road is left to the backstop: a whole re-read of a file after its release was taken (the agent viewer's) holds it whole
+# until the count cap, the byte budget or a quiescent drop at a stepping fold reaches it (releasedReread counts the read that
+# starts each such hold), since releasing it after every whole read would make a reader that reads it whole at each render
+# read it whole at each render. ROMP_RECORD_CACHE_BUDGET_MB still sets it outright.
 RECORD_CACHE_BUDGET_FLOOR_BYTES = 4 * 1024 ** 3
 RECORD_CACHE_BUDGET_FRACTION = 0.5
 RECORD_CACHE_RESIDENT_PER_FILE_BYTE = 3.2   # resident bytes per held file byte: the largest measured figure, rounded up
