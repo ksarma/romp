@@ -8179,7 +8179,7 @@ review before the PR ran two rounds, named below as the review's round 1 and rou
 of the PR (2026-09-20) is named the file review. Its contract is kept outside the repo; this section records what was built,
 with the build's deliberate departures from that contract recorded as the decisions, and what is left for the owner to
 rule on. The file review's rounds are numbered by the maintainer, and a record names one by its number: the file review's rounds 1,
-2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14 and 15 are the rounds the convention enumerates, this list the one home of the enumeration
+2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15 and 16 are the rounds the convention enumerates, this list the one home of the enumeration
 (ui/webview/linknav-records-attribution.test.ts reads its allowed set from this list and faults a numbered round the list
 lacks, so a round the maintainer rules next is added here first, and with it the ids its fixlist filed, in the roster
 paragraph after this one; the fixlists and rulings themselves are kept outside the repo in the maintainer's notes). The
@@ -8246,7 +8246,10 @@ extra6-3, tests-2, extra7-3, rules-1, extra8-1, extra8-2, regression-1, extra7-2
 extra7-1, extra7-4, extra9-2, extra9-3 and extra9-4;
 round 15 filed correctness-1, tests-3, tests-4, extra5-1, extra6-2, extra9-2, extra9-3, tests-1, tests-2, extra6-1, ui-1,
 fresh-1, ui-2, extra5-3, extra6-3, extra7-1, extra7-2, extra7-3, extra8-1, extra8-2, extra8-3, extra9-1, extra9-4, extra9-5,
-extra9-6 and extra5-2.
+extra9-6 and extra5-2;
+round 16 filed correctness-1, tests-1, tests-2, regression-1, regression-2, ui-2, extra5-1, fresh-1, ui-1, extra7-2, extra5-2,
+extra6-1, extra7-1, extra9-1, extra9-2, extra9-3, extra9-4, extra9-5, extra9-6, extra7-3, extra7-4, extra8-1, extra8-2,
+extra8-3, extra8-4 and fresh-2.
 
 **What existed.** A link in a rendered file to another file (`[x](other.md)`, `other.md:7`, `other.md#section`, a
 picture or PDF path, a wikilink, an embed chip) opened that file in the SAME viewer card: re-opening replaced whatever
