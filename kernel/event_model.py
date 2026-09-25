@@ -737,7 +737,7 @@ _RECORD_CACHE_STATS.update({   # the release at an agent's end (release_entry, 2
 #                                                    refreshes its mark
 _RELEASED_MARKS = {}              # path -> True for the paths a release popped, under _JSONL_CACHE_LOCK: taken by the path's next whole
 #                                   read (releasedReread), cleared by any other pop of it, kept by a same-path replace (a restored tail
-#                                   growing); at most _JSONL_CACHE_MAX, oldest first
+#                                   growing), moved to the newest by the path's next release; at most _JSONL_CACHE_MAX, oldest first
 _DROP_AFTER_QUIESCENT_S = float(os.environ.get("ROMP_RECORD_CACHE_DROP_QUIESCENT_S", "120"))   # a file this long unchanged
 #                                   is one whose writer has finished (a subagent that returned): its records are not kept
 
@@ -768,7 +768,8 @@ def _entry_weight(ent) -> int:
 
 def _cache_pop_locked(path, keep_mark=False):
     """Under _JSONL_CACHE_LOCK: drop `path`'s entry and its weight; returns the weight (0 when absent). A pop other than the
-    insert's own replace (`keep_mark`) clears the path's release mark: a whole read after an eviction is the eviction's."""
+    insert's own replace and the release's own pop (`keep_mark`; the release moves the mark to the newest itself) clears the
+    path's release mark: a whole read after an eviction is the eviction's."""
     if not keep_mark and _RELEASED_MARKS:
         _RELEASED_MARKS.pop(path, None)
     ent = _JSONL_CACHE.pop(path, None)
@@ -2604,10 +2605,10 @@ def release_entry(path, reason):
     # so does a read that replaced the entry before the write ("raced" from _drop_write), which is owed below the same way
     with _read_stripe(key), _JSONL_CACHE_LOCK:
         if _JSONL_CACHE.get(key) is ent:
-            w = _cache_pop_locked(key)
+            w = _cache_pop_locked(key, keep_mark=True)
             rel = _stat_table_locked("released").setdefault(reason, {"count": 0, "bytes": 0})
             rel["count"] += 1; rel["bytes"] += w
-            _RELEASED_MARKS.pop(key, None); _RELEASED_MARKS[key] = True
+            _RELEASED_MARKS.pop(key, None); _RELEASED_MARKS[key] = True   # the mark, newest: re-releasing a marked path refreshes it
             while len(_RELEASED_MARKS) > _JSONL_CACHE_MAX:
                 _RELEASED_MARKS.pop(next(iter(_RELEASED_MARKS)), None)
             return "released"

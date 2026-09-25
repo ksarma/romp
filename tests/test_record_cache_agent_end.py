@@ -497,6 +497,19 @@ class AgentEnd(unittest.TestCase):
         self.assertEqual(self._stat("releasedReread"), {"count": 1, "bytes": size}, "what the release cost: one whole read")
         em._read_jsonl_incremental(self.agent)
         self.assertEqual(self._stat("releasedReread")["count"], 1, "a hit afterwards costs nothing more")
+        # only the first whole read after the release counts (PR 913 round 1, group E): the file rewritten in place at the
+        # same size, with a later mtime, is read whole past the cache, and that second whole read is not counted
+        with open(self.agent, "r+b") as f:
+            data = bytearray(f.read())
+            i = data.rindex(b"schema")
+            data[i:i + 6] = b"SCHEMA"
+            f.seek(0); f.write(bytes(data))
+        later = os.stat(self.agent).st_mtime + 5
+        os.utime(self.agent, (later, later))
+        w0 = self._whole_reads()
+        em._read_jsonl_incremental(self.agent)
+        self.assertEqual(self._whole_reads(), w0 + 1, "precondition: a second whole read of the file")
+        self.assertEqual(self._stat("releasedReread")["count"], 1, "only the first whole read after the release is counted")
         # control: a released path popped by something else before its whole read is that pop's, not the release's
         self._fold_while_running(WF_AID, self.wf_agent)
         asyncio.run(self.s._subagent_stop_hook({"agent_id": WF_AID}, None, None))
@@ -507,6 +520,37 @@ class AgentEnd(unittest.TestCase):
             em._cache_pop_locked(self.wf_agent)                          # an eviction of the restored tail
         em._read_jsonl_incremental(self.wf_agent)
         self.assertEqual(self._stat("releasedReread")["count"], 1, "a whole read after another pop is not counted")
+
+    def test_re_releasing_a_marked_path_refreshes_its_mark(self):
+        """The release moves a path's mark to the newest (PR 913 round 1, group E; decision 11 implemented the refresh once,
+        at the move in release_entry, the release's own pop keeping the mark). A path released, resumed, and released again
+        from a restored tail that grew holds the newest mark, so a later release past the marks' bound drops the other path's
+        mark, not this one's. Red under the move made a setdefault, which leaves the mark where the first release put it."""
+        self._fold_while_running(AID, self.agent)
+        self._fold_while_running(WF_AID, self.wf_agent)
+        self._stop(AID); self._stop(WF_AID)
+        km._begin_checkpoint_cycle()
+        self.assertEqual(list(em._RELEASED_MARKS), [self.agent, self.wf_agent], "precondition: both released, in end order")
+        self._start(AID)                                                 # resumed: a false end
+        km._begin_checkpoint_cycle()
+        km._agent_launch_ids(self.agent)                                 # its fold restores a tail (the insert keeps the mark)
+        _append(self.agent, _agent_lines(AID, 45, 3))
+        km._awaiting_live_rows(SID, self.leaf, self.s.snapshot())       # and the tail grows
+        ent = self._ent(self.agent)
+        self.assertTrue(ent is not None and ent[5] > 0 and em._entry_weight(ent) > 0, "precondition: a tail holding records")
+        self.assertEqual(list(em._RELEASED_MARKS), [self.agent, self.wf_agent], "precondition: the mark kept, not taken")
+        self._stop(AID)
+        km._begin_checkpoint_cycle()                                     # released again
+        self.assertEqual(self._stat("released")["agentEnded"]["count"], 3, "precondition: the second release was taken")
+        agent3 = os.path.join(os.path.dirname(self.agent), "agent-%s.jsonl" % AID3)
+        _append(agent3, _agent_lines(AID3, 0, 40))
+        em._read_jsonl_incremental(agent3)
+        saved = em._JSONL_CACHE_MAX
+        em._JSONL_CACHE_MAX = 2                                          # the marks share the cache's count cap
+        self.addCleanup(setattr, em, "_JSONL_CACHE_MAX", saved)
+        self.assertEqual(em.release_entry(agent3, "agentEnded"), "released", "precondition: a third path released")
+        self.assertEqual(list(em._RELEASED_MARKS), [self.agent, agent3],
+                         "the re-released path's mark is the newer one kept; the other path's is dropped")
 
     def test_a_resumed_agent_is_a_false_end_and_appends_to_its_tail(self):
         size = self._fold_while_running(AID, self.agent)
