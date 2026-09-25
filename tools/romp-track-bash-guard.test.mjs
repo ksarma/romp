@@ -207,8 +207,10 @@ const programsNamed = (cmd, table = NAMED_PROBE) => Object.keys(table).filter((p
 // blank, or is spelled by name in a text that REBINDS names, where the table's bare-word reading above still holds a program the text spells;
 // and a program a shell reaches by a road the list above does not follow (a script file's own lines, a `(( ))` or `$((` body read as
 // commands, an array's elements, a pattern a `case` or zsh's `for NAME (..)` holds). A miss there runs the leg, and where its program is
-// absent the leg reds by name on that machine, never a false pass. The lexer is the hook's own, so a defect in it that drops a segment drops
-// that segment's program here with the same consequence, a red and not a pass; the pin at the end of this file holds the derivation to an
+// absent the leg reds by name on that machine, never a false pass. THE CLEARED ENVIRONMENT's legs assert an absence, which a missing
+// program also gives, so since the fifty-first commit each of them is also read for a program its shell did not find (legUnfound), and
+// reds on one; that reading's own limit is stated there. The lexer is the hook's own, so a defect in it that drops a segment drops that
+// segment's program here with the same consequence, a red and not a pass; the pin at the end of this file holds the derivation to an
 // independent reading of the text for the zsh family over every row the legs gated.
 // the words a shell reads as its own, never a program it looks up: the reserved words, and the builtins of bash, zsh (its modules' among them)
 // and dash
@@ -486,8 +488,10 @@ const withoutAccountStartup = (opts) => {
 // (-l, -i, --login, --rcfile, --init-file, a cluster holding l or i), `exec -l`, or an argv0 opening with `-` (`exec -a`, env's -a or
 // --argv0); zsh needs no such reading, since every file of the account's it reads by name lies under the ZDOTDIR the keep-out gives. A
 // road throws by name unless its text is one of CLEARED_LEGS, each run under strace in every present shell by the thirty-third commit's
-// test and pinned to open no startup file under the account's home. The reading is of spellings, read wherever they stand, a quoted text
-// or a here-document included, so a clear before a shell it does not start costs a listing and nothing else.
+// test and pinned to open no startup file under the account's home; since the fifty-first commit a row's legs run only where every
+// program THE INVOKED PROGRAM derives from its text is on this box, and a leg whose shell did not find a program it runs reds. The reading
+// is of spellings, read wherever they stand, a quoted text or a here-document included, so a clear before a shell it does not start costs
+// a listing and nothing else.
 // The thirty-fourth commit (the round's verifiers on the thirty-third, LOW: `python3 -c 'import os; os.execve("/usr/bin/bash", .., {})'`
 // and `perl -e '%ENV=(); exec "/usr/bin/bash", ..'` passed the wrapper and opened the account's ~/.bashrc in every leg under strace, and
 // `exec -c /proc/self/exe -c ..` its ~/.bashrc in bash's leg and its .zshenv in zsh's): the classes are a clear a program makes by its own
@@ -11478,8 +11482,48 @@ test("round 7 of fork PR #780 review, thirty-third commit, THE CLEARED ENVIRONME
   }
 });
 
-test("round 7 of fork PR #780 review, thirty-third commit, THE CLEARED ENVIRONMENT by execution: every command CLEARED_LEGS lists, run in every present shell over a fresh world from its row's cwd under strace (every process traced, the startup files under the account's home watched), opens none of them, while the instrument sees the roads it watches in a world's home: a bash leg with no SHLVL whose standard input is a socket opens the world's ~/.bashrc, and so does a bash a dash leg starts, a zsh leg opens the world's .zshenv, and SHLVL 1 or zsh's -f shuts each; where strace is absent, or refuses to run in its recorded shape, a NOT RUN line, and any other failure of it reds", () => {
-  const WHAT = 'THE CLEARED ENVIRONMENT by execution';
+// THE CLEARED ENVIRONMENT's gate (round 7 of fork PR #780 review, fifty-first commit; the reviewer on the fiftieth, from an instrumented run
+// of the CI step under a PATH without zsh). The test below gated its legs on the program a row names by hand (the row's fourth field) alone,
+// so the three rows that run zsh by name from their bash and dash legs (RT-zshenv-zdotdir, RT-zshenv-home, RT-zsh-zdotdir-i) ran on CI's
+// runner, which has no zsh: each leg's shell said zsh was not found, no startup file was opened, and the test counted 13 of 13 listed
+// commands measured when three measured nothing. A leg here asserts an absence, which a leg whose program is missing also gives, so two
+// things hold now. A row's legs run only where the program its row names by hand and every program THE INVOKED PROGRAM derives from its
+// command (namedPresent, from the row's cwd) are on this box; else a NOT RUN line per missing program, and the row counts as lacking. And
+// every leg that runs is read for a program its shell did not find (legUnfound: an exit status of 126 or 127, or a shell's not-found line
+// on its standard error, bash's `command not found`, zsh's `command not found: NAME` and dash's `N: NAME: not found`), which reds by name,
+// so a program the derivation does not read (an expansion in a program's place, say) cannot pass either. The limit of that reading: bash
+// and zsh report a missing program run by a path as they report a failed redirection (`No such file or directory`), so such a program that
+// is not the leg's last command is seen only where the derivation reads it; dash reports it as not found. `gate` is for the pins at the end
+// of this file: namedPresent's `report`, `table` and `absent`.
+const CLEARED_WHAT = 'THE CLEARED ENVIRONMENT by execution';
+const clearedLegRuns = (text, [id, cwd, , program], cwds, { report = (line) => console.error(line), table = NAMED_PROBE, absent = OVERRIDE_ABSENT } = {}) => {
+  const own = program ? presenceOf(program, { absent }) : null;
+  if (own && !own.ok) { report(`NOT RUN: real ${program} ${own.why}, so its evidence leg did not run: ${CLEARED_WHAT}, ${id}`); return false; }
+  return namedPresent(text, `${CLEARED_WHAT}, ${id}, whose command names it: ${text}`, table, report, { absent, cwd: cwds[cwd] });
+};
+const SHELL_NOT_FOUND = /\bcommand not found\b|^(?:dash|sh): \d+: .*: not found$/m;
+// a leg's run, `{ status, stderr }`, whose shell did not find a program it runs
+const legUnfound = ({ status, stderr }) => status === 126 || status === 127 || SHELL_NOT_FOUND.test(String(stderr || ''));
+// the legs: every row the gate runs, in every shell of `shells`, each leg over a world `build` makes fresh, measured by `measure(shell, text,
+// cwd, id)`, which returns the leg's `{ opened, status, stderr }`; the rows the gate does not run are `lacking`, and the legs legUnfound
+// reads as missing a program are `unfound`
+const clearedLegs = (shells, cwds, build, measure, gate = {}) => {
+  const got = [];
+  const lacking = [];
+  const unfound = [];
+  for (const [text, row] of CLEARED_LEGS) {
+    if (!clearedLegRuns(text, row, cwds, gate)) { lacking.push(row[0]); continue; }
+    for (const shell of shells) {
+      build();
+      const run = measure(shell, text, cwds[row[1]], row[0]);
+      if (legUnfound(run)) unfound.push(`${row[0]} ${shell}: exit ${run.status}: ${String(run.stderr || '').trim().slice(0, 200)}`);
+      got.push([row[0], shell, run.opened]);
+    }
+  }
+  return { got, lacking, unfound };
+};
+test("round 7 of fork PR #780 review, thirty-third commit, THE CLEARED ENVIRONMENT by execution: every command CLEARED_LEGS lists, run in every present shell over a fresh world from its row's cwd under strace (every process traced, the startup files under the account's home watched), opens none of them, while the instrument sees the roads it watches in a world's home: a bash leg with no SHLVL whose standard input is a socket opens the world's ~/.bashrc, and so does a bash a dash leg starts, a zsh leg opens the world's .zshenv, and SHLVL 1 or zsh's -f shuts each; where strace is absent, or refuses to run in its recorded shape, a NOT RUN line, and any other failure of it reds; since the fifty-first commit a command that runs a program this box lacks, the row's own or one THE INVOKED PROGRAM derives from its text, is NOT RUN with the reason and counted as lacking, and a leg whose shell did not find a program it runs reds", () => {
+  const WHAT = CLEARED_WHAT;
   if (!hasProgram('strace')) { console.error(`NOT RUN: real strace ${presenceOf('strace').why}, so its evidence leg did not run: ${WHAT}`); return; }
   const check = spawnSync('strace', ['-f', '-qq', '-o', '/dev/null', 'true'], { encoding: 'utf8', env: { PATH: process.env.PATH }, timeout: 20000 });
   if (check.status !== 0) {   // a refusal is NOT RUN only in its recorded shape (THE REFUSING PROGRAM's (ii)); any other failure reds
@@ -11491,10 +11535,12 @@ test("round 7 of fork PR #780 review, thirty-third commit, THE CLEARED ENVIRONME
   try {
     const trace = path.join(w.W, 'trace');
     // the lines of the trace that open a watched file, every process of the run traced (-f)
+    let last = null;   // the last traced run: its exit status (strace exits with its command's) and standard error
     const opened = (watched, argv, cwd, env) => {
       fs.rmSync(trace, { force: true });
       const r = spawnSync('strace', ['-f', '-qq', '-e', 'trace=open,openat,openat2', '-e', 'signal=none', '-o', trace, ...watched.flatMap((p) => ['-P', p]), ...argv], { cwd, input: '', encoding: 'utf8', env, timeout: 30000 });
       assert.ok(fs.existsSync(trace), `strace wrote its trace: ${argv.join(' ').slice(0, 200)}: ${String(r.stderr || '').slice(0, 300)}`);
+      last = { status: r.status, stderr: String(r.stderr || '') };
       return fs.readFileSync(trace, 'utf8').split('\n').filter((l) => /\bopen(?:at2?)?\(/.test(l));
     };
     const shells = shellsFor(['bash', 'zsh', 'dash'], WHAT);
@@ -11522,20 +11568,14 @@ test("round 7 of fork PR #780 review, thirty-third commit, THE CLEARED ENVIRONME
     const measure = (argv, cwd, env) => opened(accountFiles, argv, cwd, env).map((l) => l.replace(/^\d+ /, ''));
     const headOpened = new Set(measure(['head', '-c', '0', '--', ...accountFiles], w.W, { PATH: process.env.PATH }).map((l) => (l.match(/^open(?:at2?)?\((?:AT_FDCWD, )?"([^"]+)"/) || [])[1]));
     assert.deepEqual(accountFiles.filter((f) => !headOpened.has(f)), [], "the watch sees an open of every startup file under the account's home");
-    const got = [];
-    const none = [];
-    let lacking = 0;
-    for (const [text, [id, cwd, , program]] of CLEARED_LEGS) {
-      if (program && !hasProgram(program)) { console.error(`NOT RUN: real ${program} ${presenceOf(program).why}, so its evidence leg did not run: ${WHAT}, ${id}`); lacking++; continue; }
-      for (const shell of shells) {
-        w.build();
-        got.push([id, shell, measure([shell, ...shellArgv(shell, text)], w.cwds[cwd], w.env)]);
-        none.push([id, shell, []]);
-      }
-    }
-    assert.deepEqual(got, none, "no listed command opens a startup file under the account's home, in any present shell");
-    assert.deepEqual(got.map(([id, shell]) => `${id} ${shell}`), [...CLEARED_LEGS.values()].filter(([, , , p]) => !p || hasProgram(p)).flatMap(([id]) => shells.map((shell) => `${id} ${shell}`)), 'each listed command measured in every present shell');
-    console.log(`# THE CLEARED ENVIRONMENT by execution: ${CLEARED_LEGS.size - lacking} of ${CLEARED_LEGS.size} listed commands in ${shells.join(', ')} (${lacking} for a program this box lacks), ${accountFiles.length} files under the account's home watched, ${controls.length} controls`);
+    // the legs, through the gate; each returns what it opened and its run's exit status and standard error, for legUnfound (the fifty-first
+    // commit)
+    const { got, lacking: notRun, unfound } = clearedLegs(shells, w.cwds, w.build, (shell, text, cwd) => ({ opened: measure([shell, ...shellArgv(shell, text)], cwd, w.env), ...last }));
+    const lacking = notRun.length;
+    assert.deepEqual(unfound, [], 'every leg measured found every program it runs (a leg whose program is missing opens no startup file, and would pass)');
+    assert.deepEqual(got, got.map(([id, shell]) => [id, shell, []]), "no listed command opens a startup file under the account's home, in any present shell");
+    assert.deepEqual(got.map(([id, shell]) => `${id} ${shell}`), [...CLEARED_LEGS].filter(([text, row]) => clearedLegRuns(text, row, w.cwds, { report: () => {} })).flatMap(([, [id]]) => shells.map((shell) => `${id} ${shell}`)), 'each listed command the gate runs measured in every present shell');
+    console.log(`# THE CLEARED ENVIRONMENT by execution: ${CLEARED_LEGS.size - lacking} of ${CLEARED_LEGS.size} listed commands in ${shells.join(', ')} (${lacking} for a program this box lacks${lacking ? `: ${notRun.join(', ')}` : ''}), ${accountFiles.length} files under the account's home watched, ${controls.length} controls`);
   } finally { w.rm(); }
 });
 
@@ -15318,4 +15358,88 @@ test("round 7 of fork PR #780 review, fiftieth commit, THE OVERRIDE is never wha
     overrideInCi({ [ABSENT_OVERRIDE]: 'zsh zsh5 rzsh' }) !== null,
     overrideInCi({}) !== null,
   ], [true, true, false, false, false, false], 'the override set in CI (GITHUB_ACTIONS or CI) is the only refused shape');
+});
+
+// ── round 7 of fork PR #780 review, fifty-first commit (2026-09-25): THE CLEARED ENVIRONMENT's legs inside THE INVOKED PROGRAM's gate ─────
+//
+// The reviewer on the fiftieth, from an instrumented run of the CI step under a PATH without zsh: THE CLEARED ENVIRONMENT's loop gated its
+// legs on the program a row names by hand alone, so the three rows that run zsh by name ran their bash and dash legs on CI's runner, each
+// exiting 127, and the test printed 13 of 13 listed commands measured. The first pin runs that loop (clearedLegs, through which the test
+// measures) in process, with the zsh family as the absent set, the shells CI has and a stand-in that records each leg in place of strace, so
+// it needs no strace and holds on every runner: no row whose text spells a zsh-family program is measured, each prints a NOT RUN line
+// naming the program, its reason, the row and its command, and counts as lacking, the three rows CI ran among them, and every other row is
+// measured in every shell exactly where the gate with no absent set runs it. The second holds the reading the loop gives every leg it runs
+// (legUnfound) for a program the derivation does not read: in each present shell, a missing program named through an expansion is seen,
+// last or not, and a text whose programs are present is not; the stated limit is witnessed as written; and the loop reports every leg the
+// reading sees, and no other.
+// the shells CI's runner has, as labels for the pins' stand-ins, which spawn nothing (legsOutsideProbe's scan reads a literal list of shell
+// names as a real-shell leg's list; the one real-shell leg below takes its shells from shellsFor)
+const CI_STAND_IN_SHELLS = 'bash dash'.split(' ');
+test("round 7 of fork PR #780 review, fifty-first commit, THE CLEARED ENVIRONMENT's legs are inside THE INVOKED PROGRAM's gate (the reviewer on the fiftieth: on a runner without zsh, three rows ran zsh by name from their bash and dash legs and counted as measured): the test's own loop, run in process with the zsh family as the absent set, the shells CI has and a recording stand-in for strace, measures no row whose text spells a zsh-family program, prints for each a NOT RUN line naming the program, its reason, the row and its command, and counts it as lacking; every other row is measured in every shell exactly where the gate with no absent set runs it", () => {
+  const w = sixthPassWorld();
+  try {
+    const shells = CI_STAND_IN_SHELLS;
+    const table = { ...NAMED_PROBE };   // a copy of the table, so the pin's gate calls stay out of GATED_ROWS
+    const lines = [];
+    const legs = [];
+    const { lacking } = clearedLegs(shells, w.cwds, () => {}, (shell, text, cwd, id) => { legs.push(`${id} ${shell}`); return { opened: [], status: 0, stderr: '' }; }, { report: (l) => lines.push(l), table, absent: absentSet(ZSH_FAMILY.join(' '), "the pin's absent set") });
+    // the independent reading: the rows whose text spells a zsh-family program as a word or a path's last component
+    const spelled = [...CLEARED_LEGS].filter(([text]) => zshSpelled(text).length > 0).map(([, [id]]) => id);
+    assert.deepEqual(['RT-zshenv-zdotdir', 'RT-zshenv-home', 'RT-zsh-zdotdir-i'].filter((id) => !spelled.includes(id)), [], 'the three rows CI ran without zsh spell it');
+    assert.deepEqual(legs.filter((l) => spelled.includes(l.split(' ')[0])), [], 'no leg of a row that spells a zsh-family program is measured');
+    const rowOf = (l) => (l.match(new RegExp(`so its evidence leg did not run: ${reLiteral(CLEARED_WHAT)}, ([^\\s,]+)`)) || [])[1];
+    const zshLines = lines.filter((l) => ZSH_FAMILY.includes(wordBase(notRunProgram(l) || '')));
+    assert.deepEqual([...new Set(zshLines.map(rowOf))].sort(), [...spelled].sort(), 'a NOT RUN line naming a zsh-family program for exactly the rows that spell one');
+    const textOf = (id) => ([...CLEARED_LEGS].find(([, [i]]) => i === id) || [null])[0];
+    const lineOk = (l) => {
+      const p = notRunProgram(l);
+      const id = rowOf(l);
+      const text = textOf(id);
+      return text !== null && new RegExp(`^NOT RUN: real ${reLiteral(p)} (?:is not on this runner(?: \\(no executable file at that path\\))?|is treated as absent by the pin's absent set, which lists ${reLiteral(wordBase(p))} \\(present on this machine\\)), so its evidence leg did not run: ${reLiteral(CLEARED_WHAT)}, ${reLiteral(id)}, whose command names it: ${reLiteral(text)} \\(`).test(l);
+    };
+    assert.deepEqual(zshLines.filter((l) => !lineOk(l)), [], "each line names its program, gives the real check's reason or the pin's absent set's, and names the row and its command");
+    assert.deepEqual(spelled.filter((id) => !lacking.includes(id)), [], 'each counts as lacking');
+    const none = absentSet('', 'no absent set');
+    const want = [...CLEARED_LEGS].filter(([text, row]) => !spelled.includes(row[0]) && clearedLegRuns(text, row, w.cwds, { report: () => {}, table, absent: none })).flatMap(([, [id]]) => shells.map((shell) => `${id} ${shell}`));
+    assert.ok(want.length > 0, 'rows that spell no zsh-family program are measured here');
+    assert.deepEqual(legs, want, 'every other row measured in every shell exactly where the gate with no absent set runs it');
+    console.log(`# THE CLEARED ENVIRONMENT's gate, the zsh family absent: ${CLEARED_LEGS.size - lacking.length} of ${CLEARED_LEGS.size} listed commands measured in ${shells.join(', ')}, ${lacking.length} not run (${lacking.join(', ')})`);
+  } finally { w.rm(); }
+});
+test("round 7 of fork PR #780 review, fifty-first commit, THE CLEARED ENVIRONMENT's not-found reading (legUnfound) in every present shell, and the loop's use of it: a missing program the derivation does not read (its name in an expansion, a text the gate runs) is seen as the leg's last command and before another, a missing program run by a path is seen as the last command, a text whose programs are present is not, and the stated limit holds as written (a missing program run by a path before another command is seen in dash alone); the loop reports as unfound every leg the reading sees, and no other", () => {
+  const w = sixthPassWorld();
+  try {
+    const NAME = 'q780-no-such-program';
+    const MISSING = '/nonexistent/bin/q780-no-such-program';
+    const texts = [
+      [`z=${NAME}; $z -c :`, () => true],
+      [`z=${NAME}; $z -c :; true`, () => true],
+      [`${MISSING} -c :`, () => true],
+      [`${MISSING} -c :; true`, (shell) => shell === 'dash'],   // the limit: bash and zsh print a failed redirection's line for it
+      ['z=true; $z; true', () => false],
+    ];
+    const table = { ...NAMED_PROBE };   // a copy, so these synthetic commands stay out of GATED_ROWS
+    assert.deepEqual(texts.slice(0, 2).map(([t]) => namedPresent(t, null, table, () => assert.fail(`the gate reports a program for ${t}`))), [true, true], 'the gate derives no program from a name in an expansion, so it runs those texts and the reading is what reds them');
+    const shells = shellsFor(['bash', 'zsh', 'dash'], "THE CLEARED ENVIRONMENT's not-found reading");
+    assert.ok(shells.length > 0, 'a shell of the three is on this runner');
+    const got = [];
+    const want = [];
+    for (const shell of shells) {
+      for (const [text, seen] of texts) {
+        w.build();
+        const r = spawnSync(shell, shellArgv(shell, text), { cwd: w.cwds.nad, input: '', encoding: 'utf8', env: w.env, timeout: 20000 });
+        got.push([shell, text, legUnfound(r)]);
+        want.push([shell, text, seen(shell)]);
+      }
+    }
+    assert.deepEqual(got, want, 'legUnfound sees each missing program where its comment says it does, and nothing in a text whose programs are present');
+    // the loop applies the reading to every leg it runs: a stand-in whose runs missed a program is reported per leg, one whose runs found
+    // theirs never
+    const runs = (miss) => clearedLegs(CI_STAND_IN_SHELLS, w.cwds, () => {}, (shell) => ({ opened: [], status: miss ? 127 : 0, stderr: miss ? (shell === 'dash' ? `dash: 1: ${NAME}: not found\n` : `bash: line 1: ${NAME}: command not found\n`) : '' }), { report: () => {}, table });
+    const missed = runs(true);
+    assert.ok(missed.got.length > 0, 'the loop ran legs here');
+    assert.deepEqual(missed.unfound.map((l) => l.split(':')[0]), missed.got.map(([id, shell]) => `${id} ${shell}`), 'every leg whose run missed a program is reported unfound');
+    assert.deepEqual(runs(false).unfound, [], 'no leg whose run found its programs is reported');
+    console.log(`# THE CLEARED ENVIRONMENT's not-found reading: ${texts.length} texts in ${shells.join(', ')}; the loop reported ${missed.unfound.length} of ${missed.got.length} stand-in legs that missed a program`);
+  } finally { w.rm(); }
 });
