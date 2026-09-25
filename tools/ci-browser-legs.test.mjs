@@ -106,12 +106,13 @@ function jobs(text) {
 /** A job's steps: each starts at a line of six spaces and `- ` (`^      - `) and runs to the next such line, so a `- `
  *  at another indent does not start one. Its name is the rest of its first `      - name: ` or `        name: ` line,
  *  trimmed, quotes kept (null for a step with neither, a bare `uses:` step), so a name: line at another indent is not
- *  its name. Its comments are its lines whose first non-blank character is #, and `code` the rest, a line with a # after
- *  code included. Its fields are its code lines of eight spaces, a field of letters and -, and a colon, the rest of the
- *  line trimmed as the value, and its opening line when that is `      - <field>: ` and a value, a later line of a field
- *  replacing an earlier one; a field at another indent, a field holding a digit or _, a quoted field key, and a line
- *  holding a carriage return, U+2028 or U+2029, which the value's . does not match, are not read as a field (U+0085, which
- *  it matches, stays in the value). Its table: STEPS_ROWS, run by the test after it.
+ *  its name. Its comments are its lines whose first non-blank character is #, blank by \s (a no-break space among it,
+ *  so a # line led by one is a comment here, where the env reader below does not read it as one), and `code` the rest,
+ *  a line with a # after code included. Its fields are its code lines of eight spaces, a field of letters and -, and a
+ *  colon, the rest of the line trimmed as the value, and its opening line when that is `      - <field>: ` and a value,
+ *  a later line of a field replacing an earlier one; a field at another indent, a field holding a digit or _, a quoted
+ *  field key, and a line holding a carriage return, U+2028 or U+2029, which the value's . does not match, are not read
+ *  as a field (U+0085, which it matches, stays in the value). Its table: STEPS_ROWS, run by the test after it.
  *  Its env, the env reader, which reads every step and fails closed: a line it cannot read is refused, named by its
  *  line (the step's envRefused), rather than read past. A line of the step holding a carriage return or a Unicode line
  *  break (U+0085, U+2028, U+2029) is refused wherever it sits in the step, a # line included: YAML ends a line there,
@@ -181,6 +182,7 @@ const STEPS_ROWS = [
   { what: 'a name: line at ten spaces is not the step\'s name', lines: ['      - uses: actions/x@v1', '        with:', '          name: C'], steps: [{ name: null, fields: { uses: 'actions/x@v1', with: '' } }] },
   { what: 'a quoted name is read with its quotes', lines: ['      - name: "Test"'], steps: [{ name: '"Test"', fields: { name: '"Test"' } }] },
   { what: 'a # line is a comment and not code, and a # after code is code', lines: ['      - name: A', '        # a comment', '        run: a # b'], steps: [{ name: 'A', fields: { name: 'A', run: 'a # b' }, comments: ['        # a comment'] }] },
+  { what: 'a # line led by a no-break space is a comment, blank by \\s', lines: ['      - name: A', '        \u00a0# a comment', '        run: a'], steps: [{ name: 'A', fields: { name: 'A', run: 'a' }, comments: ['        \u00a0# a comment'] }] },
   { what: 'a field on an eight-space line, its value trimmed', lines: ['      - name: A', '        timeout-minutes:   5  '], steps: [{ name: 'A', fields: { name: 'A', 'timeout-minutes': '5' } }] },
   { what: 'a field on the step\'s "- " opener', lines: ['      - run: npx playwright install chromium'], steps: [{ name: null, fields: { run: 'npx playwright install chromium' } }] },
   { what: 'a field at ten spaces is not read', lines: ['      - name: A', '        with:', '          run: x'], steps: [{ name: 'A', fields: { name: 'A', with: '' } }] },
@@ -190,7 +192,9 @@ const STEPS_ROWS = [
   { what: 'a later line of a field replaces an earlier one', lines: ['      - run: a', '        run: b'], steps: [{ name: null, fields: { run: 'b' } }] },
   { what: 'a field line ending in a carriage return is not read', lines: ['      - name: A', '        run: x\r'], steps: [{ name: 'A', fields: { name: 'A' } }] },
   { what: 'an opener ending in a carriage return: its name read, trimmed, and its field not read', lines: ['      - name: A\r'], steps: [{ name: 'A', fields: {} }] },
+  { what: 'a field line holding a lone carriage return inside it is not read', lines: ['      - name: A', '        run: a\rb'], steps: [{ name: 'A', fields: { name: 'A' } }] },
   { what: 'a field line holding U+2028 is not read', lines: ['      - name: A', '        run: a\u2028b'], steps: [{ name: 'A', fields: { name: 'A' } }] },
+  { what: 'a field line holding U+2029 is not read', lines: ['      - name: A', '        run: a\u2029b'], steps: [{ name: 'A', fields: { name: 'A' } }] },
   { what: 'a field line holding U+0085 is read, the character in its value', lines: ['      - name: A', '        run: a\u0085b'], steps: [{ name: 'A', fields: { name: 'A', run: 'a\u0085b' } }] },
 ];
 test('steps()\' table: each row\'s steps, names and fields read as steps()\' docstring states', () => {
@@ -239,10 +243,15 @@ const ENV_ROWS = [
   { what: 'a second env line, refused, its block read', lines: ['        env:', ENV_ON, '        timeout-minutes: 5', '        env:', ENV_NO], env: ENV_BOTH, refused: ['        env:'] },
   { what: 'a # line holding a carriage return with NODE_OPTIONS after it, refused', lines: ['        env:', ENV_ON, '          # a comment\r' + ENV_NO], env: ENV_SW, refused: ['          # a comment\r' + ENV_NO] },
   { what: 'a # line holding U+0085 with NODE_OPTIONS after it, refused', lines: ['        env:', ENV_ON, '          # a comment\u0085' + ENV_NO], env: ENV_SW, refused: ['          # a comment\u0085' + ENV_NO] },
+  { what: 'a # line holding U+2029 with NODE_OPTIONS after it, refused', lines: ['        env:', ENV_ON, '          # a comment\u2029' + ENV_NO], env: ENV_SW, refused: ['          # a comment\u2029' + ENV_NO] },
   { what: 'a key line ending in a carriage return, refused', lines: ['        env:', ENV_ON, ENV_NO + '\r'], env: ENV_SW, refused: [ENV_NO + '\r'] },
   { what: 'a value holding U+2028, refused', lines: ['        env:', ENV_ON, '          FOO: a\u2028b'], env: ENV_SW, refused: ['          FOO: a\u2028b'] },
   { what: 'a line before the env line holding U+2029, refused where it sits', lines: ['        timeout-minutes: 5\u2029        env:', '        env:', ENV_ON], env: ENV_SW, refused: ['        timeout-minutes: 5\u2029        env:'] },
+  { what: 'a line before the env line holding U+0085, refused where it sits', lines: ['        timeout-minutes: 5\u0085', '        env:', ENV_ON], env: ENV_SW, refused: ['        timeout-minutes: 5\u0085'] },
+  { what: 'a # line after the block holding U+2028 with NODE_OPTIONS after it, refused where it sits', lines: ['        env:', ENV_ON, '        timeout-minutes: 5', '        # a comment\u2028' + ENV_NO], env: ENV_SW, refused: ['        # a comment\u2028' + ENV_NO] },
+  { what: 'a # line holding a lone carriage return and then an env line, in a step with no other env line, refused where it sits', lines: ['        # a comment\r        env:', ENV_ON], env: {}, refused: ['        # a comment\r        env:'] },
   { what: 'a # line led by a no-break space, refused (YAML reads a key there)', lines: ['        env:', ENV_ON, '          \u00a0#NODE_OPTIONS: x'], env: ENV_SW, refused: ['          \u00a0#NODE_OPTIONS: x'] },
+  { what: 'a # line led by eight spaces and a no-break space ends the block, and a key after it is neither read nor refused', lines: ['        env:', ENV_ON, '        \u00a0# a comment', ENV_NO], env: ENV_SW, refused: [] },
   { what: 'a # line led by spaces and a tab, a comment, not the end of the block', lines: ['        env:', ENV_ON, ' \t # a comment', ENV_NO], env: ENV_BOTH, refused: [] },
 ];
 test('the env reader\'s table: each row\'s env and refused lines read as steps()\' docstring states', () => {
@@ -574,6 +583,8 @@ const INSTALL_ROWS = [
   ['another launcher, not read', ['      - name: Install', '        run: pnpm exec playwright install chromium', ...TEST_LINES], false, false],
   ['a # line holding a carriage return with run: npx playwright install after it, read by the code-line pattern (the line split at the break)', ['      - name: A', '        # a note\r        run: npx playwright install chromium', '        run: echo', ...TEST_LINES], true, false],
   ['a # line holding U+2028 with the cache path after it, read (the line split at the break)', ['      - uses: actions/cache@v4', '        with:', '          # a note\u2028          path: ~/.cache/ms-playwright', ...TEST_LINES], false, true],
+  ['a # line holding U+0085 with run: npx playwright install after it, read by the code-line pattern (the line split at the break)', ['      - name: A', '        # a note\u0085        run: npx playwright install chromium', '        run: echo', ...TEST_LINES], true, false],
+  ['a # line holding U+2029 with the cache key after it, read (the line split at the break)', ['      - uses: actions/cache@v4', '        with:', '          # a note\u2029          key: playwright-chromium-x', ...TEST_LINES], false, true],
   ['a # line naming the install, not read (a # line is dropped, and the pattern reads run: after the leading whitespace alone)', ['      - name: A', '        # run: npx playwright install chromium', '        run: echo', ...TEST_LINES], false, false],
   ['an install after the Test step, not read (the steps before it alone)', [...TEST_LINES, '      - name: Install', '        run: npx playwright install chromium'], false, false],
   ['the cache path, read', ['      - uses: actions/cache@v4', '        with:', '          path: ~/.cache/ms-playwright', ...TEST_LINES], false, true],
