@@ -366,23 +366,30 @@ const watch = (ctx) => {
   } catch (e) {} });
   return seen;
 };
-{ // 1. migrated, and the browser kept the old cookie: the next navigation carries it beside the session and clears it
+{ // 1. migrated, and the browser still holds the old cookie: the next navigation carries it beside the session and clears
+  //    it. A cookie the test adds has been dropped by the engine before any request carried it (WebKit, about 1 run in 4),
+  //    so the state is set up again, up to four times, until a navigation carries it.
   const ctx = await browser.newContext(VIEW);
   await ctx.addCookies([{ name: "romp_token", value: cfg.token, url: cfg.origin }]);
   let page = await ctx.newPage();
   await page.goto(cfg.origin + "/");
   await settle(page);
-  const r = { migrated: (await sessionCookie(ctx)).length === 1 && (await legacy(ctx)).length === 0 };
+  const r = { migrated: (await sessionCookie(ctx)).length === 1 && (await legacy(ctx)).length === 0, attempts: [] };
   await page.close();
-  await ctx.addCookies([{ name: "romp_token", value: cfg.token, url: cfg.origin }]);   // the state such a browser is in
-  r.heldBoth = (await legacy(ctx)).length === 1 && (await sessionCookie(ctx)).length === 1;
   const seen = watch(ctx);
-  page = await ctx.newPage();
-  const nav = await page.goto(cfg.origin + "/");
-  const sent = (await nav.request().allHeaders())["cookie"] || "";
-  r.navigation = { status: nav.status(), sentOld: /(^|; )romp_token=/.test(sent), sentSession: /(^|; )romp_s_/.test(sent),
-                   cleared: /(^|\n)romp_token=;/.test(await setOf(nav)) };
-  await settle(page);
+  for (let i = 0; i < 4; i++) {
+    await ctx.addCookies([{ name: "romp_token", value: cfg.token, url: cfg.origin }]);   // the state such a browser is in
+    const heldBoth = (await legacy(ctx)).length === 1 && (await sessionCookie(ctx)).length === 1;
+    page = await ctx.newPage();
+    const nav = await page.goto(cfg.origin + "/");
+    const sent = (await nav.request().allHeaders())["cookie"] || "";
+    const a = { heldBoth, status: nav.status(), sentOld: /(^|; )romp_token=/.test(sent), sentSession: /(^|; )romp_s_/.test(sent),
+                cleared: /(^|\n)romp_token=;/.test(await setOf(nav)) };
+    r.attempts.push(a);
+    await settle(page);
+    if (a.sentOld) break;
+    await page.close();
+  }
   r.signedIn = onLogin(page) ? "login" : await status(page, "/sessions");
   r.oldLeft = (await legacy(ctx)).length;
   r.besideCleared = seen.filter((x) => x.session).map((x) => x.cleared);
@@ -677,9 +684,11 @@ class ServedFileCapsAndPageKey(unittest.TestCase):
         r = self._drive(RETAINED, other="an-older-kernels-value")
         kept = r["retained"]
         self.assertTrue(kept["migrated"], "the old cookie migrated and was cleared: %r" % kept)
-        self.assertTrue(kept["heldBoth"], "the browser holds the old cookie beside the session again: %r" % kept)
-        self.assertEqual(kept["navigation"], {"status": 200, "sentOld": True, "sentSession": True, "cleared": True},
-                         "the next navigation carries both and its response clears the old cookie")
+        self.assertTrue(all(a["heldBoth"] for a in kept["attempts"]), "the browser holds the old cookie beside the session again: %r" % kept)
+        self.assertTrue(all(a["cleared"] for a in kept["attempts"] if a["sentOld"]),
+                        "a navigation that carries the old cookie beside the session clears it: %r" % kept)
+        self.assertEqual(kept["attempts"][-1], {"heldBoth": True, "status": 200, "sentOld": True, "sentSession": True, "cleared": True},
+                         "a navigation carried both, and its response cleared the old cookie: %r" % kept)
         self.assertEqual(kept["oldLeft"], 0, "the jar holds no old cookie after it: %r" % kept)
         self.assertEqual(kept["signedIn"], 200, "and the page is signed in: %r" % kept)
         self.assertTrue(kept["besideCleared"] and all(kept["besideCleared"]),
