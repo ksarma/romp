@@ -3,7 +3,7 @@ title: PendingQueueLoop's fake client streams one init per turn, as the CLI does
 status: candidate
 where: tests/test_sdk_backend.py (PendingQueueLoop.setUp: GatedClient.receive_messages; PendingQueueLoop.test_second_turn_forwarded_immediately_when_the_first_is_sent_after_connect, new); upstream/2026-09-25-pqloop-fake-init-per-turn.md (this entry)
 added: 2026-09-25
-pr:
+pr: 918
 tier: docs
 offered:
 closed:
