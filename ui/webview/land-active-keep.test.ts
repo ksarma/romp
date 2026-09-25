@@ -372,6 +372,14 @@ test("the raw land-saved write on a missed land with no row at the saved place, 
   assert.equal(j.content.scrollTop, 4000);
 });
 
+test("the nothing-armed re-show of the view already on screen, inside the same frame: the raw land-saved write is of the scroller's place, not the lagging record's (at the base it wrote the record's stale place; showActive's keepPlaceAcrossWindow then puts back the row it kept, so the lag reached the reader when showActive had no row to keep)", () => {
+  const w = world(STALE);
+  w.land(w.content, w.v, true);
+  assert.equal(w.content.scrollTop, 8, "the reader is where the scroller held them (at the base the raw write put them at the record's 0): " + JSON.stringify(w.writes));
+  assert.deepEqual(w.writes, [{ writer: "land-saved", top: 8, stick: false, from: undefined }], "nothing armed, nothing taken: the raw write, of the scroller's place");
+  assert.equal(takes(w), 0, "nothing armed: the land takes nothing");
+});
+
 // A DEEP LINK FROM A READER SCROLLED UP IN HISTORY, its fetch armed (the base's behaviour, which this change keeps). A deep link with a time
 // into history the page does not hold asks for a window, and its pre-jump (preJumpIntoGap) writes the reader into the gap where the target
 // will be; the land then misses, because the target comes with the reply, and the fallback puts the row the reader stood on back at its offset
@@ -400,7 +408,7 @@ test("a deep link with a time from a reader scrolled up in history, figures park
   assert.equal(n.spacer.h, 2000 + D); assert.equal(n.parked(), false);
 });
 
-test("render.ts: showActive decides whether the scroller holds the view's reader BEFORE the display flip (a switch's entering view is still display:none then) and hands the decision to the synchronous land alone; the deferred build's land and the hidden pane's retry pass nothing. A source pin, keyed on where the decision is read and what each land is handed. Executed: the landing lab's road 16 (tests/test_landing_notice_browser.py) runs the hand-off, a deep link with no time on the displayed tab reaching landActive through showActive with every conjunct true, and goes red with the hand-off dropped; the roads above run what the flag changes inside landActive, and the with-time, no-time and raw roads go red without it. No executed road reaches five parts, which only source pins guard (this one for all five; keep-across-window.test.ts and tab-switch-defer.test.ts also match the deferred land's call): the display conjunct (a switch; the decision read after the flip drops it), the pane-height conjunct, the pending-build conjunct, the deferred land passing nothing and the hidden pane's retry passing nothing", () => {
+test("render.ts: showActive decides whether the scroller holds the view's reader BEFORE the display flip (a switch's entering view is still display:none then) and hands the decision to the synchronous land alone; the deferred build's land and the hidden pane's retry pass nothing. A source pin, keyed on where the decision is read and what each land is handed. Executed: the landing lab's road 16 (tests/test_landing_notice_browser.py) runs the hand-off, a deep link with no time on the displayed tab reaching landActive through showActive with every conjunct true, and goes red with the hand-off dropped; the roads above run what the flag changes inside landActive, and the with-time, no-time and raw roads and the nothing-armed re-show's go red without it. No executed road reaches five parts, which only source pins guard (this one for all five; keep-across-window.test.ts and tab-switch-defer.test.ts also match the deferred land's call): the display conjunct (a switch; the decision read after the flip drops it), the pane-height conjunct, the pending-build conjunct, the deferred land passing nothing and the hidden pane's retry passing nothing", () => {
   const m = RENDER.match(/^function showActive\(keep\?: \{ uuid: string; y: number \} \| null\) \{([\s\S]*?)\n\}/m);
   assert.ok(m, "showActive");
   const body = m![1];
