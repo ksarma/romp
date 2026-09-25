@@ -13,8 +13,9 @@ this module mints). Every population is DERIVED from the source and the served b
      the wrapper: the first script in the document is the page-key script, right after <head>, and no fetch call, and no
      other script, comes before it. The login response (the one that seeds the key) holds the seed and then the wrapper.
   2. Every fetch call in a kernel.py string literal (read with the ast module, so escapes are decoded and docstrings are
-     not code) is served verbatim inside a page-class document after its wrapper, or inside the service worker. A call
-     that no page-class document serves would run in a document the wrapper is not in, or nowhere.
+     not code) is served verbatim, and every page-class document that serves it serves it after that document's own
+     wrapper. A call that no page-class document serves must be the service worker's; otherwise it would run in a
+     document the wrapper is not in, or nowhere.
   3. Every fetch the service worker makes names its route as a literal, and that route answers a request that carries no
      credential at all (probed here, not listed): a worker has no wrapper.
   4. The only `.fetch` member reference in any served page document or the worker is the wrapper's own two (it reads
@@ -211,20 +212,22 @@ class PageDocumentsOpenWithTheWrapper(_Served):
 
 
 class InlineFetchCallsRunAfterTheWrapper(_Served):
-    def test_every_fetch_call_in_a_kernel_literal_is_served_after_a_wrapper_or_in_the_worker(self):
+    def test_every_fetch_call_in_a_kernel_literal_runs_after_the_wrapper_of_each_page_serving_it_or_in_the_worker(self):
         calls = _fetch_calls_in_literals(_kernel_tree())
         self.assertGreater(len(calls), 20, "the census found the inline scripts' fetch calls (a census of nothing proves nothing)")
         worker = self.worker[1]
         stray = []
         for line, frag in calls:
             self.assertGreaterEqual(len(frag), 16, "kernel.py:%d: the call's text is long enough to find: %r" % (line, frag))
-            after_wrapper = [r for r, (_, body) in self.pages.items()
-                             if 0 <= body.find(WRAPPER) < body.find(frag)]
-            if not after_wrapper and frag not in worker:
-                stray.append("kernel.py:%d %r" % (line, frag))
-        self.assertEqual(stray, [], "a fetch call that no page-class document serves after its wrapper, and that is not the "
-                                    "service worker's, runs in a document without the page key: move it into a page, or give "
-                                    "it the road its document has")
+            serving = [r for r, (_, body) in self.pages.items() if frag in body]
+            if not serving and frag not in worker:
+                stray.append("kernel.py:%d served by no page document and not the worker's: %r" % (line, frag))
+            for r in serving:                   # EVERY page document that serves the call serves it after its own wrapper
+                body = self.pages[r][1]
+                if not 0 <= body.find(WRAPPER) < body.find(frag):
+                    stray.append("kernel.py:%d served by %s before or without its wrapper: %r" % (line, r, frag))
+        self.assertEqual(stray, [], "a fetch call in a document without the page-key script ahead of it carries no page key: "
+                                    "move it into a page document, or give it the road its document has")
 
     def test_the_service_workers_fetches_go_to_routes_that_need_no_credential(self):
         st, sw, _ = self.worker
