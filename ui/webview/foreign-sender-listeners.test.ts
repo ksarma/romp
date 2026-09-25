@@ -26,7 +26,9 @@
 // The census reads the population instead of a list: every addEventListener("message", …) call in a ui/ source file
 // (tests excluded) must open with the check, preceded by nothing but reads of the message, and must be one of the gated
 // sites below, each with an executed leg here. A new window listener anywhere in ui/ fails it until it is gated and given
-// a leg. Synthetic world only: the notes-api demo, placeholder ids.
+// a leg. A second census reads what the name windowSender is bound to: in every ui/ file that calls the check, it is
+// the helper's own import (gear.js: its require), bound once and never written, so a local helper of the same name that
+// lets one more sender through cannot stand in for it. Synthetic world only: the notes-api demo, placeholder ids.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -360,6 +362,105 @@ test("census: every window message listener in ui/ opens with the foreign-sender
     .map(([s, why]) => s.file + ":" + s.line + " (" + s.receiver + "): " + why);
   assert.deepEqual(bad, [], "a window message listener acts before it rules out a foreign sender:\n" + bad.join("\n"));
   assert.ok(sites.every((s) => s.receiver === "window"), "every census site is a window listener");
+});
+
+// ── the census: the name every check calls is the helper ──
+//
+// The lifted legs hand each listener the real windowSender under that name, and the head census accepts a call by that
+// name, so neither reads what the name is bound to in the listener's file. This census does: in every ui/ source file
+// that names windowSender (the gated sites, the chat's render.ts and any file that joins them), the name has exactly one
+// binding, the helper itself, and nothing writes to it. In a TypeScript file the binding is
+// `import { windowSender } from "./window-sender"`, unaliased; in gear.js, a CommonJS script, it is
+// `var windowSender = require('./window-sender.ts').windowSender;` at the file's top level. A second binding anywhere in
+// the file (a local, a parameter, a function, a destructured name, an import aliased so that another binding takes the
+// name), an assignment to the name, or a `with` statement, which can rebind any name, fails it.
+
+const TS_BINDING = 'import { windowSender } from "./window-sender";';
+const GEAR_BINDING = "var windowSender = require('./window-sender.ts').windowSender;";
+/** Why `windowSender` in this source does not certainly name the helper, or null when it does: its declarations, the
+ *  writes to it and any `with` statement, read by the TypeScript parser (so a spelling in a comment or a string is none). */
+function senderBinding(file: string, src: string): string | null {
+  const isJs = !file.endsWith(".ts");
+  const sf = ts.createSourceFile(file, src, ts.ScriptTarget.Latest, true, isJs ? ts.ScriptKind.JS : ts.ScriptKind.TS);
+  const decls: any[] = [], writes: string[] = [], withs: string[] = [];
+  const DECL = [ts.SyntaxKind.VariableDeclaration, ts.SyntaxKind.Parameter, ts.SyntaxKind.BindingElement, ts.SyntaxKind.FunctionDeclaration,
+    ts.SyntaxKind.FunctionExpression, ts.SyntaxKind.ClassDeclaration, ts.SyntaxKind.ClassExpression, ts.SyntaxKind.ImportSpecifier,
+    ts.SyntaxKind.ImportClause, ts.SyntaxKind.NamespaceImport, ts.SyntaxKind.ImportEqualsDeclaration, ts.SyntaxKind.EnumDeclaration,
+    ts.SyntaxKind.ModuleDeclaration];
+  const named = (n: any): boolean => !!n && ts.isIdentifier(n) && n.text === "windowSender";
+  const mentions = (n: any): boolean => { let hit = named(n); if (!hit) ts.forEachChild(n, (c: any) => { if (!hit && mentions(c)) hit = true; }); return hit; };
+  const visit = (n: any): void => {
+    if (DECL.includes(n.kind) && named(n.name)) decls.push(n);
+    if (ts.isBinaryExpression(n) && n.operatorToken.kind >= ts.SyntaxKind.FirstAssignment && n.operatorToken.kind <= ts.SyntaxKind.LastAssignment && mentions(n.left)) writes.push(n.getText(sf).slice(0, 80));
+    if ((ts.isPrefixUnaryExpression(n) || ts.isPostfixUnaryExpression(n)) && (n.operator === ts.SyntaxKind.PlusPlusToken || n.operator === ts.SyntaxKind.MinusMinusToken) && named(n.operand)) writes.push(n.getText(sf));
+    if ((ts.isForInStatement(n) || ts.isForOfStatement(n)) && !ts.isVariableDeclarationList(n.initializer) && mentions(n.initializer)) writes.push(n.initializer.getText(sf));
+    if (ts.isWithStatement(n)) withs.push(n.getText(sf).slice(0, 80));
+    ts.forEachChild(n, visit);
+  };
+  visit(sf);
+  if (withs.length) return "a `with` statement, which can rebind the name: " + withs.join("; ");
+  if (writes.length) return "a write to windowSender: " + writes.join("; ");
+  if (decls.length !== 1) return decls.length + " bindings of windowSender, not the one: " + decls.map((d) => ts.SyntaxKind[d.kind] + " `" + d.getText(sf).slice(0, 60) + "`").join("; ");
+  const d = decls[0];
+  if (isJs) {
+    const stmt = d.parent && d.parent.parent;
+    if (!ts.isVariableDeclaration(d) || !stmt || !ts.isVariableStatement(stmt) || stmt.parent !== sf || stmt.getText(sf) !== GEAR_BINDING) {
+      return "the binding is not `" + GEAR_BINDING + "` at the file's top level: `" + (stmt ? stmt.getText(sf) : d.getText(sf)).slice(0, 100) + "`";
+    }
+    return null;
+  }
+  const decl = ts.isImportSpecifier(d) ? d.parent.parent.parent : null;
+  if (!decl || d.propertyName || !ts.isImportDeclaration(decl) || decl.getText(sf) !== TS_BINDING) {
+    return "the binding is not `" + TS_BINDING + "`: `" + (decl ? decl.getText(sf) : d.getText(sf)).slice(0, 100) + "`";
+  }
+  return null;
+}
+/** Every ui/ source file whose code names windowSender (read by the parser), window-sender.ts itself aside. */
+function senderFiles(): string[] {
+  return uiSources().filter((f) => f !== "webview/window-sender.ts").filter((f) => {
+    const src = fs.readFileSync(path.join(UI, f), "utf8");
+    if (!src.includes("windowSender")) return false;
+    const sf = ts.createSourceFile(f, src, ts.ScriptTarget.Latest, true, f.endsWith(".ts") ? ts.ScriptKind.TS : ts.ScriptKind.JS);
+    let hit = false;
+    const visit = (n: any): void => { if (hit) return; if (ts.isIdentifier(n) && n.text === "windowSender") hit = true; else ts.forEachChild(n, visit); };
+    visit(sf);
+    return hit;
+  });
+}
+
+test("census: in every ui/ file that calls the check, the name windowSender is bound once, to the helper, and never written", () => {
+  const files = senderFiles();
+  const gated = GATED.map(([f]) => f);
+  assert.deepEqual(gated.filter((f) => !files.includes(f)), [], "every gated site's file names windowSender");
+  assert.ok(files.includes("webview/render.ts"), "the chat's frame handler, the first check, is in the population");
+  const bad = files.map((f) => [f, senderBinding(f, fs.readFileSync(path.join(UI, f), "utf8"))] as const).filter(([, why]) => why !== null)
+    .map(([f, why]) => f + ": " + why);
+  assert.deepEqual(bad, [], "a file's windowSender is not certainly the helper:\n" + bad.join("\n"));
+});
+
+test("the binding census reads what it claims: a local, a parameter, an aliased import, a wrapper in gear.js, a write or a `with` is refused; the helper's own import and require are accepted", () => {
+  const imp = TS_BINDING + "\n";
+  assert.equal(senderBinding("webview/probe.ts", imp + 'window.addEventListener("message", (e) => { if (windowSender(e) === "foreign") return; });'), null);
+  assert.equal(senderBinding("webview/probe.js", "var x = 1;\n" + GEAR_BINDING + "\nfunction f(e) { return windowSender(e); }"), null);
+  const refused: Array<[string, string, RegExp]> = [
+    ["webview/probe.ts", 'import { windowSender as senderOf } from "./window-sender";\nconst windowSender = (e: MessageEvent) => (e.origin === "null" ? "peer" : senderOf(e));', /not `import/],
+    ["webview/probe.ts", imp + "function f() { const windowSender = (e: unknown) => \"peer\"; return windowSender; }", /2 bindings/],
+    ["webview/probe.ts", imp + "function f(windowSender: (e: unknown) => string) { return windowSender; }", /2 bindings/],
+    ["webview/probe.ts", imp + "const { windowSender: w2 } = { windowSender: 1 }; function g({ windowSender }: any) { return windowSender; }", /2 bindings/],
+    ["webview/probe.ts", imp + "function windowSender2() { return 1; } class C { m() { function windowSender() { return 'peer'; } return windowSender; } }", /2 bindings/],
+    ["webview/probe.ts", 'import { windowSender } from "./window-sender.ts";', /not `import/],
+    ["webview/probe.ts", 'import { windowSender } from "./some-other-module";', /not `import/],
+    ["webview/probe.ts", 'import windowSender from "./window-sender";', /not `import/],
+    ["webview/probe.ts", 'import * as windowSender from "./window-sender";', /not `import/],
+    ["webview/probe.ts", "const windowSender = require(\"./window-sender\").windowSender;", /not `import/],
+    ["webview/probe.js", "var windowSender = function (e) { var c = require('./window-sender.ts').windowSender(e); return (c === 'foreign' && e && e.origin === 'null') ? 'peer' : c; };", /not `var windowSender = require/],
+    ["webview/probe.js", "(function () { " + GEAR_BINDING + " })();", /top level/],
+    ["webview/probe.js", GEAR_BINDING + "\nwindowSender = function () { return 'peer'; };", /a write/],
+    ["webview/probe.js", GEAR_BINDING + "\n[windowSender] = [function () { return 'peer'; }];", /a write/],
+    ["webview/probe.js", GEAR_BINDING + "\nwith ({ windowSender: function () { return 'peer'; } }) { windowSender(e); }", /with/],
+    ["webview/probe.js", "var a = 1;", /0 bindings/],
+  ];
+  for (const [file, src, why] of refused) assert.match(String(senderBinding(file, src)), why, file + ": " + src);
 });
 
 test("census: every gated site has an executed leg in this file (installed, or lifted by its marker)", () => {
