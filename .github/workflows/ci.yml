@@ -148,7 +148,7 @@ jobs:
   shell:
     name: Shell (bats, ${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    # Generous vs the python jobs on purpose: the suite takes ~1min on Linux but
+    # Generous on purpose: the suite takes ~1min on Linux but
     # ~16min on macOS, so anything near 15 would kill a PASSING job.
     timeout-minutes: 35
     strategy:
