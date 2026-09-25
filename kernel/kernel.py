@@ -3996,6 +3996,10 @@ def _hmac_b64(key, msg, n=32):
 # its own session under its own name rather than one shared cookie slot.
 _SESSION_COOKIE = "romp_s_" + _hmac_b64(TOKEN or "-", _COOKIE_NAME_LABEL)[:10]
 
+# The header value that clears the legacy romp_token cookie, which a kernel before the session-id design
+# set to the serve token itself. Handler._clears_legacy_cookie decides which responses carry it.
+_LEGACY_COOKIE_CLEAR = "romp_token=; Path=/; Max-Age=0; SameSite=Lax; HttpOnly"
+
 
 def _mint_session():
     """A fresh session id: 144 random bits, and their tag under the serve token. The tag is what the
@@ -73368,6 +73372,46 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, *a):
         pass
 
+    def handle_one_request(self):
+        # What end_headers reads about a request starts empty before the request's line and headers are
+        # read, so an error the base class answers mid-parse on a keep-alive connection reads nothing from
+        # the request before it.
+        self._legacy_ours = self._legacy_signed_in = False
+        self._set_cookie = None
+        super().handle_one_request()
+
+    def parse_request(self):
+        """The base parse, then two facts about the request's cookies that every response reads
+        (_clears_legacy_cookie): whether the legacy romp_token cookie holds THIS kernel's token, and
+        whether the request carries a valid session cookie of this kernel. Both are computed for every
+        request, and both compares are constant time (_ct_eq, and _session_ok's)."""
+        ok = super().parse_request()
+        if ok:
+            self._legacy_ours = bool(TOKEN) and _ct_eq(self._cookie("romp_token"), TOKEN)
+            self._legacy_signed_in = bool(self._browser_session())
+        return ok
+
+    def _clears_legacy_cookie(self):
+        """True when this response clears the legacy romp_token cookie (a kernel before the session-id
+        design set it, and its value WAS the serve token). It is cleared only when its value is THIS
+        kernel's token, and only when the browser is signed in without it: this response sets the session
+        cookie (the sign-in that migrates it), or the request already carries a valid session cookie of
+        this kernel (the migration happened earlier, and the browser kept the old cookie although that
+        response cleared it). Every response that holds, of any route class, a refusal and a socket
+        upgrade included, carries the clear. A request with no valid session is never answered with it,
+        so a dashboard that has not migrated keeps the cookie it still signs in with (its polls and socket
+        redials carry no session, and the reload that migrates it finds the cookie), and a romp_token
+        holding any other value (a second, older kernel on the same host) is never touched."""
+        return bool(getattr(self, "_legacy_ours", False)
+                    and (getattr(self, "_legacy_signed_in", False) or getattr(self, "_set_cookie", None)))
+
+    def end_headers(self):
+        # the one place every response's headers end, so the legacy cookie's clear reaches each response
+        # _clears_legacy_cookie names (the socket relay writes its peer's head raw and adds it there)
+        if self._clears_legacy_cookie():
+            self.send_header("Set-Cookie", _LEGACY_COOKIE_CLEAR)
+        super().end_headers()
+
     def _send(self, code, body, ctype, cache=None, headers=None):
         seeded = False
         if getattr(self, "_page_ok", False) and isinstance(body, str) and ctype.startswith("text/html") and "<head>" in body:
@@ -73434,17 +73478,10 @@ class Handler(BaseHTTPRequestHandler):
             # top-level navigations (never on a cross-site POST/subresource, and every
             # state-changing route here is a POST), so the gate the cookie provides is unchanged.
             # The cookie holds the SESSION ID and its name is this kernel's own (_SESSION_COOKIE); the
-            # serve token is never a cookie value.
+            # serve token is never a cookie value. When the request carried the legacy romp_token cookie
+            # holding this kernel's token, end_headers adds its clear beside this (_clears_legacy_cookie).
             self.send_header("Set-Cookie", "%s=%s; Path=/; Max-Age=31536000; "
                              "SameSite=Lax; HttpOnly" % (_SESSION_COOKIE, self._set_cookie))
-            # The legacy romp_token cookie (a kernel before the session-id design set it, and its value
-            # WAS the serve token) is cleared ONLY here, in the very response that migrates it, and only
-            # when its value is THIS kernel's token. Clearing it on every request would sign out a
-            # dashboard left open across the upgrade (its next poll or socket redial is not a navigation,
-            # so it would clear without migrating and the reload would land on /login) and a second,
-            # older kernel on the same host whose cookie holds a different token.
-            if getattr(self, "headers", None) is not None and TOKEN and _ct_eq(self._cookie("romp_token"), TOKEN):
-                self.send_header("Set-Cookie", "romp_token=; Path=/; Max-Age=0; SameSite=Lax; HttpOnly")
         # CORS delivery for an AUTHORIZED browser origin (set at the _authorize call sites).
         # A VS Code webview's synthetic origin makes every kernel fetch cross-origin, and
         # without an echoed Access-Control-Allow-Origin the browser withholds the response
@@ -73558,7 +73595,7 @@ class Handler(BaseHTTPRequestHandler):
                     # cookie of one login with the stored key of another).
                     self._reauth = not ok
                 elif need == "page" and TOKEN and _ct_eq(self._cookie("romp_token"), TOKEN):
-                    ok, login, migrate = True, True, True   # the old token cookie, once: this response migrates it (and _send clears it)
+                    ok, login, migrate = True, True, True   # the old token cookie, once: this response migrates it (and clears it: _clears_legacy_cookie)
         if not ok:
             if not self._origin_ok():
                 return False, None, "cross-site origin"
@@ -78181,6 +78218,11 @@ class Handler(BaseHTTPRequestHandler):
             # directive) would act on this origin and is dropped. The peer's first frames, which ride
             # past the blank line, are unchanged.
             head = _ws_head_allowlist(head)
+            sep = head.find(b"\r\n\r\n")
+            if sep >= 0 and self._clears_legacy_cookie():
+                # this kernel's own clear of the legacy cookie, which end_headers adds to every other
+                # response (_clears_legacy_cookie); this head is written raw, so it is added here
+                head = head[:sep] + b"\r\nSet-Cookie: " + _LEGACY_COOKIE_CLEAR.encode("ascii") + head[sep:]
             try:
                 down.sendall(head)
             except OSError:
