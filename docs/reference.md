@@ -3177,13 +3177,14 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   only an entry whose list's callback never queued it. `expired` minus
   `collected` counts the last two ways. While `resident` has stayed under
   the cap, it counts only the third; once the cap binds, it also counts
-  entries of lists freed since the last build, re-registration or release
-  that the cap dropped before a removal could, with no callback missed. A
-  `resident` that keeps rising while `evictions` stays flat is the sign of
-  a leak), `released` (entries popped the moment the
-  assembly entry that owned their index was dropped or replaced, rather than
-  a million entries later at the cap), `rowDecodes` (document rows decoded,
-  a build's or a light read's), `userFacts` (below), and `restoredTurns`.
+  entries of lists freed, or brought back by a finalizer, since the last
+  build, re-registration or release that the cap dropped before a removal
+  could, with no callback missed. A `resident` that keeps rising while
+  `evictions` stays flat is the sign of a leak), `released` (entries popped
+  the moment the assembly entry that owned their index was dropped or
+  replaced, rather than a million entries later at the cap), `rowDecodes`
+  (document rows decoded, a build's or a light read's), `userFacts` (below),
+  and `restoredTurns`.
 - `skillLoadIndex`: the judge's skill-load boot pass (the tops older stores minted from
   the harness's own skill load): `filesRead` and `bytesRead` (transcripts read raw this
   boot, appended tails only once the persisted index holds a file), `filesIndexed`, and

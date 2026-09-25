@@ -5186,11 +5186,12 @@ def _mat_register(la, i):
 def _mat_trim():
     """Under _MAT_LOCK: the LRU back within _MAT_CAP from its old end. A live entry is evicted as ever (its slot back to the
     placeholder, counted `evictions`); an entry whose list has been collected is dropped and counted `expired`, and no slot is
-    touched for it (the list is gone, and its id may by now be another live list's, whose slot this entry never described).
-    A freed list's entries leave at the drain that runs before every registration (_mat_drain), so the dead entries this
-    branch meets belong to lists freed since this registration's drain (the reference cleared and the callback queued or
-    about to be: at a last decref on another thread, or in a collection on any thread, this one included), or are planted
-    with another reference; they count `expired` without `collected`, and no callback is missed."""
+    touched for it (the list is gone, and its id may by now be another live list's, whose slot this entry never described; or
+    a finalizer resurrected it and the entry holds the reference the collector cleared: see _ListRef). A freed list's entries
+    leave at the drain that runs before every registration (_mat_drain), so the dead entries this branch meets belong to
+    lists freed, or brought back by a finalizer, since this registration's drain (the reference cleared and the callback
+    queued or about to be: at a last decref on another thread, or in a collection on any thread, this one included), or are
+    planted with another reference; they count `expired` without `collected`, and no callback is missed."""
     while len(_MAT_LRU) > _MAT_CAP:
         _, (ref, j) = _MAT_LRU.popitem(last=False)
         lz = ref()
@@ -5676,7 +5677,7 @@ def asm_index_stats():
 #   released, expired and collected are the counters the removal roads bump (the LRU's weak ownership, measured 2026-09-15; the
 #   collection event, 2026-09-24): collected counts what the drain removed. While resident has stayed under the cap, expired minus
 #   collected counts only _mat_register's pops, entries whose list's callback never queued them; once the cap binds, the trim's dead
-#   branch also counts entries of lists freed since the last drain, with no callback missed.
+#   branch also counts entries of lists freed, or brought back by a finalizer, since the last drain, with no callback missed.
 #   A resident count that keeps rising while evictions stays flat is the leak signal.
 _ASM_CKPT_CAP = 16 * 1024 * 1024   # a document past this is not written (counted): that session parses whole as today
 _ASM_CKPT_STATS = {"written": 0, "restored": 0, "fallbacks": {}, "skipped": {}, "hydratedBytes": 0, "hydratedAtoms": 0,

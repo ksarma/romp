@@ -445,7 +445,7 @@ class CollectionEvent(Synthetic):
     asserts the LRU's (live, dead) before `collected`, so that on a source without the event its red is the dead entries
     themselves. On such a source the other tests red on what they add: the no-entry case on the missing `collected` key,
     the in-place case on the TypeError that is not raised, the order tests on the missing _ListRef, the default-argument
-    case on the missing queue, and the lock test on the missing _mat_drain."""
+    case on the missing queue, the lock test on the missing _mat_drain, and the live-list test on the missing _ref."""
 
     def _read_after_release(self, k, tag):
         """An index and one list of k rows: every slot built, the index released (its assembly entry dropped), then every
@@ -735,7 +735,7 @@ class CollectionEvent(Synthetic):
             em._MAT_LRU.pop((id(la), 1))                           # slot 1 stays built with no entry of its own
         la[1]                                                      # the hit road registers it again
         self.assertIs(la._ref, own, "a live list keeps its one reference across registrations")
-        self.assertEqual(ix._minted, [own], "its index holds that one reference")
+        self.assertEqual([r is own for r in ix._minted], [True], "its index holds that one reference")
 
     def test_a_freed_list_with_no_entry_changes_nothing(self):
         ix, la = _mint(6, "h")
