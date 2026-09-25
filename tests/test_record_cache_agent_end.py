@@ -644,13 +644,15 @@ class AgentEnd(unittest.TestCase):
                 raise RuntimeError("synthetic")
             return real(key, reason)
         em.release_entry = release
+        err = io.StringIO()
         try:
-            with contextlib.redirect_stderr(io.StringIO()):
+            with contextlib.redirect_stderr(err):
                 km._begin_checkpoint_cycle()
         finally:
             em.release_entry = real
         self.assertNotIn((SID, AID), km._AGENT_ENDED_UNHELD, "a raise gives the remembered end up")
         self.assertEqual(self._stat("releaseLost"), 2, "counted as a release given up")
+        self._assert_raise_line(err.getvalue(), (SID, AID, self.agent))   # written like the batch's raise (group G)
         self.assertIsNone(self._weight(agent3), "the batch's end in the same cycle was still released")
 
     def test_the_unheld_ends_past_their_bound_forget_the_oldest_and_count_nothing(self):
@@ -924,6 +926,7 @@ class AgentEnd(unittest.TestCase):
         self.assertIsNone(self._weight(agent3), "the end queued for the same cycle was released in it")
         self.assertEqual(self._stat("releaseLost"), 1, "the raise is one release given up")
         self.assertIn("a release raised RuntimeError", err.getvalue())
+        self._assert_raise_line(err.getvalue(), ("the owed release of " + self.agent,))   # PR 913 round 1, group G
 
     def test_with_the_drop_writes_off_the_release_keeps_the_entry_and_says_so_once(self):
         km.CKPT_CONVERGE_MS = 0                                          # the pass off: the cycle begins with no budget
@@ -1180,6 +1183,7 @@ class AgentEnd(unittest.TestCase):
         self.assertEqual(self._weight(self.agent), size, "the entry is kept")
         self.assertEqual((self._stat("releaseLost"), self._stat("released")), (1, NOTHING_RELEASED))
         self.assertIn("the document check raised RuntimeError (counted as recordCache.releaseLost", err.getvalue())
+        self._assert_raise_line(err.getvalue(), ("the document check of " + self.agent,))   # PR 913 round 1, group G
 
     def test_an_owed_release_whose_file_is_gone_is_released(self):
         size = self._fold_while_running(AID, self.agent)
@@ -1207,18 +1211,44 @@ class AgentEnd(unittest.TestCase):
         self.assertIsNone(self._weight(self.agent), "released: nothing to write, everything to release")
         self.assertEqual((self._stat("released"), self._stat("releaseLost")), ({"agentEnded": {"count": 1, "bytes": size}}, 0))
 
-    def test_the_end_dropped_past_the_queue_bound_is_a_release_given_up_and_the_start_is_not(self):
+    def test_an_end_dropped_past_the_queue_bound_is_released_at_the_drain(self):
+        """PR 913 round 1, decision 4: a dropped end is kept as its (sid, agent id) pair and released at the drain like a
+        batch end, not counted lost."""
+        size = self._fold_while_running(AID, self.agent)
+        km._begin_checkpoint_cycle()                                     # drains the start
         self.be._AGENT_LIVE_MAX = 2                                      # this backend's bound, for the test
-        # the queue holds two, so start(WF_AID) drops start(AID) and stop(WF_AID) drops stop(AID): of the two events dropped,
-        # the stop is a release and the start is not
-        self._start(AID); self._stop(AID); self._start(WF_AID); self._stop(WF_AID)
+        # the queue holds two, so stop(WF_AID) drops stop(AID): the batch holds no later event for AID
+        self._stop(AID); self._start(WF_AID); self._stop(WF_AID)
         err = io.StringIO()
         with contextlib.redirect_stderr(err):
             km._begin_checkpoint_cycle()
-        self.assertEqual(self._stat("releaseLost"), 1, "of the two events dropped past the bound, the one end is counted")
-        self.assertIn("recordCache.releaseLost", err.getvalue())
-        km._begin_checkpoint_cycle(); km._begin_checkpoint_cycle()
-        self.assertEqual(self._stat("releaseLost"), 1, "two later cycles add nothing to releaseLost")
+        self.assertEqual(self._stat("releaseLost"), 0, "the end dropped past the queue's bound is not a release given up")
+        self.assertIsNone(self._weight(self.agent), "released at the drain (held: %s of %d bytes)" % (self._weight(self.agent), size))
+        self.assertEqual(self._stat("released"), {"agentEnded": {"count": 1, "bytes": size}})
+        self.assertNotIn("recordCache.releaseLost", err.getvalue())
+        self.assertEqual(self.be.drain_agent_live_events(), ([], 0), "the drain took the dropped end with the batch")
+
+    def test_a_dropped_end_whose_agent_the_batch_speaks_for_later_is_not_released_by_the_drop(self):
+        """A dropped end is released at the drain only when the batch holds no later event for its agent: a later start keeps
+        the agent's records, and a later end is the one that releases."""
+        size = self._fold_while_running(AID, self.agent)
+        km._begin_checkpoint_cycle()
+        self.be._AGENT_LIVE_MAX = 2
+        self._stop(AID); self._start(AID); self._start(WF_AID)            # start(WF_AID) drops stop(AID); the start stays
+        self.assertEqual(self.be._agent_live_dropped, {(SID, AID): True}, "precondition: the dropped end is kept")
+        km._begin_checkpoint_cycle()
+        self.assertEqual(self._weight(self.agent), size, "the agent started again after the dropped end: its records stay")
+        self.assertEqual((self._stat("released"), self._stat("releaseLost"), self._stat("falseEnds")), (NOTHING_RELEASED, 0, 0))
+
+    def test_a_start_dropped_after_its_agents_dropped_end_forgets_that_end(self):
+        size = self._fold_while_running(AID, self.agent)
+        km._begin_checkpoint_cycle()
+        self.be._AGENT_LIVE_MAX = 2
+        self._stop(AID); self._start(AID); self._start(WF_AID); self._stop(WF_AID)   # both of AID's events dropped, the start last
+        self.assertEqual(self.be._agent_live_dropped, {}, "the dropped start forgot the pair's dropped end")
+        km._begin_checkpoint_cycle()
+        self.assertEqual(self._weight(self.agent), size, "the running agent keeps its records")
+        self.assertEqual(self._stat("releaseLost"), 0)
 
     def test_starts_dropped_past_the_queue_bound_are_not_releases_given_up(self):
         self.be._AGENT_LIVE_MAX = 2
@@ -1230,13 +1260,88 @@ class AgentEnd(unittest.TestCase):
         self.assertEqual(self._stat("releaseLost"), 0, "the two events dropped past the bound were starts: none is counted")
         self.assertNotIn("recordCache.releaseLost", err.getvalue())
 
-    def test_every_end_dropped_past_the_queue_bound_is_counted(self):
+    def test_the_ends_dropped_past_the_bound_of_the_kept_pairs_are_counted_lost(self):
+        """Decision 4: releaseLost counts only the dropped ends given up past the bound of the pairs the backend keeps (the
+        queue's bound, _AGENT_LIVE_MAX). The oldest pair is the one given up: its entry stays; the pairs kept are released."""
+        agent3 = os.path.join(os.path.dirname(self.agent), "agent-%s.jsonl" % AID3)
+        _append(agent3, _agent_lines(AID3, 0, 40))
+        em._read_jsonl_incremental(self.agent); em._read_jsonl_incremental(agent3)   # whole entries for the releases to take
+        size, size3 = os.path.getsize(self.agent), os.path.getsize(agent3)
         self.be._AGENT_LIVE_MAX = 2
-        # stop(AID) and stop(WF_AID) drop the two starts; start(AID3) drops stop(AID) and stop(AID3) drops stop(WF_AID)
-        self._start(AID); self._start(WF_AID); self._stop(AID); self._stop(WF_AID); self._start(AID3); self._stop(AID3)
+        # stop(AID3) drops stop(AID), stop(WF_AID2) drops stop(WF_AID), and the next end drops stop(AID3): three pairs kept
+        # past a bound of two, so the oldest, AID's, is given up
+        for aid in (AID, WF_AID, AID3, WF_AID2, "a5555555555555555"):
+            self._stop(aid)
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            km._begin_checkpoint_cycle()
+        self.assertEqual(self._stat("releaseLost"), 1, "the one pair past the bound is the one release given up")
+        self.assertIn("recordCache.releaseLost", err.getvalue())
+        self.assertEqual(self._weight(self.agent), size, "the given-up agent's entry stays")
+        self.assertIsNone(self._weight(agent3), "a kept pair is released at the drain")
+        self.assertEqual(self._stat("released"), {"agentEnded": {"count": 1, "bytes": size3}})
+        km._begin_checkpoint_cycle()
+        self.assertEqual(self._stat("releaseLost"), 1, "a later cycle adds nothing")
+
+    # ---- the release counters count releases, not ends (PR 913 round 1, group C) ----
+    # An agent reports two ends (its stop and its task's end, or a workflow slot's done state), and a cycle's owed pay and
+    # its batch can each try the same path: releaseDeferred and releaseLost count a path once per cycle.
+
+    def _two_ends_under_a_refused_budget(self, aid, path, second_end):
+        km.CKPT_CONVERGE_BYTES = 1                                       # no room for the document, every cycle below
+        self._stop(aid)
+        km._begin_checkpoint_cycle()
+        self.assertEqual(self._stat("releaseDeferred"), 1, "the stop's release is deferred once")
+        second_end()
+        self.assertEqual(list(self.be._agent_live_q), [(SID, aid, False)], "precondition: the second end is queued")
+        km._begin_checkpoint_cycle()                                     # the owed pay, then the batch's end, try the one path
+        self.assertEqual(self._stat("releaseDeferred"), 2, "one per refused cycle: the second end in that cycle adds nothing")
+        self.assertEqual((self._weight(path), em.owed_release_paths()), (os.path.getsize(path), {path}), "still whole, owed")
+
+    def test_a_workflow_agents_stop_then_slot_done_count_one_deferral_per_cycle(self):
+        self.s._on_task_event("task_started", {"task_id": WF_TID, "task_type": "local_workflow"})
+        self._fold_while_running(WF_AID, self.wf_agent)
+        self.s._on_task_event("task_progress", {"task_id": WF_TID, "workflow_progress": [_wf(1, WF_AID, "progress")]})
+        km._begin_checkpoint_cycle()                                     # drains the start
+        self._two_ends_under_a_refused_budget(WF_AID, self.wf_agent, lambda: self.s._on_task_event(
+            "task_progress", {"task_id": WF_TID, "workflow_progress": [_wf(1, WF_AID, "done")]}))
+
+    def test_a_task_agents_stop_then_task_end_count_one_deferral_per_cycle(self):
+        self.s._on_task_event("task_started", {"task_id": AID, "task_type": "local_agent"})
+        self._fold_while_running(AID, self.agent)
+        km._begin_checkpoint_cycle()
+        self._two_ends_under_a_refused_budget(AID, self.agent, lambda: self.s._on_task_event(
+            "task_notification", {"task_id": AID, "status": "completed"}))
+
+    def test_a_dropped_stop_whose_task_end_releases_counts_nothing_lost(self):
+        self.s._on_task_event("task_started", {"task_id": AID, "task_type": "local_agent"})
+        size = self._fold_while_running(AID, self.agent)
+        km._begin_checkpoint_cycle()
+        self.be._AGENT_LIVE_MAX = 2
+        self._stop(AID)
+        self.s._on_task_event("task_notification", {"task_id": AID, "status": "completed"})
+        self._start(WF_AID)                                              # drops the stop; the task's end survives
+        self.assertEqual(list(self.be._agent_live_q), [(SID, AID, False), (SID, WF_AID, True)],
+                         "precondition: the stop was dropped, the task's end kept")
         with contextlib.redirect_stderr(io.StringIO()):
             km._begin_checkpoint_cycle()
-        self.assertEqual(self._stat("releaseLost"), 2, "the two ends dropped past the bound are two releases given up")
+        self.assertEqual((self._stat("released"), self._stat("releaseLost")), ({"agentEnded": {"count": 1, "bytes": size}}, 0),
+                         "one release, and nothing given up")
+
+    def test_an_owed_release_lost_at_the_pay_and_a_second_end_in_that_cycle_count_one_loss(self):
+        self.s._on_task_event("task_started", {"task_id": AID, "task_type": "local_agent"})
+        size = self._fold_while_running(AID, self.agent)
+        km._begin_checkpoint_cycle()
+        km.CKPT_CONVERGE_BYTES = 1
+        self._stop(AID)
+        km._begin_checkpoint_cycle()                                     # the stop's release is owed
+        self.assertEqual(em.owed_release_paths(), {self.agent}, "precondition: owed")
+        self.s._on_task_event("task_notification", {"task_id": AID, "status": "completed"})   # the second end
+        km.CKPT_CONVERGE_BYTES = 8 * 1024 * 1024
+        km.CKPT_CONVERGE_MS = 0                                          # the drop writes off: the pay and the end are each lost
+        with contextlib.redirect_stderr(io.StringIO()):
+            km._begin_checkpoint_cycle()
+        self.assertEqual((self._stat("releaseLost"), self._weight(self.agent)), (1, size), "one release given up, the entry kept")
 
     def test_an_end_that_raises_does_not_lose_the_rest_of_the_batch(self):
         size = self._fold_while_running(AID, self.agent)
@@ -1257,12 +1362,24 @@ class AgentEnd(unittest.TestCase):
         self.assertIsNone(self._weight(self.agent), "the end queued after the one that raised was still released")
         self.assertEqual((self._stat("releaseLost"), self._stat("released")), (1, {"agentEnded": {"count": 1, "bytes": size}}))
         self.assertIn("a release raised RuntimeError", err.getvalue())
+        self._assert_raise_line(err.getvalue(), (OTHER_SID, WF_AID2, "its file not resolved"))   # PR 913 round 1, group G
         asyncio.run(other._subagent_start_hook({"agent_id": WF_AID2, "agent_type": "general-purpose"}, None, None))
         asyncio.run(other._subagent_stop_hook({"agent_id": WF_AID2}, None, None))
         err = io.StringIO()
         with contextlib.redirect_stderr(err):
             km._begin_checkpoint_cycle()
-        self.assertEqual((err.getvalue(), self._stat("releaseLost")), ("", 2), "counted again, said once")
+        self.assertEqual(self._stat("releaseLost"), 2, "counted again")
+        self._assert_raise_line(err.getvalue(), (OTHER_SID, WF_AID2))
+        self.assertNotIn("recordCache.releaseLost; said once", err.getvalue(), "the cause's summary line is said once")
+
+    def _assert_raise_line(self, out, names):
+        """A release that raised wrote its own line: the names given, the exception's text and a traceback."""
+        line = [ln for ln in out.splitlines() if ln.startswith("record cache: ") and " raised; the release is given up" in ln]
+        self.assertEqual(len(line), 1, "one line for the raise: %r" % out)
+        for n in names:
+            self.assertIn(n, line[0], "the line names %s: %r" % (n, line[0]))
+        self.assertIn("Traceback (most recent call last)", out, "with the traceback: %r" % out)
+        self.assertIn("RuntimeError: synthetic", out, "and the exception's text: %r" % out)
 
     # ---- the bounds, and a rebind ----
 

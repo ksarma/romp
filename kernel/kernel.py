@@ -15606,8 +15606,10 @@ def _release_ended_agents():
     a tail and reads nothing whole. The events come from the SDK backend's own add and removal sites, queued in arrival order
     (SdkBackend.drain_agent_live_events), never from a difference of liveness snapshots: three threads take those
     independently, and a staler one would end an agent a fresher one listed. In order:
-    - The batch is drained. End events dropped past the queue's bound are releases given up (recordCache.releaseLost); a
-      dropped start is not counted.
+    - The batch is drained. An agent whose last event dropped past the queue's bound was an end comes back as an end ahead
+      of the queued events, so it is released like the batch's own ends below when the batch holds no later event for it;
+      only the ends dropped past the bound of the list the backend keeps them in are releases given up (recordCache.releaseLost).
+      A dropped start is not counted.
     - An agent that entered the live set in this batch and whose earlier end is still owed its release (an earlier cycle's
       budget refused the document, or a read raced the pop) has that release cancelled (em.cancel_owed_release, under the
       path the release was owed for). Its entry was never popped, so that start is not a false end, as for an end and a
@@ -15626,13 +15628,17 @@ def _release_ended_agents():
       entering the live set again releases nothing. An agent entering the live set after its release was taken is a false
       end, counted (recordCache.falseEnds); after a release that was only owed, it is not. An end that finds nothing held
       is remembered as unheld; any other outcome forgets a remembered end of the agent.
+    An end, remembered or in the batch, whose resolution or release raises is given up, counted in releaseLost, and
+    written to stderr at every raise with the session, the agent, the file when it resolved and the traceback
+    (em.say_release_raised), as the pusher's other stage failures are; the rest are still released. The release counters
+    count a path once per cycle, so an agent's second end in the cycle adds nothing to them.
     The file is resolved as the folds resolve it (_path_of, _subagent_file), so the release names the cache key the folds
     read. Returns the releases taken or owed for this batch's ends."""
     be = _sdk_backend
     drain = getattr(be, "drain_agent_live_events", None) if be else None
-    events, dropped = drain() if drain is not None else ([], 0)
-    if dropped:
-        em.note_release_lost(dropped, "overflow")
+    events, lost = drain() if drain is not None else ([], 0)
+    if lost:
+        em.note_release_lost(lost, "overflow")          # ends given up past the backend's bound on the ends it keeps
     last = {}
     for i, (sid, aid, _live) in enumerate(events):
         last[(sid, aid)] = i
@@ -15664,7 +15670,8 @@ def _release_ended_agents():
         try:
             got = em.release_entry(p, "agentEnded")
         except Exception as e:                         # given up, like a batch end that raises; the rest are still paid
-            em.note_release_lost(1, "a release raised %s" % type(e).__name__)
+            em.say_release_raised("the release of session %s's agent %s (remembered unheld; file %s)" % (pair[0], pair[1], p))
+            em.note_release_lost(1, "a release raised %s" % type(e).__name__, key=p)
             _AGENT_ENDED_UNHELD.pop(pair, None)
             continue
         if got == "absent":
@@ -15684,12 +15691,15 @@ def _release_ended_agents():
             continue
         if last[pair] != i:
             continue                                   # the agent entered the live set again later in this batch
+        ap = None
         try:
             path = _path_of(sid)
             ap = _subagent_file(path, aid) if path else None
             got = em.release_entry(str(ap), "agentEnded") if ap is not None else None
         except Exception as e:                         # one event that raises must not lose the rest of the drained batch
-            em.note_release_lost(1, "a release raised %s" % type(e).__name__)
+            em.say_release_raised("the release of session %s's agent %s (%s)"
+                                  % (sid, aid, "file %s" % ap if ap is not None else "its file not resolved"))
+            em.note_release_lost(1, "a release raised %s" % type(e).__name__, key=None if ap is None else str(ap))
             _AGENT_ENDED_UNHELD.pop(pair, None)
             continue
         if got is None:

@@ -26,7 +26,7 @@ Auxiliary inputs the file adapter may read (same category as the transcript):
                                transcript lost to an API-errored try; judge parse only)
   timeline/messages.jsonl   -> peer rompUuid for a postal atom (join on the msg id)
 """
-import array, bisect, collections, copy, gzip, json, os, re, sys, time, hashlib, threading, weakref
+import array, bisect, collections, copy, gzip, json, os, re, sys, time, hashlib, threading, traceback, weakref
 from datetime import datetime
 from pathlib import Path
 
@@ -713,15 +713,19 @@ _RECORD_CACHE_STATS = {"inserts": 0, "evictions": 0, "evictedBytes": 0, "budgetE
 #                                          and an append are not whole reads and are not counted here.
 _RECORD_CACHE_STATS.update({   # the release at an agent's end (release_entry, 2026-09-24):
     "released": {},            #  reason -> {"count", "bytes"}: entries a release popped (the reason today: agentEnded)
-    "releaseDeferred": 0,      #  deferrals of a release to the next pusher cycle, one per deferral, so a release refused on N
-    #                             cycles counts N and the figure is not the number owed now: its checkpoint budget refused the
-    #                             document write, or a read replaced the entry before the pop or was still pulling the file's bytes
-    #                             when the pop came (paid by checkpoint_pay_owed_releases)
+    "releaseDeferred": 0,      #  deferrals of a release to the next pusher cycle, counted once per path per cycle
+    #                             (_RELEASE_COUNTED: an agent's second end, or another attempt at the path in the same cycle, adds
+    #                             nothing), so a release refused on N cycles counts N and the figure is not the number owed now:
+    #                             its checkpoint budget refused the document write, or a read replaced the entry before the pop or
+    #                             was still pulling the file's bytes when the pop came (paid by checkpoint_pay_owed_releases)
     "releaseLost": 0,          #  releases given up, the entry left to the cache's own eviction (the count cap or the byte budget,
-    #                             or a later quiescent drop): no document could be written (the drop writes off, no checkpoint
-    #                             directory, a write that was due and failed, or the check whether a write was due raised), an
-    #                             agent end or an owed release was dropped past its queue's bound, or resolving or paying one
-    #                             raised
+    #                             or a later quiescent drop), counted once per path per cycle as releaseDeferred is: no document
+    #                             could be written (the drop writes off, no checkpoint directory, a write that was due and failed,
+    #                             or the check whether a write was due raised), an owed release was dropped past the owed table's
+    #                             bound, an agent's end was dropped past the queue's bound and then past the bound of the list the
+    #                             backend keeps those ends in (SdkBackend.note_agent_live; one kept in that list is released at the
+    #                             drain like any other end), or resolving or paying one raised. With the drop writes off, an agent
+    #                             whose two ends (its stop and its task's end) reach two cycles counts two
     "falseEnds": 0,            #  agents whose release at their end was taken (the entry popped) that entered their session's live
     #                             set again (a resumed agent, or an end reported early): note_false_end, counted by the kernel; a
     #                             release only owed, then cancelled, forgotten, given up or paid without being taken, counts none
@@ -834,11 +838,44 @@ def note_false_end():
 _RELEASE_LOST_SAID = set()        # the causes of a lost release already said on stderr: once per process each
 
 
-def note_release_lost(n=1, cause="overflow"):
+def say_release_raised(what, tb=None):
+    """A release that raised, written to stderr at every raise with the traceback (`tb`, or the exception being handled), the
+    way the pusher's other stage failures are; `what` names the session and agent, or the path. note_release_lost's summary
+    line for the cause is said once beside it. The events bound the rate: at most one line per end, owed release or
+    remembered end per cycle, and each one that raises is given up, not retried."""
+    try:
+        sys.stderr.write("record cache: %s raised; the release is given up (recordCache.releaseLost):\n%s"
+                         % (what, tb if tb is not None else traceback.format_exc()))
+    except Exception:
+        pass
+
+
+_RELEASE_COUNTED = {"releaseDeferred": set(), "releaseLost": set()}   # the paths each counter has counted in the pusher cycle in
+#                                   progress, under _JSONL_CACHE_LOCK: a path counts once per cycle in each (an agent reports two
+#                                   ends, its stop and its task's end, and a cycle's owed pay and its batch can each try the same
+#                                   path). Cleared at each cycle's start (checkpoint_cycle_begin); only the pusher's cycle releases
+
+
+def _count_release_locked(counter, key, n=1):
+    """Under _JSONL_CACHE_LOCK: add `n` to the release counter `counter` unless `key` (a path) was counted in it this cycle; a
+    key of None always counts. True when it counted."""
+    if key is not None:
+        seen = _RELEASE_COUNTED.setdefault(counter, set())
+        if key in seen:
+            return False
+        seen.add(key)
+    _RECORD_CACHE_STATS[counter] = int(_RECORD_CACHE_STATS.get(counter) or 0) + int(n)
+    return True
+
+
+def note_release_lost(n=1, cause="overflow", key=None):
     """`n` releases given up (recordCache.releaseLost), their entries left to the cache's own eviction (the count cap or the byte
-    budget) or a later quiescent drop; each cause is said once on stderr."""
+    budget) or a later quiescent drop; `key`, the path when there is one, counts once per cycle (_RELEASE_COUNTED), and nothing
+    is said for a path already counted. Each cause is said once on stderr, in a summary line; a release that raised has already
+    written its own line, with the traceback, at the road that caught it."""
     with _JSONL_CACHE_LOCK:
-        _RECORD_CACHE_STATS["releaseLost"] = int(_RECORD_CACHE_STATS.get("releaseLost") or 0) + int(n)
+        if not _count_release_locked("releaseLost", None if key is None else str(key), n):
+            return
         if cause in _RELEASE_LOST_SAID:
             return
         _RELEASE_LOST_SAID.add(cause)
@@ -846,7 +883,8 @@ def note_release_lost(n=1, cause="overflow"):
                         "checkpoint directory), and a release without its document would read the file whole at its next fold",
            "noDocument": "the file's checkpoint document could not be written, and a release without it would read the file "
                          "whole at its next fold",
-           "overflow": "a bounded queue of agent ends or owed releases passed its bound"}.get(cause, cause)
+           "overflow": "the list of agent ends the SDK backend keeps past its event queue's bound, or the table of owed "
+                       "releases, passed its bound"}.get(cause, cause)
     try:
         sys.stderr.write("record cache: a finished agent's records stay in memory until the cache evicts them (the count cap or "
                          "the byte budget) or a quiescent fold drops them: %s (counted as recordCache.releaseLost; said once)\n"
@@ -1418,6 +1456,9 @@ def checkpoint_cycle_begin(cap):
     byte knob) turns the drop write off: the drop pops as before, holding nothing."""
     with _CKPT_LOCK:
         _CKPT_CYCLE["cap"] = int(cap); _CKPT_CYCLE["spent"] = 0
+    with _JSONL_CACHE_LOCK:
+        for seen in _RELEASE_COUNTED.values():
+            seen.clear()                                  # the release counters count each path once per cycle
 
 
 def checkpoint_cycle_take(n):
@@ -1506,8 +1547,9 @@ def checkpoint_pay_owed_releases():
     (cancel_owed_release), so an agent whose start is in the drained batch keeps its entry. A start that does not cancel the
     owed release lets it pop a running agent's entry: one queued after the drain (when the release is taken, counted in
     falseEnds at the cycle that drains the start), one dropped past the queue's bound, or one whose end has left the
-    kernel's table of released ends past its bound (neither of those two counted). One release that raises is given up and counted (releaseLost); the rest are still
-    paid. Returns {path: outcome} for every release it paid: release_entry's result, or "raised"."""
+    kernel's table of released ends past its bound (neither of those two counted). One release that raises is given up and
+    counted (releaseLost), its path and traceback written to stderr at every raise; the rest are still paid. Returns
+    {path: outcome} for every release it paid: release_entry's result, or "raised"."""
     with _CKPT_LOCK:
         owed = list(_RELEASE_OWED.items())
         _RELEASE_OWED.clear()
@@ -1516,7 +1558,8 @@ def checkpoint_pay_owed_releases():
         try:
             out[key] = release_entry(key, reason)
         except Exception as e:                            # one owed release that raises must not lose the rest, nor the cycle's
-            note_release_lost(1, "a release raised %s" % type(e).__name__)   #  drain that the kernel runs after this
+            say_release_raised("the owed release of %s" % key)     #  drain that the kernel runs after this
+            note_release_lost(1, "a release raised %s" % type(e).__name__, key=key)
             out[key] = "raised"
     return out
 
@@ -2463,8 +2506,8 @@ def _drop_write(key, ent, why=None):
       document), or the write found nothing to record;
     - "wrote";
     - "failed": a write was due and failed (checkpoint_write's "cutGuard" or "writeFailed", no checkpoint directory, or a
-      False that names no cause), or the check whether one was due raised (the name of its exception is appended to the
-      list `why` when one is given);
+      False that names no cause), or the check whether one was due raised (the name of its exception, then its traceback,
+      are appended to the list `why` when one is given);
     - "absent": the write wrote nothing and the entry is gone after it (a concurrent pop took it: nothing is held);
     - "raced": the write wrote nothing and a read has replaced the entry since (the caller owes its release);
     - "refused": the budget had no room for the previous document's read and about as much written, taken in one step:
@@ -2482,7 +2525,7 @@ def _drop_write(key, ent, why=None):
             needs = any(_cursor_recordable(c.get(key), gen, base, total) for c in list(_FOLD_REG.values()))
     except Exception as e:
         if why is not None:
-            why.append(type(e).__name__)
+            why.append(type(e).__name__); why.append(traceback.format_exc())   # the name for the cause, the traceback for its line
         return "failed"
     if not needs:
         return "clean"
@@ -2525,8 +2568,9 @@ def release_entry(path, reason):
       fold holds a recordable cursor for (none, or every one at an older read of the file, even with the path dirty) has
       nothing to write and is popped without a document; its next fold reads it whole. With the drop writes off (a cycle
       cap of 0, or no checkpoint directory), a write that was due and failed, or a check whether a write is due that
-      raised, the entry stays and the release is given up, counted and said once per cause: a release without its document
-      would read the file whole at every fold that follows ("lost").
+      raised, the entry stays and the release is given up, counted once per path per cycle and said once per cause in a
+      summary line, and a check that raised also writes its own line with the path and the traceback at every raise: a
+      release without its document would read the file whole at every fold that follows ("lost").
     - The cycle's budget refusing the write defers the release to the next cycle's start ("deferred").
     - A concurrent pop that took the entry before the write or the pop leaves nothing to release: "absent", nothing counted
       and nothing owed; so does an entry weighing nothing (a restored tail) standing in its place at the pop.
@@ -2542,7 +2586,7 @@ def release_entry(path, reason):
         return "absent"
     if os.path.exists(key):
         if _ckpt_dir() is None or not checkpoint_drop_writes_on():
-            note_release_lost(1, "writesOff")
+            note_release_lost(1, "writesOff", key=key)
             return "lost"
         why = []
         res = _drop_write(key, ent, why)
@@ -2552,7 +2596,9 @@ def release_entry(path, reason):
         if res == "absent":
             return "absent"
         if res == "failed":
-            note_release_lost(1, ("the document check raised %s" % why[0]) if why else "noDocument")
+            if len(why) > 1:
+                say_release_raised("the document check of %s, on its release," % key, why[1])
+            note_release_lost(1, ("the document check raised %s" % why[0]) if why else "noDocument", key=key)
             return "lost"
     # the path's stripe, then the reader's lock, as in the quiescent drop: a read in flight inserts first, and the check fails;
     # so does a read that replaced the entry before the write ("raced" from _drop_write), which is owed below the same way
@@ -2573,17 +2619,18 @@ def release_entry(path, reason):
 
 
 def _owe_release(key, reason):
-    """Defer `key`'s release to the next cycle's start (releaseDeferred); over the owed table's bound the oldest is given up."""
-    lost = False
+    """Defer `key`'s release to the next cycle's start (releaseDeferred, once per path per cycle); over the owed table's bound
+    the oldest is given up."""
+    lost = None
     with _CKPT_LOCK:
         _RELEASE_OWED.pop(key, None); _RELEASE_OWED[key] = reason
         if len(_RELEASE_OWED) > _DROP_OWED_MAX:
-            _RELEASE_OWED.pop(next(iter(_RELEASE_OWED)), None)
-            lost = True
+            lost = next(iter(_RELEASE_OWED))
+            _RELEASE_OWED.pop(lost, None)
     with _JSONL_CACHE_LOCK:
-        _RECORD_CACHE_STATS["releaseDeferred"] = int(_RECORD_CACHE_STATS.get("releaseDeferred") or 0) + 1
-    if lost:
-        note_release_lost(1, "overflow")
+        _count_release_locked("releaseDeferred", key)
+    if lost is not None:
+        note_release_lost(1, "overflow", key=lost)
 
 
 _UNPINNED = object()

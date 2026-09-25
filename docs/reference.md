@@ -3120,17 +3120,23 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   `released` (per reason, today `agentEnded`, with `count` and `bytes`;
   `agentEnded` is reported at zero until the first release, so the block
   carries every key from a new kernel's first read),
-  `releaseDeferred` (deferrals of a release to the next cycle, one per
-  deferral, so a release refused on N cycles counts N and the figure is not
-  the number owed now: its checkpoint budget refused the write, or a read
-  replaced the entry before the drop or was still reading the file when the
-  drop came),
+  `releaseDeferred` (deferrals of a release to the next cycle, counted once
+  per path per cycle, so an agent's second end in the cycle adds nothing, a
+  release refused on N cycles counts N, and the figure is not the number owed
+  now: its checkpoint budget refused the write, or a read replaced the entry
+  before the drop or was still reading the file when the drop came),
   `releaseLost` (releases given up, the entry left to the cache's own
-  eviction, the count cap or the byte budget, or a later quiescent drop: no
-  document could be written, as with `ROMP_CKPT_CONVERGE_MS=0` or
-  `ROMP_CKPT_CONVERGE_MB=0` or when the check whether a write was due
-  raised, an agent end or an owed release was dropped past its bound, or
-  resolving or paying one raised; said once on stderr per cause),
+  eviction, the count cap or the byte budget, or a later quiescent drop,
+  counted once per path per cycle: no document could be written, as with
+  `ROMP_CKPT_CONVERGE_MS=0` or `ROMP_CKPT_CONVERGE_MB=0` or when the check
+  whether a write was due raised; an owed release was dropped past its
+  bound; an agent's end was dropped past the queue's bound and then past the
+  bound of the ends the backend keeps (an end kept is released at the drain
+  like any other); or resolving or paying one raised. With the drop writes
+  off, an agent whose two ends, its stop and its task's end, reach two cycles
+  counts two. Each cause is said once on stderr in a summary line, and a
+  release that raises also writes its own line with the traceback at every
+  raise),
   `falseEnds` (agents whose release at their end was taken, the entry
   popped, that entered the live set again; a release that was only owed,
   then cancelled, forgotten, given up or paid without being taken, counts
