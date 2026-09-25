@@ -15550,7 +15550,13 @@ def _begin_checkpoint_cycle():
     deferred are paid with this cycle's room, oldest first, no fold over their files needed; then the releases at an agent's
     end, against the same room (_release_ended_agents: the cycle's live-set events drained, the owed release of an agent that
     started again cancelled, the owed releases paid, the ends an earlier cycle saw while nothing was held released again,
-    then the batch's ends). The pass's off switch (ROMP_CKPT_CONVERGE_MS=0)
+    then the batch's ends).
+    The order carries a property: each cycle pays what an earlier cycle deferred before any end that is new to it, so the
+    owed quiescent drops and the owed releases are each paid before the batch's ends. They take their writes from one budget,
+    each in one step (em.checkpoint_cycle_take), so whichever runs first gets the room when only one document fits. An owed
+    drop's only other payer is a later fold over its file, which may never come; with the new ends first, a steady stream
+    of them could defer an owed drop or an owed release at every cycle and leave its records resident. The pass's off
+    switch (ROMP_CKPT_CONVERGE_MS=0)
     covers the drop write: the cycle begins with no budget, and the drop pops as before T362 (with the drop writes off, a
     release at an agent's end keeps the entry of a file still on disk instead of popping it unwritten)."""
     em.checkpoint_cycle_begin(CKPT_CONVERGE_BYTES if CKPT_CONVERGE_MS > 0 else 0)

@@ -783,6 +783,59 @@ class AgentEnd(unittest.TestCase):
         km._begin_checkpoint_cycle()
         self.assertEqual(self._stat("falseEnds"), 1, "the agent starting after its owed release was paid is a false end")
 
+    # ---- the cycle start's order (PR 913 round 1, group D) ----
+    # The owed quiescent drops and the owed releases take their writes from the same budget as the batch's new ends, each
+    # in one step, so whichever runs first gets the room when one document fits: each owed kind is paid before a new end.
+
+    def _est(self, path):
+        """_drop_write's estimate for a file with no document yet: half the room its write takes from the cycle's budget."""
+        self.assertFalse(em._ckpt_file(path).exists(), "precondition: no document yet for %s" % os.path.basename(path))
+        return max(4096, os.path.getsize(path) // 8)
+
+    def test_an_owed_drop_is_paid_before_a_new_end_when_one_document_fits(self):
+        """Red when _begin_checkpoint_cycle pays the ends (_release_ended_agents) before the owed drops: the release takes the
+        room and the owed drop is deferred again."""
+        self._fold_while_running(WF_AID, self.wf_agent)
+        size = self._fold_while_running(AID, self.agent)
+        km._begin_checkpoint_cycle()                                     # drains the two starts
+        saved = em._DROP_AFTER_QUIESCENT_S
+        em._DROP_AFTER_QUIESCENT_S = 0                                   # every file is quiescent: a fold that steps drops
+        self.addCleanup(setattr, em, "_DROP_AFTER_QUIESCENT_S", saved)
+        em.checkpoint_cycle_begin(1)                                     # no room: the workflow agent's drop is owed
+        _append(self.wf_agent, _agent_lines(WF_AID, 45, 2))
+        km._agent_launch_ids(self.wf_agent)                              # a quiescent fold that steps the appended records
+        wf_size = os.path.getsize(self.wf_agent)
+        self.assertEqual((self.wf_agent in em._DROP_OWED, self._weight(self.wf_agent)), (True, wf_size),
+                         "precondition: the drop is owed, the entry whole")
+        self._stop(AID)                                                  # an end new to the next cycle
+        km.CKPT_CONVERGE_BYTES = max(2 * self._est(self.wf_agent), 2 * self._est(self.agent)) + 64   # one document fits
+        w0 = em.checkpoint_stats()["converge"]["dropWrites"]
+        km._begin_checkpoint_cycle()
+        self.assertIsNone(self._weight(self.wf_agent), "the owed drop is paid (held: %s of %d bytes)"
+                          % (self._weight(self.wf_agent), wf_size))
+        self.assertNotIn(self.wf_agent, em._DROP_OWED, "and no longer owed")
+        self.assertEqual(em.checkpoint_stats()["converge"]["dropWrites"], w0 + 1, "its document written")
+        self.assertEqual(self._weight(self.agent), size, "the new end's release is deferred: the entry whole")
+        self.assertEqual((self._stat("released"), self._stat("releaseDeferred")), (NOTHING_RELEASED, 1))
+
+    def test_an_owed_release_is_paid_before_a_new_end_when_one_document_fits(self):
+        """Red when _release_ended_agents pays the owed releases after the batch's ends: the new end takes the room and the
+        owed release is deferred again."""
+        size = self._fold_while_running(AID, self.agent)
+        wf_size = self._fold_while_running(WF_AID, self.wf_agent)
+        km._begin_checkpoint_cycle()                                     # drains the two starts
+        km.CKPT_CONVERGE_BYTES = 1
+        self._stop(AID)
+        km._begin_checkpoint_cycle()                                     # no room: the release is owed
+        self.assertEqual(em.owed_release_paths(), {self.agent}, "precondition: owed")
+        self._stop(WF_AID)                                               # an end new to the next cycle
+        km.CKPT_CONVERGE_BYTES = max(2 * self._est(self.agent), 2 * self._est(self.wf_agent)) + 64   # one document fits
+        km._begin_checkpoint_cycle()
+        self.assertIsNone(self._weight(self.agent), "the owed release is paid")
+        self.assertEqual(self._weight(self.wf_agent), wf_size, "the new end's release is deferred: the entry whole")
+        self.assertEqual(self._stat("released"), {"agentEnded": {"count": 1, "bytes": size}})
+        self.assertEqual((self._stat("releaseDeferred"), em.owed_release_paths()), (2, {self.wf_agent}))
+
     def test_an_owed_release_is_cancelled_when_the_agent_starts_again(self):
         size = self._fold_while_running(AID, self.agent)
         self._stop(AID)

@@ -1891,9 +1891,11 @@ fold cold for want of a state counts for the pass, which heals it, and not
 here, where it would only be written cold again), before the entry is popped,
 and on a hit or a restore at the witness the entry stays as it always has. The
 write is charged to the pusher cycle's byte budget, which the kernel begins at
-each cycle's start, where the drops an earlier cycle owed and then the releases
-at an agent's end charge it before the builds' drops do, and the pass shares
-near its end; over the budget the write
+each cycle's start, where the drops an earlier cycle owed, then the releases an
+earlier cycle owed, then the releases at the ends new to the cycle charge it
+before the builds' drops do (whichever runs first gets the room when one
+document fits, so what an earlier cycle deferred is paid before any new end),
+and the pass shares near its end; over the budget the write
 and the drop wait with the entry held (`converge.dropDeferred`), the drop then
 owed and paid at the next cycle's start with the room that cycle has, oldest
 first, or by the next fold over the file, whichever comes first. A document
