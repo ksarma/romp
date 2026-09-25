@@ -331,30 +331,39 @@ test('the install guide, the hook\'s README row and the ledger entry say a name 
   // the reader constructs is the realm's (an assignment reds as a binding does, so `Set = ...`, which would replace the built-in where it
   // stands, reds here too; a replacement made through globalThis or a property descriptor is a realm road, under THE REALM's precondition
   // below). The parser is node's own (`node --check`, which runs nothing, in a separate process), since a regular expression over the text
-  // cannot tell code from a comment or see a destructured or escaped binding; the census's witnesses show that it reads those. What this pin
+  // cannot tell code from a comment or see a destructured or escaped binding; the census's witnesses show that it reads those. This pin's
+  // own code resolves no name the file can bind (the forty-eighth commit, after the reviewer's verifier found Set bound at module level
+  // green beside a String rebound there to misdecode the escape it was spelled with, and beside a spawnSync rebound in this test to cut
+  // that line from the text the parser reads): it reaches process, String, Math and parseInt through eval called indirectly, which reads
+  // the global scope and which module code can neither bind nor assign, and fs, url, child_process and assert/strict through
+  // process.getBuiltinModule; DECLARATION spells READER's text out on its own line, since a block opened around this pin could bind READER
+  // again (a change to one copy and not the other reds this pin or THE READER); and it declares every other name it reads. What this pin
   // reads is the file import.meta.url names when the test runs, not the text node compiled; THE REALM's limit below states what that leaves
   // out of scope
-  const SOURCE = fs.readFileSync(fileURLToPath(import.meta.url), 'utf8');
-  const DECLARATION = `const signalNamesIn = ${READER};`;
+  const REALM = (0, eval)('({ process, String, Math, parseInt })');
+  const builtin = (specifier) => REALM.process.getBuiltinModule(specifier);
+  const ASSERT = builtin('node:assert/strict');
+  const SOURCE = builtin('node:fs').readFileSync(builtin('node:url').fileURLToPath(import.meta.url), 'utf8');
+  const DECLARATION = 'const signalNamesIn = (text) => [...new Set([...(text.match(SIGNAL_WORD) || []), ...(text.match(SIGNAL_UPPER) || [])])];';
   const lines = SOURCE.split('\n');
-  assert.equal(lines.filter((l) => l === DECLARATION).length, 1, 'THE SOURCE: the file holds the reader\'s declaration, `const signalNamesIn = ` and READER, as one whole line; a declaration rewritten around the same text (a pattern or Set taken as a wrapper\'s parameter, a text THE READER still reads as READER) reds here');
-  const parse = (text) => spawnSync(process.execPath, ['--input-type=module', '--check', '-'], { input: text, encoding: 'utf8', env: {}, timeout: 60000 });
+  ASSERT.equal(lines.filter((l) => l === DECLARATION).length, 1, 'THE SOURCE: the file holds the reader\'s declaration, `const signalNamesIn = ` and READER, as one whole line; a declaration rewritten around the same text (a pattern or Set taken as a wrapper\'s parameter, a text THE READER still reads as READER) reds here');
+  const parse = (text) => builtin('node:child_process').spawnSync(REALM.process.execPath, ['--input-type=module', '--check', '-'], { input: text, encoding: 'utf8', env: {}, timeout: 60000 });
   const asEval = (text, name) => text.replace(/(?:[$\p{ID_Continue}\u200c\u200d]|\\u[0-9A-Fa-f]{4}|\\u\{[0-9A-Fa-f]+\})+/gu,
-    (id) => (id.replace(/\\u(?:([0-9A-Fa-f]{4})|\{([0-9A-Fa-f]+)\})/g, (_, a, b) => String.fromCodePoint(Math.min(parseInt(a || b, 16), 0x10ffff))) === name ? 'eval' : id));
+    (id) => (id.replace(/\\u(?:([0-9A-Fa-f]{4})|\{([0-9A-Fa-f]+)\})/g, (_, a, b) => REALM.String.fromCodePoint(REALM.Math.min(REALM.parseInt(a || b, 16), 0x10ffff))) === name ? 'eval' : id));
   for (const w of ['const f = () => () => { { var S\\u0065t; } };', 'const { a: [, ...Set] } = { a: [] };', "import { x as Set } from 'y';", 'class \\u{53}et {}', 'Set = 1;']) {
-    assert.match(parse(asEval(w, 'Set')).stderr, /SyntaxError/, `the census reads ${w} as binding or assigning Set`);
+    ASSERT.match(parse(asEval(w, 'Set')).stderr, /SyntaxError/, `the census reads ${w} as binding or assigning Set`);
   }
   const plain = parse(asEval("new Set([1]); Set.prototype.add; ({ Set: 1 }).Set; (x) => Set; /* Set = 1 */ 'var Set';", 'Set'));
-  assert.equal(plain.status, 0, `the census reads a construction, a property, a key, a reference, a comment and a string as neither binding nor assigning Set: ${plain.stderr}`);
+  ASSERT.equal(plain.status, 0, `the census reads a construction, a property, a key, a reference, a comment and a string as neither binding nor assigning Set: ${plain.stderr}`);
   for (const [name, declares] of [['signalNamesIn', (l) => l === DECLARATION], ['SIGNAL_WORD', (l) => l.startsWith('const SIGNAL_WORD = ')], ['SIGNAL_UPPER', (l) => l.startsWith('const SIGNAL_UPPER = ')]]) {
-    assert.equal(lines.filter(declares).length, 1, `THE SOURCE: one line of the file declares ${name}`);
+    ASSERT.equal(lines.filter(declares).length, 1, `THE SOURCE: one line of the file declares ${name}`);
     const elsewhere = parse(asEval(lines.map((l) => (declares(l) ? '' : l)).join('\n'), name));
-    assert.equal(elsewhere.status, 0, `THE SOURCE: no line but its declaration binds or assigns ${name}, at module level or in any function or block, so every reading of the name resolves that declaration: ${elsewhere.stderr}`);
+    ASSERT.equal(elsewhere.status, 0, `THE SOURCE: no line but its declaration binds or assigns ${name}, at module level or in any function or block, so every reading of the name resolves that declaration: ${elsewhere.stderr}`);
     const again = parse(`${SOURCE}\nlet ${name};`);
-    assert.ok(again.status === 1 && again.stderr.includes(`SyntaxError: Identifier '${name}' has already been declared`), `THE SOURCE: ${name}'s declaration line binds it at module level, and is not text in a comment or a string nor a declaration inside a block or a function: ${again.status} ${again.stderr}`);
+    ASSERT.ok(again.status === 1 && again.stderr.includes(`SyntaxError: Identifier '${name}' has already been declared`), `THE SOURCE: ${name}'s declaration line binds it at module level, and is not text in a comment or a string nor a declaration inside a block or a function: ${again.status} ${again.stderr}`);
   }
   const bound = parse(asEval(SOURCE, 'Set'));
-  assert.equal(bound.status, 0, `THE SOURCE: the file binds and assigns Set nowhere, at module level or in any function or block, so the Set signalNamesIn constructs is the realm's; Set bound at module level, which THE READER cannot see, reds here: ${bound.stderr}`);
+  ASSERT.equal(bound.status, 0, `THE SOURCE: the file binds and assigns Set nowhere, at module level or in any function or block, so the Set signalNamesIn constructs is the realm's; Set bound at module level, which THE READER cannot see, reds here: ${bound.stderr}`);
   // the witnesses of the two patterns' reach (the thirty-ninth commit): every name in each inflected form, bare and with SIG, as spelled and in
   // lower case, is read by SIGNAL_WORD, and every name glued to letters on either side in upper case by SIGNAL_UPPER, so a mutation that drops
   // an ending, the doubled letter, the dropped e or the glued reading reds here even while the committed row holds no such word
@@ -387,22 +396,22 @@ test('the install guide, the hook\'s README row and the ledger entry say a name 
   // Array.prototype.includes; the premise pin reads each pattern's source through the RegExp source getter; the flag assertion reads the
   // RegExp unicode and unicodeSets getters; THE READER reads signalNamesIn's text through Function.prototype.call and
   // Function.prototype.toString, and the flags through the RegExp flags getter and the eight flag getters it calls (hasIndices, global,
-  // ignoreCase, multiline, dotAll, unicode, unicodeSets, sticky); and THE SOURCE finds this file with url.fileURLToPath over the module's
+  // ignoreCase, multiline, dotAll, unicode, unicodeSets, sticky); and THE SOURCE reaches process, String, Math and parseInt through the
+  // global eval, called indirectly, and the modules node:fs, node:url, node:child_process and node:assert/strict through
+  // process.getBuiltinModule, checks with assert/strict's equal, match and ok, finds this file with url.fileURLToPath over the module's
   // import.meta.url, reads it through fs.readFileSync, cuts it with String.prototype.split, String.prototype.startsWith and
   // Array.prototype.filter, map and join (and the Array [Symbol.species] getter filter and map read), rewrites it with
   // String.prototype.replace, RegExp.prototype[Symbol.replace], RegExp.prototype.exec, the RegExp global and unicode getters, parseInt,
   // Math.min and String.fromCodePoint, walks its tables with Array.prototype[Symbol.iterator] and the array iterator's next, reads the
   // parser's answer with String.prototype.includes, and hands each text through child_process.spawnSync to node's parser at
   // process.execPath, a separate process whose realm is not this one. Out of scope, as one limit, the residual of that precondition: a test
-  // that rewrites what a reading is handed (the row, or rest cut from it, or what THE SOURCE reads: the file, the path it takes from
-  // import.meta.url, or the parser's answer), that rebinds a name THE SOURCE's own code resolves outside it (fs, fileURLToPath, spawnSync,
-  // assert, process, String, Math, parseInt), or that replaces a built-in or an accessor (where it stands, or for a pattern alone by an own
-  // property, a subclass or a proxy), before, between or after the readings; each changes the test itself, as an edit to an assertion's
-  // expected side does. THE SOURCE reads the file import.meta.url names when the test runs, not the text node compiled, so a line of this
-  // file that writes the file or points import.meta.url at a copy is in that limit; a name THE SOURCE's own code resolves is there because
-  // a pin of that name would run through it. A name the reader resolves, rebound in this file, is not in that limit (a pattern or Set taken
-  // as a wrapper's parameter around signalNamesIn's text, Set bound at module level, signalNamesIn or a pattern bound again in any scope):
-  // it is text in the file THE SOURCE reads, and THE SOURCE pin holds that text there
+  // that rewrites what a reading is handed (the row, or rest cut from it, or what THE SOURCE reads when the test runs, which need not be the
+  // text node compiled: the file, the path it takes from import.meta.url, or the parser's answer), or that replaces a built-in or an
+  // accessor (where it stands, by a global binding a script run through node:vm makes, or for a pattern alone by an own property, a
+  // subclass or a proxy), before, between or after the readings; each changes the test itself, as an edit to an assertion's expected side
+  // does. A name the reader resolves, rebound in this file, is not in that limit (a pattern or Set taken as a wrapper's parameter around
+  // signalNamesIn's text, Set bound at module level, signalNamesIn or a pattern bound again in any scope): it is text in the file THE SOURCE
+  // reads, and THE SOURCE pin holds that text there
   assert.ok(!SIGNAL_WORD.unicode && !SIGNAL_WORD.unicodeSets, 'the boundary witness runs every UTF-16 code unit, the units SIGNAL_WORD reads while it has no u or v flag; with either flag it reads a character above U+FFFF as one unit, and the witness must run those');
   // THE PREMISE the witnesses rely on for every form but the lower-case name (the forty-second commit, after the reviewer's verifier found
   // the forty-first commit's witnesses green under three mutants that each leave a README word unread: a SIG spelling unread after U+00A0, an
