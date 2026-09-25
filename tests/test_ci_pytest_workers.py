@@ -37,19 +37,37 @@ def python_job_steps(path=WF):
     return steps
 
 
+# pytest's short flags that take a value, besides xdist's -n, as pytest 9.1.1's parser lists them with pytest-xdist 3.8.0
+# and pytest-timeout loaded: in a short-flag cluster such a letter takes the rest of the token as its value. worker_counts
+# reads every other letter as an argument-less flag, the side that reads a count rather than missing one (pytest refuses a
+# letter it does not know).
+VALUE_FLAGS = frozenset("Wckmopr")
+
+
 def worker_counts(cmd):
-    """Every worker count the command's tokens set, in order, as text: the token after `-n` or `--numprocesses`, the
-    tail of a `-nN` token, the value of `--numprocesses=N`. Other spellings (a short-flag cluster such as `-qn2`) are
-    not read, so they give no count."""
+    """Every worker count the command's tokens set, in order, as text, read the way pytest's parser reads them on Python
+    3.11 and later: the token after `--numprocesses`, the value of `--numprocesses=N`, and in a token with one leading
+    dash, its letters in turn: a letter in VALUE_FLAGS ends the read (the rest is that flag's value), `n` takes the rest
+    of the token with one leading `=` dropped (`-n2`, `-n=2` and `-qn3` read 2, 2 and 3) or the next token when nothing
+    follows it, and any other letter passes to the next. Only those spellings are read: a count set through addopts (the
+    step's PYTEST_ADDOPTS, an ini file, or `-o addopts=...` on the line) or by xdist's --tx specs is not seen, nor an
+    abbreviated long option, which pytest refuses (it reads `--numproc=2` as an unrecognized argument)."""
     toks = shlex.split(cmd)
     out = []
     for i, t in enumerate(toks):
-        if t in ("-n", "--numprocesses"):
-            out.append(toks[i + 1] if i + 1 < len(toks) else "")
+        nxt = toks[i + 1] if i + 1 < len(toks) else ""
+        if t == "--numprocesses":
+            out.append(nxt)
         elif t.startswith("--numprocesses="):
             out.append(t.split("=", 1)[1])
-        elif t.startswith("-n") and not t.startswith("--") and len(t) > 2:
-            out.append(t[2:])
+        elif t.startswith("-") and not t.startswith("--"):
+            for j, c in enumerate(t[1:], 1):
+                if c in VALUE_FLAGS:
+                    break
+                if c == "n":
+                    rest = t[j + 1:]
+                    out.append((rest[1:] if rest.startswith("=") else rest) if rest else nxt)
+                    break
     return out
 
 
@@ -86,6 +104,39 @@ class PythonJobRunsTwoWorkers(unittest.TestCase):
         installers = [n for n, run in before if run and "pytest-xdist" in requirement_names(run)]
         self.assertTrue(installers, "no step before Run pytest has a `python -m pip install` run line naming pytest-xdist, and "
                                     "without it pytest refuses -n: %r" % (before,))
+
+
+class WorkerCountsReadsWhatPytestReads(unittest.TestCase):
+    """worker_counts against pytest's own reading of each spelling: pytest 9.1.1 with pytest-xdist 3.8.0 read each of these
+    on Python 3.11 to 3.14 as the counts below (on 3.10 its parser refuses a cluster that opens with an argument-less flag
+    such as -q, so each cluster here that sets a count is a line 3.10 refuses outright)."""
+
+    def read(self, spelling):
+        return worker_counts("python -m pytest -q %s --durations=10" % spelling)
+
+    def test_the_plain_spellings_read_their_count(self):
+        for spelling in ("-n 2", "-n2", "--numprocesses 2", "--numprocesses=2"):
+            with self.subTest(spelling=spelling):
+                self.assertEqual(self.read(spelling), ["2"], "pytest reads %s as two workers" % spelling)
+
+    def test_one_equals_sign_after_n_is_dropped(self):
+        self.assertEqual(self.read("-n=2"), ["2"], "pytest reads -n=2 as two workers; a pin reading it as '=2' goes red on a "
+                                                   "line that runs two")
+        self.assertEqual(self.read("-n==2"), ["=2"], "pytest drops one = and no more, and refuses the '=2' left")
+
+    def test_a_trailing_n_in_a_short_flag_cluster_is_a_count(self):
+        for spelling, counts in (("-qn3", ["3"]), ("-n 2 -qn3", ["2", "3"]), ("-qn 3", ["3"]), ("-qn=3", ["3"]),
+                                 ("-qvn=2", ["2"])):
+            with self.subTest(spelling=spelling):
+                self.assertEqual(self.read(spelling), counts, "%s sets the counts %r in pytest's parser, which keeps the last: "
+                                                              "a cluster's trailing n sets a count, and a second count beside "
+                                                              "-n 2 must not pass unseen" % (spelling, counts))
+
+    def test_a_flag_that_takes_a_value_takes_the_rest_of_its_cluster(self):
+        for spelling in ("-rfEn3", "-qrn3", "-kn3", "-qmn3"):
+            with self.subTest(spelling=spelling):
+                self.assertEqual(self.read(spelling), [], "pytest reads the n in %s as part of the value of the flag before "
+                                                          "it, not as a count" % spelling)
 
 
 if __name__ == "__main__":
