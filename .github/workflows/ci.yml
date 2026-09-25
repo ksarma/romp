@@ -98,7 +98,8 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
       - name: Install pytest
-        run: python -m pip install --upgrade pip pytest pytest-timeout
+        # pytest-xdist runs the Run pytest step's two workers (-n 2; the reason is on that step).
+        run: python -m pip install --upgrade pip pytest pytest-timeout pytest-xdist
       - name: Install cryptography
         # cryptography: the kernel's Web Push soft dependency (plans/ios-app.md). Installed here
         # so tests/test_kernel_webpush.py's crypto layers RUN in CI instead of skipping — the
@@ -117,14 +118,27 @@ jobs:
           PYTHON_GIL: ${{ endsWith(matrix.python-version, 't') && '0' || '' }}
         # T230b: a hung test used to be 15 minutes of silence (five jobs since 2026-08-27, a
         # process-global time.sleep patch consumed by a foreign thread). pytest-timeout turns the
-        # NEXT stall into a named failure with every thread's stack: thread method = guaranteed
-        # termination (the process ends; the dump's bottom frame is the blocked primitive, and the
-        # hung test is the lowest tests/ frame above the _pytest/runner frames) - the signal
-        # method cannot interrupt a C call. 600 s strictly exceeds the slowest legitimate test
-        # (~122 s, leak-scaled) and the 300 s child timeout in test_session_move_live. Its timer
-        # waits on an Event, so it can never itself consume a patched sleep. --durations names the
-        # slowest tests on every run so a creeping one is visible before it stalls.
-        run: python -m pytest -q --durations=10 --timeout=600 --timeout-method=thread
+        # NEXT stall into a failure that names the test: thread method = guaranteed termination
+        # (the process running the test ends) - the signal method cannot interrupt a C call. 600 s
+        # strictly exceeds the slowest legitimate test (~122 s, leak-scaled) and the 300 s child
+        # timeout in test_session_move_live. Its timer waits on an Event, so it can never itself
+        # consume a patched sleep. --durations names the slowest tests on every run so a creeping
+        # one is visible before it stalls.
+        # Two workers (-n 2, 2026-09-25): serially the cells had reached the 25-minute cap they
+        # had then (main's run 35890814789: the 3.14t cell at 24 min 35 s). Measured on 2026-09-22
+        # with Python 3.10 at this step's other flags on a four-CPU, 16 GB budget (the documented
+        # size of GitHub's Linux runner for a public repository), the suite took 1437 s serially
+        # and 739 s with two workers, whose run's cgroup memory peaked at 10.9 GB (page cache
+        # included); three workers peaked at 15.8 GB of the runner's 16. The macOS cells run the
+        # same two workers unmeasured, on runners GitHub documents at 3 CPUs and 7 GB for a public
+        # repository (arm64).
+        # Under the workers a timeout ends the worker process running the hung test: xdist fails
+        # that test by name ("worker 'gw0' crashed while running '<test id>'") and the other tests
+        # run on. The thread dump pytest-timeout writes goes to that worker's stdout, which xdist's
+        # transport (execnet) points at /dev/null, so the log names the test but carries no stacks;
+        # run the named test alone (without -n) and the dump prints, its bottom frame the blocked
+        # primitive.
+        run: python -m pytest -q -n 2 --durations=10 --timeout=600 --timeout-method=thread
 
   shell:
     name: Shell (bats, ${{ matrix.os }})
