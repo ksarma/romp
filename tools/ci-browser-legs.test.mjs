@@ -496,25 +496,71 @@ test('the step is bounded twice: its own timeout-minutes fits the margin under t
   assert.ok(ms < bound * 60 * 1000, 'node\'s --test-timeout (' + ms + ' ms) is under the step\'s bound (' + bound + ' min = ' + bound * 60 * 1000 + ' ms), so a hung file fails by name before the step is cut');
 });
 
-/** The install pin: over the steps before the step named Test, as steps() splits the job, each step's code lines (its
- *  lines but its # lines), read for three patterns, each after a line's leading whitespace: run: npx playwright install
- *  and then a word boundary (so run: npx playwright install-deps is read too), path: ~/.cache/ms-playwright with only
- *  whitespace after it, and key: playwright-. A spelling outside them is not read: a run: on the step's opening `- ` line,
- *  as an unnamed step spells it, a run: whose command is on the next line, another launcher, another key. The three
- *  patterns are those of the gate-adopt pin in tools/markdown-viewer-plan-gate-adopt.test.mjs (its installBefore and
- *  cacheBefore), but the two pins read different regions and hold different directions: the gate-adopt pin reads the
- *  region its npmTestJob docstring states, and this pin holds that pin's CI_SKIP direction alone. Under the plan's
- *  CI_RUN sentence the gate-adopt pin requires an install before the Test step, and this pin refuses any run: line there
- *  that it reads, whatever engines it names. */
-test('no step before the Test step has a Playwright install or cache, as the install pin reads them (its docstring)', () => {
-  const all = steps(extensionJob());
+/** The install pin: over the steps before the step named Test, as steps() splits the job, it reads a Playwright install
+ *  by the union of two reads, so a spelling either reads is read. The first is each step's run field as steps() reads it
+ *  (an eight-space `run:` line, or the step's `- run:` opener, its value trimmed) when it begins npx playwright install and
+ *  then a word boundary. The second is those steps' code lines (their lines but their # lines, joined) read for run: npx
+ *  playwright install and a word boundary after a line's leading whitespace, so a run: nested under with: and a step whose
+ *  fields sit at ten spaces are read too. By the word boundary, npx playwright install-deps is read as well. It reads a
+ *  Playwright cache from the same code lines, after a line's leading whitespace: path: ~/.cache/ms-playwright with only
+ *  whitespace after it, and key: playwright-. A spelling outside them is not read: a run: whose command is on the next
+ *  line, another launcher, another key. The code-line patterns are those of the gate-adopt pin in
+ *  tools/markdown-viewer-plan-gate-adopt.test.mjs (its installBefore and cacheBefore), but the two pins read different
+ *  regions (the gate-adopt pin reads the region its npmTestJob docstring states), differ on the run fields steps() reads
+ *  where the code-line pattern does not (the step's `- run:` opener, and more than one space after run:), which this pin
+ *  reads and the gate-adopt pin does not, and hold different directions: this pin holds that pin's CI_SKIP direction
+ *  alone. Under the plan's CI_RUN sentence the gate-adopt pin requires an install before the Test step, and this pin
+ *  refuses any install it reads there, whatever engines it names. Returns the Test step's place and what was read. Its
+ *  table: INSTALL_ROWS, run by the test after it. */
+function installReads(job) {
+  const all = steps(job);
   const testAt = all.findIndex((s) => s.name === TEST_STEP);
+  const region = testAt < 0 ? [] : all.slice(0, testAt);
+  const before = region.flatMap((s) => s.code).join('\n');
+  const install = [
+    ...region.filter((s) => /^npx playwright install\b/.test(s.fields.run || '')).map((s) => 'the run field ' + JSON.stringify(s.fields.run)),
+    ...[...before.matchAll(/^\s+run: npx playwright install\b.*$/gm)].map((m) => 'the code line ' + JSON.stringify(m[0].trim())),
+  ];
+  const cache = [...before.matchAll(/^\s+path: ~\/\.cache\/ms-playwright\s*$|^\s+key: playwright-.*$/gm)].map((m) => 'the code line ' + JSON.stringify(m[0].trim()));
+  return { testAt, install, cache };
+}
+/** The install pin's table: each row a job's lines, a step named Test among them, and whether the install pin reads an
+ *  install and a cache before that step, one spelling inside and one outside each family its docstring names. */
+const TEST_LINES = ['      - name: Test', '        run: npm test'];
+const INSTALL_ROWS = [
+  ['a named step\'s eight-space run: line, read by both reads', ['      - name: Install', '        run: npx playwright install chromium', ...TEST_LINES], true, false],
+  ['an unnamed step\'s "- run:" opener, read through steps()', ['      - run: npx playwright install chromium', ...TEST_LINES], true, false],
+  ['a "- run:" opener with a name: line after it, read through steps()', ['      - run: npx playwright install chromium', '        name: Install', ...TEST_LINES], true, false],
+  ['two spaces after run:, read through steps()', ['      - name: Install', '        run:  npx playwright install chromium', ...TEST_LINES], true, false],
+  ['install-deps, read by the word boundary after install', ['      - name: Deps', '        run: npx playwright install-deps', ...TEST_LINES], true, false],
+  ['a longer word than install, not read', ['      - name: Install', '        run: npx playwright installer', ...TEST_LINES], false, false],
+  ['a step whose fields sit at ten spaces, read by the code-line pattern', ['      -   name: Install', '          run: npx playwright install chromium', ...TEST_LINES], true, false],
+  ['a run: nested under with:, read by the code-line pattern', ['      - uses: actions/x@v1', '        with:', '          run: npx playwright install chromium', ...TEST_LINES], true, false],
+  ['a run: whose command is on the next line, not read', ['      - name: Install', '        run: |', '          npx playwright install chromium', ...TEST_LINES], false, false],
+  ['another launcher, not read', ['      - name: Install', '        run: pnpm exec playwright install chromium', ...TEST_LINES], false, false],
+  ['a # line naming the install, not read (a # line is dropped, and the pattern reads run: after the leading whitespace alone)', ['      - name: A', '        # run: npx playwright install chromium', '        run: echo', ...TEST_LINES], false, false],
+  ['an install after the Test step, not read (the steps before it alone)', [...TEST_LINES, '      - name: Install', '        run: npx playwright install chromium'], false, false],
+  ['the cache path, read', ['      - uses: actions/cache@v4', '        with:', '          path: ~/.cache/ms-playwright', ...TEST_LINES], false, true],
+  ['a longer cache path, not read', ['      - uses: actions/cache@v4', '        with:', '          path: ~/.cache/ms-playwright/chromium', ...TEST_LINES], false, false],
+  ['the cache key, read', ['      - uses: actions/cache@v4', '        with:', '          key: playwright-chromium-x', ...TEST_LINES], false, true],
+  ['another key, not read', ['      - uses: actions/cache@v4', '        with:', '          key: pw-chromium-x', ...TEST_LINES], false, false],
+];
+test('the install pin\'s table: each row read or not read as the install pin\'s docstring states', () => {
+  const wrong = [];
+  for (const [what, lines, install, cache] of INSTALL_ROWS) {
+    const r = installReads({ lines });
+    if ((r.install.length > 0) !== install || (r.cache.length > 0) !== cache) wrong.push(what + ': the install pin over ' + JSON.stringify(lines) + ' reads the install ' + JSON.stringify(r.install) + ' and the cache ' + JSON.stringify(r.cache) + ', not ' + (install ? 'an install' : 'no install') + ' and ' + (cache ? 'a cache' : 'no cache'));
+  }
+  assert.deepEqual(wrong, [], 'each row of the install pin\'s table is read or not read as its docstring states; the rows read otherwise: ' + JSON.stringify(wrong));
+});
+test('no step before the Test step has a Playwright install or cache, as the install pin reads them (its docstring)', () => {
+  const job = extensionJob();
+  const { testAt, install, cache } = installReads(job);
   assert.ok(testAt > 0, 'the Test step is not the first step');
-  const before = all.slice(0, testAt).flatMap((s) => s.code).join('\n');
-  assert.ok(!/^\s+run: npx playwright install\b/m.test(before), 'no Playwright install before the Test step, as the install pin reads it (its docstring)');
-  assert.ok(!/^\s+path: ~\/\.cache\/ms-playwright\s*$/m.test(before) && !/^\s+key: playwright-/m.test(before), 'no Playwright cache before the Test step, as the install pin reads it (its docstring)');
-  const install = all.find((s) => s.name === INSTALL);
-  assert.match(install.fields.run || '', /^npx playwright install chromium$/, 'the install step installs Chromium alone (the roster rule\'s Chromium, the one engine a rostered leg launches, rests on this)');
+  assert.deepEqual(install, [], 'no Playwright install before the Test step, as the install pin reads it (its docstring): ' + JSON.stringify(install));
+  assert.deepEqual(cache, [], 'no Playwright cache before the Test step, as the install pin reads it (its docstring): ' + JSON.stringify(cache));
+  const installStep = steps(job).find((s) => s.name === INSTALL);
+  assert.match(installStep.fields.run || '', /^npx playwright install chromium$/, 'the install step installs Chromium alone (the roster rule\'s Chromium, the one engine a rostered leg launches, rests on this)');
 });
 
 // ── the roster and the tree ───────────────────────────────────────────────────────────────────────────────
