@@ -3102,11 +3102,13 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   agent whose row was minted from a progress frame that carried no type,
   left out because resolving an id no type vouches for walks every sibling
   session's subagents tree on a miss (on the largest project directory
-  measured, on 2026-09-25: 101 to 134 ms at the first walk, thirteen runs,
-  and a median of 84 to 89 ms at each later cycle's walk once the jobs pass
-  drops the sibling trees no alive session owns, three runs of ten walks);
-  their entries fall to the quiescent drop, the count cap or the byte
-  budget. The pusher, at each
+  measured, on 2026-09-25: 101 to 134 ms at the first walk, thirteen runs;
+  at a later cycle's walk, a median of 84 to 89 ms when no sibling session
+  is alive, so the jobs pass has dropped every sibling tree, three runs of
+  ten walks, and a median of 27 to 41 ms with every sibling alive, as on
+  the measured box, since an alive sibling's tree stays held, three runs of
+  ten walks); their entries fall to the quiescent drop, the count cap or
+  the byte budget. The pusher, at each
   cycle's start, writes an ended
   agent's checkpoint document when it lacks what the cache holds, then
   drops its records, so a later fold whose cursor the document records

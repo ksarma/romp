@@ -20935,10 +20935,12 @@ class SdkBackend:
         a type never learned is no Task agent's by _bg_row_is_agent. That last one is left on purpose: resolving an id no
         type vouches for walks every sibling session's subagents tree in the project directory when the file is not in
         the session's own, and on the largest project directory measured (2026-09-25) such a miss cost 101 to 134 ms at its
-        first walk (thirteen runs), and a median of 84 to 89 ms at each later cycle's walk once the jobs pass had dropped the
-        sibling trees no alive session owns (_subagent_trees_forget; three runs of ten walks), both more than the 50 ms
-        bound set for a cycle's resolution; a further new id in the same cycle, with the trees still held, cost a median of
-        19 to 34 ms (thirteen runs). The witness: tests/test_record_cache_agent_end.py,
+        first walk (thirteen runs), more than the 50 ms bound set for a cycle's resolution. A later cycle's walk cost a
+        median of 84 to 89 ms when no sibling session was alive, so the jobs pass (_subagent_trees_forget) had dropped
+        every sibling tree (three runs of ten walks); an alive sibling's tree stays held, and with every sibling alive, as
+        on the measured box on 2026-09-25, each later cycle cost a median of 27 to 41 ms (three runs of ten walks), a range
+        that overlaps the median of 19 to 34 ms a further new id in the same cycle cost with the trees still held
+        (thirteen runs). The witness: tests/test_record_cache_agent_end.py,
         test_residual_a_task_agent_row_of_a_type_never_learned_queues_no_end. Their entries fall to the quiescent drop,
         the count cap or the byte budget.
         An agent can be queued as ended more than once (its stop and its task's end). In one batch the kernel acts on the

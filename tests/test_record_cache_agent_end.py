@@ -398,11 +398,13 @@ class AgentEnd(unittest.TestCase):
         reattached object's mirror lacked the agent's row, so the row is minted from the agent's first progress frame, which
         carries no type, and its end queues nothing. Queuing it was measured first (2026-09-25): the kernel would resolve
         the id at the drain, and on a miss that walks every sibling session's subagents tree in the project directory: on
-        the largest project directory measured, 101 to 134 ms at the first walk (thirteen runs), and a median of 84 to 89 ms
-        at each later cycle's walk once the jobs pass had dropped the sibling trees no alive session owns
-        (_subagent_trees_forget; three runs of ten walks), both over the 50 ms bound set for one cycle's resolution; a
-        further new id in the same cycle, with the trees still held, cost a median of 19 to 34 ms (thirteen runs). Green
-        while the residual stands; queuing the end turns it red, and the texts that name the residual must change with it."""
+        the largest project directory measured, 101 to 134 ms at the first walk (thirteen runs), over the 50 ms bound set for
+        one cycle's resolution. A later cycle's walk cost a median of 84 to 89 ms when no sibling session was alive, so the
+        jobs pass (_subagent_trees_forget) had dropped every sibling tree (three runs of ten walks); an alive sibling's tree
+        stays held, and with every sibling alive, as on the measured box on 2026-09-25, each later cycle cost a median of 27
+        to 41 ms (three runs of ten walks), a range that overlaps the median of 19 to 34 ms a further new id in the same
+        cycle cost with the trees still held (thirteen runs). Green while the residual stands; queuing the end turns it red,
+        and the texts that name the residual must change with it."""
         again, size = self._reattached(AID, self.agent)
         again._on_task_event("task_progress", {"task_id": AID, "description": "check the notes-api routes"})
         self.assertEqual(again._bg_tasks[AID]["type"], "", "precondition: a row of a type never learned")
