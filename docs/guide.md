@@ -1264,7 +1264,9 @@ and **Romp: web** for anything else (a task finished, a turn ended); the line
 under it says what happened. On an iPhone, first add Romp to the
 Home Screen (share sheet, then **Add to Home Screen**) and open it from there:
 iOS only lets an installed app receive notifications, so in a plain Safari tab
-the option stays off and says so. On Android and on a desktop browser the page
+the option stays off and says so. The installed app keeps site storage of its
+own, so the first time you open it, it may ask for the access token once; paste
+it in. On Android and on a desktop browser the page
 itself can receive them.
 
 Then tap the bell. On a phone it sits in the bar along the bottom; on a desktop
@@ -1331,12 +1333,15 @@ ports, so without this any other user could inject prompts into your live
 sessions. The token is 144-bit random and lives at
 `~/.local/state/romp/serve-token` with mode `0600` (readable only by your own
 user account). Local tools (the CLI, hooks, the bus, the editor extension) read
-that file and send it automatically, so you never type it. Only two kinds of
-request skip the token: the liveness probes (`/healthz`, `/version`, `/busy`,
-and the bus's `/ping`), and the files a browser fetches without credentials
-when you add Romp to the Home Screen (`/manifest.webmanifest` and three icons
-under `/media/`). Those files are fixed (the app's name, colors and icon art)
-and read no session state.
+that file and send it automatically, so you never type it. A few requests skip
+the token: the liveness probes (`/healthz`, `/version`, `/busy`, and the bus's
+`/ping`); the sign-in page (`/login`, a fixed form); the notification worker's
+acknowledgement (`POST /push/ack`, admitted by the notification's own
+unguessable id); and the files a browser fetches without credentials when you
+add Romp to the Home Screen (`/manifest.webmanifest` and three icons under
+`/media/`). The files and the sign-in page are fixed (the app's name, colors
+and icon art, the form) and read no session state; SECURITY.md lists exactly
+what each of these requests can do.
 
 The kernel and the bus mint the token file when it is missing, one mint between
 them under a sibling lock file, `serve-token.lock`. An existing token is never
