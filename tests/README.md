@@ -206,7 +206,10 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   run serially: 2.6 s on 3.10 and 3.4 s on 3.12 where no run has `-n 2`, as in
   CI's pytest job, and 7.1 s and 7.8 s where the `-n 2` runs are made (means of
   three runs each, measured at the forty-third and forty-fifth commits of fork
-  PR #894, not enforced).
+  PR #894, not enforced). Those figures were measured with the synthetic
+  cases' children run four at once; since the forty-ninth commit they run as
+  many at once as the machine has CPUs, at least four and at most eight
+  (`_CHILDREN_AT_ONCE`), so a machine with four CPUs keeps that pace.
   Second, matchable at a cost and not matched here: the rest of the collection,
   meaning a module's exact place, which modules come before a test's module and
   after it, and how many (the child collects its four; a real run collects every

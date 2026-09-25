@@ -119,6 +119,7 @@ the spawn site, naming the file.
 import ast
 import collections
 import concurrent.futures
+import functools
 import gc
 import glob
 import importlib.util
@@ -3888,6 +3889,26 @@ def _proof_child_env(probed, tmp):
     return child
 
 
+_CHILDREN_AT_ONCE = max(4, min(8, len(os.sched_getaffinity(0)) if hasattr(os, "sched_getaffinity") else os.cpu_count() or 4))
+#   THE CHILD PROCESSES THIS MODULE RUNS AT ONCE (the cost cut of round 2 of fork PR #894, after the reviewer's ruling of
+#   2026-09-24 07:17Z, (1)), where a test starts several children that share nothing: each child has a directory, a
+#   TMPDIR and an output of its own, and none reads what another writes. The number is the CPUs this process may run
+#   on, at least four and at most eight. Four was the execution proof's pool before the cut, and a machine with four
+#   CPUs or fewer keeps it; eight bounds what each worker of a sweep with -n 4 starts on a larger machine. Running
+#   children at once changes only when each child runs. It changes neither what a child reads nor what a test asserts
+#   about it: each test asserts over the results after every child has ended, in the order the test lists them
+#   (_at_once).
+
+
+def _at_once(calls):
+    """The results of `calls` (callables that take no argument, each running one child process to its end), in the
+    order of `calls`, run on threads, _CHILDREN_AT_ONCE at a time. A call that raised raises here, after every call has
+    ended; where several raised, the first in the order of `calls` is the one raised."""
+    with concurrent.futures.ThreadPoolExecutor(max_workers=_CHILDREN_AT_ONCE) as pool:
+        futures = [pool.submit(call) for call in calls]
+    return [f.result() for f in futures]
+
+
 def _proof_reports(at, modes):
     """{mode: {(module, class, test): the probe's report}} for each mode of `modes`, read from `at`/<form>/serial/ for
     the mode's run with no worker and `at`/<form>/xdist/ for its run with -n 2 (_PROOF_MODE_RUNS), where each probe test
@@ -4032,9 +4053,8 @@ def _reassert_proof(cases, real=False):
                         with open(path, "w", encoding="utf-8") as f:
                             f.write(body)
                     jobs.append((i, mode, run_dir))
-            with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:    # each run has a directory of its own
-                results = list(pool.map(run, [(mode, run_dir, ["tests"], os.path.join(root, "tmp-c%02d-%s" % (i, mode)))
-                                              for i, mode, run_dir in jobs]))
+            results = _at_once([functools.partial(run, (mode, run_dir, ["tests"], os.path.join(root, "tmp-c%02d-%s" % (i, mode))))
+                                for i, mode, run_dir in jobs])    # each run has a directory of its own
             for (i, mode, run_dir), r in zip(jobs, results):
                 record(i, mode, r)
                 conftests[i][mode] = os.path.join(run_dir, "tests", "conftest.py")
@@ -5349,6 +5369,149 @@ class HermeticKernelPostal(unittest.TestCase):
         self.assertEqual(_CENSUS_BUILDS[tuple(paths)], 1, "the whole tree was built once in this module's run, whichever of "
                                                           "its readers ran first")
 
+    def test_at_once_runs_its_calls_together_and_returns_their_results_in_the_order_of_the_calls(self):
+        """_at_once (the cost cut of round 2 of fork PR #894), planted. _CHILDREN_AT_ONCE calls each wait on one barrier
+        of as many parties, which opens only when that many calls wait at the same moment, so a pool that ran fewer at
+        once would leave it closed until its timeout (BrokenBarrierError, red here). Each call then waits for the call
+        after it to end, so they end in the reverse of their order, and the results come back in the order of the calls.
+        Of three calls that end in reverse, the first and the second raising, the first's exception is the one raised,
+        not the first to end's. Of three calls, the first raising at once and the last waiting half a second for an
+        event this test sets once the exception reaches it, the exception is raised only after the last has ended: a
+        raise before the last call ended would set the event while that call still waits, and when the raise comes
+        after every call the half second decides nothing, since this test cannot set the event before the call
+        returns. _CHILDREN_AT_ONCE is at least four and at most eight."""
+        import threading
+        self.assertTrue(4 <= _CHILDREN_AT_ONCE <= 8, _CHILDREN_AT_ONCE)
+
+        def chain(n, raising=()):
+            barrier = threading.Barrier(n, timeout=30) if n == _CHILDREN_AT_ONCE else None
+            done = [threading.Event() for _i in range(n + 1)]
+            done[n].set()
+            ended = []
+
+            def call(i):
+                def run():
+                    try:
+                        if barrier is not None:
+                            barrier.wait()
+                        self.assertTrue(done[i + 1].wait(30), "call %d: the call after it ended" % i)
+                        if i in raising:
+                            raise ValueError("call %d raised" % i)
+                        return i
+                    finally:
+                        ended.append(i)
+                        done[i].set()
+                return run
+            return [call(i) for i in range(n)], ended
+        calls, ended = chain(_CHILDREN_AT_ONCE)
+        self.assertEqual((_at_once(calls), ended), (list(range(_CHILDREN_AT_ONCE)), list(reversed(range(_CHILDREN_AT_ONCE)))),
+                         "every call ran at once with the others, they ended in reverse, and the results are in their order")
+        calls, ended = chain(3, raising=(0, 1))
+        with self.assertRaises(ValueError) as caught:
+            _at_once(calls)
+        self.assertEqual((str(caught.exception), sorted(ended)), ("call 0 raised", [0, 1, 2]),
+                         "the first call's exception in the order of the calls, not the first to end's")
+        seen, ended, early = threading.Event(), [], []
+
+        def forward(i):
+            def run():
+                try:
+                    if i == 0:
+                        raise ValueError("call 0 raised")
+                    if i == 2:
+                        early.append(seen.wait(0.5))
+                    return i
+                finally:
+                    ended.append(i)
+            return run
+        caught = None
+        try:
+            _at_once([forward(i) for i in range(3)])
+        except ValueError as e:
+            seen.set()
+            caught = (str(e), sorted(ended), early)
+        self.assertEqual(caught, ("call 0 raised", [0, 1, 2], [False]),
+                         "the first call raised at once, and the exception came after the last call had ended")
+
+    _FRESH_RUNNER = textwrap.dedent("""\
+        import sys, unittest
+        import tests.%s as module
+        result = unittest.TextTestRunner(verbosity=2).run(unittest.TestSuite([getattr(module, sys.argv[1])(sys.argv[2])]))
+        sys.exit(0 if result.wasSuccessful() else 1)
+    """) % os.path.splitext(os.path.basename(__file__))[0]
+    #   the child _in_a_fresh_interpreter starts: it imports this module from the checkout as the package's module and
+    #   runs one method of one class of it through unittest's runner, which sets the module up before it and tears it
+    #   down after it (setUpModule, tearDownModule and the pins tearDownModule holds)
+
+    def _in_a_fresh_interpreter(self, body, env=None):
+        """Runs this class's method `body` as a test, alone, in a fresh interpreter (_FRESH_RUNNER), from the checkout,
+        with this process's environment less PYTEST_CURRENT_TEST and with `env` added. The body's name does not start
+        with test, so no run collects it as a test of its own and it runs only in that child. Fails with the
+        child's output unless the child's return code is 0 and its output has the line `OK` alone, which a failure, an
+        error (in the body or in tearDownModule) and a skip each leave out (`FAILED (...)`, `OK (skipped=1)`); planted
+        by test_a_body_run_in_a_fresh_interpreter_passes_here_only_where_it_passes_there."""
+        child = {k: v for k, v in os.environ.items() if k != "PYTEST_CURRENT_TEST"}
+        child.update(env or {})
+        r = subprocess.run([sys.executable, "-c", self._FRESH_RUNNER, type(self).__name__, body],
+                           cwd=os.path.dirname(HERE), env=child, stdin=subprocess.DEVNULL, capture_output=True, text=True,
+                           timeout=300)
+        out = r.stdout + r.stderr
+        self.assertEqual((r.returncode, re.search(r"^OK$", out, re.M) is not None), (0, True),
+                         "%s, run in a fresh interpreter (return code, the line OK): %s" % (body, out[-6000:]))
+
+    def _the_fresh_plant_body(self):
+        """The body test_a_body_run_in_a_fresh_interpreter_passes_here_only_where_it_passes_there runs in a fresh
+        interpreter: as ROMP_TEST_HERMETIC_FRESH_PLANT says, it fails, skips, or passes and ends its process with code 3
+        by an exit handler; passing, it first writes its pid in the marker ROMP_TEST_HERMETIC_FRESH_MARKER names."""
+        plant = os.environ.get("ROMP_TEST_HERMETIC_FRESH_PLANT")
+        if plant == "fail":
+            self.fail("the planted failure in the fresh interpreter")
+        if plant == "skip":
+            self.skipTest("the planted skip in the fresh interpreter")
+        if plant == "exit":
+            import atexit
+            atexit.register(os._exit, 3)
+        with open(os.environ["ROMP_TEST_HERMETIC_FRESH_MARKER"], "w", encoding="utf-8") as f:
+            f.write(str(os.getpid()))
+
+    def test_a_body_run_in_a_fresh_interpreter_passes_here_only_where_it_passes_there(self):
+        """THE FRESH-INTERPRETER ROAD (_in_a_fresh_interpreter, the cost cut of round 2 of fork PR #894), planted: the
+        road runs _the_fresh_plant_body four times, each with a plant of its own. Planted to pass, the child writes its
+        pid in a marker this process made, and the pid is not this process's: the body ran in another process. Planted
+        to fail (the body's own failure), to skip (unittest's `OK (skipped=1)`, return code 0) and to pass and then exit
+        with code 3 (the line `OK` printed, an exit handler ending the child after it), the road fails, naming the
+        child's failure where it has one. So a road that returned without starting the child, one that read no result
+        of it, and one that read the return code alone or the line alone are each red here. The four children run at
+        once (_at_once). The exiting child ends by os._exit, which skips the tests package's removal of the child's own
+        temporary root, so that child is handed a system temporary directory inside this test's scratch directory
+        (TMPDIR and ROMP_TESTS_SYSTEM_TMPDIR), where it mints its root and where this test's clean-up removes it."""
+        d = os.path.realpath(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, d, True)
+        system = os.path.join(d, "exit-tmp")
+        os.mkdir(system)
+
+        def road(plant):
+            env = {"ROMP_TEST_HERMETIC_FRESH_PLANT": plant, "ROMP_TEST_HERMETIC_FRESH_MARKER": os.path.join(d, plant)}
+            if plant == "exit":
+                env.update(TMPDIR=system, ROMP_TESTS_SYSTEM_TMPDIR=system)
+
+            def call():
+                try:
+                    self._in_a_fresh_interpreter("_the_fresh_plant_body", env)
+                except AssertionError as e:
+                    return str(e)
+                return None
+            return call
+        plants = ("pass", "fail", "skip", "exit")
+        got = dict(zip(plants, _at_once([road(plant) for plant in plants])))
+        self.assertIsNone(got["pass"], "planted to pass, the road passes")
+        with open(os.path.join(d, "pass"), encoding="utf-8") as f:
+            self.assertNotEqual(int(f.read()), os.getpid(), "the body ran in another process")
+        self.assertEqual({plant: got[plant] is not None for plant in plants[1:]}, dict.fromkeys(plants[1:], True),
+                         "planted to fail, to skip and to exit with code 3 after the line OK, the road fails: %s" % got)
+        self.assertIn("the planted failure in the fresh interpreter", got["fail"], "the road names the child's failure")
+        self.assertIn("OK (skipped=1)", got["skip"], "the road names the child's skip")
+
     def test_the_drops_count_by_every_node_sees_each_part_a_road_keeps_of_a_dropped_tree(self):
         """THE DROP BY LIVE OBJECTS' read, planted (the verifier's finding at round 2's thirty-first commit of fork PR
         #894: a road that kept each dropped tree's statement list left the tree object to die, so the census pin's weak
@@ -5377,7 +5540,19 @@ class HermeticKernelPostal(unittest.TestCase):
         the build over tests/ itself does not read is in _census_build's docstring. WHAT NO READ SEES, planted as a
         witness (the verifier's finding at round 2's thirty-fourth commit of fork PR #894): a walk that keeps each Name
         node's attribute dict until the build ends, no ast object among what it keeps but the parser's shared ones,
-        gives ([kept], {}, [kept]), as nothing kept does."""
+        gives ([kept], {}, [kept]), as nothing kept does.
+        WHERE IT RUNS (the cost cut of round 2 of fork PR #894, after the reviewer's ruling of 2026-09-24 07:17Z, (1)):
+        alone, in a fresh interpreter (_in_a_fresh_interpreter). Each of the twelve reads lists every object the
+        collector tracks, and in this module's own process, after the whole tree's census, those include every object
+        the census holds until tearDownModule, which made the reads most of the test's time there; a fresh interpreter
+        has few objects to list. The body, this module's setUpModule and tearDownModule, and the pins tearDownModule
+        holds all run in that interpreter as they would here, and this test fails with the child's output unless the
+        child's run of its body passed (_in_a_fresh_interpreter says what it reads)."""
+        self._in_a_fresh_interpreter("_the_drops_count_body")
+
+    def _the_drops_count_body(self):
+        """The body of test_the_drops_count_by_every_node_sees_each_part_a_road_keeps_of_a_dropped_tree, which that test
+        runs in a fresh interpreter (_in_a_fresh_interpreter); its docstring says what the body holds."""
         from unittest import mock
         text = "import os\n\n\ndef f(a, b=2):\n    return [a + b, {'k': a}]\n\n\nclass C:\n    x = f(1)\n"
         roads = (("the tree", lambda t: [t]), ("its statement list", lambda t: t.body), ("one statement", lambda t: [t.body[1]]),
@@ -8138,6 +8313,12 @@ class HermeticKernelPostal(unittest.TestCase):
         """_PROBE in a fresh interpreter over the real module (imported) or over `planted_text`, a synthetic copy compiled
         under the real file's name, with the real tests/conftest.py or `conftest_text` in its place; returns the child's
         report."""
+        return self._tunnels_probe_job(planted_text, conftest_text)()
+
+    def _tunnels_probe_job(self, planted_text=None, conftest_text=None):
+        """_tunnels_probe's child, made ready but not started: the planted files are written and their removal
+        registered here, on the test's own thread; the callable returned runs the child, waits for it and returns what
+        _tunnels_probe returns, so a test can run several at once (_at_once)."""
         paths = []
         for text, name in ((planted_text, "planted_tunnels_module.py"), (conftest_text, "planted_conftest.py")):
             paths.append("")
@@ -8149,9 +8330,12 @@ class HermeticKernelPostal(unittest.TestCase):
                     f.write(text)
         env = dict(os.environ)
         env.pop("ROMP_POSTAL_PEERS", None)
-        res = subprocess.run([sys.executable, "-c", _PROBE, HERE] + paths, capture_output=True, text=True, timeout=180, env=env, cwd=HERE)
-        self.assertEqual(res.returncode, 0, res.stderr[-2000:])
-        return json.loads(res.stdout.strip().splitlines()[-1])
+
+        def run():
+            res = subprocess.run([sys.executable, "-c", _PROBE, HERE] + paths, capture_output=True, text=True, timeout=180, env=env, cwd=HERE)
+            self.assertEqual(res.returncode, 0, res.stderr[-2000:])
+            return json.loads(res.stdout.strip().splitlines()[-1])
+        return run
 
     def test_importing_the_attaching_module_writes_no_leg_of_the_trio_and_its_setup_pins_all_three_for_the_test(self):
         """Executed, not read: a fresh interpreter pops the three names, imports the floor modules the tunnels module
@@ -8211,21 +8395,26 @@ class HermeticKernelPostal(unittest.TestCase):
         client-only write alone, under the real conftest and under a copy carrying the floor line: the check the two
         probe tests above share must red on it at the import, which it cannot if its floor value is read after the
         import (the verifier's mutation on round 2 of fork PR #894, under which the whole module passed)."""
-        for label, lines in (("assignment", 'os.environ["ROMP_POSTAL_PEERS"] = "0"\n'),
-                             ("update", 'os.environ.update(ROMP_POSTAL_PEERS="0")\n'),
-                             ("class body", 'class _Planted:\n    os.environ["ROMP_POSTAL_PEERS"] = "0"\n')):    # runs at import (the fixup of 2026-09-22)
-            out = self._tunnels_probe(_plant(_tunnels_source(), lines))
+        writes = (("assignment", 'os.environ["ROMP_POSTAL_PEERS"] = "0"\n'),
+                  ("update", 'os.environ.update(ROMP_POSTAL_PEERS="0")\n'),
+                  ("class body", 'class _Planted:\n    os.environ["ROMP_POSTAL_PEERS"] = "0"\n'))    # runs at import (the fixup of 2026-09-22)
+        planted = _plant(_tunnels_source(), 'os.environ["ROMP_POSTAL_CLIENT_ONLY"] = "on"\n')
+        floors = (("the real conftest", None), ("a conftest that floors client-only", _conftest_with_the_client_only_floor()))
+        # the six probes run at once, each a fresh interpreter over planted files of its own, and each is read in its order
+        outs = _at_once([self._tunnels_probe_job(_plant(_tunnels_source(), lines)) for _label, lines in writes]
+                        + [self._tunnels_probe_job(_plant(_tunnels_source(), 'os.environ["ROMP_POSTAL_PORT"] = "45678"\n'
+                                                                             'os.environ["ROMP_POSTAL_CLIENT_ONLY"] = "on"\n'))]
+                        + [self._tunnels_probe_job(planted, conftest_text=conftest_text) for _label, conftest_text in floors])
+        for (label, _lines), out in zip(writes, outs[:3]):
             self.assertEqual(out["after_import"]["ROMP_POSTAL_PEERS"], "0", "%s: the probe sees a module-level write at import" % label)
             self.assertEqual(out["after_cleanups"]["ROMP_POSTAL_PEERS"], "1", "%s: the planted copy's own cleanup still restores the shell's value" % label)
-        out = self._tunnels_probe(_plant(_tunnels_source(), 'os.environ["ROMP_POSTAL_PORT"] = "45678"\nos.environ["ROMP_POSTAL_CLIENT_ONLY"] = "on"\n'))
+        out = outs[3]
         self.assertEqual(out["after_import"]["ROMP_POSTAL_PORT"], "45678", "the probe sees the port written at import")
         self.assertNotEqual(out["before_import"]["ROMP_POSTAL_CLIENT_ONLY"], "on", "the planted client-only value is not the floor's, so the write is visible")
         self.assertEqual(out["after_import"]["ROMP_POSTAL_CLIENT_ONLY"], "on", "the probe sees client-only written at import")
         self.assertEqual(out["bus_port_at_import"], 45678, "...and the kernel read it at import: the bus a stray revive would start binds it")
         self.assertEqual(out["after_cleanups"]["ROMP_POSTAL_PORT"], "45678", "the planted copy's cleanup puts the import-time value back, which is the leak")
-        planted = _plant(_tunnels_source(), 'os.environ["ROMP_POSTAL_CLIENT_ONLY"] = "on"\n')
-        for label, conftest_text in (("the real conftest", None), ("a conftest that floors client-only", _conftest_with_the_client_only_floor())):
-            out = self._tunnels_probe(planted, conftest_text=conftest_text)
+        for (label, conftest_text), out in zip(floors, outs[4:]):
             if conftest_text is not None:
                 self.assertEqual(out["before_import"]["ROMP_POSTAL_CLIENT_ONLY"], "1", "the copy of conftest floors client-only")
             self.assertNotEqual(out["before_import"]["ROMP_POSTAL_CLIENT_ONLY"], "on", "%s: the floor's value is not the planted one" % label)
@@ -9287,6 +9476,12 @@ class HermeticKernelPostal(unittest.TestCase):
     def _spied_pytest(self, targets, fixed):
         """A child pytest over `targets` from the checkout with _DIAL_SPY as its sitecustomize, refusing and recording every
         connect to the port `fixed`; returns (returncode, output, records, the child's pid)."""
+        return self._spied_pytest_job(targets, fixed)()
+
+    def _spied_pytest_job(self, targets, fixed):
+        """_spied_pytest's child, made ready but not started: its directory (the spy and the spy's records) is made, its
+        removal registered and the spy written here, on the test's own thread; the callable returned starts the child,
+        waits for it and returns what _spied_pytest returns, so a test can run several at once (_at_once)."""
         d = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, d, True)
         with open(os.path.join(d, "sitecustomize.py"), "w", encoding="utf-8") as f:
@@ -9295,17 +9490,20 @@ class HermeticKernelPostal(unittest.TestCase):
         env = dict(os.environ, ROMP_TEST_DIAL_SPY=out, ROMP_TEST_DIAL_SPY_FIXED=str(fixed),
                    PYTHONPATH=os.pathsep.join([d] + ([os.environ["PYTHONPATH"]] if os.environ.get("PYTHONPATH") else [])))
         env.pop("PYTEST_CURRENT_TEST", None)
-        p = subprocess.Popen([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider"] + list(targets),
-                             cwd=os.path.dirname(HERE), env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                             stderr=subprocess.STDOUT, text=True)
-        try:
-            text = p.communicate(timeout=300)[0]
-        finally:
-            if p.poll() is None:
-                p.kill()
-                p.wait()
-        recs = [json.loads(line) for line in open(out, encoding="utf-8")] if os.path.exists(out) else []
-        return p.returncode, text, recs, p.pid
+
+        def run():
+            p = subprocess.Popen([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider"] + list(targets),
+                                 cwd=os.path.dirname(HERE), env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                 stderr=subprocess.STDOUT, text=True)
+            try:
+                text = p.communicate(timeout=300)[0]
+            finally:
+                if p.poll() is None:
+                    p.kill()
+                    p.wait()
+            recs = [json.loads(line) for line in open(out, encoding="utf-8")] if os.path.exists(out) else []
+            return p.returncode, text, recs, p.pid
+        return run
 
     def test_the_modules_whose_kernels_dialled_the_fixed_bus_port_dial_none_and_start_no_postal_service_in_either_order(self):
         """THE PIN for the path from the run's in-process kernels to the machine's fixed bus port (the reviewer's ruling of
@@ -9315,7 +9513,8 @@ class HermeticKernelPostal(unittest.TestCase):
         one full serial run of tests/ recording every connect to the fixed port and every romp-postal-service spawn with
         its PYTEST_CURRENT_TEST: BUS_DIALLING_MODULES holds every module a recorded connect or spawn came from, the
         in-process postal client's heartbeat in tests/test_postal_relay_honesty.py among them (its BASE was built from the
-        same popped name). They run here together, in both orders, in a child pytest with _DIAL_SPY as its sitecustomize
+        same popped name). They run here together, in both orders, a child pytest per order, the two children at once
+        (_at_once, each child with a spy directory and records of its own), with _DIAL_SPY as their sitecustomize
         (every Python process of the run records each connect and refuses one to the fixed port, and records each
         romp-postal-service process started through subprocess.Popen, each such process's own start and every process's
         argv at exit): no process dials the fixed port and none starts the postal service. conftest's _dead_bus_port gives
@@ -9326,7 +9525,8 @@ class HermeticKernelPostal(unittest.TestCase):
         process that is not Python, or is started with -S or -I or an environment without this PYTHONPATH (none loads
         the sitecustomize), a connect below socket.socket, and a spawn outside subprocess.Popen whose child is not a
         Python process that loads the spy (os.system, os.exec*, os.posix_spawn called directly). At the round-1 head
-        (951479a14), with this module's text overlaid, the pin is red. In every run, each order records dials to the
+        (951479a14), with this module's text overlaid and main's tests/parse_cache.py beside it (the module imports it,
+        and that head has none), the pin is red. In every run, each order records dials to the
         fixed port from six tests, the three set_working tests of tests/test_postal_relay_honesty.py and KnownHostMemory's
         detach and set-trust tests and PersistedIntent's detach test, and postal-service starts from two of the three
         detach tests the refuters named, KnownHostMemory's test_detach_remembers_the_host_and_its_trust and
@@ -9345,9 +9545,10 @@ class HermeticKernelPostal(unittest.TestCase):
         fixed = _fixed_bus_port()
         phase = lambda r: r["test"] or "(no test phase, thread %s)" % r["thread"]     # noqa: E731
         runs, seen = {}, {}
-        for order in (list(BUS_DIALLING_MODULES), list(reversed(BUS_DIALLING_MODULES))):
+        orders = (list(BUS_DIALLING_MODULES), list(reversed(BUS_DIALLING_MODULES)))
+        for order, result in zip(orders, _at_once([self._spied_pytest_job(order, fixed) for order in orders])):
             label = " then ".join(os.path.basename(m) for m in order)
-            runs[label] = self._spied_pytest(order, fixed)
+            runs[label] = result
             recs = runs[label][2]
             seen[label] = {"dials to the fixed port": sorted({phase(r) for r in recs if r["kind"] == "dial" and r["port"] == fixed}),
                            "romp-postal-service starts": sorted({phase(r) for r in recs if r["kind"] in ("spawn", "start") or (
@@ -9367,6 +9568,13 @@ class HermeticKernelPostal(unittest.TestCase):
         built as tests/test_env_value_redaction.py builds its child runs; `env` names to set, a None value a name to
         remove. A file name may carry a directory (`pkg/__init__.py`), made as needed; the child is given the test_*.py
         files only. Returns (returncode, output, the scratch directory, which is the child's TMPDIR)."""
+        return self._scratch_conftest_job(modules, env)()
+
+    def _scratch_conftest_job(self, modules, env=None):
+        """_scratch_conftest_run's child, made ready but not started: the scratch directory is made, its removal
+        registered and its files written here, on the test's own thread; the callable returned starts the child, waits
+        for it and returns what _scratch_conftest_run returns. A test that needs several children runs their callables
+        at once (_at_once)."""
         d = os.path.realpath(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, d, True)
         for name in ("conftest.py", "credential_patterns.py"):
@@ -9385,9 +9593,12 @@ class HermeticKernelPostal(unittest.TestCase):
                 child[k] = v
         child["PYTHONPATH"] = os.pathsep.join(p for p in (os.path.dirname(HERE), child.get("PYTHONPATH")) if p)
         child["TMPDIR"] = d
-        r = subprocess.run([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "--rootdir", d] + sorted(modules),
-                           cwd=d, env=child, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=180)
-        return r.returncode, r.stdout + r.stderr, d
+
+        def run():
+            r = subprocess.run([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "--rootdir", d] + sorted(modules),
+                               cwd=d, env=child, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=180)
+            return r.returncode, r.stdout + r.stderr, d
+        return run
 
     def test_the_dead_bus_port_holds_for_each_test_and_comes_back_after_it(self):
         """conftest's _dead_bus_port, run: a child pytest (a copy of tests/conftest.py) over a module that registers two
@@ -9824,6 +10035,7 @@ class HermeticKernelPostal(unittest.TestCase):
                  ("a session fixture the second test requests by name, the first under xfail(run=False) with "
                   "--runxfail", "", behind("@pytest.mark.xfail(run=False, reason='synthetic')\ndef test_one():\n    pass"),
                   [], ["test_p1.py"], "3 passed", {"env": {"PYTEST_ADDOPTS": "--runxfail"}})]
+        runs = []
         for case in cases:
             label, where, text, per_test_expected, module_expected = case[:5]
             tally = case[5] if len(case) > 5 else "3 passed"
@@ -9838,7 +10050,12 @@ class HermeticKernelPostal(unittest.TestCase):
             env = {"ROMP_TEST_MODULE_ENV_MARKER": marker, "ROMP_TEST_PLANT_DIR": plant_dir, "ROMP_SESSIONS_FILE": None,
                    "PYTEST_ADDOPTS": None}
             env.update(opts.get("env", {}))
-            rc, out, _d = self._scratch_conftest_run(modules, env=env)
+            runs.append(((label, per_test_expected, module_expected, tally, opts, plant_dir, marker),
+                         self._scratch_conftest_job(modules, env=env)))
+        # every case's child pytest runs at once with the others (each in a scratch directory and TMPDIR of its own, with
+        # a plant directory and a marker of its own), and each case is then read in its order
+        for (case, (rc, out, _d)) in zip([case for case, _job in runs], _at_once([job for _case, job in runs])):
+            label, per_test_expected, module_expected, tally, opts, plant_dir, marker = case
             inherits = os.path.join(plant_dir, "planted.json") if opts.get("inherits", True) else "None"
             with open(marker, encoding="utf-8") as f:
                 self.assertEqual(f.read(), inherits, "%s: the later module's child inherits %s: %s"
