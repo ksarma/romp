@@ -6935,13 +6935,15 @@ class HermeticKernelPostal(unittest.TestCase):
         /tmp where TEMP and TMP are unset, which every run shares, and the test as it stood passed). Every pytest child
         that one call of _reassert_proof makes, synthetic (two cases, each run in a directory of its own) or `real` (the
         runs of one case in the one copy, at once), is handed a TMPDIR no other run of the call has, a `real` run's
-        under the one copy's scratch directory, and that TMPDIR is what tempfile.gettempdir(), under which pytest makes
-        its temporary root, returns in the child's environment when the child starts, read by running Python at that
-        moment with the child's environment and working directory. Read by a spy on subprocess.run that answers the
-        pytest children alone and hands every other call to the real one (the copy is made first, whose file list runs
-        git). Not read: pytest's two overrides of where it puts its temporary root, PYTEST_DEBUG_TEMPROOT and
-        --basetemp, which neither form's options give; either reaches a child only from outside the proof, from this
-        process's environment, which _proof_child_env passes on, or from an ini file above the run's directory."""
+        under the one copy's scratch directory, and that TMPDIR is what tempfile.gettempdir() returns in the child's
+        environment when the child starts, read by running Python at that moment with the child's environment and
+        working directory; pytest makes its temporary root under tempfile's directory unless told to make it elsewhere.
+        Read by a spy on subprocess.run that answers the pytest children alone and hands every other call to the real
+        one (the copy is made first, whose file list runs git). Not read: where pytest is told to make its temporary
+        root instead, by PYTEST_DEBUG_TEMPROOT or --basetemp. Neither form's options give either, and the test reads
+        what each child's tempfile resolves, not the root pytest takes, so either is not seen by whatever road it
+        reaches a child, code the child runs among them (the verifier's PBT at the forty-fifth commit: a
+        pytest_configure in the copy's tests/conftest.py that sets --basetemp to one directory for every run)."""
         from unittest import mock
         scratch, _checkout = _proof_checkout()
         real_run, seen = subprocess.run, []
