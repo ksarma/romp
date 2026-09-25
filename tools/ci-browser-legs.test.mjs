@@ -9,9 +9,10 @@
 // leg's source for it, so the step can read green a rostered leg that breaks it, as the examples its homes name show. Nor
 // does anything here check that every browser leg in the tree is rostered. A green here is:
 //   - the step exists once in that job, directly after the Chromium install step (by step NAMES, over the steps and
-//     fields jobs() and steps() read by their lines' shapes), with the switch and the run line, in the job's default
-//     working directory, and no Playwright install or cache before the Test step, as the install pin reads them (its
-//     docstring); every path PATH_TOKEN reads (its docstring) in the step's comment is in the tree;
+//     fields jobs() and steps() read by their lines' shapes), with the switch as its only env, as the env reader reads
+//     it (its docstring, which states what it refuses), and the run line, in the job's default working directory, and
+//     no Playwright install or cache before the Test step, as the install pin reads them (its docstring); every path
+//     PATH_TOKEN reads (its docstring) in the step's comment is in the tree;
 //   - the step carries a timeout-minutes of its own that fits the margin under the job's cap at the measured head (the
 //     assertion's arithmetic over the step comment's measured figures and phrase and the cap comment's number and
 //     passage, read as the comments at those reads state), and the script passes node a --test-timeout above the
@@ -107,10 +108,22 @@ function jobs(text) {
  *  line trimmed as the value, and its opening line when that is `      - <field>: ` and a value, a later line of a field
  *  replacing an earlier one; a field at another indent, a field holding a digit or _, and a quoted field key are not
  *  read. Its table: STEPS_ROWS, run by the test after it.
- *  Its env: the `^          KEY: value` code lines after an `        env:`
- *  line (a key that begins with a letter or _, then letters, digits and _, followed at once by a colon and a space), read up
- *  to the first line not indented ten spaces. A quoted key, a key led by a digit, a key with a space before its colon and a
- *  key whose value starts on the next line are not read. */
+ *  Its env, the env reader, which reads every step and fails closed: a line in the block it cannot read is refused,
+ *  named by its line (the step's envRefused), rather than read past. An env line is a code line of exactly eight spaces
+ *  and then `env:`, and the block begins after the step's env line when only whitespace follows its colon. An env line
+ *  with anything else after its colon (an inline mapping, a comment, an alias) is refused, and so is a second env line
+ *  in the step, each opening a block read the same way. The block runs to the first code line that is not blank and
+ *  whose leading run of spaces and tabs holds no tab and eight spaces or fewer. A blank line (empty, or whitespace
+ *  alone by \s at any length) and a # line (dropped from the code lines above, at any indent, inside a block scalar's
+ *  text too) neither end the block nor are read. Inside it, a line of exactly ten spaces, then a key of letters, digits
+ *  and _ beginning with a letter or _, then a colon and a space, is read as that key, its value the rest of the line
+ *  trimmed: a block-scalar indicator (`NOTE: |`, `FOO: >-`) is read as the value, and a colon followed by spaces alone
+ *  as an empty value, each an extra key, a loud red. Every other line in the block is refused: a quoted key, a key led
+ *  by a digit, a key holding another character (a hyphen, a dot, the YAML merge key `<<`), a key with a space before
+ *  its colon, a key whose colon ends its line, a line led by nine, or eleven or more, spaces (a block scalar's text, a
+ *  value continued on the next line, a key at another depth), and a line with a tab in its leading whitespace. The
+ *  first test asserts the Browser legs step's refused lines are none and its env the switch alone. Its table: ENV_ROWS,
+ *  run by the test after STEPS_ROWS' test. */
 function steps(job) {
   const out = [];
   for (const l of job.lines) {
@@ -128,10 +141,21 @@ function steps(job) {
       if (f) s.fields[f[1]] = f[2].trim();
     }
     s.env = {};
-    const at = s.code.findIndex((l) => /^        env:\s*$/.test(l));
-    if (at >= 0) for (let i = at + 1; i < s.code.length && /^          \S/.test(s.code[i]); i++) {
-      const e = /^          ([A-Za-z_][A-Za-z0-9_]*): (.*)$/.exec(s.code[i]);
+    s.envRefused = [];
+    let block = false, envLines = 0;
+    for (const l of s.code) {
+      if (/^        env:/.test(l)) {
+        envLines++;
+        block = true;
+        if (envLines > 1 || !/^        env:\s*$/.test(l)) s.envRefused.push(l);
+        continue;
+      }
+      if (!block || /^\s*$/.test(l)) continue;
+      const lead = /^[ \t]*/.exec(l)[0];
+      if (!lead.includes('\t') && lead.length <= 8) { block = false; continue; }
+      const e = /^          ([A-Za-z_][A-Za-z0-9_]*): (.*)$/.exec(l);
       if (e) s.env[e[1]] = e[2].trim();
+      else s.envRefused.push(l);
     }
   }
   return out;
@@ -162,6 +186,52 @@ test('steps()\' table: each row\'s steps, names and fields read as steps()\' doc
     if (!isDeepStrictEqual(got, row.steps)) wrong.push(row.what + ': steps() over ' + JSON.stringify(row.lines) + ' reads ' + JSON.stringify(got) + ', not ' + JSON.stringify(row.steps));
   }
   assert.deepEqual(wrong, [], 'each row of steps()\' table is read as its docstring states; the rows read otherwise: ' + JSON.stringify(wrong));
+});
+/** The env reader's table: each row a step's lines after its `      - name: S` opener, with `        run: x` after them, and
+ *  the env and the refused lines steps() reads from them, one spelling inside and one outside each family its docstring
+ *  names. */
+const ENV_ON = '          ' + SWITCH + ': "1"', ENV_NO = '          NODE_OPTIONS: --test-only';
+const ENV_SW = { [SWITCH]: '"1"' }, ENV_BOTH = { [SWITCH]: '"1"', NODE_OPTIONS: '--test-only' };
+const ENV_ROWS = [
+  { what: 'NODE_OPTIONS after a blank line, read', lines: ['        env:', ENV_ON, '', ENV_NO], env: ENV_BOTH, refused: [] },
+  { what: 'NODE_OPTIONS after a quoted block-scalar key and its text line, both refused', lines: ['        env:', ENV_ON, '          "NOTE": |', '            a text line', ENV_NO], env: ENV_BOTH, refused: ['          "NOTE": |', '            a text line'] },
+  { what: 'NODE_OPTIONS after a key whose colon ends its line and its value line, both refused', lines: ['        env:', ENV_ON, '          NOTE:', '            a value', ENV_NO], env: ENV_BOTH, refused: ['          NOTE:', '            a value'] },
+  { what: 'a quoted NODE_OPTIONS key, refused', lines: ['        env:', ENV_ON, '          "NODE_OPTIONS": --test-only'], env: ENV_SW, refused: ['          "NODE_OPTIONS": --test-only'] },
+  { what: 'a YAML merge key, refused', lines: ['        env:', ENV_ON, '          <<: *x'], env: ENV_SW, refused: ['          <<: *x'] },
+  { what: 'NODE_OPTIONS after a line of four spaces alone, which is blank, read', lines: ['        env:', ENV_ON, '    ', ENV_NO], env: ENV_BOTH, refused: [] },
+  { what: 'NODE_OPTIONS after a line of whitespace holding a tab, which is blank, read', lines: ['        env:', ENV_ON, '  \t  ', ENV_NO], env: ENV_BOTH, refused: [] },
+  { what: 'NODE_OPTIONS after a block-scalar key read with its indicator as the value and its text line refused', lines: ['        env:', ENV_ON, '          NOTE: |', '            a text line', ENV_NO], env: { ...ENV_BOTH, NOTE: '|' }, refused: ['            a text line'] },
+  { what: 'a folded block-scalar indicator with a modifier, read as the value', lines: ['        env:', ENV_ON, '          FOO: >-'], env: { ...ENV_SW, FOO: '>-' }, refused: [] },
+  { what: 'a # line inside a block scalar\'s text, neither read nor refused', lines: ['        env:', ENV_ON, '          NOTE: |', '            # text that YAML reads as text'], env: { ...ENV_SW, NOTE: '|' }, refused: [] },
+  { what: 'a colon followed by a space alone, an empty value', lines: ['        env:', ENV_ON, '          NOTE: '], env: { ...ENV_SW, NOTE: '' }, refused: [] },
+  { what: 'a key led by _ and holding digits, read', lines: ['        env:', ENV_ON, '          _A1: x'], env: { ...ENV_SW, _A1: 'x' }, refused: [] },
+  { what: 'a value with spaces around it, trimmed', lines: ['        env:', ENV_ON, '          A:   x  '], env: { ...ENV_SW, A: 'x' }, refused: [] },
+  { what: 'a key led by a digit, refused', lines: ['        env:', ENV_ON, '          1A: x'], env: ENV_SW, refused: ['          1A: x'] },
+  { what: 'a key holding a hyphen, refused', lines: ['        env:', ENV_ON, '          NODE-OPTIONS: x'], env: ENV_SW, refused: ['          NODE-OPTIONS: x'] },
+  { what: 'a key holding a dot, refused', lines: ['        env:', ENV_ON, '          a.b: x'], env: ENV_SW, refused: ['          a.b: x'] },
+  { what: 'a single-quoted key, refused', lines: ['        env:', ENV_ON, '          \'NODE_OPTIONS\': x'], env: ENV_SW, refused: ['          \'NODE_OPTIONS\': x'] },
+  { what: 'a key with a space before its colon, refused', lines: ['        env:', ENV_ON, '          NODE_OPTIONS : x'], env: ENV_SW, refused: ['          NODE_OPTIONS : x'] },
+  { what: 'a line of nine spaces, refused', lines: ['        env:', ENV_ON, '         NODE_OPTIONS: x'], env: ENV_SW, refused: ['         NODE_OPTIONS: x'] },
+  { what: 'a line of eleven spaces, refused', lines: ['        env:', ENV_ON, '           NODE_OPTIONS: x'], env: ENV_SW, refused: ['           NODE_OPTIONS: x'] },
+  { what: 'a line led by a tab, refused', lines: ['        env:', ENV_ON, '\tNODE_OPTIONS: x'], env: ENV_SW, refused: ['\tNODE_OPTIONS: x'] },
+  { what: 'a line led by four spaces and a tab, refused and not the end of the block', lines: ['        env:', ENV_ON, '    \tNODE_OPTIONS: x', ENV_NO], env: ENV_BOTH, refused: ['    \tNODE_OPTIONS: x'] },
+  { what: 'a # line at two spaces and one at eight, neither the end of the block', lines: ['        env:', ENV_ON, '  # a comment', '        # a comment', ENV_NO], env: ENV_BOTH, refused: [] },
+  { what: 'a line of eight spaces ends the block, and a key after it is neither read nor refused', lines: ['        env:', ENV_ON, '        timeout-minutes: 5', ENV_NO], env: ENV_SW, refused: [] },
+  { what: 'an env line with spaces after its colon opens the block', lines: ['        env:  ', ENV_ON], env: ENV_SW, refused: [] },
+  { what: 'an env line of ten spaces, under with:, is not the step\'s env', lines: ['        with:', '          env:', '            NODE_OPTIONS: x'], env: {}, refused: [] },
+  { what: 'an inline mapping after env:, refused', lines: ['        env: { NODE_OPTIONS: --test-only }'], env: {}, refused: ['        env: { NODE_OPTIONS: --test-only }'] },
+  { what: 'a comment after env:, refused, its block read', lines: ['        env: # the switch', ENV_ON], env: ENV_SW, refused: ['        env: # the switch'] },
+  { what: 'an alias after env:, refused', lines: ['        env: *x'], env: {}, refused: ['        env: *x'] },
+  { what: 'a second env line, refused, its block read', lines: ['        env:', ENV_ON, '        timeout-minutes: 5', '        env:', ENV_NO], env: ENV_BOTH, refused: ['        env:'] },
+];
+test('the env reader\'s table: each row\'s env and refused lines read as steps()\' docstring states', () => {
+  const wrong = [];
+  for (const row of ENV_ROWS) {
+    const [s] = steps({ lines: ['      - name: S', ...row.lines, '        run: x'] });
+    const got = { env: s.env, refused: s.envRefused }, want = { env: row.env, refused: row.refused };
+    if (!isDeepStrictEqual(got, want)) wrong.push(row.what + ': steps() over ' + JSON.stringify(row.lines) + ' reads ' + JSON.stringify(got) + ', not ' + JSON.stringify(want));
+  }
+  assert.deepEqual(wrong, [], 'each row of the env reader\'s table is read as steps()\' docstring states; the rows read otherwise: ' + JSON.stringify(wrong));
 });
 function extensionJob() {
   const hits = jobs(read(CI)).filter((j) => j.key === JOB);
@@ -239,7 +309,8 @@ test('the step exists once in the ' + JOB + ' job, directly after the Chromium i
   assert.equal(at, install + 1, 'the step is directly after the Chromium install step, by the two steps\' places among the job\'s steps (the legs need the browser it installs); order: ' + JSON.stringify(names));
   assert.ok(install > testAt, 'the Chromium install step is placed after the Test step, by the two steps\' places (an install or a cache before the Test step is the install pin\'s read, its docstring)');
   const step = all[at];
-  assert.deepEqual(step.env, { [SWITCH]: '"1"' }, 'the step\'s env, as steps() reads it (the lines under env: of ten spaces, a key that begins with a letter or _, then letters, digits and _, a colon and a space, read up to the first line not indented ten spaces; a quoted key, a digit-led key, a key with a space before its colon and a key whose value starts on the next line are not read), is the switch alone, set to "1"');
+  assert.deepEqual(step.envRefused, [], 'the step\'s env block holds no line the env reader refuses (its docstring in tools/ci-browser-legs.test.mjs states what it reads and what it refuses), each named here: ' + JSON.stringify(step.envRefused));
+  assert.deepEqual(step.env, { [SWITCH]: '"1"' }, 'the step\'s env, as the env reader reads it (its docstring in tools/ci-browser-legs.test.mjs states what it reads and what it refuses), is the switch alone, set to "1"');
   assert.equal(step.fields.run, RUN_LINE, 'the run line calls the script, which runs node --test over the roster');
   assert.ok(!('working-directory' in step.fields), 'no working-directory field among the step\'s fields (steps() states what it reads): the roster, the script and out-tests/ are under the job\'s default, vscode-extension/');
   assert.match(job.lines.join('\n'), /^    defaults:\n      run:\n        working-directory: vscode-extension$/m, 'the job\'s default working directory is vscode-extension');
