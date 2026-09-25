@@ -5098,9 +5098,11 @@ class _ListRef(weakref.ref):
     references, and runs their callbacks, before it runs finalizers). The entries that held it leave as dead ones (at the
     drain, or at the trim when the collection falls between a registration's drain and its trim), and _mat_register mints
     the list a fresh reference at its next registration. The slots those entries described keep their atoms with no entry
-    until a read registers them again; a slot never read again stays built with no entry, which `resident` does not count
-    and the cap cannot reach, as before the collection event, when the trim stripped such a slot. No kernel path
-    resurrects a list."""
+    until a read registers them again or, once a read has minted the fresh reference, a release of the index resets them
+    (every built slot of the list, read again or not; before that read, release() cannot reach the list, since the index
+    holds no live reference to it); a slot neither read again nor released stays built with no entry, which `resident`
+    does not count and the cap cannot reach, as before the collection event, when the trim stripped such a slot and no
+    release could reach the list. No kernel path resurrects a list."""
     __slots__ = ("lid", "n")
 
 
@@ -5237,8 +5239,10 @@ class LazyIndex:
         self._cache_key = cache_key                        # the assembly entry this index serves: dropped when a row fails to build
         self._rows_noted = False                          # the document noted `rows` once, at the first row that fails to build
         self._minted = []                                 # the _ListRef of every LazyAtoms minted over this index (LazyAtoms.__init__ adds
-        #                                                   under _MAT_LOCK; release() walks and prunes them): a list of refs, no WeakSet,
-        #                                                   since a LazyAtoms is unhashable
+        #                                                   under _MAT_LOCK, and _mat_register adds, under the same lock, the fresh one of
+        #                                                   a list a finalizer resurrected, whose cleared one stays until a release prunes
+        #                                                   it; release() walks and prunes them): a list of refs, no WeakSet, since a
+        #                                                   LazyAtoms is unhashable
         self.rowb = [r.encode("utf-8") for r in doc["atoms"]]   # v6: the document's rows are JSON strings already (T401 (4))
         self.records = doc["records"]
         self.fsids = list(doc.get("fsids") or [])
@@ -5297,10 +5301,11 @@ class LazyIndex:
         mutated. A tree that outlives its entry (a parse cache slot, a build in flight) reads a released slot as it reads an
         evicted one: rebuilt through this index, and registered again; that is allowed and needs no retired flag, since under
         weak ownership the LRU then holds nothing beyond that tree's own lifetime: its entries leave at the next registration
-        or release after it goes (_mat_drain; before 2026-09-24 they waited for the cap). The walk is over this index's own
-        lists' slots, never the LRU (measured 2026-09-15, a lab process: 20,000 rows with 200 built, 1.3 ms; 200,000 rows
-        with 2,000 built, 9.8 ms; 200,000 rows with 20,000 built, 26.5 ms), so a release costs the dropped index its row count
-        in list reads, once, where the cap paid a million-entry residency."""
+        or release after it goes (_mat_drain; before 2026-09-24 they waited for the cap or for a new list registering the same
+        row under their id). The walk is over this index's own lists' slots, never the LRU (measured 2026-09-15, a lab
+        process: 20,000 rows with 200 built, 1.3 ms; 200,000 rows with 2,000 built, 9.8 ms; 200,000 rows with 20,000 built,
+        26.5 ms), so a release costs the dropped index its row count in list reads, once, where the cap paid a million-entry
+        residency."""
         with _MAT_LOCK:
             _mat_drain()                                  # the queued freed lists' entries first, then this index's own
             n, live = 0, []

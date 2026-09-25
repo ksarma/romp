@@ -69,13 +69,16 @@ class _Stand:
 
 
 class _Resurrector:
-    """A finalizer in a garbage cycle (it refers to itself) holding a list: its __del__ puts the list in `keep`, so the
-    collection that runs it brings the list back."""
+    """A finalizer in a garbage cycle (it refers to itself) holding a list: its __del__ records in `seen` whether the list's
+    reference read None and whether the queue held that reference, then puts the list in `keep`, so the collection that
+    runs it brings the list back."""
 
-    def __init__(self, la, keep):
-        self.la, self.keep, self.cycle = la, keep, self
+    def __init__(self, la, keep, seen):
+        self.la, self.keep, self.seen, self.cycle = la, keep, seen, self
 
     def __del__(self):
+        ref = self.la._ref
+        self.seen.append((ref() is None, any(q is ref for q in em._MAT_COLLECTED)))
         self.keep.append(self.la)
 
 
@@ -720,6 +723,20 @@ class CollectionEvent(Synthetic):
             self.assertTrue(seen.get(name), "the %s road called the drain" % name)
             self.assertTrue(all(seen[name]), "the %s road's drain ran with _MAT_LOCK held" % name)
 
+    def test_a_live_list_keeps_its_one_reference_across_registrations(self):
+        """Across the build road and the hit road a live list keeps the reference it was minted with, and its index holds that
+        one: a registration mints no reference for a list whose reference still reads it (Resurrected covers one whose
+        reference reads None)."""
+        ix, la = _mint(3, "K")
+        own = la._ref
+        for i in range(3):
+            la[i]                                                  # the build road, once per slot
+        with em._MAT_LOCK:
+            em._MAT_LRU.pop((id(la), 1))                           # slot 1 stays built with no entry of its own
+        la[1]                                                      # the hit road registers it again
+        self.assertIs(la._ref, own, "a live list keeps its one reference across registrations")
+        self.assertEqual(ix._minted, [own], "its index holds that one reference")
+
     def test_a_freed_list_with_no_entry_changes_nothing(self):
         ix, la = _mint(6, "h")
         for i in range(6):
@@ -789,8 +806,8 @@ class Resurrected(Synthetic):
     """A list a finalizer resurrects inside a garbage cycle: the collector clears the list's weak reference, and runs its
     callback, before it runs the finalizer, so the list comes back holding a reference that reads None. Red before the
     registration minted a fresh reference for such a list: every entry it registered held the cleared reference, dead
-    from birth, and each re-read of a built slot counted one `expired` more than `collected`. No kernel path resurrects a
-    list today."""
+    from birth, and each later re-read of a slot holding such an entry counted one `expired` more than `collected`. No
+    kernel path resurrects a list today."""
 
     def test_a_list_a_finalizer_resurrects_registers_live_entries_again(self):
         """After the resurrection its entries are live, expired equals collected, the cap evicts them, release() reaches the
@@ -800,13 +817,15 @@ class Resurrected(Synthetic):
         ix, la = _mint(k, "R")
         for i in range(k):
             la[i]
-        own, keep = la._ref, []
-        res = _Resurrector(la, keep)                               # the cycle holds the list's one other reference
+        own, keep, seen = la._ref, [], []
+        res = _Resurrector(la, keep, seen)                         # the cycle holds the list's one other reference
         del ix, la, res
         gc.collect()
         self.assertEqual(len(keep), 1, "the finalizer ran and brought the list back")
         la = keep.pop()
-        self.assertIsNone(own(), "the collector cleared the list's reference before the finalizer ran")
+        self.assertEqual(seen, [(True, True)],
+                         "when the finalizer ran, the list's reference already read None and its callback had queued it")
+        self.assertIsNone(own(), "after the collection the reference the list was minted with reads None")
         trace = []
         for _ in range(3):
             la[0]                                                  # a built slot read again
@@ -818,6 +837,9 @@ class Resurrected(Synthetic):
         for i in range(1, k):
             la[i]                                                  # the other built slots, stripped by the drain, register again
         self.assertEqual(_entries(id(la)), (k, 0), "every entry of the resurrected list is live")
+        minted = la._index._minted
+        self.assertEqual((len(minted), minted[0] is own, minted[-1] is la._ref), (2, True, True),
+                         "its index holds two references: the cleared one first, then the fresh one the list holds")
         st = em.asm_index_stats()
         self.assertEqual((st["expired"], st["collected"]), (k, k), "expired equals collected: the k entries the drain removed")
         em._MAT_CAP = k
@@ -829,7 +851,7 @@ class Resurrected(Synthetic):
         self.assertEqual(la._index.release(), k - 1, "release() reached the list through its index's minted references")
         self.assertEqual(_entries(id(la)), (0, 0))
         self.assertEqual(_built(la), [])
-        la[0]                                                      # built and registered again, under the fresh reference
+        la[k - 1]                                                  # built and registered again, under the fresh reference
         wl = weakref.ref(la)
         del la
         self.assertIsNone(wl(), "the list is freed")
