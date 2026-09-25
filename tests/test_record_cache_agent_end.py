@@ -1025,6 +1025,52 @@ class AgentEnd(unittest.TestCase):
         self.assertEqual(err.getvalue(), "", "nothing said on stderr")
         self.assertEqual(km._AGENT_RELEASED, {}, "no release taken or owed for the end")
 
+    def _evicted_after_the_write(self):
+        """Stub the document write so that, once it has written, an eviction pops the agent's entry, the way another path's
+        insert does between the release's write and its pop. Returns the list the stub fills with each write's result."""
+        real, fired = em.checkpoint_write, []
+
+        def write_then_evict(path, *a, **k):
+            out = real(path, *a, **k)
+            if str(path) == self.agent:
+                fired.append(out)
+                with em._JSONL_CACHE_LOCK:
+                    em._cache_pop_locked(self.agent)
+            return out
+        em.checkpoint_write = write_then_evict
+        self.addCleanup(setattr, em, "checkpoint_write", real)
+        return fired
+
+    def test_a_release_whose_entry_is_evicted_after_its_write_is_absent_not_owed(self):
+        """PR 913 round 1, group B: a concurrent pop after the document write and before the release's pop leaves nothing
+        held, so nothing is deferred or owed; the end is remembered as one that found nothing held (group H)."""
+        self._fold_while_running(AID, self.agent)
+        self._stop(AID)
+        fired = self._evicted_after_the_write()
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            km._begin_checkpoint_cycle()
+        self.assertEqual(fired, [True], "precondition: the release wrote the document")
+        self.assertIsNone(self._ent(self.agent), "precondition: the eviction took the entry")
+        self.assertEqual((self._stat("releaseDeferred"), self._stat("releaseLost"), self._stat("released")),
+                         (0, 0, NOTHING_RELEASED), "nothing deferred, lost or released")
+        self.assertEqual((em.owed_release_paths(), km._AGENT_RELEASED), (set(), {}), "nothing owed, no release recorded")
+        self.assertEqual(km._AGENT_ENDED_UNHELD.get((SID, AID)), self.agent, "remembered as an end that found nothing held")
+        self.assertEqual(err.getvalue(), "", "nothing said on stderr")
+
+    def test_an_owed_release_whose_entry_is_evicted_after_its_write_is_absent_and_remembered(self):
+        """Group B on the owed releases' pay: the same pop after the write answers "absent" there too, so the release is not
+        owed again, and the end is remembered (group H's owed road)."""
+        self._owed()
+        fired = self._evicted_after_the_write()
+        with contextlib.redirect_stderr(io.StringIO()):
+            km._begin_checkpoint_cycle()                                 # the pay writes the document, and the entry goes
+        self.assertEqual(fired, [True], "precondition: the pay wrote the document")
+        self.assertEqual((self._stat("releaseDeferred"), em.owed_release_paths()), (1, set()),
+                         "the one deferral before the pay, and nothing owed after it")
+        self.assertNotIn((SID, AID), km._AGENT_RELEASED, "no release taken or owed for the end")
+        self.assertEqual(km._AGENT_ENDED_UNHELD.get((SID, AID)), self.agent, "remembered as an end that found nothing held")
+
     def test_a_failed_write_after_a_read_replaced_the_entry_is_owed_not_lost(self):
         self._fold_while_running(AID, self.agent)
         self._stop(AID)

@@ -2528,11 +2528,12 @@ def release_entry(path, reason):
       raised, the entry stays and the release is given up, counted and said once per cause: a release without its document
       would read the file whole at every fold that follows ("lost").
     - The cycle's budget refusing the write defers the release to the next cycle's start ("deferred").
-    - A concurrent pop that took the entry before the write read it leaves nothing to release: "absent", nothing counted.
-    - A read that replaced the entry before the write or the pop defers the release, never drops it ("raced"); so does a
-      read still pulling the file's bytes when the pop comes, since the pop takes the path's stripe lock first, as the
-      reader does, and so waits for that read's insert. The cost is that wait: the pusher waits out a read in flight on a
-      path that shares the stripe.
+    - A concurrent pop that took the entry before the write or the pop leaves nothing to release: "absent", nothing counted
+      and nothing owed; so does an entry weighing nothing (a restored tail) standing in its place at the pop.
+    - A read that replaced the entry, before the write or the pop, with one that holds records defers the release, never
+      drops it ("raced"); so does a read still pulling the file's bytes when the pop comes, since the pop takes the path's
+      stripe lock first, as the reader does, and so waits for that read's insert. The cost is that wait: the pusher waits
+      out a read in flight on a path that shares the stripe.
     Returns "released", "absent", "lost", "deferred" or "raced". Runs on the pusher thread with neither lock held."""
     key = str(path)
     with _JSONL_CACHE_LOCK:
@@ -2564,6 +2565,9 @@ def release_entry(path, reason):
             while len(_RELEASED_MARKS) > _JSONL_CACHE_MAX:
                 _RELEASED_MARKS.pop(next(iter(_RELEASED_MARKS)), None)
             return "released"
+        now = _JSONL_CACHE.get(key)
+        if now is None or _entry_weight(now) == 0:
+            return "absent"                               # a concurrent pop took it after the write read it: nothing is held
     _owe_release(key, reason)
     return "raced"
 
