@@ -338,12 +338,12 @@ jobs:
         # The browser legs named in vscode-extension/ci-browser-legs.txt run here with the Chromium installed above.
         # The Test step runs every leg too, but before any browser is installed, so there each one skips at launch,
         # and this step is the job's only run of a rostered leg with a browser. ROMP_BROWSER_LEGS_REQUIRE=1 arms the
-        # one shared launcher, inBrowser in ui/webview/real-viewer-leg.ts (any non-empty value arms it), and under the
+        # one shared launcher, inBrowser in ui/webview/real-viewer-leg.ts (any non-empty value counts), and under the
         # switch, inBrowser fails a launch it cannot make, naming the switch and the reason, instead of skipping. So,
         # for a leg that follows the roster rule below, a runner that lost its browser turns this step red rather than
         # green with the coverage gone (the ROMP_UI_BENCH_REQUIRE stance below), and the script prints "the runner
-        # lost its browser: check the Chromium install step" beside the failing leg when the failing test is
-        # registered in the leg's bundle. The roster is the file each PR
+        # lost its browser: check the Chromium install step" beside the failing leg, within the scope the script's
+        # header states. The roster is the file each PR
         # adds its legs to, one compiled bundle path per line. The roster rule: under the switch, a rostered leg
         # passes only when inBrowser has launched Chromium, and the leg does nothing that lets it pass otherwise (for
         # example: it launches no browser of its own; nothing catches or settles inBrowser's rejection, so the
@@ -358,22 +358,20 @@ jobs:
         # real pass; a leg that catches inBrowser's rejection and passes (a try and catch around the awaited call,
         # .catch(), .then's second argument or Promise's allSettled). A leg built to pass without a browser is outside
         # what the step can detect. tools/ci-browser-legs.test.mjs runs a synthetic leg of each example and reads it
-        # green. Nothing checks that every browser leg in the tree is rostered, and main has no such check. Of the
-        # code a leg runs, only inBrowser reads the switch, so a private skip stays a skip and a private launch that
-        # fails is never the failure naming the switch. The step sits directly after the Chromium install with nothing
-        # before the Test step moved, so plans/markdown-viewer.md's CI sentence and the pin that reads it
-        # (tools/markdown-viewer-plan-gate-adopt.test.mjs) stay true. The Dashboard pane bench and the served-page tests
-        # below run only after this step passes: a red here skips them for the run, as a red step before them always
-        # has. The script (scripts/ci-browser-legs.sh) checks before node --test that every roster line is a bundle
-        # path, listed once, whose source is in the tree and whose bundle is under out-tests/ (the Test step's npm test
-        # built it; the Build step writes dist/ only), a red naming the line and the fix; after node --test it reads its
-        # own reporter's record (scripts/ci-browser-legs-reporter.mjs) and a rostered leg with no passing test of its
-        # own, a skipped test, a failure inside a todo, or a file that failed as a whole is red too, naming the leg or
-        # the test, reading only the results node attributes to a rostered bundle's file (a test registered in any
-        # other file, such as one a leg loads at run time outside its bundle, is read through node's status alone,
-        # as the script's header says); an empty roster prints "no legs in the roster" and exits 0 without starting
-        # node --test, whose default glob would rerun the whole suite (tools/ci-browser-legs.test.mjs, in the shell
-        # job, runs the script over synthetic trees).
+        # green. Nothing checks that every browser leg in the tree is rostered, and main has no such check. inBrowser's
+        # read of the switch changes inBrowser's own skip alone: a private skip is not turned into a failure by it, and
+        # a private launch that fails is not inBrowser's failure naming the switch. The step sits directly after the
+        # Chromium install with nothing before the Test step moved, so plans/markdown-viewer.md's CI sentence and the
+        # pin that reads it (tools/markdown-viewer-plan-gate-adopt.test.mjs) stay true. The Dashboard pane bench and the
+        # served-page tests below run only after this step passes: a red here skips them for the run, as a red step
+        # before them always has. The script (scripts/ci-browser-legs.sh) checks before node --test that every roster
+        # line is a bundle path, listed once, whose source is in the tree and whose bundle is under out-tests/ (the Test
+        # step's npm test built it; the Build step writes dist/ only), a red naming the line and the fix; after node
+        # --test it reads its own reporter's record (scripts/ci-browser-legs-reporter.mjs) and a rostered leg with no
+        # passing test of its own, a skipped test, a failure inside a todo, or a file that failed as a whole is red too,
+        # naming the leg or the test, within the scope the script's header states; an empty roster prints "no legs in
+        # the roster" and exits 0 without starting node --test, whose default glob would rerun the whole suite
+        # (tools/ci-browser-legs.test.mjs, in the shell job, runs the script over synthetic trees).
         # Two bounds: this step's timeout-minutes (the job comment above says it fits within the margin under the
         # job's cap at the measured head), so a roster whose legs together exceed it fails this step by name instead of
         # cancelling the job nameless; and node's --test-timeout in the script, a per-FILE bound under the step's, so

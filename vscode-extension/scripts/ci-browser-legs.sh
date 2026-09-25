@@ -2,14 +2,11 @@
 # Runs the browser legs named in ci-browser-legs.txt under node --test. The step "Browser legs (node --test over
 # ci-browser-legs.txt)" of .github/workflows/ci.yml calls this from vscode-extension/ after the job installs Chromium,
 # with ROMP_BROWSER_LEGS_REQUIRE=1. The one shared launcher, inBrowser in ui/webview/real-viewer-leg.ts, reads the
-# switch (any non-empty value arms it), and under the switch, inBrowser fails a launch it cannot make, naming the switch
+# switch (any non-empty value counts), and under the switch, inBrowser fails a launch it cannot make, naming the switch
 # and the reason, instead of skipping. Before node --test this script checks the roster file alone, and every red names
 # the line (or the file) and what to do:
 #   - the roster file is not in vscode-extension/: restore it;
-#   - a malformed line (a bundle path is out-tests/<dir>/<name>.test.js and canonical, no empty, . or .. segment, since node
-#     resolves a bundle to its canonical spelling and a line spelled otherwise matches no result of the run; a trailing space,
-#     tab or carriage return counts; the check reads out-tests/, a run with no whitespace and .test.js, so a bundle straight
-#     under out-tests/ passes it too), printed with its whitespace visible, as bash's %q spells it: fix the line;
+#   - a malformed line (the comment above well_formed states the shape): fix the line;
 #   - a duplicate line: remove one;
 #   - a line whose source (ui/webview/<name>.test.ts for out-tests/ui/webview/<name>.test.js) is not in the tree, because
 #     the source moved or was deleted: fix the line;
@@ -26,40 +23,40 @@
 # a todo test that passes beside a real pass; a leg that catches inBrowser's rejection and passes (a try and catch around
 # the awaited call, .catch(), .then's second argument or Promise's allSettled). A leg built to pass without a browser is
 # outside what the step can detect. tools/ci-browser-legs.test.mjs runs a synthetic leg of each example and reads it green.
-# Nothing checks that every browser leg in the tree is rostered, and main has no such check. Of the code a leg runs, only
-# inBrowser reads the switch, so a launch or a skip of the leg's own stands outside it, and Chromium is the one engine the
-# job installs. A leg with no line runs only under the Test step, before the job installs a browser.
+# Nothing checks that every browser leg in the tree is rostered, and main has no such check. inBrowser's read of the
+# switch changes inBrowser's own skip alone, so a launch or a skip of the leg's own stands outside that read, and Chromium
+# is the one engine the job installs. A leg with no line runs only under the Test step, before the job installs a browser.
 # tools/ci-browser-legs.test.mjs (CI's Shell job, no node_modules) runs this script over synthetic trees, with a stub node
 # on PATH that records the node --test call and writes the record a case hands it, and with the real node and the real
 # reporter. `--check`, read as the first argument alone, runs the pre-run checks alone and starts no node --test (it does
-# not check that the bundles are built, which the step's run does).
-# After node --test it reads the run's record from scripts/ci-browser-legs-reporter.mjs (one line per result, attributed to
-# a file by node's own record of it: the bundle for a test registered in the bundle, the other file for a test registered in
-# a file the bundle loads at run time; node's TAP record names no file for a pass, so it cannot say which leg a pass belongs
-# to) and derives, per rostered leg, that A TEST OF ITS BUNDLE PASSED: at least one result attributed to it is a pass that
-# carries no skip or todo, is a test and not a suite, and is not marked as node's file-level result (node reports a file
-# that registered nothing, from itself or from a file it loads, as one pass named by its path; the reporter's header states
-# what its mark reads). That is the whole of what the record can prove: node's events carry no launch, so a bundle that
-# mixes source pins with its browser tests satisfies the property by a pin's pass alone, and a browser test behind an unmet
-# condition, which registers nothing and emits no event, leaves no line to read; for a leg that follows the roster rule, the
-# skip and lost-browser reads below see inBrowser's own skip and failure by name when the launch is reached from a test
-# registered in the bundle, and nothing here proves it was reached. A leg
-# with no such pass and no failure outside a todo is red naming the leg and what the record held instead (skips, todos,
-# suites, the file-level result), since the step would otherwise claim coverage it did not run; a leg with a failure
-# outside a todo and no such pass is node's red, passed through. Beside that property: a test skipped is red naming
-# the test, its reason and the switch's state in the run (with the switch unset, as a local run may have it, the remedy is
-# to run with it set); a failure inside a todo is red (node discards it: # fail 0, exit 0); a file that failed as a whole
-# (node's file-level result failing: node fails a file as a whole when its process exits non-zero or is cut at the run's
-# --test-timeout outside any one test's result) is red naming the file and pointing at the spec output above for the cause;
-# and a failed test whose message BEGINS with the phrase inBrowser fails with when it cannot launch (the switch's name; a
-# message that merely quotes that phrase after other text, as a leg embedding a child run's output does, is an ordinary
-# failure) is printed beside its leg with the remedy: the runner lost its browser, check the Chromium install step. The
-# property and each of these reds read only the results the record attributes to a rostered bundle, so a test registered in
-# any other file, such as one a leg loads at run time outside its bundle, is read through node's status alone: its skip, or
-# its failure inside a todo, reads green beside a pass of the bundle's own that counts; its failure outside a todo, a lost
-# browser's included, is red by node's status without the lost-browser remedy; and a leg whose bundle has neither a pass
-# that counts nor a failure outside a todo is red as unrun, the red's tally counting none of that file's results. One pass
-# over the record (awk), linear in its length. An empty roster prints "no legs in the roster" and exits 0 without starting
+# not check that the bundles are built, which the step's run does). The tree test's case "the script runs the rostered
+# legs" runs --check as the first argument, and as the second, where it is not read.
+# After node --test it reads the run's record from scripts/ci-browser-legs-reporter.mjs (the reporter's header states
+# what each line records) and derives, per rostered leg, that A TEST OF ITS BUNDLE PASSED: at least one result
+# attributed to it is a pass that carries no skip or todo, is a test and not a suite, and is not marked as node's
+# file-level result (node reports a file that registered nothing, from itself or from a file it loads, as one pass named
+# by its path; the reporter's header states what its mark reads). That is the whole of what the record can prove: node's
+# events carry no launch, so a bundle that mixes source pins with its browser tests satisfies the property by a pin's
+# pass alone, and a browser test behind an unmet condition, which registers nothing and emits no event, leaves no line
+# to read; for a leg that follows the roster rule, the skip and lost-browser reads below see inBrowser's own skip and
+# failure by name when the launch is reached from a test registered in the bundle, and nothing here proves it was
+# reached. A leg with no such pass and no failure outside a todo is red naming the leg and what the record held instead
+# (skips, todos, suites, the file-level result), since the step would otherwise claim coverage it did not run; a leg
+# with a failure outside a todo and no such pass is node's red, passed through. Beside that property: a test skipped is
+# red naming the test, its reason and the switch's state in the run (with the switch unset, as a local run may have it,
+# the remedy is to run with it set); a failure inside a todo is red (node discards it: # fail 0, exit 0); a file that
+# failed as a whole (node's file-level result failing: node fails a file as a whole when its process exits non-zero or
+# is cut at the run's --test-timeout outside any one test's result) is red naming the file and pointing at the spec
+# output above for the cause; and a failed test whose message BEGINS with the phrase inBrowser fails with when it cannot
+# launch (the switch's name; a message that merely quotes that phrase after other text, as a leg embedding a child run's
+# output does, is an ordinary failure) is printed beside its leg with the remedy: the runner lost its browser, check the
+# Chromium install step. The property and each of these reds read only the results the record attributes to a rostered
+# bundle, so a test registered in any other file, such as one a leg loads at run time outside its bundle, is read
+# through node's status alone: its skip, or its failure inside a todo, reads green beside a pass of the bundle's own
+# that counts; its failure outside a todo, a lost browser's included, is red by node's status without the lost-browser
+# remedy; and a leg whose bundle has neither a pass that counts nor a failure outside a todo is red as unrun, the red's
+# tally counting none of that file's results. One pass over the record (awk), linear in its length, executed by the tree
+# test's post-run and composition cases. An empty roster prints "no legs in the roster" and exits 0 without starting
 # node --test: with no file arguments node --test runs its default glob, the whole suite again.
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
@@ -67,8 +64,10 @@ ROOT=$(cd .. && pwd)
 ROSTER=ci-browser-legs.txt
 SWITCH=ROMP_BROWSER_LEGS_REQUIRE
 REPORTER=./scripts/ci-browser-legs-reporter.mjs
-# The switch's state in this run, printed by the messages after node --test: the step sets it to 1; a local run may not,
-# and a skip with it unset is inBrowser skipping as designed, so the remedy differs.
+# The switch's state in this run, printed by the messages after node --test: set when its value is not empty (any
+# non-empty value counts, as in inBrowser's read), unset otherwise; the tree test's post-run case runs it set to 1, set to
+# yes and unset. The step sets it to 1; a local run may not, and a skip with it unset is inBrowser skipping as designed, so
+# the remedy differs.
 if [ -n "${!SWITCH:-}" ]; then switch_state="$SWITCH=${!SWITCH}"; else switch_state="$SWITCH unset"; fi
 
 check_only=0
@@ -79,13 +78,17 @@ if [ ! -f "$ROSTER" ]; then echo "ci-browser-legs: $ROSTER is not in vscode-exte
 fail=0
 red() { echo "ci-browser-legs: $*" >&2; fail=1; }
 source_of() { local rel=${1#out-tests/}; printf '%s/%s.test.ts' "$ROOT" "${rel%.test.js}"; }
-# a bundle path: out-tests/<dir>/<name>.test.js with no whitespace, and canonical, every segment after out-tests/ non-empty
-# and neither . nor .., the spelling normalizing leaves unchanged (the pattern reads out-tests/, a run with no whitespace and
-# .test.js, so a bundle straight under out-tests/ passes too). Node resolves a bundle to that spelling and the post-run
-# read keys a line by it; the duplicate check below reads only the lines that pass here, so it compares canonical paths.
-# Whitespace here, and in the loop's test for a blank or # line, is bash's [[:space:]] in the runner's locale, not the
-# tree test's \s: a no-break space inside a line passes here under C.UTF-8 and is refused there, and a line holding a
-# byte-order mark or a no-break space before its # is refused here as malformed and dropped there, a red on one side.
+# a bundle path: out-tests/<dir>/<name>.test.js with no whitespace, and canonical, every segment after out-tests/
+# non-empty and neither . nor .., the spelling normalizing leaves unchanged (the pattern reads out-tests/, a run with no
+# whitespace and .test.js, so a bundle straight under out-tests/ passes too). The roster loop skips, before this check,
+# a line of whitespace alone (an empty one among them) and one whose first non-blank character is #. Node resolves a
+# bundle to that spelling and the post-run read keys a line by it; the duplicate check below reads only the lines that
+# pass here, so it compares canonical paths. Whitespace here, and in the loop's test for a blank or # line, is bash's
+# [[:space:]] in the runner's locale, not the tree test's \s: a no-break space inside a line passes here under C.UTF-8
+# and is refused there, and a line holding a byte-order mark or a no-break space before its # is refused here as
+# malformed and dropped there, a red on one side. The tree test's case "the script refuses" runs the malformed rows (six
+# whitespace shapes and three non-canonical spellings), and its case "the script runs the rostered legs" a bundle
+# straight under out-tests/ and the empty roster's comment line and whitespace-only line, both skipped.
 well_formed() {
   [[ "$1" =~ ^out-tests/[^[:space:]]+\.test\.js$ ]] || return 1
   local seg rest="${1#out-tests/}/"
@@ -139,7 +142,7 @@ node --test --test-timeout=240000 --test-reporter=spec --test-reporter-destinati
 
 # One pass over the record with the roster on stdin: per rostered leg a TALLY line (passes that count, fails that count,
 # skips, todos, todo failures, suites, file-level results); and one line per result the step reads a red from: SKIP, TODOFAIL,
-# FILEFAIL (the file failed as a whole), LOST (a failure whose message begins with inBrowser's cannot-launch phrase). Node resolves a bundle from its
+# FILEFAIL (the file failed as a whole), LOST (the lost-browser read the header states). Node resolves a bundle from its
 # physical working directory, so the roster's lines are keyed by that path.
 here=$(pwd -P)
 report=$(printf '%s\n' "${legs[@]}" | awk -v msg="$SWITCH is set and this leg cannot run" -F '\t' -v here="$here" '
@@ -152,11 +155,10 @@ report=$(printf '%s\n' "${legs[@]}" | awk -v msg="$SWITCH is set and this leg ca
     if ($4 == "todo") { td[$1]++; if ($2 == "fail") { tf[$1]++; print "TODOFAIL\t" leg[$1] "\t" $6 "\t" $7 } }
     if ($3 == "suite") su[$1]++
     if ($5 == "file-level") { fl[$1]++; if ($2 == "fail") print "FILEFAIL\t" leg[$1] "\t" $8 "\t" $7 }
-    # LOST reads the START of the message (index == 1): the assert.fail message of inBrowser begins with the phrase (the tree
-    # test pins the literal in ui/webview/real-viewer-leg.ts), so a failure whose message quotes the output of a child run that
-    # carries the phrase after other text (the assertion messages of the rostered switch test embed the stdout of the child)
-    # is an ordinary failure, not a lost browser with a remedy pointing at the Chromium install step. No apostrophe here: this
-    # awk program is a single-quoted bash string.
+    # LOST: the lost-browser read the header states. It reads the start of the message because the assertion messages of
+    # the rostered switch test embed the stdout of a child run, which carries the phrase after other text (the tree test
+    # pins the literal in ui/webview/real-viewer-leg.ts). No apostrophe here: this awk program is a single-quoted bash
+    # string.
     if ($2 == "fail" && index($7, msg) == 1) print "LOST\t" leg[$1] "\t" $6 "\t" $7
   }
   END { for (i = 1; i <= n; i++) { a = order[i]; print "TALLY\t" leg[a] "\t" p[a] "\t" f[a] "\t" sk[a] "\t" td[a] "\t" tf[a] "\t" su[a] "\t" fl[a] } }

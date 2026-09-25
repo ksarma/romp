@@ -1,7 +1,7 @@
 # The browser legs the gating CI job runs with a browser. The step "Browser legs (node --test over
 # ci-browser-legs.txt)" in .github/workflows/ci.yml reads this file into node --test (scripts/ci-browser-legs.sh)
 # after the job's Chromium install, with ROMP_BROWSER_LEGS_REQUIRE=1: the one shared launcher, inBrowser in
-# ui/webview/real-viewer-leg.ts, reads the switch (any non-empty value arms it), and under the switch, inBrowser fails
+# ui/webview/real-viewer-leg.ts, reads the switch (any non-empty value counts), and under the switch, inBrowser fails
 # a launch it cannot make, naming the switch and the reason, instead of skipping. The Test step's npm test runs every
 # leg too, before any browser is installed, so each leg skips there at launch; this step is the job's only run of a
 # rostered leg with a browser.
@@ -9,13 +9,13 @@
 # Format: one compiled bundle path per line, relative to vscode-extension/, as the Test step's npm test builds it
 # (ui/webview/<name>-browser.test.ts builds to out-tests/ui/webview/<name>-browser.test.js), for example
 #   out-tests/ui/webview/gear-sub-focus-browser.test.js
-# Blank lines and lines whose first non-blank character is # are ignored. A PR that wants its legs run adds them as
-# lines here and puts each leg's own whole-file seconds, measured, in its body: node runs the rostered files
-# concurrently, so the step's total does not give one leg's time, and node's --test-timeout in the script, which cuts
-# each file's whole run at its bound, has to sit above it. The script refuses a malformed or duplicated line, a line
-# whose source moved or was deleted, and a line whose bundle is not built; tools/ci-browser-legs.test.mjs (the Shell
-# job, which builds no bundles) holds the roster to the first three (a bundle path in its canonical spelling, listed
-# once, naming a source in the tree) and runs each of the script's refusals, the unbuilt bundle included, over
+# Comment and blank lines are skipped as the script's comment above well_formed states. A PR that wants its legs run
+# adds them as lines here and puts each leg's own whole-file seconds, measured, in its body: node runs the rostered
+# files concurrently, so the step's total does not give one leg's time, and node's --test-timeout in the script, which
+# cuts each file's whole run at its bound, has to sit above it. The script refuses a malformed or duplicated line, a
+# line whose source moved or was deleted, and a line whose bundle is not built; tools/ci-browser-legs.test.mjs (the
+# Shell job, which builds no bundles) holds the roster to the first three (a bundle path in its canonical spelling,
+# listed once, naming a source in the tree) and runs each of the script's refusals, the unbuilt bundle included, over
 # synthetic trees; the bundle check over the real roster is the step's run alone.
 #
 # The roster rule: under the switch, a rostered leg passes only when inBrowser has launched Chromium, and the leg does
@@ -31,19 +31,14 @@
 # inBrowser's rejection and passes (a try and catch around the awaited call, .catch(), .then's second argument or
 # Promise's allSettled). A leg built to pass without a browser is outside what the step can detect.
 # tools/ci-browser-legs.test.mjs runs a synthetic leg of each example and reads it green. Nothing checks that every
-# browser leg in the tree is rostered, and main has no such check. Of the code a leg runs, only inBrowser reads the
-# switch, so a launch or a skip of the leg's own stands outside it: a private skip stays a skip, and a private launch
-# that fails is never the failure naming the switch. Chromium is the one engine the job installs, so a leg's Firefox
-# and WebKit runs happen only in a local run. A Firefox or WebKit test in a rostered file would not run on the runner:
-# it skips there, and the script reds a skipped test in a rostered file, or its launch fails, which node reds unless
-# the leg swallows the failure and so breaks the roster rule. So such a test cannot sit in a rostered file. After the
-# run, a skipped test, a failure inside a todo, a file that failed as a whole, or a leg that ran no passing test is
-# red: each is coverage the step would claim and not have. Those reads cover the results node attributes to a
-# rostered bundle's file: a test registered in any other file, such as one a leg loads at run time outside its bundle,
-# is read through node's status alone, so its pass does not count for the leg, its skip or its failure inside a todo
-# reads green beside a passing test of the bundle's own, and its failure, a failed launch included, is red by node's
-# status without the script's lost-browser remedy. A leg whose bundle has neither a passing test of its own nor a
-# failure outside a todo is red as unrun, and the red's tally counts none of that file's results.
+# browser leg in the tree is rostered, and main has no such check. inBrowser's read of the switch changes inBrowser's
+# own skip alone: a private skip is not turned into a failure by it, and a private launch that fails is not
+# inBrowser's failure naming the switch. Chromium is the one engine the job installs, so a leg's Firefox and WebKit
+# runs happen only in a local run. A Firefox or WebKit test in a rostered file would not run on the runner: it skips
+# there, and the script reds a skipped test in a rostered file, or its launch fails, which node reds unless the leg
+# swallows the failure and so breaks the roster rule. So such a test cannot sit in a rostered file. After the run, a
+# skipped test, a failure inside a todo, a file that failed as a whole, or a leg that ran no passing test is red: each
+# is coverage the step would claim and not have. The script's header states which results those reads cover.
 #
 # The switch test below spawns three child node --test runs of its own first test (the switch set to "1", to another
 # non-empty value, and unset) with PLAYWRIGHT_BROWSERS_PATH pointed at an empty directory, and asserts that the two

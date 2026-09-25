@@ -48,7 +48,7 @@ module that launches a Playwright browser; `tests/ui-bench.test.mjs` under `ROMP
 served pytest files under `ROMP_SERVED_TESTS_REQUIRE` carry their own switch) skips at launch there. The
 legs named in `vscode-extension/ci-browser-legs.txt`, one compiled bundle path per line, run again after
 the job's Chromium install with `ROMP_BROWSER_LEGS_REQUIRE=1`. The one shared launcher, `inBrowser` in
-`ui/webview/real-viewer-leg.ts`, reads the switch (any non-empty value arms it), and under the switch,
+`ui/webview/real-viewer-leg.ts`, reads the switch (any non-empty value counts), and under the switch,
 `inBrowser` fails a launch it cannot make, naming the switch and the reason, instead of skipping. A PR
 that wants its legs run adds their bundle paths to the roster and puts each leg's own whole-file seconds,
 measured, in its body: node runs the rostered files concurrently, so the step's total does not give one
@@ -70,25 +70,21 @@ process and tolerates the child's failure; a todo test that passes beside a real
 argument or Promise's allSettled). A leg built to pass without a browser is outside what the step can
 detect. `tools/ci-browser-legs.test.mjs` runs a synthetic leg of each example and reads it green. Nothing
 checks that every browser leg in the tree is rostered, and main has no such check. A leg with no line runs
-only under the Test step, before the job installs a browser. Of the code a leg runs, only `inBrowser`
-reads the switch, so a leg's own skip stays a skip and its own failed launch is never the failure naming
-the switch. Chromium is the one engine the job installs, so a leg's Firefox and WebKit runs happen only
-in a local run. A Firefox or WebKit test in a rostered file would not run on the runner: it skips there,
-and the script reds a skipped test in a rostered file, or its launch fails, which node reds unless the
-leg swallows the failure and so breaks the roster rule. So such a test cannot sit in a rostered file.
+only under the Test step, before the job installs a browser. `inBrowser`'s read of the switch changes
+`inBrowser`'s own skip alone: a leg's own skip is not turned into a failure by it, and its own failed
+launch is not `inBrowser`'s failure naming the switch. Chromium is the one engine the job installs, so a
+leg's Firefox and WebKit runs happen only in a local run. A Firefox or WebKit test in a rostered file
+would not run on the runner: it skips there, and the script reds a skipped test in a rostered file, or its
+launch fails, which node reds unless the leg swallows the failure and so breaks the roster rule. So such a
+test cannot sit in a rostered file.
 
 The step's script, `vscode-extension/scripts/ci-browser-legs.sh`, refuses before `node --test` a roster
 line that is malformed, duplicated or names a source that moved or was deleted, and a rostered bundle
 that is not built. After `node --test` it reads its own reporter's record, and a rostered leg with no
 passing test, a skipped test, a failure inside a todo, or a file that failed as a whole is red, naming
 the leg or the test; a leg that follows the roster rule and whose launch failed under the switch is
-named with the remedy to check the Chromium install step. These reds and that remedy read the results
-node attributes to a rostered bundle's file. A test registered in any other file, such as one a leg
-loads at run time outside its bundle, is read through node's status alone: its pass does not count for
-the leg, its skip or its failure inside a todo reads green beside a passing test of the bundle's own, and
-its failure, a failed launch included, is red without that remedy. A leg whose bundle has neither a
-passing test of its own nor a failure outside a todo is red as unrun, and the red's tally counts none of
-that file's results. Before you push,
+named with the remedy to check the Chromium install step. The script's header states which results those
+reads cover. Before you push,
 `node --test tools/ci-browser-legs.test.mjs` from the repo root runs the tree checks CI's shell job runs
 (no `npm ci` needed). From `vscode-extension/`,
 `bash scripts/ci-browser-legs.sh --check` runs the step's pre-run checks except the bundle check,
