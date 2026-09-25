@@ -2483,7 +2483,9 @@ class Panel {
     const also = saving ? " " + cap(savingWords) + " is still saving; if it is not saved, its words are lost too." : "";
     if (!typed && !n) return { question: cap(savingWords) + " is still saving. Close anyway? If it is not saved, its words are lost.", kept: "This file stays open: " + savingWords + " is still saving. Try again when it has finished." };
     // the typed words: a reply's named as a reply; words not on screen (behind a pending Re-place, or left by its drag with no
-    // composer open) named as words, with the way to see them: any opener shows them, Comment on this file among them
+    // composer open) named as words, with the way to see them. Each of the seven openers keeps them in the box
+    // (releaseSavingBox); six show them, Comment on this file among them, and a Re-place keeps them hidden, carried on to the
+    // opener after it
     const hidden = typed && (!c || c.kind === "replace");
     const typedThe = hidden ? "the words typed on " + name : (c && c.kind === "reply" ? "the reply typed to a comment on " : "the comment typed on ") + name;
     const before = hidden && c ? " before the re-place" : "";
