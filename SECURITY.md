@@ -155,7 +155,7 @@ session cookie clears it as well. Either way the kernel clears `romp_token`
 only when its value is this kernel's token, so a `romp_token` that belongs to
 another romp kernel on the same host is left alone. A response to a request
 without a valid session cookie never clears it, so a browser that has not yet
-signed in this way still has it for that sign-in. Every browser that signs
+signed in with it keeps it until it does. Every browser that signs
 in this way gets the same session, so tabs that reopen together after the
 upgrade all end signed in; each of those browsers held the serve token itself,
 and the session ends, like every session, when the token is rotated. A
