@@ -1117,7 +1117,7 @@ test("a picture from the web whose address the stand-in cannot resolve, a protoc
 // withheld it), and each surface's print there is recorded as a diagnostic line of this case, so the run at either head shows what
 // printed. The cost rows print their address at that head and show the withheld address now: the rule's stated cost. The controls,
 // outside the rule, print their words at both heads. Every value is assembled at run time.
-test("the sign-in rule over the paint, one table (the file review's round 15, correctness-1): every spelling the rulings name, the refuters' (https: with no slash, one slash or one backslash on an https base; http: likewise, and HTTP:, on an http base; a tab before one slash; a password beginning with a slash or a backslash; a numeric head before a backslash; a backslash in the sign-in name; s3:), those an authority-only rule missed (a numeric password head before a /, a ? or a #; a token or a name holding a slash; https: with a numeric head on an https base), the leading run, the tab and control-character forms, the schemeless forms marked renders, the encoded, double-encoded and lookalike at signs, the data: forms, a data: head past 40 characters to its comma, two leading backslashes before a token with no colon, percent-encoded colons before a sign-in, and a plain userinfo or token on an http, an https and a VS Code webview base, and on a URL document the two-backslash form, shows the withheld address and no part of itself on every surface it has: the picture's title line, the control's title property and aria-label, and the failed label; a picture in a fold's own summary and one in a link holding it alone carry it in the control's words, their title withheld; the cost rows (an @ in a web address's path, a profile path, a refused address with an @, a relative a@2x.png on a URL document) are withheld too; the controls print as before: a relative a@2x.png on the Files pane, an inline svg holding @media after its comma, past or inside its first 40 characters, a ported address as its origin, a refused one cut at its authority, at a slash or a backslash (a property pin over the paint, red at the head the round read on each surface that printed)", async (t) => {
+test("the sign-in rule over the paint, one table (the file review's round 15, correctness-1): every spelling the rulings name, the refuters' (https: with no slash, one slash or one backslash on an https base; http: likewise, and HTTP:, on an http base; a tab before one slash; a password beginning with a slash or a backslash; a numeric head before a backslash; a backslash in the sign-in name; s3:), those an authority-only rule missed (a numeric password head before a /, a ? or a #; a token or a name holding a slash; https: with a numeric head on an https base), the leading run, the tab and control-character forms, the schemeless forms marked renders, the encoded, double-encoded and lookalike at signs, an encoded at sign after an invalid byte and after a truncated multi-byte sequence (the file review's round 16, tests-1: green at the head that round read by design, red at 2e9205301 and under a decode that keeps the rest of a run as written from its first malformed byte), the data: forms, a data: head past 40 characters to its comma, two leading backslashes before a token with no colon, percent-encoded colons before a sign-in, and a plain userinfo or token on an http, an https and a VS Code webview base, and on a URL document the two-backslash form, shows the withheld address and no part of itself on every surface it has: the picture's title line, the control's title property and aria-label, and the failed label; a picture in a fold's own summary and one in a link holding it alone carry it in the control's words, their title withheld; the cost rows (an @ in a web address's path, a profile path, a refused address with an @, a relative a@2x.png on a URL document) are withheld too; the controls print as before: a relative a@2x.png on the Files pane, an inline svg holding @media after its comma, past or inside its first 40 characters, a ported address as its origin, a refused one cut at its authority, at a slash or a backslash (a property pin over the paint, red at the head the round read on each surface that printed)", async (t) => {
   const fv = await mod();
   const US = "u" + "ser", PW = "p" + "w" + String(4 * 4), PORT = String(2000 + 24), TK = "tok" + "en", H = "example.test", BS = "\\", TAB = "\t";
   const SIGN = US + ":" + PW + "@", NUM = US + ":" + PORT;
@@ -1185,6 +1185,11 @@ test("the sign-in rule over the paint, one table (the file review's round 15, co
     ent("https:" + US + ":" + PW + "&#xFE6B;" + H + "/x.png", "https:" + US + ":" + PW + FE6B + H + "/x.png", "raw HTML https: with no slash and a small at sign, on an https base", true, ["https"], [PW, US + ":"]),
     mdRow("http://" + US + ":" + PW + FF20 + H + "/x.png", "http://" + US + ":" + PW + "%EF%BC%A0" + H + "/x.png", "markdown http:// with a fullwidth at sign, which the parser refuses", true, ALL, [PW, US + ":"]),
     raw("http://" + US + ":" + PW + "%2540" + H + "/x.png", "a double-encoded at sign, which the parser refuses", true, ALL, [PW, US + ":"]),
+    // a malformed escape before an encoded at sign (the file review's round 16, tests-1): the decode reads a run of escapes sequence by
+    // sequence and keeps a malformed byte as written, so the %40 beside it still decodes; a decode that gives up on the rest of the run at
+    // its first malformed byte (its parseInt kept) passed every other row while these printed the password
+    raw("http://" + US + ":" + PW + "%FF%40" + H + "/x.png", "an invalid byte before an encoded at sign, which the parser refuses", true, ALL, [PW, US + ":"]),
+    raw("http://" + US + ":" + PW + "%E2%80%40" + H + "/x.png", "a truncated multi-byte sequence before an encoded at sign, which the parser refuses", true, ALL, [PW, US + ":"]),
     // the data: forms (the label only)
     raw("data://" + SIGN + H + "/x.png", "raw HTML data: with a sign-in in its printed head", false, ALL, [PW, US + ":"]),
     mdRow("data://" + SIGN + H + "/x.png", "data://" + SIGN + H + "/x.png", "markdown data: with a sign-in in its printed head", false, ALL, [PW, US + ":"]),
@@ -1306,7 +1311,7 @@ test("the sign-in rule over the paint, one table (the file review's round 15, co
 // ── a credential in the path (the file review's round 15, extra9-2, on the coordinator's answer): the picture's title and the failed
 // label show the origin alone, so a path parameter carrying a session or an opaque capability segment never prints; the control's
 // words were host-only already. Each planted value is assembled at run time.
-test("a picture from the web whose path carries a ;jsessionid= parameter, and one whose path carries an opaque token segment, painted with the host loaded and failed through the real error listener: the picture's title and the failed label show the origin alone, with no planted value, and the control's words name the host as before (a property pin over the paint, red at the head the round read by the planted value in both texts; the control's words are the control, green at both heads)", async (t) => {
+test("a picture from the web whose path carries a ;jsessionid= parameter, and one whose path carries an opaque token segment, painted with the host loaded and failed through the real error listener: the picture's title and the failed label show the origin alone, with no planted value, and the control's words name the host as before (a property pin over the paint, both texts read in one assertion with every fail collected, red at the head the round read by the planted value in both texts, the file review's round 16, extra6-1; the control's words are the control, green at both heads)", async (t) => {
   const fv = await mod();
   const sess = "S" + "ESS" + String(41 * 41) + "abcdef", seg = "k" + "ey" + String(97 * 89) + "ZyXw";
   const srcs = ["https://example.test/img/a.png;jsessionid=" + sess, "https://example.test/s/" + seg + "/a.png"];
@@ -1318,9 +1323,17 @@ test("a picture from the web whose path carries a ;jsessionid= parameter, and on
   assert.deepEqual(imgs.map((i) => i.getAttribute("alt")), ["b0", "b1"], "the two pictures painted, none gated");
   for (const i of imgs) i.dispatchEvent(new Ev("error"));
   const read = imgs.map((i) => { const c = i.nextSibling instanceof El && i.nextSibling.hasAttribute("data-fv-figopen") ? i.nextSibling : null; const l = (c || i).nextSibling; return { title: i.getAttribute("title"), words: c ? c.title : null, label: l instanceof El && l.hasAttribute("data-fv-figerr") ? l.textContent : null }; });
-  assert.deepEqual(read.map((r) => r.title), ["Opens in a new tab: https://example.test", "Opens in a new tab: https://example.test"], "the picture's title: the origin alone (a property pin over the title attribute)");
-  assert.deepEqual(read.map((r) => r.label), [fv.FIGURE_FAILED + " https://example.test (b0)", fv.FIGURE_FAILED + " https://example.test (b1)"], "the failed label: the origin alone (a property pin over the label's text)");
-  for (const r of read) for (const x of [sess, seg, "jsessionid", ";", "/s/", "a.png"]) for (const v of [r.title, r.label]) assert.ok(!(v || "").includes(x), "no planted value and no path (a property pin): " + JSON.stringify(x) + " in " + JSON.stringify(v));
+  // both texts read in one assertion, every fail collected as the sign-in table collects them (the file review's round 16, extra6-1: the
+  // title's assertion stood first and alone, so at 2e9205301 its red stopped the case before the label or the planted values were read)
+  const fails: string[] = [];
+  const TITLE = "Opens in a new tab: https://example.test";
+  read.forEach((r, k) => {
+    const alt = "b" + k, label = fv.FIGURE_FAILED + " https://example.test (" + alt + ")";
+    if (r.title !== TITLE) fails.push(alt + ": the title is " + JSON.stringify(r.title) + ", not " + JSON.stringify(TITLE));
+    if (r.label !== label) fails.push(alt + ": the label is " + JSON.stringify(r.label) + ", not " + JSON.stringify(label));
+    for (const x of [sess, seg, "jsessionid", ";", "/s/", "a.png"]) for (const [where, v] of [["title", r.title], ["label", r.label]] as const) if ((v || "").includes(x)) fails.push(alt + ": the " + where + " prints " + JSON.stringify(x));
+  });
+  assert.deepEqual(fails, [], "the picture's title and the failed label each show the origin alone, with no planted value and no path (a property pin over both texts, every fail collected)");
   assert.deepEqual(read.map((r) => r.words), ["Open the picture in a new tab at example.test", "Open the picture in a new tab at example.test"], "the control's words name the host alone, as before (a control, green at both heads by design)");
 });
 
@@ -1336,6 +1349,26 @@ test("the one rule called directly (figureSourceCredentialed, through the label 
   assert.deepEqual(out, srcs.map(() => [WITHHELD, WITHHELD]), "each withheld by the label builder on no base and on an https base (a property pin over the returned strings)");
   assert.deepEqual(srcs.map((s) => (fv as any).figureSourceCredentialed(s)), [true, true, true, true], "and the rule answers true for each (a property pin over the rule's answers)");
   assert.deepEqual(["a@2x.png", "/img/a@2x.png", "https://cdn.example/plot.png", "data:image/png;base64,iVBORw0KGgo"].map((s) => (fv as any).figureSourceCredentialed(s)), [false, false, false, false], "and false for the controls: a relative and a root-relative at sign with no colon before it, a plain address, a data: head with no at sign (controls, outside the rule)");
+});
+
+// ── the sign-in rule's decode, bounded (the file review's round 16, regression-2): the decode ran to its fixed point, and a `%25` chain
+// loses one level per pass, so one source nested deep held the page's thread for a time quadratic in its length. It now runs at most
+// eight passes (DECODE_PASSES), and a text still changing at the last reads as carrying a sign-in, failing closed. Held by the answers
+// and by a count of passes (decodePasses), never by a time, since a time pin flakes.
+test("the sign-in rule's decode is bounded (the file review's round 16, regression-2): a source whose percent-escapes nest twenty deep (`a%`, then `25` twenty times, then `40x.png`, which reads a@x.png only after twenty-one passes) is read as carrying a sign-in and withheld by the label builder, and so is the same chain twenty thousand levels deep (some forty thousand characters), each through the schemeless read; a web address whose escapes nest twenty deep before a plain letter is withheld too (the bound's cost, through the read after the scheme); each call of the rule, and of the label builder over it, runs at most eight passes of the decode, counted through decodePasses; and the controls stay: an at sign encoded twice (%2540) is found in three passes, and a relative a@2x.png stays outside the rule (a property pin over the rule's answers and the label's words, red at the head the file review's round 16 read, where every chain decoded to its end and each read false, the label printing the source as written; and over the pass count, red under a decode that runs to its fixed point and answers a sign-in past eight passes, whose answers are these)", async () => {
+  const fv = await mod();
+  const deep = "a%" + "25".repeat(20) + "40x.png", long = "a%" + "25".repeat(20000) + "40x.png", web = "https://cdn.example/a%" + "25".repeat(20) + "41x.png";
+  const twice = "http://" + "u" + "ser" + ":" + "p" + "w" + String(4 * 4) + "%2540example.test/x.png";
+  // the answers first, so a red at the head before the bound is this assertion's and not the missing count's
+  assert.deepEqual([deep, long, web, twice, "a@2x.png"].map((s) => (fv as any).figureSourceCredentialed(s)), [true, true, true, true, false], "the rule's answers: the twenty-deep chain, the twenty-thousand-deep chain and the twenty-deep web address read as carrying a sign-in, the at sign encoded twice is found, and a relative a@2x.png is outside the rule (a property pin over the rule's answers)");
+  assert.deepEqual([fv.shownSource(deep), fv.shownSource(long), fv.shownSource(web)], [WITHHELD, WITHHELD, WITHHELD], "the label builder withholds each chain (a property pin over the label's words)");
+  assert.equal(typeof (fv as any).decodePasses, "function", "the decode's pass count is exported, the seam this case counts through (a sentence pin on the export; the counts below hold the property)");
+  const count = (f: () => unknown): number => { const a = (fv as any).decodePasses(); f(); return (fv as any).decodePasses() - a; };
+  const counts = {
+    deep: count(() => (fv as any).figureSourceCredentialed(deep)), long: count(() => (fv as any).figureSourceCredentialed(long)),
+    web: count(() => (fv as any).figureSourceCredentialed(web)), longLabel: count(() => fv.shownSource(long)), twice: count(() => (fv as any).figureSourceCredentialed(twice)),
+  };
+  assert.deepEqual([counts.deep <= 8, counts.long <= 8, counts.web <= 8, counts.longLabel <= 8, counts.twice], [true, true, true, true, 3], "the passes each call runs, at most eight for every chain and three for the at sign encoded twice, " + JSON.stringify(counts) + " (a property pin over the pass count)");
 });
 
 // ── the key gate over the stand-in's paint, the gate's one guard CI runs (the file review's round 15, tests-3 with extra5-2; the
@@ -1354,9 +1387,9 @@ test("the one rule called directly (figureSourceCredentialed, through the label 
 type KeyGate = { ctl: El; img: El; body: El; place: (r: Rect) => void; cover: (e: El | null) => void; frame: (f: StandInFrame | null, foreign?: "null" | "throws") => void; gate: () => boolean[] };
 /** A same-origin parent for the framed cells: the frame element's box and border in the parent's viewport, the parent's layout
  *  viewport, an optional wrapper around the frame element with its padding box and overflow (and, for the cells of the file
- *  review's round 16, regression-1, its computed display and a client size apart from its box), and the parent's visual
- *  viewport. */
-type StandInFrame = { box: Rect; border?: [number, number]; inner: [number, number]; wrap?: { box: Rect; overflow: string; display?: string; client?: [number, number] }; vv?: [number, number, number, number] };
+ *  review's round 16, regression-1, its computed display and a client size apart from its box; for its tests-2, a read of its
+ *  computed style that throws, naming what it reads), and the parent's visual viewport. */
+type StandInFrame = { box: Rect; border?: [number, number]; inner: [number, number]; wrap?: { box: Rect; overflow: string; display?: string; client?: [number, number]; throws?: string }; vv?: [number, number, number, number] };
 const boxAt = (left: number, top: number, width = 22, height = 22): Rect => ({ left, top, right: left + width, bottom: top + height, width, height });
 const vvOf = (v: [number, number, number, number]) => ({ offsetLeft: v[0], offsetTop: v[1], width: v[2], height: v[3] });
 /** The viewer open on one remote picture from a loaded host (`md`, a case's own document holding it, for the cells that wrap it in
@@ -1406,7 +1439,7 @@ async function keyGateScene(t: TestContext, md = '# R\n\n<img src="http://exampl
     if (!f) return;
     const root: any = { parentElement: null, __throws: "the parent's root (its overflow is the viewport's: passed over)" };
     const body: any = { parentElement: root, __throws: "the parent's body (its overflow is the viewport's: passed over)" };
-    const wrap: any = f.wrap ? { parentElement: body, __clip: f.wrap.overflow, __display: f.wrap.display, getBoundingClientRect: () => f.wrap!.box, clientLeft: 0, clientTop: 0, clientWidth: f.wrap.client ? f.wrap.client[0] : f.wrap.box.width, clientHeight: f.wrap.client ? f.wrap.client[1] : f.wrap.box.height } : null;
+    const wrap: any = f.wrap ? { parentElement: body, __clip: f.wrap.overflow, __display: f.wrap.display, __throws: f.wrap.throws, getBoundingClientRect: () => f.wrap!.box, clientLeft: 0, clientTop: 0, clientWidth: f.wrap.client ? f.wrap.client[0] : f.wrap.box.width, clientHeight: f.wrap.client ? f.wrap.client[1] : f.wrap.box.height } : null;
     const fe: any = { parentElement: wrap || body, getBoundingClientRect: () => f.box, clientLeft: (f.border || [0, 0])[0], clientTop: (f.border || [0, 0])[1] };
     const parent: any = { innerWidth: f.inner[0], innerHeight: f.inner[1], getComputedStyle: cs, document: { body, documentElement: root }, visualViewport: f.vv ? vvOf(f.vv) : null };
     parent.parent = parent;
@@ -1432,7 +1465,10 @@ test("the key gate, a guard CI runs (the file review's round 15, tests-3): Enter
   g.place(IN_BOX);
   assert.deepEqual(g.gate(), IN3, "the control inside the window and the body's scrollport: none of the three cancelled (a property pin over defaultPrevented)");
 });
-test("the key gate's region, the terms the file review's round 15 added (extra5-2), each in a cell of its own where it alone excludes a control every other read keeps: the window's visual viewport, a pinch zoom leaving 300 by 200 of the layout viewport on the screen; and, the viewer's window framed by a same-origin parent as the dashboard frames it, the parent's layout viewport across (the frame element at 700 in a parent 900 wide), the frame element's border (its top border of 10 moves the control past a parent 590 tall), a clipping ancestor of the frame element in the parent's document (a wrapper 300 wide with overflow hidden), and the top's visual viewport read through the parent (300 by 200) while the viewer's own visual viewport is its whole window; and at a parent of another origin, where the walk stops, the viewer's own visual viewport; each cancels the three keys, and the same frame with nothing excluding cancels none, the parent's body and root never read (a property pin over each key's defaultPrevented, red at the head the round read, which read no visual viewport and walked no frame, and each cell red with its own term deleted; the dashboard's cell red too under a walk that reads the viewer's own visual viewport)", async (t) => {
+/** A same-origin frame at 0, 0 in a parent 900 by 600 whose frame element's wrapper clips at the parent's size, its computed-style read
+ *  throwing when `throws` names what it reads (the region case's two cells of the file review's round 16, tests-2). */
+const wrapped = (throws?: string): StandInFrame => ({ box: boxAt(0, 0, 900, 600), inner: [900, 600], wrap: { box: boxAt(0, 0, 900, 600), overflow: "hidden", throws } });
+test("the key gate's region, the terms the file review's round 15 added (extra5-2), each in a cell of its own where it alone excludes a control every other read keeps: the window's visual viewport, a pinch zoom leaving 300 by 200 of the layout viewport on the screen; and, the viewer's window framed by a same-origin parent as the dashboard frames it, the parent's layout viewport across (the frame element at 700 in a parent 900 wide), the frame element's border (its top border of 10 moves the control past a parent 590 tall), a clipping ancestor of the frame element in the parent's document (a wrapper 300 wide with overflow hidden), and the top's visual viewport read through the parent (300 by 200) while the viewer's own visual viewport is its whole window; and at a parent of another origin, where the walk stops, the viewer's own visual viewport; each cancels the three keys, and the same frame with nothing excluding cancels none, the parent's body and root never read (a property pin over each key's defaultPrevented, red at the head the round read, which read no visual viewport and walked no frame, and each cell red with its own term deleted; the dashboard's cell red too under a walk that reads the viewer's own visual viewport); and a read that throws fails closed (the file review's round 16, tests-2): a same-origin frame whose wrapper clips at the parent's size keeps the three keys, and the same frame with its wrapper's computed-style read throwing cancels them, and a click on the control there opens nothing and reveals it (the throwing cell green at the head the file review's round 16 read by design, whose catch answered out, red under a catch that answers in and under a region with no catch, where the throw leaves the keydown listener; at 2e9205301 it reads in, red there by the missing walk and not by the catch, since that head walked no frame; the click red at the head that round read by group A's open)", async (t) => {
   const g = await keyGateScene(t);
   g.place(IN_BOX);
   const cells: Array<[string, () => void, boolean[]]> = [
@@ -1445,10 +1481,19 @@ test("the key gate's region, the terms the file review's round 15 added (extra5-
     ["the top's visual viewport through the parent (0, 0, 300 by 200), the viewer's own visual viewport its whole window (0, 0, 1200 by 800)", () => { g.frame({ box: boxAt(0, 0, 900, 600), inner: [900, 600], vv: [0, 0, 300, 200] }); win.visualViewport = vvOf([0, 0, 1200, 800]); }, OUT3],
     ["the top's visual viewport through the parent at a scale of 1.2 (0, 0, 750 by 500) (keep)", () => { g.frame({ box: boxAt(0, 0, 900, 600), inner: [900, 600], vv: [0, 0, 750, 500] }); win.visualViewport = vvOf([0, 0, 1200, 800]); }, IN3],
     ["a parent of another origin, its frame element null: the walk stops at the viewer's window, whose own visual viewport (0, 0, 300 by 200) still applies", () => { g.frame(null, "null"); win.visualViewport = vvOf([0, 0, 300, 200]); }, OUT3],
+    ["a same-origin parent whose frame element's wrapper clips at the parent's size (overflow hidden, 0, 0, 900 by 600): the control inside (keep; the throwing read's twin, placed first so its red is the throw's)", () => { g.frame(wrapped()); }, IN3],
+    ["the same frame, the read of the wrapper's computed style throwing: the region fails closed and cancels the three keys (the file review's round 16, tests-2)", () => { g.frame(wrapped("the wrapper's computed style")); }, OUT3],
   ];
   const got = cells.map(([what, set]) => { set(); return [what, g.gate()] as const; });
   for (const [what, read] of got) t.diagnostic(what + ": " + JSON.stringify(read));
   assert.deepEqual(got.map(([what, read]) => [what, read]), cells.map(([what, , want]) => [what, want]), "each cell's three keys, [Enter keydown, Space keydown, Space keyup], cancelled where its term excludes the control and not where every term keeps it (a property pin over defaultPrevented)");
+  // the click reads the same region under the one gate (the file review's round 16, extra5-1), so under the throwing read a click on the
+  // control opens nothing and reveals it
+  g.frame(wrapped("the wrapper's computed style"));
+  g.cover(null);
+  const stub = openStub(t, g.ctl);
+  click(g.ctl);
+  assert.deepEqual([stub.read().opened, stub.read().reveals], [0, 1], "under the throwing read a click on the control opens nothing and reveals it, [window.open's calls, reveals] (a property pin; red at the head the file review's round 16 read by group A's open, since that head had no gate)");
 });
 test("the key gate's region at a parent of another origin (the file review's round 15, extra5-2): the walk stops there with the reads made so far, which is not an out, so a control in view in the viewer's window keeps its keys whether the frame element reads null, as Chromium answers, or its read throws, and the parent itself, which throws on any read, is never read (a property pin over each key's defaultPrevented; green at the head the round read, which walked no frame, by design, and red under a walk that reads a null or a throwing frame element as out; the cell where the viewer's own visual viewport applies at the stop is the region case's)", async (t) => {
   const g = await keyGateScene(t);

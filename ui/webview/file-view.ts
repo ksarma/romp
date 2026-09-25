@@ -4890,13 +4890,30 @@ function decodeEscapesOnce(s: string): string {
     return out;
   });
 }
+/** The most passes decodeEscapes runs. Eight reach every honest spelling (an at sign encoded twice, `%2540`, settles in three),
+ *  and each pass is linear in the text, so the bound keeps the read linear where a loop to the fixed point was quadratic: a `%25`
+ *  chain loses one level per pass, and one source 256 KB long held the page's thread about 21 s, a failed local picture's source
+ *  and one on raw.githubusercontent.com alike (the file review's round 16, regression-2). */
+const DECODE_PASSES = 8;
+/** The passes decodeEscapes has run since the module loaded, read by the node suite through decodePasses so the bound is held by
+ *  a count of passes and never by a time. */
+let decodePassCount = 0;
+/** decodePassCount, for the node suite (file-view-outline.test.ts, the bounded decode's case). */
+export function decodePasses(): number { return decodePassCount; }
 /** The text with its percent-escapes decoded until it stops changing (decodeEscapesOnce), so a double-encoded at sign (`%2540`)
- *  reads as one. A pass that decodes an escape shortens the text and upper-casing a malformed escape changes it once, so the
- *  loop ends. */
-function decodeEscapes(s: string): string {
-  let was: string;
-  do { was = s; s = decodeEscapesOnce(s); } while (s !== was);
-  return s;
+ *  reads as one, in at most DECODE_PASSES passes: a pass that decodes an escape shortens the text and upper-casing a malformed
+ *  escape changes it once, and null answers a text still changing at the last pass, which the sign-in rule reads as carrying a
+ *  sign-in (figureSourceCredentialed, at both of its reads), failing closed, since a source nested that deep has no honest
+ *  spelling. The cost: a source whose escapes nest past the bound is withheld wherever its address shows, and a local picture
+ *  whose name nests them loses its label's words. */
+function decodeEscapes(s: string): string | null {
+  for (let n = 0; n < DECODE_PASSES; n++) {
+    decodePassCount++;
+    const next = decodeEscapesOnce(s);
+    if (next === s) return s;
+    s = next;
+  }
+  return null;
 }
 /** Whether a picture's source appears to carry a sign-in: the ONE rule every visible word of an address reads (the file review's
  *  round 15, correctness-1 with extra5-1, extra6-2, tests-1 and extra9-3, on the coordinator's decision: the URL parser reads more
@@ -4908,7 +4925,9 @@ function decodeEscapes(s: string): string {
  *  written), and on a URL document the address resolveFigureRefs resolved: the text with every ASCII tab and line break removed
  *  and leading control characters and spaces trimmed, as the parser reads it. An at sign (AT_SIGNS) is looked for in the text
  *  with its percent-escapes decoded until it stops changing (decodeEscapes), so an encoded or a double-encoded one counts and no
- *  list of encoded forms is kept. Where it must stand: anywhere after a scheme other than data: (in any letter case), in the
+ *  list of encoded forms is kept, and a text still changing after DECODE_PASSES passes counts as carrying a sign-in, since no
+ *  honest spelling nests that deep (so a source whose escapes nest past the bound is withheld too, a cost of the same kind as
+ *  the one below). Where it must stand: anywhere after a scheme other than data: (in any letter case), in the
  *  authority, the path, the query or the fragment; anywhere after a leading run of two or more slashes or backslashes; in a
  *  data: source, only in the head the label prints (through the first comma, else the first forty characters), so an inline
  *  image's payload is not read; and in a source with neither, after a colon. The cost, stated and accepted: no rule on the text
@@ -4921,7 +4940,7 @@ function decodeEscapes(s: string): string {
  *  not count), which the Files pane and the modals' file view show as a workspace path. */
 export function figureSourceCredentialed(src: string): boolean {
   const read = src.replace(/[\t\n\r]/g, "").replace(/^[\u0000-\u0020]+/, "");
-  const atIn = (text: string): boolean => AT_SIGNS.test(decodeEscapes(text));
+  const atIn = (text: string): boolean => { const d = decodeEscapes(text); return d === null || AT_SIGNS.test(d); };   // still changing at the bound: read as a sign-in (decodeEscapes)
   const scheme = /^([a-z][a-z0-9+.-]*):/i.exec(read);
   if (scheme) {
     if (scheme[1].toLowerCase() !== "data") return atIn(read.slice(scheme[0].length));
@@ -4930,7 +4949,9 @@ export function figureSourceCredentialed(src: string): boolean {
   }
   const lead = /^[/\\]{2,}/.exec(read);
   if (lead) return atIn(read.slice(lead[0].length));
-  const plain = decodeEscapes(read), colon = plain.indexOf(":");
+  const plain = decodeEscapes(read);
+  if (plain === null) return true;                        // still changing at the bound: read as a sign-in, as atIn reads it
+  const colon = plain.indexOf(":");
   return colon >= 0 && AT_SIGNS.test(plain.slice(colon + 1));
 }
 /** A refused address cut at its authority, for shownAddress and targetHost: the scheme with its slashes, or a leading run of two
