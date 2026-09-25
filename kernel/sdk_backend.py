@@ -15415,18 +15415,19 @@ class SdkBackend:
                             if ask_died:
                                 reg["pendingAsk"] = False   # asked once per death — the re-raise mints a fresh flag
                             write_reg(self.state_dir, sid, reg)
-                        # a Task agent the dead CLI took with it ended there too, beside the notice: its end is queued for
-                        # the record cache (its file is seldom held at boot; an end that finds nothing held is remembered,
-                        # and the file released at the first cycle after a read holds it)
-                        for t in dead_tasks:
-                            if _bg_row_is_agent(t) and t.get("taskId"):
-                                self.note_agent_live(sid, t.get("taskId"), False)
                     if cut:
                         # Durable "romp cut this, romp is continuing it" stamp, written with the resume
                         # notice rather than waiting for it to reach disk — so the interrupt-block tick
                         # cannot read the intervening bare stop record as the user stopping the session
                         # (see append_machine_cut).
                         append_machine_cut(self.state_dir, sid, "restart")
+                    # a Task agent the dead CLI took with it ended there too, beside the notice: its end is queued for
+                    # the record cache (its file is seldom held at boot; an end that finds nothing held is remembered,
+                    # and the file released at the first cycle after a read holds it). It follows the cut's stamp, which
+                    # it does not touch: the end is an in-memory event, the stamp a durable write.
+                    for t in dead_tasks:
+                        if _bg_row_is_agent(t) and t.get("taskId"):
+                            self.note_agent_live(sid, t.get("taskId"), False)
                     resumed += 1 if cut else 0
                     notified += 1 if dead_tasks else 0
                     restored += len(queued)
