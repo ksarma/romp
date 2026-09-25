@@ -687,10 +687,11 @@ class LegacyCookieMigration(_Server):
                             for sc in self._set_cookies(headers)), "the old cookie is cleared")
 
     def test_the_old_token_cookie_is_refused_on_a_json_read_and_not_cleared(self):
-        # The old cookie opens no data route, and it is NOT cleared here. Clearing it on a
-        # non-migrating response would sign out a dashboard left open across the upgrade (its next
-        # poll or redial is not a navigation, so it would clear without migrating) and a second, older
-        # kernel on the same host. It is cleared ONLY in the migrating page navigation (above).
+        # The old cookie opens no data route, and with no session beside it, it is NOT cleared here.
+        # Clearing it on such a response would sign out a dashboard left open across the upgrade (its
+        # next poll or redial is not a navigation, so it would clear without migrating). It is cleared in
+        # the migrating page navigation (above), and on any response to a request that carries a valid
+        # session beside it (LegacyCookieClearedBesideASession).
         status, _, headers = self._req("/sessions", extra_cookie="romp_token=" + TOK)
         self.assertEqual(status, 403, "the old cookie opens no data route")
         self.assertFalse(any(sc.startswith("romp_token=") and "Max-Age=0" in sc
@@ -707,6 +708,150 @@ class LegacyCookieMigration(_Server):
         self.assertFalse(any(sc.startswith("romp_token=") and "Max-Age=0" in sc
                              for sc in self._set_cookies(headers)),
                          "another kernel's romp_token is not cleared")
+
+
+class _OneShotPeer(threading.Thread):
+    """An attached host's kernel for the socket relay: accept one connection, read the forwarded upgrade,
+    answer a 101 head carrying only the handshake headers, close."""
+    daemon = True
+    HEAD = b"HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n"
+
+    def __init__(self):
+        super().__init__()
+        self.sock = socket.socket()
+        self.sock.bind(("127.0.0.1", 0))
+        self.sock.listen(1)
+        self.port = self.sock.getsockname()[1]
+
+    def run(self):
+        try:
+            self.sock.settimeout(10)
+            conn, _ = self.sock.accept()
+            try:
+                conn.settimeout(5)
+                conn.recv(65536)
+                conn.sendall(self.HEAD)
+            finally:
+                conn.close()
+        except OSError:
+            pass
+
+    def close(self):
+        try:
+            self.sock.close()
+        except OSError:
+            pass
+
+
+class LegacyCookieClearedBesideASession(_Server):
+    """The legacy romp_token cookie holding THIS kernel's token is cleared on ANY response to a request that
+    also carries a valid session cookie of this kernel. The session shows the browser migrated already, and a
+    browser can keep the old cookie although the migrating response cleared it; the next response clears it.
+    A request with no valid session keeps the old cookie (a dashboard that has not migrated still signs in
+    with it), and a romp_token holding any other value is never cleared. The kinds below reach the browser by
+    every road a response takes: _send, the file route's own headers (GET and HEAD), the preflight's, the
+    socket upgrade's, and the socket relay's raw head. Counts, kinds and statuses only; no value is printed."""
+
+    FORGED = SESS.partition(".")[0] + ".not-this-kernels-tag"     # this kernel's cookie name, a tag that does not match
+    # each kind's status with a valid session: the road it names was taken (a refusal answers through _send, and
+    # would prove nothing about the file route's, the preflight's or a socket's own headers)
+    SIGNED_IN = {"a page navigation": 200, "a sign-in navigation": 200, "a page fetch": 200, "a static read": 200,
+                 "a data read with the key": 200, "a data read without the key": 403, "a file load on its cap": 200,
+                 "a file probe on its cap": 200, "a POST with the key": 404, "a preflight": 204,
+                 "the sign-in page": 200, "the health probe": 200, "a socket upgrade": 101,
+                 "a relayed socket upgrade": 101}
+
+    def _clears(self, set_cookies):
+        return sum(1 for sc in set_cookies if sc.startswith("romp_token=") and "Max-Age=0" in sc)
+
+    def _upgrade(self, path, cookies):
+        """A socket upgrade over a raw socket: (status, the Set-Cookie values of its head)."""
+        s = socket.create_connection(("127.0.0.1", self.port), timeout=10)
+        try:
+            lines = ["GET %s HTTP/1.1" % path, "Host: 127.0.0.1:%d" % self.port, "Upgrade: websocket",
+                     "Connection: Upgrade", "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==",
+                     "Sec-WebSocket-Version: 13", "Cookie: " + cookies]
+            s.sendall(("\r\n".join(lines) + "\r\n\r\n").encode())
+            buf = b""
+            while b"\r\n\r\n" not in buf:
+                b = s.recv(4096)
+                if not b:
+                    break
+                buf += b
+            head = buf.split(b"\r\n\r\n", 1)[0].decode("latin-1").split("\r\n")
+            status = int(head[0].split(" ")[1]) if head[0].count(" ") >= 1 else 0
+            return status, [ln.split(":", 1)[1].strip() for ln in head[1:] if ln.lower().startswith("set-cookie:")]
+        finally:
+            s.close()
+
+    def _relay_upgrade(self, cookies):
+        peer = _OneShotPeer()
+        peer.start()
+        saved = dict(km._remotes)
+        with km._remotes_lock:
+            km._remotes["TESTHOST"] = {"host": "TESTHOST", "kernel_port": 29855, "local_port": peer.port,
+                                       "token": "", "status": "up"}
+        try:
+            return self._upgrade("/remote/TESTHOST/ws?k=" + KEY, cookies)
+        finally:
+            with km._remotes_lock:
+                km._remotes.clear()
+                km._remotes.update(saved)
+            peer.close()
+            peer.join(timeout=5)
+
+    def _answers(self, cookies, sign_ins=True):
+        """(kind, status, clears) for one request of each kind, each carrying the Cookie header `cookies` and,
+        where the kind takes one, this session's page key or cap. `sign_ins` adds the two navigations that
+        sign a browser in (a page navigation, and a ?token= one), which migrate a legacy cookie on their own."""
+        cap = "/file?path=%s&cap=%s" % (self.fpath, _cap(SESS, self.fpath, ""))
+        out = []
+
+        def http(kind, path, **kw):
+            status, _, headers = self._req(path, extra_cookie=cookies, **kw)
+            out.append((kind, status, self._clears(self._set_cookies(headers))))
+        if sign_ins:
+            http("a page navigation", "/", accept="text/html", sec_fetch="document")
+            http("a sign-in navigation", "/?token=" + TOK, accept="text/html", sec_fetch="document")
+        http("a page fetch", "/chat")
+        http("a static read", "/sw.js")
+        http("a data read with the key", "/sessions", key=KEY)
+        http("a data read without the key", "/sessions")
+        http("a file load on its cap", cap)
+        http("a file probe on its cap", cap, method="HEAD")
+        http("a POST with the key", "/no-such-route", method="POST", key=KEY)
+        http("a preflight", "/sessions", method="OPTIONS", origin=self.origin, key=KEY)
+        http("the sign-in page", "/login")
+        http("the health probe", "/healthz")
+        status, sc = self._upgrade("/ws?k=" + KEY, cookies)
+        out.append(("a socket upgrade", status, self._clears(sc)))
+        status, sc = self._relay_upgrade(cookies)
+        out.append(("a relayed socket upgrade", status, self._clears(sc)))
+        return out
+
+    def test_a_retained_old_cookie_beside_a_valid_session_is_cleared_on_any_response(self):
+        got = self._answers("%s=%s; romp_token=%s" % (CN, SESS, TOK))
+        self.assertEqual({k: s for k, s, _ in got}, self.SIGNED_IN, "each kind reached the road it names")
+        self.assertEqual([(k, s, c) for k, s, c in got if c != 1], [],
+                         "each kind's response clears the old cookie once: (kind, status, clears) of those that do not")
+
+    def test_a_request_with_no_valid_session_keeps_the_old_cookie(self):
+        # a dashboard that has not migrated: its polls, reads and socket redials carry the old cookie and no
+        # session, and none of their responses clears it (the navigation that migrates it clears it: above)
+        for what, cookies in (("no session cookie", "romp_token=%s" % TOK),
+                              ("a session cookie whose tag does not match", "%s=%s; romp_token=%s" % (CN, self.FORGED, TOK))):
+            got = self._answers(cookies, sign_ins=False)
+            self.assertEqual(len(got), 12)
+            self.assertEqual([(k, s, c) for k, s, c in got if c], [],
+                             "%s: the old cookie is kept: (kind, status, clears) of the responses that clear it" % what)
+
+    def test_another_kernels_old_cookie_beside_a_valid_session_is_never_cleared(self):
+        # a romp_token holding another value (a second, older kernel on the same host) beside this kernel's
+        # valid session: no response clears it, the sign-in navigations included
+        got = self._answers("%s=%s; romp_token=another-kernels-token" % (CN, SESS))
+        self.assertEqual({k: s for k, s, _ in got}, self.SIGNED_IN, "each kind reached the road it names")
+        self.assertEqual([(k, s, c) for k, s, c in got if c], [],
+                         "another kernel's cookie is not cleared: (kind, status, clears) of the responses that clear it")
 
 
 class NoPageDataInlined(_Server):

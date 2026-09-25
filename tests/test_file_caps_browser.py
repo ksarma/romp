@@ -21,6 +21,9 @@ the REAL chat page of a hermetic kernel in playwright's Chromium and checks ever
   3. Two sign-ins racing in one browser end, in each tab, either signed in or on /login, never on a page whose requests
      are all refused. Two tabs of a browser that still holds the cookie of the version before this one, opened at the
      same moment (tabs restored after the upgrade), both end signed in: each is handed the same session and key.
+     That old cookie, holding this kernel's token, is cleared by any response to a request that carries it beside a
+     valid session (a browser can keep it after the migrating response cleared it); a browser with no session keeps
+     it, and an old cookie holding another value is never cleared.
   4. A same-origin /file address typed where no markdown renderer runs carries the cap and opens: a code span holding
      one URL, a user todo's text and its link chip (in the chat and in the Waiting pane), and, in the viewer, a figure
      and a link the note writes with the scheme.
@@ -296,20 +299,27 @@ MIGRATE = HEAD + r"""
 // opened at the same moment: each tab's request carries the old cookie, each response migrates it. Each tab must end
 // signed in (a fetch reads /sessions), since both responses hand the browser the same session and the same key. Each
 // migrating response (a document request that carried the old cookie and no session) must set the session cookie and
-// clear the old one; whether the browser's jar then still holds the old cookie is the browser's, and is reported.
+// clear the old one. Any later request that still carries the old cookie beside the session must be answered with the
+// clear too. The round ends with a navigation, and a request after it must carry no old cookie. Whether the browser's
+// cookie list still names the old cookie is reported, not asserted: in Firefox the list has named an entry with an empty
+// value that had already expired, which no request carried.
+const setOf = async (resp) => (await resp.headersArray()).filter((h) => h.name.toLowerCase() === "set-cookie").map((h) => h.value).join("\n");
 const runs = [];
 for (let i = 0; i < cfg.rounds; i++) {
   const ctx = await browser.newContext(VIEW);
   await ctx.addCookies([{ name: "romp_token", value: cfg.token, url: cfg.origin }]);
   const p1 = await ctx.newPage(), p2 = await ctx.newPage();
   const migrating = [];   // per migrating response: did it set the session cookie, did it clear the old one (booleans)
+  const beside = [];      // per response to a request carrying the old cookie AND a session: its kind, did it clear the old one
   ctx.on("response", async (resp) => { try {
     const req = resp.request();
-    if (req.resourceType() !== "document" || new URL(resp.url()).origin !== cfg.origin) return;
+    if (new URL(resp.url()).origin !== cfg.origin) return;
     const sent = (await req.allHeaders())["cookie"] || "";
-    if (!/(^|; )romp_token=/.test(sent) || /(^|; )romp_s_/.test(sent)) return;
-    const set = (await resp.headersArray()).filter((h) => h.name.toLowerCase() === "set-cookie").map((h) => h.value).join("\n");
-    migrating.push({ setSession: /(^|\n)romp_s_[^=]*=[^;]+/.test(set), cleared: /(^|\n)romp_token=;/.test(set) });
+    if (!/(^|; )romp_token=/.test(sent)) return;
+    const cleared = /(^|\n)romp_token=;/.test(await setOf(resp));
+    if (/(^|; )romp_s_/.test(sent)) { beside.push({ kind: req.resourceType(), cleared }); return; }
+    if (req.resourceType() !== "document") return;
+    migrating.push({ setSession: /(^|\n)romp_s_[^=]*=[^;]+/.test(await setOf(resp)), cleared });
   } catch (e) {} });
   await Promise.all([p1.goto(cfg.origin + "/"), p2.goto(cfg.origin + "/")]);
   const ends = [];
@@ -320,10 +330,99 @@ for (let i = 0; i < cfg.rounds; i++) {
     ends.push(st);
   }
   const jar = await ctx.cookies(cfg.origin);
-  runs.push({ ends, migrating, legacyLeft: jar.some((c) => c.name === "romp_token"), sessions: jar.filter((c) => c.name.startsWith("romp_s_")).length });
+  const legacyLeft = jar.some((c) => c.name === "romp_token");
+  await p1.goto(cfg.origin + "/");
+  await p1.waitForFunction(() => !!window.__rompPaneToggle || location.pathname === "/login", null, { timeout: cfg.deadline }).catch(() => {});
+  // what the browser sends after that navigation: a read of its own, and whether its request still carried the old cookie
+  const [last] = await Promise.all([p1.waitForRequest((q) => new URL(q.url()).search === "?last=1", { timeout: cfg.deadline }),
+                                    p1.evaluate(async () => (await fetch("/sessions?last=1")).status).catch(() => 0)]);
+  const lastSent = (await last.allHeaders())["cookie"] || "";
+  const after = await ctx.cookies(cfg.origin);
+  runs.push({ ends, migrating, beside, legacyLeft, sentOldAfterNext: /(^|; )romp_token=/.test(lastSent),
+              listedAfterNext: after.some((c) => c.name === "romp_token"), sessions: jar.filter((c) => c.name.startsWith("romp_s_")).length });
   await ctx.close();
 }
 out.runs = runs;
+fs.writeSync(1, "RESULT:" + JSON.stringify(out) + "\n");
+await browser.close();
+process.exit(0);
+"""
+
+RETAINED = HEAD + r"""
+// the old cookie beside a session, in the three states a browser can hold it in. Every response of a context to a
+// request that carried the old cookie is recorded: whether the request carried a session too, and whether the
+// response cleared the old cookie (booleans and counts; no value leaves this process).
+const setOf = async (resp) => (await resp.headersArray()).filter((h) => h.name.toLowerCase() === "set-cookie").map((h) => h.value).join("\n");
+const legacy = async (ctx) => (await ctx.cookies(cfg.origin)).filter((c) => c.name === "romp_token");
+const settle = (page) => page.waitForFunction(() => !!window.__rompPaneToggle || location.pathname === "/login", null, { timeout: cfg.deadline }).catch(() => {});
+const watch = (ctx) => {
+  const seen = [];
+  ctx.on("response", async (resp) => { try {
+    if (new URL(resp.url()).origin !== cfg.origin) return;
+    const sent = (await resp.request().allHeaders())["cookie"] || "";
+    if (!/(^|; )romp_token=/.test(sent)) return;
+    seen.push({ session: /(^|; )romp_s_/.test(sent), kind: resp.request().resourceType(), status: resp.status(),
+                cleared: /(^|\n)romp_token=;/.test(await setOf(resp)) });
+  } catch (e) {} });
+  return seen;
+};
+{ // 1. migrated, and the browser kept the old cookie: the next navigation carries it beside the session and clears it
+  const ctx = await browser.newContext(VIEW);
+  await ctx.addCookies([{ name: "romp_token", value: cfg.token, url: cfg.origin }]);
+  let page = await ctx.newPage();
+  await page.goto(cfg.origin + "/");
+  await settle(page);
+  const r = { migrated: (await sessionCookie(ctx)).length === 1 && (await legacy(ctx)).length === 0 };
+  await page.close();
+  await ctx.addCookies([{ name: "romp_token", value: cfg.token, url: cfg.origin }]);   // the state such a browser is in
+  r.heldBoth = (await legacy(ctx)).length === 1 && (await sessionCookie(ctx)).length === 1;
+  const seen = watch(ctx);
+  page = await ctx.newPage();
+  const nav = await page.goto(cfg.origin + "/");
+  const sent = (await nav.request().allHeaders())["cookie"] || "";
+  r.navigation = { status: nav.status(), sentOld: /(^|; )romp_token=/.test(sent), sentSession: /(^|; )romp_s_/.test(sent),
+                   cleared: /(^|\n)romp_token=;/.test(await setOf(nav)) };
+  await settle(page);
+  r.signedIn = onLogin(page) ? "login" : await status(page, "/sessions");
+  r.oldLeft = (await legacy(ctx)).length;
+  r.besideCleared = seen.filter((x) => x.session).map((x) => x.cleared);
+  out.retained = r;
+  await ctx.close();
+}
+{ // 2. not migrated: a page that never signed in with the old cookie (the sign-in page, which migrates nothing) reads,
+  //    dials a socket, and keeps the old cookie
+  const ctx = await browser.newContext(VIEW);
+  await ctx.addCookies([{ name: "romp_token", value: cfg.token, url: cfg.origin }]);
+  const seen = watch(ctx);
+  const page = await ctx.newPage();
+  await page.goto(cfg.origin + "/login");
+  const r = { reads: await page.evaluate(async () => { const o = {}; for (const p of ["/sessions", "/sw.js", "/chat", "/healthz"]) { try { o[p] = (await fetch(p)).status; } catch (e) { o[p] = "error"; } } return o; }) };
+  r.socket = await page.evaluate(() => new Promise((res) => { const w = new WebSocket("ws://" + location.host + "/ws?app=chat"); w.onopen = () => { w.close(); res("open"); }; w.onerror = () => res("refused"); setTimeout(() => res("timeout"), 5000); }));
+  const kept = await legacy(ctx);
+  r.kept = kept.length === 1 && kept[0].value === cfg.token;
+  r.sessions = (await sessionCookie(ctx)).length;
+  r.responses = seen.length;
+  r.clearedBy = seen.filter((x) => x.cleared).map((x) => x.kind + " " + x.status);
+  out.notMigrated = r;
+  await ctx.close();
+}
+{ // 3. signed in here, beside another kernel's old cookie (another value): nothing clears it
+  const ctx = await browser.newContext(VIEW);
+  const page = await ctx.newPage();
+  await page.goto(cfg.origin + "/?token=" + encodeURIComponent(cfg.token));
+  await settle(page);
+  await ctx.addCookies([{ name: "romp_token", value: cfg.other, url: cfg.origin }]);
+  const seen = watch(ctx);
+  await page.goto(cfg.origin + "/");
+  await settle(page);
+  const r = { signedIn: onLogin(page) ? "login" : await status(page, "/sessions") };
+  const kept = await legacy(ctx);
+  r.kept = kept.length === 1 && kept[0].value === cfg.other;
+  r.beside = seen.filter((x) => x.session).length;
+  r.clearedBy = seen.filter((x) => x.cleared).map((x) => x.kind + " " + x.status);
+  out.another = r;
+  await ctx.close();
+}
 fs.writeSync(1, "RESULT:" + JSON.stringify(out) + "\n");
 await browser.close();
 process.exit(0);
@@ -562,11 +661,42 @@ class ServedFileCapsAndPageKey(unittest.TestCase):
             self.assertTrue(all(m["setSession"] and m["cleared"] for m in run["migrating"]),
                             "each migrating response sets the session cookie and clears the old one: %r" % r["runs"])
             self.assertEqual(run["sessions"], 1, "one session cookie: %r" % r["runs"])
-        # Whether the jar still holds the old cookie after both responses cleared it is the browser's: Firefox kept it in 1
-        # of 20 rounds, and in 1 of 40, with both migrating responses carrying the clear. Reported, not asserted.
-        left = sum(1 for run in r["runs"] if run["legacyLeft"])
-        if left:
-            sys.stderr.write("migration scene: the browser kept the old cookie in %d of %d rounds after it was cleared\n" % (left, len(r["runs"])))
+            self.assertTrue(all(b["cleared"] for b in run["beside"]),
+                            "a response to a request carrying the old cookie beside the session clears it: %r" % r["runs"])
+            self.assertFalse(run["sentOldAfterNext"], "after the next navigation no request carries the old cookie: %r" % r["runs"])
+        # Reported, not asserted: rounds whose requests carried the old cookie beside the session (each answered with the
+        # clear, above), and rounds where the browser's cookie list still named the old cookie at the end. Firefox's list
+        # has named it in some rounds, as an entry with an empty value that had already expired, which no request carried.
+        sent = sum(1 for run in r["runs"] if run["beside"])
+        listed = sum(1 for run in r["runs"] if run["listedAfterNext"])
+        if sent or listed:
+            sys.stderr.write("migration scene: %d of %d rounds sent the old cookie beside the session, each cleared; the cookie "
+                             "list named it at the end of %d\n" % (sent, len(r["runs"]), listed))
+
+    def test_the_old_cookie_is_cleared_beside_a_session_and_kept_without_one(self):
+        r = self._drive(RETAINED, other="an-older-kernels-value")
+        kept = r["retained"]
+        self.assertTrue(kept["migrated"], "the old cookie migrated and was cleared: %r" % kept)
+        self.assertTrue(kept["heldBoth"], "the browser holds the old cookie beside the session again: %r" % kept)
+        self.assertEqual(kept["navigation"], {"status": 200, "sentOld": True, "sentSession": True, "cleared": True},
+                         "the next navigation carries both and its response clears the old cookie")
+        self.assertEqual(kept["oldLeft"], 0, "the jar holds no old cookie after it: %r" % kept)
+        self.assertEqual(kept["signedIn"], 200, "and the page is signed in: %r" % kept)
+        self.assertTrue(kept["besideCleared"] and all(kept["besideCleared"]),
+                        "every response to a request carrying both cleared it: %r" % kept)
+        fresh = r["notMigrated"]
+        self.assertEqual(fresh["clearedBy"], [], "no response to a request without a session clears the old cookie: %r" % fresh)
+        self.assertTrue(fresh["kept"], "a browser that has not migrated keeps it: %r" % fresh)
+        self.assertEqual(fresh["sessions"], 0, "and holds no session: %r" % fresh)
+        self.assertGreaterEqual(fresh["responses"], 5, "the requests carried the old cookie: %r" % fresh)
+        self.assertEqual(fresh["reads"], {"/sessions": 403, "/sw.js": 403, "/chat": 200, "/healthz": 200},
+                         "the old cookie alone opens no data or static route: %r" % fresh)
+        self.assertEqual(fresh["socket"], "refused", "nor the socket: %r" % fresh)
+        other = r["another"]
+        self.assertEqual(other["signedIn"], 200, "signed in here: %r" % other)
+        self.assertGreater(other["beside"], 0, "the requests carried the other cookie beside the session: %r" % other)
+        self.assertEqual(other["clearedBy"], [], "no response clears another kernel's old cookie: %r" % other)
+        self.assertTrue(other["kept"], "the jar keeps it, with its value: %r" % other)
 
     def test_a_typed_file_address_carries_the_cap_and_opens(self):
         r = self._drive(TYPED_LINKS)
