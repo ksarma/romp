@@ -803,7 +803,7 @@ class RunEnd(unittest.TestCase):
         self.assertEqual(len(outer["listed"]), 2, "the outermost run's list names both nested roots: %r" % (outer,))
 
     @procfs
-    @unittest.skipUnless(HAS_XDIST, "pytest-xdist is not installed (CI's case; the serial nested case holds the same recording)")
+    @unittest.skipUnless(HAS_XDIST, "pytest-xdist is not installed (the serial nested case holds the same recording)")
     def test_a_process_leaked_by_a_nested_run_a_worker_started_is_the_controllers_finding(self):
         """correctness-1 under xdist: the child run is `-n 1`; its worker's test runs a nested pytest that leaves a detached
         sleeper. The worker removes its root at its unconfigure, before the controller's check."""

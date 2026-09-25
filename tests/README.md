@@ -203,8 +203,9 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   from running in any of those tests, keyed on those facts alone or on facts one
   run has together, named or not, is refused by the run. The pair doubles each
   case's runs, which adds to the time of `tests/test_hermetic_kernel_postal.py`
-  run serially: 2.6 s on 3.10 and 3.4 s on 3.12 where no run has `-n 2`, as in
-  CI's pytest job, and 7.1 s and 7.8 s where the `-n 2` runs are made (means of
+  run serially: 2.6 s on 3.10 and 3.4 s on 3.12 where no run has `-n 2`
+  (pytest-xdist not installed), and 7.1 s and 7.8 s where the `-n 2` runs are
+  made (pytest-xdist installed; means of
   three runs each, measured at the forty-third and forty-fifth commits of fork
   PR #894, not enforced). Those figures were measured with the synthetic
   cases' children run four at once; since the forty-ninth commit they run as

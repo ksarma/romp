@@ -95,7 +95,7 @@ itself, once per run of this module, keeps the trees of the files its resolver m
 its walk, and derives once per path tuple, what it keeps held by one object the module releases in its tearDownModule,
 and the module changes no collector state (the reviewer's rulings of
 2026-09-24 on round 2 of fork PR #894: parse_cache.derived() freezes the heap, and every perf-snapshot reader after this
-module in CI's serial order then pays per read; the census's own parse rather than parse_cache's shared one, by the
+module in a serial run then pays per read; the census's own parse rather than parse_cache's shared one, by the
 measurement module_level_env_census's docstring gives); that docstring also says which of its figures are compared and
 which are not (the reviewer's ruling of round 1 on fork PR #894). Beside it,
 tests/conftest.py's run-end process check makes a run red that leaves any process holding its temp root
@@ -1995,12 +1995,12 @@ def module_level_env_census(paths=None):
     (the reviewer's rulings of 2026-09-24 on round 2 of fork PR #894). WHY NOT tests/parse_cache.py's derived(), round 1's
     shape: derived() freezes every object tracked after a build, and every later call of the kernel's _PerfStats.snapshot
     reads gc.get_freeze_count(), which walks the frozen objects, so every snapshot reader that sorts after this module in
-    CI's serial order paid per read; the module changes no collector state at all (no gc.freeze, gc.disable or
+    a serial run paid per read; the module changes no collector state at all (no gc.freeze, gc.disable or
     gc.collect). WHY NOT THE CACHE'S SHARED PARSE EITHER, this census's exception to tests/parse_cache.py's one-cache
     rule, chosen by the measured rule the reviewer set (the shape whose snapshot readers stay inside main's spread ships):
     read through source_and_tree, which freezes nothing, the trees stayed in that cache, tracked, for the rest of the
     process, and every full collection after this module walked them. THE MEASUREMENT, at round 2 of fork PR #894 (this
-    module then the 29 test modules after it in CI's serial order whose tests read gc.get_freeze_count(), the
+    module then the 29 test modules that sort after it and whose tests read gc.get_freeze_count(), the
     perf-snapshot readers, one serial process per run, each shape paired with main in the same rounds; the figures with
     their heads are in the PR's body): with the trees kept in that cache the readers ran 50 to 72 s slower than main on
     Python 3.10 and about 35 s slower on 3.12; with every tree held by this module until its end, 4.3 s slower on 3.12
@@ -3453,9 +3453,9 @@ def _conftest_reasserted_names(src=None, where=None):
     form (_proof_command_roads), and on a test module's place in the order: the first, the third or later (the
     verifier's X7) and the second to the six-hundredth (its Y1)). The pair adds runs: the developer's form doubles each
     case's runs, and serially this module took 2.6 s longer on 3.10 and 3.4 s on 3.12 at the forty-fifth commit of
-    fork PR #894 than at the forty-third where no run has -n 2, as in CI's pytest job, which does not install
-    pytest-xdist, and 7.1 s and 7.8 s longer where the -n 2 runs are made (means of three runs each, side by side;
-    measured at those heads, not enforced).
+    fork PR #894 than at the forty-third where no run has -n 2 (pytest-xdist not installed), and 7.1 s and 7.8 s
+    longer where the -n 2 runs are made (pytest-xdist installed; means of three runs each, side by side; measured at
+    those heads, not enforced).
     SECOND, MATCHABLE AT A COST AND NOT MATCHED HERE: the rest of the collection, finite but open-ended in count up to
     the number of test modules under tests/, where the child collects its four added modules. A condition on a module's
     place that holds at neither the first nor the fourth: exactly the third, where a dummy module stands (the verifier's
@@ -3662,8 +3662,8 @@ _PROOF_READS = tuple(((module, cls, test), "the %s test of %s, %s" % (when, wher
 def _proof_modes():
     """The runs the execution proof makes (_PROOF_MODE_RUNS): in each form of command line, CI's (_proof_options) and
     a developer's (_proof_developer_options), one run with no xdist worker, and one with -n 2 where pytest-xdist is
-    installed in this interpreter. Where it is not, as in CI's pytest job, which does not install it, no run of the
-    suite in this interpreter has an xdist worker, so no road keyed on one can keep a fixture from a test here."""
+    installed in this interpreter: four runs where it is installed, two where it is not. Where it is not, no run of
+    the suite in this interpreter has an xdist worker, so no road keyed on one can keep a fixture from a test here."""
     if importlib.util.find_spec("xdist") is not None:
         return ("serial", "xdist", "developer", "developer-xdist")
     return ("serial", "developer")
@@ -4905,8 +4905,10 @@ _PROBE = textwrap.dedent("""
 
 _REVIVE_PROBE = textwrap.dedent("""
     # The trio's second guard, run (the reviewer's ruling of round 1 on fork PR #894): a TunnelConcierge case of this
-    # probe's own drives the revive road after the trio's setUp and reports the recorder, what the cleanups return and
-    # which checks fired in them, and whether the road is the import-time function again after them.
+    # probe's own calls the revive road, km._ensure_postal_bus, after the trio's setUp and reports the recorder, what
+    # the cleanups return and which checks fired in them, and whether the road is the import-time function again after
+    # them. It calls the road itself and not km._revive_postal_bus, whose client-only gate (upstream's PR 1848, which
+    # fork PR #875 folds) can return before the road, so what it reports does not depend on that gate.
     import json, os, shutil, sys
     here = sys.argv[1]
     sys.path.insert(0, here)
@@ -4917,7 +4919,7 @@ _REVIVE_PROBE = textwrap.dedent("""
     case = t.TunnelConcierge("test_attach_requires_host")
     case.setUp()
     out = {"port": t.km.BUS_PORT, "stubbed_in_setup": t.km._ensure_postal_bus is not at_import}
-    t.km._revive_postal_bus()
+    t.km._ensure_postal_bus()
     out["revives"] = list(case.revives)
     case.tearDown()
     fired, check = [], case.assertEqual
@@ -7068,7 +7070,7 @@ class HermeticKernelPostal(unittest.TestCase):
         this process's environment carrying the variables pytest-xdist sets in a worker, as on a worker of a sweep with
         -n 8, and its runs with no worker drop them (_proof_child_env), so the variable's road is refused for the -n 2
         runs' reads alone. V5's worker roads and the conjunctions are refused only where the proof makes the -n 2 runs:
-        where pytest-xdist is not installed (CI's pytest job) no run there has a worker, and the proof makes one run in
+        where pytest-xdist is not installed, no run there has a worker, and the proof makes one run in
         each form and grants them, which this test reads from _proof_modes and runs for the worker road with
         pytest-xdist taken out of reach."""
         try:
@@ -7134,8 +7136,8 @@ class HermeticKernelPostal(unittest.TestCase):
             listed = {ctx for ctx, _k, _m in reads if ctx in why or "in each of the %d reads" % len(reads) in why}
             self.assertEqual(listed, {ctx for ctx, _key, m in reads if _PROOF_MODE_RUNS[m][0] in forms},
                              "%s: refused for the reads of the runs in %s and no others: %s" % (label, " and ".join(forms), why))
-        # with pytest-xdist taken out of reach, as in CI's pytest job, the proof makes the run with no worker alone in
-        # each form and grants V5's worker road
+        # with pytest-xdist taken out of reach, the proof makes the run with no worker alone in each form and grants
+        # V5's worker road
         find = importlib.util.find_spec
         with mock.patch.object(importlib.util, "find_spec", lambda name, *a: None if name == "xdist" else find(name, *a)):
             self.assertEqual(_proof_modes(), ("serial", "developer"))
@@ -7161,8 +7163,8 @@ class HermeticKernelPostal(unittest.TestCase):
     def test_each_run_of_the_proof_has_a_temporary_directory_of_its_own(self):
         """EACH RUN'S OWN TEMPORARY DIRECTORY (the builder's red at round 2's forty-fourth commit of fork PR #894, and
         the verifier's F1 at that commit). A spy on subprocess.run answers each pytest child of a call of
-        _reassert_proof in its place, and for each one runs a separate Python with that child's environment and working
-        directory, which prints what tempfile.gettempdir() returns. The test asserts three things. A call with two
+        _reassert_proof in its place, and for each one runs a separate Python with that child's environment, which
+        prints what tempfile.gettempdir() returns. The test asserts three things. A call with two
         synthetic cases makes twice as many pytest children as _proof_modes() has modes, a call with one `real` case
         makes as many, and no two children of a call are handed the same TMPDIR. Each `real` child's TMPDIR lies under
         the one copy's scratch directory. For every child, the separate Python's tempfile.gettempdir() is the TMPDIR
@@ -8483,23 +8485,26 @@ class HermeticKernelPostal(unittest.TestCase):
 
     def test_the_trio_stubs_the_revive_road_and_its_cleanup_fails_on_a_revive_and_puts_the_road_back(self):
         """_PostalTrio's second guard, run in a fresh interpreter (_REVIVE_PROBE) on a TunnelConcierge case of its own, so
-        the import probe's after_cleanups and after_setup_raise stay independent of it: after the trio's setUp a call
-        of km._revive_postal_bus() lands in the stub's recorder (the test's port, once) and runs no ensure; the cleanups
-        then return False, because the recorder check in _restore_bus fired on that revive and no other check did; and
-        km._ensure_postal_bus is the import-time function again after them. Each of the three pieces the round-1 review
-        could delete with no test failing reds here: the stub deleted (M1: the revive runs the real ensure in the probe
-        child, with the trio's environment, and client-only makes that ensure start nothing: it pings the test's own
-        port and returns, so the recorder is empty and the cleanups succeed), the road's restore dropped from
-        _restore_bus (M2: the stub is still the road after the cleanups), and the recorder check disabled (M3: the
-        cleanups succeed with the recorder full). The placement check reds on M1 and M2 as well, from the assignments."""
+        the import probe's after_cleanups and after_setup_raise stay independent of it: after the trio's setUp a call of
+        the revive road, km._ensure_postal_bus(), lands in the stub's recorder (the test's port, once) and runs no
+        ensure; the cleanups then return False, because the recorder check in _restore_bus fired on that call and no
+        other check did; and km._ensure_postal_bus is the import-time function again after them. The probe calls the
+        road and not km._revive_postal_bus(), whose client-only gate in upstream's PR 1848 and in fork PR #875 can
+        return before the road, so the assertion on the recorder does not depend on client-only or on that gate (the
+        reviewer's ruling of round 1 on fork PR #894). Each of the three pieces the round-1 review could delete with no
+        test failing reds here: the stub deleted (M1: the call runs the real ensure in the probe child, with the trio's
+        environment, and client-only makes that ensure start nothing: it pings the test's own port and returns, so the
+        recorder is empty and the cleanups succeed), the road's restore dropped from _restore_bus (M2: the stub is still
+        the road after the cleanups), and the recorder check disabled (M3: the cleanups succeed with the recorder full).
+        The placement check reds on M1 and M2 as well, from the assignments."""
         env = dict(os.environ)
         env.pop("ROMP_POSTAL_PEERS", None)
         res = subprocess.run([sys.executable, "-c", _REVIVE_PROBE, HERE], capture_output=True, text=True, timeout=180, env=env, cwd=HERE)
         self.assertEqual(res.returncode, 0, res.stderr[-2000:])
         out = json.loads(res.stdout.strip().splitlines()[-1])
-        self.assertEqual(out["revives"], [out["port"]], "a revive after the setUp lands in the stub's recorder, the test's port, once, "
-                                                        "and runs no ensure")
-        self.assertIs(out["cleanups_succeeded"], False, "the cleanups fail on a revive the test did not expect")
+        self.assertEqual(out["revives"], [out["port"]], "a call of the revive road after the setUp lands in the stub's recorder, "
+                                                        "the test's port, once, and runs no ensure")
+        self.assertIs(out["cleanups_succeeded"], False, "the cleanups fail on a call of the revive road the test did not expect")
         self.assertEqual(len(out["fired"]), 1, "...because one check fired in them: %r" % out["fired"])
         self.assertIn("a refused bus call revived the bus from this test", out["fired"][0], "...the recorder check in _restore_bus")
         self.assertTrue(out["road_restored"], "the cleanups put the import-time _ensure_postal_bus back, the check's failure notwithstanding")
