@@ -499,15 +499,22 @@ def _short(qual):
 def _source_functions(trees):
     """Every module of the kernel's directory, from its tree in `trees` ({module: tree}, the census's own parse, in
     _kernel_modules' order): {qualified name (_module_qual): def} for every module-level function and every method of a
-    module-level class, and [(module, statement)] for the other top-level and class-level statements. Read-only: the
-    tests read these, never change them. Called once per build of the census, and the census is built once per module
-    run (_flag_census)."""
+    module-level class, and [(module, statement)] for the other top-level and class-level statements and for each part
+    of a module-level class outside its body. Those parts, its decorators, bases and keywords (and its type parameters
+    on Python 3.12 and later: every child of the class that is not a statement of its body), are the class's own code,
+    run in the module's scope when the class is made: a decorator is called with the class, and its keywords are handed
+    to its metaclass and to a base's __init_subclass__, so a decorator that names the store or a keyword that hands a
+    setter on is read as a class-level statement is (the reviewer's ruling on round 2 of fork PR #909, tests-1). The
+    parts come before the class's body statements, in the class's field order. Read-only: the tests read these, never
+    change them. Called once per build of the census, and the census is built once per module run (_flag_census)."""
     fns, rest = {}, []
     for module, tree in trees.items():
         for node in tree.body:
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 fns[_module_qual(module, node.name)] = node
             elif isinstance(node, ast.ClassDef):
+                body = {id(st) for st in node.body}
+                rest.extend((module, part) for part in ast.iter_child_nodes(node) if id(part) not in body)
                 for sub in node.body:
                     if isinstance(sub, (ast.FunctionDef, ast.AsyncFunctionDef)):
                         fns[_module_qual(module, "%s.%s" % (node.name, sub.name))] = sub
@@ -725,6 +732,21 @@ _PATH_KEYED = "<path as a key of> "   # _store_flow's key prefix for the path st
 # and _chat_ident a tuple of stat fields or None. A name among them is a stop only where it is bound as it was read
 # (_READ_BINDINGS, _misbound); .stat, a method, is read by its name alone, and so is the .get rule's .get.
 _PATH_STOPS = frozenset({".stat", "os.stat", "_read_state_json", "json.loads", "_stat_key", "_chat_ident"})
+# the READS and stops whose function runs a callable handed to it by keyword, each read by hand: sorted's key, and
+# json.loads' cls, object_hook, object_pairs_hook, parse_float, parse_int and parse_constant, and any other keyword,
+# which json.loads hands on to cls. A call of one that is handed the path takes every keyword value that is not a
+# constant and not a callback _bindings reads (a lambda, or a name bound only to nested defs or lambdas, _callbacks),
+# a ** spread's value included, as a call handed the path, keyed by its spelling (_callee_spelling), which no set
+# holds unless it is a read: `key=_poke` is a call of _poke, `key=functools.partial(_poke, sid)` spells `<Call>`,
+# `key=_poke if sid else str` `<IfExp>`, `**{"object_hook": h}` `<Dict>`. Nothing is exempt for being path-valued: a
+# nested class, a list or a parameter's default that holds the path is still a callable the call runs. A function of
+# the module handed by name is refused, not read: reading its body with its parameters bound from the call would seed
+# a callee from its caller, which the census does not do (it seeds a caller from a path helper's return, never a
+# callee's parameters). A data name beside the path (`reverse=rev`) is refused too, on the safe side. No other READS or
+# stop calls a callable it is handed (each of the kernel's own was read by hand and calls no parameter it is handed),
+# and map and filter, which take one positionally, are not in READS (the reviewer's ruling on round 2 of fork PR #909,
+# extra5-2)
+_CALLBACK_READS = frozenset({"sorted", "json.loads"})
 # the binding each name READS and _PATH_STOPS spell was read against, for a bare name and for the module at the root of
 # a dotted one, so that such a call is resolved by what its name is bound to, not by its spelling (_misbound): None for
 # a builtin (bound nowhere in the function or its module), an import for a module or a name brought in from one, and a
@@ -909,7 +931,43 @@ def _split(target, value):
     return [(target, value)]
 
 
-def _bindings(fn):
+def _callback_params(c):
+    """Every parameter of a def or lambda, as its ast.arg: positional-only, positional, *args, keyword-only and
+    **kwargs."""
+    a = c.args
+    return (a.posonlyargs + a.args + ([a.vararg] if a.vararg is not None else []) + a.kwonlyargs
+            + ([a.kwarg] if a.kwarg is not None else []))
+
+
+def _callbacks(fn):
+    """{name: [def or lambda, ...]} for each name every binding of which in `fn` (_scope_bindings) is a def or async def
+    nested in it or a plain `name = lambda ...` assignment: a call handed that name runs one of those, whose body is
+    `fn`'s own code. A name also bound some other way (`def poke(q)` and then `poke = _writer`, a parameter, a loop
+    target, an import, a tuple target) is left out, since the call may run the other binding: _store_flow spells it by
+    its name instead (the reviewer's ruling on round 2 of fork PR #909, extra5-2)."""
+    named = {}
+    for n in ast.walk(fn):
+        if n is not fn and isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            named.setdefault(n.name, []).append(n)
+        elif isinstance(n, ast.Assign) and isinstance(n.value, ast.Lambda):
+            for t in n.targets:
+                if isinstance(t, ast.Name):
+                    named.setdefault(t.id, []).append(n.value)
+    every = _scope_bindings(fn, skip=fn)
+    return {name: found for name, found in named.items() if len(every.get(name, ())) == len(found)}
+
+
+def _callback_of(x, callbacks):
+    """The defs or lambdas a call's argument or keyword value `x` is (_callbacks): itself when it is a lambda, what
+    `callbacks` binds its name to when it is a name there, else none."""
+    if isinstance(x, ast.Lambda):
+        return [x]
+    if isinstance(x, ast.Name) and x.id in callbacks:
+        return callbacks[x.id]
+    return []
+
+
+def _bindings(fn, callbacks=None):
     """[(target, value)] for every binding in `fn`: =, :=, an augmented or annotated assignment, a for, with or
     comprehension target, a match statement's captures, an import (its alias is both the target and the value, so an
     alias of a path helper is bound from the helper's name), each def, async def or class nested in it (the node is
@@ -918,7 +976,17 @@ def _bindings(fn):
     positional-only and positional parameters zipped from the tail with the defaults (which cover both kinds), the
     keyword-only ones with their kw_defaults that are not None. An assignment's tuple target is matched to a tuple
     display element by element (_split), and so is a for target to each element of a displayed iterable
-    (`for p, k in ((path, "name"), ...)`)."""
+    (`for p, k in ((path, "name"), ...)`).
+    A callable a call runs is the function's code too: for every call in `fn`, each argument or keyword value that is
+    a lambda, or a name `callbacks` holds (_callbacks: bound only to nested defs or lambdas; computed here when not
+    given), has each of its parameters (_callback_params, every kind) paired with each other argument, keyword value
+    and receiver of that call, as a default is. So where the call is handed the path the callback's parameters carry
+    it, and its body, walked as `fn`'s, has its writes read as `fn`'s: `sorted([p], key=lambda q: open(q, "w"))` hands
+    open() the path. Over-approximate, as a nested def is: the parameters carry whenever the call is handed anything
+    computed from the path, so a reader whose callback calls something outside READS on its parameter reds until
+    classed (the reviewer's ruling on round 2 of fork PR #909, extra5-2)."""
+    if callbacks is None:
+        callbacks = _callbacks(fn)
     out = []
     for n in ast.walk(fn):
         if isinstance(n, ast.Assign):
@@ -946,6 +1014,12 @@ def _bindings(fn):
                 out.append((n, n))
         elif isinstance(n, ast.ClassDef):
             out.append((n, n))
+        elif isinstance(n, ast.Call):
+            given = list(n.args) + [k.value for k in n.keywords]
+            others = given + ([n.func.value] if isinstance(n.func, ast.Attribute) else [])
+            for x in given:
+                for c in _callback_of(x, callbacks):
+                    out.extend((param, y) for param in _callback_params(c) for y in others if y is not x)
     return out
 
 
@@ -1055,8 +1129,19 @@ def _store_flow(fn, modules, helpers=frozenset(), outer=None):
     carries the path, each base and metaclass of such a class, and each decorator of `fn` itself when `fn` is a path
     helper, is handed it by its spelling (_callee_spelling), and one that is a method of a value (`@REG.append`) keeps
     it.
+    A callable a read runs is a call too. A lambda, or a name bound only to nested defs or lambdas (_callbacks), handed
+    to any call is read as `fn`'s code with its parameters bound from the call's other arguments (_bindings). Any other
+    keyword value handed to a call in _CALLBACK_READS (sorted, json.loads) that is handed the path, a ** spread's value
+    included, is a call handed the path by its spelling, unless it is a constant: `key=_poke` is a call of _poke,
+    refused as outside READS, since the census reads no other function's body with parameters bound from a call.
     It judges no WRITE by its spelling: FlagWriterPopulation.READS lists what a reader may hand the path to, and any
-    other call is a write until someone classes it. Nor a READ by its spelling alone: a bare name, or the module at the
+    other call is a write until someone classes it. It judges no write that is not a call: an expression that runs a
+    method of another object with the path (an operator or a comparison, `p in REG`; a subscript read or deleted,
+    `REG[p]`; an f-string's format spec; a match statement's value or class pattern; or a comparison, conversion or type
+    test a READS call makes, sorted, str, dict, tuple, bool, isinstance) runs that object's method, and a write there,
+    when the object is the kernel's own, is outside this flow (the reviewer's ruling on round 2 of fork PR #909,
+    fresh-1: closing it would refuse a current reader's `p in _state_fault_seen`, and telling a kernel object from a
+    plain container would be a new mechanism). Nor a READ by its spelling alone: a bare name, or the module at the
     root of a dotted one, that `fn` binds, or that its module (`outer`, _module_bindings) binds otherwise than it was
     read against, is spelled `<bound NAME>` (_misbound), so it is neither a read nor a stop; a method is read by its
     name alone, FlagWriterPopulation's stated limit."""
@@ -1064,7 +1149,8 @@ def _store_flow(fn, modules, helpers=frozenset(), outer=None):
     seeds = {id(n) for n in _store_seeds(fn)}
     if helpers:
         seeds |= {id(n) for n in ast.walk(fn) if _mentioned(n) & helpers}
-    pairs = _bindings(fn)
+    callbacks = _callbacks(fn)
+    pairs = _bindings(fn, callbacks)
     tainted, pathy = set(), set()
     while True:
         grown, grown_pathy = set(tainted), set(pathy)
@@ -1091,6 +1177,10 @@ def _store_flow(fn, modules, helpers=frozenset(), outer=None):
             receiver = [n.func.value] if isinstance(n.func, ast.Attribute) else []
             if any(_carries(x, seeds, tainted) for x in given + receiver):
                 handed.setdefault(spelled, []).append(n.lineno)
+                if spelled in _CALLBACK_READS:
+                    for k in n.keywords:
+                        if not isinstance(k.value, ast.Constant) and not _callback_of(k.value, callbacks):
+                            handed.setdefault(_callee_spelling(k.value, modules, misbound), []).append(n.lineno)
             if spelled.startswith(".") and spelled != ".get" and any(
                     _path_valued(x, seeds, pathy, modules, misbound) for x in given):
                 handed.setdefault(_PATH_STORED, []).append(n.lineno)
@@ -1224,10 +1314,13 @@ def _facts(node):
 
 def _unit_facts(tree):
     """({id(unit): _facts(unit)}, loads) for one module's tree. The units are the pieces _source_functions splits a
-    module into, each top-level statement but a class and each statement of a class's body, so every def in fns and
-    every statement in rest is one; the table is keyed by id(unit), the census's own, never an attribute on a node.
-    loads is the union of every unit's and of each class's parts outside its body (decorators, bases, keywords): every
-    node ast.walk(tree) visits but the module and the classes themselves, neither of them a call."""
+    module into, each top-level statement but a class, each part of a class outside its body (its decorators, bases,
+    keywords and type parameters) and each statement of a class's body, so every def in fns and every statement or
+    header part in rest is one; the table is keyed by id(unit), the census's own, never an attribute on a node. A
+    header part's facts go in the table from the one walk that also reads its loads, so the module-level checks read a
+    class's header as they read its body's statements (the reviewer's ruling on round 2 of fork PR #909, tests-1).
+    loads is the union of every unit's: every node ast.walk(tree) visits but the module and the classes themselves,
+    neither of them a call."""
     table, loads = {}, set()
     for node in tree.body:
         units = [node]
@@ -1235,7 +1328,8 @@ def _unit_facts(tree):
             body = {id(st) for st in node.body}
             for part in ast.iter_child_nodes(node):
                 if id(part) not in body:
-                    loads |= _facts(part).loads
+                    table[id(part)] = f = _facts(part)
+                    loads |= f.loads
             units = node.body
         for st in units:
             table[id(st)] = f = _facts(st)
@@ -1386,7 +1480,8 @@ def _derive_namers(fns, of, modules, trees=None):
 
 
 def _derive_flag_census(cls):
-    """The census, from the source: every function and statement (_source_functions); the names bound to a module in
+    """The census, from the source: every function and statement, a module-level class's header parts among the
+    statements (_source_functions); the names bound to a module in
     the kernel and in its judge (the other module that names the store), so a call spells as os.replace, not .replace
     (_call_spelling; an unknown spelling is outside READS, a write, and so is a read's name bound otherwise than it
     was read against, _misbound, in the function or in its module's scope); the functions that name the store, in
@@ -1397,13 +1492,13 @@ def _derive_flag_census(cls):
     (_store_flow), whatever the call is spelled (a path exit and a kept path are not calls: a helper's callers are
     namers, traced in turn, and the role check refuses a kept path); every setter any of them finds with
     WRITERS (setters, and shorts, the names code mentions them by); the functions other than a setter that mention one
-    (callers); and the roads (_derive_roads). Every unit of every module (each def and statement) is walked ONCE
-    (_facts), and what the sets above and the tests read of a unit comes from that one walk: facts, keyed by id(unit),
-    and loads, each module's files loaded by name. Each caller's door walk (_door_walk) is walked once here too, as
-    door_walks, for the five tests that key a caller's nodes to its doors. trees holds each module's tree, the build's
-    own parse (_parse_kernel_module), so the mechanism pin enumerates the units of the very trees the build walked and
-    the trees go when the census goes. It returns one _Census; the build leaves no cycle behind, so dropping that
-    object frees everything here by reference count (_flag_census)."""
+    (callers); and the roads (_derive_roads). Every unit of every module (each def, statement and header part) is walked
+    ONCE (_facts), and what the sets above and the tests read of a unit comes from that one walk: facts, keyed by
+    id(unit), and loads, each module's files loaded by name. Each caller's door walk (_door_walk) is walked once here
+    too, as door_walks, for the five tests that key a caller's nodes to its doors. trees holds each module's tree, the
+    build's own parse (_parse_kernel_module), so the mechanism pin enumerates the units of the very trees the build
+    walked and the trees go when the census goes. It returns one _Census; the build leaves no cycle behind, so dropping
+    that object frees everything here by reference count (_flag_census)."""
     trees = {module: _parse_kernel_module(module) for module in _kernel_modules()}
     fns, rest = _source_functions(trees)
     modules = frozenset(n for m in (km, km.jd) for n, v in vars(m).items() if isinstance(v, type(os)))
@@ -1466,8 +1561,9 @@ class FlagWriterPopulation(unittest.TestCase):
     (a socket op forwarding to _state_write_route("/flag", ...), a second POST path onto it) reds as well. The setters
     are found without trusting how a function writes: every function that names the store in code (in a str or bytes
     literal) is pinned by role (NAMERS), and one that hands the store's path to anything but a read (READS) is a
-    writer, so a writer spelled with open(), os.replace or a helper of its own reds as surely as one that calls
-    _write_state_json, the path reaching it through an assignment or a parameter's default alike. A read is one by what
+    writer, so a writer spelled with open(), os.replace or a helper of its own that the function calls reds as surely
+    as one that calls _write_state_json, the path reaching it through an assignment or a parameter's default alike (a
+    method an operator runs is no call, a limit stated below). A read is one by what
     its name is bound to, not by its spelling: a bare name in READS or the stops, or the module at the root of a dotted
     one, counts only where it is bound as it was read (_READ_BINDINGS: a builtin bound nowhere in the function or its
     module, a module or a name by its import, a kernel read by its one def or class at kernel.py's top level), so a
@@ -1479,7 +1575,15 @@ class FlagWriterPopulation(unittest.TestCase):
     nested in a function is a value that holds whatever it mentions, in a closure, a default or a class attribute: a
     nested def that builds the path is followed to every call of it, and a closure or a class holding the path goes
     wherever a value goes, handed back, kept or handed to a call, its decorators, bases and metaclass included, since
-    each is called with it. What a function hands back counts as the path unless it passes through a read of the file
+    each is called with it. A callable a call runs is the function's code too: a lambda, or a name bound only to
+    nested defs or lambdas, handed to a call is read with its parameters bound from the call's other arguments
+    (_bindings), so a sorted key that writes the element it is handed reds; and every other keyword value handed to
+    sorted or json.loads beside the path, but a constant (a function of the module by name, a call's result, an
+    if-else, a walrus, a subscript, a ** spread), is a call by its spelling, outside READS unless it is a read, so a
+    write until classed (_CALLBACK_READS), nothing exempt for holding the path. A module-level class's header, its
+    decorators, bases and keywords, is read as its module's code, as a class-level statement is (_source_functions),
+    so a class decorator that names the store or a keyword that hands a setter on reds the module-level checks. What a
+    function hands back counts as the path unless it passes through a read of the file
     or a fact about it (_path_valued lists where the path stops, not the ways it goes through, so an `or`, a walrus, a
     subscript, a dict, a .get's default or a closure carries it), and a namer that keeps the path, or an object that
     holds it, anywhere but a plain local name (a subscript or attribute, whatever its root, `self` included; a name it
@@ -1499,7 +1603,18 @@ class FlagWriterPopulation(unittest.TestCase):
     .get of another object that writes the file, or one that returns its key and so hides the path a helper hands back,
     passes as the read its name promises (the witnesses are the two cases of
     StoreFlowReach.test_a_method_is_read_by_its_name_alone), and so does a read's name rebound from outside its module
-    (another module's attribute, the builtins module, globals(), setattr). The stdlib's
+    (another module's attribute, the builtins module, globals(), setattr). Beside that limit stands its twin, a method
+    an operator runs: an expression that runs a method of another object with the path, an operator or a comparison
+    (`p in REG`), a subscript read or deleted (`REG[p]`, the .get limit's twin), an f-string's format spec, a match
+    statement's value or class pattern, or a comparison, conversion or type test a READS call makes (sorted, str, dict,
+    tuple, bool, isinstance), runs that object's method with the path, and a write there, when the object is the
+    kernel's own, is no call and is outside the census (the witness is
+    StoreFlowReach.test_a_method_an_operator_runs_is_outside_the_flow: a membership test, a subscript by the path and a
+    type test through a metaclass's __instancecheck__, each writing the file and passing as a reader). A function of
+    the module handed by name to sorted or json.loads as a callback is refused, a call outside READS, whatever its body
+    does: reading that body with its parameters bound from the call would seed a callee from its caller, which the
+    census does not do (the witness, a key that only reads, is
+    StoreFlowReach.test_a_function_of_the_module_handed_as_a_callback_is_refused_unread). The stdlib's
     handler enters do_GET and do_POST by a name it builds, which is where the roads end. These read WHERE the code
     lives, so they guard the population and the arms' shape, not the behaviour; the behaviour is executed in
     SocketFlagWhitelist (the socket op, in process and over a real socket) and in
@@ -1542,7 +1657,10 @@ class FlagWriterPopulation(unittest.TestCase):
     # parse (_hidden_from_feed), the quarantine bookkeeping (a mark retired, a fault noted or cleared, the refusal's
     # text), a cache lookup, plain value handling, and the calls that build a path from it (os.path.join, Path, str,
     # os.fspath: a path helper returns what they build). Each bare name and each module at a dotted name's root is
-    # resolved by the binding it was read against (_READ_BINDINGS, one entry each); a method by its name alone
+    # resolved by the binding it was read against (_READ_BINDINGS, one entry each); a method by its name alone. A read
+    # added here or to the stops whose function runs a callable it is handed, by keyword or positionally, joins
+    # _CALLBACK_READS' rule, so every callable handed to it is read or refused (one that takes it positionally widens
+    # that rule to its arguments)
     READS = {".get", ".stat", "os.stat", "_read_state_json", ".read_text", "json.loads", "_flags_quarantined",
              "_flags_exit_text", "_StateUnreadable", "_note_state_fault", "_clear_state_fault", "_retire_flags_quarantine",
              "_stat_key", "_chat_ident", "_files_stat_observe_sig", ".append", ".items", "bool", "dict", "isinstance",
@@ -2023,8 +2141,9 @@ class StoreFlowReach(unittest.TestCase):
     parsed here and its defs handed to the census's functions; no file written, no kernel copy (the reviewer's ruling
     on round 1 of fork PR #909, extra6-1, fresh-1 and fresh-2). FlagWriterPopulation reads what they make of the
     kernel's own tree; these pin how far they reach, so a writer spelled a new way reds there, within the stated limits
-    FlagWriterPopulation's docstring names (a method read by its name alone among them). The verdicts are read as
-    the role check reads them, what a function sends the path to outside FlagWriterPopulation.READS."""
+    FlagWriterPopulation's docstring names (a method read by its name alone, a method an operator runs, and a function
+    of the module handed as a callback refused unread among them). The verdicts are read as the role check reads them,
+    what a function sends the path to outside FlagWriterPopulation.READS."""
 
     MODULES = frozenset({"os", "json"})
     maxDiff = None   # a red names every case that differs, not the first 640 characters of the diff
@@ -2470,6 +2589,159 @@ class StoreFlowReach(unittest.TestCase):
         self.assertEqual((namers, helpers, flows["h"]), ({"h"}, frozenset(), {".get": [6]}),
                          "a .get that returns its key hides the path: the helper passes as a reader and the writer "
                          "through it names no store")
+
+    def test_a_method_an_operator_runs_is_outside_the_flow(self):
+        """The stated limit beside the method limit, pinned by its witnesses (FlagWriterPopulation's docstring names
+        them): the census reads calls, and an expression that runs a method of another object with the path is none. A
+        membership test runs the container's __contains__, a subscript its __getitem__, a type test its metaclass's
+        __instancecheck__; each below writes the file it is handed, and each reader passes, with nothing sent outside
+        READS (the reviewer's ruling on round 2 of fork PR #909, fresh-1: closing the road would refuse a current
+        reader, _flags_unknown_cold's `p in _state_fault_seen`, and telling a kernel object from a plain container
+        would be a new mechanism). The type test stands in an if-else's test, since a returned isinstance(p, _K) is a
+        path exit. Green by design: a change that closes the road reds here, and the stated limit moves with it, as
+        test_a_method_is_read_by_its_name_alone's does."""
+        s = 'jd.STATE / "session-flags.json"'
+        w = '        open(q, "w").write("{}")\n'
+        cases = [
+            ("a membership test, the container's __contains__",
+             'class _Reg:\n    def __contains__(self, q):\n' + w + '        return False\n'
+             'REG = _Reg()\ndef r():\n    p = %s\n    return p in REG\n' % s),
+            ("a subscript by the path, the container's __getitem__",
+             'class _Reg:\n    def __getitem__(self, q):\n' + w + '        return 0\n'
+             'REG = _Reg()\ndef r():\n    p = %s\n    return REG[p]\n' % s),
+            ("a type test, the metaclass's __instancecheck__",
+             'class _M(type):\n    def __instancecheck__(cls, q):\n' + w + '        return False\n'
+             'class _K(metaclass=_M):\n    pass\ndef r():\n    p = %s\n    return 1 if isinstance(p, _K) else 0\n' % s),
+        ]
+        got = {what: self._outside(src, "r") for what, src in cases}
+        self.assertEqual(got, {what: {} for what, src in cases}, "a method another object runs on the path is no call, "
+                         "so a write there passes as a reader: the stated limit")
+
+    def test_a_module_level_class_header_is_read_as_its_modules_code(self):
+        """A module-level class's decorators, bases and keywords run in the module's scope when the class is made (a
+        decorator is called with the class, a keyword handed to its metaclass and a base's __init_subclass__), so
+        _source_functions puts each in rest beside the class's body statements, and _unit_facts keeps its facts from
+        its one walk. The module-level checks then read a decorator that names the store (the role check's predicate,
+        _unit_names_the_store) and a keyword that names a setter (the doors' and roads' mention) as they read a
+        class-level statement (the reviewer's ruling on round 2 of fork PR #909, tests-1). On Python 3.12 and later a
+        type parameter is such a part too; before it a class has none."""
+        src = '@register(STATE / "session-flags.json")\nclass K(Base, hook=_set_session_flag):\n    X = 1\n'
+        tree = ast.parse(src)
+        fns, rest = _source_functions({"kernel.py": tree})
+        table, loads = _unit_facts(tree)
+        got = [(m, type(st).__name__, st.lineno, id(st) in table,
+                id(st) in table and _unit_names_the_store(table[id(st)], frozenset()),
+                id(st) in table and "_set_session_flag" in table[id(st)].names) for m, st in rest]
+        self.assertEqual((fns, got), ({}, [("kernel.py", "Name", 2, True, False, False),
+                                           ("kernel.py", "keyword", 2, True, False, True),
+                                           ("kernel.py", "Call", 1, True, True, False),
+                                           ("kernel.py", "Assign", 3, True, False, False)]),
+                         "rest as (module, part kind, line, facts kept, names the store, mentions the setter): the "
+                         "base, the keyword and the decorator, each a unit with its facts, then the body's statement")
+        if "type_params" in ast.ClassDef._fields:
+            tree = ast.parse("class K[T: _set_session_flag]:\n    X = 1\n")
+            fns, rest = _source_functions({"kernel.py": tree})
+            table, loads = _unit_facts(tree)
+            self.assertEqual([(type(st).__name__, id(st) in table and "_set_session_flag" in table[id(st)].names)
+                              for m, st in rest], [("TypeVar", True), ("Assign", False)],
+                             "a type parameter's bound is a header part, read with its facts")
+        else:
+            self.assertFalse(hasattr(ast, "TypeVar"), "this Python's classes take no type parameters")
+
+    def test_a_callable_a_read_runs_is_read_or_refused(self):
+        """A callable a call runs is the function's code (the reviewer's ruling on round 2 of fork PR #909, extra5-2).
+        A lambda, or a name bound only to nested defs or lambdas, handed to a call is read with its parameters bound
+        from the call's other arguments and its receiver (_bindings), so its writes are the function's: the first group.
+        Every other keyword value handed to sorted or json.loads beside the path, but a constant, is a call by its
+        spelling (_CALLBACK_READS), outside READS unless it is a read: a function of the module by name, a call's
+        result, an if-else, an or, a walrus, a ** spread, a subscript, and nothing exempt for holding the path (a nested
+        class, a list, a parameter's default); a name bound to a nested def and bound again to another callable is no
+        callback, so it is spelled by its name. Each case reads one key of what the function sends outside READS; the
+        controls are the next test's."""
+        p = '    p = jd.STATE / "session-flags.json"\n'
+        d, d0 = 'def r(sid):\n' + p, 'def r():\n' + p   # the reader's head, with a parameter and without
+        t = '    return p.stat().st_size\n'
+        w = 'open(q, "w").write(sid)'
+        cases = [
+            ("a sorted key lambda writing its element", d + '    sorted([p], key=lambda q: %s)\n' % w + t, "open", [3]),
+            ("a nested def handed by its name",
+             d + '    def poke(q):\n        %s\n        return 0\n    sorted([p], key=poke)\n' % w + t, "open", [4]),
+            ("a lambda bound to a local, handed by its name",
+             d + '    poke = lambda q: %s\n    sorted([p], key=poke)\n' % w + t, "open", [3]),
+            ("a lambda taking *args", d + '    sorted([p], key=lambda *qs: open(qs[0], "w").write(sid))\n' + t,
+             "open", [3]),
+            ("a lambda handed to a method, its parameter bound from the receiver",
+             d + '    ps = [p]\n    ps.sort(key=lambda q: %s)\n' % w + t, "open", [4]),
+            ("a function of the module as the key", d + '    sorted([p], key=_poke)\n' + t, "_poke", [3]),
+            ("a call's result as the key", d + '    sorted([p], key=functools.partial(_poke, sid))\n' + t, "<Call>",
+             [3]),
+            ("json.loads' object_hook naming a function",
+             d0 + '    return json.loads(p.read_text(), object_hook=_hook)\n', "_hook", [3]),
+            ("a ** spread into json.loads", 'def r(kw):\n' + p + '    return json.loads(p.read_text(), **kw)\n', "kw",
+             [3]),
+            ("an if-else", d + '    sorted([p], key=_poke if sid else str)\n' + t, "<IfExp>", [3]),
+            ("an if-else with the path in one arm", d + '    sorted([p], key=p if sid else _poke)\n' + t, "<IfExp>",
+             [3]),
+            ("an or", d + '    sorted([p], key=_poke or str)\n' + t, "<BoolOp>", [3]),
+            ("a walrus", d + '    sorted([p], key=(k := _poke))\n' + t, "<NamedExpr>", [3]),
+            ("a ** spread of a dict display into sorted", d + '    sorted([p], **{"key": _poke})\n' + t, "<Dict>", [3]),
+            ("a ** spread of a dict display into json.loads",
+             d0 + '    return json.loads(p.read_text(), **{"object_hook": _hook})\n', "<Dict>", [3]),
+            ("a callable subscripted out of a display that holds the path",
+             d + '    fs = [p, _poke]\n    sorted([p], key=fs[1])\n' + t, "<Subscript>", [4]),
+            ("a nested class holding the path, handed by its name",
+             d + '    class K:\n        seen = p is None\n\n        def __init__(self, q):\n            %s\n'
+             '    sorted([p], key=K)\n' % w + t, "K", [8]),
+            ("a lambda held in a local list beside the path",
+             d + '    fs = [p, lambda q: %s]\n    sorted([p], key=fs[1])\n' % w + t, "<Subscript>", [4]),
+            ("a parameter whose default is a lambda holding the store",
+             'def r(sid, poke=lambda q, _=jd.STATE / "session-flags.json": _poke(q)):\n' + p
+             + '    sorted([p], key=poke)\n' + t, "poke", [3]),
+            ("a name bound to a nested def and bound again to a function of the module",
+             d + '    def poke(q):\n        return 0\n    poke = _poke\n    sorted([p], key=poke)\n' + t, "poke", [6]),
+        ]
+        got = {what: self._outside(src, "r").get(key) for what, src, key, lines in cases}
+        self.assertEqual(got, {what: lines for what, src, key, lines in cases},
+                         "a callable a read runs is read as the function's code or refused by its spelling, by line")
+
+    def test_a_read_handed_no_callable_passes_and_map_stays_outside_reads(self):
+        """The callback rule's controls, green with it and without it, by design: the strict reader's keyword
+        (`expect=dict`, the one keyword the readers hand a READS call) and a nested def key that only reads hand nothing
+        outside READS, and map, which takes its callable positionally and is not in READS, is a call outside READS
+        either way. The first and second read all a function sends outside READS, the third the key map."""
+        p = '    p = jd.STATE / "session-flags.json"\n'
+        d0 = 'def r():\n' + p
+        cases = [
+            ("the strict reader's keyword", d0 + '    return _read_state_json(p, expect=dict)\n', None, None),
+            ("a nested def key that only reads",
+             d0 + '    def key(q):\n        return q.stat().st_mtime\n    ps = sorted([p], key=key)\n'
+             '    return ps[0].stat().st_size\n', None, None),
+            ("map handed a lambda, a call outside READS",
+             d0 + '    for x in map(lambda q: q.stat(), [p]):\n        pass\n    return p.stat().st_size\n', "map",
+             [3]),
+        ]
+        got = {}
+        for what, src, key, lines in cases:
+            outside = self._outside(src, "r")
+            got[what] = outside if key is None else outside.get(key)
+        self.assertEqual(got, {what: ({} if key is None else lines) for what, src, key, lines in cases},
+                         "a read handed no callable of the module passes, and map stays outside READS")
+
+    def test_a_function_of_the_module_handed_as_a_callback_is_refused_unread(self):
+        """The stated limit on the callback rule, pinned by its witness (FlagWriterPopulation's docstring names it): a
+        function of the module handed by name to sorted or json.loads is refused as a call outside READS whatever its
+        body does, here a key that only reads a stat. Reading that body with its parameters bound from the call would
+        seed a callee from its caller, which the census does not do (it seeds a caller from a path helper's return,
+        never a callee's parameters), so the refusal is the safe side, the one a direct call `_by_mtime(p)` draws. The
+        same key nested in the reader is read with its parameter bound and passes. Green by design: a change that
+        reads the named function's body reds here, and the stated limit moves with it."""
+        s = 'jd.STATE / "session-flags.json"'
+        key = 'def _by_mtime(q):\n    return q.stat().st_mtime\n'
+        use = '    ps = sorted([p], key=_by_mtime)\n    return ps[0].stat().st_size\n'
+        top = key + 'def r():\n    p = %s\n' % s + use
+        nested = 'def r():\n    p = %s\n' % s + ''.join('    ' + ln + '\n' for ln in key.splitlines()) + use
+        self.assertEqual((self._outside(top, "r"), self._outside(nested, "r")), ({"_by_mtime": [5]}, {}),
+                         "the module's function handed as the key is refused unread; the same key nested is read")
 
 
 class ViewsRoute(_Routes):
