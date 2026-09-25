@@ -15,9 +15,9 @@ slot share one object and one entry; a dead entry under a reused id is absent to
 The collection event (2026-09-24, CollectionEvent below): entries registered after a release (a tree that outlived its
 assembly entry reading a released slot again) belong to an index nothing releases again, so when that tree went they stood
 dead until the cap or a new list registering the same row under their id, and on a large machine the cap (MemTotal /
-32 KiB) had not come after 73 hours: 6.15 million entries against a 7.73 million cap, most of them for freed lists. Each
-list's own weak reference now queues itself when the list is freed, and the next registration or release removes that
-list's entries, counted `collected` and `expired`. A list a finalizer resurrects gets a fresh reference at its next
+32 KiB) had not come after 73 hours: 6.15 million entries against a 7.73 million cap, most of them for freed lists. When
+a list holding entries is freed, its own weak reference now queues itself, and the next registration or release removes
+that list's entries, counted `collected` and `expired`. A list a finalizer resurrects gets a fresh reference at its next
 registration (Resurrected below).
 Synthetic documents only."""
 import copy

@@ -3167,8 +3167,8 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   times above them: the cap is a backstop, and `evictions` counts the live
   entries it takes), `evictions` (a live entry past the cap: its slot's memo
   dropped, never a field in place), `collected` (entries the collection event
-  removed: a list's weak reference queues itself when the list is freed,
-  and the next build, re-registration or release removes that list's
+  removed: when a list holding entries is freed, its weak reference queues
+  itself, and the next build, re-registration or release removes that list's
   entries), `expired` (an entry whose list has been collected, dropped in
   one of three ways, no slot touched in any case: by that removal, so every
   `collected` entry counts here too; by the cap; or when a live list
