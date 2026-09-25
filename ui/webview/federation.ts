@@ -1009,33 +1009,43 @@ const UNKNOWN_SLOT_CUT = 32;
 // literals however wrapped or spaced (the feed branch, its twin in the except arm and the warm gate's pair), a singleton
 // of any name (the chat and the timeline), or a value formatted into text (the send log line), names every other form (a
 // named constant, a list, a non-literal member, a negated test, a bound read, a call's argument) and asserts none occurs,
-// asserts no subscript or .get in the body keys on a bare name and no "app" literal sits in a position the census does
-// not read (bound to a name in any shape, a default, a keyword argument, a passed value), asserts the union of the read
-// apps IS this set, and drives each member through the manager on the channel its audience names (a tuple naming feed
-// is the feed payload's, one naming chat the tab list's, one naming timeline the lanes'), with the other two channels'
-// frames leaving it pending. So a pane the kernel adds to any of _push's audiences, in any spelling of the key as a
-// literal, reads red there (in the roster, or as a named form the census cannot read), a key held in a name reads red at
-// both ends (a subscript or a .get whose key is a bare name, `c[APP_KEY]` or `c.get(key)`, is listed whatever the name,
-// the subscript behind a receiver, which is whatever can end a subscriptable primary in Python's grammar: a name that is
-// not a standalone keyword, a closing parenthesis, a closing bracket, a closing brace or a closing quote, double or
-// single, so `pick(c)[k]`, `targets[0][k]`, `{**c}[k]`, `"abc"[k]`, `'abc'[k]` and `self.match[k]` are listed with a
-// generic annotation such as `list[str]`, while a one-element list display and a sequence pattern behind the soft
-// keyword case (`case [k]:`) are not; the derived set, in the same words here, in the census's comment and in the
-// ledger entry: a name is a whole identifier token, ASCII or not; a number of any spelling, an Ellipsis or a keyword
-// constant (None, True, False) before a bracket is unlisted; a name after a dot is an identifier only where Python
-// allows one there (match and case); so `1j[k]`, `0x1f[k]`, `1e5[k]` and `1.e5[k]` are not listed through their tails,
-// a name with a character past ASCII is listed whole, and a list display behind a hard keyword after a float's trailing
-// dot or an Ellipsis (`1. in [k]`, `... in [k]`) is not listed; deliberately unlisted and disclosed: a number, an
-// Ellipsis or a keyword constant before a bracket, none of which can hold the client record, and a bare variable named
-// match or case, subscripted, which reads as the keyword; and every key _push reads today is written as a literal; the
-// "app" literal a name would be bound to is listed in any binding's spelling), a member here the kernel
-// never pushes to reads red, and a non-feed member that
-// pendingFor's selector below would fall to the per-host feed reads red. What stays outside that census and disclosed
-// rather than detected: a key held in a dict or a list, reached through an attribute or returned by a call
-// (`c[KEYS[0]]`, `c[self.key]`), whose value the body never spells as a literal, and a pane pushed only by a sender
-// outside _push's body. Exported for that census. Kept an ALLOWLIST on purpose: a denylist of settings and files
-// would pend every host forever again for the next app added to the fan-out with no pushed view (the class the project's
-// change closed).
+// asserts no subscript or .get in the body keys on a bare ASCII name and no "app" literal sits in a position the census
+// does not read (bound to a name in any shape, a default, a keyword argument, a passed value), asserts the union of the
+// read apps IS this set, and drives each member through the manager on the channel its audience names (a tuple naming
+// feed is the feed payload's, one naming chat the tab list's, one naming timeline the lanes'), with the other two
+// channels' frames leaving it pending. So a pane the kernel adds to any of _push's audiences, in any spelling of the
+// key as a literal, reads red there (in the roster, or as a named form the census cannot read), a key held in a name
+// reads red at its read if the name is ASCII and at its literal if the body binds it (a subscript or a .get whose key
+// is a bare name, `c[APP_KEY]` or `c.get(key)`, is listed whatever the name, if the name is ASCII, and every key _push
+// reads today is written as a literal; the "app" literal a name would be bound to is listed in any binding's spelling),
+// a member here the kernel never pushes to reads red, and a non-feed member that pendingFor's selector below would fall
+// to the per-host feed reads red. The receiver-class text, word for word here, in the census's comment and in the
+// ledger entry (federation-reconnect.test.ts's three-homes case holds the three equal): a subscript is listed only
+// behind a receiver, which is whatever can end a subscriptable primary in Python's grammar: a name that is not a
+// standalone keyword, a closing parenthesis, a closing bracket, a closing brace or a closing quote, double or single,
+// so `pick(c)[k]`, `targets[0][k]`, `{**c}[k]`, `"abc"[k]`, `'abc'[k]`, `self.match[k]` and a generic annotation such
+// as `list[str]` are listed, while a one-element list display (`xs = [c]`, `return [c]`) and a sequence pattern behind
+// the soft keyword case (`case [k]:`) are not. The derived set: a name is a whole identifier token, ASCII or not; a
+// number of any spelling, an Ellipsis or a keyword constant (None, True, False) before a bracket is unlisted; a name
+// after a dot is an identifier only where Python allows one there (match and case). So a name never starts behind an
+// identifier character: `1j[k]`, `0x1f[k]`, `0xff[k]` and `1e5[k]` are not listed through their tails, and a name with
+// a character past ASCII is listed whole. Nor does a name start directly behind a number's trailing dot (a digit run
+// that starts a token, then the dot): `1.e5[k]` and `1_0.j[k]`, one number token each, are not listed, while `v5.e5[k]`
+// and `1.5.e5[k]`, attributes, are. Both rules are lookbehinds on the census's name alternative alone, so a closing
+// parenthesis still ends `f(x)[k]`'s receiver. A hard keyword after a dot is still the keyword, so a list display
+// behind a float's trailing dot or an Ellipsis (`1. in [k]`, `... in [k]`) is not listed. The key, unlike the receiver,
+// is read as an ASCII name: a subscript or a `.get` whose key is a bare name holding a character past ASCII is not
+// listed. Where such a name is bound to the app literal inside `_push`'s body, the unread-literal scan lists the
+// literal; where it is bound outside the body (a module-level constant), the key is listed nowhere, and the census's
+// premise case plants such keys, each asserted unlisted. Deliberately unlisted and disclosed, then: a key named with a
+// character past ASCII and bound outside `_push`'s body; a number, an Ellipsis or a keyword constant before a bracket,
+// none of which can hold the client record; and a bare variable named match or case, subscripted, which reads as the
+// keyword. What stays outside that census and disclosed rather than detected: a key named with a character past ASCII
+// and bound outside _push's body (above), a key held in a dict or a list, reached through an attribute or returned by a
+// call (`c[KEYS[0]]`, `c[self.key]`), whose value the body never spells as a literal, and a pane pushed only by a
+// sender outside _push's body. Exported for that census. Kept an ALLOWLIST on purpose: a denylist of settings and files
+// would pend every host forever again for the next app added to the fan-out with no pushed view (the class the
+// project's change closed).
 export const PANE_CHANNELS = new Set(["chat", "feed", "fleet", "timeline", "waiting"]);
 
 export class FederationManager {

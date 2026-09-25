@@ -827,24 +827,26 @@ function pyNormalise(src: string, firstLine: number): { text: string; inStr: boo
   return { text: out.join(""), inStr, encl, line };
 }
 
-// The forms a read of the "app" key in _push's body can take. Two the census READS as an audience; one it can rule out as
-// no audience at all (the value becomes text: the send log line's `%` operand); every other form it cannot see through, so
-// each is NAMED, counted over the body and asserted absent, the way tests/test_card_boards.py's _other_card_forms
-// enumerates what its card census cannot read (review round 3, 2026-09-21: both refuters defeated a wider regex with a
-// named constant, `c["app"] in NOTE_APPS`, which no pattern over literals can read; the enumeration turns it red instead of
-// invisible). Keyed on the KEY written as a string literal, however spaced or wrapped (a subscript or a .get with any
-// whitespace around the literal and around the call's dot, name and paren; a subscript wrapped over a line, which
-// pyNormalise folds to the spaced form), so a renamed loop variable is still read. A key that is NOT a literal is keyed
-// on the shape of its read, never on its spelling (review round 6, 2026-09-21): a subscript or a .get whose key is a
-// bare name (`c[APP_KEY]`, `c.get(key)`) is the ninth named form, NAME_KEY_FORM, listed with its statement and asserted
-// absent whatever the name (every key _push reads at the head is written as a literal, so the form has nothing to fire
-// on until a key is held in a name; the bracket arm needs a receiver before the bracket, whatever can end a primary
-// in Python's grammar, so a one-element list display is not listed and a generic annotation such as `list[str]` is,
-// review rounds 7 and 8, the bound stated at the arm); and every "app" literal in the body
-// that no detector read (bound to a name in any shape, a default, a keyword argument, a passed value) is listed under
-// UNREAD_LITERAL and asserted absent, so the road from inside the body to a key held in a name is red at both ends, the
-// literal and the read. What stays disclosed, not detected: a key held in a dict or a list, reached through an attribute
-// or returned by a call (`c[KEYS[0]]`, `c[self.key]`, `c[pick()]`), whose value the body never spells as a literal.
+// The forms a read of the "app" key in _push's body can take. Two the census READS as an audience; one it can rule out
+// as no audience at all (the value becomes text: the send log line's `%` operand); every other form it cannot see
+// through, so each is NAMED, counted over the body and asserted absent, the way tests/test_card_boards.py's
+// _other_card_forms enumerates what its card census cannot read (review round 3, 2026-09-21: both refuters defeated a
+// wider regex with a named constant, `c["app"] in NOTE_APPS`, which no pattern over literals can read; the enumeration
+// turns it red instead of invisible). Keyed on the KEY written as a string literal, however spaced or wrapped (a
+// subscript or a .get with any whitespace around the literal and around the call's dot, name and paren; a subscript
+// wrapped over a line, which pyNormalise folds to the spaced form), so a renamed loop variable is still read. A key
+// that is NOT a literal is keyed on the shape of its read, never on its spelling (review round 6, 2026-09-21): a
+// subscript or a .get whose key is a bare name (`c[APP_KEY]`, `c.get(key)`) is the ninth named form, NAME_KEY_FORM,
+// listed with its statement and asserted absent whatever the name, if the name is ASCII (every key _push reads at the
+// head is written as a literal, so the form has nothing to fire on until a key is held in a name; the bracket arm needs
+// a receiver before the bracket, whatever can end a primary in Python's grammar, so a one-element list display is not
+// listed and a generic annotation such as `list[str]` is, review rounds 7 and 8, the bound stated at the arm, where the
+// receiver-class text also says the key is read as an ASCII name); and every "app" literal in the body that no detector
+// read (bound to a name in any shape, a default, a keyword argument, a passed value) is listed under UNREAD_LITERAL and
+// asserted absent, so the road from inside the body to a key held in a name is red at both ends, the literal and, for
+// an ASCII name, the read. What stays disclosed, not detected: a key named with a character past ASCII and bound
+// outside the body, and a key held in a dict or a list, reached through an attribute or returned by a call
+// (`c[KEYS[0]]`, `c[self.key]`, `c[pick()]`), whose value the body never spells as a literal.
 const READ_TUPLE = "a tuple of string literals (the audience, read)";
 const READ_SINGLE = "a singleton, == a string literal (the audience, read)";
 const READ_TEXT = "a value formatted into text (a % format's operand, a .format argument, a field inside a string literal): no audience";
@@ -858,8 +860,10 @@ const OTHER_FORMS = [
   "the read bound to a name (an assignment or a walrus)",
   "a read in any other position (a call's argument, a returned value, a comparison's right operand, a yield): not followed",
 ] as const;
-// The ninth named form, keyed on the SHAPE of the read rather than on the key: a subscript or a .get whose key is a bare
-// name. Listed whatever the name (the census cannot tell it from a read of the app key) and asserted absent.
+// The ninth named form, keyed on the SHAPE of the read rather than on the key: a subscript or a .get whose key is a
+// bare name. Listed whatever the name, if the name is ASCII (the census cannot tell it from a read of the app key), and
+// asserted absent; a key named with a character past ASCII is not listed (the receiver-class text at pushAudiences'
+// bracket arm).
 const NAME_KEY_FORM = "a subscript or a .get whose key is a bare name (a constant, a variable, a parameter; a generic annotation such as list[str] shares the bracket): which key it reads is not known here";
 // Python's keywords (3.12's keyword.kwlist) and the two soft keywords that precede a bracket in their keyword role
 // (keyword.softkwlist's match and case: `match [c]:` a subject, `case [c]:` a sequence pattern): a bracket directly behind
@@ -950,39 +954,46 @@ function pushAudiences(kernel: string): Audiences {
     a.unread.push(whereAt(p));
   }
   // The ninth named form, keyed on the SHAPE of the read: a subscript or a .get whose key is a bare name, outside a
-  // string, whatever the name (a constant, a variable, a parameter). Which key it reads is not known here, so it is
-  // listed and asserted absent (every key _push reads at the head is written as a literal, so the form has nothing to
-  // fire on until a key is held in a name) rather than disclosed. Tolerates the whitespace the literal read tolerates.
-  // The bracket arm is a subscript only behind a receiver primary directly before the bracket, joined by spaces or tabs
-  // only: whatever can end a subscriptable primary in Python's grammar, a name, a closing parenthesis, a closing bracket,
-  // a closing brace (a dict or set display, a comprehension) or a closing quote, double or single (a string literal); the
-  // statement's text before the bracket is read from its line start, and pyNormalise folds a newline inside brackets to
-  // one space, so a newline never lets one statement's tail become the next bare bracket's receiver. The derived set,
-  // in the same words here, in federation.ts's PANE_CHANNELS comment and in the ledger entry: a name is a whole
-  // identifier token, ASCII or not; a number of any spelling, an Ellipsis or a keyword constant (None, True, False)
-  // before a bracket is unlisted; a name after a dot is an identifier only where Python allows one there (match and
-  // case). So the name alternative's characters are an identifier's, \w or any code unit past ASCII (outside a string or
-  // a comment, valid Python holds one only in an identifier), and it starts only where a name can start: never behind an
-  // identifier character, so `1j[k]`, `0x1f[k]`, `0xff[k]` and `1e5[k]` are not listed through their tails and a
-  // name with a character past ASCII is listed whole, and never directly behind a number's trailing dot (a digit run
-  // that starts a token, then the dot), so `1.e5[k]` and `1_0.j[k]`, one number token each, are not listed either, while
-  // `v5.e5[k]` and `1.5.e5[k]`, attributes, are. Both lookbehinds sit inside the name alternative alone, so a closing
-  // parenthesis still ends `f(x)[k]`'s receiver. A name in PY_KEYWORDS is no receiver as a STANDALONE token only
-  // (`case [k]:`, `in [k]`, `return [c]`), and of that set only match and case can follow an attribute's dot: for those
-  // two alone the text before the name is read for a dot followed by spaces or tabs, so after a dot, tight or spaced
-  // (`self.match[k]`, `c . case[k]`), the spelling is an identifier and its bracket a subscript, listed, while a hard
-  // keyword after a dot (`1. in [k]` behind a float's trailing dot, `... in [k]` behind an Ellipsis) is the keyword and
-  // its bracket a list display. So a one-element list display (`xs = [c]`, `return [c]`, `f([c], 1)`) and a sequence
-  // pattern are not listed, and a generic annotation such as `list[str]`, `pick(c)[k]`, `targets[0][k]`, `{**c}[k]`,
-  // `"abc"[k]` and `'abc'[k]` are: subscripts with a bare-name key, whose remedy is not the literal (review round 7,
-  // 2026-09-23: the arm listed every one-name bracket, so a list display in the body turned the census red with a cause
-  // and a remedy that did not apply; round 8: the receiver class derived from the grammar after a name-paren-bracket
-  // class fitted to the examples left a dict display and a string literal unlisted; round 9, 2026-09-24: the name
-  // alternative matched a run of ASCII characters, so a number was listed through its letter tail and a name with a
-  // character past ASCII was not, and the dot test read any dot before a keyword as an attribute's). Deliberately
-  // unlisted, and disclosed in the same three homes: a number, an Ellipsis or a keyword constant before a bracket, a
-  // subscript in the grammar that no client record can stand behind, and a bare variable named match or case,
-  // subscripted, which reads as the keyword (PY_KEYWORDS).
+  // string, whatever the name (a constant, a variable, a parameter) if the name is ASCII. Which key it reads is not
+  // known here, so it is listed and asserted absent (every key _push reads at the head is written as a literal, so the
+  // form has nothing to fire on until a key is held in a name) rather than disclosed. Tolerates the whitespace the
+  // literal read tolerates. The bracket arm is a subscript only behind a receiver primary directly before the bracket,
+  // joined by spaces or tabs only; the statement's text before the bracket is read from its line start, and pyNormalise
+  // folds a newline inside brackets to one space, so a newline never lets one statement's tail become the next bare
+  // bracket's receiver. The receiver-class text, word for word here, in federation.ts's PANE_CHANNELS comment and in
+  // the ledger entry (the three-homes case below holds the three equal): a subscript is listed only behind a receiver,
+  // which is whatever can end a subscriptable primary in Python's grammar: a name that is not a standalone keyword, a
+  // closing parenthesis, a closing bracket, a closing brace or a closing quote, double or single, so `pick(c)[k]`,
+  // `targets[0][k]`, `{**c}[k]`, `"abc"[k]`, `'abc'[k]`, `self.match[k]` and a generic annotation such as `list[str]`
+  // are listed, while a one-element list display (`xs = [c]`, `return [c]`) and a sequence pattern behind the soft
+  // keyword case (`case [k]:`) are not. The derived set: a name is a whole identifier token, ASCII or not; a number of
+  // any spelling, an Ellipsis or a keyword constant (None, True, False) before a bracket is unlisted; a name after a
+  // dot is an identifier only where Python allows one there (match and case). So a name never starts behind an
+  // identifier character: `1j[k]`, `0x1f[k]`, `0xff[k]` and `1e5[k]` are not listed through their tails, and a name
+  // with a character past ASCII is listed whole. Nor does a name start directly behind a number's trailing dot (a digit
+  // run that starts a token, then the dot): `1.e5[k]` and `1_0.j[k]`, one number token each, are not listed, while
+  // `v5.e5[k]` and `1.5.e5[k]`, attributes, are. Both rules are lookbehinds on the census's name alternative alone, so
+  // a closing parenthesis still ends `f(x)[k]`'s receiver. A hard keyword after a dot is still the keyword, so a list
+  // display behind a float's trailing dot or an Ellipsis (`1. in [k]`, `... in [k]`) is not listed. The key, unlike the
+  // receiver, is read as an ASCII name: a subscript or a `.get` whose key is a bare name holding a character past ASCII
+  // is not listed. Where such a name is bound to the app literal inside `_push`'s body, the unread-literal scan lists
+  // the literal; where it is bound outside the body (a module-level constant), the key is listed nowhere, and the
+  // census's premise case plants such keys, each asserted unlisted. Deliberately unlisted and disclosed, then: a key
+  // named with a character past ASCII and bound outside `_push`'s body; a number, an Ellipsis or a keyword constant
+  // before a bracket, none of which can hold the client record; and a bare variable named match or case, subscripted,
+  // which reads as the keyword (PY_KEYWORDS). How the arm below reads it: the name alternative's characters are an
+  // identifier's, \w or any code unit past ASCII (outside a string or a comment, valid Python holds one only in an
+  // identifier), with both lookbehinds inside that alternative; a name in PY_KEYWORDS is no receiver as a STANDALONE
+  // token only (`case [k]:`, `in [k]`, `return [c]`), and for match and case alone the text before the name is read for
+  // a dot followed by spaces or tabs, so after a dot, tight or spaced (`self.match[k]`, `c . case[k]`), the spelling is
+  // an identifier and its bracket a subscript; and the key classes are [A-Za-z_]\w*, whose \w is ASCII in JavaScript,
+  // so the key is read as an ASCII name (review round 7, 2026-09-23: the arm listed every one-name bracket, so a list
+  // display in the body turned the census red with a cause and a remedy that did not apply; round 8: the receiver class
+  // derived from the grammar after a name-paren-bracket class fitted to the examples left a dict display and a string
+  // literal unlisted; round 9, 2026-09-24: the name alternative matched a run of ASCII characters, so a number was
+  // listed through its letter tail and a name with a character past ASCII was not, and the dot test read any dot before
+  // a keyword as an attribute's; round 9's rulings, 2026-09-25: the three homes had drifted apart, and they claimed
+  // every bare-name key was listed while the key class read ASCII names only).
   for (const m of text.matchAll(/\[\s*[A-Za-z_]\w*\s*\]|\.\s*get\s*\(\s*[A-Za-z_]\w*\s*[,)]/g)) {
     const p = m.index!;
     if (inStr[p]) continue;
@@ -996,7 +1007,7 @@ function pushAudiences(kernel: string): Audiences {
   return a;
 }
 
-test("every app the kernel's _push addresses is a pushed-channel pane here, on the channel its audience names: the roster is derived from every read of the app key written as a string literal in _push's body, however spaced or wrapped (a tuple of string literals however wrapped or spaced, a singleton of any name, or a value formatted into text), every other form is named and asserted absent, a subscript or a .get whose key is a bare name is named and asserted absent, and every app literal the census did not read is listed and asserted absent, so a pane added to any of _push's audiences in any spelling of the key as a literal reads red here, in the roster or as a named form, a key held in a name reads red at the name or at the literal a name would be bound to, a key held in a dict or reached through an attribute is disclosed as outside, and a member _push never addresses reads red (review rounds 1 to 6, 2026-09-21)", async () => {
+test("every app the kernel's _push addresses is a pushed-channel pane here, on the channel its audience names: the roster is derived from every read of the app key written as a string literal in _push's body, however spaced or wrapped (a tuple of string literals however wrapped or spaced, a singleton of any name, or a value formatted into text), every other form is named and asserted absent, a subscript or a .get whose key is a bare ASCII name is named and asserted absent, and every app literal the census did not read is listed and asserted absent, so a pane added to any of _push's audiences in any spelling of the key as a literal reads red here, in the roster or as a named form, a key held in a name reads red at the name if it is ASCII or at the literal a name would be bound to in the body, a key named past ASCII and bound outside the body, or held in a dict or reached through an attribute, is disclosed as outside, and a member _push never addresses reads red (review rounds 1 to 6, 2026-09-21; round 9's rulings, 2026-09-25)", async () => {
   // Keyed on the PRODUCER, not on the compliant sites: a set that names the panes it knows cannot see the one it misses,
   // and the project's four-name set missed this fork's fifth. Round 1 read the first `if c["app"] in (...):` alone, the
   // feed branch, so a pane added to the timeline's or the chat's audience (a `==` widened to a tuple) took no verdict.
@@ -1017,13 +1028,15 @@ test("every app the kernel's _push addresses is a pushed-channel pane here, on t
   // second roster assertion below catches.
   // SCOPE: this census reads _push's body, the pusher's send loop. Senders outside it test the app key on their own
   // (_feed_first's cold first feed frame, _send_feed_now's ready-time frame, the tab strips of _push_session_now and
-  // _confirm_close_now), each addressing a pane _push also addresses; none is read here, so a pane pushed ONLY by a route
-  // outside _push's body is outside this case's claim. And the key is read as a STRING LITERAL, however spaced or wrapped;
-  // a key held in a name is caught by the shape of its read, at both ends (review round 6, 2026-09-21): a subscript or a
-  // .get whose key is a bare name (c[APP_KEY], c.get(key)) is listed whatever the name, and so is every "app" literal in
-  // the body the census did not read (the literal a name would be bound to, in any binding's spelling); both are asserted
-  // absent here. What stays disclosed, not detected: a key held in a dict or a list, reached through an attribute or
-  // returned by a call (c[KEYS[0]], c[self.key]), whose value the body never spells as a literal.
+  // _confirm_close_now), each addressing a pane _push also addresses; none is read here, so a pane pushed ONLY by a
+  // route outside _push's body is outside this case's claim. And the key is read as a STRING LITERAL, however spaced or
+  // wrapped; a key held in a name is caught at both ends (review round 6, 2026-09-21): a subscript or a .get whose key
+  // is a bare name (c[APP_KEY], c.get(key)) is listed whatever the name, if the name is ASCII, and so is every "app"
+  // literal in the body the census did not read (the literal a name would be bound to, in any binding's spelling); both
+  // are asserted absent here. What stays disclosed, not detected: a key named with a character past ASCII and bound
+  // outside the body (the receiver-class text at pushAudiences' bracket arm), and a key held in a dict or a list,
+  // reached through an attribute or returned by a call (c[KEYS[0]], c[self.key]), whose value the body never spells as
+  // a literal.
   const kernel = fs.readFileSync(path.resolve(process.cwd(), "..", "kernel", "kernel.py"), "utf8");
   const { tuples, singles, other, unread, byName } = pushAudiences(kernel);
   assert.deepEqual([...other].filter(([, hits]) => hits.length), [],
@@ -1081,13 +1094,16 @@ test("every app the kernel's _push addresses is a pushed-channel pane here, on t
   }
 });
 
-test("the census's premise, shown to hold for a reason: on a planted _push every named form the census cannot read fires exactly where planted, the roster reads the wrapped, unspaced, hyphenated, digit-carrying and continued spellings, a tuple with no space after its in, and the key spaced inside its subscript or its .get call, around the call's dot, name and paren, or wrapped over a line, a formatted value and a docstring's prose read as text, a subscript by a bare name behind each receiver the grammar allows (a name, ASCII or not, a call, a subscript, a dict display, a string literal, double- or single-quoted, an attribute named by a soft keyword with the dot tight or spaced, an attribute after a name ending in a digit or after a float, the builtin type and the variable _) and a generic annotation are listed where planted, and a one-element list display, a sequence pattern behind the soft keyword case, a number of each spelling before a bracket and a list display behind a hard keyword after a float's trailing dot or an Ellipsis are not, no app literal is listed as unread, and every read of the key lands in exactly one form (review rounds 3, 5 and 6, 2026-09-21; rounds 7 and 8, 2026-09-23; round 9, 2026-09-24)", () => {
+test("the census's premise, shown to hold for a reason: on a planted _push every named form the census cannot read fires exactly where planted, the roster reads the wrapped, unspaced, hyphenated, digit-carrying and continued spellings, a tuple with no space after its in, and the key spaced inside its subscript or its .get call, around the call's dot, name and paren, or wrapped over a line, a formatted value and a docstring's prose read as text, a subscript by a bare name behind each receiver the grammar allows (a name, ASCII or not, a call, a subscript, a dict display, a string literal, double- or single-quoted, an attribute named by a soft keyword with the dot tight or spaced, an attribute after a name ending in a digit or after a float, the builtin type and the variable _) and a generic annotation are listed where planted, and a one-element list display, a sequence pattern behind the soft keyword case, a number of each spelling before a bracket and a list display behind a hard keyword after a float's trailing dot or an Ellipsis are not, nor is a subscript or a .get keyed by a name holding a character past ASCII or an audience keyed through a module-level constant so named (the key class is ASCII, disclosed), no app literal is listed as unread, and every read of the key lands in exactly one form (review rounds 3, 5 and 6, 2026-09-21; rounds 7 and 8, 2026-09-23; round 9, 2026-09-24; round 9's rulings, 2026-09-25)", () => {
   // the synthetic body, one read per tagged line: T a tuple the roster reads, S a singleton, X text, a number the
-  // OTHER_FORMS index that must fire there, null a line with no read of its own (a wrapped tuple's continuation lines, a
-  // one-element list display, a match statement and its sequence pattern, a number before a bracket, a list display
-  // behind a hard keyword)
+  // OTHER_FORMS index that must fire there, U a read keyed by a bare name holding a character past ASCII, which no
+  // detector sees (the disclosed key class), null a line with no read of its own (the module-level constant ahead of
+  // the def, a wrapped tuple's continuation lines, a one-element list display, a match statement and its sequence
+  // pattern, a number before a bracket, a list display behind a hard keyword)
   const T = READ_TUPLE, S = READ_SINGLE, X = READ_TEXT, N = NAME_KEY_FORM;
+  const U = "a read keyed by a bare name holding a character past ASCII (the key class is ASCII: not listed, disclosed)";
   const plant: [string, string | number | null][] = [
+    ['APP_K\u00c9Y = "app"', null],                               // a module-level constant named past ASCII, bound to the key outside _push's body, where the unread-literal scan does not read (round 9's rulings, 2026-09-25)
     ["def _push(targets, connect=False, live_map=None):", null],
     ['    """prose naming c["app"] in NOTE_APPS or c[KEY] is text, not a test or a read by a name"""', X],   // a bare-name subscript inside a string is no ninth form (review round 6)
     ['    if c["app"] in ("feed",   # a wrapped tuple, a comment inside it, a hyphen, a digit, a trailing comma', T],
@@ -1157,6 +1173,12 @@ test("the census's premise, shown to hold for a reason: on a planted _push every
     ["    e1 = \u00e95.e5[APP_KEY]", N],                           // the same after a name whose first character is past ASCII and whose last is a digit: listed (red where a digit run after such a character counted as a number)
     ["    cf = caf\u00e9[APP_KEY]", N],                            // a name whose last character is past ASCII (the e accented): a whole identifier token, listed (red where the name arm was a run of ASCII characters and left it unlisted)
     ["    ea = \u00e9a[APP_KEY]", N],                              // a name whose first character is past ASCII: listed (red where the name arm's first character was ASCII only, which leaves the a behind that character no start)
+    ["    k1 = c[cl\u00e9]", U],                                  // a subscript keyed by a name whose last character is past ASCII: not listed, the key class being ASCII (the disclosed gap; red the day the key class's continuation widens; round 9's rulings, 2026-09-25)
+    ["    k2 = c.get(cl\u00e9)", U],                              // the same through a .get
+    ["    k3 = c[\u00e9a]", U],                                   // a subscript keyed by a name whose first character is past ASCII: not listed (red the day the key class's start widens)
+    ["    k4 = c.get(\u00e9a)", U],                               // the same through a .get
+    ['    if c[APP_K\u00c9Y] == "newpane":', U],                  // an audience keyed through the module-level constant above: read by no form, so its pane is in no roster (the disclosed escape)
+    ["        pass", null],
     ["    if 1. in [k]:", null],                                   // a list display behind the hard keyword in after a float's trailing dot: only match and case follow an attribute's dot, so in is the keyword, not listed (red where the dot test read any dot before a keyword as an attribute's; review round 9)
     ["        pass", null],
     ["    el = ... in [k]", null],                                 // the same after an Ellipsis: not listed (red where the Ellipsis's last dot was read as an attribute's)
@@ -1173,13 +1195,21 @@ test("the census's premise, shown to hold for a reason: on a planted _push every
   const linesTagged = (tag: string | number) => plant.flatMap(([, t], i) => (t === tag ? [i + 2] : []));   // the leading newline: plant[0] is line 2
   assert.deepEqual(a.tuples, [["feed", "outline", "waiting-2", "x9"], ["timeline", "notes"], ["chat", "tight"], ["chat", "spaced"], ["timeline", "wrapped"]], T);
   assert.deepEqual(a.singles, ["chat", "timeline", "feed", "chat"], S);
-  assert.deepEqual(a.unread, [], "the plant leaves no app literal unread: OTHER_FORMS[6]'s `app = c[\"app\"]` binds a name to the READ, not to the key, and every tuple member and every compared value is a read");
+  assert.deepEqual(a.unread, [], "the plant leaves no app literal unread: OTHER_FORMS[6]'s `app = c[\"app\"]` binds a name to the READ, not to the key, every tuple member and every compared value is a read, and the module-level constant's literal lies outside _push's body, which is all the scan reads");
   const listDisplays = plant.flatMap(([l, t], i) => (t === null && /\[c\]/.test(l) ? [i + 2] : []));
   assert.equal(listDisplays.length, 2, "the two one-element list displays are planted (xs = [c], return [c])");
   assert.deepEqual(a.byName.map(lineOf).filter((l) => listDisplays.includes(l)), [], "a one-element list display has no receiver before its bracket and is no subscript: not listed as the ninth form (review round 7)");
   const patterns = plant.flatMap(([l, t], i) => (t === null && /^\s*case \[/.test(l) ? [i + 2] : []));
   assert.equal(patterns.length, 1, "the sequence pattern behind the soft keyword case is planted (case [k]:)");
   assert.deepEqual(a.byName.map(lineOf).filter((l) => patterns.includes(l)), [], "a sequence pattern behind the standalone soft keyword case is no subscript: not listed as the ninth form (review round 8)");
+  // The key class is ASCII, and the three homes' receiver-class text says so (round 9's rulings, 2026-09-25, taking the
+  // disclose option over widening the key class): a subscript or a .get keyed by a bare name holding a character past
+  // ASCII, first or later, is not listed, and an audience keyed through a module-level constant so named reaches no
+  // form, so its pane is in no roster. Red the day the key class widens: then retag these N and say so in the homes.
+  const pastAscii = linesTagged(U);
+  assert.equal(pastAscii.length, 5, "the keys named past ASCII are planted: a subscript and a .get by a name whose last character is past ASCII, the same by a name whose first is, and an audience keyed through a module-level constant so named");
+  assert.deepEqual(a.byName.map(lineOf).filter((l) => pastAscii.includes(l)), [], "a subscript or a .get whose key is a bare name holding a character past ASCII is not listed: the key class is ASCII, the gap disclosed in the receiver-class text's three homes");
+  assert.ok(![...a.tuples.flat(), ...a.singles].includes("newpane"), "the audience keyed through the module-level constant named past ASCII is read by no form: the disclosed escape, its pane in no roster");
   assert.deepEqual(a.byName.map(lineOf), linesTagged(N), N);
   assert.deepEqual(a.text.map(lineOf), linesTagged(X), X);
   OTHER_FORMS.forEach((form, k) => {
@@ -1188,12 +1218,12 @@ test("the census's premise, shown to hold for a reason: on a planted _push every
   });
   assert.equal(a.reads, a.tuples.length + a.singles.length + a.text.length + [...a.other.values()].flat().length,
     "every read of the app key landed in exactly one form");
-  assert.equal(a.reads, plant.filter(([, t]) => t !== null && t !== N).length, "and the plant's reads were all seen (the ninth form's read is of a key the census does not know)");
+  assert.equal(a.reads, plant.filter(([, t]) => t !== null && t !== N && t !== U).length, "and the plant's reads were all seen (the ninth form's read is of a key the census does not know, and a read keyed by a name past ASCII is seen by no detector)");
   // the message a red carries names the form, the line and the statement
   assert.match(a.other.get(OTHER_FORMS[0])![0], /^kernel\.py:\d+ if c\["app"\] in NOTE_APPS:$/);
 });
 
-test("an app literal in _push's body in a position the census does not read is listed with its statement, whatever holds it (an assignment, a tuple unpacking, an annotated one with a spaced, an unspaced union or a string annotation, a walrus, a parameter default, a for target, a parenthesised target, a parenthesised or a call-wrapped literal, a keyword argument, a passed value) and never from a docstring's prose, another literal, a read key, a compared value or a tuple's member, and a read through a bare name is listed as a subscript or a .get by a name: the road to a key held in a name is red at both ends (review rounds 5 and 6, 2026-09-21)", () => {
+test("an app literal in _push's body in a position the census does not read is listed with its statement, whatever holds it (an assignment, a tuple unpacking, an annotated one with a spaced, an unspaced union or a string annotation, a walrus, a parameter default, a for target, a parenthesised target, a parenthesised or a call-wrapped literal, a keyword argument, a passed value) and never from a docstring's prose, another literal, a read key, a compared value or a tuple's member, and a read through a bare name is listed as a subscript or a .get by a name: the road to a key held in an ASCII name is red at both ends (review rounds 5 and 6, 2026-09-21)", () => {
   const src = [
     "",
     "def _push(targets, connect=False, live_map=None):",
@@ -1236,6 +1266,32 @@ test("an app literal in _push's body in a position the census does not read is l
   assert.equal(a.reads, 2, "the three reads through a name are no reads of the app key the census knows; the literal reads are the two");
   assert.deepEqual(a.singles, ["app"]);
   assert.deepEqual(a.tuples, [["app", "feed"]]);
+});
+
+test("the three homes of the receiver-class text agree word for word: pushAudiences' comment at its bracket arm, federation.ts's PANE_CHANNELS comment and the pane-channels ledger entry each hold one span from the receiver's definition to its last disclosed exclusion, found once in each and, with comment markers and line breaks normalised away, the same in all three (round 9's rulings, 2026-09-25: two homes lacked the 0xff example and the trailing-dot rule the census's comment had gained, and none disclosed the ASCII key class)", () => {
+  // The span's first and last words, joined at run time so this case's own source never holds either phrase whole (a
+  // copy here would be a second match in this file). They are words the three homes already shared when the drift was
+  // found, so at that head this case is red on the texts differing, not on an end gone missing.
+  const first = ["whatever can end a", "subscriptable primary in Python's grammar"].join(" ");
+  const last = ["which reads as", "the keyword"].join(" ");
+  const homes = ["ui/webview/federation-reconnect.test.ts", "ui/webview/federation.ts", "upstream/2026-09-21-pane-channels-audience-census.md"];
+  const spans = homes.map((rel) => {
+    const raw = fs.readFileSync(path.resolve(process.cwd(), "..", rel), "utf8");
+    const flat = raw.replace(/\n[ \t]*\/\/ ?/g, "\n").replace(/\s+/g, " ");   // a line comment's marker, however indented, then every line break and run of spaces as one space
+    const at = flat.indexOf(first);
+    assert.ok(at >= 0, rel + ": the receiver-class text's first words are here");
+    assert.equal(flat.indexOf(first, at + 1), -1, rel + ": the receiver-class text's first words stand once");
+    const end = flat.indexOf(last, at);
+    assert.ok(end >= 0, rel + ": the receiver-class text's last words follow its first");
+    return flat.slice(at, end + last.length);
+  });
+  for (let k = 1; k < homes.length; k++) {
+    let d = 0;
+    while (d < spans[0].length && spans[0][d] === spans[k][d]) d++;
+    const near = (t: string) => JSON.stringify(t.slice(Math.max(0, d - 60), d + 60));
+    assert.ok(spans[k] === spans[0], homes[k] + "'s receiver-class text departs from " + homes[0] + "'s at character " + d
+      + " of " + spans[0].length + ": " + near(spans[k]) + " where the census's comment reads " + near(spans[0]) + "; state the one text in all three homes");
+  }
 });
 
 test("a pane's FIRST publish posts even an empty list, so a reloaded pane replaces the list its predecessor left (2026-09-18)", async () => {
