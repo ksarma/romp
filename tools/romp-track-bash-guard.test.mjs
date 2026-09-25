@@ -209,13 +209,15 @@ const programsNamed = (cmd, table = NAMED_PROBE) => Object.keys(table).filter((p
 // commands, an array's elements, a pattern a `case` or zsh's `for NAME (..)` holds). A miss there runs the leg. Where the leg asserts that
 // a shell writes, the absent program then reds it by name on that machine (no shell writes), never a false pass; where the leg asserts
 // that no shell writes, or an absence, the absent program gives the very result the leg asserts, and the leg passes without having run it
-// (the reviewer's verifier on the fifty-first commit). Two populations of that kind are read otherwise since the fifty-second commit: THE
-// CLEARED ENVIRONMENT's legs, where a program's absence is decided from each leg's execve record and an attempt must be attributable to
-// every program word the row's command holds (THE EXECVE RECORD, at their test), and the matrix rows outside `needs`, whose write is placed
-// by a recorder before the row runs where the program it names is absent (THE WRITE'S PLACE, at rowsNotRun). Any other leg that asserts
-// no write through a program this derivation misses passes where that program is absent. The lexer is the hook's own, so a defect in it
-// that drops a segment drops that segment's program here with the same consequences; the pin at the end of this file holds the derivation
-// to an independent reading of the text for the zsh family over every row the legs gated.
+// (the reviewer's verifier on the fifty-first commit). Two populations of that kind are read otherwise. THE CLEARED ENVIRONMENT's legs: since
+// the fifty-third commit a name a leg's processes looked up and found nowhere reds the leg by that name, read from the leg's strace record
+// of lookups and execs, whatever text the name stood in (a script file's lines, a -c operand or an eval text holding an expansion among
+// them), as far as THE LOOKUP ROADS' self-test pins each road (THE LOOKUP RECORD, at their test; the fifty-second commit's attribution of
+// each program word to an execve missed a name in such a text, since bash and dash make no execve for a name they do not find). And the
+// matrix rows outside `needs`, whose write is placed by a recorder before the row runs where the program it names is absent (THE WRITE'S
+// PLACE, at rowsNotRun). Any other leg that asserts no write through a program this derivation misses passes where that program is absent.
+// The lexer is the hook's own, so a defect in it that drops a segment drops that segment's program here with the same consequences; the pin
+// at the end of this file holds the derivation to an independent reading of the text for the zsh family over every row the legs gated.
 // the words a shell reads as its own, never a program it looks up: the reserved words, and the builtins of bash, zsh (its modules' among them)
 // and dash
 const SHELL_OWN = new Set(['!', '{', '}', '[[', ']]', '((', '))', 'if', 'then', 'elif', 'else', 'fi', 'case', 'esac', 'for', 'foreach', 'select', 'while', 'until', 'do', 'done', 'in', 'end', 'function', '.', ':', '[', 'alias', 'autoload', 'bg', 'bind', 'bindkey', 'break', 'builtin', 'bye', 'caller', 'cd', 'chdir', 'compgen', 'complete', 'compopt', 'continue', 'declare', 'dirs', 'disable', 'disown', 'echo', 'emulate', 'enable', 'eval', 'exit', 'export', 'false', 'fc', 'fg', 'float', 'functions', 'getln', 'getopts', 'hash', 'help', 'history', 'integer', 'jobs', 'kill', 'let', 'limit', 'local', 'logout', 'mapfile', 'popd', 'print', 'printf', 'private', 'pushd', 'pushln', 'pwd', 'read', 'readarray', 'readonly', 'rehash', 'return', 'sched', 'set', 'setopt', 'shift', 'shopt', 'source', 'suspend', 'test', 'times', 'trap', 'true', 'type', 'typeset', 'ulimit', 'umask', 'unalias', 'unfunction', 'unhash', 'unlimit', 'unset', 'unsetopt', 'vared', 'wait', 'whence', 'where', 'which', 'zcompile', 'zformat', 'zle', 'zmodload', 'zparseopts', 'zstyle', 'sysopen', 'sysread', 'sysseek', 'syswrite', 'zsystem', 'zf_chgrp', 'zf_chmod', 'zf_chown', 'zf_ln', 'zf_mkdir', 'zf_mv', 'zf_rm', 'zf_rmdir', 'zf_sync', 'zstat', 'zselect', 'zsocket', 'ztcp', 'zpty']);
@@ -275,12 +277,12 @@ const definedNames = (text) => new Set([
 const REBINDS = /(?:^|[\s;&|(){}`'"])(?:alias|hash|autoload|enable|zmodload|command_not_found_handler?|functions\[|commands\[|(?:PATH|path|fpath)(?:\+?=|\[))/;
 // every program the command text runs, in the order its segments run them (wrappers included), each once: by name unless the text REBINDS
 // names, and by path unless the text names that path elsewhere too (as an operand or a redirection's target: a file the text makes, copies
-// or links before it runs it). `collect`, when given, receives every PROGRAM WORD the walk reaches, read or not, for THE EXECVE RECORD
-// (below, at THE CLEARED ENVIRONMENT's legs): `{ word, read, name, operands, conditional }`. `read` marks a program the walk reads (by name or
+// or links before it runs it). `collect`, when given, receives every PROGRAM WORD the walk reaches, read or not, for THE LOOKUP RECORD's
+// rule 2 (below, at THE CLEARED ENVIRONMENT's legs): `{ word, read, name, conditional }`. `read` marks a program the walk reads (by name or
 // by path, returned below unless a filter above sets it aside); an unread one is a program word the walk stops at (an expansion or a tilde in
 // the program's place, a word holding a blank, zsh's `=name`, a name in a text that REBINDS names, the first word after an assignment the
-// lexer holds as an expansion), `name` its literal text where it has one (else null) and `operands` the words after it where every one is
-// literal (else null). `conditional` marks a segment its text runs only on a condition: a body of a loop, of an if, elif or else, of a case
+// lexer holds as an expansion), `name` its literal text where it has one (else null; the fifty-third commit dropped the literal operands the
+// fifty-second attributed such a word by). `conditional` marks a segment its text runs only on a condition: a body of a loop, of an if, elif or else, of a case
 // arm or of a function, a command after && or ||, the texts of trap, alias, mapfile's -C and find's -exec, and what a shell given a -c text
 // or an operand, and no -s, is fed on its standard input; the other texts a segment runs (its substitutions, a shell's -c text, eval's)
 // share its mark. A subshell's parenthesis is not read, so a command inside `a && ( .. )` after its first is marked unconditional: the
@@ -291,17 +293,16 @@ const programsInvoked = (cmd, { collect = null } = {}) => {
   const rebound = REBINDS.test(cmd);
   const mentions = (p) => cmd.split(p).length - 1;   // how often the text spells a path, in any position
   const asProgram = new Map();   // how often the walk read each path as the program a segment runs
-  const note = (word, cond) => { asProgram.set(word, (asProgram.get(word) || 0) + 1); if (!found.includes(word)) found.push(word); if (collect) collect.push({ word, read: true, name: word, operands: null, conditional: cond }); };
-  // a program word the walk does not read, at `words[i]`: the first word from there that is no assignment, its literal name and operands
+  const note = (word, cond) => { asProgram.set(word, (asProgram.get(word) || 0) + 1); if (!found.includes(word)) found.push(word); if (collect) collect.push({ word, read: true, name: word, conditional: cond }); };
+  // a program word the walk does not read, at `words[i]`: the first word from there that is no assignment, and its literal name
   const unread = (words, i, cond, named) => {
     if (!collect) return;
     let j = i;
     while (j < words.length && ASSIGNMENT.test(words[j].text)) j++;
     if (j >= words.length) return;   // assignments alone run no program
     const w = words[j];
-    const ops = words.slice(j + 1);
     const literal = (x) => x.literal && !x.text.includes('\u0000') && !/^~/.test(x.raw || '');
-    collect.push({ word: w.raw || w.text, read: false, name: (named || j > i) && literal(w) && !/\s/.test(w.text) ? w.text : null, operands: ops.every(literal) ? ops.map((o) => o.text) : null, conditional: cond });
+    collect.push({ word: w.raw || w.text, read: false, name: (named || j > i) && literal(w) && !/\s/.test(w.text) ? w.text : null, conditional: cond });
   };
   const lexOf = (text) => { try { return lex(text); } catch (e) { throw new Error(`THE INVOKED PROGRAM: the command text could not be read (${e.message}): ${String(text).slice(0, 200)}`); } };
   // the text a segment of echo, printf or cat prints, as a shell it feeds reads it: echo's literal operands joined by a blank (its leading
@@ -611,8 +612,8 @@ const withoutAccountStartup = (opts) => {
 // --argv0); zsh needs no such reading, since every file of the account's it reads by name lies under the ZDOTDIR the keep-out gives. A
 // road throws by name unless its text is one of CLEARED_LEGS, each run under strace in every present shell by the thirty-third commit's
 // test and pinned to open no startup file under the account's home; since the fifty-first commit a row's legs run only where every
-// program THE INVOKED PROGRAM derives from its text is on this box, and since the fifty-second a leg reds where its execve record shows a
-// program absent or holds no attempt attributable to a program word its command holds (THE EXECVE RECORD, at that test). The reading
+// program THE INVOKED PROGRAM derives from its text is on this box, and since the fifty-third a leg reds where its strace record shows a
+// name its processes looked up found nowhere, or a path one ran absent (THE LOOKUP RECORD, at that test). The reading
 // is of spellings, read wherever they stand, a quoted text or a here-document included, so a clear before a shell it does not start costs
 // a listing and nothing else.
 // The thirty-fourth commit (the round's verifiers on the thirty-third, LOW: `python3 -c 'import os; os.execve("/usr/bin/bash", .., {})'`
@@ -859,11 +860,12 @@ const clearedTexts = (cmd, args, input, namedEnv, cwd) => {
   }
   return [[String(cmd), ...strs.filter((a) => !isText(a))].join(' '), ...strs.filter(isText), ...(stdin ? [stdin] : []), ...Object.values(namedEnv || {}).filter((v) => typeof v === 'string' && isText(v)), ...files];
 };
-const clearedRoad = (cmd, args, env, input, { namedEnv = null, cwd = null } = {}) => {
+// `listed` the commands let through (CLEARED_LEGS; the fifty-third commit's witnesses add their own for their legs alone)
+const clearedRoad = (cmd, args, env, input, { namedEnv = null, cwd = null, listed = CLEARED_LEGS } = {}) => {
   if (String(cmd) === process.execPath) return null;   // node runs the hook or this file, whose own legs meet this wrapper there
   const noWorldHome = !env || !env.HOME || ACCOUNT_HOMES.has(path.resolve(env.HOME));
   for (const t of clearedTexts(cmd, args, input, namedEnv, cwd)) {
-    if (CLEARED_LEGS.has(t)) continue;
+    if (listed.has(t)) continue;
     const starts = shellStarterSpellings(t);
     if (starts.length) return { text: t, spellings: starts };
     const clears = clearingSpellings(t);
@@ -878,11 +880,11 @@ const CLEARED_THROW = ({ text, spellings }) => `THE CLEARED ENVIRONMENT: a leg's
 // written outside shellsFor cannot run that shell in silence, however its list is spelled; `table` and `raw` are parameters so
 // the wrapper is pinned in-process against a synthetic table. It hands every spawn the options NO STARTUP FILE OF THE ACCOUNT'S gives,
 // and throws by name for a spawn THE PROBE'S RUN or THE CLEARED ENVIRONMENT refuses.
-const guardedSpawn = (table, raw) => (cmd, ...rest) => {
+const guardedSpawn = (table, raw, listed = CLEARED_LEGS) => (cmd, ...rest) => {
   if (Object.hasOwn(table, cmd) && !probeOk(table, cmd)) throw new Error(`a real-shell leg ran ${cmd} outside the probe: real ${cmd} ${probeWhy(table, cmd)}; ask shellsFor first`);
   const [args, opts] = splitSpawnArgs(rest);   // spawnSync(cmd, [args], [options])
   refusePipelessProbe(cmd, args, opts);
-  const road = clearedRoad(cmd, args, opts && opts.env ? opts.env : process.env, opts && opts.input, { namedEnv: opts && opts.env, cwd: opts && opts.cwd });
+  const road = clearedRoad(cmd, args, opts && opts.env ? opts.env : process.env, opts && opts.input, { namedEnv: opts && opts.env, cwd: opts && opts.cwd, listed });
   if (road) throw new Error(CLEARED_THROW(road));
   return raw(cmd, args, withoutAccountStartup(opts));
 };
@@ -11643,29 +11645,47 @@ test("round 7 of fork PR #780 review, thirty-third commit, THE CLEARED ENVIRONME
 // INVOKED PROGRAM derives from its command (namedPresent, from the row's cwd) are on this box; else a NOT RUN line per missing program, and
 // the row counts as lacking. `gate` is for the pins at the end of this file: namedPresent's `report`, `table` and `absent`.
 //
-// THE EXECVE RECORD (the fifty-second commit; the reviewer's ruling at 12:24Z on the fifty-first). A leg here asserts an absence (no
-// startup file opened), which a leg whose program never ran also gives, so the fifty-first commit read each leg for a program its shell did
-// not find, from its exit status and its shell's not-found line. The reviewer's verifier ran two rows past that reading: a wrapper prints
-// the not-found message in its own words (`env -i SHLVL=1 $e ..`, env's "No such file or directory") and a redirection sends it away
-// (`$z .. 2>/dev/null`), and neither was the leg's last command, so both counted as measured. A program's absence is now decided from the
-// leg's EXECVE RECORD, which strace writes for every process of the leg (it traces execve and execveat beside the opens): the attempts one
-// process makes in a row with the same arguments (a PATH search, or one attempt) are one invocation, and its program is ABSENT when every
-// attempt of it failed and none succeeded. Two rules, each a red by name, read the record:
-//   1. every invocation of the record that is absent reds where the row's text spells its program (its name as a word, bare or as a path's
-//      last component), whoever ran it (a wrapper's search, a shell's, a program's that runs its operands, as tmux does), even where
-//      another invocation found that program (the stricter reading: a command of the leg ran nothing); an absent invocation of a program
-//      the text never spells is a startup file's or a helper's own, not the row's, and is printed as an INFO line, not judged;
-//   2. every program word THE INVOKED PROGRAM's walk reaches in the row's command must be ATTRIBUTABLE to an invocation other than the leg's
-//      own shell, or the leg reds (it FAILS CLOSED): a program the walk reads by its name (an attempt of that name, or that argv[0]) or by
-//      its path (an attempt of that path, from the row's cwd), and a program word the walk does not read (an expansion, a tilde) by its
-//      literal name where it has one, else by the literal operands after it (an invocation, no read program's, whose arguments after the
-//      first are those operands); a word with neither can be attributed to nothing and reds. bash and dash make no attempt at all for a name
-//      they do not find, so rule 2 is what reds that case. The one exemption: a program the walk reads, on a segment the text runs only on a
-//      condition (THE INVOKED PROGRAM's `conditional`: a loop's body, a conditional's, after && or ||), that the leg's shell finds whatever
-//      PATH the text leaves it, so wherever that segment runs: a name found both on this PATH and in /bin or /usr/bin, the directories every
-//      shell here searches when the environment names no PATH, or an absolute path to an executable file. RT-tmux-new's `sleep`, in a loop
-//      that may never repeat, is one. A record strace cut short, that holds a call it did not finish, or that holds no successful execve of
-//      the leg's shell, reds as unreadable.
+// THE EXECVE RECORD (the fifty-second commit; the reviewer's ruling at 12:24Z on the fifty-first), read BY NAME since the fifty-third as
+// THE LOOKUP RECORD (the reviewer's ruling at 14:33Z on the fifty-second's re-verify). A leg here asserts an absence (no startup file
+// opened), which a leg whose program never ran also gives. The fifty-first commit read a leg's exit status and its shell's not-found line,
+// which a wrapper's own wording (`env -i SHLVL=1 $e ..`) or a redirection (`$z .. 2>/dev/null`) defeats. The fifty-second read the execve
+// record and attributed each program word of the command to an invocation. bash and dash make no execve for a name they do not find, so a
+// missing name in a text the walk does not read (a -c operand or an eval text holding an expansion, a script file's lines) passed, and an
+// unread word matched any invocation with its literal operands, another program's among them (the re-verify's F1 and F2). Each leg's strace
+// now traces every call a lookup makes (LOOKUP_CALLS: the execve family, the stat family, the access family and the opens, a superset of the
+// calls THE LOOKUP ROADS below find carrying a planted miss) beside the forks, and prints each execve's environment. The record is read by
+// the names the leg's processes looked up, whatever text a name stood in:
+//   THE LOOKUP RULE. The directories the record shows are the entries of every PATH it holds (each execve's environment, and a `PATH=` word
+//   among its arguments, as env takes one), with the directories bash, dash, zsh and libc search where the environment holds no PATH, as
+//   THE LOOKUP ROADS measure them. A name N is MISSING when a call of the record on D/N failed for such a directory D, and no call on D/N
+//   for such a D and no execve of a path whose last component is N succeeded anywhere in the leg. This is the reviewer's simpler rule: one
+//   failed call in a directory the record shows, where the full rule asks for a failure in every directory of the PATH in force. A path P
+//   is MISSING when an execve of P, in a directory no such PATH holds, failed and no execve of P succeeded. Each missing name or path reds
+//   the leg, unless the row's entry in LEGITIMATE LOOKUPS names it with a measured reason (no committed row's record shows one; the loop
+//   counts them). An execve whose environment strace did not print reds too: the PATH in force for that process's lookups cannot then be
+//   recovered from the record.
+//   Rule 1 (the fifty-second commit's, kept): an execve invocation whose every attempt failed reds where the row's text spells its program,
+//   even where another invocation found that program (a command of the leg ran nothing). An absent invocation of a program the text never
+//   spells, which another invocation found, is printed as an INFO line.
+//   Rule 2 (the fifty-second commit's, narrowed): every program word THE INVOKED PROGRAM's walk READS in the row's command, and every word it
+//   does not read that has a literal name (a name in a text that REBINDS names), must be attributable by that name or path to an invocation
+//   other than the leg's own shell, or the leg reds. The one exemption stays: a program the walk reads, on a segment the text runs only on a
+//   condition (THE INVOKED PROGRAM's `conditional`), that the leg's shell finds whatever PATH the text leaves it (a name found both on this
+//   PATH and in /bin or /usr/bin, or an absolute path to an executable file); RT-tmux-new's `sleep`, in a loop that may never repeat, is
+//   one. The attribution of an unread word by its literal operands is gone: it was not one-to-one, and THE LOOKUP RULE judges the name such
+//   a word's value takes.
+//   How far it fails closed, as THE LOOKUP ROADS' self-test pins it. The self-test plants a missing name on every road a committed row's
+//   lookups use, and the census below the legs holds that list to the legs: every program that makes a call in a directory the record shows
+//   in a committed row's leg (a path the row's text spells, as cp's source /usr/bin/cp, set aside as an operand) is one a plant's lookup ran
+//   in, on every run. The self-test traces each plant with strace's whole %file and %process classes, and reds where no call carries the
+//   plant, where a call carrying it is not among LOOKUP_CALLS, or where this rule, over the leg's own trace, does not find the plant
+//   missing; and it shows that a trace without the one call carrying a road's plant does not show it. Every road it plants is visible on
+//   this box, so no road falls back to failing closed on the texts the walk does not read (the ruling's fallback (a)); on a runner where a
+//   road is invisible the self-test reds. What the rule does not read: a name looked up under a PATH that a process set in its own memory
+//   and that no environment of the record holds (a shell's `PATH=/x; q`): its failed calls sit in no directory the record shows. No
+//   committed row's text sets PATH; the system profile a login bash reads here appends /snap/bin to it, after every directory the record
+//   shows. A record strace cut short, that holds a call it did not finish, or that holds no successful execve of the leg's shell, reds as
+//   unreadable.
 const CLEARED_WHAT = 'THE CLEARED ENVIRONMENT by execution';
 const clearedLegRuns = (text, [id, cwd, , program], cwds, { report = (line) => console.error(line), table = NAMED_PROBE, absent = OVERRIDE_ABSENT } = {}) => {
   const own = program ? presenceOf(program, { absent }) : null;
@@ -11697,50 +11717,98 @@ const straceString = (s, i) => {
   if (s[j] !== '"' || s.startsWith('...', j + 1)) return null;
   return { value: Buffer.from(bytes).toString('utf8'), end: j + 1 };
 };
-// the execve and execveat calls a trace of `strace -f` holds, in order, each `{ pid, filename, argv, ok, error }`; or `{ unreadable }`, the
-// first line the record could not read (a string cut short, arguments it could not parse, a call that never returned)
-const execAttempts = (trace) => {
+// THE LOOKUP RECORD's calls (the fifty-third commit; the reviewer's ruling at 14:33Z, condition 1): what each leg's strace traces beside the
+// forks, a superset of the calls THE LOOKUP ROADS find carrying a planted miss (each named with a `?`, so a call this architecture lacks,
+// stat or lstat on some, is no error of strace's)
+const LOOKUP_CALLS = ['execve', 'execveat', 'newfstatat', 'statx', 'stat', 'lstat', 'access', 'faccessat', 'faccessat2', 'open', 'openat', 'openat2'];
+const FORK_CALLS = ['clone', 'clone3', 'fork', 'vfork'];
+const EXEC_CALLS = ['execve', 'execveat'];
+// a leg's strace options: every process followed, strings in full, `trace` its calls (LOOKUP_CALLS and the forks; 'all' for the self-test's
+// whole %file and %process classes), and each execve's environment printed (every other structure stays abbreviated)
+const straceOptions = (trace = [...LOOKUP_CALLS, ...FORK_CALLS]) => ['-f', '-qq', '-s', '65535', '-e', `trace=${trace === 'all' ? '%file,%process' : trace.map((c) => `?${c}`).join(',')}`, '-e', `abbrev=!${EXEC_CALLS.join(',')}`, '-e', 'signal=none'];
+// a list of C strings as strace prints one, from `s[i]` (a bracket): its values and the index after it; null where it does not parse (an
+// element strace cut short or left out)
+const straceStrings = (s, i) => {
+  if (s[i] !== '[') return null;
+  const values = [];
+  let j = i + 1;
+  while (s[j] !== ']') {
+    const a = straceString(s, j);
+    if (!a) return null;
+    values.push(a.value);
+    j = a.end;
+    if (s.startsWith(', ', j)) j += 2;
+    else if (s[j] !== ']') return null;
+  }
+  return { values, end: j + 1 };
+};
+// the calls a trace of `strace -f` holds, in order, each `{ pid, sys, dirfd, path, ok, error, argv, envp, child }`: `path` the call's first
+// string, after the directory fd where it takes one (`dirfd`: AT_FDCWD or a number, else null); an execve's and an execveat's `argv` and
+// `envp` (envp null where strace printed only its address); a fork's `child`. `names` the calls read, each of whose lines must parse, else
+// `{ unreadable }` names the first that does not (a string cut short, arguments it could not parse, a result it could not read, a call that
+// never returned). With `names` null every call is read and a line that does not parse is passed over, as the self-test reads the whole
+// classes (`exit_group(0) = ?` has no result)
+const traceCalls = (trace, names = new Set([...LOOKUP_CALLS, ...FORK_CALLS])) => {
   const out = [];
   const pending = new Map();
-  const result = (tail) => tail.match(/\) += (-?\d+)(?: (\w+))?/);
+  const strict = names !== null;
+  // a call's result: true where it has one, 'restarted' where a signal cut it and the kernel restarts it (strace's `= ? ERESTARTNOINTR`: the
+  // call is made again, and its next line carries its result), else false
+  const settle = (c, tail) => {
+    if (/\)\s+=\s+\?\s+ERESTART[A-Z_]*(?:\s+\([^()]*\))?\s*$/.test(tail)) return 'restarted';
+    const r = tail.match(/\)\s+=\s+(-?\d+)(?:\s+([A-Z][A-Z0-9_]*))?(?:\s+\([^()]*\))?\s*$/);
+    if (!r) return false;
+    const n = Number(r[1]);
+    Object.assign(c, { ok: n >= 0, error: n >= 0 ? null : r[2] || r[1], child: FORK_CALLS.includes(c.sys) && n > 0 ? String(n) : null });
+    return true;
+  };
   for (const line of String(trace).split('\n')) {
-    const resumed = line.match(/^(\d+) +<\.\.\. (?:execve|execveat) resumed>(.*)$/);
+    const resumed = line.match(/^(\d+) +<\.\.\. ([a-z0-9_]+) resumed>(.*)$/);
     if (resumed) {
-      const a = pending.get(resumed[1]);
-      const r = result(resumed[2]);
-      if (!a || !r) return { unreadable: line };
+      if (strict && !names.has(resumed[2])) continue;
+      const c = pending.get(resumed[1]);
+      if (!c || c.sys !== resumed[2]) { if (strict) return { unreadable: line }; continue; }
       pending.delete(resumed[1]);
-      Object.assign(a, { ok: r[1] === '0', error: r[1] === '0' ? null : r[2] || r[1] });
+      const done = settle(c, resumed[3]);
+      if (done === 'restarted') out.splice(out.indexOf(c), 1);
+      else if (!done) { if (strict) return { unreadable: line }; out.splice(out.indexOf(c), 1); }
       continue;
     }
-    const call = line.match(/^(\d+) +(execve|execveat)\((.*)$/);
-    if (!call) continue;
+    const call = line.match(/^(\d+) +([a-z0-9_]+)\((.*)$/);
+    if (!call || (strict && !names.has(call[2]))) continue;
     const [, pid, sys, rest] = call;
-    const at = sys === 'execveat' ? rest.indexOf(', ') + 2 : 0;
-    const file = at >= 0 ? straceString(rest, at) : null;
-    if (!file || !rest.startsWith(', [', file.end)) return { unreadable: line };
-    const argv = [];
-    let j = file.end + 3;
-    while (rest[j] !== ']') {
-      const a = straceString(rest, j);
-      if (!a) return { unreadable: line };
-      argv.push(a.value);
-      j = a.end;
-      if (rest.startsWith(', ', j)) j += 2;
-      else if (rest[j] !== ']') return { unreadable: line };
+    const c = { pid, sys, dirfd: null, path: null, ok: null, error: null, argv: null, envp: null, child: null };
+    let j = 0;
+    const fd = rest.match(/^(AT_FDCWD|-?\d+), (?=")/);
+    if (fd) { c.dirfd = fd[1]; j = fd[0].length; }
+    let parsed = true;
+    if (rest[j] === '"') {
+      const p = straceString(rest, j);
+      if (p) { c.path = p.value; j = p.end; } else parsed = false;
+    } else if (!FORK_CALLS.includes(sys) && strict) parsed = false;   // a call of LOOKUP_CALLS names its path first
+    if (parsed && EXEC_CALLS.includes(sys)) {
+      const argv = rest.startsWith(', ', j) ? straceStrings(rest, j + 2) : null;
+      if (!argv) parsed = false;
+      else {
+        c.argv = argv.values;
+        j = argv.end;
+        if (rest.startsWith(', [', j)) { const envp = straceStrings(rest, j + 2); if (envp) { c.envp = envp.values; j = envp.end; } else parsed = false; }
+        else if (rest.startsWith(', NULL', j)) { c.envp = []; j += 6; }
+      }
     }
-    const attempt = { pid, filename: file.value, argv };
-    out.push(attempt);
-    const tail = rest.slice(j + 1);
-    if (/<unfinished \.\.\.>\s*$/.test(tail)) { pending.set(pid, attempt); continue; }
-    const r = result(tail);
-    if (!r) return { unreadable: line };
-    Object.assign(attempt, { ok: r[1] === '0', error: r[1] === '0' ? null : r[2] || r[1] });
+    if (!parsed) { if (strict) return { unreadable: line }; continue; }
+    out.push(c);
+    const tail = rest.slice(j);
+    if (/<unfinished \.\.\.>\s*$/.test(tail)) { pending.set(pid, c); continue; }
+    const done = settle(c, tail);
+    if (done === 'restarted') out.pop();
+    else if (!done) { if (strict) return { unreadable: line }; out.pop(); }
   }
-  if (pending.size) return { unreadable: `a call that never returned: ${[...pending.values()].map((a) => `${a.pid} ${a.filename}`).join(', ')}` };
-  return { attempts: out };
+  if (pending.size && strict) return { unreadable: `a call that never returned: ${[...pending.values()].map((c) => `${c.pid} ${c.sys} ${c.path || ''}`.trim()).join(', ')}` };
+  return { calls: out.filter((c) => c.ok !== null) };
 };
-// the attempts as invocations: one process's attempts in a row with the same arguments, `ok` where one of them succeeded
+// a record's execve and execveat attempts (each `{ pid, filename, argv, ok, error }`) as invocations: one process's attempts in a row with
+// the same arguments, `ok` where one of them succeeded
 const execInvocations = (attempts) => {
   const out = [];
   const last = new Map();
@@ -11753,47 +11821,117 @@ const execInvocations = (attempts) => {
   }
   return out;
 };
+// a directory as a PATH entry names it (an empty entry is the current one) and as a call's path holds it
+const pathDir = (d) => (d === '' ? '.' : d.length > 1 ? d.replace(/\/+$/, '') || '/' : d);
+const callDir = (c) => (c.path === null || (c.dirfd !== null && c.dirfd !== 'AT_FDCWD' && !c.path.startsWith('/')) ? null : pathDir(c.path.includes('/') ? c.path.slice(0, c.path.lastIndexOf('/')) || '/' : '.'));
+// the program a process of a record's calls runs at its call `i`: its last successful execve's before it, else its parent's at the fork
+// (null for the leg's own start, the process strace forks)
+const callPrograms = (calls) => {
+  const parent = new Map();
+  calls.forEach((c, i) => { if (c.child) parent.set(c.child, [c.pid, i]); });
+  const execs = calls.map((c, i) => [c, i]).filter(([c]) => EXEC_CALLS.includes(c.sys) && c.ok);
+  const programAt = (pid, i, depth = 0) => {
+    const own = execs.filter(([c, k]) => c.pid === pid && k < i).pop();
+    if (own) return wordBase(own[0].path);
+    const p = parent.get(pid);
+    return p && depth < 64 ? programAt(p[0], p[1], depth + 1) : null;
+  };
+  return programAt;
+};
+// THE LOOKUP RULE over a record's calls (the fifty-third commit; the reviewer's ruling at 14:33Z, condition 2): `dirs` the directories the
+// record shows (`searchDirs`, those searched where an environment holds no PATH, and every PATH the record holds); `missing` each name and
+// path it shows missing, with its failed calls; `unrecovered` the execve calls whose environment strace did not print; and `searchers`, the
+// program each call in such a directory ran in (a process's last successful execve, else its parent's at the fork), for THE LOOKUP ROADS'
+// census, which sets `operand` aside: a path the row's text spells, which a command reads as its operand (cp's source /usr/bin/cp), no lookup
+const lookupReading = (calls, searchDirs, { operand = () => false } = {}) => {
+  const dirs = new Set(searchDirs.map(pathDir));
+  const unrecovered = [];
+  const pathWords = (words) => words.filter((e) => /^PATH=\S*$/.test(e)).flatMap((e) => e.slice(5).split(':').map(pathDir));
+  for (const c of calls) {
+    if (!EXEC_CALLS.includes(c.sys)) continue;
+    if (c.envp === null) unrecovered.push(`${c.pid} ${c.sys} ${c.path}`);
+    else for (const d of pathWords(c.envp)) dirs.add(d);
+    for (const d of pathWords(c.argv || [])) dirs.add(d);
+  }
+  const programAt = callPrograms(calls);
+  const found = new Set();
+  const foundPaths = new Set();
+  const failedNames = new Map();
+  const failedPaths = new Map();
+  const searchers = new Map();
+  const push = (m, k, c) => { if (!m.has(k)) m.set(k, []); m.get(k).push(c); };
+  calls.forEach((c, i) => {
+    if (c.path === null) return;
+    const name = wordBase(c.path);
+    if (name === '' || name === '.' || name === '..') return;
+    const d = callDir(c);
+    const inDirs = d !== null && dirs.has(d);
+    const exec = EXEC_CALLS.includes(c.sys);
+    if (inDirs && !operand(c.path)) { const p = programAt(c.pid, i); if (p !== null) { if (!searchers.has(p)) searchers.set(p, new Set()); searchers.get(p).add(c.sys); } }
+    if (c.ok) { if (inDirs || exec) found.add(name); if (exec) foundPaths.add(c.path); return; }
+    if (inDirs) push(failedNames, name, c);
+    else if (exec) push(failedPaths, c.path, c);
+  });
+  const missing = [
+    ...[...failedNames].filter(([n]) => !found.has(n)).map(([n, cs]) => ({ what: n, kind: 'name', calls: cs })),
+    ...[...failedPaths].filter(([p]) => !foundPaths.has(p)).map(([p, cs]) => ({ what: p, kind: 'path', calls: cs })),
+  ];
+  return { dirs, unrecovered, missing, searchers };
+};
+const missingLine = (m) => `${m.what} is missing: ${m.calls.length === 1 ? 'its one lookup call' : `each of its ${m.calls.length} lookup calls`} failed (${[...new Set(m.calls.map((c) => `${c.sys} ${c.error}`))].join(', ')}): ${m.calls.map((c) => c.path).join(' ').slice(0, 200)}; ${m.kind === 'name' ? 'no call on it in a directory the record shows, and no execve of it,' : 'no execve of that path'} succeeded`;
+// LEGITIMATE LOOKUPS (the reviewer's ruling at 14:33Z, condition 4): per committed row, each name its legs look up and do not find by design,
+// with the measured reason; the loop counts each. None: no committed row's record shows a missing name or path, on this box's PATH and under
+// the PATH shim that hides zsh, zsh5, rzsh and perf. No exemption by a name's pattern.
+const LEGITIMATE_LOOKUPS = {};
 const VOUCH_PATH = '/bin:/usr/bin';   // the directories every shell here searches when the environment names no PATH
-// what THE EXECVE RECORD reads in one leg of `text`, run from `cwd`: `run.trace` is the leg's strace output; `PATH` the PATH the exemption's
-// first check reads (this process's, which every leg is given). `faults` red the leg; `unjudged` are the absent invocations of programs the
-// text never spells, a startup file's or a helper's own (rule 1 judges a program the row's command runs), which the loop prints
-const recordReading = (text, cwd, run, { PATH = process.env.PATH } = {}) => {
-  if (!run || typeof run.trace !== 'string') return { faults: ['no execve record was taken'], unjudged: [] };
-  const rec = execAttempts(run.trace);
-  if (rec.unreadable) return { faults: [`the execve record could not be read: ${String(rec.unreadable).slice(0, 200)}`], unjudged: [] };
-  const invs = execInvocations(rec.attempts);
-  if (!invs.length || !invs[0].ok) return { faults: ["the execve record holds no successful execve of the leg's shell"], unjudged: [] };
+// what THE LOOKUP RECORD reads in one leg of `text`, run from `cwd`: `run.trace` is the leg's strace output; `PATH` the PATH the exemption's
+// first check reads (this process's, which every leg is given); `searchDirs` the directories searched where an environment holds no PATH (THE
+// LOOKUP ROADS' measure, by default); `legit` the names the row's LEGITIMATE LOOKUPS entry holds. `faults` red the leg; `legitimate` the
+// listed names it found missing, for the count; `unjudged` the absent invocations of programs the text never spells that another invocation
+// found, which the loop prints; `searchers` the programs that made a lookup, for THE LOOKUP ROADS' census
+const recordReading = (text, cwd, run, { PATH = process.env.PATH, searchDirs = null, legit = [] } = {}) => {
+  const none = { unjudged: [], legitimate: [], searchers: new Map() };
+  if (!run || typeof run.trace !== 'string') return { faults: ['no lookup record was taken'], ...none };
+  const rec = traceCalls(run.trace);
+  if (rec.unreadable) return { faults: [`the lookup record could not be read: ${String(rec.unreadable).slice(0, 200)}`], ...none };
+  const invs = execInvocations(rec.calls.filter((c) => EXEC_CALLS.includes(c.sys)).map((c) => ({ pid: c.pid, filename: c.path, argv: c.argv, ok: c.ok, error: c.error })));
+  if (!invs.length || !invs[0].ok) return { faults: ["the lookup record holds no successful execve of the leg's shell"], ...none };
   const faults = [];
   const absentLine = (inv) => `${inv.argv[0] || path.basename(inv.attempts[0].filename)} is absent: ${inv.attempts.length === 1 ? 'its one execve attempt' : `every one of its ${inv.attempts.length} execve attempts`} failed (${[...new Set(inv.attempts.map((a) => a.error))].join(', ')}): ${inv.attempts.map((a) => a.filename).join(' ').slice(0, 200)}`;
-  // the text spells the program: its name as a word, bare or as a path's last component (a word no letter, digit, dot or hyphen touches)
+  // rule 1: the text spells the program, its name as a word, bare or as a path's last component (a word no letter, digit, dot or hyphen touches)
   const spells = (name) => name !== '' && new RegExp(`(?:^|[^\\w.-])(?:[^\\s'"\`;&|()<>]*/)?${reLiteral(name)}(?![\\w.-])`).test(text);
   for (const inv of invs) if (!inv.ok && (spells(path.basename(inv.argv[0] || '')) || spells(path.basename(inv.attempts[0].filename)))) faults.push(absentLine(inv));
+  // THE LOOKUP RULE, by name, over every call of the record
+  const look = lookupReading(rec.calls, searchDirs === null ? lookupRoads().searchDirs : searchDirs, { operand: (p) => text.includes(p) });
+  const legitimate = [];
+  for (const m of look.missing) { if (legit.includes(m.what)) legitimate.push(m.what); else faults.push(missingLine(m)); }
+  for (const u of look.unrecovered) faults.push(`the PATH in force for the lookups of ${u} cannot be recovered from the record: strace printed no environment for that execve`);
+  // rule 2: each program word the walk reads, and each it does not read that has a literal name, attributable by that name or path
   const words = [];
   programsInvoked(text, { collect: words });
   const own = invs.slice(1);   // the first is the leg's shell, which strace starts
   const byName = (name, inv) => inv.argv[0] === name || inv.attempts.some((a) => path.basename(a.filename) === name);
   const byPath = (p, inv) => inv.attempts.some((a) => a.filename === p || path.resolve(cwd, a.filename) === path.resolve(cwd, p));
-  const readBy = (w, inv) => (w.word.includes('/') ? byPath(w.word, inv) : byName(w.word, inv));
-  const ofRead = new Set(own.filter((inv) => words.some((w) => w.read && readBy(w, inv))));
   const vouched = (w) => (w.word.includes('/') ? path.isAbsolute(w.word) && isExecFile(w.word) : realPresence(w.word, { PATH }).ok && realPresence(w.word, { PATH: VOUCH_PATH }).ok);
   for (const w of words) {
+    if (!w.read && w.name === null) continue;   // an expansion or a tilde in the program's place: THE LOOKUP RULE reads the name its value takes
     if (w.read && w.conditional && vouched(w)) continue;
-    let mine;
-    if (w.read) mine = own.filter((inv) => readBy(w, inv));
-    else if (w.name === null && !(w.operands && w.operands.length)) { faults.push(`\`${w.word}\`, a program word the row's command holds, can be attributed to no execve: the walk does not read it, and it has no literal name or operand`); continue; }
-    else mine = own.filter((inv) => (w.name !== null && (w.name.includes('/') ? byPath(w.name, inv) : byName(w.name, inv))) || (w.operands && w.operands.length && !ofRead.has(inv) && JSON.stringify(inv.argv.slice(1)) === JSON.stringify(w.operands)));
-    if (!mine.length) faults.push(`no execve the record holds is attributable to \`${w.word}\`, a program the row's command runs${w.read ? '' : ` (${w.name !== null ? `by its name ${w.name}` : `by its operands ${JSON.stringify(w.operands).slice(0, 100)}`})`}${w.conditional ? ', on a segment run on a condition and not found in every directory a shell searches' : ''}`);
+    const by = w.read ? w.word : w.name;
+    const mine = own.filter((inv) => (by.includes('/') ? byPath(by, inv) : byName(by, inv)));
+    if (!mine.length) faults.push(`no execve the record holds is attributable to \`${w.word}\`, a program the row's command runs${w.read ? '' : ` (by its name ${w.name})`}${w.conditional ? ', on a segment run on a condition and not found in every directory a shell searches' : ''}`);
     else for (const inv of mine) if (!inv.ok) faults.push(absentLine(inv));
   }
-  return { faults: [...new Set(faults)], unjudged: [...new Set(invs.filter((inv) => !inv.ok).map(absentLine).filter((l) => !faults.includes(l)))] };
+  const judged = (inv) => inv.attempts.some((a) => look.missing.some((m) => m.what === (m.kind === 'name' ? path.basename(a.filename) : a.filename)));
+  return { faults: [...new Set(faults)], legitimate, unjudged: [...new Set(invs.filter((inv) => !inv.ok && !judged(inv)).map(absentLine).filter((l) => !faults.includes(l)))], searchers: look.searchers };
 };
 const recordFaults = (text, cwd, run, opts) => recordReading(text, cwd, run, opts).faults;
 // one leg under strace, every process of it traced: the lines that open a file of `watched` (each as named, and the file a symlink among
-// them resolves to, as strace's -P reads them) and the whole trace, for THE EXECVE RECORD. strace's -P, which the thirty-third commit used,
-// passes only the calls that name a watched path, so no execve reached the trace; the opens are picked here instead, by the same reading
-const straceLeg = (trace, watched, argv, cwd, env) => {
+// them resolves to, as strace's -P reads them) and the whole trace, for THE LOOKUP RECORD. strace's -P, which the thirty-third commit used,
+// passes only the calls that name a watched path, so no execve reached the trace; the opens are picked here instead, by the same reading.
+// `trace` the calls traced (straceOptions'), `spawn` the guarded spawn (a witness's own listed commands, for THE LOOKUP ROADS' and the pins')
+const straceLeg = (trace, watched, argv, cwd, env, { calls = undefined, spawn = spawnSync } = {}) => {
   fs.rmSync(trace, { force: true });
-  const r = spawnSync('strace', ['-f', '-qq', '-s', '65535', '-e', 'trace=open,openat,openat2,execve,execveat', '-e', 'signal=none', '-o', trace, ...argv], { cwd, input: '', encoding: 'utf8', env, timeout: 30000 });
+  const r = spawn('strace', [...straceOptions(calls), '-o', trace, ...argv], { cwd, input: '', encoding: 'utf8', env, timeout: 30000 });
   assert.ok(fs.existsSync(trace), `strace wrote its trace: ${argv.join(' ').slice(0, 200)}: ${String(r.stderr || '').slice(0, 300)}`);
   const text = fs.readFileSync(trace, 'utf8');
   const named = new Set(watched.flatMap((p) => { try { return [p, fs.realpathSync(p)]; } catch { return [p]; } }));
@@ -11814,28 +11952,129 @@ const straceUsable = (what) => {
   console.error(`NOT RUN: real strace refuses to run on this runner (${refusalReason(check.stderr)}), so its evidence leg did not run: ${what}`);
   return false;
 };
+// THE LOOKUP ROADS (the fifty-third commit; the reviewer's ruling at 14:33Z, conditions 1 and 3): a missing name planted on every road a
+// committed row's lookups use, each [the road, the shell its leg runs in, the programs it runs beyond that shell, the text (`@N` the planted
+// name, `@S` a scratch directory of the world), and what is planted: a name (by default), a `path` in a directory that does not exist, or a
+// name looked up where the environment holds `nopath`]. The committed rows' roads are these: the leg shells' own lookups (a -c text, eval, a
+// command substitution, a pipeline, a shell reading a pipe, a function from the environment, a login bash's and zsh's startup files, a
+// script file), the wrappers env, nice, timeout and xargs, script and tmux, which start a program or a shell themselves, an absolute path,
+// and a cleared environment; command -v and Python's shutil.which, which look a name up and run nothing, stand for a legitimate lookup.
+// THE LOOKUP ROADS' census, in THE CLEARED ENVIRONMENT's test, holds every process that makes a lookup in a committed row's leg to a program
+// these plants' lookups run in.
+const LOOKUP_ROADS = [
+  ['bash -c', 'bash', [], '@N; true'],
+  ['dash -c', 'dash', [], '@N; true'],
+  ['zsh -c', 'zsh', [], '@N; true'],
+  ["bash's eval of an expansion", 'bash', [], 'e=@N; eval "$e"; true'],
+  ["dash's eval of an expansion", 'dash', [], 'e=@N; eval "$e"; true'],
+  ["zsh's eval of an expansion", 'zsh', [], 'e=@N; eval "$e"; true'],
+  ["a -c operand holding an expansion, bash's", 'bash', [], 'x=@N; bash -c "$x"; true'],
+  ["a -c operand holding an expansion, dash's", 'dash', [], 'x=@N; dash -c "$x"; true'],
+  ["a -c operand holding an expansion, zsh's", 'zsh', [], 'x=@N; zsh -f -c "$x"; true'],
+  ["a script file, bash's", 'bash', [], "printf '%s\\n' '@N' > @S/road.sh; bash @S/road.sh; true"],
+  ["a script file, dash's", 'bash', ['dash'], "printf '%s\\n' '@N' > @S/road.sh; dash @S/road.sh; true"],
+  ["a script file, zsh's", 'bash', ['zsh'], "printf '%s\\n' '@N' > @S/road.sh; zsh -f @S/road.sh; true"],
+  ['a shell reading its standard input', 'bash', [], "echo '@N' | bash; true"],
+  ['a command substitution', 'bash', [], 'x=$(@N); true'],
+  ["a pipeline's element", 'bash', [], 'echo | @N; true'],
+  ['a function bash takes from its environment', 'bash', ['env'], "env 'BASH_FUNC_f%%=() { @N; }' bash -c f; true"],
+  ["a login bash's startup file", 'bash', ['mkdir'], "mkdir -p @S/h; printf '%s\\n' '@N' > @S/h/.bash_profile; HOME=@S/h bash -l -c true"],
+  ["zsh's startup file", 'bash', ['mkdir', 'zsh'], "mkdir -p @S/z; printf '%s\\n' '@N' > @S/z/.zshenv; ZDOTDIR=@S/z zsh -c :"],
+  ['env', 'bash', ['env'], 'env @N; true'],
+  ['nice', 'bash', ['nice'], 'nice @N; true'],
+  ['timeout', 'bash', ['timeout'], 'timeout 5 @N; true'],
+  ['xargs', 'bash', ['xargs'], 'echo | xargs @N; true'],
+  ["script's command", 'bash', ['script'], "script -qc '@N' /dev/null; true"],
+  ["script's shell, by SHELL", 'bash', ['script'], 'SHELL=@S/absent/@N script -qc true /dev/null; true', 'path'],
+  ["tmux's command", 'bash', ['tmux', 'sleep'], 'tmux -S @S/t.sock new -d @N x; n=0; while tmux -S @S/t.sock has-session 2>/dev/null && [ $n -lt 50 ]; do n=$((n+1)); sleep 0.1; done; tmux -S @S/t.sock kill-server 2>/dev/null; true'],   // a socket of the world's own, so no other run's server takes the command
+  ["an absolute path, bash's", 'bash', [], '@S/absent/@N; true', 'path'],
+  ["an absolute path, dash's", 'dash', [], '@S/absent/@N; true', 'path'],
+  ["an absolute path, zsh's", 'zsh', [], '@S/absent/@N; true', 'path'],
+  ["an absolute path, env's", 'bash', ['env'], 'env @S/absent/@N; true', 'path'],
+  ["no PATH, env's", 'bash', ['env'], 'env -i @N; true', 'nopath'],
+  ["no PATH, bash's", 'bash', ['env'], "env -i SHLVL=1 bash -c '@N; true'", 'nopath'],
+  ["no PATH, dash's", 'bash', ['env', 'dash'], "env -i dash -c '@N; true'", 'nopath'],
+  ["no PATH, zsh's", 'bash', ['env', 'zsh'], "env -i zsh -f -c '@N; true'", 'nopath'],
+  ["bash's command -v", 'bash', [], 'command -v @N; true'],
+  ["dash's command -v", 'dash', [], 'command -v @N; true'],
+  ["zsh's command -v", 'zsh', [], 'command -v @N; true'],
+  ["Python's shutil.which", 'bash', ['python3'], `python3 -c 'import shutil; shutil.which("@N")'`],
+];
+// the plants measured, once per process, whichever test asks first: per road, whether it ran (else the programs it lacks, each with a NOT RUN
+// line), the calls of its whole-class trace that carry the plant (their calls `derived`, the programs they ran in `searchers`, their
+// directories), and whether THE LOOKUP RULE, over the leg's own trace, finds the plant missing; `searchDirs` the directories the `nopath`
+// plants were looked up in, which THE LOOKUP RULE adds to every record's; `searchers` every program a plant's lookup ran in, which THE LOOKUP
+// ROADS' census reads. `calls` is for the pins' mutants: the calls the leg's own trace holds (default LOOKUP_CALLS)
+let LOOKUP_ROADS_MEASURED = null;
+const measureLookupRoads = ({ calls = LOOKUP_CALLS, report = (line) => console.error(line), only = null } = {}) => {
+  const WHAT = 'THE LOOKUP ROADS';
+  const w = sixthPassWorld();
+  try {
+    w.build();
+    const S = path.join(w.W, 'roads');
+    fs.mkdirSync(S, { recursive: true });
+    const trace = path.join(w.W, 'roads-trace');
+    const rows = LOOKUP_ROADS.map(([road, shell, needs, text, kind = 'name'], i) => {
+      const N = `q780-road-${i + 1}`;
+      return { road, shell, needs, kind, N, text: text.replaceAll('@N', N).replaceAll('@S', S), planted: kind === 'path' ? `${S}/absent/${N}` : N };
+    }).filter((r) => only === null || only.includes(r.road) || r.kind === 'nopath');   // `only` a list of roads (the no-PATH ones always, for the directories they measure)
+    const spawn = guardedSpawn(SHELL_PROBE, _spawnSync, new Map([...CLEARED_LEGS, ...rows.map((r) => [r.text, null])]));
+    const isShell = (p) => Object.hasOwn(SHELL_PROBE, p);
+    for (const r of rows) {
+      r.lacking = [...new Set([r.shell, ...r.needs])].filter((p) => (isShell(p) ? !probeOk(SHELL_PROBE, p) : !presenceOf(p).ok));
+      for (const p of r.lacking) report(`NOT RUN: real ${p} ${isShell(p) ? probeWhy(SHELL_PROBE, p) : presenceOf(p).why}, so its evidence leg did not run: ${WHAT}, the road ${r.road}`);
+      r.ran = r.lacking.length === 0;
+      if (!r.ran) continue;
+      r.argv = [r.shell, ...shellArgv(r.shell, r.text)];
+      const whole = traceCalls(straceLeg(trace, [], r.argv, w.cwds.nad, w.env, { calls: 'all', spawn }).trace, null).calls;
+      const programAt = callPrograms(whole);
+      const carrying = whole.map((c, i) => [c, i]).filter(([c]) => c.path !== null && wordBase(c.path) === r.N);
+      r.visible = carrying.length;
+      r.derived = [...new Set(carrying.map(([c]) => c.sys))].sort();
+      r.searchers = [...new Set(carrying.map(([c, i]) => programAt(c.pid, i)).filter((p) => p !== null))].sort();
+      r.dirs = [...new Set(carrying.map(([c]) => callDir(c)).filter((d) => d !== null))];
+    }
+    const searchDirs = [...new Set(rows.filter((r) => r.ran && r.kind === 'nopath').flatMap((r) => r.dirs))];
+    for (const r of rows.filter((x) => x.ran)) {
+      const rec = traceCalls(straceLeg(trace, [], r.argv, w.cwds.nad, w.env, { calls: [...calls, ...FORK_CALLS], spawn }).trace);
+      r.unreadable = rec.unreadable || null;
+      r.found = !rec.unreadable && lookupReading(rec.calls, searchDirs).missing.some((m) => m.what === r.planted || m.what === r.N);   // script looks its SHELL's name up on PATH when the path fails
+    }
+    return { rows, searchDirs, searchers: new Set(rows.filter((r) => r.ran).flatMap((r) => r.searchers)) };
+  } finally { w.rm(); }
+};
+const lookupRoads = () => {
+  if (!LOOKUP_ROADS_MEASURED) LOOKUP_ROADS_MEASURED = measureLookupRoads();
+  return LOOKUP_ROADS_MEASURED;
+};
 // the legs: every row of `legs` the gate runs, in every shell of `shells`, each leg over a world `build` makes fresh, measured by
-// `measure(shell, text, cwd, id)`, which returns the leg's `{ opened, trace, status, stderr }`; the rows the gate does not run are `lacking`,
-// and THE EXECVE RECORD's faults, per leg, are `faults`
+// `measure(shell, text, cwd, id)`, which returns the leg's `{ opened, trace, status, stderr }`; the rows the gate does not run are `lacking`;
+// THE LOOKUP RECORD's faults, per leg, are `faults`, the LEGITIMATE LOOKUPS it found `legitimate`, and the programs that made a lookup, with
+// the calls they made in a directory the record shows, `searchers`. `gate.searchDirs` is for the pins' synthetic records
 const clearedLegs = (shells, cwds, build, measure, gate = {}, legs = CLEARED_LEGS) => {
   const report = gate.report || ((line) => console.error(line));
   const got = [];
   const lacking = [];
   const faults = [];
+  const legitimate = [];
+  const searchers = new Map();
   for (const [text, row] of legs) {
     if (!clearedLegRuns(text, row, cwds, gate)) { lacking.push(row[0]); continue; }
+    const legit = Object.hasOwn(LEGITIMATE_LOOKUPS, row[0]) ? LEGITIMATE_LOOKUPS[row[0]].map(([name]) => name) : [];
     for (const shell of shells) {
       build();
       const run = measure(shell, text, cwds[row[1]], row[0]);
-      const read = recordReading(text, cwds[row[1]], run);
+      const read = recordReading(text, cwds[row[1]], run, { legit, searchDirs: gate.searchDirs === undefined ? null : gate.searchDirs });
       for (const f of read.faults) faults.push(`${row[0]} ${shell}: ${f}`);
+      for (const n of read.legitimate) legitimate.push(`${row[0]} ${shell}: ${n}`);
       for (const u of read.unjudged) report(`INFO: ${CLEARED_WHAT}, ${row[0]} ${shell}: a program the row's text does not spell, ${u}`);
+      for (const [p, sys] of read.searchers) { if (!searchers.has(p)) searchers.set(p, new Set()); for (const s of sys) searchers.get(p).add(s); }
       got.push([row[0], shell, run.opened]);
     }
   }
-  return { got, lacking, faults };
+  return { got, lacking, faults, legitimate, searchers };
 };
-test("round 7 of fork PR #780 review, thirty-third commit, THE CLEARED ENVIRONMENT by execution: every command CLEARED_LEGS lists, run in every present shell over a fresh world from its row's cwd under strace (every process traced, the startup files under the account's home watched), opens none of them, while the instrument sees the roads it watches in a world's home: a bash leg with no SHLVL whose standard input is a socket opens the world's ~/.bashrc, and so does a bash a dash leg starts, a zsh leg opens the world's .zshenv, and SHLVL 1 or zsh's -f shuts each; where strace is absent, or refuses to run in its recorded shape, a NOT RUN line, and any other failure of it reds; since the fifty-first commit a command that runs a program this box lacks, the row's own or one THE INVOKED PROGRAM derives from its text, is NOT RUN with the reason and counted as lacking; since the fifty-second (THE EXECVE RECORD) a leg reds where its execve record shows a program absent or holds no attempt attributable to a program word its command holds", () => {
+test("round 7 of fork PR #780 review, thirty-third commit, THE CLEARED ENVIRONMENT by execution: every command CLEARED_LEGS lists, run in every present shell over a fresh world from its row's cwd under strace (every process traced, the startup files under the account's home watched), opens none of them, while the instrument sees the roads it watches in a world's home: a bash leg with no SHLVL whose standard input is a socket opens the world's ~/.bashrc, and so does a bash a dash leg starts, a zsh leg opens the world's .zshenv, and SHLVL 1 or zsh's -f shuts each; where strace is absent, or refuses to run in its recorded shape, a NOT RUN line, and any other failure of it reds; since the fifty-first commit a command that runs a program this box lacks, the row's own or one THE INVOKED PROGRAM derives from its text, is NOT RUN with the reason and counted as lacking; since the fifty-second (THE EXECVE RECORD) a leg reds where its execve record shows a program absent or holds no invocation of a program word the walk reads; since the fifty-third (THE LOOKUP RECORD) a leg reds where a name its processes looked up, or a path one ran, was found nowhere in the leg, and every program that made a lookup in a leg is one THE LOOKUP ROADS plant a miss for", () => {
   const WHAT = CLEARED_WHAT;
   if (!straceUsable(WHAT)) return;
   const w = sixthPassWorld();
@@ -11870,13 +12109,18 @@ test("round 7 of fork PR #780 review, thirty-third commit, THE CLEARED ENVIRONME
     const measure = (argv, cwd, env) => opened(accountFiles, argv, cwd, env).map((l) => l.replace(/^\d+ /, ''));
     const headOpened = new Set(measure(['head', '-c', '0', '--', ...accountFiles], w.W, { PATH: process.env.PATH }).map((l) => (l.match(/^open(?:at2?)?\((?:AT_FDCWD, )?"([^"]+)"/) || [])[1]));
     assert.deepEqual(accountFiles.filter((f) => !headOpened.has(f)), [], "the watch sees an open of every startup file under the account's home");
-    // the legs, through the gate; each returns what it opened and its trace, for THE EXECVE RECORD (the fifty-second commit)
-    const { got, lacking: notRun, faults } = clearedLegs(shells, w.cwds, w.build, (shell, text, cwd) => ({ opened: measure([shell, ...shellArgv(shell, text)], cwd, w.env), trace: last.trace, status: last.status, stderr: last.stderr }));
+    // the legs, through the gate; each returns what it opened and its trace, for THE LOOKUP RECORD (the fifty-second and fifty-third commits)
+    const { got, lacking: notRun, faults, legitimate, searchers } = clearedLegs(shells, w.cwds, w.build, (shell, text, cwd) => ({ opened: measure([shell, ...shellArgv(shell, text)], cwd, w.env), trace: last.trace, status: last.status, stderr: last.stderr }));
     const lacking = notRun.length;
-    assert.deepEqual(faults, [], "every leg's execve record shows each program its command runs found and run (a leg whose program never ran opens no startup file, and would pass)");
+    assert.deepEqual(faults, [], "every leg's lookup record shows each name its processes looked up found, and each program word the walk reads run (a leg whose program never ran opens no startup file, and would pass)");
+    // THE LOOKUP ROADS' census (the fifty-third commit): every program that made a lookup in a listed command's leg is one a plant's lookup
+    // ran in, so the self-test's roads are the roads these legs use; and every LEGITIMATE LOOKUPS entry is found in its row's legs
+    const roads = lookupRoads();
+    assert.deepEqual([...searchers].filter(([p]) => !roads.searchers.has(p)).map(([p, sys]) => `${p} (${[...sys].sort().join(', ')})`), [], "every program that made a lookup in a listed command's leg is one THE LOOKUP ROADS plant a miss for");
+    assert.deepEqual(Object.entries(LEGITIMATE_LOOKUPS).flatMap(([id, ns]) => ns.map(([n]) => `${id}: ${n}`)).filter((l) => !legitimate.some((g) => g.startsWith(`${l.split(':')[0]} `) && g.endsWith(`: ${l.slice(l.indexOf(': ') + 2)}`))), [], 'each LEGITIMATE LOOKUPS entry is a missing name its row\'s legs show');
     assert.deepEqual(got, got.map(([id, shell]) => [id, shell, []]), "no listed command opens a startup file under the account's home, in any present shell");
     assert.deepEqual(got.map(([id, shell]) => `${id} ${shell}`), [...CLEARED_LEGS].filter(([text, row]) => clearedLegRuns(text, row, w.cwds, { report: () => {} })).flatMap(([, [id]]) => shells.map((shell) => `${id} ${shell}`)), 'each listed command the gate runs measured in every present shell');
-    console.log(`# THE CLEARED ENVIRONMENT by execution: ${CLEARED_LEGS.size - lacking} of ${CLEARED_LEGS.size} listed commands in ${shells.join(', ')} (${lacking} for a program this box lacks${lacking ? `: ${notRun.join(', ')}` : ''}), ${accountFiles.length} files under the account's home watched, ${controls.length} controls`);
+    console.log(`# THE CLEARED ENVIRONMENT by execution: ${CLEARED_LEGS.size - lacking} of ${CLEARED_LEGS.size} listed commands in ${shells.join(', ')} (${lacking} for a program this box lacks${lacking ? `: ${notRun.join(', ')}` : ''}), ${accountFiles.length} files under the account's home watched, ${controls.length} controls; the programs that made a lookup: ${[...searchers.keys()].sort().join(', ')}, each one THE LOOKUP ROADS plant a miss for; ${legitimate.length} legitimate failed lookups`);
   } finally { w.rm(); }
 });
 
@@ -15670,7 +15914,7 @@ test("round 7 of fork PR #780 review, fiftieth commit, THE OVERRIDE is never wha
 // it needs no strace and holds on every runner: no row whose text spells a zsh-family program is measured, each prints a NOT RUN line
 // naming the program, its reason, the row and its command, and counts as lacking, the three rows CI ran among them, and every other row is
 // measured in every shell exactly where the gate with no absent set runs it. What the loop reads in each leg it runs is the fifty-second
-// commit's (THE EXECVE RECORD), pinned below.
+// commit's (THE EXECVE RECORD), read by name since the fifty-third (THE LOOKUP RECORD), pinned below.
 // the shells CI's runner has, as labels for the pins' stand-ins, which spawn nothing (legsOutsideProbe's scan reads a literal list of shell
 // names as a real-shell leg's list; the one real-shell leg below takes its shells from shellsFor)
 const CI_STAND_IN_SHELLS = 'bash dash'.split(' ');
@@ -15709,75 +15953,93 @@ test("round 7 of fork PR #780 review, fifty-first commit, THE CLEARED ENVIRONMEN
 // ── round 7 of fork PR #780 review, fifty-second commit (2026-09-25): THE EXECVE RECORD and THE WRITE'S PLACE ─────────────────────────
 //
 // The reviewer's ruling at 12:24Z on the fifty-first commit's verifier. (1) A CLEARED ENVIRONMENT leg's program is decided absent from the
-// leg's execve record, never from a not-found line or an exit status, and a leg whose record cannot attribute an attempt to a program its
-// command runs reds (THE EXECVE RECORD, at that test). The first pin reads synthetic records in process, so it holds on every runner: each
-// rule, the record's own failure shapes, the exemption, and the loop over every listed command with a record that finds every program word
-// (none faults) and with one absent invocation added (each faults). The second runs witnesses under strace in every present shell, among
-// them the verifier's two shapes, a wrapper's not-found message and a redirected standard error, neither the leg's last command: each is
-// faulted in every shell, through the loop the test measures by, and a text whose programs run is faulted in none. (2) Ruling E narrowed:
-// the third reads the placements the three matrices derived in this process (THE WRITE'S PLACE, at rowsNotRun), holds each to what its
-// runs showed, prints the split, and holds the gate, with the zsh family as the absent set, to not run exactly the rows whose `needs` list
-// zsh and the rows placed inside zsh.
-// a C string as strace prints one, for the synthetic records
+// leg's record, never from a not-found line or an exit status, and a leg whose record does not show a program its command runs found reds;
+// since the fifty-third commit the record is read by name over the leg's lookups (THE LOOKUP RECORD, at that test; the reviewer's ruling at
+// 14:33Z), and the two pins below read it so. The first reads synthetic records in process, so it holds on every runner: each rule, the
+// record's own failure shapes, the exemption, the re-verify's F1 and F2 shapes, and the loop over every listed command with a record that
+// finds every program word (none faults) and with one absent invocation added (each faults). The second runs witnesses under strace in every
+// present shell, among them the fifty-first commit's verifier's two shapes (a wrapper's not-found message, a redirected standard error) and
+// the fifty-second's re-verify's five rows (F1's three, F2's two), verbatim: each is faulted in every shell, through the loop the test
+// measures by, and a text whose programs run is faulted in none. THE LOOKUP ROADS' self-test follows them. (2) Ruling E narrowed: the last
+// pin reads the placements the three matrices derived in this process (THE WRITE'S PLACE, at rowsNotRun), holds each to what its runs
+// showed, prints the split, and holds the gate, with the zsh family as the absent set, to not run exactly the rows whose `needs` list zsh
+// and the rows placed inside zsh.
+// a C string as strace prints one, and the synthetic record's lines: an execve (its environment printed, as each leg's strace prints it, or
+// `null` for strace's address alone) and a lookup's stat call
 const straceQuote = (s) => `"${String(s).replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n').replace(/\t/g, '\\t').replace(/[\x00-\x1f]/g, (c) => `\\${c.charCodeAt(0).toString(8)}`)}"`;
-const straceExec = (pid, file, argv, tail = ') = 0') => `${pid} execve(${straceQuote(file)}, [${argv.map(straceQuote).join(', ')}], 0x7ffc0000 /* 3 vars */${tail}`;
+const SYNTH_ENV = ['PATH=/usr/local/bin:/usr/bin:/bin'];
+const SYNTH_DIRS = ['/bin', '/usr/bin'];   // the synthetic records' directories searched with no PATH, in THE LOOKUP ROADS' place
+const straceExec = (pid, file, argv, tail = ') = 0', env = SYNTH_ENV) => `${pid} execve(${straceQuote(file)}, [${argv.map(straceQuote).join(', ')}], ${env === null ? '0x7ffc0000 /* 3 vars */' : `[${env.map(straceQuote).join(', ')}]`}${tail}`;
+const straceStat = (pid, file, ok) => `${pid} newfstatat(AT_FDCWD, ${straceQuote(file)}, ${ok ? '{st_mode=S_IFREG|0755, st_size=1, ...}, 0) = 0' : '0x7ffc0000, 0) = -1 ENOENT (No such file or directory)'}`;
 const STRACE_ENOENT = ') = -1 ENOENT (No such file or directory)';
-test("round 7 of fork PR #780 review, fifty-second commit, THE EXECVE RECORD read in process (the reviewer's ruling at 12:24Z, condition (1)): an invocation whose every attempt failed reds whoever ran it where the text spells its program; every program word of the command must be attributable to an invocation, by name, by path, or for a word the walk does not read by its literal operands, never through a read program's own invocation, and a word with nothing literal reds; a vouched program on a segment run on a condition is exempt and an unvouched or unread one is not; a string strace cut short, a call that never returned and a record without the leg's shell red as unreadable; env's command after a `BASH_FUNC_c%%=` word is attributed; an absent invocation reds where the text spells its program, a tmux operand's among them, and one of a program it never spells is kept apart, not judged; and the loop over every listed command faults no leg whose record finds each program word and every leg whose record holds an absent invocation", () => {
+// bash's and dash's lookup of a name they do not find, as the record shows it: a failed stat in each directory of the synthetic PATH
+const lookupMiss = (pid, name) => ['/usr/local/bin', '/usr/bin', '/bin'].map((d) => straceStat(pid, `${d}/${name}`, false));
+test("round 7 of fork PR #780 review, fifty-second and fifty-third commits, THE LOOKUP RECORD read in process (the reviewer's rulings at 12:24Z, condition (1), and 14:33Z, conditions 2 and 3): a name a process looked up in a directory the record shows and found nowhere reds by that name, whatever text it stood in (the re-verify's F1: a -c operand holding an expansion) and whatever else ran with its operands (its F2), a name found in any such directory is no miss, a failed execve of a path no PATH holds reds, a PATH among env's arguments and the directories searched with no PATH count, and a directory no PATH holds is none of the rule's; an execve whose environment strace did not print reds, its PATH unrecoverable; an invocation whose every attempt failed reds where the text spells its program; every program word the walk reads must be attributable by name or path, a vouched one on a segment run on a condition exempt and an unvouched one not; a string strace cut short, a call that never returned and a record without the leg's shell red as unreadable, and a call the kernel restarts is read at its restart; a missing program the text never spells reds too, and an absent invocation of one another invocation found is kept apart, not judged; and the loop over every listed command faults no leg whose record finds each program word and every leg whose record holds an absent invocation", () => {
   const SELF = straceExec(100, '/usr/bin/sh', ['sh', '-c', 'x']);
   const sleepVouched = realPresence('sleep').ok && realPresence('sleep', { PATH: VOUCH_PATH }).ok;
-  // [what, the command, the record's lines, the faults: each pattern matches one, and there are no others]
+  // [what, the command, the record's lines, the faults: each pattern matches one, and there are no others, the reading's options]
   const cases = [
-    ['every program found', 'cp a b', [SELF, straceExec(101, '/usr/bin/cp', ['cp', 'a', 'b'])], []],
-    ["a wrapper's search that failed, before another command", 'e=q; nice $e -c :; true', [SELF, straceExec(101, '/usr/bin/nice', ['nice', 'q', '-c', ':']), straceExec(101, '/usr/local/bin/q', ['q', '-c', ':'], STRACE_ENOENT), straceExec(101, '/usr/bin/q', ['q', '-c', ':'], STRACE_ENOENT)], [/^q is absent: every one of its 2 execve attempts failed \(ENOENT\)/]],
-    ['no attempt for an unread word (bash and dash look a name up without execve), its stderr redirected', 'z=q; $z -c : 2>/dev/null; true', [SELF], [/^no execve the record holds is attributable to `\$z`, a program the row's command runs \(by its operands \["-c",":"\]\)$/]],
-    ['an unread word with nothing literal', 'z=q; $z', [SELF], [/^`\$z`, a program word the row's command holds, can be attributed to no execve/]],
+    ['every program found', 'cp a b', [SELF, straceStat(100, '/usr/local/bin/cp', false), straceStat(100, '/usr/bin/cp', true), straceExec(101, '/usr/bin/cp', ['cp', 'a', 'b'])], []],
+    ["a wrapper's search that failed, before another command", 'e=q; nice $e -c :; true', [SELF, straceExec(101, '/usr/bin/nice', ['nice', 'q', '-c', ':']), straceExec(101, '/usr/local/bin/q', ['q', '-c', ':'], STRACE_ENOENT), straceExec(101, '/usr/bin/q', ['q', '-c', ':'], STRACE_ENOENT)], [/^q is absent: every one of its 2 execve attempts failed \(ENOENT\)/, /^q is missing: each of its 2 lookup calls failed \(execve ENOENT\)/]],
+    ["bash's and dash's lookup, which makes no execve, its standard error redirected", 'z=q; $z -c : 2>/dev/null; true', [SELF, ...lookupMiss(100, 'q')], [/^q is missing: each of its 3 lookup calls failed \(newfstatat ENOENT\): \/usr\/local\/bin\/q \/usr\/bin\/q \/bin\/q; no call on it in a directory the record shows, and no execve of it, succeeded$/]],
+    ["the re-verify's F1: a missing name in a -c operand holding an expansion", 'x=q; bash -c "$x"; true', [SELF, straceExec(101, '/usr/bin/bash', ['bash', '-c', 'q']), ...lookupMiss(101, 'q')], [/^q is missing: each of its 3 lookup calls failed/]],
+    ["the re-verify's F2: a missing name another program's run shares the operands of", "y=cat; z=q; $z x 2>/dev/null; $y x", [SELF, ...lookupMiss(100, 'q'), straceExec(101, '/usr/bin/cat', ['cat', 'x'])], [/^q is missing: each of its 3 lookup calls failed/]],
+    ['a name found in one directory of the search is no miss', 'z=cat; $z x', [SELF, straceStat(100, '/usr/local/bin/cat', false), straceStat(100, '/usr/bin/cat', true), straceExec(101, '/usr/bin/cat', ['cat', 'x'])], []],
+    ['an execve of a path no PATH holds, failed', 'z=/opt/q780/q; $z x', [SELF, straceExec(101, '/opt/q780/q', ['/opt/q780/q', 'x'], STRACE_ENOENT)], [/^\/opt\/q780\/q is absent: its one execve attempt failed/, /^\/opt\/q780\/q is missing: its one lookup call failed \(execve ENOENT\): \/opt\/q780\/q; no execve of that path succeeded$/]],
+    ["a PATH among env's arguments counts", 'env PATH=/opt/q780 q', [SELF, straceExec(101, '/usr/bin/env', ['env', 'PATH=/opt/q780', 'q']), straceExec(101, '/opt/q780/q', ['q'], STRACE_ENOENT)], [/^q is absent: its one execve attempt failed/, /^q is missing: its one lookup call failed \(execve ENOENT\): \/opt\/q780\/q/]],
+    ['the directories searched with no PATH count: a bash under a cleared environment', 'env -i SHLVL=1 bash -c q', [straceExec(100, '/usr/bin/sh', ['sh', '-c', 'x'], ') = 0', ['PATH=/usr/local/bin']), straceExec(101, '/usr/bin/env', ['env', '-i', 'SHLVL=1', 'bash', '-c', 'q'], ') = 0', ['PATH=/usr/local/bin']), straceExec(101, '/usr/bin/bash', ['bash', '-c', 'q'], ') = 0', ['SHLVL=1']), straceStat(101, '/bin/q', false), straceStat(101, '/usr/bin/q', false)], [/^q is missing: each of its 2 lookup calls failed \(newfstatat ENOENT\): \/bin\/q \/usr\/bin\/q/]],
+    ['and without them its stat calls are in no directory the record shows: the directories are measured, never assumed', 'env -i SHLVL=1 bash -c q', [straceExec(100, '/usr/bin/sh', ['sh', '-c', 'x'], ') = 0', ['PATH=/usr/local/bin']), straceExec(101, '/usr/bin/env', ['env', '-i', 'SHLVL=1', 'bash', '-c', 'q'], ') = 0', ['PATH=/usr/local/bin']), straceExec(101, '/usr/bin/bash', ['bash', '-c', 'q'], ') = 0', ['SHLVL=1']), straceStat(101, '/bin/q', false), straceStat(101, '/usr/bin/q', false)], [], { searchDirs: [] }],
+    ["env's search with no PATH, an execve in each directory", 'env -i q', [straceExec(100, '/usr/bin/sh', ['sh', '-c', 'x'], ') = 0', ['PATH=/usr/local/bin']), straceExec(101, '/usr/bin/env', ['env', '-i', 'q'], ') = 0', ['PATH=/usr/local/bin']), straceExec(101, '/bin/q', ['q'], STRACE_ENOENT, []), straceExec(101, '/usr/bin/q', ['q'], STRACE_ENOENT, [])], [/^q is absent: every one of its 2 execve attempts failed/, /^q is missing: each of its 2 lookup calls failed \(execve ENOENT\): \/bin\/q \/usr\/bin\/q/]],
+    ["a failed stat in a directory no PATH of the record holds is none of the rule's (a PATH a shell set in its own memory: the stated limit)", 'z=q; $z', [SELF, straceStat(100, '/opt/q780/q', false)], []],
+    ["an execve whose environment strace did not print: the PATH in force for its lookups cannot be recovered", 'cp a b', [SELF, straceExec(101, '/usr/bin/cp', ['cp', 'a', 'b'], ') = 0', null)], [/^the PATH in force for the lookups of 101 execve \/usr\/bin\/cp cannot be recovered from the record/]],
+    ['a record with no lookup of the name holds nothing to judge (THE LOOKUP ROADS pin that every road puts its lookup in the record)', 'z=q; $z -c : 2>/dev/null; true', [SELF], []],
     ['a call strace left unfinished and resumed', 'cp a b | cat', [SELF, straceExec(101, '/usr/bin/cp', ['cp', 'a', 'b'], ' <unfinished ...>'), straceExec(102, '/usr/bin/cat', ['cat']), '101 <... execve resumed>) = 0'], []],
-    ['a string strace cut short', 'cp a b', [SELF, '101 execve("/usr/bin/cp", ["cp", "a"..., "b"], 0x7ffc0000 /* 3 vars */) = 0'], [/^the execve record could not be read: /]],
-    ['a call that never returned', 'cp a b', [SELF, straceExec(101, '/usr/bin/cp', ['cp', 'a', 'b'], ' <unfinished ...>')], [/^the execve record could not be read: a call that never returned/]],
-    ["no execve of the leg's shell", 'cp a b', [], [/^the execve record holds no successful execve of the leg's shell$/]],
+    ['a call the kernel restarts, read at its restart', 'cp a b', [SELF, '100 clone(child_stack=NULL, flags=SIGCHLD) = ? ERESTARTNOINTR (To be restarted)', '100 clone(child_stack=NULL, flags=SIGCHLD) = 101', straceExec(101, '/usr/bin/cp', ['cp', 'a', 'b'])], []],
+    ['a string strace cut short', 'cp a b', [SELF, `101 execve("/usr/bin/cp", ["cp", "a"..., "b"], [${straceQuote(SYNTH_ENV[0])}]) = 0`], [/^the lookup record could not be read: /]],
+    ['a call that never returned', 'cp a b', [SELF, straceExec(101, '/usr/bin/cp', ['cp', 'a', 'b'], ' <unfinished ...>')], [/^the lookup record could not be read: a call that never returned/]],
+    ["no execve of the leg's shell", 'cp a b', [], [/^the lookup record holds no successful execve of the leg's shell$/]],
     ['a vouched program on a segment run on a condition', 'false && sleep 1; true', [SELF], sleepVouched ? [] : [/attributable to `sleep`/]],
     ['an unvouched program on a segment run on a condition', 'false && q780-no-such-program x; true', [SELF], [/^no execve the record holds is attributable to `q780-no-such-program`, a program the row's command runs, on a segment run on a condition/]],
-    ['an unread word on a segment run on a condition (it fails closed)', 'true || $z -c :', [SELF], [/attributable to `\$z`/]],
+    ['an unread word on a segment that never runs: no lookup of it, nothing judged', 'true || $z -c :', [SELF], []],
     ['a program by its path', '/opt/q780/bin/tool x', [SELF, straceExec(101, '/opt/q780/bin/tool', ['/opt/q780/bin/tool', 'x'])], []],
-    ['a tilde in the program word, by its operands', '~/c2 a b', [SELF, straceExec(101, '/w/home/c2', ['/w/home/c2', 'a', 'b'])], []],
-    ["a read program's invocation is not an unread word's", 'z=q; $z x; cat x', [SELF, straceExec(101, '/usr/bin/cat', ['cat', 'x'])], [/attributable to `\$z`/]],
+    ['a tilde in the program word, its execve found', '~/c2 a b', [SELF, straceExec(101, '/w/home/c2', ['/w/home/c2', 'a', 'b'])], []],
     ["env's command after a word holding `=`", "env 'BASH_FUNC_c%%=() { :; }' /usr/bin/bash -c c", [SELF, straceExec(101, '/usr/bin/env', ['env', 'BASH_FUNC_c%%=() { :; }', '/usr/bin/bash', '-c', 'c']), straceExec(101, '/usr/bin/bash', ['/usr/bin/bash', '-c', 'c'])], []],
-    ['an absent program a program runs from its operands, which the walk does not read, spelled in the text', 'tmux new -d q780-no-such-program', [SELF, straceExec(101, '/usr/bin/tmux', ['tmux', 'new', '-d', 'q780-no-such-program']), straceExec(102, '/usr/bin/q780-no-such-program', ['q780-no-such-program'], STRACE_ENOENT)], [/^q780-no-such-program is absent: its one execve attempt failed \(ENOENT\)/]],
-    ["an absent program the text never spells, a startup file's or a helper's own, is not judged", 'cp a b', [SELF, straceExec(101, '/usr/bin/cp', ['cp', 'a', 'b']), straceExec(102, '/usr/bin/q780-helper', ['q780-helper'], STRACE_ENOENT)], []],
+    ['an absent program a program runs from its operands, which the walk does not read, spelled in the text', 'tmux new -d q780-no-such-program', [SELF, straceExec(101, '/usr/bin/tmux', ['tmux', 'new', '-d', 'q780-no-such-program']), straceExec(102, '/usr/bin/q780-no-such-program', ['q780-no-such-program'], STRACE_ENOENT)], [/^q780-no-such-program is absent: its one execve attempt failed \(ENOENT\)/, /^q780-no-such-program is missing: its one lookup call failed/]],
+    ["a missing program the text never spells, a startup file's or a helper's own, reds by name: no exemption by pattern", 'cp a b', [SELF, straceExec(101, '/usr/bin/cp', ['cp', 'a', 'b']), straceExec(102, '/usr/bin/q780-helper', ['q780-helper'], STRACE_ENOENT)], [/^q780-helper is missing: its one lookup call failed/]],
+    ['an absent invocation of a program the text never spells, which another invocation found, is not judged', 'cp a b', [SELF, straceExec(101, '/usr/bin/cp', ['cp', 'a', 'b']), straceExec(102, '/usr/local/bin/q780-helper', ['q780-helper'], STRACE_ENOENT), straceExec(103, '/usr/bin/q780-helper', ['q780-helper'])], []],
   ];
   const got = [];
   const want = [];
-  for (const [what, text, lines, patterns] of cases) {
-    const faults = recordFaults(text, '/w/nad', { trace: lines.join('\n') });
+  for (const [what, text, lines, patterns, opts = {}] of cases) {
+    const faults = recordFaults(text, '/w/nad', { trace: lines.join('\n') }, { searchDirs: SYNTH_DIRS, ...opts });
     got.push([what, faults.length === patterns.length && patterns.every((p) => faults.some((f) => p.test(f))), faults]);
     want.push([what, true, faults]);
   }
   assert.deepEqual(got, want, 'each record gives exactly the faults its case names');
   const helper = cases[cases.length - 1];
-  assert.deepEqual(recordReading(helper[1], '/w/nad', { trace: helper[2].join('\n') }).unjudged.map((l) => l.split(':')[0]), ['q780-helper is absent'], 'and it is kept, for the loop to print');
+  assert.deepEqual(recordReading(helper[1], '/w/nad', { trace: helper[2].join('\n') }, { searchDirs: SYNTH_DIRS }).unjudged.map((l) => l.split(':')[0]), ['q780-helper is absent'], 'and it is kept, for the loop to print');
   // the loop the test measures by, over every listed command, with a stand-in for strace: a record that finds every program word the walk
-  // reaches (by its name, its path, or an unread word's literal name or operands) faults no leg, and the same record with an absent
-  // invocation added faults every leg
+  // reaches by its name or path faults no leg, and the same record with an absent invocation added faults every leg
   const w = sixthPassWorld();
   try {
     const foundTrace = (text, cwd) => {
       const words = [];
       programsInvoked(text, { collect: words });
-      return [SELF, ...words.map((x, i) => (x.read ? straceExec(200 + i, x.word.includes('/') ? path.resolve(cwd, x.word) : `/usr/bin/${x.word}`, [x.word]) : x.name !== null ? straceExec(200 + i, `/usr/bin/${x.name}`, [x.name]) : straceExec(200 + i, '/usr/bin/q780-stand-in', ['q780-stand-in', ...(x.operands || [])])))];
+      return [SELF, ...words.filter((x) => x.read || x.name !== null).map((x, i) => (x.read ? straceExec(200 + i, x.word.includes('/') ? path.resolve(cwd, x.word) : `/usr/bin/${x.word}`, [x.word]) : straceExec(200 + i, `/usr/bin/${x.name}`, [x.name])))];
     };
     // the absent invocation added: one of the first program the walk reads in the command, which the text spells
     const absentOf = (text) => { const words = []; programsInvoked(text, { collect: words }); const p = (words.find((x) => x.read) || { word: 'q780-none' }).word; return straceExec(300, p.includes('/') ? p : `/usr/local/bin/${p}`, [p], STRACE_ENOENT); };
-    const loop = (miss) => clearedLegs(CI_STAND_IN_SHELLS, w.cwds, () => {}, (shell, text, cwd) => ({ opened: [], trace: [...foundTrace(text, cwd), ...(miss ? [absentOf(text)] : [])].join('\n') }), { report: () => {}, table: { ...NAMED_PROBE } });
+    const loop = (miss) => clearedLegs(CI_STAND_IN_SHELLS, w.cwds, () => {}, (shell, text, cwd) => ({ opened: [], trace: [...foundTrace(text, cwd), ...(miss ? [absentOf(text)] : [])].join('\n') }), { report: () => {}, table: { ...NAMED_PROBE }, searchDirs: SYNTH_DIRS });
     const found = loop(false);
     assert.ok(found.got.length > 0, 'the loop ran legs here');
     assert.deepEqual(found.faults, [], "a record that finds every program word of a listed command faults none of its legs (each listed command's program words are attributable)");
     const missed = loop(true);
     assert.deepEqual([...new Set(missed.faults.map((f) => f.split(':')[0]))], missed.got.map(([id, shell]) => `${id} ${shell}`), 'a record holding an absent invocation of a program the command runs faults every leg');
-    console.log(`# THE EXECVE RECORD in process: ${cases.length} records; the loop faulted ${new Set(found.faults.map((f) => f.split(':')[0])).size} of ${found.got.length} legs whose record found every program word and ${new Set(missed.faults.map((f) => f.split(':')[0])).size} of ${missed.got.length} holding an absent invocation`);
+    console.log(`# THE LOOKUP RECORD in process: ${cases.length} records; the loop faulted ${new Set(found.faults.map((f) => f.split(':')[0])).size} of ${found.got.length} legs whose record found every program word and ${new Set(missed.faults.map((f) => f.split(':')[0])).size} of ${missed.got.length} holding an absent invocation`);
   } finally { w.rm(); }
 });
-test("round 7 of fork PR #780 review, fifty-second commit, THE EXECVE RECORD by execution in every present shell (the reviewer's ruling at 12:24Z, condition (1)): a missing program run through an expansion behind env, nice or timeout, whose not-found message the wrapper words, or bare with its standard error redirected, before another command or last, and one on a segment the text skips, is faulted in every shell through the loop the test measures by; a missing program the walk reads by name or by path is stopped by the gate first, and its record is faulted in every shell too; a text whose programs run is faulted in none; where strace is absent or refuses, a NOT RUN line", () => {
-  const WHAT = 'THE EXECVE RECORD by execution';
+test("round 7 of fork PR #780 review, fifty-second and fifty-third commits, THE LOOKUP RECORD by execution in every present shell (the reviewer's rulings at 12:24Z, condition (1), and 14:33Z, condition 3): a missing program run through an expansion behind env, nice or timeout, whose not-found message the wrapper words, or bare with its standard error redirected, before another command or last, and the re-verify's five rows verbatim (F1's missing name in a -c operand holding an expansion, in eval's text and in a script file's line; F2's missing name beside a run of bash or of script's shell with its operands), are faulted in every shell through the loop the test measures by; a missing program the walk reads by name or by path is stopped by the gate first, and its record is faulted in every shell too; a text whose programs run, and one whose missing program stands on a segment the text skips, which looks nothing up, are faulted in none; where strace is absent or refuses, a NOT RUN line", () => {
+  const WHAT = 'THE LOOKUP RECORD by execution';
   if (!straceUsable(WHAT)) return;
   const w = sixthPassWorld();
   try {
@@ -15785,33 +16047,65 @@ test("round 7 of fork PR #780 review, fifty-second commit, THE EXECVE RECORD by 
     const shells = shellsFor(['bash', 'zsh', 'dash'], WHAT);
     assert.ok(shells.length > 0, 'a shell of the three is on this runner');
     const NAME = 'q780-no-such-program';
-    // [id, the command, faulted]: the loop's witnesses, texts the gate runs (a missing program in them stands where the walk does not read it)
+    // [id, the command, faulted, the program it runs by name beyond the leg's shell]: the loop's witnesses, texts the gate runs (a missing
+    // program in them stands where the walk does not read it)
     const WITNESSES = [
       ['X-env-message', `e=${NAME}; env X=1 $e -c :; true`, true],
       ['X-nice-message', `e=${NAME}; nice $e -c :; true`, true],
       ['X-timeout-message', `e=${NAME}; timeout 5 $e -c :; true`, true],
       ['X-stderr-redirected', `z=${NAME}; $z -c : 2>/dev/null; true`, true],
       ['X-last', `z=${NAME}; $z -c :`, true],
-      ['X-skipped', `true || { z=${NAME}; $z -c :; }`, true],
+      // the fifty-second commit's re-verify, F1's three rows and F2's two, as it ran them
+      ['F1-unread-c-text', `x=q780v-no-such-program; bash -c "$x -c 'env -i SHLVL=1 bash -c true'"; true`, true],
+      ['F1-eval-text', `e=q780v-no-such-program; eval "$e -c 'env -i SHLVL=1 bash -c true'" 2>/dev/null; true`, true],
+      ['F1-script-file', `printf '%s\\n' "q780v-no-such-program -c 'env -i SHLVL=1 bash -c true'" > ../scratch/q780v.sh; bash ../scratch/q780v.sh; true`, true],
+      ['F2-shared-operands-bash', `y=bash; z=q780v-no-such-program; $z -c 'env -i SHLVL=1 bash -c true' 2>/dev/null; $y -c 'env -i SHLVL=1 bash -c true'`, true],
+      ['F2-shared-operands-script', 'z=q780v-no-such-program; $z -c true 2>/dev/null; script -qc true /dev/null', true, 'script'],
       ['X-env-found', 'e=echo; env X=1 $e x | cat', false],
       ['X-expansion-found', 'z=cat; $z /dev/null; true', false],
       ['X-condition-vouched', 'false && sleep 1; true', false],
       ['X-mkdir', 'mkdir -p ../scratch/q780; true', false],
+      ['X-skipped', `true || { z=${NAME}; $z -c :; }`, false],
     ];
-    const measure = (shell, text, cwd) => { const r = straceLeg(trace, [], [shell, ...shellArgv(shell, text)], cwd, w.env); return { opened: r.opens, trace: r.trace, status: r.status, stderr: r.stderr }; };
-    const legs = new Map(WITNESSES.map(([id, text]) => [text, [id, 'nad', 'a witness of THE EXECVE RECORD']]));
+    const legs = new Map(WITNESSES.map(([id, text]) => [text, [id, 'nad', 'a witness of THE LOOKUP RECORD']]));
+    const spawn = guardedSpawn(SHELL_PROBE, _spawnSync, new Map([...CLEARED_LEGS, ...legs]));   // F1's and F2's rows start bash under env -i
+    const measure = (shell, text, cwd) => { const r = straceLeg(trace, [], [shell, ...shellArgv(shell, text)], cwd, w.env, { spawn }); return { opened: r.opens, trace: r.trace, status: r.status, stderr: r.stderr }; };
     const { got, lacking, faults } = clearedLegs(shells, w.cwds, w.build, measure, { report: () => {}, table: { ...NAMED_PROBE } }, legs);
-    assert.deepEqual(lacking, [], 'the gate runs every witness (their program words are unread, or present)');
+    const absentHere = WITNESSES.filter(([, , , p]) => p && !presenceOf(p).ok).map(([id]) => id);
+    assert.deepEqual(lacking, absentHere, 'the gate runs every witness whose named program is here (their missing program words are unread)');
+    const ran = WITNESSES.filter(([id]) => !absentHere.includes(id));
     const faulted = [...new Set(faults.map((f) => f.split(':')[0]))].sort();
-    assert.deepEqual(faulted, WITNESSES.filter(([, , bad]) => bad).flatMap(([id]) => shells.map((shell) => `${id} ${shell}`)).sort(), 'each missing program is faulted in every present shell, and no text whose programs run is faulted in any');
-    assert.deepEqual(got.map(([id, shell]) => `${id} ${shell}`).sort(), WITNESSES.flatMap(([id]) => shells.map((shell) => `${id} ${shell}`)).sort(), 'every witness measured in every present shell, its faults beside it');
+    assert.deepEqual(faulted, ran.filter(([, , bad]) => bad).flatMap(([id]) => shells.map((shell) => `${id} ${shell}`)).sort(), 'each missing program is faulted in every present shell, and no text whose programs run, or whose missing program is never looked up, is faulted in any');
+    const reverified = ran.filter(([id]) => /^F[12]-/.test(id)).flatMap(([id]) => shells.map((shell) => `${id} ${shell}`));
+    assert.deepEqual(reverified.filter((leg) => !faults.some((f) => f.startsWith(`${leg}: q780v-no-such-program is missing: `))), [], "each of the re-verify's rows is faulted in every shell by THE LOOKUP RULE, by the name its leg looked up");
+    assert.deepEqual(got.map(([id, shell]) => `${id} ${shell}`).sort(), ran.flatMap(([id]) => shells.map((shell) => `${id} ${shell}`)).sort(), 'every witness measured in every present shell, its faults beside it');
     // a missing program the walk reads, by name or by path: the gate stops the row first, and the record of a run of it is faulted too
     const stopped = [`${NAME} -c : 2>/dev/null; true`, `/nonexistent/bin/${NAME} -c :; true`];
     assert.deepEqual(stopped.map((t) => clearedLegRuns(t, ['X-read', 'nad'], w.cwds, { report: () => {}, table: { ...NAMED_PROBE } })), [false, false], 'the gate does not run a row whose missing program it reads');
     const direct = shells.flatMap((shell) => stopped.map((t) => { w.build(); return [shell, t, recordFaults(t, w.cwds.nad, measure(shell, t, w.cwds.nad)).length > 0]; }));
     assert.deepEqual(direct, direct.map(([shell, t]) => [shell, t, true]), 'and its record is faulted in every present shell');
-    console.log(`# THE EXECVE RECORD by execution: ${WITNESSES.length} witnesses in ${shells.join(', ')}, ${faulted.length} legs faulted of ${WITNESSES.filter(([, , bad]) => bad).length * shells.length} with a missing program, none of ${WITNESSES.filter(([, , bad]) => !bad).length * shells.length} whose programs run; ${stopped.length} read missing programs stopped by the gate and faulted in every shell`);
+    console.log(`# THE LOOKUP RECORD by execution: ${ran.length} of ${WITNESSES.length} witnesses in ${shells.join(', ')}${absentHere.length ? ` (${absentHere.join(', ')} not run, its program absent)` : ''}, ${faulted.length} legs faulted of ${ran.filter(([, , bad]) => bad).length * shells.length} with a missing program (the re-verify's five rows among them), none of ${ran.filter(([, , bad]) => !bad).length * shells.length} whose programs run or whose missing program is never looked up; ${stopped.length} read missing programs stopped by the gate and faulted in every shell`);
   } finally { w.rm(); }
+});
+test("round 7 of fork PR #780 review, fifty-third commit, THE LOOKUP ROADS (the reviewer's ruling at 14:33Z, conditions 1 and 3): a missing name planted on every road a committed row's lookups use, each traced with strace's whole %file and %process classes, is carried by some call of every road; every call that carries a plant is among LOOKUP_CALLS, the calls each leg's strace traces; THE LOOKUP RULE over the leg's own trace finds the plant missing on every road, and a trace without the one call that carries a road's plant does not (the self-test reds on such a runner); the calls, the programs the lookups ran in and the directories searched with no PATH are derived here, never listed; where strace is absent or refuses, or a road's program is, a NOT RUN line", () => {
+  const WHAT = 'THE LOOKUP ROADS';
+  if (!straceUsable(WHAT)) return;
+  const { rows, searchDirs, searchers } = lookupRoads();
+  const ran = rows.filter((r) => r.ran);
+  assert.ok(ran.length > 0, 'a road ran here');
+  assert.deepEqual(ran.filter((r) => !r.visible).map((r) => r.road), [], "every road's plant is carried by a call of its whole-class trace (on a runner where a road's lookup is not in the record, the ruling's fallback (a), failing closed on the texts the walk does not read, would apply to that road; no road here needs it)");
+  assert.deepEqual(ran.flatMap((r) => r.derived.filter((c) => !LOOKUP_CALLS.includes(c)).map((c) => `${r.road}: ${c}`)), [], 'every call that carries a plant is one each leg traces (LOOKUP_CALLS)');
+  assert.deepEqual(ran.filter((r) => r.unreadable || !r.found).map((r) => `${r.road}: ${r.unreadable || 'its plant not found missing'}`), [], "THE LOOKUP RULE, over each road's own trace, finds its plant missing");
+  // the self-test's own sensitivity: a trace without the one call that carries a road's plant does not show the plant
+  const sole = ran.filter((r) => r.derived.length === 1);
+  assert.ok(sole.length > 0, 'a road whose plant one call alone carries');
+  const alone = sole.filter((r) => r.derived[0] === sole[0].derived[0]).map((r) => r.road);
+  const dropped = measureLookupRoads({ calls: LOOKUP_CALLS.filter((c) => c !== sole[0].derived[0]), report: () => {}, only: alone }).rows.filter((r) => alone.includes(r.road));
+  assert.deepEqual(dropped.map((r) => r.road), alone, 'each such road ran again');
+  assert.deepEqual(dropped.filter((r) => r.found).map((r) => r.road), [], `a trace without ${sole[0].derived[0]} shows no plant of the roads that call alone carries`);
+  assert.ok(searchDirs.length > 0, 'the directories searched with no PATH are measured');
+  for (const r of ran) console.log(`# THE LOOKUP ROADS: ${r.road}: carried by ${r.derived.join(', ')} (${r.visible} calls) in ${r.searchers.join(', ')}; found missing over the leg's own trace`);
+  console.log(`# THE LOOKUP ROADS: ${ran.length} of ${rows.length} roads planted, the calls carrying a plant ${[...new Set(ran.flatMap((r) => r.derived))].sort().join(', ')}, each among LOOKUP_CALLS (${LOOKUP_CALLS.join(', ')}); without ${sole[0].derived[0]}, ${dropped.length} roads' plants unseen; searched with no PATH: ${searchDirs.join(':')}; the programs the lookups ran in: ${[...searchers].sort().join(', ')}`);
 });
 test("round 7 of fork PR #780 review, fifty-second commit, THE WRITE'S PLACE (the reviewer's ruling at 12:24Z, condition (2), ruling E narrowed): the three matrices with `needs` placed, in this process, every row and program their `needs` leave out, each by its runs: kept where a shell the runner has wrote, gated where none wrote and the program was handed a text; the split is printed with its rows; and with the zsh family as the absent set, the gate does not run exactly the rows whose `needs` list zsh and the rows placed inside zsh, each of the latter with its own line naming zsh (runs last: it reads what the matrices derived)", () => {
   const MATRICES = [['the piped-script matrix', pipedScriptMatrixRows(), PIPED_SCRIPT_MATRIX_PIN], ['the stdin-script matrix', stdinScriptMatrixRows(), STDIN_SCRIPT_MATRIX_PIN], ['the heredoc-body matrix', heredocBodyMatrixRows(), HEREDOC_BODY_MATRIX_PIN]];
