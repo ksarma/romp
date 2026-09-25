@@ -8635,7 +8635,12 @@ press from it, and the family's accent border at 7.87:1 dark and 3.79:1 light ag
 pointer and in a pointer press on a fine pointer, under touch emulation and on the trackpad, read by pixels and, but for the press,
 composed from the declared opacities, and the
 token's states clear 3:1 in VS Code on a neutral editor ground up to #404040 and on a light one from #efefef, the family's accent hover
-border held on each theme's own ground; the painted-contrast ask of 2026-09-23, the press cue on the maintainer's ruling within it,
+border held on each theme's own ground, and an author's class on the figure or above it dims none of it, since the viewer takes every
+class the sheets dim off the author's markup there before the dress is laid (`dropDimmingClasses` over `SHEET_DIM_CLASSES`, held to
+the sheets both ways by file-figure-open.test.ts; the file review's round 16, extra5-2: an author's span of tag-chip-off, 0.45, had
+painted the dress at 2.00:1 dark and 1.86:1 light while a tap opened the tab), while an author's element laid over the figure is no
+state a gesture opens the tab from, the one gate refusing a covered sign, and an author's own link opens its address with no dress, as
+before this follow-on; the painted-contrast ask of 2026-09-23, the press cue on the maintainer's ruling within it,
 where at 0.8 the control read 2.46:1 by pixels on a
 VS Code editor ground of #404040 and, at 0.8 x 0.7 inside a captioned dead link, 2.47:1 dark and 2.40:1 light), measured in its own
 CSS pixels from the loaded picture's laid-out box while it is in the document (the box divided by the picture's zoom and rounded to

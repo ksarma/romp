@@ -1351,6 +1351,25 @@ test("the one rule called directly (figureSourceCredentialed, through the label 
   assert.deepEqual(["a@2x.png", "/img/a@2x.png", "https://cdn.example/plot.png", "data:image/png;base64,iVBORw0KGgo"].map((s) => (fv as any).figureSourceCredentialed(s)), [false, false, false, false], "and false for the controls: a relative and a root-relative at sign with no colon before it, a plain address, a data: head with no at sign (controls, outside the rule)");
 });
 
+// ── the dimming classes off a figure's ancestors (the file review's round 16, extra5-2): the render path of a file document takes every
+// class the sheets dim (file-view.ts SHEET_DIM_CLASSES) off each figure and each element above it, before any pass of the viewer's own,
+// and leaves an author element that holds no figure as the author wrote it. The two-way pin holding the list to the sheets is
+// file-figure-open.test.ts's; the open leg reads the drop's effect on the paint.
+test("the dimming classes off a figure's ancestors, over the render path (the file review's round 16, extra5-2): an author's span of two classes the sheets dim and one they do not (tag-chip-off, fv-figopen and keep) around a picture keeps keep alone, the picture itself wearing a dimmed class keeps its own other class, and a span of the same three classes around an inline svg holding an svg image keeps keep alone too, down to the svg, since the fence pass can make an HTML img of that image; the same span holding words and no picture keeps all three (a property pin over each element's classes after the paint; red at the head the file review's round 16 read, which kept every author class)", async (t) => {
+  const md = '# R\n\nOne <span class="tag-chip-off fv-figopen keep"><img class="fade mine" src="figs/p.png" alt="inside"></span> words.\n\n'
+    + 'Two <span class="tag-chip-off fv-figopen keep">no picture here</span> words.\n\n'
+    + 'Three <span class="tag-chip-off fv-figopen keep"><svg class="chip keep" width="40" height="40"><image href="figs/q.png" width="40" height="40"/></svg></span> words.\n';
+  const o = await open(REPORT, md, t);
+  const box = o.body.querySelector(".fileview-md")!;
+  const spans = box.querySelectorAll("span").filter((x) => x.classes.includes("keep"));
+  const img = box.querySelectorAll("img").find((x) => x.getAttribute("alt") === "inside");
+  const svg = box.querySelectorAll("svg")[0];
+  assert.ok(spans.length === 3 && img && svg && box.querySelectorAll("image").length === 1, "the three author spans, the picture and the svg holding its image painted (the case's premise)");
+  const read = { span1: spans[0].classes, img: img!.classes, span2: spans[1].classes, span3: spans[2].classes, svg: svg.classes };
+  t.diagnostic("classes after the paint: " + JSON.stringify(read));
+  assert.deepEqual(read, { span1: ["keep"], img: ["mine"], span2: ["tag-chip-off", "fv-figopen", "keep"], span3: ["keep"], svg: ["keep"] }, "each element's classes after the paint: the listed classes off the picture and its ancestors, the svg image's too, the rest kept, and an author element holding no figure untouched (a property pin over the classes)");
+});
+
 // ── the sign-in rule's decode, bounded (the file review's round 16, regression-2): the decode ran to its fixed point, and a `%25` chain
 // loses one level per pass, so one source nested deep held the page's thread for a time quadratic in its length. It now runs at most
 // eight passes (DECODE_PASSES), and a text still changing at the last reads as carrying a sign-in, failing closed. Held by the answers

@@ -3758,3 +3758,58 @@ for (const [zoom, surface, scenes] of ZOOM_CASES) {
     }, [900, 700], zoom === 1 ? "" : "body{zoom:" + zoom.toFixed(4) + ";}");
   });
 }
+
+// ── the dimming classes off a figure's ancestors, on the paint (the file review's round 16, extra5-2) ── Under CDP touch emulation, where
+// the web control and the mark stand at rest and a tap opens the tab from that state: an author's span of tag-chip-off (an opacity of
+// 0.45 in the sheets) around a loaded remote picture wearing the control and around one under the floor wearing the mark, and an
+// author's img wearing fv-figopen, the control's own class (0.8 at rest on a coarse pointer). file-view.ts takes every class the sheets
+// dim off the markup around each figure of a file document (dropDimmingClasses over SHEET_DIM_CLASSES), so the span keeps its other
+// class alone, the opacity composed from the dress up to the Rendered box is the dress's own, the dress paints at 3:1 or better by
+// screenshot pixels (paintedRatio) in both themes, the author's img stands at full opacity, and a tap on each picture opens its tab as
+// before. At the head the file review's round 16 read the span kept its class and the dress painted under it at 0.45 (2.00:1 dark and
+// 1.86:1 light by that round's refuter), and the img computed 0.8.
+const DIM_TEXT = "# Report\n\n" + PARA(1) + '\n\nChip <span class="tag-chip-off keep"><img src="' + WEB + '/fchip.svg" alt="fchip"></span> words.\n\n' + PARA(2)
+  + '\n\nMark <span class="tag-chip-off keep"><img src="' + WEB + '/tiny.svg" alt="fmark"></span> words.\n\n' + PARA(3)
+  + '\n\n<img class="fv-figopen keep" src="' + WEB + '/fimg.svg" alt="fimg">\n\n' + Array.from({ length: 10 }, (_, i) => PARA(i + 4)).join("\n\n") + "\n";
+type DimRead = { kind: string; span: string[]; own: number; composed: number };
+for (const surface of ["chat", "pane"] as Surface[]) {
+  test("in a browser " + gateOn("touch", surface) + ", the dimming classes off a figure's ancestors: an author's span of tag-chip-off and keep around a loaded remote picture wearing the web control, and one around a remote picture under the floor wearing the mark, each keep the class keep alone; the opacity composed from the control, and from the marked picture, up to the Rendered box is the element's own; each dress paints at 3:1 or better by screenshot pixels at rest, in the dark theme and in the light one; an author's img wearing fv-figopen keeps its other class and stands at full opacity; and a tap on each picture, its sign in view, opens its tab once (the file review's round 16, extra5-2: red at the head that round read, where each span kept tag-chip-off, the composed opacity was 0.45 and the dress painted under 3:1, and the img computed 0.8 at rest; the taps green there by design; property pins read off the page)", { timeout: 180000 }, async (t) => {
+    const rec: Record<string, unknown> = { scene: "the dimming classes" };
+    await gateCase(t, "touch", surface, DIM_TEXT, rec, async (g) => {
+      const d: { coarse: boolean; fchip: DimRead; fmark: DimRead; fimg: { classes: string[]; opacity: string } } = await g.page.evaluate(() => {
+        const w = window as any, box = document.querySelector(".fileview-md") as HTMLElement;
+        const composed = (e: Element): number => { let o = 1; for (let n: Element | null = e; n && n !== box.parentElement; n = n.parentElement) o *= Number(getComputedStyle(n).opacity); return Math.round(o * 1000) / 1000; };
+        const one = (alt: string) => { const s = w.__gsign(alt) as HTMLElement, img = w.__img(alt) as HTMLElement; return { kind: s === img ? "mark" : "control", span: Array.from((img.parentElement as HTMLElement).classList), own: Number(getComputedStyle(s).opacity), composed: composed(s) }; };
+        const fimg = w.__img("fimg") as HTMLElement;
+        return { coarse: matchMedia("(pointer: coarse)").matches, fchip: one("fchip"), fmark: one("fmark"), fimg: { classes: Array.from(fimg.classList), opacity: getComputedStyle(fimg).opacity } };
+      });
+      rec.read = d;
+      assert.deepEqual([d.coarse, d.fchip.kind, d.fmark.kind], [true, "control", "mark"], "a coarse pointer, the loaded picture's sign its web control and the small picture's its mark (the case's premise): " + JSON.stringify(d));
+      g.cell("the span around the picture with the control: its classes", ["keep"], d.fchip.span);
+      g.cell("the span around the picture with the mark: its classes", ["keep"], d.fmark.span);
+      g.cell("the control's opacity, [its own, composed up to the Rendered box]", [d.fchip.own, d.fchip.own], [d.fchip.own, d.fchip.composed]);
+      g.cell("the marked picture's opacity, [its own, composed up to the Rendered box]", [d.fmark.own, d.fmark.own], [d.fmark.own, d.fmark.composed]);
+      g.cell("the author's img wearing fv-figopen: [its classes, its computed opacity at rest]", [["keep"], "1"], [d.fimg.classes, d.fimg.opacity]);
+      const painted: Record<string, unknown> = {};
+      for (const theme of ["dark", "light"] as const) {
+        if (theme === "light") {
+          await g.page.evaluate(() => new Promise<void>((done) => { const c = (window as any).__ctl("fchip") as HTMLElement; c.addEventListener("transitionend", () => done(), { once: true }); setTimeout(done, 1500); document.body.classList.add("theme-light"); }));
+          await frames(g.page, 3);
+        }
+        const control = await paintedRatio(g.page, "fchip", "control"), mark = await paintedRatio(g.page, "fmark", "mark");
+        painted[theme] = { control, mark };
+        t.diagnostic("painted, " + theme + " theme: the control " + control.dash + " over " + control.ground + ", " + control.ratio.toFixed(3) + ":1 (opacities on the way: " + (control.opacities.join(", ") || "none") + "); the mark " + mark.dash + " against " + mark.ground + ", " + mark.ratio.toFixed(3) + ":1 (the worst read: " + mark.at + ")");
+        g.cell("painted, " + theme + " theme: the web control inside the author's span at 3:1 or better", true, control.ratio >= 3);
+        g.cell("painted, " + theme + " theme: the mark inside the author's span at 3:1 or better", true, mark.ratio >= 3);
+      }
+      rec.painted = painted;
+      await g.page.evaluate(() => { document.body.classList.remove("theme-light"); });
+      for (const alt of ["fchip", "fmark"]) {
+        const at = await g.place(alt, 120);
+        assert.ok(at.inView && at.hit2 === "the picture", alt + ": its sign in view and the tap's point on the picture (a precondition): " + JSON.stringify(at));
+        await g.gesture("touch", at.pt2.x, at.pt2.y);
+        g.cell("a tap on " + alt + ", its sign in view: its opens [popups, document requests]", [1, 1], opensOf(await g.opens()));
+      }
+    });
+  });
+}

@@ -4413,6 +4413,62 @@ export function viewerHtml(text: string, walk?: (token: Token) => void): string 
   if (walk) marked.walkTokens(tokens, walk);
   return marked.parser(tokens, opts);
 }
+/** The classes the page's sheets dim, every one (the file review's round 16, extra5-2): each class a rule of a sheet some page of
+ *  either host loads (ui/webview/host-sheets.mjs hostSheets) names where that rule sets an opacity under 1, a visibility other than
+ *  visible, a filter or a clip-path other than none, or an animation whose keyframes set one of those, taken from the rule's subject
+ *  (the classes of its last compound outside :not() and :has(), or, where that names none, the classes of its other compounds) and,
+ *  where the subject names only classes the figure control wears, from its other compounds as well (`.fileview-md .fv-figopen`), so
+ *  a later rule that dims the control under a class of its own puts that class here. The sanitizer keeps an author's class, no rule
+ *  of a sheet can undo an ancestor's opacity, and an author's span of one of these around a picture dimmed its outbound dress, the web
+ *  control or the mark, under the 3:1 the sheets state (tag-chip-off at 0.45: 2.00:1 dark and 1.86:1 light, by pixels) while a tap
+ *  still opened the tab; so dropDimmingClasses takes them off the markup around every figure of a file document. Held to the sheets
+ *  both ways by file-figure-open.test.ts, which derives the list by this rule and names each class the sheets dim that the list lacks
+ *  and each listed class they no longer dim, so a rule added or removed under a class moves the list in the same change. The rule
+ *  over-counts on the safe side: an opacity it cannot read as a number (a var(), a calc()) counts as under 1, and a rule on a
+ *  pseudo-element counts for its element's class. */
+const SHEET_DIM_CLASSES: ReadonlySet<string> = new Set([
+  "agent-gist-meta", "agent-steps-note", "armed", "ask-btn-primary", "ask-pair-a", "bg-await-note", "bg-caret", "bg-stop",
+  "branch-chip", "busy", "chip", "chip-interrupting", "chip-nav", "cl", "cleared", "cmd-row", "cmt-attach", "cmt-err",
+  "cmt-mail", "cmt-max", "cmt-note", "cmt-quote", "cmt-relayed-note", "cmt-send", "cmt-tick", "cmt-x", "code-copy",
+  "col-dragging", "compacting-bar-fill", "composer-note-hint", "composer-ship-dots", "ctx-bar", "ctx-caret", "ctx-clicked",
+  "ctx-icon", "ctx-item", "ctx-item-body", "ctx-item-sub", "ctx-scan", "cv", "day-divider", "diff-code", "diff-ctx", "diff-gut",
+  "diff-hunk", "disabled", "dismissing", "done", "dragging", "echo-bubble", "emoji-cats", "emoji-cell", "emoji-none",
+  "emoji-sec-h", "emoji-title", "encrypted", "expanded", "fade", "fask-awaiting-swirl", "fask-awaiting-why", "fask-bellbtn",
+  "fask-bg-body", "fask-distill", "fask-interrupting", "fask-nbody", "fask-nfile", "fask-nprod", "fask-origin-absorbed",
+  "fask-retrying", "fask-stall-body", "fask-subparked", "fask-waiton-dur", "fb-crumb-sep", "fb-crumb-up", "fc-card-detached",
+  "fcheck", "fdismiss", "feed-col", "feed-col-count", "feed-empty", "feed-sess-head", "feed-toast", "file-uri-link",
+  "fileview-btn", "fileview-btn-blocked", "fileview-busy", "fileview-dot", "fileview-gutter", "fileview-md", "fitem", "fl-empty",
+  "fl-hover-sub", "fl-mail-off", "fl-prov", "fl-sesslabel", "fl-wordmark", "fnact", "fname", "forced", "fq", "fq-arrow",
+  "freeze-badge", "fretry", "freviewed", "fs-hint", "fs-recent-head", "fs-title", "fsum-stale", "ftree-act-btn", "ftree-node",
+  "fv-cl", "fv-dead", "fv-figopen", "fv-wikilink", "fx-body", "glyph", "gone", "host-off", "host-prefix", "idle", "img-caption",
+  "img-pending", "jl-sess", "jl-switch", "jl-text", "jl-unknown", "ledger-tnode", "loading", "locate-toast", "machine", "mcount",
+  "mcp-act", "mention-more", "meta-caret", "meta-dots", "meta-item-sub", "meta-label", "mrow", "msg-del", "msg-edit", "msg-fork",
+  "msg-restorefiles", "nm", "none", "notice-act", "notice-caret", "notice-sub", "off", "on", "opening", "opening-line-dots",
+  "pane-gone", "path-full-retry", "path-load-note", "pending", "ph", "picker-action", "picker-be-opt", "picker-browse",
+  "picker-dir", "picker-lifted", "rail-day", "rail-sticky", "repeat", "resolved", "rewound", "rl-dots", "romp-acted",
+  "romp-bubble", "romp-tl-tip", "rs-dragging", "rs-fastin", "rs-jrow", "rs-login-rm", "rs-off", "rs-pane-gone", "rs-row",
+  "rs-stale-toast", "rs-widget", "rs-widget-demo", "scroll-mark", "sel", "send-held", "sending", "sess-exit", "slash-arg",
+  "slash-key-hint", "sn-applying", "sn-known", "sn-trust", "snap-act", "snap-count", "snap-note", "snap-sess", "st-cleared",
+  "tab", "tab-close", "tab-closed", "tab-compacting-fill", "tab-dot", "tab-group-count", "tab-group-head", "tab-label",
+  "tag-chip-off", "tg-child", "tg-last", "thinking", "tool-fold-toggle", "toolgroup-caret", "turn", "turn-elapsed",
+  "turn-toolgroup", "tx-gap-glyph", "tx-starting-swirl", "typing", "undelivered-bubble", "undo-dots", "user-bubble",
+  "user-img-path", "ut-file", "ut-link", "warn-toast", "wt-empty", "wt-file", "wt-link", "wt-notice", "wt-sess"
+]);
+/** A file document's figures with the dimming classes (SHEET_DIM_CLASSES) taken off the author's markup around them: on the
+ *  sanitizer's body, before any pass of the viewer's own, each img and each svg image, and every element above it up to the body,
+ *  lose every listed class and keep their others. An svg image too, since the fence pass below makes an HTML img of one split across
+ *  a fence's lines, and before that pass, since the viewer's own code rows and Copy buttons wear listed classes and are made there;
+ *  before the anchors' pass too, which gives a dead link its own fv-dead. Its cost: an author's element of a page class around a
+ *  picture loses what that class gave it. The chat's md() does not run it (md-sanitize.ts is unchanged), and an author element laid
+ *  over a figure rather than around it is the one gate's to refuse (signUncovered: a covered sign opens nothing). */
+function dropDimmingClasses(root: Element): void {
+  root.querySelectorAll("img, image").forEach((fig) => {
+    for (let e: Element | null = fig; e && e !== root; e = e.parentElement) {
+      const dim = (e.getAttribute("class") || "").split(/\s+/).filter((c) => SHEET_DIM_CLASSES.has(c));
+      if (dim.length) e.classList.remove(...dim);
+    }
+  });
+}
 // Markdown rendered as the prose it means (the user 2026-08-09: Rendered is the default, Raw one click
 // away). The file is arbitrary bytes off a disk and marked emits raw HTML verbatim, so, exactly like the
 // chat's md() in render.ts, the output goes through the shared sanitizer (sanitizeMd, md-sanitize.ts)
@@ -4459,6 +4515,7 @@ function mdBlock(text: string, doc?: MdDocLoc): HTMLElement {
   // above renders as literal text, so the slug takes the tag's characters too (md-results-b), where GitHub reads the
   // tag as HTML (results).
   const clean = sanitizeMd(dirty, mintHeadingIds);   // the sanitized <body>: DOMPurify's own document's, which never loads (below)
+  if (doc && doc.kind === "file") dropDimmingClasses(clean);   // an author's dimming class off every figure's ancestors, before any pass of the viewer's own (dropDimmingClasses)
   // Fenced blocks: highlight only a language the fence NAMES and this bundle registers (the same no-guessing rule as
   // langFor; an unnamed block stays plain rather than being painted at random). Then, for EVERY fence, named or not, the
   // chat's own dress (code-block.ts): the per-line rows that number the lines and make a soft-wrap read distinctly from a

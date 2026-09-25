@@ -428,3 +428,117 @@ test("the Mouse census's bound, recorded: a Mouse reached through an alias, a de
   ];
   assert.deepEqual(BOUND.map(([shape, statement]) => [shape, plantRead(statement)]), BOUND.map(([shape]) => [shape, [0, 0]]), "each shape outside the read, [shape, [calls read, calls read with the key]] (a property pin recording the bound)");
 });
+
+// ── the dimming classes, both ways (the file review's round 16, extra5-2) ── The sheets say every state from which a gesture opens a web
+// picture's tab paints its outbound dress at 3:1 or better; an author's span of a page class around the picture (tag-chip-off at 0.45)
+// dimmed the dress under it while a tap still opened the tab, and no rule of a sheet undoes an ancestor's opacity. So file-view.ts
+// drops every class the sheets dim from the author's markup around each figure of a file document (dropDimmingClasses over
+// SHEET_DIM_CLASSES), and the list is held here to every sheet a page of either host loads (SHEETS, hostSheets), derived by the rule
+// SHEET_DIM_CLASSES's docstring states and compared both ways: a class the sheets dim that the list lacks, and a listed class they no
+// longer dim, each named. The derivation's reads are armed by planted rules in the same test. The open leg
+// (file-figure-open-browser.test.ts) reads the drop's effect by pixels and file-view-outline.test.ts runs it over the stand-in.
+/** `s` split at `ch` where no parenthesis, bracket or quote is open. */
+function splitTop(s: string, ch: string): string[] {
+  const out: string[] = [];
+  let depth = 0, cur = "", quote: string | null = null;
+  for (const c of s) {
+    if (quote) { cur += c; if (c === quote) quote = null; continue; }
+    if (c === '"' || c === "'") { quote = c; cur += c; continue; }
+    if (c === "(" || c === "[") depth++;
+    else if (c === ")" || c === "]") depth--;
+    if (c === ch && depth === 0) { out.push(cur); cur = ""; } else cur += c;
+  }
+  out.push(cur);
+  return out;
+}
+/** The properties a declaration block sets that dim what they apply to: an opacity under 1 (one it cannot read as a number, a var() or a
+ *  calc(), counted as under, the safe side), a visibility other than visible (or inherit, initial, unset, revert), a filter or a clip-path
+ *  other than none, and an animation naming keyframes that set one of those (`keyframes`). */
+function dimsOf(body: string, keyframes: ReadonlySet<string>): string[] {
+  const hits: string[] = [];
+  for (const d of splitTop(body, ";")) {
+    const at = d.indexOf(":");
+    if (at < 0) continue;
+    const p = d.slice(0, at).trim().toLowerCase(), v = d.slice(at + 1).trim().toLowerCase().replace("!important", "").trim();
+    if (p === "opacity") { const m = /^([0-9.]+)(%?)$/.exec(v); if (!m || parseFloat(m[1]) / (m[2] ? 100 : 1) < 1) hits.push("opacity " + v); }
+    else if (p === "visibility") { if (!["visible", "inherit", "initial", "unset", "revert"].includes(v)) hits.push("visibility " + v); }
+    else if (p === "filter" || p === "-webkit-filter" || p === "clip-path" || p === "-webkit-clip-path") { if (v !== "none") hits.push(p + " " + v); }
+    else if (p === "animation" || p === "animation-name") { for (const k of v.split(/[\s,]+/)) if (keyframes.has(k)) hits.push("animation " + k); }
+  }
+  return hits;
+}
+const keyframesOf = (chain: string[]): string | undefined => chain.map((c) => (/^@(?:-webkit-)?keyframes\s+(\S+)/i.exec(c) || [])[1]).find(Boolean);
+/** `sel` with every :not(...) and :has(...) taken out, their arguments with them. */
+function withoutNotHas(sel: string): string {
+  let s = sel;
+  for (let m = /:(?:not|has)\(/.exec(s); m; m = /:(?:not|has)\(/.exec(s)) {
+    let i = m.index + m[0].length, depth = 1;
+    for (; i < s.length && depth; i++) { if (s[i] === "(") depth++; else if (s[i] === ")") depth--; }
+    s = s.slice(0, m.index) + s.slice(i);
+  }
+  return s;
+}
+/** Every class the sheets dim by SHEET_DIM_CLASSES's rule, each with the rules that dim it (sheet, selector, what dims): the keyframes
+ *  that dim first, then each rule outside a keyframes block that dims, and from each of its selectors the subject's classes (the last
+ *  compound's, outside :not() and :has()), or the other compounds' where the subject names none, and the other compounds' too where the
+ *  subject names only classes the control wears (`control`). */
+function dimmingClasses(sheets: Array<{ name: string; css: string }>, control: ReadonlySet<string>): Map<string, string[]> {
+  const rules = sheets.flatMap((s) => cssRules(s.css).map((r) => ({ ...r, sheet: s.name })));
+  const keyframes = new Set<string>();
+  for (const r of rules) { const k = keyframesOf(r.chain); if (k && dimsOf(r.body, new Set()).length) keyframes.add(k); }
+  const out = new Map<string, string[]>();
+  const add = (c: string, why: string): void => { out.set(c, [...(out.get(c) || []), why]); };
+  const CLASS = /\.(-?[_a-zA-Z][_a-zA-Z0-9-]*)/g;
+  for (const r of rules) {
+    if (keyframesOf(r.chain)) continue;
+    const hits = dimsOf(r.body, keyframes);
+    if (!hits.length) continue;
+    for (const one of splitTop(r.selector, ",")) {
+      const sel = one.trim(), compounds = withoutNotHas(sel).trim().split(/\s*[>+~]\s*|\s+/).filter(Boolean);
+      const subject = [...(compounds[compounds.length - 1] || "").matchAll(CLASS)].map((m) => m[1]);
+      const others = compounds.slice(0, -1).flatMap((c) => [...c.matchAll(CLASS)].map((m) => m[1]));
+      const why = r.sheet + ": " + sel + " (" + hits.join(", ") + ")";
+      for (const c of subject.length ? subject : others) add(c, why);
+      if (subject.length && subject.every((c) => control.has(c))) for (const c of others) add(c, why + ", above the control");
+    }
+  }
+  return out;
+}
+/** The list's drift from the sheets: the classes they dim that the list lacks, each with its first rule, and the listed classes they do not dim. */
+function dimDrift(derived: Map<string, string[]>, listed: ReadonlySet<string>): { missing: string[]; stale: string[] } {
+  return { missing: [...derived.keys()].filter((c) => !listed.has(c)).sort().map((c) => c + " (" + derived.get(c)![0] + ")"), stale: [...listed].filter((c) => !derived.has(c)).sort() };
+}
+/** SHEET_DIM_CLASSES read off file-view.ts's source: one array of string literals inside `new Set([` and `]);`. */
+function listedDimClasses(): Set<string> {
+  const m = /\nconst SHEET_DIM_CLASSES: ReadonlySet<string> = new Set\(\[\n([\s\S]*?)\n\]\);\n/.exec(VIEW);
+  assert.ok(m, "file-view.ts holds SHEET_DIM_CLASSES as one array of string literals (a sentence pin on the shape this read takes)");
+  const names: unknown[] = JSON.parse("[" + m![1] + "]");
+  assert.ok(names.every((n) => typeof n === "string"), "every member a string literal");
+  assert.equal(new Set(names).size, names.length, "no class listed twice");
+  return new Set(names as string[]);
+}
+/** The classes the figure control wears, read off decideFigureControl's element and the class constants: the button's two family
+ *  classes, FIGOPEN_CLASS, its float twins and FIGOPEN_WEB_CLASS. */
+function controlClasses(): Set<string> {
+  const base = /\nconst FIGOPEN_CLASS = "([\w-]+)";\n/.exec(VIEW), web = /\nconst FIGOPEN_WEB_CLASS = FIGOPEN_CLASS \+ "(-[\w-]+)";\n/.exec(VIEW);
+  const made = /el\("button", "([\w -]+?) " \+ FIGOPEN_CLASS\)/.exec(VIEW);
+  assert.ok(base && web && made && VIEW.includes('if (align === "left" || align === "right") b.classList.add(FIGOPEN_CLASS + "-" + align);'), "the control's classes: its element, the two class constants and the float twins, read off file-view.ts (a sentence pin on the spellings the read takes)");
+  return new Set([...made![1].split(" "), base![1], base![1] + "-left", base![1] + "-right", base![1] + web![1]]);
+}
+test("the dimming classes, a two-way pin (the file review's round 16, extra5-2): SHEET_DIM_CLASSES in file-view.ts, the classes dropDimmingClasses takes off the author's markup around a figure, equals the classes every sheet a page of either host loads dims, derived by the rule its docstring states (an opacity under 1, one not read as a number counted as under, a visibility other than visible, a filter or a clip-path other than none, or an animation whose keyframes set one; the subject's classes outside :not() and :has(), else the other compounds', and the other compounds' too above the control's own classes); each class the sheets dim that the list lacks, and each listed class they no longer dim, is named; the derivation's reads are armed by planted rules, one per property, the keyframes and the clause above the control, and by a class taken off the list and one put on it, each named in the drift, with controls of the same properties that dim nothing (a property pin over the derived set against the list; green at the head the file review's round 16 read by design, which had no list; red with a class taken off the list and with a dimming rule added to a sheet under a class the list lacks)", () => {
+  const listed = listedDimClasses(), control = controlClasses();
+  const derived = dimmingClasses(SHEETS, control);
+  assert.ok(derived.size >= 200, "the derivation reads the sheets: " + derived.size + " classes (a derivation that reads nothing is red)");
+  const drift = dimDrift(derived, listed);
+  assert.deepEqual(drift.missing, [], "each class a sheet dims that SHEET_DIM_CLASSES lacks, with the rule that dims it: add it to the list, in the same change as the rule");
+  assert.deepEqual(drift.stale, [], "each class SHEET_DIM_CLASSES lists that no sheet dims now: take it off the list, in the same change as the rule");
+  // the reads armed, in this run: each planted rule's class is named missing, the controls' are not, and the list's own drift in both
+  // directions is named
+  const planted = { name: "planted", css: ".plant-op { opacity: 0.5; } .plant-var { opacity: var(--x); } .plant-vis { visibility: hidden; } .plant-filter { filter: grayscale(1); } .plant-clip { clip-path: inset(50%); } @keyframes plant-kf { from { opacity: 0; } to { opacity: 1; } } .plant-anim { animation: plant-kf 1s ease; } .plant-above .fv-figopen { opacity: 0.6; } .plant-keep { opacity: 1; } .plant-keep-vis { visibility: visible; } .plant-keep-filter { filter: none; } .plant-sub span { opacity: 0.4; }" };
+  assert.ok(control.has("fv-figopen") && listed.has("fv-figopen"), "the control's own class is one the control wears and one the list holds (the planted rule above it is read by the clause above the control alone)");
+  const withPlant = dimDrift(dimmingClasses([...SHEETS, planted], control), listed).missing.map((m) => m.split(" ")[0]);
+  assert.deepEqual(withPlant, ["plant-above", "plant-anim", "plant-clip", "plant-filter", "plant-op", "plant-sub", "plant-var", "plant-vis"], "a planted sheet's dimming classes are named missing, the rule above the control's class and the one whose subject names no class among them, and its controls (an opacity of 1, a visible visibility, a filter of none) are not (a property pin over the drift)");
+  const cut = new Set(listed); cut.delete("tag-chip-off");
+  assert.deepEqual(dimDrift(derived, cut).missing.map((m) => m.split(" ")[0]), ["tag-chip-off"], "a class taken off the list is named missing (a property pin over the drift)");
+  assert.deepEqual(dimDrift(derived, new Set([...listed, "plant-never-dims"])).stale, ["plant-never-dims"], "a class put on the list that no sheet dims is named (a property pin over the drift)");
+});

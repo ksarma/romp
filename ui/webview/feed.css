@@ -2076,7 +2076,13 @@ a.fileview-gh-note { border-style: dashed; }
    VS Code, whose editor ground the dark theme's --bg follows, the token's states clear 3:1 on a neutral editor ground up to #404040
    (3.00:1) and fall under at #414141 (2.96:1), and on a light one from #efefef (3.00:1), while the accent, the button family's colour
    and not the editor's, reads 1.35:1 under the dark theme on a light editor ground, as every accent hover there does. All of it the
-   painted-contrast ask of 2026-09-23, the press rule on the maintainer's ruling within it. Byte-equal in both sheets
+   painted-contrast ask of 2026-09-23, the press rule on the maintainer's ruling within it. An author's class on the figure or above it
+   dims none of this: every class these sheets dim is taken off the author's markup on each figure of a file and on every element
+   above it before the dress is laid (file-view.ts dropDimmingClasses over SHEET_DIM_CLASSES, the list held to these sheets both ways
+   in file-figure-open.test.ts; the file review's round 16, extra5-2: an author's span of tag-chip-off, 0.45, painted the dress at
+   2.00:1 dark and 1.86:1 light while a tap opened the tab). An author's element laid over the figure, not above it, is no state a
+   gesture opens the tab from, since the one gate refuses a gesture while anything covers the sign (file-view.ts signUncovered), and an
+   author's own link still opens its address with no dress, as it did before this follow-on. Byte-equal in both sheets
    (fileview-parity.test.ts); laid out in file-figure-open-browser.test.ts. */
 .fileview-md .fv-figopen { position: relative; z-index: 1; vertical-align: top; margin: 0; margin-inline: -28px 6px; top: 6px; padding: 3px; background: var(--bg); opacity: 0; }
 .fileview-md .fv-figopen:hover { background: var(--bg) linear-gradient(var(--accent-wash), var(--accent-wash)); }
