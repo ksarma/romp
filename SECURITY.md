@@ -149,9 +149,13 @@ and icon list) and the icons are three PNG files.
 
 Before the session cookie, the dashboard kept the serve token itself in a
 cookie named `romp_token`. The first dashboard page a browser loads after the
-upgrade signs it in and clears `romp_token` in that same response, and only
-when the cookie's value is this kernel's token: a `romp_token` that belongs to
-another romp kernel on the same host is left alone. Every browser that signs
+upgrade signs it in and clears `romp_token` in that same response, and any
+later response to a request that still carries `romp_token` beside a valid
+session cookie clears it as well. Either way the kernel clears `romp_token`
+only when its value is this kernel's token, so a `romp_token` that belongs to
+another romp kernel on the same host is left alone. A response to a request
+without a valid session cookie never clears it, so a browser that has not yet
+signed in this way still has it for that sign-in. Every browser that signs
 in this way gets the same session, so tabs that reopen together after the
 upgrade all end signed in; each of those browsers held the serve token itself,
 and the session ends, like every session, when the token is rotated. A
