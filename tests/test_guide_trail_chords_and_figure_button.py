@@ -127,13 +127,15 @@ PICTURE = ("A picture in a rendered file that comes from a file or a web address
                 "nds have none: a picture that failed to load, which opens nothing either; a `data:` picture, whose b"
                 "ytes are written into the file itself and which does not open; a picture smaller than 48 pixels on e"
                 "ither side (a badge, an inline icon), which the button would cover, and which a plain click still op"
-                "ens when neither a link nor a fold's title line holds it (a small picture from the web outside such "
-                "a line has the dashed border itself, on a mouse or trackpad while the pointer is over it, and at all"
-                " times on a phone or tablet and on a laptop with a touchscreen, since a finger gets no tooltip); and"
-                " a picture inside a link that holds more than the picture (a caption beside it), where a click follo"
-                "ws the link (a link with no address left, or an anchor that only marks a place, is not a link a clic"
-                "k can follow, so a picture inside it keeps its button and its tooltip, and a plain click opens it), "
-                "while a picture that is all its link holds keeps its button beside the link.")
+                "ens when neither a link nor a fold's title line holds it, though no key opens it, since the button i"
+                "s the keyboard's only way to a picture, and a picture that shrinks below 48 pixels as the pane narro"
+                "ws loses its button and that way with it (a small picture from the web outside such a line has the d"
+                "ashed border itself, on a mouse or trackpad while the pointer is over it, and at all times on a phon"
+                "e or tablet and on a laptop with a touchscreen, since a finger gets no tooltip); and a picture insid"
+                "e a link that holds more than the picture (a caption beside it), where a click follows the link (a l"
+                "ink with no address left, or an anchor that only marks a place, is not a link a click can follow, so"
+                " a picture inside it keeps its button and its tooltip, and a plain click opens it), while a picture "
+                "that is all its link holds keeps its button beside the link.")
 PICTURE_HEAD = PICTURE[:PICTURE.index("; a plain click")]
 PICTURE_NONE = PICTURE[PICTURE.index("a figure waiting behind"):]
 # the guide's condition clause for the Back and Forward pair, the browser plan's matching clause, and the one line of openFileView both claim

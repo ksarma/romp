@@ -578,7 +578,9 @@ answered for a picture, four kinds have none: a picture that failed to load, whi
 nothing either; a `data:` picture, whose bytes are written into the file itself and which
 does not open; a picture smaller than 48 pixels on either side (a badge, an inline icon),
 which the button would cover, and which a plain click still opens when neither a link nor
-a fold's title line holds it (a small picture from the web outside such a line has the
+a fold's title line holds it, though no key opens it, since the button is the keyboard's
+only way to a picture, and a picture that shrinks below 48 pixels as the pane narrows
+loses its button and that way with it (a small picture from the web outside such a line has the
 dashed border itself, on a mouse or trackpad while the
 pointer is over it, and at all times on a phone or tablet and on a laptop with a
 touchscreen, since a finger gets no tooltip); and a picture inside a link that holds more

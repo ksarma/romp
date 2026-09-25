@@ -8381,7 +8381,15 @@ control names the host in its title and aria-label and wears `fv-figopen-web` be
 rule for an open that leaves for another host, the picture's own title carrying the address after an author's title
 (its origin alone through `shownAddress`, since the fixes for the file review's round 15, extra9-2, and the withheld
 address, `FIGURE_ADDRESS_WITHHELD`, in the title and in the control's words, `FIGURE_OPEN_WEB_WITHHELD`, when the source
-appears to carry a sign-in, `figureSourceCredentialed`, since the fixes for the same round's correctness-1), the
+appears to carry a sign-in, `figureSourceCredentialed`, since the fixes for the same round's correctness-1, whose docstring
+in file-view.ts is the at-sign rule's one home: the rule, its cost and its two stated boundaries stand there, and the rule
+replaced the disclosed residual of two credential spellings the parser reads with no sign-in part, withdrawn at the file
+review's round 15; the cost, in this record's words: every address with an at sign anywhere after its scheme is withheld
+wherever it would show, a harmless `https://cdn/img/a@2x.png`, a profile path such as
+`https://social.example/@api/avatar.png`, a relative `a@2x.png` on a URL document and a workspace file name with a colon
+before an at sign among them, and so is a source whose escapes nest past the decode's eight passes (the file review's round
+16, regression-2), an address missing from a tooltip or a label, with no privacy or activation effect; the file review's
+round 16, extra7-2: Slice 7's two pointers to this record found neither the rule nor its cost here), the
 dress re-decided with the control (`dressFigureControl`; the file review's round 11, ui-1 with extra8-1: a remote and a
 local picture had presented one surface before the click); `button.fileview-btn.fileview-icon.fv-figopen`, the words in its
 title and aria-label, found by its mark
@@ -8536,7 +8544,10 @@ placeholder's click, a settings change restoring it, the chat page's heal landin
 figures are the web's. Two more shapes get none, the review's round 1 (a control the sheets' fixed margins laid over a
 figure's neighbours took the clicks meant for them, itself transparent): a figure under 48 CSS px on either side
 (`FIGOPEN_MIN_PX`: the control's 22px box, its 6px inset and as much figure again; a badge, an inline icon, whose
-plain click still opens them where no link holds them, and a picture from the web among them wears the control's dashed dress
+plain click still opens them where no link holds them, a local one in this viewer and one from the web in a tab only while its
+mark is in view and uncovered, which a pointer's click on the picture meets, while no key opens them, since the control is the
+keyboard's one route to a figure, and a figure a reflow narrows under the floor loses its control and that route with it (the
+file review's round 16, ui-2: the limit had been stated nowhere), and a picture from the web among them wears the control's dashed dress
 itself, an outline the sheets key on the mark the decision sets right after the title (`data-fv-figweb`, `dressFigureMark`), on
 hover on a fine pointer and at rest where hover is none or any pointer is coarse, in the outbound dress's own token, `--outbound-line`,
 the one the control's dashed border wears at rest (the file review's round 13, ui-1 with extra6-1), over a ring of the page's own ground
@@ -9185,9 +9196,15 @@ Playwright browser).
    (`![[Note]]`) the contract lists among the pushes was not driven, the wikilink (`[[Note]]`) was; the Waiting pane's
    links and the file browser's rows are outside by construction (no tag) and were not driven, the Files pane's relay
    and Recent rows were; desktop Firefox and Safari were not run.
-7. Discoverability. On a hover-capable device the control is transparent until the pointer is over the picture or the
-   button holds the focus; the plain click on the picture is the other door, and the guide says so. Whether the control
-   should show at rest is a ruling.
+7. Discoverability. On a device whose primary pointer hovers and none of whose pointers is coarse, the control is
+   transparent at rest: the pointer over the picture or the button shows it, a focus reached from the keyboard shows it,
+   and the web control shows under any focus, while a Cmd/Ctrl-click or a press dragged off a local button leaves that
+   button focused but hidden until a key is pressed, so the next Enter opens its picture with nothing shown first. A
+   phone, a tablet or a touchscreen laptop keeps the control visible at rest. The plain click on the picture is the other
+   door, for a picture from the web only while its control or mark is in view and uncovered (L3), and the guide says so.
+   Whether the control should show at rest is a ruling (the file review's round 16, ui-1: this point had said that on any
+   hover-capable device the control was transparent until the pointer or a focus, false for the focused local button and
+   for a touchscreen laptop, whose primary pointer hovers).
 8. The plan's two follow-on sections. The print follow-on (branch filereview-print, in flight) appends its section at
    the same place, after "## Out of scope", and its pin requires its section to be the plan's last; this section's pin
    requires only that it follows "## Out of scope", so when both land this section goes before the print one.
