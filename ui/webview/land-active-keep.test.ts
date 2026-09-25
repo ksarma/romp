@@ -382,8 +382,9 @@ test("the nothing-armed re-show of the view already on screen, inside the same f
 
 // A DEEP LINK FROM A READER SCROLLED UP IN HISTORY, its fetch armed (the base's behaviour, which this change keeps). A deep link with a time
 // into history the page does not hold asks for a window, and its pre-jump (preJumpIntoGap) writes the reader into the gap where the target
-// will be; the land then misses, because the target comes with the reply, and the fallback puts the row the reader stood on back at its offset
-// over the take in the same pass (PR 861's restore). Whatever ends the landing then starts from the reader's place: the reply lands the anchor;
+// will be; the land then misses, because the target comes with the reply, and when a row was captured at the reader's place the fallback puts
+// it back at its offset over the take in the same pass (PR 861's restore; with no row there, the raw road above, the pre-jump stands, as
+// before PR 861). Whatever ends the landing then starts from the reader's place: the reply lands the anchor;
 // a fault or a missing reply writes back the origin the pre-jump recorded (chatWindow), which moves nothing in the landing lab's road 17; and
 // while no answer comes, as after a relay socket that drops once the ask is out (nothing on the page ends the landing then), the reader stays
 // there (the lab's road 2 while its ask is held). The change that let the pre-jump stand through the armed fetch was withdrawn in the
