@@ -8,7 +8,7 @@
 //
 //   1. --record <app> --seconds N --out /tmp/…/frames.jsonl
 //      Connect to the LIVE kernel's WebSocket exactly as the browser page does (the shim's own query:
-//      app, delta=1, iid; the token as the romp_token cookie with a same-origin Origin header; the
+//      app, delta=1, iid; the serve token as ?token= on the dial, with a same-origin Origin header; the
 //      {type:"ready"} handshake) and save every frame the kernel sends, with a receive timestamp, as
 //      JSONL. The client is read-only: it sends the ready handshake and nothing else (the ws library
 //      answers protocol pings, which the kernel's liveness check needs). Recorded frames are REAL

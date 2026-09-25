@@ -45,8 +45,10 @@ class TokenLoginPage(unittest.TestCase):
         flat = " ".join(HTML.split())
         low = flat.lower()
         self.assertIn("lost its saved sign-in", low)
-        for case in ("cleared site data", "a private window", "clears a site's storage"):
+        for case in ("cleared site data", "a private window", "clears a site's storage", "added to the home screen"):
             self.assertIn(case, low)
+        self.assertIn("in an app on the home screen, paste the token here", low,
+                      "an installed app keeps storage of its own, and pasting the token is the way it signs in")
         self.assertIn("run <code>romp url</code>", flat, "the link that signs a browser in")
         self.assertIn("run <code>romp</code> there to open a signed-in window", flat, "the window a bare romp opens")
 
