@@ -20934,10 +20934,12 @@ class SdkBackend:
         whose row the object minted from a progress frame that carried no type (the mirror lacked the row), since a row of
         a type never learned is no Task agent's by _bg_row_is_agent. That last one is left on purpose: resolving an id no
         type vouches for walks every sibling session's subagents tree in the project directory when the file is not in
-        the session's own, and on the largest project directory measured (2026-09-25, ten runs) such a miss cost 101 to
-        134 ms at its first walk and a median of 19 to 33 ms for each new id after it, more than the 50 ms bound set for a
-        cycle's resolution (the witness: tests/test_record_cache_agent_end.py,
-        test_residual_a_task_agent_row_of_a_type_never_learned_queues_no_end). Their entries fall to the quiescent drop,
+        the session's own, and on the largest project directory measured (2026-09-25) such a miss cost 101 to 134 ms at its
+        first walk (thirteen runs), and a median of 84 to 89 ms at each later cycle's walk once the jobs pass had dropped the
+        sibling trees no alive session owns (_subagent_trees_forget; three runs of ten walks), both more than the 50 ms
+        bound set for a cycle's resolution; a further new id in the same cycle, with the trees still held, cost a median of
+        19 to 34 ms (thirteen runs). The witness: tests/test_record_cache_agent_end.py,
+        test_residual_a_task_agent_row_of_a_type_never_learned_queues_no_end. Their entries fall to the quiescent drop,
         the count cap or the byte budget.
         An agent can be queued as ended more than once (its stop and its task's end). In one batch the kernel acts on the
         agent's last event only. A later end, in a later cycle, finds the entry gone or a restored tail weighing nothing when
