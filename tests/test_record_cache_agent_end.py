@@ -5,14 +5,18 @@ The kernel folds a running agent's transcript within seconds of each append (the
 command through it, the agent head steps it), so the quiescent drop, which pops only at a fold that steps records over a
 file unchanged for 120 s, never fires for it; after the agent ends every fold is a hit, which never pops, and the whole
 entry stayed until the count cap evicted it. On a long-lived kernel those entries were most of the cache's non-leaf held
-bytes. The SDK backend knows the end exactly: the agent leaves its session's live set on SubagentStop, its own task's end,
-its workflow slot's done or error state, a re-minted slot, the run's end, the CLI's reconnect teardown, or the CLI's end (a
-kill, a crash; not a detach, where the CLI lives on under its host). Each of those ends queues the agent, the agent's own
-end events even on a session object that never saw it start (the object that reattaches after a kernel restart under a
-session host); the pusher drains the queue at its next cycle's start and releases the agent's entry, writing the file's
-checkpoint document first when it lacks what the cache holds, so a later fold whose cursor the document records restores a
-zero-weight tail instead of reading the file whole. A file no fold holds a recordable cursor for is released without a
-document and read whole at its next fold; a file that no longer exists is released with nothing written.
+bytes. The SDK backend knows the end exactly: the agent leaves its session's live set on SubagentStop, its own task's end
+or a turn-end report that lists its Task row as ended, its workflow slot's done or error state, a re-minted slot, the run's
+end, the CLI's reconnect teardown, or the CLI's end (a kill, a crash; not a detach, where the CLI lives on under its host),
+and, for a CLI that died with an earlier kernel, the boot reconcile or a comment thread's wake over the reg's mirror
+(SdkBackend.note_agent_live's docstring states the roads in full, with the agents no end is queued for). Each of those ends
+queues the agent, the agent's own end events even on a session object that never saw it start (the object that reattaches
+after a kernel restart under a session host); the pusher drains the queue at its next cycle's start and releases the
+agent's entry, writing the file's checkpoint document first when it lacks what the cache holds, so a later fold whose
+cursor the document records restores a zero-weight tail instead of reading the file whole; an end seen before any fold
+holds the file is remembered and the file is released at the first cycle after a read holds it. A file no fold holds a
+recordable cursor for is released without a document and read whole at its next fold; a file that no longer exists is
+released with nothing written.
 
 Synthetic data only: a notes-api project under a temp root, placeholder ids, a private sid, hostname TESTHOST.
 """
@@ -644,7 +648,7 @@ class AgentEnd(unittest.TestCase):
 
     def test_a_start_after_an_unheld_end_keeps_the_records(self):
         """The guard: the agent starts again after an end that found nothing held, and its file is read whole while it runs.
-        The start forgets the end in its own cycle, so the running agent keeps its records then and at every later cycle. A
+        The start forgets the end in its own cycle; the running agent keeps its records then and at the cycle after. A
         start that did not forget it would be caught at the cycle after the start's: in the start's own cycle the batch
         speaks for the agent, and the remembered end is not paid then either way."""
         self._end_before_any_read()
@@ -721,9 +725,9 @@ class AgentEnd(unittest.TestCase):
                          "the end forgotten past the bound counts nothing: it held nothing when it was last paid")
 
     def test_an_owed_release_taken_for_a_path_forgets_its_unheld_ends(self):
-        """Any release that pops a remembered end's path forgets that end. The owed pay's road is reached when another end
-        of the same file was owed while this one found nothing held (a concurrent pop in between), so the pay is stubbed to
-        report that release taken."""
+        """An owed release taken for a remembered end's path forgets that end. The owed pay's road is reached when another
+        end of the same file was owed while this one found nothing held (a concurrent pop in between), so the pay is stubbed
+        to report that release taken."""
         km._AGENT_ENDED_UNHELD[(OTHER_SID, AID)] = self.agent            # an end remembered for the file
         real = em.checkpoint_pay_owed_releases
         em.checkpoint_pay_owed_releases = lambda: {self.agent: "released"}
@@ -732,6 +736,23 @@ class AgentEnd(unittest.TestCase):
         finally:
             em.checkpoint_pay_owed_releases = real
         self.assertNotIn((OTHER_SID, AID), km._AGENT_ENDED_UNHELD, "the path's release forgot the remembered end")
+
+    def test_a_remembered_release_that_pops_a_path_forgets_the_other_ends_remembered_for_it(self):
+        """The remembered releases' road of the rule that a release popping a path forgets every end remembered for that path
+        (kernel._forget_unheld_paths over the paths popped in the cycle): two ends remembered for one file, a whole read, one
+        cycle. The first remembered end's release pops the file; the second's then finds nothing held and would stay
+        remembered, and the popped path forgets it. A batch end's release adds its path to the popped paths too, and that is
+        reached only when the remembered releases before it did not pop the path. Red when the popped paths forget nothing:
+        the second end stays remembered."""
+        km._AGENT_ENDED_UNHELD[(SID, WF_AID)] = self.agent               # two ends remembered for one file
+        km._AGENT_ENDED_UNHELD[(OTHER_SID, AID)] = self.agent
+        em._read_jsonl_incremental(self.agent)                           # a whole read holds it
+        size = os.path.getsize(self.agent)
+        self.assertEqual(self._weight(self.agent), size, "precondition: the read holds the whole file")
+        km._begin_checkpoint_cycle()
+        self.assertIsNone(self._weight(self.agent), "released at the cycle after the read")
+        self.assertEqual(self._stat("released"), {"agentEnded": {"count": 1, "bytes": size}}, "by one release")
+        self.assertEqual(km._AGENT_ENDED_UNHELD, {}, "the popped path forgot both remembered ends")
 
     # ---- an agent's later end after its earlier release was taken (PR 913 round 1, the texts' account of two ends) ----
     # An agent reports two ends (its stop and its task's end, or its workflow slot's done state), and the second can reach a
@@ -1404,7 +1425,7 @@ class AgentEnd(unittest.TestCase):
 
     def test_a_dropped_end_whose_agent_the_batch_speaks_for_later_is_not_released_by_the_drop(self):
         """A dropped end is released at the drain only when the batch holds no later event for its agent: a later start keeps
-        the agent's records, and a later end is the one that releases."""
+        the agent's records (a later end releasing is pinned by test_a_dropped_stop_whose_task_end_releases_counts_nothing_lost)."""
         size = self._fold_while_running(AID, self.agent)
         km._begin_checkpoint_cycle()
         self.be._AGENT_LIVE_MAX = 2
@@ -1648,12 +1669,15 @@ CENSUS_QUEUE_CALLS = {"_note_live_agents": 1, "note_agent_live": 2}   # the call
 MIRROR, SESSIONS = "bgTasks mirror", "sessions"
 Q, X, ADD, DROP = "QUEUES", "EXEMPT", "ADD", "DROP"
 SB = "kernel/sdk_backend.py"
-_MARKER = "a marker set over _bg_tasks rows: the row stays (a start or progress frame) or leaves at a _bg_tasks pop"
+_MARKER = "a marker set over _bg_tasks rows"
+_TASK_EVENT_MARKER = _MARKER + ": the row stays (a start or progress frame) or leaves at the task end's _bg_tasks pop"
+_REPORT_MARKER = (_MARKER + ": a retired row leaves at one of this function's _bg_tasks pops, and every other row stays in "
+                  "_bg_tasks")
 _ROW_ADDED = "a _bg_tasks row added, guarded by the id's absence"
 _ENDS_QUEUED = ("the record of ends already queued: it names no live agent, and a repeated end is harmless (in the cycle of "
                 "an earlier attempt it counts nothing; with the drop writes off a repeat in a later cycle counts again)")
-_GONE_ROAD = ("kernel/sdk_backend.py SdkBackend._on_session_gone queues every agent the dropped object knows before this drop "
-              "or after its thread ends")
+_GONE_ROAD = ("SdkBackend._on_session_gone, which queues every agent the dropped object knows when it is not detached, before "
+              "this drop or after its thread ends")
 # (file, enclosing function, structure, operation) -> one (verdict, the executed road test that proves it, or the reason) per
 # site, in source order. QUEUES: the site's function calls _note_live_agents(..., False) or note_agent_live(..., False)
 # after a removal of a _subagents entry, a _bg_tasks row or a roster, and anywhere for a mirror write; ADD: a call with
@@ -1671,8 +1695,8 @@ RELEASE_CENSUS = {
     (SB, "SdkSession._drop_live_work", "_wf_ended", "clear"): [(X, _ENDS_QUEUED)],
     (SB, "SdkSession._drop_live_work", "_bg_tasks", "clear"): [
         (Q, "test_a_reattached_objects_seeded_agent_row_ends_when_its_cli_is_torn_down")],
-    (SB, "SdkSession._drop_live_work", "_seeded_tasks", "clear"): [(X, _MARKER + ", cleared with the rows")],
-    (SB, "SdkSession._drop_live_work", "_reported_tasks", "clear"): [(X, _MARKER + ", cleared with the rows")],
+    (SB, "SdkSession._drop_live_work", "_seeded_tasks", "clear"): [(X, _MARKER + ", cleared with the rows (the _bg_tasks clear)")],
+    (SB, "SdkSession._drop_live_work", "_reported_tasks", "clear"): [(X, _MARKER + ", cleared with the rows (the _bg_tasks clear)")],
     (SB, "SdkSession._drop_live_work", MIRROR, "_update_reg"): [
         (Q, "test_a_reattached_objects_seeded_agent_row_ends_when_its_cli_is_torn_down")],
     (SB, "SdkSession._reconcile_workflow_agents", "_wf_slots", "setitem (alias)"): [
@@ -1682,8 +1706,8 @@ RELEASE_CENSUS = {
     (SB, "SdkSession._reconcile_workflow_agents", "_wf_ended", "pop"): [(X, _ENDS_QUEUED)],
     (SB, "SdkSession._reconcile_workflow_agents", "_subagents", "pop"): [
         (Q, "test_a_workflow_agent_is_released_when_its_slot_reports_done")],
-    (SB, "SdkSession._on_task_event", "_seeded_tasks", "discard"): [(X, _MARKER)],
-    (SB, "SdkSession._on_task_event", "_reported_tasks", "discard"): [(X, _MARKER)],
+    (SB, "SdkSession._on_task_event", "_seeded_tasks", "discard"): [(X, _TASK_EVENT_MARKER)],
+    (SB, "SdkSession._on_task_event", "_reported_tasks", "discard"): [(X, _TASK_EVENT_MARKER)],
     (SB, "SdkSession._on_task_event", "_bg_tasks", "setitem"): [(X, _ROW_ADDED)],
     (SB, "SdkSession._on_task_event", "_bg_tasks", "setitem (alias)"): [(X, "a field of a standing row")] * 4,
     (SB, "SdkSession._on_task_event", "_bg_tasks", "pop"): [
@@ -1698,10 +1722,8 @@ RELEASE_CENSUS = {
         (Q, "test_a_reattached_objects_seeded_agent_row_ends_when_the_report_lists_it_ended"),
         (X, "a row the report omits: only a shell reaches it (report_absence_decides), and a shell names no agent; the type "
             "test runs over both retired lists, so this stays right if the predicate widens")],
-    (SB, "SdkSession._reconcile_seeded_with_report", "_seeded_tasks", "clear"): [
-        (X, _MARKER + ", or stays in _bg_tasks")],
-    (SB, "SdkSession._reconcile_seeded_with_report", "_reported_tasks", "difference_update"): [
-        (X, _MARKER + ", or stays in _bg_tasks")],
+    (SB, "SdkSession._reconcile_seeded_with_report", "_seeded_tasks", "clear"): [(X, _REPORT_MARKER)],
+    (SB, "SdkSession._reconcile_seeded_with_report", "_reported_tasks", "difference_update"): [(X, _REPORT_MARKER)],
     (SB, "SdkSession._reconcile_seeded_with_report", MIRROR, "_update_reg"): [
         (Q, "test_an_adopted_agent_row_ends_when_a_later_report_lists_it_ended")],
     (SB, "SdkBackend._boot_reconcile", MIRROR, "setitem"): [
@@ -1900,8 +1922,8 @@ class ReleaseCensus(unittest.TestCase):
     the census's (CENSUS_NOT_COVERAGE, which the failure message carries). kernel/kernel.py holds no session structure,
     and the census finds nothing there.
     Shown red before it was relied on (2026-09-25), and kept red by the test_the_census_reds_* tests below: a clear of
-    _subagents in a new function of SdkSession with no queue call; a second _bg_tasks clear inside
-    SdkBackend._on_session_gone, a function already listed, whose queue call follows it; the queue call removed from
+    _subagents in a new function of SdkSession with no queue call; a _bg_tasks clear planted in SdkBackend._on_session_gone,
+    a function already listed, ahead of its queue call; the queue call removed from
     _reconcile_seeded_with_report, whose sites are recorded QUEUES; and a tree in which it finds nothing."""
 
     @classmethod
