@@ -427,8 +427,11 @@ test("in a browser, the chat modal with the page's heal: a failed web picture wh
   const planted = ["user:", "pw16", "?" + TOK, V("HQ")];
   const served: string[] = [];
   const remote = await remoteServer(served);
+  const seen: Array<[string, string | null]> = [];   // [cell, label] for every cell that is not a control, both pages, asserted once after both
+  let ran = false;
   try {
     await inBrowser(t, async (browser) => {
+      ran = true;
       for (const scheme of ["http", "https"] as const) {
         const mine = cells.filter(([, , s]) => s === scheme);
         const note = "# Report\n\n" + mine.map(([n, h], i) => "Case " + i + " (" + n + "): " + h + " end.").join("\n\n") + "\n";
@@ -461,10 +464,8 @@ test("in a browser, the chat modal with the page's heal: a failed web picture wh
           assert.equal(rows.length, mine.length, "one paragraph per cell");
           // the precondition: the heal parked each failed img (no src, md-img-failed, the resolved address in data-md-src)
           assert.deepEqual(rows.map((r) => [r.parked, r.src, !!r.mdSrc]), mine.map(() => [true, false, true]), "the heal parked every failed figure before the label was read");
-          // FAILS BEFORE the fix: the five cells that are not controls read FIGURE_FAILED + " the source is empty"; and at the head the
-          // file review's round 16 read, the four empty destinations read FIGURE_FAILED + " http://notes-api.test (diagram)" (or https), the
-          // page's own origin (correctness-1)
-          assert.deepEqual(rows.map((r, k) => (mine[k][4] ? null : r.label)), mine.map(([, , , w, control]) => (control ? null : FAILED + " " + w)), "each label names the heal's record as any address is named, the origin alone or the withheld address (a property pin over the label's text)");
+          // every label of a cell that is not a control, kept for the one assertion after both pages, so a red shows each page's cells
+          rows.forEach((r, k) => { if (!mine[k][4]) seen.push([mine[k][0], r.label]); });
           // the controls, green before the fix by design: the label names the candidate the browser chose, from its origin on (the path
           // after it printed before the origin cut), never the fallback src and never the empty source
           for (const [k, r] of rows.entries()) if (mine[k][4]) assert.ok((r.label || "").startsWith(FAILED + " " + mine[k][3]) && !/fallback|the source is empty/.test(r.label || ""), mine[k][0] + ": after its " + r.errs + " error events the label names the candidate's origin, not the fallback src or the empty source: " + JSON.stringify(r.label));
@@ -475,5 +476,10 @@ test("in a browser, the chat modal with the page's heal: a failed web picture wh
         } finally { await page.close(); }
       }
     });
+    if (!ran) return;   // no browser: inBrowser skipped the case loudly
+    // FAILS BEFORE the fix: the five cells that are not controls read FIGURE_FAILED + " the source is empty"; and at the head the file
+    // review's round 16 read, the four empty destinations read FIGURE_FAILED + " http://notes-api.test (diagram)", or https on the https
+    // page, the page's own origin (correctness-1)
+    assert.deepEqual(seen, (["http", "https"] as const).flatMap((sc) => cells.filter(([, , s, , control]) => s === sc && !control).map(([name, , , w]): [string, string] => [name, FAILED + " " + w])), "each label names the heal's record as any address is named, the origin alone or the withheld address, and an empty destination's says the source is empty, [cell, label] on both pages (a property pin over the label's text)");
   } finally { await remote.close(); }
 });
