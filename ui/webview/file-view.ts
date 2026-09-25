@@ -4463,8 +4463,8 @@ const SHEET_DIM_CLASSES: ReadonlySet<string> = new Set([
  *  a fence's lines, and before that pass, since the viewer's own code rows and Copy buttons wear listed classes and are made there;
  *  before the anchors' pass too, which gives a dead link its own fv-dead. Its cost: an author's element of a page class around a
  *  picture loses what that class gave it. The chat's md() does not run it (md-sanitize.ts is unchanged), and an author element laid
- *  over a figure rather than around it is the one gate's to read: dropPressThrough takes off the author's markup what would let a
- *  press pass through such an element, so a press there reaches it, and signUncovered refuses a sign under it. */
+ *  over a figure rather than around it is the one gate's to read: signUncovered refuses a sign where a press would reach such an
+ *  element, and dropPressThrough takes off the author's markup what would let a press pass through one. */
 function dropDimmingClasses(root: Element): void {
   root.querySelectorAll("img, image").forEach((fig) => {
     for (let e: Element | null = fig; e && e !== root; e = e.parentElement) {
@@ -4501,8 +4501,9 @@ function declaredProperty(decl: string): string {
   if (at < 0) return "";
   return decl.slice(0, at).replace(/\\([0-9a-fA-F]{1,6})[ \t\n\r\f]?|\\([^\n\r\f0-9a-fA-F])/g, (_, hex: string | undefined, ch: string | undefined) => (hex ? String.fromCodePoint(Math.min(parseInt(hex, 16), 0x10ffff)) : ch || "")).trim().toLowerCase();
 }
-/** A file document's author markup with what lets a press pass through an element taken off it, so the hit test at a gesture's start
- *  reads every author element a picture's sign lies under (signUncovered; the file review's round 16, extra5-1, the covered sign): on
+/** A file document's author markup with what lets a press pass through an element taken off it (the file review's round 16, extra5-1,
+ *  the covered sign), so an author element over a picture's sign that a page class, its style or the inert attribute would have let a
+ *  press pass through takes the press, and the hit test at a gesture's start reads it (signUncovered): on
  *  the sanitizer's body, before any pass of the viewer's own, every element loses the classes of SHEET_PRESS_THROUGH_CLASSES, the
  *  inert attribute (the sanitizer keeps it, and the hit test skips an inert element and everything inside it, in Chromium, Firefox and
  *  WebKit alike), and each pointer-events declaration of its style attribute (the sanitizer's colour-only rule, md-sanitize.ts
