@@ -1410,8 +1410,9 @@ _TreeRead = collections.namedtuple("_TreeRead", "table env_writes paths root key
 
 class ReadAborted(AssertionError):
     """A read of a directory (_read_root) stopped by an exception, raised in its place and from it: `where` the file
-    under the directory the read stopped at (None when it stopped before its first file) and `cause` the exception, both
-    named in the message, so the tree's read records where it aborted and why (_tree_read, _ABORTED)."""
+    under the directory the read stopped at (None when it stopped before its first file, a directory it could not list
+    among the causes) and `cause` the exception, both named in the message, so the tree's read records where it
+    aborted and why (_tree_read, _ABORTED)."""
 
     def __init__(self, where, cause):
         super().__init__("the read stopped at %s: %s: %s" % (where or "its start", type(cause).__name__, cause))
@@ -1468,18 +1469,18 @@ def _read_root(root, skip=(), listing=None, count=False):
     `root`: keys or the refusal's message}, `paths` the walked files, `root`, `keys` {path: the text key (_text_key) of
     every file the read parsed, as it parsed it}, which the parse check holds the counter to (_parse_count_faults),
     `most_trees`, and `born` ({class name: count}; None without `count`). A read that raises, a file that does not
-    parse or one removed mid-read among the causes, raises ReadAborted naming the file it stopped at and the cause,
-    chained from the cause. Nothing is memoised here: over tests/ the module run's one read is _tree_read's, and a plant is read again on
-    each call."""
+    parse, one removed mid-read or a directory it cannot list among the causes, raises ReadAborted naming the file it
+    stopped at (None when it stopped before its first file) and the cause, chained from the cause. Nothing is memoised
+    here: over tests/ the module run's one read is _tree_read's, and a plant is read again on each call."""
     listing = LISTED_BY_HAND if listing is None else listing
-    paths = _tree_module_paths(root)
-    in_walk = set(paths)
-    in_table = {os.path.join(root, name) for name in os.listdir(root) if name.endswith(".py") and name not in skip}
     roads, hermetic, compared, table_paths, env_writes, keys = {}, set(), {}, [], {}, {}
-    before = _held_alive() if count else None             # held to the loop's end, so none of it dies and no id is reused
     _MOST_FILE_TREES[0] = 0                                # the window the read's most_trees measures starts here
     at = None                                              # the file the read is on, named if it stops there
     try:
+        paths = _tree_module_paths(root)                   # the listing: a failure here stops the read at its start
+        in_walk = set(paths)
+        in_table = {os.path.join(root, name) for name in os.listdir(root) if name.endswith(".py") and name not in skip}
+        before = _held_alive() if count else None         # held to the loop's end: none of it dies, no id is reused
         for path in sorted(in_walk | in_table):
             rel = at = os.path.relpath(path, root)
             src, tree = _parse(path, rel)
@@ -3494,7 +3495,10 @@ class HermeticKernelPostal(unittest.TestCase):
         leave test_b.py and test_c.py at one parse against two). The red at the round-11 review head is the module run
         over a scratch copy of the checkout with a file under its tests/ that does not parse, whose teardown named every
         file the read never reached; here, a mutant that takes the abort out of the parse check reds this test with
-        such rows."""
+        such rows. Last, a read of a directory that does not exist (_read_root, with count) raises ReadAborted with no
+        file (where None, the message naming its start) and a FileNotFoundError as its cause, chained from it: the
+        directory's listing is inside the read's abort (the red is the head before that, whose read raised the bare
+        FileNotFoundError)."""
         d = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, d, True)
         scratch = os.path.join(d, "tests")
@@ -3528,6 +3532,14 @@ class HermeticKernelPostal(unittest.TestCase):
                          % [f[:1000] for f in faults])
         self.assertEqual(_parse_count_faults(), [], "the parse check after an aborted read and a read that completed names "
                          "no file")
+        start = "the read stopped at its start: FileNotFoundError: "
+        with self.assertRaises(ReadAborted) as caught:
+            _read_root(os.path.join(d, "absent"), count=True)
+        e = caught.exception
+        self.assertEqual((e.where, type(e.cause).__name__, e.__cause__ is e.cause, str(e)[:len(start)]),
+                         (None, "FileNotFoundError", True, start), "a read of a directory that does not exist raises "
+                         "ReadAborted with no file, its message naming its start, and a FileNotFoundError as its "
+                         "cause, chained from it")
 
     def test_the_tree_read_keeps_no_tree_and_no_bindings_and_leaves_plain_values(self):
         """THE RELEASE PIN (PR #850's review round 9, E ruled again: no tree and no Bindings object of the module
