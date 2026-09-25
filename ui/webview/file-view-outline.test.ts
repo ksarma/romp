@@ -1347,7 +1347,11 @@ test("the one rule called directly (figureSourceCredentialed, through the label 
 // ancestors and the top's visual viewport. The stand-in's layout gives a control no box and it has no getComputedStyle and no
 // clientLeft or clientTop, and a NaN answers out everywhere, so the scene fills them: the viewer's body clips on both axes at its
 // box (0 to 800 across, 100 to 300 down), its border 0, every other ancestor visible; the window is 1200 by 800 and its own parent.
-type KeyGate = { ctl: El; place: (r: Rect) => void; frame: (f: StandInFrame | null, foreign?: "null" | "throws") => void; gate: () => boolean[] };
+// The stand-in document has no elementFromPoint either, which the one gate's hit test reads since the file review's round 16
+// (extra5-1: a sign in view must be uncovered too, and a document without the read answers covered), so the scene gives it one:
+// the control for a point inside the control's placed box, the viewer's body anywhere else, or `cover`'s element when a case
+// lays one over the control.
+type KeyGate = { ctl: El; img: El; body: El; place: (r: Rect) => void; cover: (e: El | null) => void; frame: (f: StandInFrame | null, foreign?: "null" | "throws") => void; gate: () => boolean[] };
 /** A same-origin parent for the framed cells: the frame element's box and border in the parent's viewport, the parent's layout
  *  viewport, an optional wrapper around the frame element with its padding box and overflow, and the parent's visual viewport. */
 type StandInFrame = { box: Rect; border?: [number, number]; inner: [number, number]; wrap?: { box: Rect; overflow: string }; vv?: [number, number, number, number] };
@@ -1356,8 +1360,9 @@ const vvOf = (v: [number, number, number, number]) => ({ offsetLeft: v[0], offse
 /** The viewer open on one remote picture from a loaded host, its web control focused, and the region's inputs filled for the case
  *  and restored after it. `place` gives the control its box; `frame` hosts the window in a same-origin parent (a StandInFrame), in a
  *  parent of another origin (`foreign`: its frameElement reads null, or its read throws, the parent itself throwing on any read),
- *  or in none (null: the window its own parent); `gate` dispatches keydown Enter, keydown Space and keyup Space on the control and
- *  returns whether each was prevented. */
+ *  or in none (null: the window its own parent); `cover` lays an element over the control for the document's elementFromPoint (null
+ *  takes it off); `gate` dispatches keydown Enter, keydown Space and keyup Space on the control and returns whether each was
+ *  prevented. */
 async function keyGateScene(t: TestContext): Promise<KeyGate> {
   loadGatedHost("example.test", doc as unknown as ParentNode);
   t.after(() => { forgetLoadedHosts(); });
@@ -1365,7 +1370,7 @@ async function keyGateScene(t: TestContext): Promise<KeyGate> {
   const img = o.body.querySelector(".fileview-md")!.querySelectorAll("img")[0];
   const ctl = img && img.nextSibling;
   assert.ok(ctl instanceof El && ctl.hasAttribute("data-fv-figopen") && ctl.classList.contains("fv-figopen-web"), "the web control after the remote picture (the scene's premise)");
-  const saved = { gcs: (globalThis as any).getComputedStyle, wgcs: win.getComputedStyle, wdoc: win.document, wvv: win.visualViewport, parent: win.parent };
+  const saved = { gcs: (globalThis as any).getComputedStyle, wgcs: win.getComputedStyle, wdoc: win.document, wvv: win.visualViewport, parent: win.parent, efp: (doc as any).elementFromPoint };
   const cs = (e: any) => {   // the viewer's body clips (auto), every other element of the viewer's document is visible; a parent's stand-in says its own
     if (e.__throws) throw new Error("read " + e.__throws);
     const o = e instanceof El ? (e.classes.includes("fileview-body") ? "auto" : "visible") : (e.__clip || "visible");
@@ -1380,9 +1385,14 @@ async function keyGateScene(t: TestContext): Promise<KeyGate> {
     for (const [k, v] of [["getComputedStyle", saved.wgcs], ["document", saved.wdoc], ["visualViewport", saved.wvv]] as const) if (v === undefined) delete win[k]; else win[k] = v;
     win.parent = saved.parent;
     if (saved.gcs === undefined) delete (globalThis as any).getComputedStyle; else (globalThis as any).getComputedStyle = saved.gcs;
+    if (saved.efp === undefined) delete (doc as any).elementFromPoint; else (doc as any).elementFromPoint = saved.efp;
   });
   ctl.focus();
-  const place = (r: Rect): void => { (ctl as any).getBoundingClientRect = () => r; };
+  Object.defineProperty(ctl, "previousElementSibling", { get: () => img, configurable: true });   // the stand-in has no previousElementSibling, which figureOfControl reads for the picture a control stands after (a click on the control)
+  let placed: Rect | null = null, over: El | null = null;
+  (doc as any).elementFromPoint = (x: number, y: number): El => (placed && x >= placed.left && x <= placed.right && y >= placed.top && y <= placed.bottom ? over || ctl : o.body);
+  const place = (r: Rect): void => { placed = r; (ctl as any).getBoundingClientRect = () => r; };
+  const cover = (e: El | null): void => { over = e; };
   const frame = (f: StandInFrame | null, foreign?: "null" | "throws"): void => {
     unframe();
     if (foreign) {
@@ -1406,7 +1416,7 @@ async function keyGateScene(t: TestContext): Promise<KeyGate> {
     return ev.defaultPrevented;
   });
   assert.equal(doc.activeElement, ctl, "the keyboard on the web control (the scene's premise)");
-  return { ctl, place, frame, gate };
+  return { ctl, img, body: o.body, place, cover, frame, gate };
 }
 const OUT3 = [true, true, true], IN3 = [false, false, false];
 const IN_BOX = boxAt(342, 206);   // inside the window (1200 by 800) and the body's scrollport (0 to 800, 100 to 300)
@@ -1445,4 +1455,80 @@ test("the key gate's region at a parent of another origin (the file review's rou
   assert.deepEqual(g.gate(), IN3, "a parent of another origin whose frame element reads null: none of the three keys cancelled (the stop is not an out; a property pin over defaultPrevented)");
   g.frame(null, "throws");
   assert.deepEqual(g.gate(), IN3, "a parent of another origin whose frame element's read throws: none of the three keys cancelled (a property pin over defaultPrevented)");
+});
+
+// ── the one gate on the click, the guards CI runs (the file review's round 16, extra5-1; the browser leg that drives the pointers
+// skips in CI): a tap, a click or a Cmd/Ctrl-click on a picture from the web opens its tab only while the picture's sign (its web
+// control here) is in view and uncovered, and otherwise opens nothing and reveals the sign (scrollIntoView, block and inline
+// "nearest"). A click dispatched on the stand-in carries no pointer, so openFigure's gate reads it at the click (a script's road;
+// a pointer's press is read at its pointerdown in the window's capture phase, which the browser leg drives). window.open is the
+// open's stub (the page is http:, so openUrlTab takes the browser's tab), and the reveal is read off the stand-in's
+// scrollIntoView record. Every value is synthetic.
+/** The opens window.open received and the reveal's count on the control since the case began, read by `read`. */
+function openStub(t: TestContext, ctl: El): { read: () => { opened: number; reveals: number; revealedWith: unknown } } {
+  const saved = win.open, before = ctl.scrolled;
+  const opened: string[] = [];
+  win.open = (u: unknown) => { opened.push(String(u)); return null; };
+  t.after(() => { if (saved === undefined) delete win.open; else win.open = saved; });
+  return { read: () => ({ opened: opened.length, reveals: ctl.scrolled - before, revealedWith: ctl.scrolledWith }) };
+}
+const click = (target: El, detail = 0): void => { target.dispatchEvent(new Ev("click", { detail })); };
+test("the one gate on the click, a guard CI runs (the file review's round 16, extra5-1): a click dispatched on a remote picture and one on its web control open nothing while the control's box lies outside the window, or inside the window and below the body's scrollport, or in view with another element over it at the hit test's points, and each such click reveals the control (scrollIntoView, block and inline nearest); in view and uncovered each opens once (a property pin over window.open's calls and the stand-in's scrollIntoView record, red at the head the file review's round 16 read, which opened a tab on every out-of-view and covered click and revealed nothing)", async (t) => {
+  const g = await keyGateScene(t);
+  g.frame(null);
+  const stub = openStub(t, g.ctl);
+  const cells: Array<[string, () => void, El, { opened: number; reveals: number }]> = [
+    ["the picture, its control below the window (900 against a height of 800)", () => { g.place(boxAt(342, 900)); g.cover(null); }, g.img, { opened: 0, reveals: 1 }],
+    ["the control itself, below the window", () => { g.place(boxAt(342, 900)); g.cover(null); }, g.ctl, { opened: 0, reveals: 1 }],
+    ["the picture, its control inside the window and below the body's scrollport (310, the body's box ending at 300)", () => { g.place(boxAt(342, 310)); g.cover(null); }, g.img, { opened: 0, reveals: 1 }],
+    ["the picture, its control in view with another element laid over it at every sample point", () => { g.place(IN_BOX); g.cover(new El("div")); }, g.img, { opened: 0, reveals: 1 }],
+    ["the control itself, in view and covered", () => { g.place(IN_BOX); g.cover(new El("div")); }, g.ctl, { opened: 0, reveals: 1 }],
+    ["the picture, its control in view and uncovered (keep)", () => { g.place(IN_BOX); g.cover(null); }, g.img, { opened: 1, reveals: 0 }],
+    ["the control itself, in view and uncovered (keep)", () => { g.place(IN_BOX); g.cover(null); }, g.ctl, { opened: 1, reveals: 0 }],
+  ];
+  const got = cells.map(([what, set, target]) => {
+    set();
+    const a = stub.read();
+    click(target);
+    const b = stub.read();
+    return [what, { opened: b.opened - a.opened, reveals: b.reveals - a.reveals }] as const;
+  });
+  for (const [what, read] of got) t.diagnostic(what + ": " + JSON.stringify(read));
+  assert.deepEqual(got.map(([what, read]) => [what, read]), cells.map(([what, , , want]) => [what, want]), "each click's opens and reveals: none opened and one reveal where the control is out of view or covered, one open and no reveal where it is shown (a property pin over window.open's calls and the scrollIntoView record)");
+  assert.deepEqual(stub.read().revealedWith, { block: "nearest", inline: "nearest" }, "the reveal scrolls the control into view the least way, in each scroll container (a property pin over scrollIntoView's argument)");
+});
+test("the one gate's later events of one gesture, a guard CI runs (the file review's round 16, extra5-1, the coordinator's decision 2: by the events' own fields, never by time): with the web control out of view, a refused first keydown of Enter reveals it, and a repeat of that held Enter (repeat true) is cancelled even once the control is in view; a refused Space keydown's repeat and its keyup are cancelled with the control in view too; a click of detail 1 refused out of view is followed, the control in view, by a click of detail 2 that opens nothing; and the next press opens: a new keydown (repeat false) is not cancelled, and a click of detail 1 opens once (a property pin over defaultPrevented and window.open's calls; the cancelled repeat and keyup and the detail-2 click are red under a gate that reads each event afresh, and the click cells red at the head the file review's round 16 read, which opened on every click)", async (t) => {
+  const g = await keyGateScene(t);
+  g.frame(null);
+  const stub = openStub(t, g.ctl);
+  const OUT = boxAt(342, 900);
+  const keyEv = (type: string, k: string, repeat: boolean): boolean => { const ev = new Ev(type, { key: k }); (ev as any).repeat = repeat; g.ctl.dispatchEvent(ev); return ev.defaultPrevented; };
+  const got: Record<string, unknown> = {};
+  g.place(OUT);
+  const r0 = stub.read().reveals;
+  got.enterFirst = keyEv("keydown", "Enter", false);
+  got.enterRevealed = stub.read().reveals - r0;
+  g.place(IN_BOX);                                                       // where the reveal put it
+  got.enterRepeat = keyEv("keydown", "Enter", true);
+  got.enterUp = keyEv("keyup", "Enter", false);
+  got.enterNext = keyEv("keydown", "Enter", false);
+  keyEv("keyup", "Enter", false);
+  g.place(OUT);
+  got.spaceFirst = keyEv("keydown", " ", false);
+  g.place(IN_BOX);
+  got.spaceRepeat = keyEv("keydown", " ", true);
+  got.spaceUp = keyEv("keyup", " ", false);
+  got.spaceNext = [keyEv("keydown", " ", false), keyEv("keyup", " ", false)];
+  g.place(OUT);
+  const o0 = stub.read().opened;
+  click(g.img, 1);
+  got.clickFirst = stub.read().opened - o0;
+  g.place(IN_BOX);
+  click(g.img, 2);
+  got.clickSecond = stub.read().opened - o0;
+  click(g.img, 1);
+  got.clickNext = stub.read().opened - o0;
+  t.diagnostic("record " + JSON.stringify(got));
+  assert.deepEqual(got, { enterFirst: true, enterRevealed: 1, enterRepeat: true, enterUp: false, enterNext: false, spaceFirst: true, spaceRepeat: true, spaceUp: true, spaceNext: [false, false], clickFirst: 0, clickSecond: 0, clickNext: 1 },
+    "the refused press's later events take its verdict: the held Enter's repeat and the held Space's repeat and release cancelled, the double click's second click opening nothing, while the next press, a new keydown or a click of detail 1, is read afresh and opens (a property pin over defaultPrevented and window.open's calls)");
 });

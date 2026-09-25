@@ -111,7 +111,13 @@
 // theirs, controls green there by design. Red over
 // the unchanged viewer at the first control assertion (no control exists), the outbound
 // case red at the head before it, where the two controls presented one surface, and the link-shapes case red at the round-12
-// head, where the title and the control read any anchor while the click did not, and the two under-the-floor cases red at that head too, the hover read and the at-rest read, where no rule dressed the picture. Skips LOUDLY without a playwright browser (in CI the Test step runs before the job's Chromium install, so the leg skips there; the launch is real-viewer-leg.ts's inBrowser, the shared helper). Synthetic values only: the notes-api world, a placeholder session id, example.invalid and example.test addresses,
+// head, where the title and the control read any anchor while the click did not, and the two under-the-floor cases red at that head too, the hover read and the at-rest read, where no rule dressed the picture. The one gate
+// between every gesture and a web picture's tab is read in cases of their own at the file's end (the file review's round 16, extra5-1,
+// with the coordinator's decisions 2 to 5 on it): a tap, a phone's tap, the laptop's finger, a click and a Ctrl-click on a picture
+// whose control stands off the screen, Enter and Space on that control, a double click, a double tap and held keys, the control under
+// the Outline popover, the text-size flyout and an author's element, the mark, the anchors, the row, a local picture and a pinch zoom,
+// each opening nothing where the sign is off the screen or covered and revealing it, the next gesture opening, the section's own
+// header naming each cell's red. Skips LOUDLY without a playwright browser (in CI the Test step runs before the job's Chromium install, so the leg skips there; the launch is real-viewer-leg.ts's inBrowser, the shared helper). Synthetic values only: the notes-api world, a placeholder session id, example.invalid and example.test addresses,
 // /repo/notes-api paths.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
@@ -2426,12 +2432,12 @@ type Host = "top" | "same" | "cross";
  *  border, whose page, the viewer's at ORIGIN + "/inner", opens the report, both remote pictures relayed to the second server and
  *  loaded through the gate (focusReady in the frame). Both origins are served by the context's routes, so a top page of another
  *  origin hosts the viewer as an out-of-process frame. Returns the page and the viewer's frame. */
-async function openFramed(browser: any, port: number, top: string): Promise<{ page: any; at: any; errors: string[] }> {
+async function openFramed(browser: any, port: number, top: string, mode: "chat" | "pane" = "chat"): Promise<{ page: any; at: any; errors: string[] }> {
   const ctx = await browser.newContext({ viewport: { width: 900, height: 600 } });
   const page = await ctx.newPage();
   const errors: string[] = [];
   page.on("pageerror", (e: Error) => { errors.push(e.message); });
-  const inner = pageHtml("chat", { [REPORT]: FOCUS_TEXT });
+  const inner = pageHtml(mode, { [REPORT]: FOCUS_TEXT });   // the framed page's surface: the chat page (its modal viewer) unless a case names the Files pane
   const shell = '<!DOCTYPE html><html><head><meta charset=utf-8><style>html, body { margin: 0; height: 100%; overflow: hidden; } iframe { border: 0; width: 900px; height: 600px; display: block; }</style></head><body><iframe src="' + ORIGIN + '/inner"></iframe></body></html>';
   await ctx.route((u: URL) => u.origin === ORIGIN || u.origin === top, (route: any) => {
     const u = new URL(route.request().url());
@@ -2453,11 +2459,11 @@ async function openFramed(browser: any, port: number, top: string): Promise<{ pa
 }
 /** One case on `host`: the viewer as the top page (openFocus, fine pointer, chat), or in the dashboard's shape with a top page of the
  *  same origin or of another; `body` gets the page (the keys, the mouse, the zoom) and the viewer's document; the record is logged. */
-async function hostCase(t: any, host: Host, rec: Record<string, unknown>, body: (page: any, at: any) => Promise<void>): Promise<void> {
+async function hostCase(t: any, host: Host, rec: Record<string, unknown>, body: (page: any, at: any) => Promise<void>, mode: "chat" | "pane" = "chat"): Promise<void> {
   const second = await secondServer([]);
   try {
     await inBrowser(t, async (browser) => {
-      const o = host === "top" ? await openFocus(browser, second.port, "fine", "chat") : await openFramed(browser, second.port, host === "same" ? ORIGIN : OTHER_TOP);
+      const o = host === "top" ? await openFocus(browser, second.port, "fine", mode) : await openFramed(browser, second.port, host === "same" ? ORIGIN : OTHER_TOP, mode);
       const at = host === "top" ? o.page : (o as { at: any }).at;
       try {
         await body(o.page, at);
@@ -2975,5 +2981,489 @@ for (const surface of ["chat", "feed", "pane"] as Surface[]) for (const width of
         } finally { await page.close(); }
       });
     } finally { await second.close(); }
+  });
+}
+
+// ── the one gate between a gesture and a web picture's tab (the file review's round 16, extra5-1, with the coordinator's decisions 2
+// to 5 on it) ── A tap, a click, a Cmd/Ctrl-click, Enter or Space on a loaded picture from the web opened its tab while the picture's
+// web control stood off the screen, with nothing on the screen saying the open leaves for another host, on every device class: the
+// click road had no counterpart of the key gate. The gate (file-view.ts openFigure, webGestureShown, the key gate, signShown) lets a
+// gesture open the tab only while the picture's sign, its control or on a picture that wears none its mark, is in view and uncovered,
+// read at the gesture's start (a pointer's or a finger's press in the window's capture phase, the first keydown of a key), and a
+// refused gesture opens nothing and scrolls the sign into view, moving no focus, so the next gesture opens. The cells, each on the chat
+// modal and the Files pane at 900 by 700 unless named, each in a browser of its own, the pictures from the web routed at the context
+// (a document request answered with a page of its own and counted, an image request answered with a picture of the path's size), the
+// opens counted as the popups the context sees and the document requests the route answered, never a window.open stub (the pinch
+// cells alone keep the key gate's stubbed report, focusReady), the gates loaded, every value synthetic:
+// - the out-of-view scene, the refuters': a remote picture 300 by 1400, taller than the body, its control's box above the body's padding
+//   box (asserted, and the gesture's point hit-testing to the picture, as the case's premise), for a tap under CDP touch emulation, a
+//   phone's tap, a finger's tap on the touchscreen laptop (LAPTOP), a fine click and a fine Ctrl-click (the key held around the click):
+//   the first gesture opens nothing, leaves the control in view, the viewer on the report and the keyboard off the control, and a
+//   second gesture on the picture's visible part, its point read again after the reveal and its click's detail 1 (asserted), opens
+//   once; red at the head the file review's round 16 read by one popup and one document request on the first gesture. Beside it, keep cells green there by
+//   design: the same gesture with the control centred opens once, and so does the sliver, the control's bottom 2px inside the body
+//   (red under a hit test that samples the control's whole box, whose upper points meet the viewer's bar);
+// - the keys, a fine pointer: Enter and Space on the control reached by Tab and scrolled out of view: the first key opens nothing and
+//   reveals the control, Space leaving it unpressed, and the second opens once (red at the head the file review's round 16 read by the second key, since
+//   nothing revealed the control); with the control centred each key opens once (keep);
+// - one gesture's later events (decision 2): a double click and a double tap on the out-of-view picture open nothing (two at the
+//   round-16 head), Enter and Space held on the out-of-view control through two repeats open nothing (none at the head the file review's round 16 read either,
+//   by design; red under a gate that reads the repeat and the release afresh, since the first keydown's reveal put the control on the
+//   screen);
+// - covered signs (decisions 4 and 5), each red at the head the file review's round 16 read by one open: the Outline popover over the control of a picture
+//   490 wide, a click and a tap on the picture's visible part, the popover closed by that press, and a second gesture then opens once;
+//   the text-size flyout over the same control with its top 3px inside the body, a click and a tap the same way, and the keyboard,
+//   Tab to the control with the flyout opened by Enter still open, then Enter, which opens nothing, and a second Enter nothing either,
+//   since no key closes the flyout (the stated limit of a reveal that cannot uncover); an author's element of two page classes laid
+//   over the figure (`picker-overlay tx-starting`: fixed, over the whole Rendered box), Tab then Enter, fine and under touch, opening
+//   nothing twice (the disclosed cost: such an element keeps the picture from opening at all), and a tap there, which the element
+//   itself takes, opening nothing at either head (a guard);
+// - the middle button (fact 1 of the rulings): on the picture with its control out of view, on the control and on the picture in view,
+//   no open at either head, the auxclick firing (a guard);
+// - the mark, under touch emulation: a picture from the web under the floor wearing the mark, scrolled wholly out of the body, and a
+//   click dispatched on it (detail 0, which no pointer can deliver there): none at the fix, the picture in view after, and a second
+//   dispatched click opens once (red at the head the file review's round 16 read by one open); a tap on the mark in view opens once (keep);
+// - the anchors: a picture inside a `<picture>` and one inside a dead link, their controls out of view: the first fine click opens
+//   nothing and leaves the control in view, and a second opens once (red at the head the file review's round 16 read by one open on the first click); in view
+//   each opens once (keep); the reveal, the second open and the keep cells red under a gate that looks for the control after the img
+//   instead of after its anchor;
+// - the row: the Comments panel open under touch emulation (a coarse pointer, the layer's overlay off), a Ctrl-click refused on the
+//   out-of-view picture opens nothing and stops before the row, whose listener would offer a comment (green at the head the file review's round 16 read,
+//   which stopped the modified click before opening; red under a gate placed before openFigure's stopPropagation);
+// - a local picture, not gated: its control out of view, a Ctrl-click opens the kernel's /file URL in a tab and a plain click opens the
+//   picture in the viewer (green at both heads; red under a gate that reads no target kind);
+// - the pinch zoom, a fine pointer on the focus report: the top page zoomed to 3 with the big picture's control outside the top's
+//   visual viewport and a click on the picture inside it, the viewer as the top page and in the dashboard's same-origin frame: the
+//   click opens nothing and the control is inside the visual viewport after, and a second click opens once (red at the head the file review's round 16 read
+//   by one open on the first click).
+// Each case collects its cells and asserts them once, so a red names every cell that differs; property pins read off the page, and
+// file-view-outline.test.ts runs the gate's click and key guards in CI over the stand-in.
+const GATE_SIZES: Record<string, [number, number]> = { "/tall.svg": [300, 1400], "/w490.svg": [490, 900], "/tiny.svg": [20, 20], "/pp.svg": [300, 1400], "/dl.svg": [300, 1400], "/ov.svg": [300, 200] };
+const GATE_LOCAL = ROOT + "/docs/figs/gate-tall.svg";
+const GATE_TEXT = "# Report\n\n" + PARA(1) + "\n\n![tall](" + WEB + "/tall.svg)\n\n" + Array.from({ length: 8 }, (_, i) => PARA(i + 2)).join("\n\n")
+  + "\n\n![localtall](figs/gate-tall.svg)\n\n" + Array.from({ length: 8 }, (_, i) => PARA(i + 10)).join("\n\n")
+  + '\n\n<picture><img src="' + WEB + '/pp.svg" alt="pp"></picture>\n\n' + Array.from({ length: 8 }, (_, i) => PARA(i + 20)).join("\n\n")
+  + "\n\n[![dl](" + WEB + "/dl.svg)](localhost:8080)\n\n" + Array.from({ length: 8 }, (_, i) => PARA(i + 30)).join("\n\n")
+  + "\n\nA badge ![tiny](" + WEB + "/tiny.svg) in words.\n\n" + Array.from({ length: 16 }, (_, i) => PARA(i + 40)).join("\n\n") + "\n";
+const COVER_TEXT = "# Report\n\n## Alpha\n\n" + PARA(1) + "\n\n![w490](" + WEB + "/w490.svg)\n\n## Beta\n\n" + Array.from({ length: 12 }, (_, i) => PARA(i + 3)).join("\n\n") + "\n\n## Gamma\n\n" + PARA(20) + "\n";
+const OVERLAY_TEXT = "# Report\n\n" + PARA(1) + "\n\n![ov](" + WEB + "/ov.svg)\n\n" + '<div class="picker-overlay tx-starting"></div>' + "\n\n" + Array.from({ length: 12 }, (_, i) => PARA(i + 3)).join("\n\n") + "\n";
+type GateDevice = "fine" | "ctrl" | "touch" | "phone" | "laptop";
+type GateOpens = { popups: number; docs: number; urls: string[]; fileTabs: string[] };
+type GateRead = { sign: number[]; img: number[]; port: number[]; inView: boolean; outside: boolean; base: string; active: string; pressed: boolean; pt: { x: number; y: number }; pt2: { x: number; y: number }; hit: string; hit2: string };
+type GateScene = { page: any; cdp: any; read: (alt: string) => Promise<GateRead>; place: (alt: string, dy: number) => Promise<GateRead>; opens: () => Promise<GateOpens>; gesture: (how: GateDevice | "double" | "doubletap" | "middle", x: number, y: number) => Promise<void>; clicks: () => Promise<Array<{ detail: number; button: number; target: string }>>; cell: (what: string, want: unknown, got: unknown) => void };
+/** In the viewer's document: the picture of an alt, its anchor by figureAnchor's climb, its sign (the control after the anchor, else the
+ *  picture wearing the mark), the control alone (`__ctl` and `__img`, the names the focus helpers read), a log of every click's detail
+ *  at the window, and `__gread`, the sign's and the picture's boxes, the body's padding box, whether the sign meets that box and the
+ *  window (in view) or lies wholly outside the box, the bar's name, the keyboard's holder, the sign's :active, and two points on the
+ *  picture's visible part with what each hit-tests to: the first near its bottom-left, the second well inside its top half and away from
+ *  the first (a finger's second tap there is no double tap). */
+const GATE_INSTALL = (): void => {
+  const w = window as any;
+  w.__img = (alt: string) => Array.from(document.querySelectorAll(".fileview-md img")).find((i) => i.getAttribute("alt") === alt) as HTMLElement;
+  w.__ganchor = (img: Element) => { let a: Element = img; for (let p = a.parentElement; p && p.querySelectorAll("img").length === 1 && (p.localName === "picture" || p.classList.contains("fc-imgwrap") || (p.localName === "a" && p.children.length === 1 && p.children[0] === a && (p.textContent || "").trim() === "")); p = a.parentElement) a = p; return a; };
+  w.__ctl = (alt: string) => { const n = w.__ganchor(w.__img(alt)).nextElementSibling; return n && n.hasAttribute("data-fv-figopen") ? n as HTMLElement : null; };
+  w.__gsign = (alt: string) => w.__ctl(alt) || (w.__img(alt).hasAttribute("data-fv-figweb") ? w.__img(alt) : null);
+  if (!w.__gclicks) { w.__gclicks = []; window.addEventListener("click", (e: MouseEvent) => { const t = e.target as Element | null; w.__gclicks.push({ detail: e.detail, button: e.button, target: t ? t.localName + (t.getAttribute("alt") ? ":" + t.getAttribute("alt") : "") : "null" }); }, true); window.addEventListener("auxclick", (e: MouseEvent) => { w.__gclicks.push({ detail: e.detail, button: e.button, target: "auxclick" }); }, true); }
+  w.__gread = (alt: string) => {
+    const s = w.__gsign(alt) as HTMLElement, img = w.__img(alt) as HTMLElement, b = document.querySelector(".fileview-body") as HTMLElement;
+    const sr = s.getBoundingClientRect(), ir = img.getBoundingClientRect(), br = b.getBoundingClientRect();
+    const pl = br.left + b.clientLeft, pt = br.top + b.clientTop, pr = pl + b.clientWidth, pb = pt + b.clientHeight;
+    const inView = sr.right > Math.max(pl, 0) && sr.left < Math.min(pr, innerWidth) && sr.bottom > Math.max(pt, 0) && sr.top < Math.min(pb, innerHeight);
+    const top = Math.max(ir.top, pt), bottom = Math.min(ir.bottom, pb, innerHeight);
+    const p1 = { x: Math.round(ir.left + 40), y: Math.round(bottom - 30) }, p2 = { x: Math.round(ir.left + Math.min(150, ir.width / 2)), y: Math.round(Math.min(top + 140, (top + bottom) / 2)) };
+    const hitName = (p: { x: number; y: number }) => { const e = document.elementFromPoint(p.x, p.y); return !e ? "null" : e === img ? "the picture" : s.contains(e) ? "the sign" : e.localName + (typeof e.className === "string" && e.className ? "." + e.className.trim().split(/\s+/).join(".") : ""); };
+    const a = document.activeElement;
+    const r = (x: DOMRect) => [x.left, x.top, x.right, x.bottom].map((v) => Math.round(v * 10) / 10);
+    return { sign: r(sr), img: r(ir), port: [pl, pt, pr, pb].map((v) => Math.round(v * 10) / 10), inView, outside: sr.bottom <= pt || sr.top >= pb || sr.right <= pl || sr.left >= pr,
+      base: (document.querySelector(".fileview-base") as HTMLElement | null)?.textContent || "", active: a === s ? "the sign" : a === b ? "the body" : a ? a.localName : "null", pressed: s.matches(":active"), pt: p1, pt2: p2, hit: hitName(p1), hit2: hitName(p2) };
+  };
+  w.__gplace = (alt: string, dy: number) => { const s = w.__gsign(alt) as HTMLElement, b = document.querySelector(".fileview-body") as HTMLElement; b.scrollTop += s.getBoundingClientRect().top - (b.getBoundingClientRect().top + b.clientTop) - dy; };
+};
+/** One case: a browser for the device (the laptop's flags at its launch, a phone's pages), `text` open on the surface at `size` with the
+ *  remote pictures routed and loaded through the gate and the local one served at the /file route, CDP's touch emulation after the load
+ *  for `touch`, the helpers installed, `body` run with the scene, and the cells asserted once at the end; the record goes to the test's
+ *  diagnostic whatever happens. */
+async function gateCase(t: any, device: GateDevice, surface: Surface, text: string, rec: Record<string, unknown>, body: (g: GateScene) => Promise<void>, size: [number, number] = [900, 700]): Promise<void> {
+  const docReqs: string[] = [];
+  const cells: Array<[string, unknown, unknown]> = [];
+  let ran = false;
+  await inBrowser(t, async (browser) => {
+    ran = true;
+    const before = async (pg: any): Promise<void> => {
+      await pg.context().route((u: URL) => u.href.startsWith(WEB + "/"), async (route: any) => {
+        const req = route.request();
+        if (req.resourceType() === "document") { docReqs.push(req.url()); return route.fulfill({ status: 200, contentType: "text/html", body: "<p>third party</p>" }); }
+        const s = GATE_SIZES[new URL(req.url()).pathname] || [300, 200];
+        return route.fulfill({ status: 200, contentType: "image/svg+xml", body: sized(s[0], s[1], "#6a3d9a") });
+      });
+    };
+    const serve = (u: URL): { status: number; type: string; body: string } | null => (u.pathname === "/file" && u.searchParams.get("path") === GATE_LOCAL ? { status: 200, type: "image/svg+xml", body: sized(300, 1400, "#456") } : null);
+    const { page, errors } = await openViewer(device === "phone" ? phonePages(browser) : browser, surface, size[0], size[1], { docs: { [REPORT]: text, [GATE_LOCAL]: sized(300, 1400, "#456") }, before, serve });
+    try {
+      for (let i = 0; i < 20 && await page.evaluate(() => !!document.querySelector('.fileview-md [data-act="fv-load"]')); i++) { await page.evaluate(() => { (document.querySelector('.fileview-md [data-act="fv-load"]') as HTMLElement).click(); }); await frames(page, 3); }
+      await page.waitForFunction(() => Array.from(document.querySelectorAll(".fileview-md img")).every((i) => (i as HTMLImageElement).complete && (i as HTMLImageElement).naturalWidth > 0), null, { timeout: 15000 });
+      await frames(page, 4);
+      await page.evaluate(GATE_INSTALL);
+      const cdp: any = await page.context().newCDPSession(page);
+      if (device === "touch") { await cdp.send("Emulation.setTouchEmulationEnabled", { enabled: true, maxTouchPoints: 1 }); await frames(page, 3); }
+      const popups: any[] = [], fileTabs: string[] = [];
+      page.context().on("page", (p: any) => { popups.push(p); });
+      page.context().on("request", (r: any) => { if (r.resourceType() === "document" && r.url().startsWith(ORIGIN + "/file")) fileTabs.push(r.url()); });   // a tab at the kernel's /file route (a local picture's Cmd/Ctrl-click)
+      let p0 = 0, d0 = 0, f0 = 0;
+      const touch = async (x: number, y: number): Promise<void> => { await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x, y }] }); await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] }); };
+      const scene: GateScene = {
+        page, cdp,
+        read: (alt) => page.evaluate((a: string) => (window as any).__gread(a), alt),
+        place: async (alt, dy) => { await page.evaluate(([a, d]: [string, number]) => (window as any).__gplace(a, d), [alt, dy]); await frames(page, 3); return page.evaluate((a: string) => (window as any).__gread(a), alt); },
+        opens: async () => {
+          for (let i = 0; i < 12; i++) await frames(page, 2);
+          await new Promise((r) => setTimeout(r, 350));   // a bounded settle for an open that must not come (a popup is a new page, no event of this one)
+          const np = popups.slice(p0), docs = docReqs.slice(d0), files = fileTabs.slice(f0);
+          p0 = popups.length; d0 = docReqs.length; f0 = fileTabs.length;
+          const urls = np.map((p: any) => p.url());
+          for (const p of np) await p.close().catch(() => null);
+          await page.bringToFront().catch(() => null);
+          return { popups: np.length, docs: docs.length, urls, fileTabs: files };
+        },
+        gesture: async (how, x, y) => {
+          await page.evaluate(() => { (window as any).__gclicks.length = 0; });
+          p0 = popups.length; d0 = docReqs.length; f0 = fileTabs.length;
+          if (how === "fine") { await page.mouse.move(x, y); await page.mouse.click(x, y); }
+          else if (how === "ctrl") { await page.mouse.move(x, y); await page.keyboard.down("Control"); await page.mouse.click(x, y); await page.keyboard.up("Control"); }   // mouse.click takes no modifiers option: the key is held around it
+          else if (how === "double") { await page.mouse.move(x, y); await page.mouse.dblclick(x, y); }
+          else if (how === "middle") { await page.mouse.move(x, y); await page.mouse.click(x, y, { button: "middle" }); }
+          else if (how === "phone") await page.touchscreen.tap(x, y);
+          else if (how === "doubletap") { await touch(x, y); await new Promise((r) => setTimeout(r, 90)); await touch(x, y); }   // two taps 90 ms apart at one point: the second tap's click carries detail 2
+          else await touch(x, y);   // CDP touch emulation, and the laptop's finger
+          await frames(page, 2);
+        },
+        clicks: () => page.evaluate(() => (window as any).__gclicks.slice()),
+        cell: (what, want, got) => { cells.push([what, want, got]); },
+      };
+      await body(scene);
+      rec.errors = errors;
+    } finally {
+      rec.cells = cells.map(([what, want, got]) => ({ what, want, got }));
+      t.diagnostic("record " + JSON.stringify({ device, surface, ...rec }));
+      await page.close();
+    }
+    assert.deepEqual(errors, [], "no page errors");
+  }, device === "laptop" ? { args: [LAPTOP] } : {});
+  if (!ran) return;   // no browser: inBrowser skipped the case loudly
+  assert.ok(cells.length > 0, "the case ran its cells");
+  assert.deepEqual(cells.map(([what, , got]) => [what, got]), cells.map(([what, want]) => [what, want]), "each cell's reading, [cell, reading] (property pins read off the page)");
+}
+const gateOn = (device: GateDevice, surface: Surface): string => "(" + (device === "fine" ? "a fine click" : device === "ctrl" ? "a fine Ctrl-click" : device === "touch" ? "a tap under CDP touch emulation" : device === "phone" ? "a phone's tap" : "a finger's tap on the touchscreen laptop") + ", " + (surface === "chat" ? "the chat modal" : "the Files pane") + ")";
+/** The number of opens as the case asserts them: the popups and the document requests together, which move as one at every head. */
+const opensOf = (o: GateOpens): [number, number] => [o.popups, o.docs];
+
+for (const device of ["touch", "phone", "laptop", "fine", "ctrl"] as GateDevice[]) for (const surface of ["chat", "pane"] as Surface[]) {
+  test("in a browser " + gateOn(device, surface) + ", the one gate's out-of-view scene: a remote picture taller than the body, its control above the body's padding box: the first gesture on the picture's visible part opens nothing and leaves the control in view, the viewer on the report and the keyboard off the control, and a second gesture, its click of detail 1, opens once; keep cells: with the control centred the gesture opens once, and with the control's bottom 2px inside the body too (the file review's round 16, extra5-1: red at the head the file review's round 16 read by one popup and one document request on the first gesture; the keep cells green there by design, the sliver red under a hit test over the control's whole box)", { timeout: 180000 }, async (t) => {
+    const rec: Record<string, unknown> = { scene: "out-of-view" };
+    await gateCase(t, device, surface, GATE_TEXT, rec, async (g) => {
+      const out = await g.place("tall", -60);
+      rec.out = out;
+      assert.ok(out.outside && out.sign[3] <= out.port[1] && out.hit === "the picture", "the control's box above the body's padding box and the gesture's point on the picture (the case's premise): " + JSON.stringify(out));
+      await g.gesture(device, out.pt.x, out.pt.y);
+      g.cell("the first gesture's opens [popups, document requests]", [0, 0], opensOf(await g.opens()));
+      const after = await g.read("tall");
+      rec.after = after;
+      g.cell("after it: the control in view, the viewer on the report, the keyboard not on the control", [true, "report.md", false], [after.inView, after.base, after.active === "the sign"]);
+      assert.equal(after.hit2, "the picture", "the second gesture's point, read after the reveal, on the picture (a precondition): " + JSON.stringify(after));
+      await g.gesture(device, after.pt2.x, after.pt2.y);
+      const clicks = await g.clicks();
+      rec.secondClicks = clicks;
+      assert.deepEqual(clicks.map((c) => c.detail), [1], "the second gesture's one click carries detail 1, a new run (a precondition): " + JSON.stringify(clicks));
+      g.cell("the second gesture's opens", [1, 1], opensOf(await g.opens()));
+      const mid = await g.place("tall", 200);
+      assert.ok(mid.inView && mid.hit2 === "the picture", "the control centred in the body (a precondition): " + JSON.stringify(mid));
+      await g.gesture(device, mid.pt2.x, mid.pt2.y);
+      g.cell("keep: the control centred, the gesture's opens", [1, 1], opensOf(await g.opens()));
+      const sliver = await g.place("tall", -20);
+      rec.sliver = sliver;
+      assert.ok(sliver.inView && sliver.sign[3] > sliver.port[1] && sliver.sign[3] <= sliver.port[1] + 2.5 && sliver.hit2 === "the picture", "the control's bottom 2px inside the body's padding box (a precondition): " + JSON.stringify(sliver));
+      await g.gesture(device, sliver.pt2.x, sliver.pt2.y);
+      g.cell("keep: the sliver, the gesture's opens", [1, 1], opensOf(await g.opens()));
+    });
+  });
+}
+/** Tab to the control of `alt` from a press on the report's first paragraph, the pointer then moved away; returns the presses. */
+async function gateTab(g: GateScene, alt: string): Promise<number> {
+  await g.page.evaluate(() => { (document.querySelector(".fileview-body") as HTMLElement).scrollTop = 0; });
+  await frames(g.page, 2);
+  const p = await g.page.evaluate(() => { const r = (document.querySelector(".fileview-md > p") as HTMLElement).getBoundingClientRect(); return { x: r.left + 20, y: r.top + 5 }; });
+  await g.page.mouse.click(p.x, p.y);
+  await g.page.mouse.move(5, 5);
+  await frames(g.page, 2);
+  return tabToControl(g.page, alt);
+}
+/** A key held on the keyboard's holder through CDP: its keydown, `repeats` keydowns with autoRepeat set (repeat true on the event), and
+ *  its keyup. */
+async function holdKey(g: GateScene, key: "Enter" | "Space", repeats: number): Promise<void> {
+  const k = key === "Enter" ? { key: "Enter", code: "Enter", windowsVirtualKeyCode: 13, text: "\r", unmodifiedText: "\r" } : { key: " ", code: "Space", windowsVirtualKeyCode: 32, text: " ", unmodifiedText: " " };
+  await g.cdp.send("Input.dispatchKeyEvent", { type: "keyDown", ...k });
+  for (let i = 0; i < repeats; i++) { await frames(g.page, 1); await g.cdp.send("Input.dispatchKeyEvent", { type: "keyDown", autoRepeat: true, ...k }); }
+  await frames(g.page, 1);
+  await g.cdp.send("Input.dispatchKeyEvent", { type: "keyUp", key: k.key, code: k.code, windowsVirtualKeyCode: k.windowsVirtualKeyCode });
+  await frames(g.page, 2);
+}
+for (const surface of ["chat", "pane"] as Surface[]) for (const key of ["Enter", "Space"] as const) {
+  test("in a browser " + gateOn("fine", surface).replace("a fine click", "a fine pointer") + ", the one gate's keys: Tab to the web control, the body scrolled until the control is out of view, then " + key + ": no open, the control revealed" + (key === "Space" ? " and unpressed" : "") + ", and a second " + key + " opens once; keep: with the control centred " + key + " opens once (the file review's round 16, extra5-1: red at the head the file review's round 16 read by the second key, since nothing revealed the control; the keep cell green there by design)", { timeout: 180000 }, async (t) => {
+    const rec: Record<string, unknown> = { scene: "keys", key };
+    await gateCase(t, "fine", surface, GATE_TEXT, rec, async (g) => {
+      rec.tabs = await gateTab(g, "tall");
+      const out = await g.place("tall", -60);
+      assert.ok(out.outside && out.active === "the sign", "the keyboard on the control, out of view above the body (a precondition): " + JSON.stringify(out));
+      await g.page.keyboard.press(key);
+      g.cell("the first " + key + "'s opens", [0, 0], opensOf(await g.opens()));
+      const after = await g.read("tall");
+      g.cell("after it: the control in view, holding the keyboard, unpressed", [true, true, false], [after.inView, after.active === "the sign", after.pressed]);
+      await g.page.keyboard.press(key);
+      g.cell("the second " + key + "'s opens", [1, 1], opensOf(await g.opens()));
+      await g.place("tall", 200);
+      await g.page.keyboard.press(key);
+      g.cell("keep: the control centred, " + key + "'s opens", [1, 1], opensOf(await g.opens()));
+    });
+  });
+}
+for (const surface of ["chat", "pane"] as Surface[]) {
+  test("in a browser (" + (surface === "chat" ? "the chat modal" : "the Files pane") + "), the one gate's later events of one gesture (the coordinator's decision 2, by the events' own fields and never by time): a fine double click and, under CDP touch emulation, a double tap 90 ms apart on the out-of-view picture open nothing, the second click of each carrying detail 2 (two opens at the head the file review's round 16 read); Enter and Space held on the out-of-view control through two repeats open nothing (none at the head the file review's round 16 read either, by design; red under a gate that reads the repeats and the release afresh, the first keydown's reveal having put the control on the screen)", { timeout: 180000 }, async (t) => {
+    const rec: Record<string, unknown> = { scene: "one gesture" };
+    await gateCase(t, "fine", surface, GATE_TEXT, rec, async (g) => {
+      let out = await g.place("tall", -60);
+      assert.ok(out.outside && out.hit === "the picture", "the control out of view, the point on the picture (a precondition): " + JSON.stringify(out));
+      await g.gesture("double", out.pt.x, out.pt.y);
+      const dbl = await g.clicks();
+      rec.double = dbl;
+      assert.deepEqual(dbl.map((c) => c.detail), [1, 2], "a double click: two clicks, of detail 1 and 2 (a precondition)");
+      g.cell("a double click's opens", [0, 0], opensOf(await g.opens()));
+      for (const key of ["Enter", "Space"] as const) {
+        rec["tabs" + key] = await gateTab(g, "tall");
+        out = await g.place("tall", -60);
+        assert.ok(out.outside && out.active === "the sign", "the keyboard on the control, out of view (a precondition): " + JSON.stringify(out));
+        await holdKey(g, key, 2);
+        g.cell(key + " held through two repeats, opens", [0, 0], opensOf(await g.opens()));
+      }
+      await g.cdp.send("Emulation.setTouchEmulationEnabled", { enabled: true, maxTouchPoints: 1 });
+      await frames(g.page, 3);
+      out = await g.place("tall", -60);
+      assert.ok(out.outside && out.hit === "the picture", "under touch, the control out of view, the point on the picture (a precondition): " + JSON.stringify(out));
+      await g.gesture("doubletap", out.pt.x, out.pt.y);
+      const taps = await g.clicks();
+      rec.doubletap = taps;
+      assert.deepEqual(taps.map((c) => c.detail), [1, 2], "a double tap: two clicks, of detail 1 and 2 (a precondition)");
+      g.cell("a double tap's opens", [0, 0], opensOf(await g.opens()));
+    });
+  });
+}
+for (const device of ["fine", "touch"] as GateDevice[]) for (const surface of ["chat", "pane"] as Surface[]) {
+  test("in a browser " + gateOn(device, surface) + ", the one gate's covered sign, the Outline popover (the coordinator's decisions 4 and 5): the popover open over the web control of a picture 490 wide, the control 42px inside the body, a gesture on the picture's visible part opens nothing, the popover closed by that press, and a second gesture opens once (red at the head the file review's round 16 read by one open, where the popover's own capture listener closed it before the body read anything)", { timeout: 180000 }, async (t) => {
+    const rec: Record<string, unknown> = { scene: "popover" };
+    await gateCase(t, device, surface, COVER_TEXT, rec, async (g) => {
+      await g.place("w490", 42);
+      await g.page.evaluate(() => { (document.querySelector(".fileview-outline-btn") as HTMLElement).click(); });
+      await frames(g.page, 3);
+      const pre = await g.page.evaluate(() => { const w = window as any; const c = w.__ctl("w490").getBoundingClientRect(); const e = document.elementFromPoint((c.left + c.right) / 2, (c.top + c.bottom) / 2); return { open: !!document.querySelector(".fileview-outline"), overCentre: !!e && !!e.closest(".fileview-outline") }; });
+      const r = await g.read("w490");
+      rec.pre = { ...pre, read: r };
+      assert.ok(pre.open && pre.overCentre && r.inView && r.hit === "the picture", "the popover open and over the control's centre, the control in view, the point on the picture (a precondition): " + JSON.stringify(rec.pre));
+      await g.gesture(device, r.pt.x, r.pt.y);
+      g.cell("the first gesture's opens", [0, 0], opensOf(await g.opens()));
+      g.cell("the popover closed by that press", false, await g.page.evaluate(() => !!document.querySelector(".fileview-outline")));
+      const r2 = await g.read("w490");
+      await g.gesture(device, r2.pt2.x, r2.pt2.y);
+      g.cell("the second gesture's opens", [1, 1], opensOf(await g.opens()));
+    });
+  });
+}
+for (const surface of ["chat", "pane"] as Surface[]) {
+  for (const device of ["fine", "touch"] as GateDevice[]) test("in a browser " + gateOn(device, surface) + ", the one gate's covered sign, the text-size flyout (the coordinator's decisions 4 and 5, the flyout measured: at 900px it drops 29.6px into the body): the flyout open over the web control of a picture 490 wide, the control's top 3px inside the body, a gesture on the picture's visible part opens nothing, the flyout closed by that press, and a second gesture opens once (red at the head the file review's round 16 read by one open)", { timeout: 180000 }, async (t) => {
+    const rec: Record<string, unknown> = { scene: "flyout" };
+    await gateCase(t, device, surface, COVER_TEXT, rec, async (g) => {
+      await g.place("w490", 3);
+      await g.page.evaluate(() => { (document.querySelector(".fileview-zoom-btn") as HTMLElement).click(); });
+      await frames(g.page, 3);
+      const pre = await g.page.evaluate(() => { const w = window as any; const c = w.__ctl("w490").getBoundingClientRect(); const e = document.elementFromPoint((c.left + c.right) / 2, (c.top + c.bottom) / 2); const m = document.querySelector(".fileview-zoom-menu") as HTMLElement; return { open: !m.hidden, overCentre: !!e && (!!e.closest(".fileview-zoom-menu") || !!e.closest(".fileview-size-reset")) }; });
+      const r = await g.read("w490");
+      rec.pre = { ...pre, read: r };
+      assert.ok(pre.open && pre.overCentre && r.inView && r.hit === "the picture", "the flyout open and over the control's centre, the control in view, the point on the picture (a precondition): " + JSON.stringify(rec.pre));
+      await g.gesture(device, r.pt.x, r.pt.y);
+      g.cell("the first gesture's opens", [0, 0], opensOf(await g.opens()));
+      g.cell("the flyout closed by that press", true, await g.page.evaluate(() => (document.querySelector(".fileview-zoom-menu") as HTMLElement).hidden));
+      const r2 = await g.read("w490");
+      await g.gesture(device, r2.pt2.x, r2.pt2.y);
+      g.cell("the second gesture's opens", [1, 1], opensOf(await g.opens()));
+    });
+  });
+  test("in a browser " + gateOn("fine", surface).replace("a fine click", "a fine pointer") + ", the one gate's covered sign, the text-size flyout from the keyboard (the coordinator's decisions 4 and 5): Enter on the zoom glyph opens the flyout, Tab walks on to the web control of a picture 490 wide with the flyout still open over it, and Enter there opens nothing, and a second Enter nothing either, since no key but Escape closes the flyout and the reveal cannot uncover the control (the stated limit of a reveal that cannot bring the sign into view; red at the head the file review's round 16 read by one open on the first Enter)", { timeout: 180000 }, async (t) => {
+    const rec: Record<string, unknown> = { scene: "flyout keys" };
+    await gateCase(t, "fine", surface, COVER_TEXT, rec, async (g) => {
+      await g.place("w490", 3);
+      await g.page.mouse.move(5, 5);
+      await g.page.focus(".fileview-zoom-btn");
+      await g.page.keyboard.press("Enter");
+      await frames(g.page, 3);
+      let tabs = 0;
+      for (; tabs < 40; tabs++) { if (await g.page.evaluate(() => document.activeElement === (window as any).__ctl("w490"))) break; await g.page.keyboard.press("Tab"); await frames(g.page, 1); }
+      const pre = await g.page.evaluate(() => { const w = window as any; const c = w.__ctl("w490").getBoundingClientRect(); const e = document.elementFromPoint((c.left + c.right) / 2, (c.top + c.bottom) / 2); const m = document.querySelector(".fileview-zoom-menu") as HTMLElement; return { open: !m.hidden, overCentre: !!e && (!!e.closest(".fileview-zoom-menu") || !!e.closest(".fileview-size-reset")), active: document.activeElement === w.__ctl("w490") }; });
+      const r = await g.read("w490");
+      rec.pre = { ...pre, tabs, read: r };
+      assert.ok(pre.open && pre.overCentre && pre.active && r.inView, "the keyboard on the control, in view under the open flyout (a precondition): " + JSON.stringify(rec.pre));
+      await g.page.keyboard.press("Enter");
+      g.cell("the first Enter's opens", [0, 0], opensOf(await g.opens()));
+      await g.page.keyboard.press("Enter");
+      g.cell("the second Enter's opens, the flyout still open", [[0, 0], true], [opensOf(await g.opens()), await g.page.evaluate(() => !(document.querySelector(".fileview-zoom-menu") as HTMLElement).hidden)]);
+    });
+  });
+  for (const device of ["fine", "touch"] as GateDevice[]) test("in a browser " + gateOn(device, surface).replace("a fine click", "a fine pointer") + ", the one gate's covered sign, an author's element laid over the figure (the coordinator's decisions 4 and 5): `<div class=\"picker-overlay tx-starting\">` after a loaded remote picture computes position fixed over the Rendered box; the body focused and Tab to the web control, then Enter opens nothing, and a second Enter nothing either (the disclosed cost: an overlay the reader cannot dismiss keeps that picture from opening; red at the head the file review's round 16 read by one open on the first Enter); a tap at the picture's point lands on the element itself and opens nothing at either head (a guard)", { timeout: 180000 }, async (t) => {
+    const rec: Record<string, unknown> = { scene: "overlay" };
+    await gateCase(t, device, surface, OVERLAY_TEXT, rec, async (g) => {
+      const st = await g.page.evaluate(() => { const o = document.querySelector(".fileview-md .picker-overlay") as HTMLElement | null; const w = window as any; const c = w.__ctl("ov"); const r = c.getBoundingClientRect(); const e = document.elementFromPoint((r.left + r.right) / 2, (r.top + r.bottom) / 2); return { overlay: !!o, position: o ? getComputedStyle(o).position : null, overCentre: !!e && !!e.closest(".picker-overlay") }; });
+      rec.state = st;
+      assert.ok(st.overlay && st.position === "fixed" && st.overCentre, "the author's element stands, fixed, over the control's centre (a precondition): " + JSON.stringify(st));
+      await g.page.evaluate(() => { (document.querySelector(".fileview-body") as HTMLElement).focus(); });
+      let tabs = 0;
+      for (; tabs < 20; tabs++) { if (await g.page.evaluate(() => document.activeElement === (window as any).__ctl("ov"))) break; await g.page.keyboard.press("Tab"); await frames(g.page, 1); }
+      rec.tabs = tabs;
+      assert.ok(await g.page.evaluate(() => document.activeElement === (window as any).__ctl("ov")), "the keyboard on the control (a precondition)");
+      await g.page.keyboard.press("Enter");
+      g.cell("the first Enter's opens", [0, 0], opensOf(await g.opens()));
+      await g.page.keyboard.press("Enter");
+      g.cell("the second Enter's opens", [0, 0], opensOf(await g.opens()));
+      if (device === "touch") {
+        const r = await g.read("ov");
+        await g.gesture("touch", r.pt.x, r.pt.y);
+        g.cell("guard: a tap at the picture's point, which the element takes (" + r.hit + "), opens", [0, 0], opensOf(await g.opens()));
+      }
+    });
+  });
+}
+for (const surface of ["chat", "pane"] as Surface[]) {
+  test("in a browser " + gateOn("fine", surface).replace("a fine click", "a fine pointer") + ", the one gate's guard on the middle button (the rulings' fact 1): a middle click on the picture with its control out of view, on the control in view and on the picture in view opens nothing, and each fires its auxclick (no open at the head the file review's round 16 read either: the figures' listener hears click alone, and the auxclick listener reads path and section links alone)", { timeout: 180000 }, async (t) => {
+    const rec: Record<string, unknown> = { scene: "middle" };
+    await gateCase(t, "fine", surface, GATE_TEXT, rec, async (g) => {
+      const out = await g.place("tall", -60);
+      assert.ok(out.outside && out.hit === "the picture", "the control out of view, the point on the picture (a precondition): " + JSON.stringify(out));
+      await g.gesture("middle", out.pt.x, out.pt.y);
+      g.cell("the middle click on the picture, its control out of view: [opens, auxclicks]", [[0, 0], 1], [opensOf(await g.opens()), (await g.clicks()).filter((c) => c.target === "auxclick").length]);
+      const mid = await g.place("tall", 200);
+      await g.page.mouse.move(mid.pt2.x, mid.pt2.y);
+      await frames(g.page, 3);
+      const c = await g.page.evaluate(() => { const r = (window as any).__ctl("tall").getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; });
+      await g.gesture("middle", c.x, c.y);
+      g.cell("the middle click on the control in view", [[0, 0], 1], [opensOf(await g.opens()), (await g.clicks()).filter((x) => x.target === "auxclick").length]);
+      await g.gesture("middle", mid.pt2.x, mid.pt2.y);
+      g.cell("the middle click on the picture in view", [[0, 0], 1], [opensOf(await g.opens()), (await g.clicks()).filter((x) => x.target === "auxclick").length]);
+    });
+  });
+  test("in a browser (CDP touch emulation, " + (surface === "chat" ? "the chat modal" : "the Files pane") + "), the one gate on the mark: a remote picture under the floor wearing the outbound mark, scrolled wholly out of the body, and a click dispatched on it (detail 0, which no pointer can deliver there): no open, the picture in view after, and a second dispatched click opens once (red at the head the file review's round 16 read by one open on the first); keep: a tap on the mark in view opens once (green there by design)", { timeout: 180000 }, async (t) => {
+    const rec: Record<string, unknown> = { scene: "mark" };
+    await gateCase(t, "touch", surface, GATE_TEXT, rec, async (g) => {
+      const out = await g.place("tiny", -100);
+      const m = await g.page.evaluate(() => { const i = (window as any).__img("tiny"); return { mark: i.hasAttribute("data-fv-figweb"), control: !!(window as any).__ctl("tiny") }; });
+      rec.out = { ...m, read: out };
+      assert.ok(m.mark && !m.control && out.outside, "the picture wears the mark and no control, and lies wholly outside the body (a precondition): " + JSON.stringify(rec.out));
+      const dispatch = (): Promise<void> => g.page.evaluate(() => { (window as any).__img("tiny").dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true })); });
+      await g.page.evaluate(() => { (window as any).__gclicks.length = 0; });
+      await dispatch();
+      g.cell("the first dispatched click's opens", [0, 0], opensOf(await g.opens()));
+      g.cell("after it: the picture in view", true, (await g.read("tiny")).inView);
+      await dispatch();
+      g.cell("the second dispatched click's opens", [1, 1], opensOf(await g.opens()));
+      const mid = await g.place("tiny", 200);
+      const c = { x: (mid.sign[0] + mid.sign[2]) / 2, y: (mid.sign[1] + mid.sign[3]) / 2 };
+      await g.gesture("touch", Math.round(c.x), Math.round(c.y));
+      g.cell("keep: a tap on the mark in view, opens", [1, 1], opensOf(await g.opens()));
+    });
+  });
+  test("in a browser " + gateOn("fine", surface) + ", the one gate's anchors: a remote picture inside a <picture> and one inside a dead link, each with its control out of view: the first click opens nothing and leaves the control in view, and a second opens once; in view each opens once (the file review's round 16, extra5-1, the first refuter's refinement 2: red at the head the file review's round 16 read by one open on each first click; the reveal, the second open and the keep cells red under a gate that looks for the control after the img instead of after its anchor)", { timeout: 180000 }, async (t) => {
+    const rec: Record<string, unknown> = { scene: "anchors" };
+    await gateCase(t, "fine", surface, GATE_TEXT, rec, async (g) => {
+      for (const alt of ["pp", "dl"]) {
+        const kind = alt === "pp" ? "the <picture>" : "the dead link";
+        const shape = await g.page.evaluate((a: string) => { const i = (window as any).__img(a); return { parent: i.parentElement.localName, dead: i.parentElement.classList.contains("fv-dead"), control: !!(window as any).__ctl(a) }; }, alt);
+        assert.ok(shape.control && (alt === "pp" ? shape.parent === "picture" : shape.parent === "a" && shape.dead), kind + ": the picture inside it, its control after the anchor (a precondition): " + JSON.stringify(shape));
+        const out = await g.place(alt, -60);
+        assert.ok(out.outside && out.hit === "the picture", kind + ": the control out of view, the point on the picture (a precondition): " + JSON.stringify(out));
+        await g.gesture("fine", out.pt.x, out.pt.y);
+        g.cell(kind + ": the first click's opens", [0, 0], opensOf(await g.opens()));
+        const after = await g.read(alt);
+        g.cell(kind + ": after it, the control in view", true, after.inView);
+        await g.gesture("fine", after.pt2.x, after.pt2.y);
+        g.cell(kind + ": the second click's opens", [1, 1], opensOf(await g.opens()));
+        const mid = await g.place(alt, 200);
+        await g.gesture("fine", mid.pt2.x, mid.pt2.y);
+        g.cell(kind + ": keep, the control centred, the click's opens", [1, 1], opensOf(await g.opens()));
+      }
+    });
+  });
+  test("in a browser (CDP touch emulation, " + (surface === "chat" ? "the chat modal" : "the Files pane") + "), the one gate and the row: the Comments panel open on a coarse pointer (the layer's overlay off), a Ctrl-click on the remote picture with its control out of view opens nothing and stops before the row, whose listener would offer a comment (green at the head the file review's round 16 read, which stopped the modified click before its open; red under a gate placed before openFigure's stopPropagation, where the refused click reached the row)", { timeout: 180000 }, async (t) => {
+    const rec: Record<string, unknown> = { scene: "row" };
+    await gateCase(t, "touch", surface, GATE_TEXT, rec, async (g) => {
+      assert.equal(await g.page.evaluate(() => matchMedia("(pointer: coarse)").matches), true, "a coarse pointer under the emulation (a precondition)");
+      await openPanel(g.page);
+      await g.page.waitForFunction(() => { const o = document.querySelectorAll(".fileview-md .fc-overlay"); return o.length > 0 && Array.from(o).every((x) => x.classList.contains("fc-overlay-off")); }, null, { timeout: 5000 });
+      await g.page.evaluate(GATE_INSTALL);
+      const out = await g.place("tall", -60);
+      assert.ok(out.outside && out.hit === "the picture", "the control out of view, the point on the picture under the open panel (a precondition): " + JSON.stringify(out));
+      const floatShown = (): Promise<boolean> => g.page.evaluate(() => { const f = document.querySelector(".fc-float") as HTMLElement | null; return !!f && !f.hidden && f.getBoundingClientRect().width > 0; });
+      await g.gesture("ctrl", out.pt.x, out.pt.y);
+      g.cell("the refused Ctrl-click's opens", [0, 0], opensOf(await g.opens()));
+      g.cell("no comment offer: the click stopped before the row", false, await floatShown());
+    });
+  });
+  test("in a browser " + gateOn("fine", surface).replace("a fine click", "a fine pointer") + ", the one gate leaves a local picture alone: its control out of view, a Ctrl-click opens the kernel's /file URL in a tab and a plain click opens the picture in the viewer (green at the head the file review's round 16 read by design; red under a gate that reads no target kind, which refused both)", { timeout: 180000 }, async (t) => {
+    const rec: Record<string, unknown> = { scene: "local" };
+    await gateCase(t, "fine", surface, GATE_TEXT, rec, async (g) => {
+      const out = await g.place("localtall", -60);
+      assert.ok(out.outside && out.hit === "the picture", "the local picture's control out of view, the point on the picture (a precondition): " + JSON.stringify(out));
+      await g.gesture("ctrl", out.pt.x, out.pt.y);
+      const tab = await g.opens();
+      rec.tab = tab;
+      g.cell("the Ctrl-click: one tab, at the /file URL", [1, true], [tab.popups, tab.fileTabs.length === 1 && tab.fileTabs[0].includes("/file?path=" + encodeURIComponent(GATE_LOCAL))]);
+      const again = await g.read("localtall");
+      await g.gesture("fine", again.pt.x, again.pt.y);
+      const shown = await g.page.locator(".fileview-base", { hasText: "gate-tall.svg" }).waitFor({ timeout: 10000 }).then(() => true, () => false);
+      g.cell("the plain click: the picture in the viewer", true, shown);
+    });
+  });
+}
+for (const [host, mode] of [["top", "chat"], ["same", "pane"], ["same", "chat"]] as Array<["top" | "same", "chat" | "pane"]>) {
+  const limit = host === "same" && mode === "chat";   // the chat modal framed: the stated limit, where the reveal cannot pan the top's visual viewport
+  const where = host === "top" ? onHost("top") : mode === "pane" ? "the Files pane's page in a same-origin iframe of the top page, the dashboard's shape" : "the chat page's modal viewer in a same-origin iframe of the top page, the dashboard's chat column";
+  test("in a browser (a fine pointer), the one gate under a pinch zoom, " + where + ": the top page zoomed to 3 with the big picture's web control outside the top's visual viewport and a click on the picture inside it: no open, " + (limit ? "and, the stated limit of a reveal that cannot bring the sign into view (the viewer's card is fixed in its frame, and Chromium's scrollIntoView from it pans no visual viewport of the top page), the control still off the visual viewport after and a second click opening nothing too, the gate failing closed until the reader pans the page by hand" : "the control inside the visual viewport after, and a second click opens once") + " (the file review's round 16, extra5-1: red at the head the file review's round 16 read by one open on the first click)", { timeout: 120000 }, async (t) => {
+    const rec: Record<string, unknown> = { pin: "gate-zoom-" + host + "-" + mode };
+    await hostCase(t, host, rec, async (page, at) => {
+      await at.evaluate(() => { const b = document.querySelector(".fileview-body") as HTMLElement; b.scrollTop += (window as any).__img("big").getBoundingClientRect().top - 90; });   // the picture's top at 90, so its lower part lies inside the zoomed visual viewport (0 to 200 down) while its control's corner lies right of it
+      await frames(at, 3);
+      const z = await zoomTo(page, at, 3);
+      rec.zoom = z;
+      assert.ok(z.scale > 1 && z.inLayout && !z.onScreen, "the top's page scale above 1, the control inside its own layout viewport and off the top's visual viewport (a precondition): " + JSON.stringify(z));
+      /** A point on the big picture inside the top's visual viewport, in the viewer's layout coordinates and in the top's visual viewport's (the mouse's), and what it hit-tests to. */
+      const pointIn = async (): Promise<{ x: number; y: number; mx: number; my: number; hit: string }> => {
+        const top = await page.evaluate(() => { const v = window.visualViewport!, f = document.querySelector("iframe"), b = f ? f.getBoundingClientRect() : null; return { vv: [v.offsetLeft, v.offsetTop, v.width, v.height], at: b ? [b.left + f!.clientLeft, b.top + f!.clientTop] : [0, 0] }; });
+        const ir = await at.evaluate(() => { const r = (window as any).__img("big").getBoundingClientRect(); return [r.left, r.top, r.right, r.bottom]; });
+        const [vx, vy, vw, vh] = top.vv, [ox, oy] = top.at;
+        const x = Math.max(ir[0], vx - ox) + 30, y = Math.min(ir[3], vy - oy + vh) - 30;
+        const hit = await at.evaluate(([px, py]: [number, number]) => { const e = document.elementFromPoint(px, py); return e === (window as any).__img("big") ? "the picture" : e ? e.localName : "null"; }, [x, y]);
+        return { x, y, mx: x + ox - vx, my: y + oy - vy, hit };
+      };
+      const p1 = await pointIn();
+      rec.p1 = p1;
+      assert.ok(p1.hit === "the picture" && p1.mx >= 0 && p1.mx <= z.vv[2] && p1.my >= 0 && p1.my <= z.vv[3], "the click's point on the picture, inside the top's visual viewport (a precondition): " + JSON.stringify(p1));
+      await page.mouse.click(p1.mx, p1.my);
+      await frames(at, 4);
+      const a = await focusState(at, "big");
+      const z2 = await zoomTo(page, at, 1);   // a read at the scale set above: at 1 no scale is sent
+      rec.after = { a, z2 };
+      assert.equal(a.opened, 0, "the first click on the picture, its control off the zoomed screen, opens nothing (a property pin read off the page)");
+      assert.equal(z2.onScreen, !limit, limit ? "the control still off the top's visual viewport after the refused click: the reveal from the framed modal pans nothing (the stated limit's witness, read off the page)" : "the control inside the top's visual viewport after the refused click: the reveal panned it there (a property pin read off the page)");
+      const p2 = await pointIn();
+      rec.p2 = p2;
+      assert.ok(p2.hit === "the picture", "the second click's point on the picture inside the visual viewport (a precondition): " + JSON.stringify(p2));
+      await page.mouse.click(p2.mx, p2.my);
+      await frames(at, 4);
+      assert.equal((await focusState(at, "big")).opened, limit ? 0 : 1, limit ? "the second click opens nothing either: the gate fails closed while the reveal cannot bring the control on the screen (the stated limit's witness)" : "the second click opens once (a property pin read off the page)");
+    }, mode);
   });
 }

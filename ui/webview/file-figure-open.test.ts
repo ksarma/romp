@@ -138,7 +138,7 @@ test("the click: a listener of its own on the body beside the links'; the contro
   const open = between(VIEW, "const openFigure = (img: Element, ev: MouseEvent): void => {", "\n  };\n");
   assert.match(open, /const target = figureTarget\(img, path\);\n\s*if \(!target\) return;/);
   assert.match(open, /if \(wantsOwnTab\(ev\)\) ev\.stopPropagation\(\);/, "a modified click stops before the row's delegate, as a link's does");
-  assert.match(open, /if \(target\.kind === "web"\) \{ openUrlTab\(target\.href\); return; \}/, "a remote picture: a tab, never the viewer");
+  assert.match(open, /if \(target\.kind === "web"\) \{ if \(webGestureShown\(img, ev\)\) openUrlTab\(target\.href\); return; \}/, "a remote picture: a tab, never the viewer, and only through the one gate (the file review's round 16, extra5-1; a sentence pin, whose property file-view-outline.test.ts's gate guards and file-figure-open-browser.test.ts's gate cells execute)");
   assert.match(open, /if \(wantsOwnTab\(ev\) && openFileTab\(target\.path, sid \|\| null\)\) return;/, "the /file URL in a tab; a blocked popup falls through");
   assert.match(open, /openFigureInViewer\(target\.path, sid \|\| null\);/, "the viewer through the figure's own door, with no target: the trail's push, and no Recent row (file-view-figure-recent-browser.test.ts)");
   assert.match(VIEW, /\nfunction openFigureInViewer\(path: string, sid: string \| null\): void \{\n  trailNext = "push";\n  try \{ openFileView\(path, sid, \{ at: null \}\); \} finally \{ trailNext = null; \}\n\}\n/, "the door: the tag set and cleared as openFromViewer sets and clears it, openFileView itself and not the host's opener");

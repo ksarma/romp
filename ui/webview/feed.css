@@ -2042,7 +2042,9 @@ a.fileview-gh-note { border-style: dashed; }
    since a local one opens this viewer): a keyboard focus, and one a script gives it with no ring, so a focus on it is never
    unpainted; no mouse press focuses it (file-view.ts, the body's mousedown listener), and Enter or Space opens it only while it is
    in view (controlInView), where a focus left by a click stood unpainted once the pointer left and a later key opened the tab with
-   nothing shown (the file review's round 14, ui-1 with extra9-1). Under a keyboard focus its focus ring stands 2px off its border
+   nothing shown (the file review's round 14, ui-1 with extra9-1); since the file review's round 16, extra5-1, every gesture on a
+   picture from the web opens the tab only while its sign, this control or the mark, is in view and uncovered at the gesture's
+   start (file-view.ts signShown). Under a keyboard focus its focus ring stands 2px off its border
    (the focus rule below): drawn where the browser draws it, the ring covered the border row and the row inside it, so no pixel of
    the dashed line showed, and at 1px off it still covered the border row. The button family's press cue, a scale to 0.96, is off on
    the web control alone (the press rule below):

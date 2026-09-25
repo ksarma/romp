@@ -2752,6 +2752,54 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     const x = linkOf(ev.target as Element | null);
     if (x && (x.dataset.act === "openpath" || x.classList.contains(FRAG_LINK_CLASS))) openLink(x, ev);
   });
+  // ── the one gate between a gesture and a web picture's tab (the file review's round 16, extra5-1) ── A tap, a click, a
+  // Cmd/Ctrl-click, Enter or Space on a picture from the web opens its tab only while the picture's outbound sign (figureSign: its
+  // web control, or on a picture that wears none its mark) is in view and uncovered (signShown), read at the gesture's start;
+  // otherwise the gesture opens nothing and reveals the sign (revealSign: a scroll, never a focus), so the next gesture opens.
+  // Before it, a tap or a click on the visible part of a loaded web picture opened the tab while its control stood off the
+  // screen, with nothing shown, on every device. A pointer's or a finger's press is read here, in the window's capture phase,
+  // before any listener of the page runs: the Outline popover closes itself in its own capture listener on the document, so a
+  // read on the body came after that close and saw the sign uncovered, and a click on the picture under the popover opened the
+  // tab; the text-size flyout closes later, at the document's mousedown. The press's verdict is kept under its pointerId, which
+  // its click carries, and openFigure reads it at that click, with the sign in view again there; a pointercancel (a swipe that
+  // scrolls, the picture's own drag) ends it, as it ends the gesture with no click. One physical gesture's later events are
+  // closed by their own fields and never by time: a click whose detail is above 1, following a refused click of its run (the
+  // second click of a double click, the second tap of a double tap), opens nothing, since the first click's reveal put the sign
+  // on the screen between the two; a held key's repeats and Space's release are the key gate's. A click no press began (a
+  // script's: pointerId -1 or none, and untrusted) is read at the click itself, and so is a key's click, which the key gate
+  // has already let through. A browser whose click carries no pointerId has its click read against the last press.
+  type FigurePress = { img: Element; type: string; ok: boolean };
+  const presses = new Map<number, FigurePress>();
+  let lastPress: FigurePress | null = null;
+  let refusedRun = false;                                 // the last click on a web figure in the current run of clicks was refused
+  const onFigurePress = (ev: PointerEvent): void => {
+    if (ev.isPrimary) for (const [id, p] of presses) if (p.type === ev.pointerType) presses.delete(id);   // a primary press: every earlier contact of its kind has ended
+    const t = ev.target as Element | null;
+    const control = figureControlOf(t, body);
+    const img = control ? figureOfControl(control) : bareFigureOf(t, body);
+    const sign = img ? figureSign(img) : null;
+    lastPress = img && sign ? { img, type: ev.pointerType, ok: signShown(sign) } : null;
+    if (lastPress) presses.set(ev.pointerId, lastPress);
+  };
+  const onFigureCancel = (ev: PointerEvent): void => { presses.delete(ev.pointerId); lastPress = null; };
+  const onClickRun = (ev: MouseEvent): void => { if (ev.detail === 1) refusedRun = false; };   // a click of detail 1 begins a new run
+  window.addEventListener("pointerdown", onFigurePress, true);
+  window.addEventListener("pointercancel", onFigureCancel, true);
+  window.addEventListener("click", onClickRun, true);
+  closeHooks.push(() => { window.removeEventListener("pointerdown", onFigurePress, true); window.removeEventListener("pointercancel", onFigureCancel, true); window.removeEventListener("click", onClickRun, true); });
+  /** The gate's verdict at a click that would open a web picture's tab, the refusal's reveal made here. */
+  const webGestureShown = (img: Element, ev: MouseEvent): boolean => {
+    const sign = figureSign(img);
+    const pid = (ev as PointerEvent).pointerId;
+    const byPointer = ev.isTrusted && (typeof pid === "number" ? pid !== -1 : ev.detail > 0);
+    const press = byPointer ? (typeof pid === "number" ? presses.get(pid) : lastPress) : undefined;
+    if (typeof pid === "number") presses.delete(pid);
+    if (ev.detail === 1) refusedRun = false;              // a new run (onClickRun hears it first on the window; read here too, whatever ran before)
+    if (ev.detail > 1 && refusedRun) return false;       // a later click of a refused run: the same gesture, which opens nothing and reveals nothing more
+    const ok = !!sign && (byPointer ? !!press && press.img === img && press.ok && controlInView(sign) : signShown(sign));
+    if (!ok) { if (ev.detail > 0) refusedRun = true; if (sign) revealSign(sign); }
+    return ok;
+  };
   // ── a figure opens in detail (L3 of the link-navigation follow-on; the section before keepVideoShape) ── in a listener of
   // its own beside the links': the two act on disjoint targets (a link and what it holds; a bare figure and its control), so
   // neither reads the other's verdict. The gesture is the links' (wantsOwnTab): a plain click opens the picture in this
@@ -2763,8 +2811,10 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // and stops before the row, as a link's modified click does. A remote picture (an http source) opens in a tab and never in
   // the viewer: the control, and the plain click and the Cmd/Ctrl-click where the press reaches the picture, all hand its own
   // address to openUrlTab (the file review's round 2, extra5-3: the record had named the first two gestures alone; its round 8,
-  // fresh-1: the two clicks had stood with no condition while the open panel's overlay takes them on a fine pointer).
-  // A failed figure opens nothing on any gesture (figureTarget).
+  // fresh-1: the two clicks had stood with no condition while the open panel's overlay takes them on a fine pointer), and each
+  // of them, the key's click on the control among them, only through the one gate above: while the picture's sign is in view and
+  // uncovered at the gesture's start, and otherwise it opens nothing and reveals the sign (the file review's round 16, extra5-1).
+  // A local picture is not gated. A failed figure opens nothing on any gesture (figureTarget).
   // The control's click is the figure's own wherever it stands (and it never stands inside a link whose click is the link's:
   // decideFigureControl puts it after a link holding the figure alone and adds none inside a link of FIGURE_LINK_SET holding
   // more, linkAbove). The figure's own click yields where another gesture owns it: a figure inside a link of FIGURE_LINK_SET
@@ -2786,7 +2836,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     const target = figureTarget(img, path);
     if (!target) return;
     if (wantsOwnTab(ev)) ev.stopPropagation();                                    // a modified click is the figure's alone: the row's delegate never sees it
-    if (target.kind === "web") { openUrlTab(target.href); return; }              // a remote picture: a tab, never the viewer
+    if (target.kind === "web") { if (webGestureShown(img, ev)) openUrlTab(target.href); return; }   // a remote picture: a tab, never the viewer, and only through the one gate
     if (wantsOwnTab(ev) && openFileTab(target.path, sid || null)) return;      // its own tab off the /file route; a blocked popup falls through to the viewer
     openFigureInViewer(target.path, sid || null);                                // the picture in this viewer: the shown file goes onto the trail (moveTrail) and the picture enters no Recent list
   };
@@ -2806,22 +2856,39 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     if (selectionOpenIn(box)) return;
     openFigure(img, ev);
   });
-  // Enter or Space on a web picture's control opens the tab only while the control is in view at that key (the file review's
+  // Enter or Space on a web picture's control opens the tab only while the control is shown at the press (the file review's
   // round 14, ui-1 with extra9-1): out of view the key's default, the click, is cancelled, so a keyboard focus left on the
   // control with the control scrolled out of view, by the body or by a table that scrolls on its own, or left off the screen
   // by a pinch zoom of the viewer's page or of a same-origin page framing it, as the dashboard frames it (the file review's
-  // round 15, extra5-2), opens nothing while nothing is shown. In view is read at each key event and never kept
-  // (controlInView, which fails closed). Enter clicks a button through its
-  // keydown and Space on its keyup, so both are read, and Space's keydown too: out of view a Space neither presses the control
-  // nor scrolls the body, while every other key, PageDown and Tab among them, works as ever. The web control alone, as in the
-  // mousedown listener above.
+  // round 15, extra5-2), opens nothing while nothing is shown. Since the file review's round 16, extra5-1, the key is the one
+  // gate's too: its press is read at its first keydown (repeat false) by signShown, in view and uncovered, the verdict kept for
+  // that press, and a refused press opens nothing and reveals the control (revealSign; the keyboard already holds it), so the
+  // next press opens. A held key's repeats read that verdict: after a refused keydown, or with no first keydown seen on the
+  // control, a repeat is cancelled too, so it neither clicks nor presses the control; after a shown one, a repeat is read in view
+  // at its own event, as before. Space clicks a button on its keyup, which is cancelled when its press was refused and otherwise
+  // read in view at the release, so a Space pressed in view and released out of view opens nothing; no repeat clears a refusal,
+  // and the keyup ends the press. Never a time: the events' own repeat field and the keyup. Out of view a Space presses nothing
+  // and does not scroll the body by a page: its only scroll is the reveal's, which brings the control into view, while every
+  // other key, PageDown and Tab among them, works as ever. The web control alone, as in the mousedown listener above.
+  const keyPress = new Map<string, boolean>();           // per key, whether its press's first keydown on a web control found the control shown
   const keyOnHiddenWebControl = (ev: KeyboardEvent): void => {
     if (ev.key !== "Enter" && ev.key !== " ") return;
     const c = figureControlOf(ev.target as Element | null, body);
-    if (c && c.classList.contains(FIGOPEN_WEB_CLASS) && !controlInView(c)) ev.preventDefault();
+    const web = !!c && c.classList.contains(FIGOPEN_WEB_CLASS);
+    if (ev.type === "keyup") {
+      const shown = keyPress.get(ev.key);
+      keyPress.delete(ev.key);                            // the release ends the press
+      if (ev.key === " " && web && (shown !== true || !controlInView(c!))) ev.preventDefault();
+      return;
+    }
+    if (!web) { if (!ev.repeat) keyPress.delete(ev.key); return; }
+    if (ev.repeat) { if (keyPress.get(ev.key) !== true || !controlInView(c!)) ev.preventDefault(); return; }
+    const shown = signShown(c!);
+    keyPress.set(ev.key, shown);
+    if (!shown) { ev.preventDefault(); revealSign(c!); }
   };
   body.addEventListener("keydown", keyOnHiddenWebControl);
-  body.addEventListener("keyup", (ev) => { if (ev.key === " ") keyOnHiddenWebControl(ev); });
+  body.addEventListener("keyup", keyOnHiddenWebControl);
 
   // ── edit mode (the raw-mode slice) ── a plain textarea holding the raw bytes: an embedded editor
   // is a different project, and a textarea that keeps your changes beats a half-editor. The kernel's
@@ -5162,7 +5229,9 @@ function resolveFigureRefs(root: ParentNode, base: string): void {
 // the control, or a keyboard focus reaches it, and the web control under any focus, and kept visible at rest where hover is
 // none or any pointer is coarse (the sheets' at-rest rule, under screen: a local control at 0.8, a web one at 1, never in
 // print); always in the tab order. No mouse press focuses the
-// web control (the body's mousedown listener), and Enter or Space opens it only while it is in view (controlInView). A figure
+// web control (the body's mousedown listener), and every gesture on a picture from the web, the control's click and Enter or
+// Space on it among them, opens the tab only while the picture's sign is in view and uncovered at the gesture's start
+// (signShown, the one gate in openFigure and the key gate; the file review's round 16, extra5-1). A figure
 // the author floated by its align attribute stacks sideways, so the control floats with it (the -left and -right classes). It has no text of its own and the text walks skip
 // it as a control (anchor-map.ts and reader-place.ts CONTROL_CLASSES). A URL document (openUrlView) gets none: its figures
 // are the web's, and it is no file of a session.
@@ -5209,7 +5278,10 @@ function figureControlOf(target: Element | null, within: Element): HTMLElement |
   return c && within.contains(c) ? c : null;
 }
 /** Whether a control is in view now, on the screen and not only laid out: its box intersects every region that decides what
- *  is shown, and it is out when any of them leaves nothing or any read fails (the key gate then cancels the key's click). The
+ *  is shown, and it is out when any of them leaves nothing or any read fails. Its readers are the one gate between a gesture and
+ *  a web picture's tab (signShown, which openFigure's gate and the key gate read at the gesture's start, and openFigure again at a
+ *  pointer's click) and the key gate's reads of a held key and of Space's release; the reads are inViewPart's, which also hands
+ *  the hit test the in-view part of the box (the file review's round 16, extra5-1). The
  *  regions, in order: the viewer's layout viewport (in VS Code the webview's); the scrollports of the control's ancestors
  *  (clipToScrollports), so the viewer's body counts and so does a table that scrolls on its own, while the Rendered box, which
  *  clips nothing, does not; then, for each same-origin frame that hosts this window, walked up while the frame element can be
@@ -5227,11 +5299,17 @@ function figureControlOf(target: Element | null, within: Element): HTMLElement |
  *  iframe with 60px of top padding kept Enter and Space on a control wholly below the top page); the kernel's pages give their
  *  frames a border of 0 and no padding. Read at the call and never kept; a control partly in view is in view. */
 function controlInView(control: Element): boolean {
+  return inViewPart(control) !== null;
+}
+/** The part of `control`'s box that is in view by controlInView's regions, moved back into the viewport coordinates of the
+ *  control's own window (the frame walk's moves taken off again, so a hit test in that window's document reads it), or null when
+ *  no part is in view or any read fails. */
+function inViewPart(control: Element): ViewBox | null {
   try {
     const r = control.getBoundingClientRect();
     const box: ViewBox = { x0: Math.max(r.left, 0), y0: Math.max(r.top, 0), x1: Math.min(r.right, window.innerWidth), y1: Math.min(r.bottom, window.innerHeight) };
     clipToScrollports(control, window, box);
-    let w: Window = window;
+    let w: Window = window, mx = 0, my = 0;               // mx, my: the frame walk's moves so far, taken off the in-view part at the end
     while (w.parent !== w) {                              // the top window is its own parent, where the walk ends
       let frame: Element | null;
       try { frame = w.frameElement; } catch { frame = null; }
@@ -5239,14 +5317,16 @@ function controlInView(control: Element): boolean {
       const p = w.parent, fr = frame.getBoundingClientRect();
       const dx = fr.left + frame.clientLeft, dy = fr.top + frame.clientTop;
       box.x0 += dx; box.x1 += dx; box.y0 += dy; box.y1 += dy;                      // into the parent's coordinates
+      mx += dx; my += dy;
       box.x0 = Math.max(box.x0, 0); box.y0 = Math.max(box.y0, 0); box.x1 = Math.min(box.x1, p.innerWidth); box.y1 = Math.min(box.y1, p.innerHeight);   // the parent's layout viewport
       clipToScrollports(frame, p, box);                   // the frame element's ancestors in the parent's document
       w = p;
     }
     const vv = w.visualViewport;
     if (vv) { box.x0 = Math.max(box.x0, vv.offsetLeft); box.y0 = Math.max(box.y0, vv.offsetTop); box.x1 = Math.min(box.x1, vv.offsetLeft + vv.width); box.y1 = Math.min(box.y1, vv.offsetTop + vv.height); }
-    return box.x1 > box.x0 && box.y1 > box.y0;
-  } catch { return false; }
+    if (!(box.x1 > box.x0 && box.y1 > box.y0)) return null;
+    return { x0: box.x0 - mx, y0: box.y0 - my, x1: box.x1 - mx, y1: box.y1 - my };
+  } catch { return null; }
 }
 /** A box in a window's viewport coordinates, controlInView's running intersection. */
 type ViewBox = { x0: number; y0: number; x1: number; y1: number };
@@ -5263,6 +5343,56 @@ function clipToScrollports(el: Element, view: Window, box: ViewBox): void {
     if (clipX) { box.x0 = Math.max(box.x0, padLeft); box.x1 = Math.min(box.x1, padLeft + a.clientWidth); }
     if (clipY) { box.y0 = Math.max(box.y0, padTop); box.y1 = Math.min(box.y1, padTop + a.clientHeight); }
   }
+}
+/** The outbound sign of a picture from the web, what a gesture on it must find shown before its tab opens (the file review's
+ *  round 16, extra5-1): the web control standing after the figure's anchor (figureControlAfter over figureAnchor, so a picture
+ *  inside a `<picture>`, the regions layer's wrap, a dead link or a named anchor finds its control), else the picture itself where
+ *  it wears the mark (FIGWEB_MARK: a picture from the web that wears no control). Null when it wears neither, and a web target
+ *  with no sign opens nothing. */
+function figureSign(img: Element): Element | null {
+  const c = figureControlAfter(figureAnchor(img));
+  if (c && c.classList.contains(FIGOPEN_WEB_CLASS)) return c;
+  return img.hasAttribute(FIGWEB_MARK) ? img : null;
+}
+/** Whether a web picture's sign is shown to the person about to open it: in view (inViewPart, controlInView's regions) and
+ *  uncovered (signUncovered). The one verdict of the gate on every gesture that opens a web picture's tab, read at the gesture's
+ *  start: at the press of a pointer or a finger, at the first keydown of Enter or Space, and at the click itself for a click no
+ *  press or key began (a script's). A read that fails answers not shown. */
+function signShown(sign: Element): boolean {
+  const part = inViewPart(sign);
+  return part !== null && signUncovered(sign, part);
+}
+/** Whether nothing covers the sign where it is in view: the element at five sample points of `part`, the in-view part of its box
+ *  in its own window's coordinates, is the sign or inside it, in the sign's own document (elementFromPoint, which reads what takes
+ *  a press there, so it sees the viewer's Outline popover, the text-size flyout and an author's element laid over the figure,
+ *  while a control transparent at rest still counts as its own). The samples are the part's centre and its four quarter points:
+ *  inside the part, since a sign partly in view is in view and samples over its whole box meet the chrome above the body where
+ *  the box leaves it (the sliver of a control's bottom inside the body); and a quarter of the way in, since the control's corners
+ *  are rounded, and under a body zoom of 1.25 a point 2px in from a corner falls outside the curve onto the picture. A same-origin
+ *  parent's own chrome over the frame is not read, as a parent of another origin's cannot be: the test reads the sign's document
+ *  alone. A document with no elementFromPoint, or a read that throws, answers covered. */
+function signUncovered(sign: Element, part: ViewBox): boolean {
+  try {
+    const d = sign.ownerDocument || document;
+    if (typeof d.elementFromPoint !== "function") return false;
+    const w = part.x1 - part.x0, h = part.y1 - part.y0;
+    return [[0.5, 0.5], [0.25, 0.25], [0.75, 0.25], [0.25, 0.75], [0.75, 0.75]].every(([fx, fy]) => {
+      const at = d.elementFromPoint(part.x0 + w * fx, part.y0 + h * fy);
+      return !!at && (at === sign || sign.contains(at));
+    });
+  } catch { return false; }
+}
+/** A refused gesture's reveal: the sign scrolled into view in each of its scroll containers, the same-origin frames above
+ *  included (block and inline "nearest"), so the next gesture opens. It moves no focus: a refused key already holds the control,
+ *  and a pointer's or a finger's refusal leaves the keyboard where it was, as no press of the pointer ever focuses the web control
+ *  (the file review's round 14, ui-1 with extra9-1; its round 16, extra5-1, kept that). Where it cannot put the sign on the
+ *  screen the gate stays closed, stated limits measured in Chromium: what covers the sign it cannot move (a press outside the
+ *  Outline popover or the text-size flyout closes it, no key but Escape closes the flyout, and an author's element laid over the
+ *  figure stays); and from the chat page's modal framed by the dashboard it pans no visual viewport of a pinch-zoomed top page,
+ *  since the viewer's card is fixed in its frame (the viewer as the top page and the Files pane's frame pan), so there a gesture
+ *  opens nothing until the reader pans by hand. */
+function revealSign(sign: Element): void {
+  try { sign.scrollIntoView({ block: "nearest", inline: "nearest" }); } catch { /* no reveal: the gesture has already opened nothing */ }
 }
 /** The figure a control stands after: the img its anchor is or holds (the element before the control: the img itself, its
  *  picture, the regions layer's wrap or the link holding it). Null when nothing stands before it or it holds no img. */

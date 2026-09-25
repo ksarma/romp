@@ -8480,8 +8480,10 @@ picture opened from a figure should take a row instead is the owner's (open poin
 follow-on adds (the file review's HIGH 1; L6): a plain click on a LOADED remote picture, its control, and a
 Cmd/Ctrl-click on it, three gestures through one arm, all call `openUrlTab` (`window.open(href, "_blank",
 "noopener,noreferrer")` in the web dashboard; the function's other arm, the host's openExternal, is the VS Code
-webview's, and the clause below holds in either arm; the control by a click at any time and by Enter or Space while it
-is in view, the plain click on the picture with the Comments panel closed, and the Cmd/Ctrl-click where the press
+webview's, and the clause below holds in either arm; each only while the picture's sign, its control or on a picture
+that wears none its mark, is in view and uncovered at the gesture's start, and otherwise it opens nothing and brings
+the sign into view, the one gate below (the file review's round 16, extra5-1); the control by a click or by Enter or
+Space, the plain click on the picture with the Comments panel closed, and the Cmd/Ctrl-click where the press
 reaches it, the panel closed or the pointer coarse, since with the panel open a plain click on the picture is the
 panel's comment offer (on a coarse pointer the press reaches the figure listener, which stands down, asideOpen) and on
 a fine pointer the layer's overlay takes a click on the picture, modified or not, and offers a comment, and neither
@@ -8571,10 +8573,30 @@ its box intersecting the viewport and the scrollport of every ancestor whose ove
 through the same-origin frames that host the viewer as the dashboard does, each parent's viewport and the scrollports of the frame's
 ancestors there, and last the visual viewport of the topmost window reached, so a control a pinch zoom leaves off the screen is out
 of view; a parent of another origin, VS Code's webview host among them, ends the walk with the reads made so far and is no out, and
-any other read that fails answers out (`controlInView`, read per key; out of view a Space presses nothing and scrolls nothing), since
+any other read that fails answers out (`controlInView`), since
 a focus a click or a press dragged off it left stood unpainted on a fine pointer once the pointer left and a later Enter or Space
 opened the tab again with nothing shown (the file review's round 14, ui-1 with extra9-1; the visual viewport and the frame walk since
-the file review's round 15, extra5-2, where a keyboard focus off a zoomed screen opened the tab), its focus ring stands 2px off its border so the dashed line shows under a keyboard
+the file review's round 15, extra5-2, where a keyboard focus off a zoomed screen opened the tab); since the file review's round 16,
+extra5-1, that read is one gate for every gesture on a picture from the web, a tap, a plain click and a Cmd/Ctrl-click on the
+picture, the control's click, and Enter or Space on it, since a tap or a click on the visible part of a loaded web picture had
+opened the tab with its control off the screen and nothing shown, on every device: the tab opens only while the picture's sign
+(`figureSign`: its web control, or on a picture that wears none its mark) is in view by that read and uncovered, the element at the
+centre and at the four quarter points of its in-view part being the sign or inside it (`signUncovered`, which sees the Outline
+popover, the text-size flyout and an author's element laid over the figure; a same-origin parent's own chrome over the frame is not
+read), read at the gesture's start, at the press in the window's capture phase, before the popover's own capture listener closes it,
+and at the first keydown (repeat false) of Enter or Space, the press's verdict taken by its click through the pointerId they share;
+a refused gesture opens nothing and scrolls the sign into view (`revealSign`, block and inline "nearest", the same-origin frames and
+a pinch zoom's visual viewport included), moving no focus, so the next gesture opens; where the reveal cannot put the sign on the
+screen the gate stays closed, stated limits measured in Chromium: the chat page's modal framed by the dashboard under a pinch zoom of
+the top page (the viewer's card is fixed in its frame, and scrollIntoView from it pans no visual viewport of the top page, while
+the viewer as the top page and the Files pane's frame pan), until the reader pans by hand; a key under the open text-size flyout,
+which no key but Escape closes, until Escape; and an author's element laid over the figure that the reader cannot dismiss, which
+keeps that picture from opening at all; the later events of one gesture take its
+verdict by their own fields and never by time, a click whose detail is above 1 after a refused click of its run, a held key's
+repeats after a refused keydown, and Space's release, which also reads the control in view at the release; out of view a Space
+presses nothing and does not scroll the body by a page, its only scroll the reveal's; a local picture is not gated; the cost: a tap
+or a click on a web picture whose sign is off the screen or covered scrolls it into view and opens nothing, and the next one opens,
+and a sign partly in view counts as in view, its focus ring stands 2px off its border so the dashed line shows under a keyboard
 focus, the button family's press cue is off on it since the release that opens the tab comes while it is held (under the cue the line spread over two
 pixel rows, a modal 1.59:1 dark and 1.39:1 light), the browser's tap highlight is off on it and on the mark, since in the pressed frames of
 a finger's tap, while the control matches :active, a phone's default highlight took the line as low as 2.22:1 dark and 2.41:1 light in a screencast of every frame, 2.578:1 and 2.531:1 in the frames the leg samples (the
@@ -8762,7 +8784,9 @@ L6. **No kernel change, no new route; one new kind of request leaves the machine
 route: a Back or Forward open fetches the file through the same `/file` route the link's open used, a figure's open in
 the viewer fetches the picture through it as the report's paint did, and the trail lives in the page. One request is
 new (the file review's HIGH 1): a plain click on a loaded remote picture, its Open the picture control, and a
-Cmd/Ctrl-click on it (the control by a click at any time and by Enter or Space while it is in view, the plain click on the
+Cmd/Ctrl-click on it (each only while the picture's sign, its control or on a picture that wears none its mark, is in view
+and uncovered at the gesture's start, and otherwise it opens nothing and brings the sign into view, and the next opens (the file
+review's round 16, extra5-1); the control by a click or by Enter or Space, the plain click on the
 picture with the Comments panel closed, and the Cmd/Ctrl-click where the press reaches it, the panel closed or the pointer
 coarse, neither click on a picture inside a fold's own summary, whose click toggles the fold; L3, the file review's round
 14, extra8-1, and its round 9, regression-1, which found this home and open
@@ -9164,7 +9188,9 @@ Playwright browser).
     gestures and asked that the outbound case be made visible before it happens; both roads stay priced here, and (b) is
     the road not taken (the file review's round 11, ui-2 with extra8-2: the point had stood as a two-road offer after the
     decision). (a) as built, the road taken: a plain click on a loaded remote picture, its control, and a Cmd/Ctrl-click on
-    it (the control by a click at any time and by Enter or Space while it is in view,
+    it (each only while the picture's sign, its control or on a picture that wears none its mark, is in view and uncovered
+    at the gesture's start, and otherwise it opens nothing and brings the sign into view, and the next opens (the file
+    review's round 16, extra5-1); the control by a click or by Enter or Space,
     the plain click on the picture with the Comments panel closed, and the Cmd/Ctrl-click where the press reaches it, the
     panel closed or the pointer coarse, neither click on a picture inside a fold's own summary, whose click toggles the
     fold; L3)

@@ -265,16 +265,18 @@ test('the file review: L3 and L6 record the remote picture\'s tab as the one new
   // the three gestures share openFigure's web arm, which runs before the /file-tab branch (extra5-3: the record had named two and
   // given the modified click the /file URL); the control's click takes openFigure with the same event
   const openFig = between(viewer, 'const openFigure = (img: Element, ev: MouseEvent): void => {', '\n  };\n');
-  inOrder(openFig, ['if (target.kind === "web") { openUrlTab(target.href); return; }', 'if (wantsOwnTab(ev) && openFileTab(target.path, sid || null)) return;'], 'openFigure: the web arm before the /file tab');
+  inOrder(openFig, ['if (target.kind === "web") { if (webGestureShown(img, ev)) openUrlTab(target.href); return; }', 'if (wantsOwnTab(ev) && openFileTab(target.path, sid || null)) return;'], 'openFigure: the web arm, through the one gate (the file review\'s round 16, extra5-1), before the /file tab');
   assert.ok(viewer.includes('if (control) { const img = figureOfControl(control); if (img) openFigure(img, ev); return; }'), 'the control\'s click takes openFigure too');
   assert.ok(L3.includes('a plain click on a LOADED remote picture, its control, and a Cmd/Ctrl-click on it, three gestures through one arm, all call `openUrlTab`'), 'L3 names the three gestures');
   assert.ok(L3.includes('The modified click opens the picture\'s own address and never the kernel\'s /file URL, since openFigure\'s web arm runs before its /file-tab branch'), 'L3 corrects the modified click');
   /** The clause of `text` in which the three gestures open the tab, from the plain click on a loaded remote picture to "open a
-   *  top-level tab": it names the control and the Cmd/Ctrl-click, and carries the condition beside them, the control by a click at
-   *  any time and by Enter or Space while it is in view, the plain click on the picture with the Comments panel closed, and the
-   *  Cmd/Ctrl-click where the press reaches it, the panel closed or the pointer coarse, neither click on a picture inside a fold's
-   *  own summary, whose click toggles the fold (the file review's round 14, extra8-1: the condition had given the plain click the
-   *  modified click's, while with the panel open a plain click stands down on every pointer). Keyed on the
+   *  top-level tab": it names the control and the Cmd/Ctrl-click, and carries the condition beside them, each gesture only while
+   *  the picture's sign is in view and uncovered at the gesture's start, a refused one opening nothing and bringing the sign into
+   *  view (the file review's round 16, extra5-1: a tap or a click on the picture had opened the tab with its control off the
+   *  screen), then the control by a click or by Enter or Space, the plain click on the picture with the Comments panel closed, and
+   *  the Cmd/Ctrl-click where the press reaches it, the panel closed or the pointer coarse, neither click on a picture inside a
+   *  fold's own summary, whose click toggles the fold (the file review's round 14, extra8-1: the condition had given the plain
+   *  click the modified click's, while with the panel open a plain click stands down on every pointer). Keyed on the
    *  property and not the bytes (the file review's round 9, regression-1: the pins on L6 and open point 11 held the unconditioned
    *  phrases by text, so the condition round 8's fresh-1 put in every other home could never be red in these two). */
   const gesturesConditioned = (text, home) => {
@@ -285,7 +287,7 @@ test('the file review: L3 and L6 record the remote picture\'s tab as the one new
     const clause = text.slice(at, end);
     assert.match(clause, /, its (?:Open the picture )?control,/, home + ' names the control among the gestures: ' + clause);
     assert.match(clause, /and a Cmd\/Ctrl-click on it\b/, home + ' names the Cmd\/Ctrl-click among the gestures: ' + clause);
-    assert.match(clause, /\(the control by a click at any time and by Enter or Space while it is in view, the plain click on the picture with the Comments panel closed, and the Cmd\/Ctrl-click where the press reaches it, the panel closed or the pointer coarse, neither click on a picture inside a fold's own summary, whose click toggles the fold\b/, home + ' carries the condition beside the gestures (the control by a click at any time and by Enter or Space while in view, the plain click with the Comments panel closed, the Cmd\/Ctrl-click where the press reaches the picture, neither click in a fold\'s own summary), a sentence pin on the condition\'s words: ' + clause);
+    assert.match(clause, /\(each only while the picture's sign, its control or on a picture that wears none its mark, is in view and uncovered at the gesture's start, and otherwise it opens nothing and brings the sign into view, and the next opens \(the file review's round 16, extra5-1\); the control by a click or by Enter or Space, the plain click on the picture with the Comments panel closed, and the Cmd\/Ctrl-click where the press reaches it, the panel closed or the pointer coarse, neither click on a picture inside a fold's own summary, whose click toggles the fold\b/, home + ' carries the condition beside the gestures (each only while the sign is in view and uncovered at the gesture\'s start, a refused one revealing it; the control by a click or by Enter or Space, the plain click with the Comments panel closed, the Cmd\/Ctrl-click where the press reaches the picture, neither click in a fold\'s own summary), a sentence pin on the condition\'s words: ' + clause);
     return clause;
   };
   gesturesConditioned(L6, 'L6');

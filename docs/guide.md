@@ -557,8 +557,12 @@ on the picture on a mouse or trackpad, and a drag draws a rectangle unless it st
 the button, which takes the press), a Cmd-click (Ctrl on Windows and Linux) on the picture
 while the panel is closed, or on the button at any time, opens the picture in a browser
 tab, and a picture from the web opens its address in a new tab, as a link to that site
-does (from the keyboard, Enter or Space on its button opens it only while the button is
-on the screen), and the button and the picture both show that before the click: the button's
+does, but only while its button, or on a small picture its dashed border, is on the screen
+with nothing over it: a click, a tap, Enter or Space while it is off the screen or covered
+(by the list of headings the **Outline** button opens, or the menu of the text size
+buttons, say) opens nothing and scrolls it into view,
+and the next one opens once it shows (a button partly on the screen counts as shown), and
+the button and the picture both show that before the click: the button's
 tooltip says it opens a new tab at the address's host, its border is dashed and its glyph
 is an arrow leaving a box, and the picture's own tooltip shows the address's origin (its
 scheme, host and port, never its path, query or fragment), on a line after the author's
