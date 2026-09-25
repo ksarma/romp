@@ -171,23 +171,29 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   reader only refuses. A name is licensed only when a child pytest over a copy of
   the conftest writes the name at each probe module's import and, in each probe
   test, reads it and sets it again, and sees the counted fixture's own code set or
-  pop it in every probe test's setup, with the value re-asserted there. The probe
-  tests reproduce six facts of a real run that a conftest hook can key on: the
-  conftest and the probe modules in a directory named `tests`, which is a package,
-  so the conftest imports as `tests.conftest` and each probe module as a module of
-  `tests`, and which for the copy of `tests/conftest.py` holds copies of
-  `tests/__init__.py` and the modules its import loads, the package on that one
-  directory; the conftest loaded when pytest starts; a module collected first and
-  one after it; function tests and a `unittest.TestCase` in each; and a run with
-  no xdist worker and, where pytest-xdist is installed, one with `-n 2`.
-  Code that stops the fixture from running in any of those tests, named or not,
-  is refused by the run. The run does not read a hook condition outside that
-  context (a mark, an environment variable, a host name, a file of `tests/` the
-  package's import does not load, or another collection-time signal): a copy of
-  the conftest whose `pytest_collectreport` takes the fixture out of each marked
-  test is granted the licence, and a real run of that copy shows a marked test
-  reading a module-level write, and a copy whose hook keys on `tests/README.md`
-  sitting beside the conftest is granted too (each planted). And
+  pop it in every probe test's setup, with the value re-asserted there. For
+  `tests/conftest.py` that child runs in one scratch copy of the checkout per
+  module run, shared by every case: the real package `tests` on its one
+  directory, with the real `tests/__init__.py`, the real conftest and every other
+  file of `tests/` in place, and the checkout's other files around it (the copy
+  leaves out what each clone keeps for itself: `.git`, the files git ignores
+  outside `tests/`, and `__pycache__`); only the two probe modules are added,
+  named to sort before every test module. The probe tests reproduce six facts of
+  a real run that a conftest hook can key on: the conftest and the probe modules
+  in a directory named `tests`, which is a package, so the conftest imports as
+  `tests.conftest` and each probe module as a module of `tests`; the conftest
+  loaded when pytest starts; a module collected first and one after it, where a
+  real run handed `tests/` collects the probe modules; function tests and a
+  `unittest.TestCase` in each; and a run with no xdist worker (and none of the
+  variables pytest-xdist sets in one) and, where pytest-xdist is installed, one
+  with `-n 2`. Code that stops the fixture from running in any of those tests,
+  named or not, is refused by the run. The run does not read a hook condition
+  outside that context (a mark, an environment variable, a host name, or another
+  collection-time signal, such as which test it is or which modules a run
+  collects after the probe's): a copy of the conftest whose
+  `pytest_collectreport` takes the fixture out of each marked test is granted
+  the licence, and a real run of that copy shows a marked test reading a
+  module-level write (planted). And
   `ROMP_MODELS_URL` (read at kernel import,
   port 9 of 127.0.0.1 and no other); a check over the table itself holds every
   licence to a per-write condition and every temporary one to a since date and a

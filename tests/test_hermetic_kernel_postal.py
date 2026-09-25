@@ -121,7 +121,6 @@ import collections
 import concurrent.futures
 import gc
 import glob
-import hashlib
 import importlib.util
 import inspect
 import json
@@ -3408,30 +3407,33 @@ def _conftest_reasserted_names(src=None, where=None):
     not name).
     THIS IS THE FILTER, REFUSE-ONLY (the reviewer's ruling of 2026-09-24 21:09Z on round 2 of fork PR #894, (1)): a
     name it counts is a candidate, and no licence rests on it alone. The licence's condition is
-    _conftest_reasserts_proved, which grants a name only where a child pytest over a copy of the conftest observes the
-    counted fixture's own re-assert (_reassert_proof) in each read of the child's context (the ruling of 23:17Z, (4);
-    _PROOF_READS, _proof_modes): V1, the conftest and the probe modules in a directory named tests; the package, the
-    conftest imported as tests.conftest and each probe module as a module of tests, and for the copy of
-    tests/conftest.py the package's __init__.py and the modules its import loads, copies of tests/'s own files beside
-    it, on that one directory (_proof_package_copies); the start, the conftest loaded when pytest starts; V3, a module
-    collected first and one collected after it; V4, in each, function tests and a unittest TestCase; V5, a run with no
-    xdist worker and, where pytest-xdist is installed, a run with -n 2. A road in
-    the conftest's own code, in the code that runs before it or in pytest that keeps pytest from running that
-    re-assert in a test of that context, keyed on those facts alone or together, is refused, named above or not
-    (planted: the module road's residuals and every facet of _proof_facets, and _proof_context_roads, a road keyed on
-    each part of each fact, on the complement of each fact a read can lack, and on one conjunction, and
-    _proof_package_roads, a road in the copy of tests/conftest.py keyed on each part of its package). WHAT THE PROOF
-    DOES NOT READ, each granted where the filter counts it (the unsafe side, as
-    above): any conftest hook condition the child's context does not reproduce, a mark, an environment variable, a
-    host name, a file of tests/ the package's import does not load (a test module, a helper tests/__init__.py does not
-    import, a file under fixtures/, tests/README.md), which the child's package does not hold, or another
-    collection-time signal (the witnesses: V2, a copy of tests/conftest.py whose listed pytest_collectreport takes
-    _dead_manager_port out of each marked test is granted, and a real run of that copy reads a module-level write in
-    a marked test and the floor in the unmarked control; and a copy whose hook keys on tests/README.md beside the
-    conftest is granted, where a real run has that file there); what a real test module, a class or
-    a conftest.py below tests/ does for its own tests (a fixture of the same name, a parametrization of it, a hook),
-    since the child runs the conftest beside probe modules of its own; a plugin a run loads by -p on its command line,
-    which the child is not given; and an attribute of tests.conftest a test changes in the test process after pytest
+    _conftest_reasserts_proved, which grants a name only where a child pytest observes the counted fixture's own
+    re-assert (_reassert_proof) in each read of the child's context (the ruling of 23:17Z, (4); _PROOF_READS,
+    _proof_modes). For tests/conftest.py the child runs in a scratch copy of the checkout (the ruling of 2026-09-25
+    01:54Z, (6); _proof_checkout): the real package tests, on its one directory, with the real tests/__init__.py, the
+    real conftest and every other file of tests/ in place, the conftest imported as tests.conftest and each probe module
+    as tests.<module>, and the checkout's other files around it; only the two probe modules are added, named to sort
+    before every test module (_PROOF_PROBE_FILE), so they are collected first and second, where a real run handed
+    tests/ or the checkout collects them. The context: V1, a directory named tests; the package; the start, the
+    conftest loaded when pytest starts; V3, a module collected first and one collected after it; V4, in each, function
+    tests and a unittest TestCase; V5, a run with no xdist worker, none of this process's PYTEST_XDIST_* variables in
+    its environment, and, where pytest-xdist is installed, a run with -n 2. A road in the conftest's own code, in the
+    code that runs before it or in pytest that keeps pytest from running that re-assert in a test of that context,
+    keyed on those facts alone or together, is refused, named above or not (planted: the module road's residuals and
+    every facet of _proof_facets; _proof_context_roads, a road keyed on each part of each fact, on the complement of
+    each fact a read can lack, and on one conjunction; and _proof_copy_roads, a road in the copy of tests/conftest.py
+    keyed on the verifier's three facts of the package and on every file of the checkout in its place in the copy).
+    WHAT THE PROOF DOES NOT READ, each granted where the filter counts it (the unsafe side, as above): any conftest hook
+    condition the child's context does not reproduce, a mark, an environment variable, a host name, or another
+    collection-time signal, among them which test it is (its module, its name, the modules collected before it) and
+    which modules a run collects after the probe's, which the run's command line decides (the witness: V2, a copy of
+    tests/conftest.py whose listed pytest_collectreport takes _dead_manager_port out of each marked test is granted,
+    and a real run of that copy reads a module-level write in a marked test and the floor in the unmarked control);
+    what the clone keeps for itself, which differs from clone to clone as a host name does and which the copy does
+    not hold (its .git, the files git ignores outside tests/, each __pycache__ directory); what a real test module, a
+    class or a conftest.py below tests/ does for its own tests (a fixture of the same name, a parametrization of it, a
+    hook), since the child collects its probe modules alone; a plugin a run loads by -p on its command line, which
+    the child is not given; and an attribute of tests.conftest a test changes in the test process after pytest
     registered it. The filter still refuses every fixture of a module with a hook off _LISTED_HOOKS
     (test_a_hook_that_may_keep_pytest_from_running_a_fixture_refuses_it_on_both_roads), so that limit is reached only
     by code the module road takes on trust (import-time code, a fixture's body, a listed hook's body) that keys a
@@ -3481,7 +3483,7 @@ _REASSERT_SENTINEL = "45678"
 _REASSERT_PROBE = textwrap.dedent('''\
     import _collections_abc, json, os, re, sys, unittest
 
-    NAMES, SENTINEL = __NAMES__, __SENTINEL__
+    NAMES, SENTINEL, REPORTS = __NAMES__, __SENTINEL__, __REPORTS__
     for _name in NAMES:
         os.environ[_name] = SENTINEL        # the licensed shape: a module-level write, run at collection
 
@@ -3524,12 +3526,13 @@ _REASSERT_PROBE = textwrap.dedent('''\
 
     def _read_then_set():
         """What the running test's setup phase did to each name and the value its body reads, in a file of its own
-        under proof-reports/ beside the module; then each name set and left, as a test can, so the next probe test's
-        setup finds each set (a pop of an unset name deletes nothing, so nothing would show its re-assert)."""
+        under REPORTS, the case's reports directory outside the package, in xdist/ on an xdist worker and serial/ in a
+        run with none; then each name set and left, as a test can, so the next probe test's setup finds each set (a pop
+        of an unset name deletes nothing, so nothing would show its re-assert)."""
         test = os.environ["PYTEST_CURRENT_TEST"].rsplit(" (", 1)[0]
         seen = {n: {"setup": [e[1:3] for e in EVENTS if e[0] == n and e[3] == test + " (setup)"], "value": os.environ.get(n)}
                 for n in NAMES}
-        at = os.path.join(os.path.dirname(os.path.abspath(__file__)), "proof-reports")
+        at = os.path.join(REPORTS, "xdist" if "PYTEST_XDIST_WORKER" in os.environ else "serial")
         os.makedirs(at, exist_ok=True)
         with open(os.path.join(at, re.sub(r"\\W", "_", test) + ".json"), "w", encoding="utf-8") as f:
             json.dump({"test": test, "seen": seen}, f)
@@ -3552,9 +3555,11 @@ _REASSERT_PROBE = textwrap.dedent('''\
         def test_2_reads_then_sets(self):
             _read_then_set()
 ''')
-#   THE EXECUTION PROOF's probe module, two per run directory (_reassert_proof): it writes each probed name at its
-#   import, the licensed shape, and installs the recorder; as function tests and again as a unittest TestCase, each of
-#   its two tests reads each name and then sets each and leaves it, each read written to a file of its own. The
+#   THE EXECUTION PROOF's probe module, two per case (_reassert_proof): it writes each probed name at its import, the
+#   licensed shape, and installs the recorder; as function tests and again as a unittest TestCase, each of its two tests
+#   reads each name and then sets each and leaves it, each read written to a file of its own outside the package, filed
+#   by whether the process is an xdist worker (the child's environment carries none of this process's PYTEST_XDIST_*
+#   variables, _proof_child_env, so its run with no worker files under serial/). The
 #   recorder's skip of the mapping's own frames is planted by every pop (os.environ.pop runs in _collections_abc, so a
 #   recorder that skipped nothing would name that frame, and the control and tests/conftest.py's pops would be refused),
 #   and its reading of a frozen module's file name by every pop on Python 3.11 and later, where _collections_abc is
@@ -3569,14 +3574,14 @@ _PROOF_READS = tuple(((module, cls, test), "the %s test of %s, %s" % (when, wher
                      for test, when in (("test_1_reads_then_sets", "first"), ("test_2_reads_then_sets", "second")))
 #   THE CHILD'S CONTEXT (the reviewer's ruling of 2026-09-24 23:17Z on round 2 of fork PR #894, (4)): the reads the
 #   proof requires of each run it makes (_proof_modes), keyed (module, class, test), the module by its last letter.
-#   Each run's directory holds the package tests (V1, a directory named tests; the package, so the conftest imports as
-#   tests.conftest and each probe module as tests.<module>, as in every real run, where tests/ holds an __init__.py;
-#   for the copy of tests/conftest.py, copies of tests/__init__.py and the modules its import loads beside it, the
-#   package on that one directory, _proof_package_copies), passed to pytest as its argument, so the conftest loads
-#   when pytest starts, as in a run handed tests/ or a module in it (the start), with a probe module collected first
-#   and one collected after it (V3), each read as function tests and as a unittest TestCase (V4), and the run is made
-#   with no xdist worker and with -n 2 (V5): every combination of V3, V4 and V5 is read, and _proof_context_roads
-#   plants a road keyed on each fact, and _proof_package_roads one keyed on each part of the copy's package
+#   Each run is over the package tests (V1, a directory named tests; the package, so the conftest imports as
+#   tests.conftest and each probe module as tests.<module>; for tests/conftest.py, the real package in the one copy of
+#   the checkout, _proof_checkout, the ruling of 2026-09-25 01:54Z, (6)), handed to pytest as its argument or its probe
+#   modules by path, so the conftest loads when pytest starts (the start), with a probe module collected first and one
+#   collected after it (V3), each read as function tests and as a unittest TestCase (V4), and the run is made with no
+#   xdist worker and with -n 2 (V5): every combination of V3, V4 and V5 is read, _proof_context_roads plants a road
+#   keyed on each fact, and _proof_copy_roads one keyed on the verifier's three facts of the package and on every file
+#   of the checkout in its place in the copy
 
 
 def _proof_modes():
@@ -3589,7 +3594,7 @@ def _proof_modes():
 def _proof_verdicts(sites, reports, conftest, rcs):
     """{name: None, or why the execution proof refuses it} for each name of `sites` (_reassert_sites' form), from
     `reports` ({mode: {(module, class, test): the probe's report}} for each run the proof made, _PROOF_READS' keys),
-    `conftest` ({mode: the realpath of the case's conftest.py in that run's directory}) and `rcs` ({mode: the run's
+    `conftest` ({mode: the realpath of the case's conftest.py that run read}) and `rcs` ({mode: the run's
     return code}). THE FIXTURE'S OWN RE-ASSERT is what is read, not the value alone, in EACH read of _PROOF_READS in
     each run. Each part
     of the match with its plant (_proof_facets, run by
@@ -3634,114 +3639,220 @@ def _proof_verdicts(sites, reports, conftest, rcs):
     return out
 
 
-_PROOF_PACKAGE_READS = ("kernel/loadsource.py",)
-#   the files a module of the package reads by path at its import, relative to the checkout's root: tests/romp_load.py
-#   loads kernel/loadsource.py from the directory above its own. A `real` proof copies each to the same place under
-#   the run's directory (_proof_package_copies); one missing there fails the package's import in the child, and the
-#   proof refuses every name, which the conftest pin reds on
+_PROOF_PROBE_FILE = "test_0_reassert_probe_%02d_%s.py"
+#   the probe modules' file name, by case and module letter: test_0 sorts before every test module of the checkout
+#   (tests/'s own begin test_ and a lowercase letter, and no other directory holds one; the copy's pin reads both), so a
+#   real run handed tests/ or the checkout would collect them first and second, as the child does
+
+_PROOF_COPY = []
+#   THE ONE COPY (the reviewer's ruling of 2026-09-25 01:54Z on round 2 of fork PR #894, (6)): [the scratch directory]
+#   holding this module run's copy of the checkout (_proof_checkout), made by the run's first read of it and shared by
+#   every later one, each `real` case in its turn; tearDownModule removes it by that path
+_PROOF_RUN = collections.Counter()
+#   "reads", the calls of _proof_checkout in this module's run, "copies", the copies it made, and "real cases", the
+#   cases a `real` proof ran in one, zeroed by setUpModule: THE ONE-COPY PIN in tearDownModule reads them
 
 
-def _proof_package_modules():
-    """The modules of the package tests that its import loads, by name (romp_load for tests/romp_load.py): the names of
-    each `from . import <names>` statement of tests/__init__.py, the one form it imports its own modules by. Any other
-    road by which the package loads a module of its own is not read: the module is then missing from the child's
-    package, which has one directory, so the child fails the package's import and the proof refuses every name.
-    test_the_real_conftests_proof_runs_it_in_the_package_a_real_run_has compares this, by equality, with the modules a
-    fresh import of the package loads."""
-    tree = ast.parse(open(os.path.join(HERE, "__init__.py"), encoding="utf-8").read())
-    return sorted(a.name for n in ast.walk(tree) if isinstance(n, ast.ImportFrom) and n.level == 1 and n.module is None
-                  for a in n.names)
+def _proof_checkout_files(root=None):
+    """THE COPY'S POPULATION: the paths, relative to the checkout's root (`root`, default the checkout this module sits
+    in) and sorted, of the files the one copy holds (_proof_checkout). The package whole: every entry under tests/ but
+    what a __pycache__ directory holds, walked, a link copied as a link and not followed. The rest of the checkout:
+    every file git does not ignore (`git ls-files --cached --others --exclude-standard`, the environment's GIT_*
+    variables dropped), or, where git reads no repository there (a tree unpacked from an archive, or no git to run),
+    every file but .git's and what a __pycache__ directory holds. NOT HELD, and why: the clone's own state, which
+    differs from clone to clone and machine to machine as a host name does and is not the package (its .git, the files
+    git ignores outside tests/: caches, build output, installed dependencies, and each __pycache__ directory, the byte
+    code the child's own imports write again)."""
+    root = os.path.dirname(HERE) if root is None else root
+    tests = os.path.join(root, "tests")
+
+    def walk(top):
+        out = []
+        for d, dirs, files in os.walk(top):
+            out += [os.path.join(d, n) for n in files + [n for n in dirs if os.path.islink(os.path.join(d, n))]]
+            dirs[:] = [n for n in dirs if n != "__pycache__" and not os.path.islink(os.path.join(d, n))]
+        return [os.path.relpath(p, root) for p in out]
+    paths = walk(tests)
+    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    try:
+        r = subprocess.run(["git", "-C", root, "ls-files", "-z", "--cached", "--others", "--exclude-standard"],
+                           env=env, stdin=subprocess.DEVNULL, capture_output=True, timeout=120)
+    except (OSError, subprocess.SubprocessError):
+        r = None
+    if r is not None and r.returncode == 0:
+        rest = [p for p in r.stdout.decode("utf-8", "surrogateescape").split("\0") if p]
+    else:
+        rest = [p for p in walk(root) if p.split(os.sep)[0] != ".git"]
+    paths += [p for p in rest if p.split("/")[0] != "tests" and os.path.lexists(os.path.join(root, p))]
+    return sorted(set(os.path.normpath(p) for p in paths))
 
 
-def _proof_package_copies():
-    """[(path under a run's tests directory, the checkout's file)] that a `real` proof (_reassert_proof) copies byte
-    for byte into each run's directory: THE PACKAGE AS EVERY REAL RUN HAS IT (the verifier's finding at round 2's
-    thirty-seventh commit of fork PR #894, under the reviewer's ruling of 2026-09-24 23:17Z, (4), and its application
-    of 2026-09-25 01:07Z, (5): a package whose __init__.py appended the checkout's tests/ to its path had two
-    directories and imported its own modules from the checkout, and a hook keyed on either was granted). Copied:
-    tests/__init__.py and each module its import loads (_proof_package_modules), beside the conftest, so the package
-    has that one directory, as in a real run, where all of them are tests/'s own files; tests/credential_patterns.py,
-    which tests/conftest.py loads by path from its own directory; and each file of _PROOF_PACKAGE_READS, under ../,
-    the run's directory standing where the checkout's root stands. The checkout's other files under tests/ are not
-    copied (the proof's disclosed limit, at the end of _conftest_reasserted_names' docstring, names them)."""
-    names = ["__init__.py", "credential_patterns.py"] + [m + ".py" for m in _proof_package_modules()]
-    root = os.path.dirname(HERE)
-    return ([(n, os.path.join(HERE, n)) for n in names]
-            + [(os.path.join("..", *p.split("/")), os.path.join(root, *p.split("/"))) for p in _PROOF_PACKAGE_READS])
+def _proof_checkout():
+    """THE ONE COPY (the reviewer's ruling of 2026-09-25 01:54Z on round 2 of fork PR #894, (6): the child runs in a
+    scratch copy of the real package, not in a model of it; and its application of 02:40Z, (7): a copy of the whole
+    checkout, the package in its real tree): (the scratch directory, the copy's root), the copy made by the first call
+    of this module's run and returned to every later one. The copy's root carries the checkout's own directory name and
+    holds the files of _proof_checkout_files, each copied with its bytes and mode (a link as a link), so the package
+    tests is the real one, on its one directory, the real tests/__init__.py, tests/conftest.py and every module in
+    place, and kernel/ and every other directory stand around it as in the checkout. The files are copied from the
+    working tree the run imports, not archived from a commit: a run imports its working tree, an edit not yet
+    committed included, and a tree with no repository (one unpacked from an archive) has no commit to archive. The
+    scratch directory also holds `tmp`, the children's TMPDIR, and each case's reports, outside the copy."""
+    _PROOF_RUN["reads"] += 1
+    if not _PROOF_COPY:
+        scratch = os.path.realpath(tempfile.mkdtemp())
+        _PROOF_COPY.append(scratch)          # held first, so tearDownModule removes a copy a failure left half made
+        _PROOF_RUN["copies"] += 1
+        src = os.path.dirname(HERE)
+        dst = os.path.join(scratch, os.path.basename(src))
+        for rel in _proof_checkout_files(src):
+            at = os.path.join(dst, rel)
+            os.makedirs(os.path.dirname(at), exist_ok=True)
+            if os.path.islink(os.path.join(src, rel)):
+                os.symlink(os.readlink(os.path.join(src, rel)), at)
+            else:
+                shutil.copy2(os.path.join(src, rel), at)
+        os.makedirs(os.path.join(scratch, "tmp"))
+    return _PROOF_COPY[0], os.path.join(_PROOF_COPY[0], os.path.basename(os.path.dirname(HERE)))
+
+
+def _proof_child_env(probed, tmp):
+    """The child pytest's environment: this process's, less PYTEST_CURRENT_TEST, the probed names and the variables
+    pytest-xdist sets in a worker (PYTEST_XDIST_*: this process's, when it is one, would make the child's run with no
+    worker look like a worker to a hook that reads them), with TMPDIR `tmp`."""
+    child = {k: v for k, v in os.environ.items()
+             if k != "PYTEST_CURRENT_TEST" and not k.startswith("PYTEST_XDIST_") and k not in probed}
+    child["TMPDIR"] = tmp
+    return child
+
+
+def _proof_reports(at, modes):
+    """{mode: {(module, class, test): the probe's report}} for each mode of `modes`, read from `at`/<mode>/, where each
+    probe test writes its report (_REASSERT_PROBE), the module keyed by the last letter of its file's name."""
+    reports = {}
+    for mode in modes:
+        got, where = {}, os.path.join(at, mode)
+        for fn in sorted(os.listdir(where)) if os.path.isdir(where) else ():
+            with open(os.path.join(where, fn), encoding="utf-8") as f:
+                rep = json.load(f)
+            path, _sep, rest = rep["test"].partition("::")
+            cls, _sep, test = rest.rpartition("::")
+            got[(os.path.basename(path)[:-3].rsplit("_", 1)[1], cls, test)] = rep
+        reports[mode] = got
+    return reports
 
 
 def _reassert_proof(cases, real=False):
     """THE EXECUTION PROOF (the reviewer's ruling of 2026-09-24 21:09Z on round 2 of fork PR #894, (1): a static reader
     with no closed boundary is replaced by the property, run, here in the context of the ruling of 23:17Z, (4); what
     that does not read is named at the end of _conftest_reasserted_names' docstring). For each case of `cases` ((label,
-    conftest text, or None for a copy of tests/conftest.py, {helper file: text}, sites in _reassert_sites' form)) and
-    each run of _proof_modes, a child pytest over a directory of its own, cNN-<mode> under a scratch root, over the
-    package it holds, `pytest tests` from that directory (with -n 2 for the second mode): tests/ holds, with `real`,
-    the copies of _proof_package_copies (tests/__init__.py, the modules its import loads, tests/credential_patterns.py
-    and, under ../, the files of _PROOF_PACKAGE_READS), else an __init__.py, a helper's where one is given and else
-    an empty one; then the conftest.py, the helpers (a name may carry a directory, ../ being the run's directory, which
-    pytest puts on sys.path) and two probe modules (_REASSERT_PROBE) over the names of the case's sites, collected in
-    the order _PROOF_READS names. The child's environment drops PYTEST_CURRENT_TEST and the probed names, and its
-    TMPDIR is the scratch root, which is removed after. Returns ({label: _proof_verdicts over the case's reports}, 0
-    or the first nonzero return code of the runs, their output)."""
-    root = os.path.realpath(tempfile.mkdtemp())
-    copies = _proof_package_copies() if real else []
-    try:
-        runs = []
-        for i, (label, text, helpers, sites) in enumerate(cases):
-            files = {} if real else {"__init__.py": ""}
-            files.update(helpers)
-            for module in "ab":
-                files["test_reassert_probe_%02d_%s.py" % (i, module)] = (_REASSERT_PROBE.replace("__NAMES__", repr(sorted(sites)))
-                                                                          .replace("__SENTINEL__", repr(_REASSERT_SENTINEL)))
-            if text is not None:
-                files["conftest.py"] = text
-            for mode in _proof_modes():
-                run_dir = os.path.join(root, "c%02d-%s" % (i, mode))
-                sub = os.path.join(run_dir, "tests")
-                os.makedirs(sub)
-                if text is None:
-                    shutil.copy(os.path.join(HERE, "conftest.py"), os.path.join(sub, "conftest.py"))
-                for rel, src in copies:
-                    at = os.path.normpath(os.path.join(sub, rel))
-                    os.makedirs(os.path.dirname(at), exist_ok=True)
-                    shutil.copyfile(src, at)
-                for name, body in files.items():
-                    at = os.path.join(sub, name)
-                    os.makedirs(os.path.dirname(at), exist_ok=True)
-                    with open(at, "w", encoding="utf-8") as f:
-                        f.write(body)
-                runs.append((i, mode, run_dir, sub))
-        probed = {n for _l, _t, _h, sites in cases for n in sites}
-        child = {k: v for k, v in os.environ.items() if k != "PYTEST_CURRENT_TEST" and k not in probed}
-        child["TMPDIR"] = root
+    conftest text, or None for tests/conftest.py itself, {helper file: text}, sites in _reassert_sites' form)) and each
+    run of _proof_modes (with -n 2 for the second), a child pytest over two probe modules (_REASSERT_PROBE, named by
+    _PROOF_PROBE_FILE) over the names of the case's sites, collected in the order _PROOF_READS names, each probe test
+    writing its report under the case's reports directory, outside the package. With `real` (the ruling of
+    2026-09-25 01:54Z, (6), and its application of 02:40Z, (7)), every case runs in THE ONE COPY of the checkout
+    (_proof_checkout), one case at a time: the case's conftest (tests/conftest.py's bytes, or the text) and the two
+    probe modules, named by the case's number in the module run, are written into the copy's tests/, each mode is a
+    child of its own handed the probe modules by path from the copy's root, and after the case the probe modules
+    and tests/__pycache__ are removed and tests/conftest.py's bytes put back, so every case finds the copy as the
+    checkout is and no case runs byte code a case before it wrote. A `real` case with a helper file is refused
+    (ValueError): the copy's package is the checkout's own. Else each case and run has a directory of its own, cNN-<mode>
+    under a scratch root, holding the package tests: an __init__.py, a helper's where one is given and else an empty
+    one, the conftest.py, the helpers (a name may carry a directory, ../ being the run's directory, which pytest puts on
+    sys.path) and the probe modules, `pytest tests` from that directory. The child's
+    environment is _proof_child_env's, its TMPDIR under the scratch directory, which is removed after (the one copy's
+    by tearDownModule). Returns ({label: _proof_verdicts over the case's reports}, 0 or the first nonzero return code
+    of the runs, their output)."""
+    modes = _proof_modes()
+    probed = {n for _l, _t, _h, sites in cases for n in sites}
+    reports, conftests, rcs = ([{} for _c in cases] for _x in range(3))
+    outs, first = [], 0
 
-        def run(job):
-            _i, mode, run_dir, _sub = job
-            return subprocess.run([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider"]
-                                  + (["-n", "2"] if mode == "xdist" else []) + ["--rootdir", run_dir, "tests"],
-                                  cwd=run_dir, env=child, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=180)
-        with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:    # each run has a directory of its own
-            results = list(pool.map(run, runs))
-        reports, conftests, rcs = ([{} for _c in cases] for _x in range(3))
-        outs, first = [], 0
-        for (i, mode, _run_dir, sub), r in zip(runs, results):
-            outs.append((r.returncode != 0, "[the run %s, case %r: return code %d]\n%s%s"
-                         % (_PROOF_MODES[mode], cases[i][0], r.returncode, r.stdout, r.stderr)))
-            first = first or r.returncode
-            got, at = {}, os.path.join(sub, "proof-reports")
-            for fn in sorted(os.listdir(at)) if os.path.isdir(at) else ():
-                with open(os.path.join(at, fn), encoding="utf-8") as f:
-                    rep = json.load(f)
-                path, _sep, rest = rep["test"].partition("::")
-                cls, _sep, test = rest.rpartition("::")
-                got[(os.path.basename(path)[:-3].rsplit("_", 1)[1], cls, test)] = rep
-            reports[i][mode], conftests[i][mode], rcs[i][mode] = got, os.path.join(sub, "conftest.py"), r.returncode
-        verdicts = {label: _proof_verdicts(sites, reports[i], conftests[i], rcs[i])
-                    for i, (label, _t, _h, sites) in enumerate(cases)}
-        return verdicts, first, "\n".join(text for _failed, text in sorted(outs, key=lambda o: o[0]))    # failed runs at the end
-    finally:
-        shutil.rmtree(root, True)
+    def probe(i, at):
+        return (_REASSERT_PROBE.replace("__NAMES__", repr(sorted(cases[i][3]))).replace("__SENTINEL__", repr(_REASSERT_SENTINEL))
+                .replace("__REPORTS__", repr(at)))
+
+    def run(job):
+        mode, cwd, args = job
+        return subprocess.run([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider"]
+                              + (["-n", "2"] if mode == "xdist" else []) + ["--rootdir", cwd] + args,
+                              cwd=cwd, env=child, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=180)
+
+    def record(i, mode, r):
+        nonlocal first
+        outs.append((r.returncode != 0, "[the run %s, case %r: return code %d]\n%s%s"
+                     % (_PROOF_MODES[mode], cases[i][0], r.returncode, r.stdout, r.stderr)))
+        first = first or r.returncode
+        rcs[i][mode] = r.returncode
+
+    if real:
+        for label, _t, helpers, _s in cases:
+            if helpers:
+                raise ValueError("a real proof runs the checkout's own package, with no helper file: %r" % label)
+        scratch, checkout = _proof_checkout()
+        tests_dir = os.path.join(checkout, "tests")
+        conftest = os.path.join(tests_dir, "conftest.py")
+        child = _proof_child_env(probed, os.path.join(scratch, "tmp"))
+        for i, (label, text, helpers, sites) in enumerate(cases):
+            n = _PROOF_RUN["real cases"]          # the case's number in the module run: its probe modules' names are its own
+            _PROOF_RUN["real cases"] += 1
+            at = os.path.join(scratch, "reports-%02d" % n)
+            probes = [os.path.join(tests_dir, _PROOF_PROBE_FILE % (n, m)) for m in "ab"]
+            try:
+                if text is None:
+                    shutil.copy2(os.path.join(HERE, "conftest.py"), conftest)
+                else:
+                    with open(conftest, "w", encoding="utf-8") as f:
+                        f.write(text)
+                for p in probes:
+                    with open(p, "w", encoding="utf-8") as f:
+                        f.write(probe(i, at))
+                args = [os.path.relpath(p, checkout) for p in probes]
+                with concurrent.futures.ThreadPoolExecutor(max_workers=len(modes)) as pool:
+                    results = list(pool.map(run, [(mode, checkout, args) for mode in modes]))
+                for mode, r in zip(modes, results):
+                    record(i, mode, r)
+                    conftests[i][mode] = conftest
+                reports[i] = _proof_reports(at, modes)
+            finally:
+                for p in probes:
+                    if os.path.lexists(p):
+                        os.unlink(p)
+                shutil.copy2(os.path.join(HERE, "conftest.py"), conftest)
+                shutil.rmtree(os.path.join(tests_dir, "__pycache__"), True)
+                shutil.rmtree(at, True)
+    else:
+        root = os.path.realpath(tempfile.mkdtemp())
+        try:
+            child = _proof_child_env(probed, root)
+            jobs = []
+            for i, (label, text, helpers, sites) in enumerate(cases):
+                files = {"__init__.py": ""}
+                files.update(helpers)
+                at = os.path.join(root, "reports-%02d" % i)
+                for module in "ab":
+                    files[_PROOF_PROBE_FILE % (i, module)] = probe(i, at)
+                files["conftest.py"] = text if text is not None else open(os.path.join(HERE, "conftest.py"), encoding="utf-8").read()
+                for mode in modes:
+                    run_dir = os.path.join(root, "c%02d-%s" % (i, mode))
+                    for name, body in files.items():
+                        path = os.path.join(run_dir, "tests", name)
+                        os.makedirs(os.path.dirname(path), exist_ok=True)
+                        with open(path, "w", encoding="utf-8") as f:
+                            f.write(body)
+                    jobs.append((i, mode, run_dir))
+            with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:    # each run has a directory of its own
+                results = list(pool.map(run, [(mode, run_dir, ["tests"]) for _i, mode, run_dir in jobs]))
+            for (i, mode, run_dir), r in zip(jobs, results):
+                record(i, mode, r)
+                conftests[i][mode] = os.path.join(run_dir, "tests", "conftest.py")
+            for i in range(len(cases)):
+                reports[i] = _proof_reports(os.path.join(root, "reports-%02d" % i), modes)
+        finally:
+            shutil.rmtree(root, True)
+    verdicts = {label: _proof_verdicts(sites, reports[i], conftests[i], rcs[i])
+                for i, (label, _t, _h, sites) in enumerate(cases)}
+    return verdicts, first, "\n".join(text for _failed, text in sorted(outs, key=lambda o: o[0]))    # failed runs at the end
 
 
 def _conftest_reasserts_proved(src=None, where=None, helpers=None, real=None):
@@ -3754,9 +3865,8 @@ def _conftest_reasserts_proved(src=None, where=None, helpers=None, real=None):
     test a process runs, a probe test's for the rest). REFUSED: the filter's refusals, and one line per name the proof
     refused, `NAME: why`. The filter may refuse early and never grants: a shape it does not model, which it counts, is
     refused by the run wherever it keeps pytest from running the re-assert in a test of that context, and granted
-    where it keys on a condition the context does not reproduce. `real` (default: `src` is None) runs the child as
-    tests/conftest.py's copy runs, beside copies of tests/__init__.py and the modules its import loads, the package on
-    that one directory as in a real run (_proof_package_copies). For
+    where it keys on a condition the context does not reproduce. `real` (default: `src` is None) runs the child in the
+    one copy of the checkout (_proof_checkout), in the real package. For
     tests/conftest.py itself the result is read once per run of this module and held by the _Census ("proofs") until
     tearDownModule's release. What the proof does not read is named at the end of _conftest_reasserted_names'
     docstring."""
@@ -4729,9 +4839,10 @@ def setUpModule():
     again parses and builds again, after tearDownModule released what the run held), and gc.get_freeze_count() is read
     for THE FREEZE-COUNT PIN in tearDownModule (the reviewer's ruling of 2026-09-24 on round 2 of fork PR #894, clause 3).
     Read here and not at import: pytest imports every module at collection, before any test runs, and another module's
-    freeze may run in between."""
+    freeze may run in between. The execution proof's copy counts (_PROOF_RUN) are zeroed too, for THE ONE-COPY PIN."""
     _CENSUS_BUILDS.clear()
     _OWN_PARSES.clear()
+    _PROOF_RUN.clear()
     _FREEZE_AT_START[:] = [gc.get_freeze_count()]
 
 
@@ -4755,8 +4866,16 @@ def tearDownModule():
     parse_cache.derived freezes every object tracked when it returns, and every later perf-snapshot read in the process
     walks them). The count is live and falls when a frozen object dies, so an object frozen before this module can lower
     it in between, while only a freeze in this module's run raises it; hence not above, rather than equal. Two reads
-    only: each walks the frozen objects. A red here is pytest's error at the teardown of the module's last test, naming
-    each pin that failed."""
+    only: each walks the frozen objects. THE ONE-COPY PIN (the reviewer's ruling of 2026-09-25 01:54Z on round 2 of
+    fork PR #894, (6): one copy per module run, shared by all cases): the one copy of the checkout (_PROOF_COPY) is
+    removed, and the run made exactly one copy if it read one at all and none if it read none (_PROOF_RUN, by
+    equality); red under a copy made per proof or per case, when the run's worker ran two `real` proofs (the copy's
+    own test holds a proof to the copy it read, on every worker), and under the removal dropped. A red here is
+    pytest's error at the teardown of the module's last test, naming each pin that failed."""
+    scratch = _PROOF_COPY.pop() if _PROOF_COPY else None
+    if scratch is not None:
+        shutil.rmtree(scratch, True)
+    made, reads, cases = _PROOF_RUN["copies"], _PROOF_RUN["reads"], _PROOF_RUN["real cases"]
     held = _HELD[0] if _HELD else None
     ref = weakref.ref(held) if held is not None else None
     del held
@@ -4780,6 +4899,11 @@ def tearDownModule():
                         "changes no collector state (the reviewer's ruling of 2026-09-24 on round 2 of fork PR #894): its "
                         "census parses its own trees and never derives through parse_cache.derived, which calls gc.freeze() "
                         "after a build" % (before, after))
+    if (made, _PROOF_COPY) != (min(reads, 1), []) or (scratch is not None and os.path.lexists(scratch)):
+        problems.append("the one-copy pin: the module's run made %d copies of the checkout over %d reads and %d real cases "
+                        "of the execution proof, where one copy serves every read and case of the run and none is made for "
+                        "none, and the copy is removed at the module's teardown (left: %s)"
+                        % (made, reads, cases, [p for p in [scratch] + _PROOF_COPY if p and os.path.lexists(p)]))
     if problems:
         raise AssertionError("; ".join(problems))
 
@@ -6501,11 +6625,14 @@ class HermeticKernelPostal(unittest.TestCase):
         pytest_collectreport taking `_f` out of each test one fact names, is refused, for the reads that share that
         fact and no others (V1, the conftest's directory and the test's, the package, the conftest's module name and
         the test module's, and the start, each in every read; V3, the first module's reads or the later module's; V4,
-        the function tests' or the TestCase's; V5, the run's with no worker or the -n 2 run's; the conjunction, the TestCase reads
-        of the later module on a worker), and the road keyed on a mark, V2, is granted. V5's worker road and the conjunction are
-        refused only where the proof makes the -n 2 run: where pytest-xdist is not installed (CI's pytest job) no run
-        there has a worker, and the proof makes the one run and grants them, which this test reads from _proof_modes and
-        runs for the worker road with pytest-xdist taken out of reach."""
+        the function tests' or the TestCase's; V5, the run's with no worker or the -n 2 run's, the worker read by its
+        config and by the variable pytest-xdist sets in it; the conjunction, the TestCase reads of the later module on a
+        worker), and the road keyed on a mark, V2, is granted. The proof runs here with this process's environment
+        carrying the variables pytest-xdist sets in a worker, as on a worker of a sweep with -n 8, and its run with no
+        worker drops them (_proof_child_env), so the variable's road is refused for the -n 2 run's reads alone. V5's
+        worker roads and the conjunction are refused only where the proof makes the -n 2 run: where pytest-xdist is not
+        installed (CI's pytest job) no run there has a worker, and the proof makes the one run and grants them, which
+        this test reads from _proof_modes and runs for the worker road with pytest-xdist taken out of reach."""
         try:
             import xdist  # noqa: F401
             installed = True
@@ -6515,8 +6642,11 @@ class HermeticKernelPostal(unittest.TestCase):
                          "the proof makes the -n 2 run wherever pytest-xdist imports")
         popper = lambda p: "import os, pytest\n\n\n@pytest.fixture(autouse=True)\ndef _f():\n    os.environ.pop(%r, None)\n    yield\n" % p
         roads = [(label, "ROMP_PROBE_CONTEXT_%02d" % i, condition, mode) for i, (label, condition, mode) in enumerate(_proof_context_roads())]
-        got, rc, out = _reassert_proof([(label, popper(p) + _CONTEXT_ROAD_HOOK.replace("__CONDITION__", condition), {},
-                                         {p: frozenset({("_f", 4, "pop")})}) for label, p, condition, _m in roads])
+        from unittest import mock
+        worker = {"PYTEST_XDIST_WORKER": "gw7", "PYTEST_XDIST_WORKER_COUNT": "8", "PYTEST_XDIST_TESTRUNUID": "0" * 32}
+        with mock.patch.dict(os.environ, worker):     # as on a worker of a run with -n 8: the child's run with none drops them
+            got, rc, out = _reassert_proof([(label, popper(p) + _CONTEXT_ROAD_HOOK.replace("__CONDITION__", condition), {},
+                                             {p: frozenset({("_f", 4, "pop")})}) for label, p, condition, _m in roads])
         self.assertEqual(rc, 0, out[-3000:])
         modes = _proof_modes()
         self.assertEqual({label: got[label][p] is not None for label, p, _c, _m in roads},
@@ -6536,6 +6666,7 @@ class HermeticKernelPostal(unittest.TestCase):
                  "V4: a unittest TestCase test": lambda key, mode: key[1] == "ProbeCase",
                  "V5: a test in a run with no xdist worker": lambda key, mode: mode == "serial",
                  "V5: a test on an xdist worker": lambda key, mode: mode == "xdist",
+                 "V5: a test on an xdist worker, by the variable pytest-xdist sets in one": lambda key, mode: mode == "xdist",
                  "V3, V4 and V5 at once: a TestCase test of a module collected after the first, on an xdist worker":
                      lambda key, mode: key[0] == "b" and key[1] == "ProbeCase" and mode == "xdist"}
         self.assertEqual(sorted(facts), sorted(label for label, _p, _c, mode in roads if mode is not None))
@@ -6548,7 +6679,6 @@ class HermeticKernelPostal(unittest.TestCase):
                              "%s: refused for the reads that share its fact and no others: %s" % (label, why))
         # with pytest-xdist taken out of reach, as in CI's pytest job, the proof makes the run with no worker alone and
         # grants V5's worker road
-        from unittest import mock
         find = importlib.util.find_spec
         with mock.patch.object(importlib.util, "find_spec", lambda name, *a: None if name == "xdist" else find(name, *a)):
             self.assertEqual(_proof_modes(), ("serial",))
@@ -6605,51 +6735,130 @@ class HermeticKernelPostal(unittest.TestCase):
                          "THE WITNESS RUN: the marked test reads the module-level write the proof granted, the control the floor "
                          "(rc %d): %s" % (r.returncode, (r.stdout + r.stderr)[-3000:]))
 
-    def test_the_real_conftests_proof_runs_it_in_the_package_a_real_run_has(self):
-        """THE COPY'S PACKAGE (the verifier's finding at round 2's thirty-seventh commit of fork PR #894, under the
-        reviewer's ruling of 2026-09-24 23:17Z, (4), and its application of 2026-09-25 01:07Z, (5)): the child of a
-        `real` proof ran tests/conftest.py's copy in a package whose __init__.py appended the checkout's tests/ to the
-        package's path and ran tests/__init__.py's code from there, so the package had two directories and its own
-        modules (tests.romp_load and the rest) were the checkout's files, not files beside the conftest. A hook keyed on
-        the package's one directory, or on a module of it sitting beside the conftest, was granted, and a real run of
-        each read the module-level write; the first was a regression, since the commit before it ran the child with the
-        checkout's package itself, on one directory, and refused that hook. Now each run's directory holds copies
-        (_proof_package_copies). THE POPULATION: the modules the package's import loads (_proof_package_modules, read
-        from tests/__init__.py's text) equal, by name, the ones a fresh import of the package loads in a child python.
-        THE ROADS (_proof_package_roads): each condition holds in this process, a real run, evaluated by the hook's own
-        helpers with the conftest's file name; and the proof over a copy of tests/conftest.py whose listed
-        pytest_collectreport takes _dead_manager_port out of each test where the condition holds refuses the four names
-        that fixture re-asserts, and no other, for each road on a part of the package, and grants every name for the
-        disclosed limit's road, a file of tests/ the package's import does not load."""
-        scratch = os.path.realpath(tempfile.mkdtemp())
-        self.addCleanup(shutil.rmtree, scratch, True)
-        env = {k: v for k, v in os.environ.items() if k != "PYTEST_CURRENT_TEST"}
-        env["TMPDIR"] = scratch
-        r = subprocess.run([sys.executable, "-c", "import json, sys, tests\n"
-                            "print(json.dumps(sorted(m[len('tests.'):] for m in sys.modules if m.startswith('tests.'))))"],
-                           cwd=os.path.dirname(HERE), env=env, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=120)
-        loaded = json.loads(r.stdout.strip().splitlines()[-1]) if r.returncode == 0 and r.stdout.strip() else None
-        self.assertEqual((r.returncode, _proof_package_modules()), (0, loaded),
-                         "THE POPULATION: the modules the child's package holds copies of are the ones a fresh import of the "
-                         "package loads: %s" % (r.stdout + r.stderr)[-3000:])
+    def test_the_real_conftests_proof_runs_its_child_in_one_scratch_copy_of_the_checkout(self):
+        """THE CHILD RUNS IN A SCRATCH COPY OF THE REAL PACKAGE (the reviewer's ruling of 2026-09-25 01:54Z on round 2 of
+        fork PR #894, (6), after the verifier's findings at the thirty-seventh commit, a package of two directories whose
+        __init__.py appended the checkout's tests/ to its path, and at the thirty-eighth, a package of the files its
+        import loads, where a hook keyed on tests/README.md, a real test module, tests/fixtures/ or a file of the
+        checkout outside tests/ was granted and a real run of each read the module-level write). THE COPY
+        (_proof_checkout): its files equal _proof_checkout_files', each with the checkout's bytes and mode, or its link;
+        every entry of tests/ but __pycache__ is among them (the package whole); and no test module of the copy sorts
+        before the probe modules (_PROOF_PROBE_FILE), so a real run handed tests/ or the checkout would collect them
+        first and second, as the child does. THE ROADS (_proof_copy_roads): each condition holds in this process, a real
+        run, evaluated in tests.conftest's own namespace; the proof over a copy of tests/conftest.py whose listed
+        pytest_collectreport takes _dead_manager_port out of each test where every condition holds refuses the four
+        names that fixture re-asserts and no other; and each child process records every condition true. The verifier's
+        Q1, Q2 and Q3 are three of them, true in a real run and false under the thirty-seventh commit's shim. ONE COPY,
+        SHARED: the proof ran in the copy this test read, still the module run's one copy after it, and the copy is the
+        checkout again after the case: its files the population with the checkout's bytes, and no tests/__pycache__ left
+        from the case's runs, so no later case runs byte code this one wrote."""
+        src = os.path.dirname(HERE)
+        scratch, checkout = _proof_checkout()
+        copies = _PROOF_RUN["copies"]
+        want = _proof_checkout_files(src)
+
+        def held():
+            got, faults = [], []
+            for d, dirs, files in os.walk(checkout):
+                got += [os.path.relpath(os.path.join(d, n), checkout) for n in files + [n for n in dirs if os.path.islink(os.path.join(d, n))]]
+                dirs[:] = [n for n in dirs if n != "__pycache__" and not os.path.islink(os.path.join(d, n))]
+            for rel in want:
+                a, b = os.path.join(checkout, rel), os.path.join(src, rel)
+                if os.path.islink(b):
+                    same = os.path.islink(a) and os.readlink(a) == os.readlink(b)
+                elif os.path.islink(a) or not os.path.isfile(a) or (os.stat(a).st_mode & 0o7777) != (os.stat(b).st_mode & 0o7777):
+                    same = False
+                else:
+                    with open(a, "rb") as fa, open(b, "rb") as fb:
+                        same = fa.read() == fb.read()
+                if not same:
+                    faults.append(rel)
+            return sorted(got), faults
+        self.assertEqual((held(), os.path.basename(checkout)), ((want, []), os.path.basename(src)),
+                         "THE COPY holds the population, each file with the checkout's bytes and mode, or its link, and nothing "
+                         "else, under the checkout's own directory name")
+        self.assertEqual(sorted({p.split(os.sep)[1] for p in want if p.split(os.sep)[0] == "tests"}),
+                         sorted(n for n in os.listdir(HERE) if n != "__pycache__"),
+                         "THE PACKAGE WHOLE: every entry of tests/ but __pycache__ is in the copy")
+        first = min(_PROOF_PROBE_FILE % (0, m) for m in "ab")
+        self.assertEqual([p for p in want if re.fullmatch(r"test_.*\.py|.*_test\.py", os.path.basename(p))
+                          and tuple(p.split(os.sep)) < ("tests", first)], [],
+                         "THE ORDER: no test module of the checkout sorts before the probe modules")
+        roads = _proof_copy_roads(src)
+        here = dict(vars(_real_conftest_module()))
+        exec(compile(_COPY_ROAD_HOOK.replace("__CONDITIONS__", "()").replace("__VALUES__", "None"), "<the copy roads' hook>", "exec"),
+             here)
+        labels = [label for label, _c in roads]
+        self.assertEqual({label: bool(eval(condition, here)) for label, condition in roads}, dict.fromkeys(labels, True),
+                         "each condition holds in a real run: this process's, in tests.conftest's namespace")
         sites, refused = _reassert_sites()
         self.assertEqual(refused, ())
         stopped = {n for n, s in sites.items() if any(f == "_dead_manager_port" for f, _l, _o in s)}
         self.assertEqual(stopped, {"ROMP_MANAGER_PORT", "ROMP_KERNEL_PORT", "ROMP_SERVE_PORT", "ROMP_POSTAL_PORT"})
-        roads = _proof_package_roads()
-        here = {"__file__": os.path.join(HERE, "conftest.py"), "os": os, "sys": sys}
-        exec(compile(_PACKAGE_ROAD_HOOK.replace("__CONDITION__", "False"), "<the package roads' hook>", "exec"), here)
-        self.assertEqual({label: bool(eval(condition, here)) for label, condition, _r in roads},
-                         {label: True for label, _c, _r in roads},
-                         "each road keys on a condition a real run meets: this process's, whose package tests is the checkout's")
-        conftest = open(os.path.join(HERE, "conftest.py"), encoding="utf-8").read()
-        got, rc, out = _reassert_proof([(label, conftest + _PACKAGE_ROAD_HOOK.replace("__CONDITION__", condition), {}, sites)
-                                        for label, condition, _r in roads], real=True)
-        self.assertEqual({label: sorted(n for n, why in got[label].items() if why) for label, _c, _r in roads},
-                         {label: sorted(stopped) if refuses else [] for label, _c, refuses in roads},
-                         "THE ROADS: the proof refuses the four names _dead_manager_port re-asserts for each road on a part of "
-                         "the copy's package, and grants every name for the disclosed limit's road (rc %d):\n%s\n%s"
-                         % (rc, "\n".join("%s: %s" % (label, got[label]) for label, _c, _r in roads), out[-3000:]))
+        values = os.path.join(scratch, "copy-roads")
+        shutil.rmtree(values, True)
+        os.makedirs(values)
+        self.addCleanup(shutil.rmtree, values, True)
+        planted = (open(os.path.join(HERE, "conftest.py"), encoding="utf-8").read()
+                   + _COPY_ROAD_HOOK.replace("__CONDITIONS__", repr(roads)).replace("__VALUES__", repr(values)))
+        got, rc, out = _reassert_proof([("copy", planted, {}, sites)], real=True)
+        recorded = []
+        for fn in sorted(os.listdir(values)):
+            with open(os.path.join(values, fn), encoding="utf-8") as f:
+                recorded.append(json.load(f))
+        self.assertEqual(recorded, [dict.fromkeys(labels, True)] * (1 + 2 * ("xdist" in _proof_modes())),
+                         "each child process that collected (the run with no worker, and each worker of the -n 2 run) "
+                         "records every condition true (rc %d): %s\n%s" % (rc, recorded, out[-3000:]))
+        self.assertEqual(sorted(n for n, why in got["copy"].items() if why), sorted(stopped),
+                         "THE ROADS: the proof refuses the four names _dead_manager_port re-asserts, and no other (rc %d): %s"
+                         % (rc, got["copy"]))
+        self.assertEqual((_PROOF_COPY, _PROOF_RUN["copies"]), ([scratch], copies),
+                         "ONE COPY, SHARED: the proof ran in the module run's one copy, and no other was made")
+        self.assertEqual((held(), os.path.exists(os.path.join(checkout, "tests", "__pycache__"))), ((want, []), False),
+                         "after the case the copy is the checkout again, with no byte code left from the case's runs")
+
+    def test_the_copys_population_is_the_package_whole_and_the_files_git_does_not_ignore(self):
+        """THE COPY'S POPULATION (_proof_checkout_files), over a synthetic checkout, both roads. With a repository: every
+        entry under tests/, walked (a file git ignores there included), less what a __pycache__ directory holds; outside
+        tests/, a tracked file (one that matches .gitignore included, by --cached), an untracked file git does not
+        ignore (--others) and a link, as a link, and not a file git ignores (--exclude-standard) nor anything under .git;
+        read with the environment's GIT_* variables dropped (a GIT_DIR pointing elsewhere is set here and does not
+        reach git). With no git to run, and with no repository (the tree unpacked from an archive): every file but
+        .git's and a __pycache__ directory's. And a `real` proof refuses a case with a helper file: the copy's package is
+        the checkout's own."""
+        root = os.path.realpath(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, root, True)
+        files = {"tests/a.py": "", "tests/sub/b.txt": "", "tests/__pycache__/a.cpython-312.pyc": "", "tests/ignored.log": "",
+                 "kept.txt": "", "new.txt": "", "build/out.bin": "", "build/tracked.bin": "", ".gitignore": "build/\n*.log\n__pycache__/\n",
+                 "bin/__pycache__/x.pyc": ""}
+        for rel, body in files.items():
+            os.makedirs(os.path.join(root, os.path.dirname(rel)), exist_ok=True)
+            with open(os.path.join(root, rel), "w", encoding="utf-8") as f:
+                f.write(body)
+        os.symlink("kept.txt", os.path.join(root, "link"))
+        env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+        env.update(GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL=os.devnull)
+        for args in (["init", "-q"], ["add", "kept.txt", "link", ".gitignore", "tests/a.py"], ["add", "-f", "build/tracked.bin"]):
+            subprocess.run(["git", "-C", root] + args, env=env, stdin=subprocess.DEVNULL, capture_output=True, check=True, timeout=60)
+        from unittest import mock
+        with mock.patch.dict(os.environ, {"GIT_DIR": os.path.join(root, "no-such-repository"), "GIT_WORK_TREE": root}):
+            got = _proof_checkout_files(root)
+        self.assertEqual(got, sorted(os.path.normpath(p) for p in [".gitignore", "build/tracked.bin", "kept.txt", "link", "new.txt",
+                                                                   "tests/a.py", "tests/ignored.log", "tests/sub/b.txt"]),
+                         "with a repository: tests/ whole but __pycache__, and outside it what git does not ignore")
+        with mock.patch.dict(os.environ, {"PATH": root}):     # no git to run: the tree's own files, the repository's left out
+            self.assertEqual(_proof_checkout_files(root),
+                             sorted(os.path.normpath(p) for p in [".gitignore", "build/out.bin", "build/tracked.bin", "kept.txt",
+                                                                  "link", "new.txt", "tests/a.py", "tests/ignored.log",
+                                                                  "tests/sub/b.txt"]),
+                             "with no git to run: every file but .git's and a __pycache__ directory's")
+        shutil.rmtree(os.path.join(root, ".git"))
+        self.assertEqual(_proof_checkout_files(root),
+                         sorted(os.path.normpath(p) for p in [".gitignore", "build/out.bin", "build/tracked.bin", "kept.txt", "link",
+                                                              "new.txt", "tests/a.py", "tests/ignored.log", "tests/sub/b.txt"]),
+                         "with no repository: every file but .git's and a __pycache__ directory's")
+        with self.assertRaises(ValueError):
+            _reassert_proof([("a helper", "", {"x.py": ""}, {"ROMP_PROBE_HELPER": frozenset()})], real=True)
 
     def test_a_fixture_that_is_not_autouse_writes_for_the_tests_after_it(self):
         """The verifier's finding at round 2's seventeenth commit of fork PR #894: the wide read of conftest's fixture writes
@@ -9879,8 +10088,9 @@ def _proof_context_roads():
     package, the conftest imported as tests.conftest, and a test's module imported as a module of tests; the start, the
     conftest loaded when pytest starts); the facts a read can lack, each and its complement (V3, a test of the first
     module collected, and one of a module collected after it; V4, a function test, and a unittest TestCase test; V5, a
-    test in a run with no xdist worker, and one on an xdist worker, which only the -n 2 run refuses); and one
-    conjunction of V3, V4 and V5. The one road of the proof's disclosed limit, V2, a test with a mark, is granted."""
+    test in a run with no xdist worker, and one on an xdist worker, read by the worker's config and by the variable
+    pytest-xdist sets in its environment, which only the -n 2 run refuses); and one conjunction of V3, V4 and V5. The
+    one road of the proof's disclosed limit, V2, a test with a mark, is granted."""
     return (
         ("V1: the conftest in a directory named tests", "os.path.basename(os.path.dirname(os.path.abspath(__file__))) == 'tests'",
          "serial"),
@@ -9895,60 +10105,97 @@ def _proof_context_roads():
          "serial"),
         ("V5: a test in a run with no xdist worker", "not hasattr(item.config, 'workerinput')", "serial"),
         ("V5: a test on an xdist worker", "hasattr(item.config, 'workerinput')", "xdist"),
+        ("V5: a test on an xdist worker, by the variable pytest-xdist sets in one", "'PYTEST_XDIST_WORKER' in os.environ", "xdist"),
         ("V3, V4 and V5 at once: a TestCase test of a module collected after the first, on an xdist worker",
          "len(_MODULES) > 1 and getattr(item, 'cls', None) is not None and hasattr(item.config, 'workerinput')", "xdist"),
         ("V2: a test with a mark", "item.get_closest_marker('filterwarnings') is not None", None))
 
 
-_PACKAGE_ROAD_HOOK = textwrap.dedent('''\
+_COPY_ROAD_HOOK = textwrap.dedent('''\
 
 
-    import hashlib as _pk_hashlib
+    import json as _cr_json
+
+    _CR_FACTS = {}
 
 
-    def _pk_digest(path):
-        with open(path, "rb") as f:
-            return _pk_hashlib.sha256(f.read()).hexdigest()
+    def _cr_walk(top):
+        out = []
+        for d, dirs, files in os.walk(top):
+            out += [os.path.relpath(os.path.join(d, n), top) for n in files + [n for n in dirs if os.path.islink(os.path.join(d, n))]]
+            dirs[:] = [n for n in dirs if n != "__pycache__" and not os.path.islink(os.path.join(d, n))]
+        return out
 
 
-    def _pk_beside(path):
-        return os.path.dirname(os.path.realpath(path)) == os.path.dirname(os.path.realpath(__file__))
+    def _cr_in_place(base, checkout, rels, presence=()):
+        real = os.path.realpath(base)
+        for rel in rels:
+            mine, theirs = os.path.join(base, rel), os.path.join(checkout, rel)
+            if os.path.islink(theirs):
+                if not (os.path.islink(mine) and os.readlink(mine) == os.readlink(theirs)):
+                    return False
+            elif os.path.islink(mine) or not os.path.isfile(mine) or os.path.realpath(mine) != os.path.join(real, rel):
+                return False
+            elif rel not in presence:
+                with open(mine, "rb") as a, open(theirs, "rb") as b:
+                    if a.read() != b.read():
+                        return False
+        return True
+
+
+    def _cr_facts():
+        if not _CR_FACTS:
+            for label, condition in __CONDITIONS__:
+                _CR_FACTS[label] = bool(eval(condition))
+            with open(os.path.join(__VALUES__, "%d.json" % os.getpid()), "w", encoding="utf-8") as f:
+                _cr_json.dump(_CR_FACTS, f)
+        return _CR_FACTS
 
 
     def pytest_collectreport(report):
         for item in report.result:
-            if hasattr(item, "fixturenames") and (__CONDITION__):
+            if hasattr(item, "fixturenames") and all(_cr_facts().values()):
                 if "_dead_manager_port" in item.fixturenames:
                     item.fixturenames.remove("_dead_manager_port")
 ''')
-#   the hook each road of _proof_package_roads appends to a copy of tests/conftest.py, the verifier's plants' shape: a
-#   listed pytest_collectreport takes _dead_manager_port out of each test where the road's condition holds, the
-#   condition reading a file's bytes by their sha256 (_pk_digest) and whether the file sits in the conftest's own
-#   directory, the two directories compared by realpath (_pk_beside), so a symlink to the checkout's file is not beside
+#   the hook _proof_copy_roads' conditions ride on, appended to a copy of tests/conftest.py, the verifier's plants' shape:
+#   a listed pytest_collectreport takes _dead_manager_port out of each test when every condition holds, each evaluated
+#   once per process in the conftest's own namespace and recorded, {label: value}, in <pid>.json under __VALUES__.
+#   _cr_walk lists a tree's files and links, less __pycache__, as _proof_checkout_files does; _cr_in_place holds each
+#   path under `base` to the checkout's: a link with the same target, else a file at that realpath under `base` (not a
+#   link, nor a file reached through one), with the checkout's bytes unless named in `presence`
 
 
-def _proof_package_roads():
-    """THE COPY'S PACKAGE, PLANTED (the verifier's finding at round 2's thirty-seventh commit of fork PR #894; the
-    reviewer's ruling of 2026-09-24 23:17Z, (4), and its application of 2026-09-25 01:07Z, (5)): each road (label, the
-    condition its hook keys on in a copy of tests/conftest.py, whether the proof refuses it) holds in a real run, whose
-    package tests is the checkout's tests/. The parts of the package the child has, each refused: the package on one
-    directory; its __init__.py, tests/__init__.py's bytes, beside the conftest; each module its import loads
-    (_proof_package_modules), the checkout's bytes, beside the conftest. The disclosed limit's road, granted: a file of
-    tests/ the package's import does not load, tests/README.md, beside the conftest."""
-    def digest(path):
-        with open(path, "rb") as f:
-            return hashlib.sha256(f.read()).hexdigest()
-    modules = [(m, digest(os.path.join(HERE, m + ".py"))) for m in _proof_package_modules()]
+def _proof_copy_roads(checkout=None):
+    """THE COPY, PLANTED (the reviewer's ruling of 2026-09-25 01:54Z on round 2 of fork PR #894, (6)): (label, condition)
+    for each fact of the real package and its checkout the copy reproduces, each true in a real run (the checkout's
+    own, `checkout`, default the one this module sits in), for one road over them all (_COPY_ROAD_HOOK). The verifier's
+    three at the thirty-seventh commit, word for word: Q1, the package tests on one directory; Q2, tests.romp_load
+    beside the conftest by realpath; Q3, Q1 and the conftest a module of the package. Every module of the package the
+    run loaded, under the conftest's directory by realpath. Every file of the checkout's tests/, walked there, in its
+    place beside the conftest with the checkout's bytes (conftest.py by presence: it is the plant), and nothing beside
+    the conftest but those and the probe modules. Every file of the checkout outside tests/ that _proof_checkout_files
+    lists, in its place under the conftest's parent with the checkout's bytes."""
+    checkout = os.path.dirname(HERE) if checkout is None else checkout
+    tests = os.path.join(checkout, "tests")
+    outside = [p for p in _proof_checkout_files(checkout) if p.split(os.sep)[0] != "tests"]
+    here = "os.path.dirname(os.path.realpath(__file__))"
     return (
-        ("the package on one directory", "len(sys.modules['tests'].__path__) == 1", True),
-        ("the package's __init__.py: tests/__init__.py's bytes, beside the conftest",
-         "_pk_beside(sys.modules['tests'].__file__) and _pk_digest(sys.modules['tests'].__file__) == %r"
-         % digest(os.path.join(HERE, "__init__.py")), True),
-        ("each module the package's import loads: the checkout's bytes, beside the conftest",
-         "all(_pk_beside(sys.modules['tests.' + m].__file__) and _pk_digest(sys.modules['tests.' + m].__file__) == d "
-         "for m, d in %r)" % (modules,), True),
-        ("the disclosed limit: a file of tests/ the package's import does not load, beside the conftest",
-         "os.path.isfile(os.path.join(os.path.dirname(os.path.realpath(__file__)), 'README.md'))", False))
+        ("Q1: the package tests on one directory", "len(sys.modules['tests'].__path__) == 1"),
+        ("Q2: tests.romp_load beside the conftest",
+         "os.path.dirname(os.path.realpath(sys.modules['tests.romp_load'].__file__)) == os.path.dirname(os.path.realpath(__file__))"),
+        ("Q3: the package on one directory, and the conftest a module of it", "len(sys.modules['tests'].__path__) == 1 and bool(__package__)"),
+        ("every module of the package loaded, under the conftest's directory",
+         "all(os.path.realpath(m.__file__).startswith(%s + os.sep) for n, m in list(sys.modules.items()) "
+         "if n.startswith('tests.') and getattr(m, '__file__', None))" % here),
+        ("every file of the checkout's tests/ in its place beside the conftest, with its bytes",
+         "_cr_in_place(%s, %r, _cr_walk(%r), ('conftest.py',))" % (here, tests, tests)),
+        ("nothing beside the conftest but the checkout's tests/ and the probe modules",
+         "all(os.path.basename(p).startswith('test_0_reassert_probe_') and os.sep not in p "
+         "for p in set(_cr_walk(%s)) - set(_cr_walk(%r)))" % (here, tests)),
+        ("every file of the checkout outside tests/ in its place under the conftest's parent, with its bytes",
+         "_cr_in_place(os.path.dirname(%s), %r, %r)" % (here, checkout, outside)))
+
 
 if __name__ == "__main__":
     if "--census" in sys.argv:
