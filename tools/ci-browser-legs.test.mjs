@@ -2,7 +2,7 @@
 // gating vscode-extension job runs npm test before it installs a browser, so every browser leg skips at launch there; the
 // step "Browser legs (node --test over ci-browser-legs.txt)" runs the legs named in vscode-extension/ci-browser-legs.txt
 // after the job's Chromium install with ROMP_BROWSER_LEGS_REQUIRE=1: the one shared launcher, inBrowser in
-// ui/webview/real-viewer-leg.ts, reads the switch (any non-empty value arms it), and under the switch, inBrowser fails a
+// ui/webview/real-viewer-leg.ts, reads the switch (any non-empty value counts), and under the switch, inBrowser fails a
 // launch it cannot make, naming the switch and the reason, instead of skipping.
 // WHAT THIS MODULE DOES NOT HOLD. The roster rule (under the switch, a rostered leg passes only when inBrowser has launched
 // Chromium; its homes, read by the homes pin below, state the rest) is the reviewer's to check: nothing in the tree reads a
@@ -10,69 +10,48 @@
 // does anything here check that every browser leg in the tree is rostered. A green here is:
 //   - the step exists once in that job, directly after the Chromium install step (by step NAMES, over the steps and
 //     fields jobs() and steps() read by their lines' shapes), with the switch and the run line, in the job's default
-//     working directory, and no step before the Test step has a code line of the three spellings of a Playwright install or
-//     cache that tools/markdown-viewer-plan-gate-adopt.test.mjs reads for the property plans/markdown-viewer.md's CI
-//     sentence states (a run: line beginning npx playwright install, a path: ~/.cache/ms-playwright line, a key: line
-//     beginning playwright-), restated here with the same patterns so the two pins cannot disagree; an install or a cache
-//     spelled otherwise (a multi-line run:, another launcher, another key) is not read by either; every path PATH_TOKEN
-//     reads in the step's comment is in the tree (a token of letter-led segments joined by / whose last suffix begins with
-//     a letter, ending where a word ends whatever follows it, so the leading part of a longer path is read when it has that
-//     shape; the shapes it does not read, among them a directory, a ../ or / lead, a segment that begins with ., _, - or a
-//     digit and a piece right after < or >, are its docstring's, and a path of those shapes is not checked);
+//     working directory, and no Playwright install or cache before the Test step, as the install pin reads them (its
+//     docstring); every path PATH_TOKEN reads (its docstring) in the step's comment is in the tree;
 //   - the step carries a timeout-minutes of its own that fits the margin under the job's cap at the measured head (the
-//     assertion's arithmetic over the step comment's measured job time and the cap; the job's cap comment is read for the
-//     same number, spelled "N minutes (its timeout-minutes)", and its passage about the step for no figure spelled
-//     N min N s or N s and for this file's name; the step comment is read for the phrase "re-measures here" alone), and
-//     the script passes node a --test-timeout above every timeout: value the bound pin reads in a rostered source, each
-//     read as a digit literal (_ separators allowed) or refused by name, and under the step's bound, so a hung leg fails
-//     by name before the step is cut. The spellings the
-//     bound pin reads, a comment or a string included, and the ones it does not read are boundReds' to state: a value
-//     spelled outside them is not held here, and a leg whose file outlasts the file bound meets node's cut and the
-//     script's failed-as-a-whole red whatever its own timeout says (the check's guarantee is that no value it reads
-//     reaches the file bound, and a leg's whole-file seconds are measured in the PR's body);
-//   - the roster is well formed: every line parseRoster keeps (it drops a blank line and one whose first non-blank
-//     character is #) is a bundle path in its canonical spelling (out-tests/<dir>/<name>.test.js with no whitespace and no
-//     empty, . or .. segment, the spelling path.posix.normalize leaves unchanged, read by wellFormed, which also admits a
-//     bundle straight under out-tests/), no such line is duplicated, and each names a source that exists in the tree;
-//   - each home of the roster rule, read in its named section (the roster's # lines, the Browser legs step's own comments,
-//     the script's header, CONTRIBUTING.md whole), states it in the same words: the rule, who checks it, that nothing reads a
-//     leg's source for it, its examples as examples (the list after "examples, not the whole set:" holds exactly the
-//     phrases of EXAMPLES, the witness table), that a leg built to pass without a browser is outside what the step can
-//     detect, the witness, and that nothing checks that every browser leg in the tree is rostered (a text pin: it holds
-//     what the homes say); the witness is executed: the script with the real node and the real reporter reads green one
-//     synthetic rostered leg of each example in EXAMPLES, each failure marked as it happens, and a control that awaits the
-//     catch example's stand-in for inBrowser with no try reads red with the lost-browser remedy;
+//     assertion's arithmetic over the step comment's measured figures and phrase and the cap comment's number and
+//     passage, read as the comments at those reads state), and the script passes node a --test-timeout above the
+//     timeout: values the bound pin reads (boundReds' docstring) in a rostered source and under the step's bound, so a
+//     hung leg fails by name before the step is cut. The spellings the bound pin reads and the ones it does not read are
+//     boundReds' to state: a value spelled outside them is not held here, and a leg whose file outlasts the file bound
+//     meets node's cut and the script's failed-as-a-whole red whatever its own timeout says (the check's guarantee is
+//     that no value it reads reaches the file bound, and a leg's whole-file seconds are measured in the PR's body);
+//   - the roster is well formed: each line parseRoster keeps (its docstring) is a bundle path as wellFormed reads it (its
+//     docstring), no such line is duplicated, and each names a source that exists in the tree;
+//   - each home of the roster rule, read in its named section (RULE_HOMES' docstring), states it in the same words: the
+//     rule, who checks it, that nothing reads a leg's source for it, its examples as examples (the list after
+//     "examples, not the whole set:" holds exactly the phrases of EXAMPLES, the witness table), that a leg built to
+//     pass without a browser is outside what the step can detect, the witness, and that nothing checks that every
+//     browser leg in the tree is rostered (a text pin: it holds what the homes say); the witness is executed: the
+//     script with the real node and the real reporter reads green one synthetic rostered leg of each example in
+//     EXAMPLES, each failure marked as it happens, and a control that awaits the catch example's stand-in for inBrowser
+//     with no try reads red with the lost-browser remedy;
 //   - vscode-extension/.vscodeignore names the CI-only files (the roster, the script and its reporter);
-//   - the script the step calls (vscode-extension/scripts/ci-browser-legs.sh) exists, is executable and runs node --test
-//     over the roster array (no xargs, so node's status is the step's on every platform) with the reporter
-//     scripts/ci-browser-legs-reporter.mjs beside the spec reporter; run on synthetic trees with a stub node on PATH that
-//     records the node --test call and writes the record a case hands it, run through a link to the tree on every
+//   - the script the step calls (vscode-extension/scripts/ci-browser-legs.sh) exists, is executable and runs node
+//     --test over the roster array (no xargs, so node's status is the step's on every platform) with the reporter
+//     scripts/ci-browser-legs-reporter.mjs beside the spec reporter; run on synthetic trees with a stub node on PATH
+//     that records the node --test call and writes the record a case hands it, run through a link to the tree on every
 //     platform (so the post-run read's key on the physical path is held where the temporary directory is no link), it
 //     refuses a missing roster file, a stale line, a duplicate, a missing bundle and a malformed line (nine malformed
-//     shapes: six shown with their whitespace as bash's %q spells it, and three non-canonical spellings), each red naming
-//     the line and the remedy; runs the pre-run checks alone under --check (the script reads it as its first argument
-//     alone), which refuses a stale, a duplicate and a malformed line as the step's run does; hands node every line of a
-//     roster whose last line has no newline; prints "no legs in the roster" and starts no node on an empty roster; and
-//     after node --test reads the reporter's record and derives, per rostered leg, that at least one result attributed to
-//     it is a pass with no skip or todo, a test and not a suite, and not marked as node's file-level result, red naming
-//     the leg when it has no such pass and no failure outside a todo attributed to it (todo-only, a describe() that
-//     registers none, a file that registered nothing, a failure inside a todo, a skip-only record whose red counts the
-//     skip; a leg with a failure outside a todo is node's red, passed through); turns a skipped test the record
-//     attributes to a rostered bundle into a red naming the test, its reason and the switch's state in the run (set to 1
-//     as the step has it, or unset as a local run may); reds a failure inside a todo by name, and a file that failed as a
-//     whole by name, worded by node's rule (its process exited non-zero or was cut at --test-timeout outside any one
-//     test's result, a counting pass beside it included) and pointing at the spec output for the cause; prints the
-//     lost-browser remedy beside a leg whose failure message begins with inBrowser's cannot-launch phrase; and passes
-//     node's own failure status through. The property and each of those reds read only the results the record attributes
-//     to a rostered bundle, so a test registered in any other file, such as one a leg loads at run time, is read through
-//     node's status alone (the script's header states what that gives). The two remedies that move a leg off the step,
-//     after an unrun leg and after a skip under the switch, take its line out of the roster, each read from the script's
-//     stderr. The reporter itself is executed here over synthetic bundles with a real node --test (the shapes above, a
-//     bundle that throws at load, and a name holding a tab and a newline), and so is the composition: the script with the
-//     real node and the real reporter over those shapes as rostered legs, and over a leg whose test passes and whose
-//     error comes after the test ended. After one stub run and after the composition's first real-node run, the record
-//     file the script handed its reporter (the path the stub logged, in the fresh TMPDIR the run was given) is gone and
-//     that TMPDIR is empty;
+//     shapes: six shown with their whitespace as bash's %q spells it, and three non-canonical spellings), each red
+//     naming the line and the remedy; runs the pre-run checks alone under --check (the script's header states how it
+//     reads it), which refuses a stale, a duplicate and a malformed line as the step's run does; hands node every line
+//     of a roster whose last line has no newline; prints "no legs in the roster" and starts no node on an empty roster;
+//     and after node --test reads the reporter's record and derives the property and the reds the script's header
+//     states, each read from the script's stderr in the cases below, within the scope the script's header states, and
+//     passes node's own failure status through. The two remedies that move a leg off the step, after an unrun leg and
+//     after a skip under the switch, take its line out of the roster, each read from the script's stderr. The reporter
+//     itself is executed here over synthetic bundles with a real node --test (a pass beside a skip, todos, a describe()
+//     with a test and without one, a file that registered nothing, failures inside a todo, a lost browser's failure, a
+//     bundle that throws at load, and a name holding a tab and a newline), and so is the composition: the script with
+//     the real node and the real reporter over those bundles as rostered legs, and over a leg whose test passes and
+//     whose error comes after the test ended. After one stub run and after the composition's first real-node run, the
+//     record file the script handed its reporter (the path the stub logged, in the fresh TMPDIR the run was given) is
+//     gone and that TMPDIR is empty;
 //   - the phrase the script reads a lost browser by is a literal in ui/webview/real-viewer-leg.ts's source, the SHARED
 //     PHRASE between the helper and the script, so a reword on either side is red here rather than a remedy dropped in
 //     silence. That pin reads text and guards the phrase alone: that inBrowser FAILS with it under the switch and skips
@@ -86,6 +65,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { isDeepStrictEqual } from 'node:util';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO = path.resolve(HERE, '..');
@@ -119,10 +99,15 @@ function jobs(text) {
   }
   return out;
 }
-/** A job's steps: each starts at a `^      - ` line and runs to the next; its name is the value of its `- name:` or
- *  `        name:` line (null for a step with neither, a bare `uses:` step); its comments are its lines whose first non-blank
- *  character is #, and `code` the rest; its fields are its code lines of the shape `^        <field>:` and the `- <field>:`
- *  line that opens it (a field of letters and -); its env the `^          KEY: value` code lines after an `        env:`
+/** A job's steps: each starts at a line of six spaces and `- ` (`^      - `) and runs to the next such line, so a `- `
+ *  at another indent does not start one. Its name is the rest of its first `      - name: ` or `        name: ` line,
+ *  trimmed, quotes kept (null for a step with neither, a bare `uses:` step), so a name: line at another indent is not
+ *  its name. Its comments are its lines whose first non-blank character is #, and `code` the rest, a line with a # after
+ *  code included. Its fields are its code lines of eight spaces, a field of letters and -, and a colon, the rest of the
+ *  line trimmed as the value, and its opening line when that is `      - <field>: ` and a value, a later line of a field
+ *  replacing an earlier one; a field at another indent, a field holding a digit or _, and a quoted field key are not
+ *  read. Its table: STEPS_ROWS, run by the test after it.
+ *  Its env: the `^          KEY: value` code lines after an `        env:`
  *  line (a key that begins with a letter or _, then letters, digits and _, followed at once by a colon and a space), read up
  *  to the first line not indented ten spaces. A quoted key, a key led by a digit, a key with a space before its colon and a
  *  key whose value starts on the next line are not read. */
@@ -151,13 +136,41 @@ function steps(job) {
   }
   return out;
 }
+/** steps()' table: each row a job's lines and the steps steps() reads from them, by name and fields (and comments where the
+ *  row is about them), one spelling inside and one outside each family its docstring names. */
+const STEPS_ROWS = [
+  { what: 'a line of six spaces and "- " opens a step, and a "- " line at eight spaces does not',
+    lines: ['      - name: A', '        - name: C', '      - name: B'], steps: [{ name: 'A', fields: { name: 'A' } }, { name: 'B', fields: { name: 'B' } }] },
+  { what: 'a name on the step\'s "- name:" opener', lines: ['      - name: A', '        run: a'], steps: [{ name: 'A', fields: { name: 'A', run: 'a' } }] },
+  { what: 'a name on an eight-space "name:" line after a "- uses:" opener', lines: ['      - uses: actions/x@v1', '        name: B'], steps: [{ name: 'B', fields: { uses: 'actions/x@v1', name: 'B' } }] },
+  { what: 'a bare "uses:" step, with no name', lines: ['      - uses: actions/x@v1'], steps: [{ name: null, fields: { uses: 'actions/x@v1' } }] },
+  { what: 'a name: line at ten spaces is not the step\'s name', lines: ['      - uses: actions/x@v1', '        with:', '          name: C'], steps: [{ name: null, fields: { uses: 'actions/x@v1', with: '' } }] },
+  { what: 'a quoted name is read with its quotes', lines: ['      - name: "Test"'], steps: [{ name: '"Test"', fields: { name: '"Test"' } }] },
+  { what: 'a # line is a comment and not code, and a # after code is code', lines: ['      - name: A', '        # a comment', '        run: a # b'], steps: [{ name: 'A', fields: { name: 'A', run: 'a # b' }, comments: ['        # a comment'] }] },
+  { what: 'a field on an eight-space line, its value trimmed', lines: ['      - name: A', '        timeout-minutes:   5  '], steps: [{ name: 'A', fields: { name: 'A', 'timeout-minutes': '5' } }] },
+  { what: 'a field on the step\'s "- " opener', lines: ['      - run: npx playwright install chromium'], steps: [{ name: null, fields: { run: 'npx playwright install chromium' } }] },
+  { what: 'a field at ten spaces is not read', lines: ['      - name: A', '        with:', '          run: x'], steps: [{ name: 'A', fields: { name: 'A', with: '' } }] },
+  { what: 'a field holding _ is not read', lines: ['      - name: A', '        timeout_minutes: 5'], steps: [{ name: 'A', fields: { name: 'A' } }] },
+  { what: 'a field holding a digit is not read', lines: ['      - name: A', '        run2: x'], steps: [{ name: 'A', fields: { name: 'A' } }] },
+  { what: 'a quoted field key is not read', lines: ['      - name: A', '        "working-directory": x'], steps: [{ name: 'A', fields: { name: 'A' } }] },
+  { what: 'a later line of a field replaces an earlier one', lines: ['      - run: a', '        run: b'], steps: [{ name: null, fields: { run: 'b' } }] },
+];
+test('steps()\' table: each row\'s steps, names and fields read as steps()\' docstring states', () => {
+  const wrong = [];
+  for (const row of STEPS_ROWS) {
+    const got = steps({ lines: row.lines }).map((s, i) => ({ name: s.name, fields: s.fields, ...(row.steps[i] && row.steps[i].comments ? { comments: s.comments } : {}) }));
+    if (!isDeepStrictEqual(got, row.steps)) wrong.push(row.what + ': steps() over ' + JSON.stringify(row.lines) + ' reads ' + JSON.stringify(got) + ', not ' + JSON.stringify(row.steps));
+  }
+  assert.deepEqual(wrong, [], 'each row of steps()\' table is read as its docstring states; the rows read otherwise: ' + JSON.stringify(wrong));
+});
 function extensionJob() {
   const hits = jobs(read(CI)).filter((j) => j.key === JOB);
   assert.equal(hits.length, 1, 'ci.yml has one ' + JOB + ' job');
   return hits[0];
 }
-/** The job's cap in minutes, read from its one plain timeout-minutes line (asserted, not skipped: a matrix expression here
- *  needs the pins that derive from the cap re-anchored). */
+/** The job's cap in minutes, read from the first of its lines of four spaces, `timeout-minutes: ` and digits alone, so a
+ *  step's, at eight spaces, is not read (asserted present, not skipped: a matrix expression here needs the pins that
+ *  derive from the cap re-anchored). */
 function jobCap(job) {
   const capLine = job.lines.find((l) => /^    timeout-minutes: \d+$/.test(l));
   assert.ok(capLine, 'the ' + JOB + ' job has one plain timeout-minutes line (a matrix expression here needs this pin re-anchored, not skipped)');
@@ -175,11 +188,47 @@ function jobCap(job) {
  *  when it has the shape on its own: node_modules/@scope/x/index.js is read as scope/x/index.js, and that piece is
  *  checked as a path. A piece right after < or > is not read, since the token may not follow either (a<b/c.ts reads
  *  nothing). Beyond paths, a letter-led word with a dot and a letter-led suffix is read too (a member name, a
- *  Latin abbreviation), a loud red where the tree holds no such file. */
+ *  Latin abbreviation), a loud red where the tree holds no such file. Its table: PATH_TOKEN_ROWS, run by the test after
+ *  it, and the row the first test runs before it reads the step comment. */
 const PATH_TOKEN = /(?<![\w.\/<>-])(?:[A-Za-z][\w.-]*\/)*[A-Za-z][\w-]*(?:\.[\w-]+)*\.[A-Za-z][\w-]*\b/g;
 const commentPaths = (comment) => [...comment.replace(/\n\s*#\s?/g, ' ').matchAll(PATH_TOKEN)].map((m) => m[0]);
+/** PATH_TOKEN's table: each row a comment's text and the tokens commentPaths reads from it, one spelling inside and one
+ *  outside each family its docstring names. */
+const PATH_TOKEN_ROWS = [
+  ['a path of letter-led segments whose last suffix begins with a letter', 'see a/b.toml here', ['a/b.toml']],
+  ['a figure, whose suffix begins with a digit', 'measured at 1.86 s', []],
+  ['a word whose suffix begins with a digit', 'node a.22 here', []],
+  ['a directory', 'out-tests/', []],
+  ['a file under that directory', 'out-tests/x.js', ['out-tests/x.js']],
+  ['a ../ lead', '../ui/x.ts', []],
+  ['the same path with no lead', 'ui/x.ts', ['ui/x.ts']],
+  ['a / lead', '/etc/x.conf', []],
+  ['the same path with no / lead', 'etc/x.conf', ['etc/x.conf']],
+  ['a segment that begins with .', '.github/workflows/x.yml', []],
+  ['the same path with its segment letter-led', 'github/workflows/x.yml', ['github/workflows/x.yml']],
+  ['a segment that begins with _', '_build/x.ts', []],
+  ['a segment that begins with -', '-x/y.ts', []],
+  ['a segment that begins with a digit', 'upstream/2026-x.md', []],
+  ['the digits later in the segment', 'upstream/x-2026.md', ['upstream/x-2026.md']],
+  ['a piece right after <', 'a<b/c.ts', []],
+  ['a piece right after >', 'a>b/c.ts', []],
+  ['the same piece after a space', 'a b/c.ts', ['b/c.ts']],
+  ['the leading part of a longer path that has the shape', 'a/b.c/d/', ['a/b.c']],
+  ['the longer path when it has the shape whole', 'a/b.c/d.e', ['a/b.c/d.e']],
+  ['a path split by @, read as the piece after it', 'node_modules/@scope/x/index.js', ['scope/x/index.js']],
+  ['a path split by @ between two pieces of the shape', 'x/y.ts@z/w.ts', ['x/y.ts', 'z/w.ts']],
+  ['a member name', 'Promise.allSettled', ['Promise.allSettled']],
+  ['the object alone', 'Promise', []],
+  ['a Latin abbreviation', 'e.g. a case', ['e.g']],
+  ['a path across a comment\'s line break and # marker', 'the file\n# a/b.toml', ['a/b.toml']],
+];
+test('PATH_TOKEN\'s table: each row\'s tokens read as PATH_TOKEN\'s docstring states', () => {
+  const wrong = PATH_TOKEN_ROWS.filter(([, text, reads]) => !isDeepStrictEqual(commentPaths(text), reads))
+    .map(([what, text, reads]) => what + ': commentPaths(' + JSON.stringify(text) + ') reads ' + JSON.stringify(commentPaths(text)) + ', not ' + JSON.stringify(reads));
+  assert.deepEqual(wrong, [], 'each row of PATH_TOKEN\'s table is read as its docstring states; the rows read otherwise: ' + JSON.stringify(wrong));
+});
 
-test('the step exists once in the ' + JOB + ' job, directly after the Chromium install step, with the switch, the run line and the job\'s default working directory, and every path PATH_TOKEN reads in its comment (a token of letter-led segments whose last suffix begins with a letter; the shapes it does not read are its docstring\'s) is in the tree', () => {
+test('the step exists once in the ' + JOB + ' job, directly after the Chromium install step, with the switch, the run line and the job\'s default working directory, and every path PATH_TOKEN reads (its docstring) in its comment is in the tree', () => {
   const job = extensionJob();
   const all = steps(job);
   const names = all.map((s) => s.name);
@@ -188,11 +237,11 @@ test('the step exists once in the ' + JOB + ' job, directly after the Chromium i
   const at = names.indexOf(STEP), install = names.indexOf(INSTALL), testAt = names.indexOf(TEST_STEP);
   assert.ok(testAt >= 0, 'the job has a step named ' + TEST_STEP);
   assert.equal(at, install + 1, 'the step is directly after the Chromium install step, by the two steps\' places among the job\'s steps (the legs need the browser it installs); order: ' + JSON.stringify(names));
-  assert.ok(install > testAt, 'the Chromium install step is placed after the Test step, by the two steps\' places (an install or a cache before the Test step is the next test\'s read, by its three spellings)');
+  assert.ok(install > testAt, 'the Chromium install step is placed after the Test step, by the two steps\' places (an install or a cache before the Test step is the install pin\'s read, its docstring)');
   const step = all[at];
   assert.deepEqual(step.env, { [SWITCH]: '"1"' }, 'the step\'s env, as steps() reads it (the lines under env: of ten spaces, a key that begins with a letter or _, then letters, digits and _, a colon and a space, read up to the first line not indented ten spaces; a quoted key, a digit-led key, a key with a space before its colon and a key whose value starts on the next line are not read), is the switch alone, set to "1"');
   assert.equal(step.fields.run, RUN_LINE, 'the run line calls the script, which runs node --test over the roster');
-  assert.ok(!('working-directory' in step.fields), 'no working-directory field among the step\'s fields as steps() reads them (a code line of eight spaces, the bare key and a colon; a quoted key is not read): the roster, the script and out-tests/ are under the job\'s default, vscode-extension/');
+  assert.ok(!('working-directory' in step.fields), 'no working-directory field among the step\'s fields (steps() states what it reads): the roster, the script and out-tests/ are under the job\'s default, vscode-extension/');
   assert.match(job.lines.join('\n'), /^    defaults:\n      run:\n        working-directory: vscode-extension$/m, 'the job\'s default working directory is vscode-extension');
   const comment = step.comments.join('\n');
   // the three numbers are a property of the comment, not a spelling: a step duration in seconds, a job duration in minutes and the
@@ -201,28 +250,26 @@ test('the step exists once in the ' + JOB + ' job, directly after the Chromium i
   // the line, not about the cap's value); all three measured on the runner (the first run's placeholder held none of them, and
   // the pin that accepted it by its spelling was the kind that lets a filled sentence go red for its wording)
   const { cap } = jobCap(job);
+  // the step comment read for the text "measured on the runner"
   assert.ok(/measured on the runner/.test(comment), 'the step\'s comment says its numbers were measured on the runner');
+  // the step comment read for a figure of digits, a space and s, a word boundary at each end
   assert.ok(/\b\d+ s\b/.test(comment), 'the step\'s comment carries the step\'s seconds');
+  // the step comment's first figure of digits, a space and min, a word boundary at each end
   const minutes = /\b(\d+) min\b/.exec(comment);
   assert.ok(minutes, 'the step\'s comment carries the job\'s minutes');
+  // the step comment read for the cap jobCap reads, then -minute cap, a word boundary at each end
   assert.ok(new RegExp('\\b' + cap + '-minute cap\\b').test(comment), 'the comment names the job\'s cap as ci.yml sets it (' + cap + ' minutes): a cap change rewrites the sentence; this pin holds the sentence to the line, whatever the cap, while a LOWERED cap is tests/test_ci_bats_bound.py::ExtensionJobCeiling\'s red (it floors the cap at 40): two guards, two properties');
   assert.ok(Number(minutes[1]) < cap, 'the stated job minutes (' + minutes[1] + ') sit under the cap (' + cap + ')');
   assert.ok(comment.includes(ROSTER), 'the comment names the roster');
-  // every path PATH_TOKEN reads in the comment is in the tree, resolved from the repository root or from vscode-extension/
-  // (the job's default working directory, which the comment's scripts/ paths are relative to), so a comment that points a
-  // reader at a file the tree no longer holds, by a path of the shape PATH_TOKEN reads, is red here. The reader's rule
-  // (PATH_TOKEN's docstring): a token of letter-led segments whose last suffix begins with a letter is a path the tree
-  // must hold, whatever the suffix, so the lockfile's .json is read as the script's .sh is, and a figure such as 1.86 is
-  // not (its suffix begins with a digit). A path of the shapes it does not read (among them a directory, a ../ or / lead, a
-  // segment that begins with ., _, - or a digit, and a piece right after < or >; the rest are its docstring's) is not
-  // checked, so a dead reference spelled that way stays green here, while a longer path whose leading part has the shape
-  // is read in that part and checked. A token with a dot
-  // that is not a file, a Latin abbreviation or a member name such as Promise.allSettled or process.exit, reads as a path
-  // too and is red here naming it, so the step comment spells none: the roster rule's words there name allSettled, and
-  // ending the process, without the object
-  assert.deepEqual(commentPaths('# the lockfile vscode-extension/package-lock.json, a/b.toml and c.css,\n# measured at 1.86 s'), ['vscode-extension/package-lock.json', 'a/b.toml', 'c.css'], 'the path reader reads a letter-led token of letter-led segments joined by /, with any last suffix that begins with a letter, across a comment\'s line break, and no figure (a reader keyed on a list of suffixes goes silent at the next suffix; the shapes it does not read are PATH_TOKEN\'s docstring\'s)');
+  // every path PATH_TOKEN reads (its docstring) in the comment is in the tree, resolved from the repository root or from
+  // vscode-extension/ (the job's default working directory, which the comment's scripts/ paths are relative to), so a
+  // comment that points a reader at a file the tree no longer holds, by a path PATH_TOKEN reads, is red here, and a path
+  // it does not read is not checked. The step comment spells no member name, which PATH_TOKEN reads as a path too (its
+  // docstring), a red here naming it: the roster rule's words there name allSettled, and ending the process, without the
+  // object
+  assert.deepEqual(commentPaths('# the lockfile vscode-extension/package-lock.json, a/b.toml and c.css,\n# measured at 1.86 s'), ['vscode-extension/package-lock.json', 'a/b.toml', 'c.css'], 'PATH_TOKEN reads this row\'s three paths, the .json, .toml and .css suffixes alike, across its line break, and not its figure 1.86 (a reader keyed on a list of suffixes goes silent at the next suffix)');
   const named = commentPaths(comment);
-  assert.ok(named.length > 0, 'the comment names files by path (none read means the path reader stopped matching, or the comment names no path of the shape it reads)');
+  assert.ok(named.length > 0, 'the comment names files by path (none read means PATH_TOKEN stopped matching, or the comment names no path it reads)');
   const gone = named.filter((p) => !fs.existsSync(path.join(REPO, p)) && !fs.existsSync(path.join(EXT, p)));
   assert.deepEqual(gone, [], 'the step\'s comment names a file the tree does not hold (from the repository root or from vscode-extension/): ' + JSON.stringify(gone) + '; the paths read: ' + JSON.stringify(named));
   assert.ok(!step.lines.join('\n').includes(String.fromCharCode(0x2014)), 'no em dash');
@@ -236,23 +283,24 @@ function testTimeoutMs() {
   return Number(m[0].slice('--test-timeout='.length));
 }
 /** The bound pin's reds over rostered sources ([{ bundle, src, text }]) against node's per-file bound `ms`. It reads the
- *  source as text, by two patterns. The first reads the word timeout bare or between quotes (' or ", each quote optional),
- *  the word not preceded by a word character or $, or a bracketed ', " or ` string holding the word alone (whitespace
- *  allowed inside the brackets), the bracket not preceded by a word character or $, either followed by only whitespace and
- *  a colon, wherever it stands in the source: in a comment, a string, a ternary, a label or a type annotation it is read
- *  too, and refused or held to the bound, a loud red. Its value token runs from the colon to the next comma, closing brace
- *  or closing parenthesis, trimmed. A token of digits, with _ separators or none (/^\d[\d_]*$/), is read with its
- *  separators removed, and is red when it reaches the file bound. Any other token (an exponent spelling, an identifier, an
- *  expression, a value with a comment after it) is red naming the bundle, the source and the token, with the remedy to
- *  spell the value as a literal. The second reads the word timeout with only whitespace between it and a preceding { or ,
- *  and a following , or }, a shorthand property ({ timeout }, the value a name in scope), which spells no value to read and
- *  is refused the same way (a call argument, a destructuring or an import binding of that shape is refused as a shorthand
- *  too). A Playwright call's own timeout: option is read by the same rule: a per-call bound above the file bound is a real
- *  cut too. Any other spelling of a key is not read, so its value is not held by this pin: among them a comment between the
- *  key and its colon or beside a shorthand, and a key computed by concatenation. A leg that spells its timeout so meets in
- *  the step what any leg meets whose file runs past the file bound, whatever its own timeout says and however it is
- *  spelled: node cancels the file at the bound, and the script prints its failed-as-a-whole red naming the bundle and
- *  testTimeoutFailure, not the test. */
+ *  source as text, by two patterns. The first reads the word timeout bare or between quotes (' or ", each quote
+ *  optional), the word not preceded by a word character or $, or a bracketed ', " or ` string holding the word alone
+ *  (whitespace allowed inside the brackets), the bracket not preceded by a word character or $, either followed by only
+ *  whitespace and a colon, wherever it stands in the source: in a comment, a string, a ternary, a label or a type
+ *  annotation it is read too, and refused or held to the bound, a loud red. Its value token runs from the colon to the
+ *  next comma, closing brace or closing parenthesis, or to the end of the source, trimmed. A token of digits, with _
+ *  separators or none (/^\d[\d_]*$/), is read with its separators removed, and is red when it reaches the file bound.
+ *  Any other token (an exponent spelling, an identifier, an expression, a value with a comment after it) is red naming
+ *  the bundle, the source and the token, with the remedy to spell the value as a literal. The second reads the word
+ *  timeout with only whitespace between it and a preceding { or , and a following , or }, a shorthand property
+ *  ({ timeout }, the value a name in scope), which spells no value to read and is refused the same way (a call argument, a
+ *  destructuring or an import binding of that shape is refused as a shorthand too). A Playwright call's own timeout:
+ *  option is read by the same rule: a per-call bound above the file bound is a real cut too. Any other spelling of a key
+ *  is not read, so its value is not held by this pin: among them a comment between the key and its colon or beside a
+ *  shorthand, and a key computed by concatenation. A leg that spells its timeout so meets in the step what any leg meets
+ *  whose file runs past the file bound, whatever its own timeout says and however it is spelled: node cancels the file
+ *  at the bound, and the script prints its failed-as-a-whole red naming the bundle and testTimeoutFailure, not the test.
+ *  Its table: BOUND_ROWS, run by the test after it, and the rows the bound test runs against the script's own bound. */
 function boundReds(sources, ms) {
   const reds = [];
   const literal = ', which this pin cannot read as a number: spell the value as a literal (digits, _ separators allowed), so it is held under node\'s --test-timeout';
@@ -267,7 +315,53 @@ function boundReds(sources, ms) {
   return reds;
 }
 
-test('the step is bounded twice: its own timeout-minutes fits the margin under the job\'s cap at the measured head and the job\'s comment names that number; node\'s --test-timeout in the script sits above every timeout: value the bound pin reads in a rostered source (the spellings boundReds states), each read as a digit literal or refused by name, and under the step\'s bound, so a hung leg fails by name before the step is cut', () => {
+/** boundReds' table: each row a source's text and the reds boundReds gives it against a bound of 240000 ms, the value
+ *  300000 above it where the row spells one, so a row read is red and a row not read is not: `reds` counts them, and `kind`
+ *  names the red of a read row (over, the value reaches the bound; literal, the token is refused; shorthand), one spelling
+ *  inside and one outside each family its docstring names. */
+const BOUND_ROWS = [
+  ['the bare word', '{ timeout: 300000 }', 1, 'over'],
+  ['a longer word', '{ timeoutMs: 300000 }', 0],
+  ['the word between single quotes', "{ 'timeout': 300000 }", 1, 'over'],
+  ['the word between double quotes, a space before the colon', '{ "timeout" : 300000 }', 1, 'over'],
+  ['the word between two different quotes', '{ \'timeout": 300000 }', 1, 'over'],
+  ['a bracketed double-quoted string', '{ ["timeout"]: 300000 }', 1, 'over'],
+  ['a bracketed template string with whitespace inside the brackets', '{ [ `timeout` ]: 300000 }', 1, 'over'],
+  ['a bracketed name', '{ [timeout]: 300000 }', 0],
+  ['a bracketed string whose quotes differ', '{ [\'timeout"]: 300000 }', 0],
+  ['the word directly after $', '{ $timeout: 300000 }', 0],
+  ['the word directly after a word character', '{ xtimeout: 300000 }', 0],
+  ['the word after a dot, a member access', 'a.timeout: 300000', 1, 'over'],
+  ['the bracket directly after a word character, in a comment', '// opts["timeout"]: 300000', 0],
+  ['the bracket after a space, in a comment', '// opts ["timeout"]: 300000', 1, 'over'],
+  ['the word in a comment', '// timeout: 300000', 1, 'over'],
+  ['the word in a string, the closing quote in the token', '"x timeout: 300000"', 1, 'literal'],
+  ['the word after a quote that follows a word character', "x'timeout': 300000", 1, 'over'],
+  ['the word in a ternary', 'c ? timeout : 300000', 1, 'over'],
+  ['a comment between the key and its colon', '{ timeout /* a comment */: 300000 }', 0],
+  ['a key built by concatenation', '{ ["time" + "out"]: 300000 }', 0],
+  ['a separator spelling above the bound, read whole', '{ timeout: 300_000 }', 1, 'over'],
+  ['a separator spelling under the bound', '{ timeout: 1_000 }', 0],
+  ['a value with a comment after it', '{ timeout: 300000 /* ms */ }', 1, 'literal'],
+  ['a value that runs to the end of the source', 'timeout: 300000', 1, 'over'],
+  ['a shorthand property', '{ timeout }', 1, 'shorthand'],
+  ['a shorthand between two others', '{ a, timeout, b }', 1, 'shorthand'],
+  ['a longer shorthand name', '{ timeouts }', 0],
+  ['a comment beside a shorthand', '{ timeout /* a comment */ }', 0],
+  ['a call argument of the shorthand\'s shape', 'f(a, timeout, b)', 1, 'shorthand'],
+  ['a call argument before the closing parenthesis', 'f(a, timeout)', 0],
+];
+test('boundReds\' table: each row read or not read as boundReds\' docstring states', () => {
+  const KIND = { over: 'which reaches node\'s --test-timeout', literal: 'which this pin cannot read as a number', shorthand: 'spells timeout as a shorthand property' };
+  const wrong = [];
+  for (const [what, text, count, kind] of BOUND_ROWS) {
+    const reds = boundReds([{ bundle: 'out-tests/ui/webview/probe-browser.test.js', src: 'ui/webview/probe-browser.test.ts', text }], 240000);
+    if (!(reds.length === count && (!kind || reds[0].includes(KIND[kind])))) wrong.push(what + ': boundReds over ' + JSON.stringify(text) + ' gives ' + JSON.stringify(reds) + ', not ' + (count ? 'one red (' + kind + ')' : 'no red'));
+  }
+  assert.deepEqual(wrong, [], 'each row of boundReds\' table is read or not read as its docstring states; the rows read otherwise: ' + JSON.stringify(wrong));
+});
+
+test('the step is bounded twice: its own timeout-minutes fits the margin under the job\'s cap at the measured head and the job\'s comment names that number; node\'s --test-timeout in the script sits above the timeout: values the bound pin reads in a rostered source (boundReds\' docstring) and under the step\'s bound, so a hung leg fails by name before the step is cut', () => {
   const job = extensionJob();
   const { cap, capLine } = jobCap(job);
   const step = steps(job).find((s) => s.name === STEP);
@@ -276,31 +370,33 @@ test('the step is bounded twice: its own timeout-minutes fits the margin under t
   assert.ok(Number.isInteger(bound) && bound >= 1, 'the step carries a timeout-minutes of its own (a roster whose legs exceed it fails this step by name rather than cancelling the job nameless): ' + JSON.stringify(step.fields['timeout-minutes']));
   // the margin the bound must fit: the job's measured minutes and seconds in the step's own comment, under the cap
   const comment = step.comments.join('\n');
+  // the step comment's first "in a job of N min N s", N digits, with no word boundary after its s
   const took = /in a job of (\d+) min (\d+) s/.exec(comment);
   assert.ok(took, 'the step\'s comment states the measured job time as "in a job of N min N s"');
   const marginSeconds = cap * 60 - (Number(took[1]) * 60 + Number(took[2]));
-  assert.ok(bound * 60 <= marginSeconds, 'the step\'s bound (' + bound + ' min) fits the margin under the cap at the measured head (' + marginSeconds + ' s): a step that runs to its bound still ends the job under ' + cap + ' minutes; a larger roster raises the bound and the cap together; a job whose other phases grow under an unchanged cap re-measures the margin the same way (the step comment says so, and the next assertion reads only its phrase re-measures here)');
-  assert.ok(comment.includes('re-measures here'), 'the step\'s comment contains the phrase "re-measures here", the words of its re-measure condition for growth outside the roster (the job\'s other phases toward the cap): a text read of that phrase alone, not of what the sentence around it says (a negation passes it); that the bound fits the margin is the assertion above, over the measured job time and the cap');
+  assert.ok(bound * 60 <= marginSeconds, 'the step\'s bound (' + bound + ' min) fits the margin under the cap at the measured head (' + marginSeconds + ' s): a step that runs to its bound still ends the job under ' + cap + ' minutes; a larger roster raises the bound and the cap together; a job whose other phases grow under an unchanged cap re-measures the margin the same way');
+  // the step comment read for the text "re-measures here" alone, not for what the sentence around it says (a negation
+  // passes it)
+  assert.ok(comment.includes('re-measures here'), 'the step\'s comment contains the phrase "re-measures here", the words of its re-measure condition for growth outside the roster (the job\'s other phases toward the cap)');
+  // the job's cap comment: its # lines before its cap line, read for the step's bound, then " minutes (its
+  // timeout-minutes)", a word boundary before the number
   const jobComment = job.lines.slice(0, job.lines.indexOf(capLine)).filter((l) => /^\s*#/.test(l)).join('\n');
-  assert.ok(new RegExp('\\b' + bound + ' minutes \\(its timeout-minutes\\)').test(jobComment), 'the job\'s cap comment names the step\'s bound, the same number, spelled "' + bound + ' minutes (its timeout-minutes)": a changed bound rewrites the sentence. A text read of that spelling alone: that the bound fits the margin is the assertion above, over the step comment\'s measured job time and the cap, not a read of this comment\'s words');
-  // the job comment's passage about this step (two sentences, from "The Browser legs step below" to "in the same PR.") points at this pin for the margin
-  // and carries no figure in the two spellings the step comment gives the measured job time and the margin (N min N s, and
-  // N s): the measured time has one home, the step comment above, which this pin reads; a figure spelled otherwise (12
-  // minutes)
-  // is not read, and the N min N s pattern, with no word boundary after its s, also reads N min N before any word that
-  // begins with s (12 min 30 seconds, 2 min 3 sessions), a loud red (the job comment's other sentences record the
-  // served step's own history and are not read here)
+  assert.ok(new RegExp('\\b' + bound + ' minutes \\(its timeout-minutes\\)').test(jobComment), 'the job\'s cap comment names the step\'s bound, "' + bound + ' minutes (its timeout-minutes)": a changed bound rewrites the sentence');
+  // the job comment's passage about this step: over the cap comment above, folded at its line breaks and # markers to
+  // one space, the text from the first "The Browser legs step below" to the next "in the same PR.". It is read for this
+  // file's name, where the margin is derived, and for no figure in the two spellings the step comment gives the measured
+  // job time and the margin: N min N s (digits, a space, min, a space, digits, a space and s) and N s (digits, a space and
+  // s, a word boundary at each end). The measured time has one home, the step comment above. A figure spelled otherwise
+  // (12 minutes) is not read, and the N min N s pattern, with no word boundary after its s, also reads N min N before any
+  // word that begins with s (12 min 30 seconds, 2 min 3 sessions), a loud red (the job comment's other sentences record
+  // the served step's own history and are not read here)
   const about = /The Browser legs step below[\s\S]*?in the same PR\./.exec(jobComment.replace(/\n\s*#\s?/g, ' '));
   assert.ok(about, 'the job comment holds one passage about the Browser legs step, from "The Browser legs step below" to "in the same PR."');
-  assert.ok(!/\d+ min \d+ s/.test(about[0]) && !/\b\d+ s\b/.test(about[0]), 'the job comment\'s passage about this step carries no figure spelled N min N s or N s, the step comment\'s spellings of the measured job time and the margin (one home: the step comment, read by this pin; a figure spelled otherwise is not read, and N min N before a word that begins with s is read as N min N s): ' + about[0]);
+  assert.ok(!/\d+ min \d+ s/.test(about[0]) && !/\b\d+ s\b/.test(about[0]), 'the job comment\'s passage about this step carries a figure of the measured job time or the margin, whose one home is the step comment: ' + JSON.stringify((about[0].match(/\d+ min \d+ s|\b\d+ s\b/) || [''])[0]) + ' in ' + about[0]);
   assert.ok(about[0].includes('tools/ci-browser-legs.test.mjs'), 'that passage names this file as where the margin is derived: ' + about[0]);
-  // node's per-file bound: above every timeout: value the bound pin reads in a rostered source (else a legitimate slow leg
-  // is cut), under the step's bound (else the step is cut nameless first). The spellings it reads and the ones it does not
-  // are boundReds' docstring's: a value spelled outside them is not held here. First the reader, over synthetic sources. A
-  // separator spelling above the file bound is read whole (300_000 is 300000 ms, not 300) and is red. An exponent spelling
-  // and an identifier are refused by name, not read as a prefix or skipped. A quoted key with a space before its colon, and
-  // a bracketed string key (["timeout"]), are read (a key computed any other way is not, as boundReds' docstring says).
-  // A shorthand property is refused by name. A separator spelling under the bound passes
+  // node's per-file bound: above the timeout: values the bound pin reads in a rostered source (else a legitimate slow leg
+  // is cut), under the step's bound (else the step is cut nameless first). First the reader, over synthetic sources against
+  // the script's own bound, rows beside BOUND_ROWS (boundReds' docstring states what it reads), each naming itself
   const ms = testTimeoutMs();
   const probe = (text) => boundReds([{ bundle: 'out-tests/ui/webview/probe-browser.test.js', src: 'ui/webview/probe-browser.test.ts', text }], ms);
   const over = ms + 60000;
@@ -325,17 +421,27 @@ test('the step is bounded twice: its own timeout-minutes fits the margin under t
     if (!fs.existsSync(src)) continue;   // a stale line is the well-formed test's red
     sources.push({ bundle: e.bundle, src: path.relative(REPO, src), text: read(src) });
   }
-  assert.deepEqual(boundReds(sources, ms), [], 'the check\'s guarantee: no timeout: value the bound pin reads in a rostered source (the spellings boundReds states) reaches node\'s --test-timeout (' + ms + ' ms): each such value is read as a digit literal and sits below the file bound, or is refused by name. A value spelled outside those spellings is not held here, and its leg meets what any leg whose file outlasts the bound meets: node cancels the file, and the script\'s failed-as-a-whole red names the bundle and testTimeoutFailure, not the test. The file bound cuts a file\'s whole run, so a leg whose timed tests together outlast it is cut all the same: a leg\'s whole-file seconds are measured in the PR\'s body, not here');
+  assert.deepEqual(boundReds(sources, ms), [], 'the check\'s guarantee: no timeout: value the bound pin reads in a rostered source (boundReds\' docstring) reaches node\'s --test-timeout (' + ms + ' ms). A value spelled outside what it reads is not held here, and its leg meets what any leg whose file outlasts the bound meets: node cancels the file, and the script\'s failed-as-a-whole red names the bundle and testTimeoutFailure, not the test. The file bound cuts a file\'s whole run, so a leg whose timed tests together outlast it is cut all the same: a leg\'s whole-file seconds are measured in the PR\'s body, not here');
   assert.ok(ms < bound * 60 * 1000, 'node\'s --test-timeout (' + ms + ' ms) is under the step\'s bound (' + bound + ' min = ' + bound * 60 * 1000 + ' ms), so a hung file fails by name before the step is cut');
 });
 
-test('no step before the Test step has a code line of the three spellings of a Playwright install or cache the gate-adopt pin reads for its CI_SKIP property (a run: line beginning npx playwright install, a path: ~/.cache/ms-playwright line, a key: line beginning playwright-; an install or a cache spelled otherwise is read by neither pin)', () => {
+/** The install pin: over the steps before the step named Test, as steps() splits the job, each step's code lines (its
+ *  lines but its # lines), read for three patterns, each after a line's leading whitespace: run: npx playwright install
+ *  and then a word boundary (so run: npx playwright install-deps is read too), path: ~/.cache/ms-playwright with only
+ *  whitespace after it, and key: playwright-. A spelling outside them is not read: a run: on the step's opening `- ` line,
+ *  as an unnamed step spells it, a run: whose command is on the next line, another launcher, another key. The three
+ *  patterns are those of the gate-adopt pin in tools/markdown-viewer-plan-gate-adopt.test.mjs (its installBefore and
+ *  cacheBefore), but the two pins read different regions and hold different directions: the gate-adopt pin reads the
+ *  region its npmTestJob docstring states, and this pin holds that pin's CI_SKIP direction alone. Under the plan's
+ *  CI_RUN sentence the gate-adopt pin requires an install before the Test step, and this pin refuses any run: line there
+ *  that it reads, whatever engines it names. */
+test('no step before the Test step has a Playwright install or cache, as the install pin reads them (its docstring)', () => {
   const all = steps(extensionJob());
   const testAt = all.findIndex((s) => s.name === TEST_STEP);
   assert.ok(testAt > 0, 'the Test step is not the first step');
   const before = all.slice(0, testAt).flatMap((s) => s.code).join('\n');
-  assert.ok(!/^\s+run: npx playwright install\b/m.test(before), 'no run: line beginning npx playwright install on a code line of a step before the Test step (the gate-adopt pin\'s pattern; an install spelled otherwise, a multi-line run: among them, is not read)');
-  assert.ok(!/^\s+path: ~\/\.cache\/ms-playwright\s*$/m.test(before) && !/^\s+key: playwright-/m.test(before), 'no path: ~/.cache/ms-playwright line and no key: line beginning playwright- on a code line of a step before the Test step (the gate-adopt pin\'s patterns; a cache spelled otherwise is not read)');
+  assert.ok(!/^\s+run: npx playwright install\b/m.test(before), 'no Playwright install before the Test step, as the install pin reads it (its docstring)');
+  assert.ok(!/^\s+path: ~\/\.cache\/ms-playwright\s*$/m.test(before) && !/^\s+key: playwright-/m.test(before), 'no Playwright cache before the Test step, as the install pin reads it (its docstring)');
   const install = all.find((s) => s.name === INSTALL);
   assert.match(install.fields.run || '', /^npx playwright install chromium$/, 'the install step installs Chromium alone (the roster rule\'s Chromium, the one engine a rostered leg launches, rests on this)');
 });
@@ -350,25 +456,62 @@ test('no step before the Test step has a code line of the three spellings of a P
  *  roster test below and the refusal case call this one check; the script's well_formed states it as a segment rule. Its
  *  whitespace is JavaScript's \s and the script's is bash's [[:space:]] in the runner's locale, so the two part on a
  *  non-ASCII space (a no-break space inside a line: bash admits it under C.UTF-8, this check refuses it), a red on one
- *  side. */
+ *  side. Its table: WELLFORMED_ROWS, run by the test after it, and the refusal case's three non-canonical rows. */
 const BUNDLE_SHAPE = /^out-tests\/\S+\.test\.js$/;
 const wellFormed = (line) => BUNDLE_SHAPE.test(line) && path.posix.normalize(line) === line;
+/** wellFormed's table: each row a line and whether wellFormed admits it, one spelling inside and one outside each family
+ *  its docstring names. */
+const WELLFORMED_ROWS = [
+  ['a bundle path in its canonical spelling', 'out-tests/ui/webview/a-browser.test.js', true],
+  ['a bundle straight under out-tests/', 'out-tests/x.test.js', true],
+  ['a bundle two directories down', 'out-tests/a/b/c.test.js', true],
+  ['a no-break space inside the line', 'out-tests/ui/web\u00a0view/a-browser.test.js', false],
+  ['a trailing space', 'out-tests/ui/webview/a-browser.test.js ', false],
+  ['a bundle that does not end in .test.js', 'out-tests/ui/webview/a-browser.js', false],
+  ['a source path, not under out-tests/', 'ui/webview/a-browser.test.ts', false],
+];
+test('wellFormed\'s table: each row admitted or refused as wellFormed\'s docstring states', () => {
+  const wrong = WELLFORMED_ROWS.filter(([, line, admitted]) => wellFormed(line) !== admitted)
+    .map(([what, line, admitted]) => what + ': wellFormed(' + JSON.stringify(line) + ') ' + (admitted ? 'refuses it' : 'admits it'));
+  assert.deepEqual(wrong, [], 'each row of wellFormed\'s table is admitted or refused as its docstring states; the rows read otherwise: ' + JSON.stringify(wrong));
+});
+/** A bundle's source, the tree test's copy of the script's source_of (whose home, the script's header, states the map). */
 const sourceOf = (bundle) => path.join(REPO, bundle.replace(/^out-tests\//, '').replace(/\.test\.js$/, '.test.ts'));
-/** Roster lines: [{ n, bundle }], a line of whitespace alone and one whose first non-blank character is # dropped, blank
- *  by \s, which counts a byte-order mark and a no-break space where the script's [[:space:]] does not: a line holding one
- *  of those before its # is dropped here and refused as malformed by the script. */
+/** Roster lines: [{ n, bundle }], n the line's number from 1, a line of whitespace alone (an empty one among them) and one
+ *  whose first non-blank character is # dropped, blank by \s, which counts a byte-order mark and a no-break space where
+ *  the script's [[:space:]] does not: a line holding one of those before its # is dropped here and refused as malformed
+ *  by the script. Every other line is kept whole, a # after its first non-blank character included. Its table:
+ *  PARSE_ROSTER_ROWS, run by the test after it. */
 function parseRoster(text) {
   return text.split('\n').map((line, i) => ({ n: i + 1, line })).filter(({ line }) => !/^\s*(#|$)/.test(line)).map(({ n, line }) => ({ n, bundle: line }));
 }
+/** parseRoster's table: each row a roster's text and the lines parseRoster keeps, one spelling inside and one outside each
+ *  family its docstring names. */
+const PARSE_ROSTER_ROWS = [
+  ['a # line', '# a comment', []],
+  ['an indented # line', '   # a comment', []],
+  ['an empty line', '', []],
+  ['a line of whitespace alone', ' \t ', []],
+  ['a byte-order mark before the #', '\ufeff# a comment', []],
+  ['a no-break space before the #', '\u00a0# a comment', []],
+  ['a line of text', 'out-tests/x.test.js', [{ n: 1, bundle: 'out-tests/x.test.js' }]],
+  ['a line of text with a # after it, kept whole', 'out-tests/x.test.js # a note', [{ n: 1, bundle: 'out-tests/x.test.js # a note' }]],
+  ['kept lines numbered from 1 across the dropped ones', 'a\n# c\n\nb\n', [{ n: 1, bundle: 'a' }, { n: 4, bundle: 'b' }]],
+];
+test('parseRoster\'s table: each row\'s lines kept or dropped as parseRoster\'s docstring states', () => {
+  const wrong = PARSE_ROSTER_ROWS.filter(([, text, kept]) => !isDeepStrictEqual(parseRoster(text), kept))
+    .map(([what, text, kept]) => what + ': parseRoster(' + JSON.stringify(text) + ') keeps ' + JSON.stringify(parseRoster(text)) + ', not ' + JSON.stringify(kept));
+  assert.deepEqual(wrong, [], 'each row of parseRoster\'s table is kept or dropped as its docstring states; the rows read otherwise: ' + JSON.stringify(wrong));
+});
 /** A line's place, for the reds below that name a line with its bundle: "<file> line <n> (<bundle>)". */
 const where = (file, e) => file + ' line ' + e.n + ' (' + e.bundle + ')';
 
-test('the roster is well formed: each line parseRoster keeps (not blank, not a # comment) is a bundle path naming a source in the tree, once (the roster rule, under the switch, a rostered leg passes only when inBrowser has launched Chromium, with the rest in its homes, is the reviewer\'s to check: nothing in the tree reads a leg\'s source for it)', () => {
+test('the roster is well formed: each line parseRoster keeps (its docstring) is a bundle path naming a source in the tree, once (the roster rule, under the switch, a rostered leg passes only when inBrowser has launched Chromium, with the rest in its homes, is the reviewer\'s to check: nothing in the tree reads a leg\'s source for it)', () => {
   const roster = parseRoster(read(path.join(EXT, ROSTER)));
   assert.ok(roster.length > 0, ROSTER + ' holds at least one line (the switch test is rostered, below): an empty roster would pass the loop below over nothing');
   const seen = new Map();
   for (const e of roster) {
-    assert.ok(wellFormed(e.bundle), ROSTER + ' line ' + e.n + ' (' + JSON.stringify(e.bundle) + '): a line is a bundle path in its canonical spelling, out-tests/<dir>/<name>.test.js with no whitespace and no empty, . or .. segment (wellFormed also admits a bundle straight under out-tests/; a trailing space, tab or carriage return counts; the quoting shows it)');
+    assert.ok(wellFormed(e.bundle), ROSTER + ' line ' + e.n + ' (' + JSON.stringify(e.bundle) + '): a line is a bundle path in its canonical spelling, out-tests/<dir>/<name>.test.js with no whitespace and no empty, . or .. segment (a bundle path as wellFormed reads it, its docstring; a trailing space, tab or carriage return counts; the quoting shows it)');
     assert.ok(!seen.has(e.bundle), where(ROSTER, e) + ' duplicates line ' + seen.get(e.bundle) + ': remove one');
     seen.set(e.bundle, e.n);
     const src = sourceOf(e.bundle);
@@ -438,7 +581,7 @@ const RULE_WORDS = [
   'Nothing checks that every browser leg in the tree is rostered, and main has no such check.',
 ];
 
-test('each home of the roster rule, read in its named section (the roster\'s # lines, the Browser legs step\'s own comments in ci.yml, the script\'s header, CONTRIBUTING.md whole), states it in the same words: the rule, who checks it, that nothing reads a leg\'s source for it, its examples as examples (the list after "examples, not the whole set:" is exactly the phrases of EXAMPLES, the witness table), the sentence on a leg built to pass without a browser, the witness, and that nothing checks that every browser leg in the tree is rostered', () => {
+test('each home of the roster rule, read in its named section (RULE_HOMES\' docstring), states it in the same words: the rule, who checks it, that nothing reads a leg\'s source for it, its examples as examples (the list after "examples, not the whole set:" is exactly the phrases of EXAMPLES, the witness table), the sentence on a leg built to pass without a browser, the witness, and that nothing checks that every browser leg in the tree is rostered', () => {
   const flat = (text) => text.split('\n').map((l) => l.replace(/^\s*(?:#|\/\/)\s?/, '').trim()).join(' ').replace(/`/g, '').replace(/\s+/g, ' ').toLowerCase();
   const lead = flat(RULE_LEAD), built = flat(RULE_BUILT), phrases = EXAMPLES.map((e) => flat(e.phrase));
   for (const home of RULE_HOMES) {
@@ -530,7 +673,8 @@ test('the script exists, is executable, runs node --test over the roster array (
  *  (CBL_STUB_REAL_NODE names it: the composition of the script, node and the real reporter) or writes CBL_STUB_REPORT (when
  *  set) to the reporter's destination and exits CBL_STUB_EXIT (0 unless set). Returns a runner over roster text (null removes
  *  the file) that runs the script with the switch set to 1 as the step does (stub.switch names another value; null runs it
- *  unset, as a local run may; stub.check runs --check; stub.report is the record the stub writes; stub.exit its exit;
+ *  unset, as a local run may; stub.check runs --check as the first argument; stub.argv is a list of arguments passed after
+ *  it; stub.report is the record the stub writes; stub.exit its exit;
  *  stub.real runs the real node); `node` in its result is the argument list of the node --test call without the reporter
  *  flags. The runner hands the script a fresh TMPDIR per run (removed and made again under the base directory), where the
  *  script's mktemp makes the record file: `tmp` in its result is that directory, and `record` is the path the script handed
@@ -585,7 +729,7 @@ function syntheticTree(t) {
     if (stub.report !== undefined) env.CBL_STUB_REPORT = stub.report;
     if (stub.exit !== undefined) env.CBL_STUB_EXIT = String(stub.exit);
     if (stub.real) env.CBL_STUB_REAL_NODE = process.execPath;
-    const r = bash([path.join(ext, 'scripts', 'ci-browser-legs.sh'), ...(stub.check ? ['--check'] : [])], { cwd: root, env });
+    const r = bash([path.join(ext, 'scripts', 'ci-browser-legs.sh'), ...(stub.check ? ['--check'] : []), ...(stub.argv || [])], { cwd: root, env });
     const args = fs.existsSync(log) ? fs.readFileSync(log, 'utf8').split('\n').filter(Boolean) : null;
     const at = args ? args.indexOf('--test-reporter=./scripts/ci-browser-legs-reporter.mjs') : -1;
     const dest = at >= 0 ? args[at + 1] : undefined;
@@ -607,7 +751,7 @@ function assertRecordRemoved(r, what) {
   assert.deepEqual(fs.readdirSync(r.tmp), [], what + ': the run\'s fresh TMPDIR is empty after the run, so the run left no file there: ' + JSON.stringify(fs.readdirSync(r.tmp)));
 }
 
-test('the script runs the rostered legs through node --test when the roster is well formed and current, a last line with no newline included, runs the pre-run checks alone under --check (which does not require the bundle), and prints "no legs in the roster" and starts no node on an empty roster; after its first run the record file the script handed its reporter is gone and the run\'s fresh TMPDIR is empty', (t) => {
+test('the script runs the rostered legs through node --test when the roster is well formed and current, a last line with no newline included, runs the pre-run checks alone under --check as its first argument (which does not require the bundle, and passes a bundle straight under out-tests/) and not under --check as its second, and prints "no legs in the roster" and starts no node on an empty roster; after its first run the record file the script handed its reporter is gone and the run\'s fresh TMPDIR is empty', (t) => {
   const { run, root, rec, A, B } = syntheticTree(t);
   // the stub's record: a's one test passed (with no record a rostered leg is red as unrun, the property the post-run test executes)
   const ok = run('# header\n\n' + A + '\n', { report: rec(A, 'pass', 'test', '-', 'test', 'leg a opens the page', '', '-') });
@@ -624,6 +768,20 @@ test('the script runs the rostered legs through node --test when the roster is w
   assert.equal(check.status, 0, '--check over a well-formed roster whose sources are present exits 0, a bundle not yet built included; stderr:\n' + check.err);
   assert.ok(check.out.includes('ci-browser-legs: the roster is well formed and every line names a source in the tree: 2 rostered (--check reads the roster alone and starts no node --test; the step\'s run also checks that each rostered bundle is built under out-tests/)'), '--check prints its agreement line with the count of rostered lines: ' + JSON.stringify(check.out));
   assert.equal(check.node, null, '--check starts no node');
+  // the --check read's rows (the script's header states it): as the first argument above; as the second argument it is
+  // not read, so the step's run starts node over the roster
+  const second = run('# header\n' + A + '\n', { argv: ['x', '--check'], report: rec(A, 'pass', 'test', '-', 'test', 'leg a opens the page', '', '-') });
+  assert.equal(second.status, 0, '--check as the second argument, the step\'s run over a well-formed roster: exit 0; stderr:\n' + second.err);
+  assert.deepEqual(second.node, ['--test', A], '--check as the second argument is not read: the step\'s run starts node --test over the roster');
+  assert.ok(!second.out.includes('the roster is well formed'), '--check as the second argument prints no agreement line: ' + JSON.stringify(second.out));
+  // a well_formed row (its comment in the script states the shape): a bundle straight under out-tests/, whose source is at
+  // the tree's root, passes the pre-run checks
+  fs.writeFileSync(path.join(root, 'x.test.ts'), '');
+  const straight = run('out-tests/x.test.js\n', { check: true });
+  assert.equal(straight.status, 0, 'a bundle straight under out-tests/ passes --check: exit 0; stderr:\n' + straight.err);
+  assert.ok(straight.out.includes('the roster is well formed and every line names a source in the tree: 1 rostered'), 'a bundle straight under out-tests/ is rostered: ' + JSON.stringify(straight.out));
+  // the empty roster: a comment line, an empty line and a line of whitespace alone, each skipped by the roster loop (the
+  // rows the script's comment above well_formed names)
   const empty = run('# only a comment\n\n   \n');
   assert.equal(empty.status, 0, 'an empty roster exits 0 (the guard, not a red); stderr:\n' + empty.err);
   assert.ok(empty.out.includes('no legs in the roster'), 'the guard says so: ' + JSON.stringify(empty.out));
@@ -659,8 +817,9 @@ test('the script refuses, naming the line and the remedy, on: a missing roster f
   refused(run(B + '\n'), ROSTER + ' line 1: \'' + B + '\' is not under out-tests/ (the Test step\'s npm test builds it; locally, node esbuild.js --tests): build the bundles before this step');
   // a malformed line, nine shapes. Three non-canonical spellings of a bundle that is present: node resolves each to the
   // canonical spelling, so the post-run read would attribute no result to the line and red a leg that passed, and a
-  // duplicate check keyed on spelling would pass one bundle rostered twice. A bundle path is canonical (no empty, . or ..
-  // segment), so each is malformed, the tree test's wellFormed first, then the script, alone and beside the canonical line
+  // duplicate check keyed on spelling would pass one bundle rostered twice. Each is malformed, as wellFormed's docstring and
+  // the script's comment above well_formed state, refused by the tree test's wellFormed first, then by the script, alone
+  // and beside the canonical line
   const DOT = 'out-tests/./ui/webview/a-browser.test.js', SLASHES = 'out-tests/ui//webview/a-browser.test.js', DOTDOT = 'out-tests/ui/../ui/webview/a-browser.test.js';
   for (const line of [DOT, SLASHES, DOTDOT]) assert.equal(wellFormed(line), false, 'the tree test\'s check refuses ' + JSON.stringify(line) + ', which path.posix.normalize spells ' + JSON.stringify(path.posix.normalize(line)) + ': a bundle path is canonical');
   assert.equal(wellFormed(A), true, 'the tree test\'s check admits the canonical spelling ' + A);
@@ -689,7 +848,7 @@ test('the script refuses, naming the line and the remedy, on: a missing roster f
   refusedUnderCheck('ui/webview/a-browser.test.ts\n', ROSTER + ' line 1: ui/webview/a-browser.test.ts is not a bundle path');
 });
 
-test('after node --test the script derives per rostered leg that at least one attributable pass ran, red when none ran and no result attributed to it failed outside a todo (todo-only, a describe() that registers none, a file that registered nothing, a failure inside a todo, a skip-only record); reds a skipped test the record attributes to a rostered bundle, naming the test, its reason and the switch\'s state; reds a failure inside a todo the record attributes to a rostered bundle, and a file that failed as a whole, by name; prints the lost-browser remedy beside a leg when a failure the record attributes to its bundle begins with inBrowser\'s cannot-launch phrase; passes node\'s status through; the unrun and the skip remedies take the line out of the roster', (t) => {
+test('after node --test the script derives per rostered leg that a test of its bundle passed, red as unrun when none did (todo-only, a describe() that registers none, a file that registered nothing, a failure inside a todo, a skip-only record); reds a rostered leg\'s skipped test (the scope the script\'s header states), naming the test, its reason and the switch\'s state; reds a rostered leg\'s failure inside a todo, and a file that failed as a whole, by name; prints the lost-browser remedy beside a leg (the lost-browser read the script\'s header states); passes node\'s status through; the unrun and the skip remedies take the line out of the roster', (t) => {
   const { run, root, rec, A, B } = syntheticTree(t);
   const PASS = rec(A, 'pass', 'test', '-', 'test', 'leg a opens the page', '', '-');
   const skipped = run(A + '\n', { report: PASS + rec(A, 'pass', 'test', 'skip', 'test', 'leg a keeps the slice\\nwhole # 2', 'no playwright chromium on this box', '-') });
@@ -757,7 +916,7 @@ test('after node --test the script derives per rostered leg that at least one at
   const failed = run(A + '\n', { report: rec(A, 'fail', 'test', '-', 'test', 'leg a opens the page', 'an assertion of the leg\'s own failed', 'testCodeFailure'), exit: 1 });
   assert.equal(failed.status, 1, 'node\'s failure is the step\'s, as node\'s own status');
   assert.equal(failed.err, '', 'a failure for a reason of the leg\'s own gets no label of the script\'s (node\'s own report carries it):\n' + failed.err);
-  // a failure whose message begins with inBrowser's cannot-launch phrase (the switch's name first) is inBrowser failing to
+  // this row's message, LOST, begins with inBrowser's cannot-launch phrase (the switch's name first), as inBrowser fails a
   // launch under it: the remedy is printed beside the leg
   const LOST = SWITCH + ' is set and this leg cannot run: no playwright browser on this box; the browser leg needs one: browserType.launch: Executable doesn\'t exist at /nowhere';
   const lost = run(A + '\n', { report: rec(A, 'fail', 'test', '-', 'test', 'leg a opens the page', LOST, 'testCodeFailure'), exit: 1 });
@@ -769,12 +928,12 @@ test('after node --test the script derives per rostered leg that at least one at
   assert.equal(quoted.status, 1, 'node\'s failure stands');
   assert.ok(!quoted.err.includes('the runner lost its browser'), 'a message that quotes the phrase after other text is not a lost browser (LOST reads the start of the message):\n' + quoted.err);
   assert.equal(quoted.err, '', 'an ordinary failure gets no label of the script\'s:\n' + quoted.err);
-  // the switch under a non-"1" non-empty value: the script reads it as set (any non-empty value arms it, as the helper does),
-  // naming the value in the skip's red and giving the set-switch remedy
+  // the switch set to yes, a row of the script's switch-state read (its comment in the script states what it reads): the
+  // skip's red names the value and gives the set-switch remedy
   const yes = run(A + '\n', { report: PASS + rec(A, 'pass', 'test', 'skip', 'test', 'leg a opens the page', 'why', '-'), switch: 'yes' });
   assert.equal(yes.status, 1, 'a skip under the switch set to yes is red; stderr: ' + yes.err);
   assert.ok(yes.err.includes('skipped with ' + SWITCH + '=yes: \'leg a opens the page\' # SKIP why (' + A + ')'), 'the skip names the switch\'s value as the run had it (yes):\n' + yes.err);
-  assert.ok(yes.err.includes('a rostered leg skipped a test with ' + SWITCH + '=yes, so the step claims coverage it did not run') && yes.err.includes('only inBrowser in ui/webview/real-viewer-leg.ts turns a launch it cannot make into a failure here'), 'the set-switch remedy, not the unset one: the script\'s two reads arm on any non-empty value:\n' + yes.err);
+  assert.ok(yes.err.includes('a rostered leg skipped a test with ' + SWITCH + '=yes, so the step claims coverage it did not run') && yes.err.includes('only inBrowser in ui/webview/real-viewer-leg.ts turns a launch it cannot make into a failure here'), 'the set-switch remedy under the switch set to yes, not the unset one:\n' + yes.err);
   const both = run(A + '\n', { report: rec(A, 'pass', 'test', 'skip', 'test', 'leg a opens the page', 'why', '-'), exit: 7 });
   assert.equal(both.status, 7, 'with a failure and a skip node\'s own status (7) stands, not overwritten by the skip\'s status=1, and the skip is still named');
   assert.ok(both.err.includes('skipped with ' + SWITCH + '=1'), 'with node\'s own failure status (7) the skip is still named:\n' + both.err);
