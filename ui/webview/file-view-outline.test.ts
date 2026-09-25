@@ -1353,28 +1353,30 @@ test("the one rule called directly (figureSourceCredentialed, through the label 
 // lays one over the control.
 type KeyGate = { ctl: El; img: El; body: El; place: (r: Rect) => void; cover: (e: El | null) => void; frame: (f: StandInFrame | null, foreign?: "null" | "throws") => void; gate: () => boolean[] };
 /** A same-origin parent for the framed cells: the frame element's box and border in the parent's viewport, the parent's layout
- *  viewport, an optional wrapper around the frame element with its padding box and overflow, and the parent's visual viewport. */
-type StandInFrame = { box: Rect; border?: [number, number]; inner: [number, number]; wrap?: { box: Rect; overflow: string }; vv?: [number, number, number, number] };
+ *  viewport, an optional wrapper around the frame element with its padding box and overflow (and, for the cells of the file
+ *  review's round 16, regression-1, its computed display and a client size apart from its box), and the parent's visual
+ *  viewport. */
+type StandInFrame = { box: Rect; border?: [number, number]; inner: [number, number]; wrap?: { box: Rect; overflow: string; display?: string; client?: [number, number] }; vv?: [number, number, number, number] };
 const boxAt = (left: number, top: number, width = 22, height = 22): Rect => ({ left, top, right: left + width, bottom: top + height, width, height });
 const vvOf = (v: [number, number, number, number]) => ({ offsetLeft: v[0], offsetTop: v[1], width: v[2], height: v[3] });
-/** The viewer open on one remote picture from a loaded host, its web control focused, and the region's inputs filled for the case
- *  and restored after it. `place` gives the control its box; `frame` hosts the window in a same-origin parent (a StandInFrame), in a
+/** The viewer open on one remote picture from a loaded host (`md`, a case's own document holding it, for the cells that wrap it in
+ *  an author's element), its web control focused, and the region's inputs filled for the case and restored after it. `place` gives the control its box; `frame` hosts the window in a same-origin parent (a StandInFrame), in a
  *  parent of another origin (`foreign`: its frameElement reads null, or its read throws, the parent itself throwing on any read),
  *  or in none (null: the window its own parent); `cover` lays an element over the control for the document's elementFromPoint (null
  *  takes it off); `gate` dispatches keydown Enter, keydown Space and keyup Space on the control and returns whether each was
  *  prevented. */
-async function keyGateScene(t: TestContext): Promise<KeyGate> {
+async function keyGateScene(t: TestContext, md = '# R\n\n<img src="http://example.test/pic.svg" alt="big">\n'): Promise<KeyGate> {
   loadGatedHost("example.test", doc as unknown as ParentNode);
   t.after(() => { forgetLoadedHosts(); });
-  const o = await open(REPORT, '# R\n\n<img src="http://example.test/pic.svg" alt="big">\n', t);
+  const o = await open(REPORT, md, t);
   const img = o.body.querySelector(".fileview-md")!.querySelectorAll("img")[0];
   const ctl = img && img.nextSibling;
   assert.ok(ctl instanceof El && ctl.hasAttribute("data-fv-figopen") && ctl.classList.contains("fv-figopen-web"), "the web control after the remote picture (the scene's premise)");
   const saved = { gcs: (globalThis as any).getComputedStyle, wgcs: win.getComputedStyle, wdoc: win.document, wvv: win.visualViewport, parent: win.parent, efp: (doc as any).elementFromPoint };
-  const cs = (e: any) => {   // the viewer's body clips (auto), every other element of the viewer's document is visible; a parent's stand-in says its own
+  const cs = (e: any) => {   // the viewer's body clips (auto), every other element of the viewer's document is visible unless a case marks it (__clip); a parent's stand-in says its own; a display only where a case sets one (__display)
     if (e.__throws) throw new Error("read " + e.__throws);
-    const o = e instanceof El ? (e.classes.includes("fileview-body") ? "auto" : "visible") : (e.__clip || "visible");
-    return { overflowX: o, overflowY: o };
+    const o = e.__clip || (e instanceof El && e.classes.includes("fileview-body") ? "auto" : "visible");
+    return { overflowX: o, overflowY: o, display: e.__display };
   };
   (globalThis as any).getComputedStyle = cs; win.getComputedStyle = cs; win.document = doc;   // the global too: the viewer before this round read it
   Object.defineProperty(o.body, "clientLeft", { value: 0, configurable: true });
@@ -1404,7 +1406,7 @@ async function keyGateScene(t: TestContext): Promise<KeyGate> {
     if (!f) return;
     const root: any = { parentElement: null, __throws: "the parent's root (its overflow is the viewport's: passed over)" };
     const body: any = { parentElement: root, __throws: "the parent's body (its overflow is the viewport's: passed over)" };
-    const wrap: any = f.wrap ? { parentElement: body, __clip: f.wrap.overflow, getBoundingClientRect: () => f.wrap!.box, clientLeft: 0, clientTop: 0, clientWidth: f.wrap.box.width, clientHeight: f.wrap.box.height } : null;
+    const wrap: any = f.wrap ? { parentElement: body, __clip: f.wrap.overflow, __display: f.wrap.display, getBoundingClientRect: () => f.wrap!.box, clientLeft: 0, clientTop: 0, clientWidth: f.wrap.client ? f.wrap.client[0] : f.wrap.box.width, clientHeight: f.wrap.client ? f.wrap.client[1] : f.wrap.box.height } : null;
     const fe: any = { parentElement: wrap || body, getBoundingClientRect: () => f.box, clientLeft: (f.border || [0, 0])[0], clientTop: (f.border || [0, 0])[1] };
     const parent: any = { innerWidth: f.inner[0], innerHeight: f.inner[1], getComputedStyle: cs, document: { body, documentElement: root }, visualViewport: f.vv ? vvOf(f.vv) : null };
     parent.parent = parent;
@@ -1455,6 +1457,102 @@ test("the key gate's region at a parent of another origin (the file review's rou
   assert.deepEqual(g.gate(), IN3, "a parent of another origin whose frame element reads null: none of the three keys cancelled (the stop is not an out; a property pin over defaultPrevented)");
   g.frame(null, "throws");
   assert.deepEqual(g.gate(), IN3, "a parent of another origin whose frame element's read throws: none of the three keys cancelled (a property pin over defaultPrevented)");
+});
+
+// ── the region's two corrections, guards CI runs (the file review's round 16, regression-1 with the coordinator's decision 1, and
+// fresh-1; the browser leg that drives the dashboard's layout and the body zoom skips in CI): an ancestor on which overflow clips
+// nothing, display: contents or display: inline, is passed over whatever its overflow reads, since either reads a client size of
+// 0 by 0 and, read as a clip, put a control on the screen out of view (the dashboard's pane wrapper in its narrow layout; an
+// author's inline span of a page class that sets overflow hidden); and an ancestor's border and client size, in its own CSS pixels,
+// are scaled into the window's pixels, since under a body zoom the box is scaled and they were not. Each cell reads the three keys
+// and a click dispatched on the control (openStub): under the one gate the click reads the same region, so a region that reads out
+// refuses the click too.
+test("the key gate's region passes over an ancestor of the frame element on which overflow clips nothing (the file review's round 16, regression-1 with the coordinator's decision 1): a wrapper with display: contents, a box and a client size of 0 by 0 and overflow hidden (the dashboard's pane wrapper in its narrow and touch layout), and one with display: inline and a client size of 0 by 0 around a box the frame's size, each leave the control in view, so none of the three keys is cancelled and a click on the control opens once; the same wrapper with display: block, a box that clips, still reads out (a property pin over each key's defaultPrevented and window.open's calls; the contents and inline cells red at the head the file review's round 16 read, where each wrapper's 0 by 0 put the control out of view and cancelled all three keys, and red under a region without the skip, where the click is refused too; the inline cell green at 2e9205301 by design, whose region walked no frame; the block cell's keys green there by design and its click red there by group A's open, since that head had no gate)", async (t) => {
+  const g = await keyGateScene(t);
+  g.place(IN_BOX);
+  g.cover(null);
+  const stub = openStub(t, g.ctl);
+  const pane = (display: string, box: Rect, client: [number, number]): StandInFrame => ({ box: boxAt(0, 0, 900, 600), inner: [900, 600], wrap: { box, overflow: "hidden", display, client } });
+  const cells: Array<[string, StandInFrame, [boolean[], number]]> = [
+    ["a wrapper with display: contents, its box and client size 0 by 0, overflow hidden (the dashboard's pane wrapper under its narrow layout)", pane("contents", boxAt(0, 0, 0, 0), [0, 0]), [IN3, 1]],
+    ["a wrapper with display: inline, its client size 0 by 0 around a box the frame's size, overflow hidden", pane("inline", boxAt(0, 0, 900, 600), [0, 0]), [IN3, 1]],
+    ["the control: a wrapper with display: block, its box and client size 0 by 0, overflow hidden, which clips everything", pane("block", boxAt(0, 0, 0, 0), [0, 0]), [OUT3, 0]],
+  ];
+  const got = cells.map(([what, f]) => {
+    g.frame(f);
+    const keys = g.gate();
+    const a = stub.read().opened;
+    click(g.ctl);
+    return [what, [keys, stub.read().opened - a]] as const;
+  });
+  for (const [what, read] of got) t.diagnostic(what + ": " + JSON.stringify(read));
+  assert.deepEqual(got.map(([what, read]) => [what, read]), cells.map(([what, , want]) => [what, want]), "each wrapper's [three keys cancelled, the click's opens]: the wrappers on which overflow clips nothing keep the control in view, the block wrapper clips it (a property pin over defaultPrevented and window.open's calls)");
+});
+test("the key gate's region passes over the control's own ancestor on which overflow clips nothing (the file review's round 16, regression-1 with the coordinator's decision 1): the web picture inside an author's span of a page class that sets overflow hidden (sub-head-waits), the span read with display: inline and a client size of 0 by 0 around a box that holds the control, and with display: contents and a box of 0 by 0 (an author's span of a second page class that sets it), each leaves the control in view, so none of the three keys is cancelled and a click on the control opens once; the same span read as an inline-block, a block container that clips, reads out (a property pin over each key's defaultPrevented and window.open's calls; the inline and contents cells red at the head the file review's round 16 read and at 2e9205301, whose region read the span as a clip and cancelled all three keys, and red under a region without the skip, where the click is refused too; the inline-block cell's keys green at both by design and its click red there by group A's open)", async (t) => {
+  const g = await keyGateScene(t, '# R\n\nGist words <span class="sub-head-waits"><img src="http://example.test/pic.svg" alt="big"></span> after.\n');
+  g.frame(null);
+  g.place(IN_BOX);
+  g.cover(null);
+  const span = g.ctl.parentElement as any;
+  assert.ok(span && span.tagName === "SPAN" && span.classes.includes("sub-head-waits") && g.img.parentElement === span, "the picture and its control inside the author's span (the case's premise)");
+  Object.defineProperty(span, "clientLeft", { value: 0, configurable: true });
+  Object.defineProperty(span, "clientTop", { value: 0, configurable: true });
+  const stub = openStub(t, g.ctl);
+  const cells: Array<[string, string, Rect, [boolean[], number]]> = [
+    ["display: inline, overflow hidden, its client size 0 by 0 around a box that holds the control", "inline", boxAt(300, 200, 120, 30), [IN3, 1]],
+    ["display: contents, overflow hidden, its box and client size 0 by 0", "contents", boxAt(0, 0, 0, 0), [IN3, 1]],
+    ["the control: display: inline-block, overflow hidden, its client size 0 by 0, a block container that clips", "inline-block", boxAt(300, 200, 120, 30), [OUT3, 0]],
+  ];
+  const got = cells.map(([what, display, box]) => {
+    span.__display = display; span.__clip = "hidden"; span.getBoundingClientRect = () => box;
+    assert.equal(span.clientWidth + span.clientHeight, 0, "the span's client size reads 0 by 0 (the case's premise)");
+    const keys = g.gate();
+    const a = stub.read().opened;
+    click(g.ctl);
+    return [what, [keys, stub.read().opened - a]] as const;
+  });
+  for (const [what, read] of got) t.diagnostic(what + ": " + JSON.stringify(read));
+  assert.deepEqual(got.map(([what, read]) => [what, read]), cells.map(([what, , , want]) => [what, want]), "each reading of the span, [three keys cancelled, the click's opens]: inline and contents keep the control in view, inline-block clips it (a property pin over defaultPrevented and window.open's calls)");
+});
+test("the key gate's region in one coordinate space under a body zoom (the file review's round 16, fresh-1): the viewer's body zoomed, its box in the window's pixels and its client size in its own CSS pixels (800 by 200), read through its zoom (currentCSSZoom) and, where the browser gives none, through the ratio of its box to its layout size (offsetWidth, offsetHeight): at 1.25 a control in the body's bottom band and one at its right edge, each inside the body's box and outside what its unscaled client size spans, keep their keys and open on a click, and one below the body's box does not; at 0.8 a control past the body's bottom edge and one past its right edge, each inside what the unscaled client size spans and inside the window, are out of view, so their keys are cancelled and a click opens nothing, and one inside keeps them; and a same-origin frame element's top border of 40 CSS px at a zoom of 1.25 moves the control 50 px, past a parent 630 tall (a property pin over each key's defaultPrevented and window.open's calls; red at the head the file review's round 16 read, where the band and right-edge cells read out, the 0.8 past cells read in, the direction that opens a tab with the control hidden, and the border cell read in, and red under a region that reads the client size unscaled, where the band and right-edge clicks are refused and the 0.8 past clicks open; the out-of-view clicks red at that head by group A's open)", async (t) => {
+  const g = await keyGateScene(t);
+  g.frame(null);
+  g.cover(null);
+  const stub = openStub(t, g.ctl);
+  const body = g.body as any;
+  const zoomBody = (z: number, road: "zoom" | "ratio"): void => {
+    const w = BODY_W * z, h = BODY_H * z;
+    body.getBoundingClientRect = () => ({ left: 0, top: EDGE, right: w, bottom: EDGE + h, width: w, height: h });
+    Object.defineProperty(body, "currentCSSZoom", { value: road === "zoom" ? z : undefined, configurable: true });
+    Object.defineProperty(body, "offsetHeight", { value: road === "ratio" ? BODY_H : undefined, configurable: true });   // offsetWidth is the stand-in's own, the client width (800)
+  };
+  const at = (x: number, y: number, z: number): Rect => boxAt(x, y, 22 * z, 22 * z);
+  const cells: Array<[string, () => void, [boolean[], number]]> = [];
+  for (const road of ["zoom", "ratio"] as const) {
+    const via = road === "zoom" ? " (currentCSSZoom)" : " (the box over offsetWidth and offsetHeight)";
+    cells.push(
+      ["1.25" + via + ": a control in the body's bottom band, 310 down, the body's box ending at 350 and its unscaled client height at 300", () => { zoomBody(1.25, road); g.place(at(342, 310, 1.25)); }, [IN3, 1]],
+      ["1.25" + via + ": a control at the body's right edge, 960 across, the body's box ending at 1000 and its unscaled client width at 800", () => { zoomBody(1.25, road); g.place(at(960, 206, 1.25)); }, [IN3, 1]],
+      ["1.25" + via + ": a control below the body's box, 360 down (keep)", () => { zoomBody(1.25, road); g.place(at(342, 360, 1.25)); }, [OUT3, 0]],
+      ["0.8" + via + ": a control past the body's bottom edge, 265 down, the body's box ending at 260 and its unscaled client height at 300", () => { zoomBody(0.8, road); g.place(at(342, 265, 0.8)); }, [OUT3, 0]],
+      ["0.8" + via + ": a control past the body's right edge, 650 across, the body's box ending at 640 and its unscaled client width at 800", () => { zoomBody(0.8, road); g.place(at(650, 150, 0.8)); }, [OUT3, 0]],
+      ["0.8" + via + ": a control inside the body's box (keep)", () => { zoomBody(0.8, road); g.place(at(342, 150, 0.8)); }, [IN3, 1]],
+    );
+  }
+  cells.push(["a same-origin frame element zoomed 1.25 with a top border of 40 CSS px, at 380 down in a parent 630 tall: the border 50 px in the parent's pixels, the control at 636", () => {
+    zoomBody(1, "zoom"); g.place(IN_BOX);
+    g.frame({ box: boxAt(0, 380, 900, 600), border: [0, 40], inner: [900, 630] });
+    Object.defineProperty(win.frameElement, "currentCSSZoom", { value: 1.25, configurable: true });
+  }, [OUT3, 0]]);
+  const got = cells.map(([what, set]) => {
+    set();
+    const keys = g.gate();
+    const a = stub.read().opened;
+    click(g.ctl);
+    return [what, [keys, stub.read().opened - a]] as const;
+  });
+  for (const [what, read] of got) t.diagnostic(what + ": " + JSON.stringify(read));
+  assert.deepEqual(got.map(([what, read]) => [what, read]), cells.map(([what, , want]) => [what, want]), "each cell's [three keys cancelled, the click's opens] under the body zoom, read in the window's pixels (a property pin over defaultPrevented and window.open's calls)");
 });
 
 // ── the one gate on the click, the guards CI runs (the file review's round 16, extra5-1; the browser leg that drives the pointers

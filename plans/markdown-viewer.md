@@ -8576,7 +8576,18 @@ of view; a parent of another origin, VS Code's webview host among them, ends the
 any other read that fails answers out (`controlInView`), since
 a focus a click or a press dragged off it left stood unpainted on a fine pointer once the pointer left and a later Enter or Space
 opened the tab again with nothing shown (the file review's round 14, ui-1 with extra9-1; the visual viewport and the frame walk since
-the file review's round 15, extra5-2, where a keyboard focus off a zoomed screen opened the tab); since the file review's round 16,
+the file review's round 15, extra5-2, where a keyboard focus off a zoomed screen opened the tab); an ancestor on which overflow
+clips nothing is passed over whatever its overflow reads, display: contents, which generates no box, and display: inline, to which
+overflow does not apply (each reads a client size of 0 by 0, and read as a clip the dashboard's pane wrapper, display: contents in
+its narrow and touch layout, put every web control of the chat column and the Files pane out of view, and an author's inline span of
+a page class with overflow hidden kept the picture inside it from opening on any gesture; the file review's round 16, regression-1
+with the coordinator's decision 1); and every read is in the window's pixels, an ancestor's and a frame element's border and client
+size, which are in the element's own CSS pixels, scaled by its zoom (`cssScale`), since under VS Code's body zoom they were read
+unscaled against a scaled box, so at 1.25 a control wholly visible in the body's bottom band or at its right edge read out and at
+0.8 one past a scrollport's edge, clipped, read in (the file review's round 16, fresh-1); a zoomed same-origin parent would need the
+box moved into it scaled too, which the walk does not do, and no page of either host zooms one; and no figure with a target stands
+under a zoom today, since VS Code's zoomed webviews load no remote picture and have no /file route for a local one, so the open
+leg's zoom cells hold the geometry on a harness page; since the file review's round 16,
 extra5-1, that read is one gate for every gesture on a picture from the web, a tap, a plain click and a Cmd/Ctrl-click on the
 picture, the control's click, and Enter or Space on it, since a tap or a click on the visible part of a loaded web picture had
 opened the tab with its control off the screen and nothing shown, on every device: the tab opens only while the picture's sign
@@ -8611,8 +8622,12 @@ composed from the declared opacities, and the
 token's states clear 3:1 in VS Code on a neutral editor ground up to #404040 and on a light one from #efefef, the family's accent hover
 border held on each theme's own ground; the painted-contrast ask of 2026-09-23, the press cue on the maintainer's ruling within it,
 where at 0.8 the control read 2.46:1 by pixels on a
-VS Code editor ground of #404040 and, at 0.8 x 0.7 inside a captioned dead link, 2.47:1 dark and 2.40:1 light), measured from the loaded picture's laid-out box while it is in
-the document, else its own size (`figureBox`, `figureTooSmall`; a loaded figure alone has a box to measure, `figureState`), read wherever the
+VS Code editor ground of #404040 and, at 0.8 x 0.7 inside a captioned dead link, 2.47:1 dark and 2.40:1 light), measured in its own
+CSS pixels from the loaded picture's laid-out box while it is in the document (the box divided by the picture's zoom and rounded to
+1/16 of a pixel, since the layout's grid of 1/64 of a window pixel falls between CSS pixels under a zoom, so the floor holds under a
+body zoom as at zoom 1: at 1.25 a 40 CSS px picture had measured 50 and got a control, and at 0.8 a 48 and a 50 had measured 38.4
+and 40 and got none; not offsetWidth, which rounds a picture laid out at 47.6 px to 48; the file review's round 16, fresh-1), else
+its own size (`figureBox`, `figureTooSmall`; a loaded figure alone has a box to measure, `figureState`), read wherever the
 decision runs: in a browser a picture the browser is still fetching at the paint (mdBlock, `addFigureControls`) gets none
 then, and its load or its error (`armFigureControls`) runs the decision with the picture's size known; a picture the
 browser already holds (the report re-opened: Back, Forward, a second open after a close; no request leaves for it) is

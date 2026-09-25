@@ -5284,20 +5284,33 @@ function figureControlOf(target: Element | null, within: Element): HTMLElement |
  *  the hit test the in-view part of the box (the file review's round 16, extra5-1). The
  *  regions, in order: the viewer's layout viewport (in VS Code the webview's); the scrollports of the control's ancestors
  *  (clipToScrollports), so the viewer's body counts and so does a table that scrolls on its own, while the Rendered box, which
- *  clips nothing, does not; then, for each same-origin frame that hosts this window, walked up while the frame element can be
- *  read (the dashboard hosts the viewer in same-origin iframes), the box moved into the parent's coordinates by the frame
- *  element's box and its border (clientLeft, clientTop), the parent's layout viewport, and the scrollports of the frame
- *  element's ancestors in the parent's document; last, the visual viewport of the topmost window the walk reached, the part of
- *  its layout viewport a pinch zoom leaves on the screen (a window without one skips that term). Inside a frame the window's
- *  own visual viewport is the frame's whole layout viewport while the top page is zoomed, so the walk reads the top's. A
- *  parent of another origin ends the walk with the reads made so far: its frameElement reads null in Chromium, or throws, and
- *  that stop is not an out, since VS Code's webview host is of another origin and an out there would refuse every key. So in
- *  VS Code the walk stops at the webview's own window, and whether that host lets a pinch zoom the webview at all is
- *  unmeasured. The top window, its own parent, ends the walk too. A frame element's CSS padding is not read: the walk moves the
- *  box by the frame element's box and its border alone, so inside a frame padded on its top or left the window's content stands
- *  further in than the walk places it, and a control past the parent's edge by less than that padding reads as in view (an
- *  iframe with 60px of top padding kept Enter and Space on a control wholly below the top page); the kernel's pages give their
- *  frames a border of 0 and no padding. Read at the call and never kept; a control partly in view is in view. */
+ *  clips nothing, does not, and neither does an ancestor on which overflow clips nothing whatever its computed value, one with
+ *  display: contents or display: inline, which is passed over (the file review's round 16, regression-1 with the coordinator's
+ *  decision 1: read as a clip, the dashboard's pane wrapper, display: contents in its narrow and touch layout, put every web
+ *  control of the chat column and the Files pane out of view, and an author's inline span of a page class that sets overflow
+ *  hidden kept the picture inside it from opening on any gesture); then, for each same-origin frame that hosts this window,
+ *  walked up while the frame element can be read (the dashboard hosts the viewer in same-origin iframes), the box moved into
+ *  the parent's coordinates by the frame element's box and its border (clientLeft, clientTop), the parent's layout viewport,
+ *  and the scrollports of the frame element's ancestors in the parent's document; last, the visual viewport of the topmost
+ *  window the walk reached, the part of its layout viewport a pinch zoom leaves on the screen (a window without one skips that
+ *  term). Inside a frame the window's own visual viewport is the frame's whole layout viewport while the top page is zoomed, so
+ *  the walk reads the top's. A parent of another origin ends the walk with the reads made so far: its frameElement reads null
+ *  in Chromium, or throws, and that stop is not an out, since VS Code's webview host is of another origin and an out there
+ *  would refuse every key. So in VS Code the walk stops at the webview's own window, and whether that host lets a pinch zoom
+ *  the webview at all is unmeasured. The top window, its own parent, ends the walk too. A frame element's CSS padding is not
+ *  read: the walk moves the box by the frame element's box and its border alone, so inside a frame padded on its top or left
+ *  the window's content stands further in than the walk places it, and a control past the parent's edge by less than that
+ *  padding reads as in view (an iframe with 60px of top padding kept Enter and Space on a control wholly below the top page);
+ *  the kernel's pages give their frames a border of 0 and no padding. Every read is in one coordinate space, the window's
+ *  viewport pixels: an ancestor's and a frame element's border and client size, which are in the element's own CSS pixels, are
+ *  scaled by its zoom (cssScale), since under a body zoom, the one VS Code's webviews apply for an editor font over 13px, they
+ *  were read unscaled against a scaled box, so a control wholly visible in the body's bottom band or at its right edge read out
+ *  at 1.25 and one past the body's edge, clipped, read in at 0.8 (the file review's round 16, fresh-1). A zoomed same-origin
+ *  parent would need the box moved into it scaled as well, which the walk does not do: no page of either host zooms one (in VS
+ *  Code the walk stops at the webview's own window, and the kernel writes no zoom). Reachability: the zoomed pages are VS
+ *  Code's webviews alone, whose policy loads no remote picture (img-src the webview's own source and data:) and whose origin
+ *  has no /file route for a local one, so no figure with a target stands under a zoom today; the zoomed cells hold the geometry
+ *  on a harness page without that policy. Read at the call and never kept; a control partly in view is in view. */
 function controlInView(control: Element): boolean {
   return inViewPart(control) !== null;
 }
@@ -5314,8 +5327,8 @@ function inViewPart(control: Element): ViewBox | null {
       let frame: Element | null;
       try { frame = w.frameElement; } catch { frame = null; }
       if (!frame) break;                                  // a parent of another origin: the walk stops, the reads so far stand
-      const p = w.parent, fr = frame.getBoundingClientRect();
-      const dx = fr.left + frame.clientLeft, dy = fr.top + frame.clientTop;
+      const p = w.parent, fr = frame.getBoundingClientRect(), [fx, fy] = cssScale(frame, fr);
+      const dx = fr.left + frame.clientLeft * fx, dy = fr.top + frame.clientTop * fy;   // the border in the parent's viewport pixels (cssScale)
       box.x0 += dx; box.x1 += dx; box.y0 += dy; box.y1 += dy;                      // into the parent's coordinates
       mx += dx; my += dy;
       box.x0 = Math.max(box.x0, 0); box.y0 = Math.max(box.y0, 0); box.x1 = Math.min(box.x1, p.innerWidth); box.y1 = Math.min(box.y1, p.innerHeight);   // the parent's layout viewport
@@ -5331,18 +5344,35 @@ function inViewPart(control: Element): ViewBox | null {
 /** A box in a window's viewport coordinates, controlInView's running intersection. */
 type ViewBox = { x0: number; y0: number; x1: number; y1: number };
 /** Clips `box`, in the viewport coordinates of `view`, the window whose document holds `el`, to the padding box, the
- *  scrollport with any scrollbar left out, of every ancestor of `el` whose computed overflow on that axis is not visible. The
- *  document's body and root are passed over, since their overflow is the viewport's, which controlInView reads itself. */
+ *  scrollport with any scrollbar left out, of every ancestor of `el` whose computed overflow on that axis is not visible. Passed
+ *  over: the document's body and root, since their overflow is the viewport's, which controlInView reads itself; and an
+ *  ancestor on which overflow clips nothing whatever its computed value, one with display: contents, which generates no box, and
+ *  one with display: inline, to which overflow does not apply; either reads a client size of 0 by 0 (and display: contents a box
+ *  of 0 by 0), so read as a clip it would put every control inside it out of view. The padding box is read in the window's viewport
+ *  pixels: the ancestor's box as getBoundingClientRect gives it, and its border and client size, which are in the ancestor's own
+ *  CSS pixels, scaled by cssScale, since under a body zoom the two spaces differ. */
 function clipToScrollports(el: Element, view: Window, box: ViewBox): void {
   const d = view.document;
   for (let a = el.parentElement; a && a !== d.body && a !== d.documentElement; a = a.parentElement) {
     const cs = view.getComputedStyle(a);
+    if (cs.display === "contents" || cs.display === "inline") continue;   // overflow clips nothing on either (the docstring)
     const clipX = cs.overflowX !== "visible", clipY = cs.overflowY !== "visible";
     if (!clipX && !clipY) continue;
-    const ar = a.getBoundingClientRect(), padLeft = ar.left + a.clientLeft, padTop = ar.top + a.clientTop;
-    if (clipX) { box.x0 = Math.max(box.x0, padLeft); box.x1 = Math.min(box.x1, padLeft + a.clientWidth); }
-    if (clipY) { box.y0 = Math.max(box.y0, padTop); box.y1 = Math.min(box.y1, padTop + a.clientHeight); }
+    const ar = a.getBoundingClientRect(), [zx, zy] = cssScale(a, ar), padLeft = ar.left + a.clientLeft * zx, padTop = ar.top + a.clientTop * zy;
+    if (clipX) { box.x0 = Math.max(box.x0, padLeft); box.x1 = Math.min(box.x1, padLeft + a.clientWidth * zx); }
+    if (clipY) { box.y0 = Math.max(box.y0, padTop); box.y1 = Math.min(box.y1, padTop + a.clientHeight * zy); }
   }
+}
+/** The factor on each axis from an element's own CSS pixels, the space of its clientLeft, clientTop, clientWidth and
+ *  clientHeight, to its window's viewport pixels, the space of its getBoundingClientRect (`r`): its effective zoom
+ *  (currentCSSZoom, Chromium 128 and later) where the browser gives one; else the ratio of its rendered box to its layout box
+ *  (r's size over offsetWidth and offsetHeight), which measures the same relation and reads 1 where the two reads agree; else 1,
+ *  where neither can be read (a stand-in outside a browser). */
+function cssScale(el: Element, r: DOMRect): [number, number] {
+  const z = el.currentCSSZoom;
+  if (z > 0) return [z, z];
+  const h = el as HTMLElement;
+  return [h.offsetWidth > 0 ? r.width / h.offsetWidth : 1, h.offsetHeight > 0 ? r.height / h.offsetHeight : 1];
 }
 /** The outbound sign of a picture from the web, what a gesture on it must find shown before its tab opens (the file review's
  *  round 16, extra5-1): the web control standing after the figure's anchor (figureControlAfter over figureAnchor, so a picture
@@ -5437,7 +5467,10 @@ function figureHasPicture(state: FigureState): boolean {
  *  click on the picture itself (the author's link, the panel's offer, the plain open) keeps most of it. A badge (a 100 by 20
  *  svg) and an inline icon (16 by 16) measure under it: laid from the sheets' fixed margins, the transparent control on one
  *  hung below the badge and over the prose before the icon and took the click meant for the link or the text (the review's
- *  round 1). Their plain click still opens them where no link holds them. */
+ *  round 1). Their plain click still opens them where no link holds them. The floor is read in the figure's own CSS pixels at
+ *  every zoom, the space the control's box is laid out in (figureBox divides the laid-out box by the figure's zoom; the file
+ *  review's round 16, fresh-1: under a body zoom of 1.25 a 40 CSS px picture measured 50 and got a control, and at 0.8 a 48 and
+ *  a 50 measured 38.4 and 40 and got none). */
 const FIGOPEN_MIN_PX = 48;
 /** A LOADED figure's box (figureState): its laid-out box while it is in the document, whatever that box is (the width the
  *  author or the column gave it; 0 by 0 for a figure with no box, an author's `hidden` or `width="0"`, or with the viewer
@@ -5450,12 +5483,23 @@ const FIGOPEN_MIN_PX = 48;
  *  with no box is under the floor by this read, so a loaded figure the author gave no box gets no control: before the file
  *  review's round 3 (correctness-1) the fallback ran for ANY zero-sided rect, so such a figure was measured over the floor at
  *  its own size and kept a control the sheets lay 28 px into the prose before it, where it took the click meant for those
- *  words and opened a picture the author hid. */
+ *  words and opened a picture the author hid. The box is in the figure's own CSS pixels, the floor's space: the laid-out box,
+ *  which getBoundingClientRect gives in the window's viewport pixels, divided by the figure's zoom (currentCSSZoom, Chromium
+ *  128 and later, and 1 where the browser gives none), so under a body zoom the floor holds as at zoom 1 (the file review's
+ *  round 16, fresh-1), and rounded to 1/16 of a CSS pixel, since the layout puts a box's edges on a grid of 1/64 of a window
+ *  pixel and under a zoom that grid falls between CSS pixels: laid out at 48 CSS px, a picture measures 38.390625 window pixels
+ *  at a zoom of 0.8 (47.988 CSS px) and 51.6875 at 14/13, VS Code's zoom for its default editor font of 14px (47.9965), and
+ *  each would fall under the floor unrounded (measured in Chromium); rounded to 1/16, the grid's error is absorbed at every
+ *  zoom above 0.5 (VS Code's run from 1 to 2), and a picture no more than 1/32 of a pixel under the floor gets a control. Not
+ *  offsetWidth and offsetHeight, which round to an integer, so a picture laid out at 47.6 px would read 48 and get a control at
+ *  every zoom, 1 included. Reachability, as controlInView's docstring states it: no figure with a target stands under a zoom
+ *  today (VS Code's zoomed webviews load no remote picture and have no /file route for a local one). */
 function figureBox(img: Element): { w: number; h: number } | null {
   if (figureState(img) !== "loaded") return null;
   const i = img as HTMLImageElement;
   const r = i.isConnected && typeof i.getBoundingClientRect === "function" ? i.getBoundingClientRect() : null;
-  return r ? { w: r.width, h: r.height } : { w: i.naturalWidth, h: i.naturalHeight };
+  const z = i.currentCSSZoom > 0 ? i.currentCSSZoom : 1;   // the figure's zoom: its box in its own CSS pixels, to 1/16 of a pixel (the docstring)
+  return r ? { w: Math.round(r.width / z * 16) / 16, h: Math.round(r.height / z * 16) / 16 } : { w: i.naturalWidth, h: i.naturalHeight };
 }
 /** Whether the figure measures under the floor on either side (figureBox), so that no control goes on it. */
 function figureTooSmall(img: Element): boolean {

@@ -149,10 +149,14 @@ test("the one decision: figureWantsControl reads the figure's state by one rule 
   // the laid-out box of a figure IN the document as it is, 0 by 0 included (an author's `hidden` or `width="0"`: under the floor, no
   // control), the picture's own size for a figure not in it (mdBlock's box at the paint); the file review's round 3
   // (correctness-1): the fallback ran for ANY zero-sided rect, so a loaded figure with no box was measured over the floor and wore
-  // a control 28 px into the prose before it (file-view-figure-floor-browser.test.ts drives both authored shapes)
-  assert.match(box, /const r = i\.isConnected && typeof i\.getBoundingClientRect === "function" \? i\.getBoundingClientRect\(\) : null;\n\s*return r \? \{ w: r\.width, h: r\.height \} : \{ w: i\.naturalWidth, h: i\.naturalHeight \};/,
-    "the laid-out box, whatever it is, for a figure in the document (an author's width attribute counts, and so does no box at all), else the picture's own size (a detached box)");
+  // a control 28 px into the prose before it (file-view-figure-floor-browser.test.ts drives both authored shapes); in the figure's
+  // own CSS pixels, the box divided by its zoom (the file review's round 16, fresh-1: under a body zoom the rect is in the window's
+  // pixels, and a 40 CSS px picture measured 50 at 1.25 and got a control; the open leg's zoom cells drive the floor at 1, 14/13,
+  // 1.25 and 0.8, and these assertions hold the spelling alone)
+  assert.match(box, /const r = i\.isConnected && typeof i\.getBoundingClientRect === "function" \? i\.getBoundingClientRect\(\) : null;\n\s*const z = i\.currentCSSZoom > 0 \? i\.currentCSSZoom : 1;[^\n]*\n\s*return r \? \{ w: Math\.round\(r\.width \/ z \* 16\) \/ 16, h: Math\.round\(r\.height \/ z \* 16\) \/ 16 \} : \{ w: i\.naturalWidth, h: i\.naturalHeight \};/,
+    "the laid-out box, whatever it is, for a figure in the document (an author's width attribute counts, and so does no box at all), divided by the figure's zoom so it is in CSS pixels and rounded to 1/16 of one (the layout's 1/64 grid of window pixels falls between CSS pixels under a zoom), else the picture's own size (a detached box) (a sentence pin: the executed read is the open leg's floor cells under a body zoom)");
   assert.doesNotMatch(box, /r\.width > 0|r\.height > 0/, "no fallback keyed on a zero side: a 0 by 0 box in the document is the figure's box");
+  assert.doesNotMatch(box, /offsetWidth|offsetHeight/, "no offsetWidth or offsetHeight read: each rounds to an integer, so a picture laid out at 47.6 px would read 48 and get a control at every zoom (a sentence pin: the open leg's 47.6 cell is the executed read)");
   const above = between(VIEW, "function linkAbove(anchor: Element): Element | null {", "\n}\n");
   assert.match(above, /const p = anchor\.parentElement;\n\s*return p \? figureLinkOf\(p\) : null;/,
     "a link of the click's own set above the anchor (a link holding the figure alone IS the anchor and is not read): figureLinkOf over FIGURE_LINK_SET, an anchor with an href, a URL, section or path link; a dead link and a named target, whose click no listener owns, are not in it and their captioned picture keeps its control (a sentence pin)");
