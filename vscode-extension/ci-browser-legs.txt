@@ -34,11 +34,13 @@
 # browser leg in the tree is rostered, and main has no such check. inBrowser's read of the switch changes inBrowser's
 # own skip alone: a private skip is not turned into a failure by it, and a private launch that fails is not
 # inBrowser's failure naming the switch. Chromium is the one engine the job installs, so a leg's Firefox and WebKit
-# runs happen only in a local run. A Firefox or WebKit test in a rostered file would not run on the runner: it skips
-# there, and the script reds a skipped test in a rostered file, or its launch fails, which node reds unless the leg
-# swallows the failure and so breaks the roster rule. So such a test cannot sit in a rostered file. After the run, a
-# skipped test, a failure inside a todo, a file that failed as a whole, or a leg that ran no passing test is red: each
-# is coverage the step would claim and not have. The script's header states which results those reads cover.
+# runs happen only in a local run. A Firefox or WebKit test in a rostered file breaks the roster rule, since inBrowser
+# launches Chromium alone. On the runner its skip is red, and a failed launch the leg does not swallow is node's red,
+# but a leg can be built that holds such a test and reads green there when the bundle has a passing test of its own
+# (the witness spelling: one that registers the test only where that engine is installed): a leg built to pass without
+# a browser is outside what the step can detect. After the run, a skipped test, a failure inside a todo, a file that
+# failed as a whole, or a leg that ran no passing test is red: each is coverage the step would claim and not have. The
+# script's header states which results those reads cover.
 #
 # The switch test below spawns three child node --test runs of its own first test (the switch set to "1", to another
 # non-empty value, and unset) with PLAYWRIGHT_BROWSERS_PATH pointed at an empty directory, and asserts that the two
