@@ -120,6 +120,7 @@ import ast
 import collections
 import gc
 import glob
+import importlib.util
 import inspect
 import json
 import os
@@ -2244,8 +2245,9 @@ class _Licence:
     """One licensed module-level write, per name (the comment above): `reason` says why a child may inherit the write;
     the CHECKABLE conditions are `value` (the one literal the writers may set), `value_ok` (a predicate over the written
     value's text, resolved through the names bound once at import, so `_ROOT = tempfile.mkdtemp()` is read as the
-    mkdtemp), `reasserted` (tests/conftest.py sets or pops the name before every test, proved by a child pytest for
-    its probe's tests: _conftest_reasserts_proved, and what that does not read, _proof_unread_roads) and,
+    mkdtemp), `reasserted` (tests/conftest.py sets or pops the name before every test, proved by a child pytest in
+    the context _conftest_reasserted_names' docstring names with what the proof does not read:
+    _conftest_reasserts_proved) and,
     for a licence that waits on an item, `since` (the ISO date it was granted) with `until` (the item, named with the
     date it was filed).
     _licence_table_faults holds every licence to that shape: since the fixup of 2026-09-22 (the verifier's finding
@@ -3396,27 +3398,34 @@ def _conftest_reasserted_names(src=None, where=None):
     deletes after pytest registered the module's fixtures (pytest read them once, at the conftest's import, and the
     reader reads them when it runs; the one test that sets an attribute of it in the test process,
     tests/test_tempdir_hygiene.py's patch of _TMP_ROOT, puts it back). The execution proof below runs a copy of
-    tests/conftest.py and sees any of what tests/conftest.py's own code does that keeps a counted fixture from
-    re-asserting a name, for every name this reader counts (and test_a_port_one_test_sets_is_gone_when_the_next_test_starts
-    does so for ROMP_POSTAL_PORT beside it). On the text road, what _unproven_statements takes on trust (code that runs
+    tests/conftest.py and refuses what that code does to keep a counted fixture from re-asserting a name in a test of
+    its child's context, for every name this reader counts (and test_a_port_one_test_sets_is_gone_when_the_next_test_starts
+    does so for ROMP_POSTAL_PORT beside it); the next paragraph names that context and what the proof does not read.
+    On the text road, what _unproven_statements takes on trust (code that runs
     before the module whatever its text says, and directories ahead of the standard library that _import_roots does
     not name).
     THIS IS THE FILTER, REFUSE-ONLY (the reviewer's ruling of 2026-09-24 21:09Z on round 2 of fork PR #894, (1)): a
     name it counts is a candidate, and no licence rests on it alone. The licence's condition is
     _conftest_reasserts_proved, which grants a name only where a child pytest over a copy of the conftest observes the
-    counted fixture's own re-assert (_reassert_proof) for the probe's tests: three plain function tests with no mark,
-    in a module of the child's own, the one module under its conftest in a directory of its own, run serially with -q
-    -s. A road in the conftest's own code, in the code that runs before it or in pytest that keeps pytest from running
-    that re-assert for those tests is refused, named above or not (the module road's residuals and every facet of
-    _proof_facets among them). WHAT THE PROOF DOES NOT READ, each granted where the filter counts it (the unsafe side,
-    as above): a road keyed on a property of a test or of the run that the probe's tests do not share, since the child
-    observes the re-assert for those tests alone (planted: _proof_unread_roads, U1 to U6, a conftest hook that takes
-    the fixture out of a test in a directory named tests, of a test with a mark, of a test past the third, of a test in
-    a class, of each test of a run with capture on and of each test of an xdist worker, each granted; a child run
-    shows U1 to U5 never re-assert for such a test); what a real test module, a class or a conftest.py below tests/
-    does for its own tests (a fixture of the same name, a parametrization of it, a hook), since the child runs the
-    conftest beside a probe module of its own; a plugin a run loads by -p on its command line, which the child is not
-    given; and an attribute of tests.conftest a test changes in the test process after pytest registered it."""
+    counted fixture's own re-assert (_reassert_proof) in each read of the child's context (the ruling of 23:17Z, (4);
+    _PROOF_READS, _proof_modes): V1, the conftest and the probe modules in a directory named tests; V3, a module
+    collected first and one collected after it; V4, in each, function tests and a unittest TestCase; V5, a run with no
+    xdist worker and, where pytest-xdist is installed, a run with -n 2. A road in the conftest's own code, in the code
+    that runs before it or in pytest that keeps pytest from running that re-assert in a test of that context, keyed on
+    those facts alone or together, is refused, named above or not (planted: the module road's residuals and every
+    facet of _proof_facets, and a road keyed on each fact, on its complement and on one conjunction,
+    _proof_context_roads). WHAT THE PROOF DOES NOT READ, each granted where the filter counts it (the unsafe side, as
+    above): any conftest hook condition the child's context does not reproduce, a mark, an environment variable, a
+    host name, or another collection-time signal (the witness, V2: a copy of tests/conftest.py whose listed
+    pytest_collectreport takes _dead_manager_port out of each marked test is granted, and a real run of that copy reads
+    a module-level write in a marked test and the floor in the unmarked control); what a real test module, a class or
+    a conftest.py below tests/ does for its own tests (a fixture of the same name, a parametrization of it, a hook),
+    since the child runs the conftest beside probe modules of its own; a plugin a run loads by -p on its command line,
+    which the child is not given; and an attribute of tests.conftest a test changes in the test process after pytest
+    registered it. The filter still refuses every fixture of a module with a hook off _LISTED_HOOKS
+    (test_a_hook_that_may_keep_pytest_from_running_a_fixture_refuses_it_on_both_roads), so that limit is reached only
+    by code the module road takes on trust (import-time code, a fixture's body, a listed hook's body) that keys a
+    removal on such a condition."""
     sites, refused = _reassert_sites(src, where)
     return _Reasserted(frozenset(n for n, s in sites.items() if any(op == "write" for _f, _l, op in s)),
                        frozenset(n for n, s in sites.items() if any(op == "pop" for _f, _l, op in s)), refused)
@@ -3460,9 +3469,9 @@ _REASSERT_SENTINEL = "45678"
 #   conftest did not re-assert over
 
 _REASSERT_PROBE = textwrap.dedent('''\
-    import _collections_abc, json, os, sys
+    import _collections_abc, json, os, re, sys, unittest
 
-    NAMES, LABEL, SENTINEL = __NAMES__, __LABEL__, __SENTINEL__
+    NAMES, SENTINEL = __NAMES__, __SENTINEL__
     for _name in NAMES:
         os.environ[_name] = SENTINEL        # the licensed shape: a module-level write, run at collection
 
@@ -3501,32 +3510,42 @@ _REASSERT_PROBE = textwrap.dedent('''\
 
 
     EVENTS = _recorder()
-    SEEN = {}
 
 
-    def _seen():
-        """For each name: what the running test's setup phase did to it, and the value its body reads."""
-        setup = os.environ["PYTEST_CURRENT_TEST"].rsplit(" (", 1)[0] + " (setup)"
-        return {n: {"setup": [e[1:3] for e in EVENTS if e[0] == n and e[3] == setup], "value": os.environ.get(n)}
+    def _read_then_set():
+        """What the running test's setup phase did to each name and the value its body reads, in a file of its own
+        under proof-reports/ beside the module; then each name set and left, as a test can, so the next probe test's
+        setup finds each set (a pop of an unset name deletes nothing, so nothing would show its re-assert)."""
+        test = os.environ["PYTEST_CURRENT_TEST"].rsplit(" (", 1)[0]
+        seen = {n: {"setup": [e[1:3] for e in EVENTS if e[0] == n and e[3] == test + " (setup)"], "value": os.environ.get(n)}
                 for n in NAMES}
-
-
-    def test_1_before_the_second_test():
-        SEEN["before"] = _seen()
-
-
-    def test_2_sets_each_name_and_leaves_it():
+        at = os.path.join(os.path.dirname(os.path.abspath(__file__)), "proof-reports")
+        os.makedirs(at, exist_ok=True)
+        with open(os.path.join(at, re.sub(r"\\W", "_", test) + ".json"), "w", encoding="utf-8") as f:
+            json.dump({"test": test, "seen": seen}, f)
         for name in NAMES:
             os.environ[name] = SENTINEL
 
 
-    def test_3_after_the_second_test():
-        SEEN["after"] = _seen()
-        print("REASSERT[%s]=%s" % (LABEL, json.dumps(SEEN)))
+    def test_1_reads_then_sets():
+        _read_then_set()
+
+
+    def test_2_reads_then_sets():
+        _read_then_set()
+
+
+    class ProbeCase(unittest.TestCase):
+        def test_1_reads_then_sets(self):
+            _read_then_set()
+
+        def test_2_reads_then_sets(self):
+            _read_then_set()
 ''')
-#   THE EXECUTION PROOF's probe module, one per case directory (_reassert_proof): it writes each probed name at its
-#   import, the licensed shape, and installs the recorder; its first test reads each name, its second sets each and
-#   leaves it, as a test or a module can, and its third reads each again, and prints what both reads saw. The
+#   THE EXECUTION PROOF's probe module, two per case directory (_reassert_proof): it writes each probed name at its
+#   import, the licensed shape, and installs the recorder; as function tests and again as a unittest TestCase, each of
+#   its two tests reads each name and then sets each and leaves it, each read written to a file of its own (the run
+#   captures a passing test's output). The
 #   recorder's skip of the mapping's own frames is planted by every pop (os.environ.pop runs in _collections_abc, so a
 #   recorder that skipped nothing would name that frame, and the control and tests/conftest.py's pops would be refused),
 #   and its reading of a frozen module's file name by every pop on Python 3.11 and later, where _collections_abc is
@@ -3534,70 +3553,96 @@ _REASSERT_PROBE = textwrap.dedent('''\
 #   round 2's thirty-fourth commit of fork PR #894: that skip had no plant, and no write or pop the filter counts runs
 #   through os's own code, so it is cut)
 
+_PROOF_MODES = {"serial": "in a run with no xdist worker", "xdist": "on an xdist worker of a run with -n 2"}
+_PROOF_READS = tuple(((module, cls, test), "the %s test of %s, %s" % (when, where, kind))
+                     for module, where in (("a", "the first module collected"), ("b", "a module collected after it"))
+                     for cls, kind in (("", "a function test"), ("ProbeCase", "a unittest TestCase test"))
+                     for test, when in (("test_1_reads_then_sets", "first"), ("test_2_reads_then_sets", "second")))
+#   THE CHILD'S CONTEXT (the reviewer's ruling of 2026-09-24 23:17Z on round 2 of fork PR #894, (4)): the reads the
+#   proof requires of each run it makes (_proof_modes), keyed (module, class, test), the module by its last letter.
+#   Each case directory is named tests (V1), holds a probe module collected first and one collected after it (V3), each
+#   read as function tests and as a unittest TestCase (V4), and the run is made with no xdist worker and with -n 2
+#   (V5): every combination of V3, V4 and V5 is read, and _proof_context_roads plants a road keyed on each fact
 
-def _proof_verdicts(sites, seen, conftest, rc=0):
-    """{name: None, or why the execution proof refuses it} for each name of `sites` (_reassert_sites' form), from `seen`
-    (what the probe module of one case directory printed, None when it printed nothing) and `conftest`, the realpath of
-    that directory's conftest.py in the child. THE FIXTURE'S OWN RE-ASSERT is what is read, not the value alone. Each
-    part of the match with its plant (_proof_facets, run by
+
+def _proof_modes():
+    """The runs the execution proof makes: one with no xdist worker, and one with -n 2 where pytest-xdist is installed
+    in this interpreter. Where it is not, as in CI's pytest job, which does not install it, no run of the suite in this
+    interpreter has an xdist worker, so no road keyed on one can keep a fixture from a test here."""
+    return ("serial", "xdist") if importlib.util.find_spec("xdist") is not None else ("serial",)
+
+
+def _proof_verdicts(sites, reports, conftest, rcs):
+    """{name: None, or why the execution proof refuses it} for each name of `sites` (_reassert_sites' form), from
+    `reports` ({mode: {(module, class, test): the probe's report}} for each run the proof made, _PROOF_READS' keys),
+    `conftest`, the realpath of the case's conftest.py in the child, and `rcs` ({mode: the run's return code}). THE
+    FIXTURE'S OWN RE-ASSERT is what is read, not the value alone, in EACH read of _PROOF_READS in each run. Each part
+    of the match with its plant (_proof_facets, run by
     test_a_re_asserted_licence_holds_only_where_a_child_pytest_sees_the_fixtures_own_re_assert): among the writes and
-    pops the recorder saw in the SETUP of the probe's first test, after the import's write (planted: a listed makereport
-    that makes a failed setup pass, whose fixture pops only in the third test's setup), and of its third, after the
-    second test's write (planted: the fixture rebound to a module-scoped fixture, which pops in the first test's setup
-    alone), those setups' own events and no others (planted: a fixture that pops in the first test's setup and after
-    every test, never in the third test's setup, which a read of every event so far would grant), one is by the code
-    of a def `sites` counts for the name, matched by its file (planted: another file's def of the name at the
-    fixture's first line), its def name (planted: a def of another name compiled in the conftest's file at that line),
-    its first line (planted: a later def of the fixture's name) and the operation counted (planted: the fixture sets a
-    name counted as popped);
+    pops the recorder saw in the SETUP of the first probe test a process runs, after the import's write (planted: a
+    listed makereport that makes a failed setup pass, whose fixture raises in a process's first setup and pops in the
+    later ones), and of each later one, after a probe test's write (planted: the fixture rebound to a module-scoped
+    fixture, which pops in its module's first setup alone), those setups' own events and no others (planted: a fixture
+    that pops in the first test's setup and after every test, never in a later test's setup, which a read of every
+    event so far would grant), one is by the code of a def `sites` counts for the name, matched by its file (planted:
+    another file's def of the name at the fixture's first line), its def name (planted: a def of another name compiled
+    in the conftest's file at that line), its first line (planted: a later def of the fixture's name) and the operation
+    counted (planted: the fixture sets a name counted as popped);
     and the test's body then reads something other than the probe's value (planted: the fixture's pop undone by a
-    fixture that sorts after it). A probe that printed nothing refuses every name (planted: the probe's third test
-    taken out of the run)."""
+    fixture that sorts after it). A read not reported refuses the name (planted: the probe's second tests taken out of
+    the run). Refusals are grouped by their reason, each naming the reads it holds for."""
     out = {}
     for name in sorted(sites):
         codes = {(conftest, fname, line, op) for fname, line, op in sites[name]}
-        if seen is None:
-            out[name] = ("the child pytest's probe module reported nothing (the child's return code %d): one of its tests "
-                         "did not run, or the run stopped before its third" % rc)
-            continue
-        whys = []
-        for when, test in (("before", "the probe's first test"), ("after", "the probe's third test, after a test set it")):
-            got = (seen.get(when) or {}).get(name)
-            if got is None:
-                whys.append("%s reported no read of it" % test)
-                continue
-            if not any(e[1] is not None and (e[1][0], e[1][1], e[1][2], e[0]) in codes for e in got["setup"]):
-                whys.append("in the setup of %s the counted fixture's own code (%s) did not set or pop it; the setup %s" % (
-                    test, ", ".join("%s at line %d, %s" % (f, ln, op) for f, ln, op in sorted(sites[name])),
-                    "; ".join("%s it from %s" % ("set" if op == "write" else "popped",
-                                                 "%s (%s, line %d)" % (c[1], os.path.basename(c[0]), c[2]) if c else "no frame")
-                              for op, c in got["setup"]) or "neither set nor popped it"))
-            elif got["value"] == _REASSERT_SENTINEL:
-                whys.append("%s read the value the probe wrote, %r, after the counted fixture's re-assert" % (test, _REASSERT_SENTINEL))
-        out[name] = "; ".join(whys) or None
+        whys = collections.OrderedDict()
+        for mode in sorted(reports):
+            for key, where in _PROOF_READS:
+                rep = reports[mode].get(key)
+                if rep is None:
+                    why = "reported no read (the run's return code %d)" % rcs[mode]
+                else:
+                    got = rep["seen"][name]
+                    if not any(e[1] is not None and (e[1][0], e[1][1], e[1][2], e[0]) in codes for e in got["setup"]):
+                        why = "the counted fixture's own code (%s) did not set or pop it in the test's setup; the setup %s" % (
+                            ", ".join("%s at line %d, %s" % (f, ln, op) for f, ln, op in sorted(sites[name])),
+                            "; ".join("%s it from %s" % ("set" if op == "write" else "popped",
+                                                         "%s (%s, line %d)" % (c[1], os.path.basename(c[0]), c[2]) if c else "no frame")
+                                      for op, c in got["setup"]) or "neither set nor popped it")
+                    elif got["value"] == _REASSERT_SENTINEL:
+                        why = "read the value the probe wrote, %r, after the counted fixture's re-assert" % _REASSERT_SENTINEL
+                    else:
+                        continue
+                whys.setdefault(why, []).append("%s, %s" % (where, _PROOF_MODES[mode]))
+        total = len(_PROOF_READS) * len(reports)
+        out[name] = "; ".join("%s (%s)" % (why, "in each of the %d reads" % total if len(at) == total else "in " + " | ".join(at))
+                              for why, at in whys.items()) or None
     return out
 
 
 def _reassert_proof(cases, real=False):
     """THE EXECUTION PROOF (the reviewer's ruling of 2026-09-24 21:09Z on round 2 of fork PR #894, (1): a static reader
-    with no closed boundary is replaced by the property, run; run here for the probe's own tests, and what that does
-    not read is named at the end of _conftest_reasserted_names' docstring). ONE child pytest over a scratch root holding a directory
-    per case of `cases` ((label, conftest text, or None for a copy of tests/conftest.py, {helper file: text}, sites in
-    _reassert_sites' form)): each directory has its conftest.py, its helpers (a name may carry a directory) and the
-    probe module (_REASSERT_PROBE) over the names of its sites. With `real`, tests/credential_patterns.py is copied beside
-    each conftest (tests/conftest.py loads it by path) and the checkout is put on PYTHONPATH (it imports the tests
-    package), as the executed checks that copy tests/conftest.py do. The child's environment drops PYTEST_CURRENT_TEST
-    and the probed names, its TMPDIR is the scratch root, which is removed after. Returns ({label: _proof_verdicts over
-    what the case's probe printed}, the child's return code, its output)."""
+    with no closed boundary is replaced by the property, run, here in the context of the ruling of 23:17Z, (4); what
+    that does not read is named at the end of _conftest_reasserted_names' docstring). A child pytest over a scratch root
+    holding a directory per case of `cases` ((label, conftest text, or None for a copy of tests/conftest.py, {helper
+    file: text}, sites in _reassert_sites' form)), run once for each of _proof_modes (-q, the default capture, and -n 2
+    for the second): each directory, cNN/tests, has its conftest.py, its helpers (a name may carry a directory) and two
+    probe modules (_REASSERT_PROBE) over the names of its sites, collected in the order _PROOF_READS names. With
+    `real`, tests/credential_patterns.py is copied beside each conftest (tests/conftest.py loads it by path) and the
+    checkout is put on PYTHONPATH (it imports the tests package), as the executed checks that copy tests/conftest.py
+    do. The child's environment drops PYTEST_CURRENT_TEST and the probed names, and its TMPDIR is the scratch root,
+    which is removed after. Returns ({label: _proof_verdicts over the case's reports}, 0 or the first nonzero return
+    code of the runs, their output)."""
     root = os.path.realpath(tempfile.mkdtemp())
     try:
+        subs = []
         for i, (label, text, helpers, sites) in enumerate(cases):
-            sub = os.path.join(root, "c%02d" % i)
-            os.mkdir(sub)
+            sub = os.path.join(root, "c%02d" % i, "tests")
+            os.makedirs(sub)
+            subs.append(sub)
             files = dict(helpers)
-            files["test_reassert_probe_%02d.py" % i] = (_REASSERT_PROBE.replace("__NAMES__", repr(sorted(sites)))
-                                                         .replace("__LABEL__", repr(label))
-                                                         .replace("__SENTINEL__", repr(_REASSERT_SENTINEL)))
+            for module in "ab":
+                files["test_reassert_probe_%02d_%s.py" % (i, module)] = (_REASSERT_PROBE.replace("__NAMES__", repr(sorted(sites)))
+                                                                          .replace("__SENTINEL__", repr(_REASSERT_SENTINEL)))
             if text is None:
                 shutil.copy(os.path.join(HERE, "conftest.py"), os.path.join(sub, "conftest.py"))
             else:
@@ -3614,16 +3659,26 @@ def _reassert_proof(cases, real=False):
         if real:
             child["PYTHONPATH"] = os.pathsep.join(p for p in (os.path.dirname(HERE), child.get("PYTHONPATH")) if p)
         child["TMPDIR"] = root
-        r = subprocess.run([sys.executable, "-m", "pytest", "-q", "-s", "-p", "no:cacheprovider", "--rootdir", root, root],
-                           cwd=root, env=child, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=180)
-        out = r.stdout + r.stderr
-        verdicts = {}
-        for i, (label, _t, _h, sites) in enumerate(cases):
-            mark = "REASSERT[%s]=" % label
-            reports = [ln.split(mark, 1)[1] for ln in out.splitlines() if mark in ln]
-            seen = json.loads(reports[0]) if len(reports) == 1 else None
-            verdicts[label] = _proof_verdicts(sites, seen, os.path.join(root, "c%02d" % i, "conftest.py"), r.returncode)
-        return verdicts, r.returncode, out
+        reports, rcs, outs = [{} for _c in cases], {}, []
+        for mode in _proof_modes():
+            r = subprocess.run([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider"]
+                               + (["-n", "2"] if mode == "xdist" else []) + ["--rootdir", root, root],
+                               cwd=root, env=child, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=180)
+            rcs[mode] = r.returncode
+            outs.append("[the run %s: return code %d]\n%s%s" % (_PROOF_MODES[mode], r.returncode, r.stdout, r.stderr))
+            for i, sub in enumerate(subs):
+                got, at = {}, os.path.join(sub, "proof-reports")
+                for fn in sorted(os.listdir(at)) if os.path.isdir(at) else ():
+                    with open(os.path.join(at, fn), encoding="utf-8") as f:
+                        rep = json.load(f)
+                    path, _sep, rest = rep["test"].partition("::")
+                    cls, _sep, test = rest.rpartition("::")
+                    got[(os.path.basename(path)[:-3].rsplit("_", 1)[1], cls, test)] = rep
+                shutil.rmtree(at, True)
+                reports[i][mode] = got
+        verdicts = {label: _proof_verdicts(sites, reports[i], os.path.join(subs[i], "conftest.py"), rcs)
+                    for i, (label, _t, _h, sites) in enumerate(cases)}
+        return verdicts, next((rc for rc in rcs.values() if rc), 0), "\n".join(outs)
     finally:
         shutil.rmtree(root, True)
 
@@ -3633,15 +3688,16 @@ def _conftest_reasserts_proved(src=None, where=None, helpers=None, real=None):
     #894, (1)): _Reasserted(writes, removals, refused) of the names tests/conftest.py (or `src`, beside `helpers`, read
     as sitting in `where`) re-asserts before every test, each PROVED BY EXECUTION: the filter (_reassert_sites,
     refuse-only) names the candidates and the fixture def behind each, and a child pytest over the conftest
-    (_reassert_proof) grants a name only where it observes that def's own code set or pop it in the setup of a test
-    that follows the module-level write of it and of a test that follows a test that set it. REFUSED: the filter's
-    refusals, and one line per name the proof refused, `NAME: why`. The filter may refuse early and never grants: a
-    shape it does not model, which it counts, is refused by the run wherever it keeps pytest from running the
-    re-assert for the probe's tests, and granted where it keys on a property of a test or of the run those tests do
-    not share (_proof_unread_roads). `real` (default: `src` is None) runs the child as tests/conftest.py's copy runs, beside
-    tests/credential_patterns.py with the checkout on PYTHONPATH. For tests/conftest.py itself the result is read once
-    per run of this module and held by the _Census ("proofs") until tearDownModule's release. What the proof does not
-    read is named at the end of _conftest_reasserted_names' docstring."""
+    (_reassert_proof) grants a name only where it observes that def's own code set or pop it in the setup of each
+    probe test of the child's context, each following a write of the name (the module-level write for the first probe
+    test a process runs, a probe test's for the rest). REFUSED: the filter's refusals, and one line per name the proof
+    refused, `NAME: why`. The filter may refuse early and never grants: a shape it does not model, which it counts, is
+    refused by the run wherever it keeps pytest from running the re-assert in a test of that context, and granted
+    where it keys on a condition the context does not reproduce. `real` (default: `src` is None) runs the child as
+    tests/conftest.py's copy runs, beside tests/credential_patterns.py with the checkout on PYTHONPATH. For
+    tests/conftest.py itself the result is read once per run of this module and held by the _Census ("proofs") until
+    tearDownModule's release. What the proof does not read is named at the end of _conftest_reasserted_names'
+    docstring."""
     proofs = _held()["proofs"] if src is None else None
     if proofs is not None and "tests/conftest.py" in proofs:
         return proofs["tests/conftest.py"]
@@ -5328,8 +5384,8 @@ class HermeticKernelPostal(unittest.TestCase):
         Since the reviewer's ruling of 2026-09-24 21:09Z (1), that reader is the FILTER, refuse-only, and every plant
         below that it counts is a candidate, not a licence: the names the licences rest on are the ones the EXECUTION
         PROOF grants (_conftest_reasserts_proved: a child pytest over a copy of tests/conftest.py sees the counted
-        fixture's own code set or pop each name before a test that follows its module-level write and before one that
-        follows a test that set it; test_a_re_asserted_licence_holds_only_where_a_child_pytest_sees_the_fixtures_own_re_assert
+        fixture's own code set or pop each name in the setup of each probe test of its context, each following a write
+        of the name; test_a_re_asserted_licence_holds_only_where_a_child_pytest_sees_the_fixtures_own_re_assert
         runs every facet under it). Here: the proof refuses nothing over the real conftest and grants every name the
         filter counts, eleven today, among them each name a `reasserted` licence names; and THE LIVE CONFTEST MODULES,
         the conftest.py files a run under tests/ loads (every one under tests/, walked, and one at the checkout's root),
@@ -6273,20 +6329,20 @@ class HermeticKernelPostal(unittest.TestCase):
         reader had no closed boundary, each fix closing one facet of the class, a fixture counted that pytest never ran,
         so the licence is proved by running the property). A `reasserted` licence holds only where
         _conftest_reasserts_proved grants the name: the filter (_reassert_sites) names the fixture def behind it, and a
-        child pytest over the conftest (_reassert_proof, _REASSERT_PROBE) writes the name at a probe module's import,
-        reads it in a first test, sets it in a second and reads it in a third, and sees, in the setup of the first and
-        of the third, that def's own code (its file, its name, its first line) make the counted write or pop, the body
-        then reading something other than the probe's value. THE FACETS (_proof_facets), each run with the site counted
-        as though the filter had counted it, so the proof's verdict is its own: every facet the reader was found counting
-        while pytest never ran the pop (F2, F2b, F2c, F2e, N2b's three, the pytest hooks, the in-place operator on a
-        bound mutable object, the module road's residuals, a module-scoped rebinding) is refused, and the control, a
+        child pytest over the conftest (_reassert_proof, _REASSERT_PROBE) writes the name at each probe module's import,
+        reads it and then sets it in each probe test, and sees, in the setup of each, that def's own code (its file, its
+        name, its first line) make the counted write or pop, the body then reading something other than the probe's
+        value. THE FACETS (_proof_facets), each run with the site counted as though the filter had counted it, so the
+        proof's verdict is its own: every facet the reader was found counting while pytest never ran the pop (F2, F2b,
+        F2c, F2e, N2b's three, the pytest hooks, the in-place operator on a bound mutable object, the module road's
+        residuals, a module-scoped rebinding) is refused, and the control, a
         listed hook that does nothing, and the three cases pytest runs the pop in are licensed. THE RE-ASSERT ITSELF: the
-        value right at both reads, set by another def registered under the name, a helper the fixture calls, another
+        value right at each read, set by another def registered under the name, a helper the fixture calls, another
         file's def of the name at its first line, a def of another name compiled in the conftest's file at that line, or
         a later def of the name, is refused, each naming the code that did set it; so are the fixture setting a name
         counted as popped, the fixture's pop undone by a fixture that sorts after it, the fixture popping in the first
-        test's setup and after every test but never in the third test's setup, and a probe that reports nothing (its
-        third test taken out of the run). THE LICENCE READS THE PROOF: with a proof that refuses every name, each
+        test's setup and after every test but never in a later test's setup, and a read not reported (the probe's second
+        tests taken out of the run). THE LICENCE READS THE PROOF: with a proof that refuses every name, each
         `reasserted` licence faults, the refusals named at the end of the list. THE FILTER IS REFUSE-ONLY: the
         fixture under a name another fixture sorting first takes, which the proof licenses, is refused by the filter (a
         false refusal on the safe side, the text road's), and a conftest in a package whose __init__.py makes
@@ -6315,7 +6371,7 @@ class HermeticKernelPostal(unittest.TestCase):
                              "line", "from _h (conftest.py, line 4)"),
                             ("itself: the fixture sets the name where the reader counted a pop", "set it from _f (conftest.py, line 4)"),
                             ("itself: the fixture's pop, then another fixture writes the probe's value back", "read the value the probe wrote"),
-                            ("report: the probe's third test taken out of the run", "reported nothing")):
+                            ("report: the probe's second tests taken out of the run", "reported no read")):
             self.assertIn(word, verdicts[label][0] or "", "%s: the refusal names what the run saw" % label)
         # the licence check reads the proof: with a proof that refuses every name, each `reasserted` licence faults
         from unittest import mock
@@ -6350,7 +6406,7 @@ class HermeticKernelPostal(unittest.TestCase):
         got = _conftest_reasserts_proved(popper, helpers={"__init__.py": not_autouse})
         self.assertEqual((got.removals, len(got.refused)), (frozenset(), 1),
                          "a package whose __init__.py drops autouse from pytest.fixture: the proof refuses the pop the filter counts")
-        self.assertIn("%s: in the setup of the probe's first test" % probe, got.refused[0])
+        self.assertIn("%s: the counted fixture's own code (_f at line 4, pop) did not set or pop it" % probe, got.refused[0])
         # the real conftest, as its copy, with a hook that keeps pytest from running one of its fixtures
         sites, refused = _reassert_sites()
         self.assertEqual(refused, ())
@@ -6358,67 +6414,120 @@ class HermeticKernelPostal(unittest.TestCase):
                 "        if '_dead_manager_port' in item.fixturenames:\n            item.fixturenames.remove('_dead_manager_port')\n")
         planted = open(os.path.join(HERE, "conftest.py"), encoding="utf-8").read() + hook
         got, rc, out = _reassert_proof([("planted", planted, {}, sites)], real=True)
-        self.assertIn("left the environment changed after its teardown: ROMP_POSTAL_PORT", out,
-                      "the copy's own module check names the port the stopped fixture no longer pops (rc %d): %s" % (rc, out[-3000:]))
-        stopped ={n for n, s in sites.items() if any(f == "_dead_manager_port" for f, _l, _o in s)}
+        stopped = {n for n, s in sites.items() if any(f == "_dead_manager_port" for f, _l, _o in s)}
         self.assertEqual(stopped, {"ROMP_MANAGER_PORT", "ROMP_KERNEL_PORT", "ROMP_SERVE_PORT", "ROMP_POSTAL_PORT"})
         self.assertEqual({n for n, why in got["planted"].items() if why}, stopped,
                          "the copy of tests/conftest.py whose hook takes _dead_manager_port out of each test: the proof "
-                         "refuses the four names it re-asserts and licenses the rest: %s" % got["planted"])
+                         "refuses the four names it re-asserts and licenses the rest (rc %d): %s" % (rc, got["planted"]))
 
-    def test_the_proof_grants_a_re_assert_keyed_on_a_property_the_probes_tests_do_not_share(self):
-        """WHAT THE EXECUTION PROOF DOES NOT READ, each road with its witness (the verifier's finding at round 2's
-        thirty-fourth commit of fork PR #894: the texts said anything that stops the fixture from running is refused by
-        the run, and a conftest that keeps its fixture from a real test while it runs for the probe's was granted). The
-        child observes the re-assert for the probe's own tests alone, so a road keyed on a property of a test or of the
-        run that those tests do not share is granted (_proof_unread_roads, U1 to U6: the test's directory, its marks,
-        its place in the run, a test in a class, the run's options, an xdist worker). THE PROOF'S HALF: each road's
-        conftest, `_f` popping a name and a listed pytest_collectreport taking `_f` out of each test the road names, is
-        granted, `_f`'s pop licensed. THE WITNESS RUN, U1 to U5 (U6 needs pytest-xdist, which CI does not install): one
-        child pytest, capture on as in a plain run, holds each road's conftest beside a reader module with the property,
-        and a control, the same reader beside `_f` alone. Each reader reads the value its module wrote at import, the
-        name never popped before it, and each control reads the name popped."""
+    def test_the_proof_refuses_a_road_keyed_on_each_fact_of_the_childs_context_and_grants_a_road_keyed_on_a_mark(self):
+        """THE CHILD'S CONTEXT (the reviewer's ruling of 2026-09-24 23:17Z on round 2 of fork PR #894, (4), after the
+        verifier's plants V1 to V5 in tests/conftest.py's pytest_collectreport were granted by a proof whose child ran
+        three plain function tests of one module, serially, beside a copy of the conftest in a directory of its own).
+        The child now reproduces the four finite facts of a real run the ruling names (_PROOF_READS, _proof_modes):
+        each road of _proof_context_roads, `_f` popping a name and a listed pytest_collectreport taking `_f` out of
+        each test one fact names, is refused, for the reads that share that fact and no others (V1, the conftest's
+        directory and the test's, in every read; V3, the first module's reads or the later module's; V4, the function
+        tests' or the TestCase's; V5, the run's with no worker or the -n 2 run's; the conjunction, the TestCase reads
+        of the later module on a worker), and the road keyed on a mark, V2, is granted. V5's worker road and the conjunction are
+        refused only where the proof makes the -n 2 run: where pytest-xdist is not installed (CI's pytest job) no run
+        there has a worker, and the proof makes the one run and grants them, which this test reads from _proof_modes and
+        runs for the worker road with pytest-xdist taken out of reach."""
+        try:
+            import xdist  # noqa: F401
+            installed = True
+        except ImportError:
+            installed = False
+        self.assertEqual(_proof_modes(), ("serial", "xdist") if installed else ("serial",),
+                         "the proof makes the -n 2 run wherever pytest-xdist imports")
         popper = lambda p: "import os, pytest\n\n\n@pytest.fixture(autouse=True)\ndef _f():\n    os.environ.pop(%r, None)\n    yield\n" % p
-        roads = [(label, "ROMP_PROBE_UNREAD_%02d" % i, condition, reader, sub, witnessed)
-                 for i, (label, condition, reader, sub, witnessed) in enumerate(_proof_unread_roads())]
-        texts = {label: popper(p) + _UNREAD_ROAD_HOOK.replace("__CONDITION__", condition) for label, p, condition, *_r in roads}
-        got, rc, out = _reassert_proof([(label, texts[label], {}, {p: frozenset({("_f", 4, "pop")})}) for label, p, *_r in roads])
+        roads = [(label, "ROMP_PROBE_CONTEXT_%02d" % i, condition, mode) for i, (label, condition, mode) in enumerate(_proof_context_roads())]
+        got, rc, out = _reassert_proof([(label, popper(p) + _CONTEXT_ROAD_HOOK.replace("__CONDITION__", condition), {},
+                                         {p: frozenset({("_f", 4, "pop")})}) for label, p, condition, _m in roads])
         self.assertEqual(rc, 0, out[-3000:])
-        self.assertEqual({label: got[label][p] for label, p, *_r in roads}, dict.fromkeys(texts),
-                         "THE PROOF GRANTS each road it does not read: `_f` re-asserts the name for each of the probe's tests")
+        modes = _proof_modes()
+        self.assertEqual({label: got[label][p] is not None for label, p, _c, _m in roads},
+                         {label: mode in modes for label, _p, _c, mode in roads},
+                         "THE PROOF refuses each road keyed on a fact of the child's context, where it makes the run that has "
+                         "the fact, and grants the road keyed on a mark (modes %s):\n%s"
+                         % (modes, "\n".join("%s: %s" % (label, got[label][p] or "granted") for label, p, _c, _m in roads)))
+        reads = [("%s, %s" % (where, _PROOF_MODES[mode]), key, mode) for mode in modes for key, where in _PROOF_READS]
+        facts = {"V1: the conftest in a directory named tests": lambda key, mode: True,
+                 "V1: a test in a directory named tests": lambda key, mode: True,
+                 "V3: a test of the first module collected": lambda key, mode: key[0] == "a",
+                 "V3: a test of a module collected after the first": lambda key, mode: key[0] == "b",
+                 "V4: a function test": lambda key, mode: key[1] == "",
+                 "V4: a unittest TestCase test": lambda key, mode: key[1] == "ProbeCase",
+                 "V5: a test in a run with no xdist worker": lambda key, mode: mode == "serial",
+                 "V5: a test on an xdist worker": lambda key, mode: mode == "xdist",
+                 "V3, V4 and V5 at once: a TestCase test of a module collected after the first, on an xdist worker":
+                     lambda key, mode: key[0] == "b" and key[1] == "ProbeCase" and mode == "xdist"}
+        self.assertEqual(sorted(facts), sorted(label for label, _p, _c, mode in roads if mode is not None))
+        for label, p, _c, mode in roads:
+            if mode not in modes:
+                continue
+            why = got[label][p]
+            listed = {ctx for ctx, _k, _m in reads if ctx in why or "in each of the %d reads" % len(reads) in why}
+            self.assertEqual(listed, {ctx for ctx, key, m in reads if facts[label](key, m)},
+                             "%s: refused for the reads that share its fact and no others: %s" % (label, why))
+        # with pytest-xdist taken out of reach, as in CI's pytest job, the proof makes the run with no worker alone and
+        # grants V5's worker road
+        from unittest import mock
+        find = importlib.util.find_spec
+        with mock.patch.object(importlib.util, "find_spec", lambda name, *a: None if name == "xdist" else find(name, *a)):
+            self.assertEqual(_proof_modes(), ("serial",))
+            label, p, condition, _m = next(r for r in roads if r[0] == "V5: a test on an xdist worker")
+            got, rc, out = _reassert_proof([(label, popper(p) + _CONTEXT_ROAD_HOOK.replace("__CONDITION__", condition), {},
+                                             {p: frozenset({("_f", 4, "pop")})})])
+        self.assertEqual((got[label][p], rc, out.count("[the run ")), (None, 0, 1),
+                         "with no pytest-xdist the proof makes one run and grants the worker road: %s" % out[-3000:])
+
+    def test_the_proofs_disclosed_limit_a_road_keyed_on_a_mark_is_granted_and_a_real_run_of_it_reads_the_module_level_write(self):
+        """THE PROOF'S DISCLOSED LIMIT, WITNESSED (the reviewer's ruling of 2026-09-24 23:17Z on round 2 of fork PR #894,
+        (4)): the proof grants a conftest hook condition its child's context does not reproduce, a mark, an environment
+        variable, a host name, or another collection-time signal. The witness is V2: a copy of tests/conftest.py with a
+        listed pytest_collectreport that takes _dead_manager_port out of each test with a mark. The proof grants every
+        name the filter counts, the four that fixture re-asserts among them, and a real run of the same copy, beside a
+        module that writes ROMP_KERNEL_PORT at its import, reads the module's '45678' in a marked test and the floor,
+        '1', in the unmarked control after it."""
+        sites, refused = _reassert_sites()
+        self.assertEqual(refused, ())
+        hook = ("\n\ndef pytest_collectreport(report):\n    for item in report.result:\n"
+                "        if hasattr(item, 'fixturenames') and item.get_closest_marker('filterwarnings') is not None:\n"
+                "            if '_dead_manager_port' in item.fixturenames:\n"
+                "                item.fixturenames.remove('_dead_manager_port')\n")
+        planted = open(os.path.join(HERE, "conftest.py"), encoding="utf-8").read() + hook
+        got, _rc, out = _reassert_proof([("V2", planted, {}, sites)], real=True)
+        self.assertEqual(got["V2"], dict.fromkeys(sites), "the proof grants every name, the mark's road unread: %s" % out[-3000:])
+        self.assertTrue({"ROMP_MANAGER_PORT", "ROMP_KERNEL_PORT", "ROMP_SERVE_PORT", "ROMP_POSTAL_PORT"} <= set(sites))
         root = os.path.realpath(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, root, True)
-        where = {}
-        for i, (label, p, _c, reader, sub, witnessed) in enumerate(roads):
-            if not witnessed:
-                continue
-            # the control's name is its own: every module is imported before any test runs, so a control's pop of the
-            # road's name would clear the road module's import-time write before its reader runs
-            for kind, name, conftest in (("road", p, texts[label]), ("control", p + "_CONTROL", popper(p + "_CONTROL"))):
-                d = os.path.join(root, "%s%02d" % (kind[0], i))
-                os.makedirs(os.path.join(d, sub))
-                with open(os.path.join(d, "conftest.py"), "w", encoding="utf-8") as f:
-                    f.write(conftest)
-                with open(os.path.join(d, sub, "test_reads_%s%02d.py" % (kind[0], i)), "w", encoding="utf-8") as f:
-                    f.write(reader.replace("__NAME__", repr(name)))
-                where[(label, kind)] = os.path.join(d, sub, "read.json")
-        probed = {n for _l, p, *_r in roads for n in (p, p + "_CONTROL")}
-        child = {k: v for k, v in os.environ.items() if k != "PYTEST_CURRENT_TEST" and k not in probed}
+        tests_dir = os.path.join(root, "tests")
+        os.mkdir(tests_dir)
+        with open(os.path.join(tests_dir, "conftest.py"), "w", encoding="utf-8") as f:
+            f.write(planted)
+        shutil.copy(os.path.join(HERE, "credential_patterns.py"), os.path.join(tests_dir, "credential_patterns.py"))
+        with open(os.path.join(tests_dir, "test_witness.py"), "w", encoding="utf-8") as f:
+            f.write("import json, os, pytest\n\nos.environ['ROMP_KERNEL_PORT'] = '45678'\n\n\n"
+                    "def _record(key):\n    with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), key + '.json'), 'w') as f:\n"
+                    "        json.dump(os.environ.get('ROMP_KERNEL_PORT'), f)\n\n\n"
+                    "@pytest.mark.filterwarnings('default')\ndef test_1_marked():\n    _record('marked')\n\n\n"
+                    "def test_2_control():\n    _record('control')\n")
+        child = {k: v for k, v in os.environ.items() if k not in ("PYTEST_CURRENT_TEST", "ROMP_KERNEL_PORT")}
+        child["PYTHONPATH"] = os.pathsep.join(p for p in (os.path.dirname(HERE), child.get("PYTHONPATH")) if p)
         child["TMPDIR"] = root
-        r = subprocess.run([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "--rootdir", root, root],
+        r = subprocess.run([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "--rootdir", root, tests_dir],
                            cwd=root, env=child, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=180)
-        self.assertEqual(r.returncode, 0, (r.stdout + r.stderr)[-3000:])
         reads = {}
-        for key, path in where.items():
+        for key in ("marked", "control"):
             try:
-                with open(path, encoding="utf-8") as f:
+                with open(os.path.join(tests_dir, key + ".json"), encoding="utf-8") as f:
                     reads[key] = json.load(f)
             except OSError:
                 reads[key] = "no read"
-        self.assertEqual(reads, {(label, kind): _REASSERT_SENTINEL if kind == "road" else None for label, kind in where},
-                         "THE WITNESS RUN: a reader with the road's property reads its module's import-time value, the fixture "
-                         "the proof granted never run before it, and the same reader beside `_f` alone reads the name popped")
-        self.assertEqual(len(where), 10, "U1 to U5, each a road and a control")
+        self.assertEqual(reads, {"marked": "45678", "control": "1"},
+                         "THE WITNESS RUN: the marked test reads the module-level write the proof granted, the control the floor "
+                         "(rc %d): %s" % (r.returncode, (r.stdout + r.stderr)[-3000:]))
 
     def test_a_fixture_that_is_not_autouse_writes_for_the_tests_after_it(self):
         """The verifier's finding at round 2's seventeenth commit of fork PR #894: the wide read of conftest's fixture writes
@@ -9460,7 +9569,7 @@ def _all_licensed_once():
 def _proof_facets():
     """THE FACETS UNDER THE EXECUTION PROOF (the reviewer's ruling of 2026-09-24 21:09Z on round 2 of fork PR #894, (1)
     (b)): two groups of synthetic conftests, each case (label, conftest text, {helper file: text}, probe name, the first
-    line of the popper `_f`, whether the proof must license `_f`'s pop), for one child pytest per group
+    line of the popper `_f`, whether the proof must license `_f`'s pop), for one proof per group
     (_reassert_proof, the counted site being `_f`'s pop in every case, as if the filter had counted it: the filter
     refuses nearly all of these, and none of that is read here). Every facet the reader was found counting while pytest
     never ran the pop: F2, a later binding of the fixture's name; F2b, another def given its name=; F2c, a name= passed
@@ -9471,12 +9580,12 @@ def _proof_facets():
     test's list of fixtures in a listed pytest_collectreport and in a fixture that sorts first, pytest.fixture's keyword
     defaults, a report's __dict__, and config.option's __dict__, which turns on the setup plan for the whole run and so
     runs alone); the module road's residuals (a fixture that registers a plugin, a listed makereport that makes a failed
-    setup pass). Each is licensed or refused by the run. THE RE-ASSERT ITSELF, not the value: the value right at both
-    reads but set by another def registered under the name, by a helper the fixture calls, by another file's def of the
+    setup pass). Each is licensed or refused by the run. THE RE-ASSERT ITSELF, not the value: the value right at each
+    read but set by another def registered under the name, by a helper the fixture calls, by another file's def of the
     name at the popper's first line, by a def of another name compiled in the conftest's file at that line, or by a
     later def of the name; the fixture setting the name where the site counts a pop; and the fixture's pop followed by
     another fixture writing the probe's value back. The fixture popping in the first test's setup and after every test,
-    never in the third test's setup, is refused, and so is a probe that reports nothing, its third test taken out of the
+    never in a later test's setup, is refused, and so is a read not reported, the probe's second tests taken out of the
     run. Licensed: the control, a listed hook that does nothing, the fixture
     under a name another fixture sorting first also takes, the fixture renamed by its own decorator, and the fixture
     aliased under a second name."""
@@ -9575,13 +9684,13 @@ def _proof_facets():
         ("itself: the fixture sets the name where the reader counted a pop", sets_it, {}, False),
         ("itself: the fixture's pop, then another fixture writes the probe's value back", later(
             "@pytest.fixture(autouse=True)\ndef _z():\n    os.environ[__NAME__] = '45678'\n    yield\n"), {}, False),
-        ("setup: the fixture pops in the first test's setup and after every test, never in the third test's setup",
+        ("setup: the fixture pops in the first test's setup and after every test, never in a later test's setup",
          lambda p: ("import os, pytest\n\n\n@pytest.fixture(autouse=True)\ndef _f():\n    if not _RUNS:\n"
                     "        os.environ.pop(%r, None)\n    _RUNS.append(1)\n    yield\n    os.environ.pop(%r, None)\n\n\n"
                     "_RUNS = []\n" % (p, p)), {}, False),
-        ("report: the probe's third test taken out of the run", later(
+        ("report: the probe's second tests taken out of the run", later(
             "def pytest_collection_modifyitems(items):\n    here = os.path.dirname(os.path.realpath(__file__))\n"
-            "    items[:] = [i for i in items if not (i.name.startswith('test_3') and str(i.path).startswith(here))]\n"),
+            "    items[:] = [i for i in items if not (i.name.startswith('test_2') and str(i.path).startswith(here))]\n"),
          {}, False),
         ("licensed: another fixture that sorts first takes the fixture's name", later(
             "@pytest.fixture(autouse=True, name='_f')\ndef _a():\n    yield\n"), {}, True),
@@ -9603,51 +9712,50 @@ def _proof_facets():
     return groups
 
 
-_UNREAD_ROAD_HOOK = textwrap.dedent('''\
+_CONTEXT_ROAD_HOOK = textwrap.dedent('''\
 
 
-    _SEEN = []
+    import unittest
+
+    _MODULES = []
 
 
     def pytest_collectreport(report):
         for item in report.result:
             if not hasattr(item, "fixturenames"):
                 continue
-            _SEEN.append(item.nodeid)
+            if str(item.path) not in _MODULES:
+                _MODULES.append(str(item.path))
             if (__CONDITION__) and "_f" in item.fixturenames:
                 item.fixturenames.remove("_f")
 ''')
-#   the hook of each road the execution proof does not read (_proof_unread_roads): pytest_collectreport, a hook on
-#   _LISTED_HOOKS, whose body the module road takes on trust, takes `_f` out of each test the road's condition names
+#   the hook of each road of _proof_context_roads, the verifier's plants' shape: pytest_collectreport, a hook on
+#   _LISTED_HOOKS, whose body the module road takes on trust, takes `_f` out of each test the road's condition names;
+#   _MODULES lists the modules of the tests reported to it, in the order they were collected
 
 
-def _proof_unread_roads():
-    """THE ROADS THE EXECUTION PROOF DOES NOT READ, planted (the verifier's finding at round 2's thirty-fourth commit of
-    fork PR #894: the proof granted a conftest that keeps its fixture from running for a real test while it runs for the
-    probe's). Each road is keyed on a property of a test or of the run that the probe's tests do not share: the child
-    runs a module of its own, three plain function tests with no mark in a directory of its own, one module under its
-    conftest, serially, with -q -s. Each case (label, the condition on `item` the hook keys on, the reader module's
-    text, the reader's directory under the case's, whether the witness run can run it): U1, the test's directory (one
-    named tests); U2, its marks (a filterwarnings mark); U3, its place in the run (past the third test collected under
-    the conftest); U4, a test in a class (a unittest case); U5, the run's options (capture on, which the child's -s
-    turns off); U6, an xdist worker, whose witness run needs pytest-xdist, which CI does not install, so only the
-    proof's half runs. Each reader module writes the name at its import, the licensed shape, and its reader records
-    what it reads in read.json beside it; U3's third test sets the name, as a test can, before the fourth reads it."""
-    record = ("import json, os, pytest, unittest\n\nP = __NAME__\nos.environ[P] = '45678'\n\n\n"
-              "def _record():\n    with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'read.json'), 'w') as f:\n"
-              "        json.dump(os.environ.get(P), f)\n\n\n")
-    plain = record + "def test_reads():\n    _record()\n"
+def _proof_context_roads():
+    """THE CHILD'S CONTEXT, PLANTED (the reviewer's ruling of 2026-09-24 23:17Z on round 2 of fork PR #894, (4)): each
+    road (label, the condition on `item` its hook keys on, the run of _proof_modes that must refuse it, or None) takes
+    `_f` out of the tests one fact of the context names. The finite facts the child reproduces, each and its
+    complement: V1, the conftest in a directory named tests, and a test in one; V3, a test of the first module
+    collected, and one of a module collected after it; V4, a function test, and a unittest TestCase test; V5, a test in
+    a run with no xdist worker, and one on an xdist worker, which only the -n 2 run refuses; and one conjunction of V3,
+    V4 and V5. The one road of the proof's disclosed limit, V2, a test with a mark, is granted."""
     return (
-        ("U1: the test's directory", "os.path.basename(os.path.dirname(str(item.path))) == 'tests'", plain, "tests", True),
-        ("U2: the test's marks", "item.get_closest_marker('filterwarnings') is not None",
-         record + "@pytest.mark.filterwarnings('default')\ndef test_reads():\n    _record()\n", "", True),
-        ("U3: the test's place in the run", "len(_SEEN) > 3",
-         record + "def test_1():\n    pass\n\n\ndef test_2():\n    pass\n\n\ndef test_3_sets_it():\n    os.environ[P] = '45678'\n"
-                  "\n\ndef test_4_reads():\n    _record()\n", "", True),
-        ("U4: a test in a class", "getattr(item, 'cls', None) is not None",
-         record + "class ReadsIt(unittest.TestCase):\n    def test_reads(self):\n        _record()\n", "", True),
-        ("U5: the run's options", "item.config.getoption('capture') != 'no'", plain, "", True),
-        ("U6: an xdist worker", "hasattr(item.config, 'workerinput')", plain, "", False))
+        ("V1: the conftest in a directory named tests", "os.path.basename(os.path.dirname(os.path.abspath(__file__))) == 'tests'",
+         "serial"),
+        ("V1: a test in a directory named tests", "os.path.basename(os.path.dirname(str(item.path))) == 'tests'", "serial"),
+        ("V3: a test of the first module collected", "len(_MODULES) == 1", "serial"),
+        ("V3: a test of a module collected after the first", "len(_MODULES) > 1", "serial"),
+        ("V4: a function test", "getattr(item, 'cls', None) is None", "serial"),
+        ("V4: a unittest TestCase test", "isinstance(getattr(item, 'cls', None), type) and issubclass(item.cls, unittest.TestCase)",
+         "serial"),
+        ("V5: a test in a run with no xdist worker", "not hasattr(item.config, 'workerinput')", "serial"),
+        ("V5: a test on an xdist worker", "hasattr(item.config, 'workerinput')", "xdist"),
+        ("V3, V4 and V5 at once: a TestCase test of a module collected after the first, on an xdist worker",
+         "len(_MODULES) > 1 and getattr(item, 'cls', None) is not None and hasattr(item.config, 'workerinput')", "xdist"),
+        ("V2: a test with a mark", "item.get_closest_marker('filterwarnings') is not None", None))
 
 
 if __name__ == "__main__":

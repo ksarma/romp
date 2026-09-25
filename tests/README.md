@@ -169,17 +169,20 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   literal tuple included, in a fixture it can show pytest registers, reading
   `tests/conftest.py`'s fixtures and hooks from the module Python imported). That
   reader only refuses. A name is licensed only when a child pytest over a copy of
-  the conftest writes the name at a probe module's import, sets it again in a
-  test, and sees the counted fixture's own code set or pop it in the setup of the
-  test after each write, with the value re-asserted there. Anything that stops
-  the fixture from running for the probe's tests, named or not, is then refused
-  by the run. The run does not read a road keyed on a property of a test or of
-  the run that the probe's three plain function tests, in a module and directory
-  of their own and run serially with `-q -s`, do not share: code in the conftest
-  that keeps the fixture from a test in a directory named `tests`, a marked test,
-  a test past the third or a test in a class, or from every test of a run with
-  capture on or of an xdist worker, is granted the licence (each planted, with a
-  real run of the first five). And
+  the conftest writes the name at each probe module's import and, in each probe
+  test, reads it and sets it again, and sees the counted fixture's own code set or
+  pop it in every probe test's setup, with the value re-asserted there. The probe
+  tests reproduce four facts of a real run that a conftest hook can key on: the
+  conftest and the probe modules in a directory named `tests`, a module collected
+  first and one after it, function tests and a `unittest.TestCase` in each, and a
+  run with no xdist worker and, where pytest-xdist is installed, one with `-n 2`.
+  Code that stops the fixture from running in any of those tests, named or not,
+  is refused by the run. The run does not read a hook condition outside that
+  context (a mark, an environment variable, a host name, or another
+  collection-time signal): a copy of the conftest whose `pytest_collectreport`
+  takes the fixture out of each marked test is granted the licence, and a real
+  run of that copy shows a marked test reading a module-level write (both
+  planted). And
   `ROMP_MODELS_URL` (read at kernel import,
   port 9 of 127.0.0.1 and no other); a check over the table itself holds every
   licence to a per-write condition and every temporary one to a since date and a
