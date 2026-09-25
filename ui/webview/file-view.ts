@@ -2755,8 +2755,8 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // ── the one gate between a gesture and a web picture's tab (the file review's round 16, extra5-1) ── A tap, a click, a
   // Cmd/Ctrl-click, Enter or Space on a picture from the web opens its tab only while the picture's outbound sign (figureSign: its
   // web control, or on a picture that wears none its mark) is in view and uncovered (signShown), read at the gesture's start;
-  // otherwise the gesture opens nothing and reveals the sign (revealSign: a scroll, never a focus), so the next gesture opens.
-  // Before it, a tap or a click on the visible part of a loaded web picture opened the tab while its control stood off the
+  // otherwise the gesture opens nothing and reveals the sign (revealSign: a scroll, never a focus), so the next gesture opens;
+  // a sign partly in view counts as in view. Before it, a tap or a click on the visible part of a loaded web picture opened the tab while its control stood off the
   // screen, with nothing shown, on every device. A pointer's or a finger's press is read here, in the window's capture phase,
   // before any listener of the page runs: the Outline popover closes itself in its own capture listener on the document, so a
   // read on the body came after that close and saw the sign uncovered, and a click on the picture under the popover opened the
@@ -2813,7 +2813,8 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // address to openUrlTab (the file review's round 2, extra5-3: the record had named the first two gestures alone; its round 8,
   // fresh-1: the two clicks had stood with no condition while the open panel's overlay takes them on a fine pointer), and each
   // of them, the key's click on the control among them, only through the one gate above: while the picture's sign is in view and
-  // uncovered at the gesture's start, and otherwise it opens nothing and reveals the sign (the file review's round 16, extra5-1).
+  // uncovered at the gesture's start, and otherwise it opens nothing and reveals the sign, so the next one opens, a sign partly in
+  // view counting as in view (the file review's round 16, extra5-1).
   // A local picture is not gated. A failed figure opens nothing on any gesture (figureTarget).
   // The control's click is the figure's own wherever it stands (and it never stands inside a link whose click is the link's:
   // decideFigureControl puts it after a link holding the figure alone and adds none inside a link of FIGURE_LINK_SET holding
@@ -2863,7 +2864,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // round 15, extra5-2), opens nothing while nothing is shown. Since the file review's round 16, extra5-1, the key is the one
   // gate's too: its press is read at its first keydown (repeat false) by signShown, in view and uncovered, the verdict kept for
   // that press, and a refused press opens nothing and reveals the control (revealSign; the keyboard already holds it), so the
-  // next press opens. A held key's repeats read that verdict: after a refused keydown, or with no first keydown seen on the
+  // next press opens; a control partly in view counts as in view. A held key's repeats read that verdict: after a refused keydown, or with no first keydown seen on the
   // control, a repeat is cancelled too, so it neither clicks nor presses the control; after a shown one, a repeat is read in view
   // at its own event, as before. Space clicks a button on its keyup, which is cancelled when its press was refused and otherwise
   // read in view at the release, so a Space pressed in view and released out of view opens nothing; no repeat clears a refusal,
@@ -4460,7 +4461,8 @@ const SHEET_DIM_CLASSES: ReadonlySet<string> = new Set([
  *  a fence's lines, and before that pass, since the viewer's own code rows and Copy buttons wear listed classes and are made there;
  *  before the anchors' pass too, which gives a dead link its own fv-dead. Its cost: an author's element of a page class around a
  *  picture loses what that class gave it. The chat's md() does not run it (md-sanitize.ts is unchanged), and an author element laid
- *  over a figure rather than around it is the one gate's to refuse (signUncovered: a covered sign opens nothing). */
+ *  over a figure rather than around it is the one gate's to read (signUncovered: a sign under an element a press would reach
+ *  opens nothing). */
 function dropDimmingClasses(root: Element): void {
   root.querySelectorAll("img, image").forEach((fig) => {
     for (let e: Element | null = fig; e && e !== root; e = e.parentElement) {
@@ -5489,9 +5491,9 @@ function signShown(sign: Element): boolean {
   return part !== null && signUncovered(sign, part);
 }
 /** Whether nothing covers the sign where it is in view: the element at five sample points of `part`, the in-view part of its box
- *  in its own window's coordinates, is the sign or inside it, in the sign's own document (elementFromPoint, which reads what takes
- *  a press there, so it sees the viewer's Outline popover, the text-size flyout and an author's element laid over the figure,
- *  while a control transparent at rest still counts as its own). The samples are the part's centre and its four quarter points:
+ *  in its own window's coordinates, is the sign or inside it, in the sign's own document (elementFromPoint, which reads the element
+ *  a press there would reach, so it sees the viewer's Outline popover, the text-size flyout and an author's element laid over the
+ *  figure that takes a press, while a control transparent at rest still counts as its own). The samples are the part's centre and its four quarter points:
  *  inside the part, since a sign partly in view is in view and samples over its whole box meet the chrome above the body where
  *  the box leaves it (the sliver of a control's bottom inside the body); and a quarter of the way in, since the control's corners
  *  are rounded, and under a body zoom of 1.25 a point 2px in from a corner falls outside the curve onto the picture. A same-origin

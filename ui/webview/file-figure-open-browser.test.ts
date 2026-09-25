@@ -3245,13 +3245,15 @@ async function gateTab(g: GateScene, alt: string): Promise<number> {
 }
 /** A key held on the keyboard's holder through CDP: its keydown, `repeats` keydowns with autoRepeat set (repeat true on the event), and
  *  its keyup. */
-async function holdKey(g: GateScene, key: "Enter" | "Space", repeats: number): Promise<void> {
+async function holdKey(g: GateScene, key: "Enter" | "Space", repeats: number, alt = ""): Promise<{ held: boolean; released: boolean }> {
   const k = key === "Enter" ? { key: "Enter", code: "Enter", windowsVirtualKeyCode: 13, text: "\r", unmodifiedText: "\r" } : { key: " ", code: "Space", windowsVirtualKeyCode: 32, text: " ", unmodifiedText: " " };
   await g.cdp.send("Input.dispatchKeyEvent", { type: "keyDown", ...k });
   for (let i = 0; i < repeats; i++) { await frames(g.page, 1); await g.cdp.send("Input.dispatchKeyEvent", { type: "keyDown", autoRepeat: true, ...k }); }
   await frames(g.page, 1);
+  const held = alt ? (await g.read(alt)).pressed : false;   // the control's :active after the last repeat, the key still down
   await g.cdp.send("Input.dispatchKeyEvent", { type: "keyUp", key: k.key, code: k.code, windowsVirtualKeyCode: k.windowsVirtualKeyCode });
   await frames(g.page, 2);
+  return { held, released: alt ? (await g.read(alt)).pressed : false };
 }
 for (const surface of ["chat", "pane"] as Surface[]) for (const key of ["Enter", "Space"] as const) {
   test("in a browser " + gateOn("fine", surface).replace("a fine click", "a fine pointer") + ", the one gate's keys: Tab to the web control, the body scrolled until the control is out of view, then " + key + ": no open, the control revealed" + (key === "Space" ? " and unpressed" : "") + ", and a second " + key + " opens once; keep: with the control centred " + key + " opens once (the file review's round 16, extra5-1: red at the head the file review's round 16 read by the second key, since nothing revealed the control; the keep cell green there by design)", { timeout: 180000 }, async (t) => {
@@ -3273,7 +3275,7 @@ for (const surface of ["chat", "pane"] as Surface[]) for (const key of ["Enter",
   });
 }
 for (const surface of ["chat", "pane"] as Surface[]) {
-  test("in a browser (" + (surface === "chat" ? "the chat modal" : "the Files pane") + "), the one gate's later events of one gesture (the coordinator's decision 2, by the events' own fields and never by time): a fine double click and, under CDP touch emulation, a double tap 90 ms apart on the out-of-view picture open nothing, the second click of each carrying detail 2 (two opens at the head the file review's round 16 read); Enter and Space held on the out-of-view control through two repeats open nothing (none at the head the file review's round 16 read either, by design; red under a gate that reads the repeats and the release afresh, the first keydown's reveal having put the control on the screen)", { timeout: 180000 }, async (t) => {
+  test("in a browser (" + (surface === "chat" ? "the chat modal" : "the Files pane") + "), the one gate's later events of one gesture (the coordinator's decision 2, by the events' own fields and never by time): a fine double click and, under CDP touch emulation, a double tap 90 ms apart on the out-of-view picture open nothing, the second click of each carrying detail 2 (two opens at the head the file review's round 16 read); Enter and Space held on the out-of-view control through two repeats open nothing, and the held Space leaves the control unpressed after its second repeat and after its release (none at the head the file review's round 16 read either, and unpressed there, by design; each red under a gate that reads the repeats and the release afresh, the first keydown's reveal having put the control on the screen, where a repeat presses it)", { timeout: 180000 }, async (t) => {
     const rec: Record<string, unknown> = { scene: "one gesture" };
     await gateCase(t, "fine", surface, GATE_TEXT, rec, async (g) => {
       let out = await g.place("tall", -60);
@@ -3287,8 +3289,10 @@ for (const surface of ["chat", "pane"] as Surface[]) {
         rec["tabs" + key] = await gateTab(g, "tall");
         out = await g.place("tall", -60);
         assert.ok(out.outside && out.active === "the sign", "the keyboard on the control, out of view (a precondition): " + JSON.stringify(out));
-        await holdKey(g, key, 2);
+        const pr = await holdKey(g, key, 2, "tall");
+        rec["pressed" + key] = pr;
         g.cell(key + " held through two repeats, opens", [0, 0], opensOf(await g.opens()));
+        if (key === "Space") g.cell("Space held: the control pressed (:active) after the second repeat and after the release, [held, released] (a property pin read off the page)", [false, false], [pr.held, pr.released]);
       }
       await g.cdp.send("Emulation.setTouchEmulationEnabled", { enabled: true, maxTouchPoints: 1 });
       await frames(g.page, 3);

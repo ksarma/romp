@@ -8614,9 +8614,9 @@ extra5-1, that read is one gate for every gesture on a picture from the web, a t
 picture, the control's click, and Enter or Space on it, since a tap or a click on the visible part of a loaded web picture had
 opened the tab with its control off the screen and nothing shown, on every device: the tab opens only while the picture's sign
 (`figureSign`: its web control, or on a picture that wears none its mark) is in view by that read and uncovered, the element at the
-centre and at the four quarter points of its in-view part being the sign or inside it (`signUncovered`, which sees the Outline
-popover, the text-size flyout and an author's element laid over the figure; a same-origin parent's own chrome over the frame is not
-read), read at the gesture's start, at the press in the window's capture phase, before the popover's own capture listener closes it,
+centre and at the four quarter points of its in-view part being the sign or inside it (`signUncovered`, which reads the element a
+press there would reach, so it sees the Outline popover, the text-size flyout and an author's element laid over the figure that takes
+a press; a same-origin parent's own chrome over the frame is not read), read at the gesture's start, at the press in the window's capture phase, before the popover's own capture listener closes it,
 and at the first keydown (repeat false) of Enter or Space, the press's verdict taken by its click through the pointerId they share;
 a refused gesture opens nothing and scrolls the sign into view (`revealSign`, block and inline "nearest", the same-origin frames and
 a pinch zoom's visual viewport included), moving no focus, so the next gesture opens; where the reveal cannot put the sign on the
@@ -8645,9 +8645,9 @@ token's states clear 3:1 in VS Code on a neutral editor ground up to #404040 and
 border held on each theme's own ground, and an author's class on the figure or above it dims none of it, since the viewer takes every
 class the sheets dim off the author's markup there before the dress is laid (`dropDimmingClasses` over `SHEET_DIM_CLASSES`, held to
 the sheets both ways by file-figure-open.test.ts; the file review's round 16, extra5-2: an author's span of tag-chip-off, 0.45, had
-painted the dress at 2.00:1 dark and 1.86:1 light while a tap opened the tab), while an author's element laid over the figure is no
-state a gesture opens the tab from, the one gate refusing a covered sign, and an author's own link opens its address with no dress, as
-before this follow-on; the painted-contrast ask of 2026-09-23, the press cue on the maintainer's ruling within it,
+painted the dress at 2.00:1 dark and 1.86:1 light while a tap opened the tab), while an author's element laid over the figure that
+takes a press is no state a gesture opens the tab from, the one gate refusing a sign under it, and an author's own link opens its
+address with no dress, as before this follow-on; the painted-contrast ask of 2026-09-23, the press cue on the maintainer's ruling within it,
 where at 0.8 the control read 2.46:1 by pixels on a
 VS Code editor ground of #404040 and, at 0.8 x 0.7 inside a captioned dead link, 2.47:1 dark and 2.40:1 light), measured in its own
 CSS pixels from the loaded picture's laid-out box while it is in the document (the box divided by the picture's zoom, so a body zoom
@@ -8831,8 +8831,8 @@ route: a Back or Forward open fetches the file through the same `/file` route th
 the viewer fetches the picture through it as the report's paint did, and the trail lives in the page. One request is
 new (the file review's HIGH 1): a plain click on a loaded remote picture, its Open the picture control, and a
 Cmd/Ctrl-click on it (each only while the picture's sign, its control or on a picture that wears none its mark, is in view
-and uncovered at the gesture's start, and otherwise it opens nothing and brings the sign into view, and the next opens (the file
-review's round 16, extra5-1); the control by a click or by Enter or Space, the plain click on the
+and uncovered at the gesture's start, and otherwise it opens nothing and brings the sign into view, and the next opens, a sign
+partly in view counting as in view (the file review's round 16, extra5-1); the control by a click or by Enter or Space, the plain click on the
 picture with the Comments panel closed, and the Cmd/Ctrl-click where the press reaches it, the panel closed or the pointer
 coarse, neither click on a picture inside a fold's own summary, whose click toggles the fold; L3, the file review's round
 14, extra8-1, and its round 9, regression-1, which found this home and open
@@ -9220,7 +9220,8 @@ Playwright browser).
    and the web control shows under any focus, while a Cmd/Ctrl-click or a press dragged off a local button leaves that
    button focused but hidden until a key is pressed, so the next Enter opens its picture with nothing shown first. A
    phone, a tablet or a touchscreen laptop keeps the control visible at rest. The plain click on the picture is the other
-   door, for a picture from the web only while its control or mark is in view and uncovered (L3), and the guide says so.
+   door, for a picture from the web only while its control or mark is in view and uncovered (L3; otherwise a click opens
+   nothing and brings it into view, and the next opens, and a sign partly in view counts as in view), and the guide says so.
    Whether the control should show at rest is a ruling (the file review's round 16, ui-1: this point had said that on any
    hover-capable device the control was transparent until the pointer or a focus, false for the focused local button and
    for a touchscreen laptop, whose primary pointer hovers).
@@ -9244,8 +9245,8 @@ Playwright browser).
     the road not taken (the file review's round 11, ui-2 with extra8-2: the point had stood as a two-road offer after the
     decision). (a) as built, the road taken: a plain click on a loaded remote picture, its control, and a Cmd/Ctrl-click on
     it (each only while the picture's sign, its control or on a picture that wears none its mark, is in view and uncovered
-    at the gesture's start, and otherwise it opens nothing and brings the sign into view, and the next opens (the file
-    review's round 16, extra5-1); the control by a click or by Enter or Space,
+    at the gesture's start, and otherwise it opens nothing and brings the sign into view, and the next opens, a sign partly
+    in view counting as in view (the file review's round 16, extra5-1); the control by a click or by Enter or Space,
     the plain click on the picture with the Comments panel closed, and the Cmd/Ctrl-click where the press reaches it, the
     panel closed or the pointer coarse, neither click on a picture inside a fold's own summary, whose click toggles the
     fold; L3)

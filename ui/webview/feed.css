@@ -2082,9 +2082,10 @@ a.fileview-gh-note { border-style: dashed; }
    dims none of this: every class these sheets dim is taken off the author's markup on each figure of a file and on every element
    above it before the dress is laid (file-view.ts dropDimmingClasses over SHEET_DIM_CLASSES, the list held to these sheets both ways
    in file-figure-open.test.ts; the file review's round 16, extra5-2: an author's span of tag-chip-off, 0.45, painted the dress at
-   2.00:1 dark and 1.86:1 light while a tap opened the tab). An author's element laid over the figure, not above it, is no state a
-   gesture opens the tab from, since the one gate refuses a gesture while anything covers the sign (file-view.ts signUncovered), and an
-   author's own link still opens its address with no dress, as it did before this follow-on. Byte-equal in both sheets
+   2.00:1 dark and 1.86:1 light while a tap opened the tab). An author's element laid over the figure, not above it, that takes a
+   press is no state a gesture opens the tab from, since the one gate refuses a gesture while an element a press would reach covers
+   the sign (file-view.ts signUncovered), and an author's own link still opens its address with no dress, as it did before this
+   follow-on. Byte-equal in both sheets
    (fileview-parity.test.ts); laid out in file-figure-open-browser.test.ts. */
 .fileview-md .fv-figopen { position: relative; z-index: 1; vertical-align: top; margin: 0; margin-inline: -28px 6px; top: 6px; padding: 3px; background: var(--bg); opacity: 0; }
 .fileview-md .fv-figopen:hover { background: var(--bg) linear-gradient(var(--accent-wash), var(--accent-wash)); }
