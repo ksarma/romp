@@ -246,8 +246,8 @@ const ledger = read('upstream', '2026-09-18-track-guard-non-literal-targets.md')
 // name another system's list adds), anywhere in a word (nonINT, INThandlers, unSIGTHR). A name in lower or mixed case glued to letters beyond
 // an inflection is not read, since in lower case a name opens or ends many English words (print, still, interrupt, terminal, pipeline): the
 // third boundary the README pin states. signalNamesIn's text, the union of the two runs and nothing else, is the one reader every witness and
-// the README pin run, and THE READER pin in the test below holds that text; THE SOURCE pin after it holds the line that declares it and the
-// one binding of each name it resolves.
+// the README pin run, and THE READER pin in the test below holds that text; THE SOURCE pin after it holds, in the file it reads, the line that
+// declares it and the one binding of each name it resolves.
 const SIGNAL_NAMES = ['HUP', 'INT', 'QUIT', 'ILL', 'TRAP', 'ABRT', 'IOT', 'BUS', 'FPE', 'KILL', 'USR1', 'SEGV', 'USR2', 'PIPE', 'ALRM', 'TERM',
   'STKFLT', 'CHLD', 'CLD', 'CONT', 'STOP', 'TSTP', 'TTIN', 'TTOU', 'URG', 'XCPU', 'XFSZ', 'VTALRM', 'PROF', 'WINCH', 'IO', 'POLL', 'PWR', 'SYS',
   'RTMIN', 'RTMAX', 'EMT', 'INFO', 'EXIT', 'ERR', 'DEBUG', 'RETURN', 'ZERR'];
@@ -331,7 +331,9 @@ test('the install guide, the hook\'s README row and the ledger entry say a name 
   // the reader constructs is the realm's (an assignment reds as a binding does, so `Set = ...`, which would replace the built-in where it
   // stands, reds here too; a replacement made through globalThis or a property descriptor is a realm road, under THE REALM's precondition
   // below). The parser is node's own (`node --check`, which runs nothing, in a separate process), since a regular expression over the text
-  // cannot tell code from a comment or see a destructured or escaped binding; the census's witnesses show that it reads those
+  // cannot tell code from a comment or see a destructured or escaped binding; the census's witnesses show that it reads those. What this pin
+  // reads is the file import.meta.url names when the test runs, not the text node compiled; THE REALM's limit below states what that leaves
+  // out of scope
   const SOURCE = fs.readFileSync(fileURLToPath(import.meta.url), 'utf8');
   const DECLARATION = `const signalNamesIn = ${READER};`;
   const lines = SOURCE.split('\n');
@@ -385,17 +387,22 @@ test('the install guide, the hook\'s README row and the ledger entry say a name 
   // Array.prototype.includes; the premise pin reads each pattern's source through the RegExp source getter; the flag assertion reads the
   // RegExp unicode and unicodeSets getters; THE READER reads signalNamesIn's text through Function.prototype.call and
   // Function.prototype.toString, and the flags through the RegExp flags getter and the eight flag getters it calls (hasIndices, global,
-  // ignoreCase, multiline, dotAll, unicode, unicodeSets, sticky); and THE SOURCE reads this file through fs.readFileSync, cuts it with
-  // String.prototype.split, String.prototype.startsWith and Array.prototype.filter, map and join (and the Array [Symbol.species] getter
-  // filter and map read), rewrites it with String.prototype.replace, RegExp.prototype[Symbol.replace], RegExp.prototype.exec, the RegExp
-  // global and unicode getters, parseInt, Math.min and String.fromCodePoint, walks its tables with Array.prototype[Symbol.iterator] and the
-  // array iterator's next, reads the parser's answer with String.prototype.includes, and hands each text through
-  // child_process.spawnSync to node's parser, a separate process whose realm is not this one. Out of scope, as one limit, the residual of
-  // that precondition: a test that rewrites what a reading is handed (the row, or rest cut from it) or that replaces a built-in or an
-  // accessor (where it stands, or for a pattern alone by an own property, a subclass or a proxy), before, between or after the readings;
-  // each changes the test itself, as an edit to an assertion's expected side does. A name the reader resolves, rebound in this file, is not
-  // in that limit (a pattern or Set taken as a wrapper's parameter around signalNamesIn's text, Set bound at module level, signalNamesIn or
-  // a pattern bound again in any scope): it is text in the file, and THE SOURCE pin holds that text
+  // ignoreCase, multiline, dotAll, unicode, unicodeSets, sticky); and THE SOURCE finds this file with url.fileURLToPath over the module's
+  // import.meta.url, reads it through fs.readFileSync, cuts it with String.prototype.split, String.prototype.startsWith and
+  // Array.prototype.filter, map and join (and the Array [Symbol.species] getter filter and map read), rewrites it with
+  // String.prototype.replace, RegExp.prototype[Symbol.replace], RegExp.prototype.exec, the RegExp global and unicode getters, parseInt,
+  // Math.min and String.fromCodePoint, walks its tables with Array.prototype[Symbol.iterator] and the array iterator's next, reads the
+  // parser's answer with String.prototype.includes, and hands each text through child_process.spawnSync to node's parser at
+  // process.execPath, a separate process whose realm is not this one. Out of scope, as one limit, the residual of that precondition: a test
+  // that rewrites what a reading is handed (the row, or rest cut from it, or what THE SOURCE reads: the file, the path it takes from
+  // import.meta.url, or the parser's answer), that rebinds a name THE SOURCE's own code resolves outside it (fs, fileURLToPath, spawnSync,
+  // assert, process, String, Math, parseInt), or that replaces a built-in or an accessor (where it stands, or for a pattern alone by an own
+  // property, a subclass or a proxy), before, between or after the readings; each changes the test itself, as an edit to an assertion's
+  // expected side does. THE SOURCE reads the file import.meta.url names when the test runs, not the text node compiled, so a line of this
+  // file that writes the file or points import.meta.url at a copy is in that limit; a name THE SOURCE's own code resolves is there because
+  // a pin of that name would run through it. A name the reader resolves, rebound in this file, is not in that limit (a pattern or Set taken
+  // as a wrapper's parameter around signalNamesIn's text, Set bound at module level, signalNamesIn or a pattern bound again in any scope):
+  // it is text in the file THE SOURCE reads, and THE SOURCE pin holds that text there
   assert.ok(!SIGNAL_WORD.unicode && !SIGNAL_WORD.unicodeSets, 'the boundary witness runs every UTF-16 code unit, the units SIGNAL_WORD reads while it has no u or v flag; with either flag it reads a character above U+FFFF as one unit, and the witness must run those');
   // THE PREMISE the witnesses rely on for every form but the lower-case name (the forty-second commit, after the reviewer's verifier found
   // the forty-first commit's witnesses green under three mutants that each leave a README word unread: a SIG spelling unread after U+00A0, an
