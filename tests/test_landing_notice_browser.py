@@ -886,7 +886,8 @@ class ServedLandingNotice(WindowLab):
         # road 2 while its ask is held: no reply and no wire-down, the state a relay socket that drops after the ask leaves the page in (onWireDown
         # runs only for the page's own connection, and nothing else ends the landing). The reader stands at road 1's landing when a deep link with
         # a time asks for a window; the pre-jump writes them into the gap, the land misses with the fetch armed, and the fallback puts their row
-        # back in the same task (PR 861's restore), so they wait at their place. With the pre-jump left standing they waited in the gap
+        # back in the same task (PR 861's restore), so they wait at their place. With the pre-jump left standing, the re-window moved them off
+        # road 1's row onto the rows just after the gap
         r = self._result()
         w, l, h = r["writes2"], r["rowLanded1"], r["held2"]
         self.assertIsNotNone(l, "a row sat under the viewport top at road 1's landing: %r" % r["landed1"])
