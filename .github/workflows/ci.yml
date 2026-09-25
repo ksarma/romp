@@ -125,13 +125,18 @@ jobs:
         # consume a patched sleep. --durations names the slowest tests on every run so a creeping
         # one is visible before it stalls.
         # Two workers (-n 2, 2026-09-25): serially the cells had reached the 25-minute cap they
-        # had then (main's run 35890814789: the 3.14t cell at 24 min 35 s). Measured on 2026-09-22
-        # with Python 3.10 at this step's other flags on a four-CPU, 16 GB budget (the documented
-        # size of GitHub's Linux runner for a public repository), the suite took 1437 s serially
-        # and 739 s with two workers, whose run's cgroup memory peaked at 10.9 GB (page cache
-        # included); three workers peaked at 15.8 GB of the runner's 16. The macOS cells run the
-        # same two workers unmeasured, on runners GitHub documents at 3 CPUs and 7 GB for a public
+        # had then (this fork's main, run 35890814789: the 3.14t cell at 24 min 35 s). Measured on
+        # 2026-09-22 with Python 3.10 at this step's other flags on a four-CPU budget (a systemd
+        # CPUQuota of 400 percent; GitHub documents its Linux runner for a public repository at
+        # 4 CPUs and 16 GB), the suite took 1437 s serially and 739 s with two workers, whose
+        # run's cgroup memory peaked at 10.9 GB (decimal, page cache included); three workers
+        # peaked at 15.8 GB, near the 16 GB GitHub documents. The macOS cells run the same two
+        # workers unmeasured, on runners GitHub documents at 3 CPUs and 7 GB for a public
         # repository (arm64).
+        # The job cap above and its pin in tests/test_ci_bats_bound.py are romp-on/romp PR #2130
+        # as merged: their figures and run ids are romp-on/romp's Actions runs of its serial
+        # suite. With two workers the measurement above puts this fork's Linux cells at about
+        # half their serial time, well inside that cap.
         # Under the workers a timeout ends the worker process running the hung test: xdist fails
         # that test by name ("worker 'gw0' crashed while running '<test id>'") and the other tests
         # run on. The thread dump pytest-timeout writes goes to that worker's stdout, which xdist's

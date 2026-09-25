@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
 """The Python job's Run pytest step runs two pytest-xdist workers (.github/workflows/ci.yml, 2026-09-25).
 
-Serially the cells had reached the 25-minute cap they had then (main's run 35890814789: the 3.14t cell at 24 min 35 s).
-Measured on 2026-09-22 with Python 3.10 on a four-CPU, 16 GB budget, the documented size of GitHub's Linux runner for a
-public repository, the suite took 1437 s serially and 739 s with two workers, whose run's cgroup memory peaked at 10.9 GB
-(page cache included), and three workers peaked at 15.8 GB. So the step sets the worker count once, to 2, and a step
-before it installs pytest-xdist, without which pytest refuses -n. Source pins, as tests/test_ci_bats_bound.py: the
+Serially the cells had reached the 25-minute cap they had then (this fork's main, run 35890814789: the 3.14t cell at
+24 min 35 s). Measured on 2026-09-22 with Python 3.10 on a four-CPU budget (a systemd CPUQuota of 400 percent; GitHub
+documents its Linux runner for a public repository at 4 CPUs and 16 GB), the suite took 1437 s serially and 739 s with
+two workers, whose run's cgroup memory peaked at 10.9 GB (decimal, page cache included), and three workers peaked at
+15.8 GB. So the step sets the worker count once, to 2, and a step before it installs pytest-xdist, without which pytest
+refuses -n. The job's cap and its pin in tests/test_ci_bats_bound.py are romp-on/romp PR #2130 as merged: their figures
+and run ids are romp-on/romp's Actions runs of its serial suite, and with two workers the measurement puts this fork's
+Linux cells at about half their serial time, well inside that cap. Source pins, as tests/test_ci_bats_bound.py: the
 workflow text read by line shape, with no YAML library in the test deps."""
 import os
 import re
@@ -74,8 +77,9 @@ class PythonJobRunsTwoWorkers(unittest.TestCase):
     def test_the_run_pytest_step_sets_two_workers_once(self):
         counts = worker_counts(self.cmd)
         self.assertEqual(counts, ["2"], "the Run pytest step must set the xdist worker count once, to 2 (-n 2); it sets %r in %r. "
-                                        "Serially the suite took 1437 s against 739 s with two workers (2026-09-22, four CPUs and 16 GB), "
-                                        "and three workers peaked at 15.8 GB of the runner's 16" % (counts, self.cmd))
+                                        "Serially the suite took 1437 s against 739 s with two workers (2026-09-22, four CPUs), "
+                                        "and three workers peaked at 15.8 GB, near the 16 GB GitHub documents for the runner"
+                                        % (counts, self.cmd))
 
     def test_a_step_before_it_installs_pytest_xdist(self):
         before = self.steps[:self.at]
