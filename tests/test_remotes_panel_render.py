@@ -111,7 +111,8 @@ const ALERTS = [];
 function alert(m){ ALERTS.push(String(m)); }
 const setTimeout_ = setTimeout;
 // listeners are RECORDED so a test can deliver a pane's postMessage (the hostsPending row copy)
-const window = { _l:{}, addEventListener(k,f){ (this._l[k]=this._l[k]||[]).push(f); }, location:{reload(){}} };
+const window = { _l:{}, addEventListener(k,f){ (this._l[k]=this._l[k]||[]).push(f); }, location:{reload(){}},
+                 __rompPaneSourceOk(){ return true; } };   // the shell's source check (kernel.py _LANDING_BOOT_JS, run by tests/test_shell_source_check.py): this stub's posts stand for a pane's
 const console_err = [];
 const console = { error(...a){ console_err.push(a.map(String).join(' ')); }, log(){}, warn(){} };
 

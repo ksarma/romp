@@ -78,6 +78,7 @@ const BODY = new Set(['po-chat', 'po-feed', 'po-timeline']);   // fleet pane hid
 const WL = {};
 global.window = {
   addEventListener: (k, f) => { (WL[k] = WL[k] || []).push(f); },
+  __rompPaneSourceOk: () => true,   // the shell's source check (kernel.py _LANDING_BOOT_JS, run by tests/test_shell_source_check.py): this stub's posts stand for a pane's
   __rompPaneToggle: (k, to) => TOGGLES.push(k + ':' + to),
   __rompShellSend: (m) => { SENT.push(m); return SHELL_OK; },
   __rompPaneEnabled: (k) => !(k === 'feed' && FEED_OFF),   // the head script's reader of the Panes setting, stubbed
