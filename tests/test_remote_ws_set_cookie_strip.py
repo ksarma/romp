@@ -239,6 +239,27 @@ class RemoteFileRelayCredentials(unittest.TestCase):
         self.assertNotIn("x-romp-key", hdrs, "no browser page key header reaches the peer")
         self.assertNotIn("x-romp-token", hdrs, "this kernel's own token never reaches the peer")
 
+    def test_with_no_row_token_the_relay_forwards_no_token(self):
+        # A host attached with no token of its own (its row token empty): the relay still strips the token this
+        # kernel was asked with, so a request authorized here by ?token= never hands this kernel's token to the
+        # peer, on the view and on the download half alike.
+        with km._remotes_lock:
+            km._remotes["TESTHOST"]["token"] = ""
+        for extra in ("", "&download=1"):
+            _PeerFileHandler.seen = []
+            c = http.client.HTTPConnection("127.0.0.1", self.hub.server_address[1], timeout=15)
+            c.request("GET", "/remote/TESTHOST/file?path=%2Fproj%2Ffigure.png&sid=11111111-2222-3333-4444-555555555555"
+                             "&token=" + km.TOKEN + extra)
+            r = c.getresponse()
+            r.read()
+            c.close()
+            self.assertEqual(r.status, 200, "the relay served the peer's answer%s" % extra)
+            self.assertEqual(len(_PeerFileHandler.seen), 1, "the peer was asked once%s" % extra)
+            path, _hdrs = _PeerFileHandler.seen[0]
+            q = parse_qs(urlsplit(path).query)
+            self.assertNotIn("token", q, "no token reaches a peer that has none of its own%s" % extra)
+            self.assertFalse(km.TOKEN in path, "this kernel's token is nowhere in the peer's request%s" % extra)
+
 
 class AllowlistHelper(unittest.TestCase):
     def test_the_helper_keeps_only_the_handshake_headers(self):

@@ -20,6 +20,7 @@ side of the gate). The model:
 Synthetic only: an invented serve token, invented session ids. No token, session id, page key or cap
 VALUE is printed; the assertions are equality booleans and status codes. No session state is touched.
 """
+import ast
 import io
 import json
 import os
@@ -34,6 +35,7 @@ import tempfile
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 BIN = os.path.join(os.path.dirname(HERE), "bin")
+KERNEL_PY = os.path.join(os.path.dirname(HERE), "kernel", "kernel.py")
 
 # Hermetic state BEFORE the loads: they resolve their state root at import time, and only pytest
 # runs conftest's floor (a bare unittest or script run otherwise writes REAL state).
@@ -174,12 +176,12 @@ class NoResponseSetsACookieEqualToTheToken(_Server):
             _, _, headers = self._req(path, accept=accept)
             for sc in self._set_cookies(headers):
                 value = sc.partition("=")[2].split(";", 1)[0]
-                self.assertNotEqual(value, TOK, "no Set-Cookie may equal the serve token (%s)" % path)
+                self.assertFalse(value == TOK, "no Set-Cookie may equal the serve token (%s)" % path.split("?")[0])
 
 
 class CookieOpensPageAndStaticOnly(_Server):
     def test_the_route_table_is_the_page_class(self):
-        # condition 3: page and static are DERIVED from the one route table the router dispatches from.
+        # page and static are DERIVED from the one route table the router dispatches from
         self.assertEqual(set(km._PAGE_RENDERERS),
                          {"", "/", "/chat", "/feed", "/timeline", "/fleet", "/waiting", "/files", "/settings"},
                          "the page route table (both the router and _need read this)")
@@ -187,6 +189,10 @@ class CookieOpensPageAndStaticOnly(_Server):
             self.assertEqual(km.Handler._need(p), ("page", ""), "%r classes as page" % p)
         for p in ("/sw.js", "/dist/x.js", "/media/icon.svg"):
             self.assertEqual(km.Handler._need(p)[0], "static", "%r classes as static" % p)
+        # the static class, frozen by value as the page table is: a path or a prefix added to either tuple would
+        # open on the session cookie alone, so it is judged here before it ships
+        self.assertEqual(km._STATIC_EXACT, ("/sw.js",), "the static class's exact paths: the push worker alone")
+        self.assertEqual(km._STATIC_PREFIXES, ("/dist/", "/media/"), "the static class's trees: the built bundles and the assets")
 
     def test_the_cookie_alone_opens_the_page_and_static_classes(self):
         for p in ("/", "/chat", "/feed", "/timeline", "/fleet", "/waiting", "/files", "/settings"):
@@ -233,9 +239,65 @@ class CookiePlusKey(_Server):
 
 
 class DomainSeparation(_Server):
-    """Condition 1: a value minted for one role is refused where another role's value is required.
-    Each pin is green here and red under the label-sharing mutant its name states (see
-    build-checklist.md); the sid-as-token pin is red at fa3ef54b5 (FailingBefore, above)."""
+    """A value minted for one role is refused where another role's value is required. Each
+    substitution pin is red under a mutant that collapses the derivation its comment names (the page
+    key derived as the session id, the cap as the page key, either as the serve token); the labels
+    themselves are pinned distinct below. The session cookie's value refused as the serve token is
+    tests/test_login_cookie_not_token.py, red at fa3ef54b5."""
+
+    def test_the_labels_are_distinct_and_differ_before_their_first_nul(self):
+        # every HMAC label the kernel defines, derived from its module (a *_LABEL string), not listed here
+        labels = {k: v for k, v in vars(km).items() if k.endswith("_LABEL") and isinstance(v, str)}
+        self.assertEqual(sorted(labels), ["_COOKIE_NAME_LABEL", "_FILE_CAP_LABEL", "_MIGRATION_LABEL",
+                                          "_PAGE_KEY_LABEL", "_SESSION_LABEL"], "the kernel's HMAC labels")
+        for k, v in labels.items():
+            self.assertTrue(v.endswith("\0") and v.count("\0") == 1, "%s ends in its one NUL" % k)
+        heads = [v.split("\0", 1)[0] for v in labels.values()]
+        self.assertEqual(len(set(heads)), len(heads), "the labels differ before their first NUL")
+        for a in labels.values():
+            for b in labels.values():
+                if a is not b:
+                    self.assertFalse(b.startswith(a), "no label is a prefix of another")
+
+    def test_every_credential_compare_is_constant_time(self):
+        # A census over kernel.py's syntax tree: no ==, !=, in or is compares a credential. A credential is the
+        # serve token (TOKEN), a value the four derivations or the session reader make, or a credential slot the
+        # request carries (?token=, ?cap=, ?k=, ?c=, X-Romp-Token, X-Romp-Key, a cookie). Every such compare goes
+        # through _ct_eq, which is hmac.compare_digest. The census must also SEE the credential compares, so the
+        # _ct_eq calls over credentials are counted: a census that matched nothing would prove nothing.
+        tree = ast.parse(open(KERNEL_PY, encoding="utf-8").read())
+        calls = {"_page_key", "_file_cap", "_hmac_b64", "_mint_session", "_migration_session",
+                 "_browser_session", "_cookie"}
+
+        def credential(n):
+            for x in ast.walk(n):
+                if isinstance(x, ast.Name) and x.id == "TOKEN":
+                    return True
+                if isinstance(x, ast.Call):
+                    f = x.func
+                    name = f.id if isinstance(f, ast.Name) else (f.attr if isinstance(f, ast.Attribute) else None)
+                    if name in calls:
+                        return True
+                    if name == "get" and x.args and isinstance(x.args[0], ast.Constant) and isinstance(f, ast.Attribute):
+                        v, base = x.args[0].value, f.value
+                        if isinstance(base, ast.Name) and base.id == "q" and v in ("token", "cap", "k", "c"):
+                            return True
+                        if isinstance(base, ast.Attribute) and base.attr == "headers" and v in ("X-Romp-Token", "X-Romp-Key"):
+                            return True
+            return False
+
+        eq_ops = (ast.Eq, ast.NotEq, ast.In, ast.NotIn, ast.Is, ast.IsNot)
+        plain = [n.lineno for n in ast.walk(tree) if isinstance(n, ast.Compare)
+                 and any(isinstance(o, eq_ops) for o in n.ops)
+                 and any(credential(x) for x in [n.left] + list(n.comparators))]
+        self.assertEqual(plain, [], "a credential compared with ==, !=, in or is (kernel.py lines): use _ct_eq")
+        ct = [n for n in ast.walk(tree) if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
+              and n.func.id == "_ct_eq" and any(credential(a) for a in n.args)]
+        self.assertGreaterEqual(len(ct), 7, "the census sees the credential compares (the session tag, ?token=, "
+                                "X-Romp-Token, the page key, the cap, the old cookie twice): %d" % len(ct))
+        ct_def = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "_ct_eq")
+        self.assertTrue(any(isinstance(x, ast.Attribute) and x.attr == "compare_digest" for x in ast.walk(ct_def)),
+                        "_ct_eq compares with hmac.compare_digest")
 
     def test_the_session_id_is_refused_as_the_page_key(self):        # mutant: page key derivation shares the session id
         self.assertEqual(self._status("/sessions", cookie=SESS, key=SESS), 403)
@@ -257,7 +319,7 @@ class DomainSeparation(_Server):
         self.assertEqual(self._status("/sessions?token=" + cap), 403)
         self.assertEqual(self._status("/sessions", xtoken=cap), 403)
 
-    def test_the_page_key_presented_as_a_session_is_refused(self):   # B11: K is not a valid session id
+    def test_the_page_key_presented_as_a_session_is_refused(self):   # K is not a valid session id
         self.assertFalse(km._session_ok(KEY), "the page key is not a session id")
         self.assertEqual(self._status("/chat", cookie=KEY), 403, "K in the cookie opens no page")
 
@@ -267,16 +329,16 @@ class DomainSeparation(_Server):
         # nothing. (The value's one use, as the session cookie, opens only the page and static
         # classes, covered above.)
         tag = SESS.split(".", 1)[1]
-        for v in (SESS, tag):
-            self.assertEqual(self._status("/sessions", cookie=SESS, key=v), 403, "not the page key")
-            self.assertEqual(self._ws_status("app=chat&k=" + v, cookie=SESS, origin=self.origin), 403, "not k=")
-            self.assertEqual(self._status("/file?path=%s&cap=%s" % (self.fpath, v), cookie=SESS), 403, "not a cap")
-            self.assertEqual(self._status("/sessions?token=" + v), 403, "not the ?token=")
-            self.assertEqual(self._status("/sessions", xtoken=v), 403, "not the X-Romp-Token")
+        for kind, v in (("the session id", SESS), ("its tag half", tag)):
+            self.assertEqual(self._status("/sessions", cookie=SESS, key=v), 403, "%s is not the page key" % kind)
+            self.assertEqual(self._ws_status("app=chat&k=" + v, cookie=SESS, origin=self.origin), 403, "%s is not k=" % kind)
+            self.assertEqual(self._status("/file?path=%s&cap=%s" % (self.fpath, v), cookie=SESS), 403, "%s is not a cap" % kind)
+            self.assertEqual(self._status("/sessions?token=" + v), 403, "%s is not the ?token=" % kind)
+            self.assertEqual(self._status("/sessions", xtoken=v), 403, "%s is not the X-Romp-Token" % kind)
 
 
 class RouteClassesDerivedFromTheRegister(_Server):
-    """B10 / condition 3: the page and static classes are DERIVED from the route table the router reads,
+    """The page and static classes are DERIVED from the route table the router reads,
     checked two ways against the checked-in route register (_PERF_HTTP_ROUTES / _PERF_HTTP_FAMILIES),
     and the file class is GET and HEAD only."""
 
@@ -311,7 +373,7 @@ class RouteClassesDerivedFromTheRegister(_Server):
 
 
 class ReauthSignalOnAStaleKey(_Server):
-    """B2: a valid session whose stored key no longer matches gets a DISTINCT 403 (X-Romp-Reauth) so
+    """A valid session whose stored key no longer matches gets a DISTINCT 403 (X-Romp-Reauth) so
     the page-key script drops the stale key and hops to /login; a denial for any other reason does not
     carry the marker."""
 
@@ -342,8 +404,11 @@ class ReauthSignalOnAStaleKey(_Server):
 
 
 class KeepAliveConnectionReuse(_Server):
-    """B9 / critic C2: the login's cookie and seed are per-request. A data request that reuses the same
-    keep-alive connection after a login navigation must carry no Set-Cookie and no key seed."""
+    """A sign-in's cookie, key seed, no-store and traceback permission are per-request. The handler object
+    lives for the whole keep-alive connection, and the routes served before the gate (/login, /healthz,
+    /version, POST /push/ack) never run _authorize, so only the resets at the top of do_GET, do_POST and
+    do_OPTIONS clear what a sign-in on the same connection set. Each request after the sign-in must carry
+    no Set-Cookie, no seed, no no-store and no traceback."""
 
     def _read_one(self, s):
         """Read exactly one HTTP/1.1 response off `s`: the head, then Content-Length body bytes."""
@@ -386,11 +451,75 @@ class KeepAliveConnectionReuse(_Server):
         finally:
             s.close()
 
+    def _sign_in(self, s):
+        s.sendall(("GET /?token=%s HTTP/1.1\r\nHost: 127.0.0.1:%d\r\nAccept: text/html\r\n"
+                   "Sec-Fetch-Dest: document\r\n\r\n" % (TOK, self.port)).encode())
+        head, body = self._read_one(s)
+        self.assertIn(CN.encode() + b"=", head, "the sign-in set the session cookie")
+        self.assertIn(SEED_SET.encode(), body, "the sign-in seeded the key")
+
+    def _assert_clean(self, head, body, what):
+        self.assertNotIn(b"Set-Cookie", head, what + ": no cookie from the earlier sign-in")
+        self.assertNotIn(b"no-store", head.lower(), what + ": not the sign-in's no-store")
+        self.assertNotIn(SEED_SET.encode(), body, what + ": no key seed")
+        self.assertNotIn(b"__rompPageKey", body, what + ": no page-key script")
+        self.assertNotIn(b"Traceback", body, what + ": no traceback")
+
+    def test_the_routes_before_the_gate_after_a_sign_in_on_one_connection_set_nothing(self):
+        s = socket.create_connection(("127.0.0.1", self.port), timeout=10)
+        try:
+            self._sign_in(s)
+            s.sendall(("GET /login HTTP/1.1\r\nHost: 127.0.0.1:%d\r\nAccept: text/html\r\n\r\n" % self.port).encode())
+            head, body = self._read_one(s)
+            self.assertIn(b" 200 ", head.split(b"\r\n", 1)[0] + b" ", "the sign-in page")
+            self._assert_clean(head, body, "GET /login")
+            s.sendall(("GET /healthz HTTP/1.1\r\nHost: 127.0.0.1:%d\r\n\r\n" % self.port).encode())
+            head, body = self._read_one(s)
+            self._assert_clean(head, body, "GET /healthz")
+            s.sendall(("POST /push/ack HTTP/1.1\r\nHost: 127.0.0.1:%d\r\nContent-Type: application/json\r\n"
+                       "Content-Length: 2\r\n\r\n{}" % self.port).encode())
+            head, body = self._read_one(s)
+            self.assertIn(b" 400 ", head.split(b"\r\n", 1)[0] + b" ", "a bad ack, answered before the gate")
+            self._assert_clean(head, body, "POST /push/ack")
+            s.sendall(("OPTIONS /sessions HTTP/1.1\r\nHost: 127.0.0.1:%d\r\n\r\n" % self.port).encode())
+            head, body = self._read_one(s)
+            self.assertIn(b" 403 ", head.split(b"\r\n", 1)[0] + b" ", "a preflight with no Origin is refused")
+            self._assert_clean(head, body, "OPTIONS /sessions")
+        finally:
+            s.close()
+
+    def test_a_route_before_the_gate_that_raises_after_a_token_request_on_one_connection_sends_no_traceback(self):
+        def _boom(*a, **k):
+            raise RuntimeError("operator-only-detail")
+        for name in ("_version_info", "_push_ledger_stamp"):
+            saved = getattr(km, name)
+            setattr(km, name, _boom)
+            self.addCleanup(setattr, km, name, saved)
+        s = socket.create_connection(("127.0.0.1", self.port), timeout=10)
+        try:
+            # a request authorized by the serve token may see a traceback; the next one on the connection may not
+            s.sendall(("GET /no-such-route?token=%s HTTP/1.1\r\nHost: 127.0.0.1:%d\r\n\r\n" % (TOK, self.port)).encode())
+            self._read_one(s)
+            s.sendall(("GET /version HTTP/1.1\r\nHost: 127.0.0.1:%d\r\n\r\n" % self.port).encode())
+            head, body = self._read_one(s)
+            self.assertIn(b" 500 ", head.split(b"\r\n", 1)[0] + b" ", "the raising /version")
+            self._assert_clean(head, body, "GET /version")
+            s.sendall(("GET /no-such-route?token=%s HTTP/1.1\r\nHost: 127.0.0.1:%d\r\n\r\n" % (TOK, self.port)).encode())
+            self._read_one(s)
+            ack = json.dumps({"pid": "p" * 22, "stage": "shown"}).encode()
+            s.sendall(("POST /push/ack HTTP/1.1\r\nHost: 127.0.0.1:%d\r\nContent-Type: application/json\r\n"
+                       "Content-Length: %d\r\n\r\n" % (self.port, len(ack))).encode() + ack)
+            head, body = self._read_one(s)
+            self.assertIn(b" 500 ", head.split(b"\r\n", 1)[0] + b" ", "the raising /push/ack")
+            self._assert_clean(head, body, "POST /push/ack")
+        finally:
+            s.close()
+
 
 class CookieOnlyClassBare500(_Server):
-    """B15: a page or static render that raises answers a BARE 500, never a traceback that could name an
-    internal path or state, because the session cookie alone reaches those classes. A class that needs
-    the page key keeps its traceback for the operator."""
+    """A traceback can name an internal path or state, so a 500 carries it only to a caller that presented
+    the serve token or the page key. A page render on the session cookie alone, a file load on its cap, and
+    a route served before the gate (/version, POST /push/ack) answer a BARE 500."""
 
     def test_a_page_render_that_raises_answers_a_bare_500(self):
         def _boom():
@@ -414,6 +543,57 @@ class CookieOnlyClassBare500(_Server):
         self.assertEqual(status, 500)
         self.assertIn("Traceback", body.decode("utf-8", "replace"),
                       "the full class needs the page key as well; the operator gets the trace")
+
+    def test_a_token_request_that_raises_keeps_its_traceback(self):
+        saved = km._sessions_listing_serve
+        def _boom(*a, **k):
+            raise RuntimeError("operator-visible-detail")
+        km._sessions_listing_serve = _boom
+        self.addCleanup(lambda: setattr(km, "_sessions_listing_serve", saved))
+        status, body, _ = self._req("/sessions", xtoken=TOK)
+        self.assertEqual(status, 500)
+        self.assertIn("Traceback", body.decode("utf-8", "replace"), "the CLI's request, on the serve token, gets the trace")
+
+    def test_a_route_served_before_the_gate_that_raises_answers_a_bare_500(self):
+        saved = km._version_info
+        def _boom(*a, **k):
+            raise RuntimeError("secret-internal-detail-in-the-probe")
+        km._version_info = _boom
+        self.addCleanup(lambda: setattr(km, "_version_info", saved))
+        status, body, _ = self._req("/version")
+        self.assertEqual(status, 500)
+        text = body.decode("utf-8", "replace")
+        self.assertNotIn("Traceback", text, "/version asks for no credential, so it gets no traceback")
+        self.assertNotIn("secret-internal-detail", text)
+
+    def test_the_push_ack_that_raises_answers_a_bare_500(self):
+        saved = km._push_ledger_stamp
+        def _boom(*a, **k):
+            raise RuntimeError("secret-internal-detail-in-the-ack")
+        km._push_ledger_stamp = _boom
+        self.addCleanup(lambda: setattr(km, "_push_ledger_stamp", saved))
+        req = urllib.request.Request(self.origin + "/push/ack", method="POST",
+                                     data=json.dumps({"pid": "p" * 22, "stage": "shown"}).encode(),
+                                     headers={"Content-Type": "application/json"})
+        try:
+            with urllib.request.urlopen(req, timeout=10) as r:
+                status, body = r.status, r.read()
+        except urllib.error.HTTPError as e:
+            status, body = e.code, e.read()
+        self.assertEqual(status, 500)
+        text = body.decode("utf-8", "replace")
+        self.assertNotIn("Traceback", text, "the ack is admitted by its push id alone, so it gets no traceback")
+        self.assertNotIn("secret-internal-detail", text)
+
+    def test_a_file_load_on_its_cap_that_raises_answers_a_bare_500(self):
+        saved = km.Handler._file_preview
+        def _boom(*a, **k):
+            raise RuntimeError("secret-internal-detail-in-the-file")
+        km.Handler._file_preview = _boom
+        self.addCleanup(lambda: setattr(km.Handler, "_file_preview", saved))
+        status, body, _ = self._req("/file?path=%s&cap=%s" % (self.fpath, _cap(SESS, self.fpath, "")), cookie=SESS)
+        self.assertEqual(status, 500)
+        self.assertNotIn("Traceback", body.decode("utf-8", "replace"), "a cap opens one file, not the trace")
 
 
 class SocketKeyQueryIsSocketOnly(_Server):
@@ -466,13 +646,40 @@ class LoginHandoff(_Server):
     def test_a_signed_in_browser_keeps_its_session_on_a_second_login(self):
         status, _, headers = self._req("/?token=" + TOK, cookie=SESS, accept="text/html", sec_fetch="document")
         self.assertEqual(status, 200)
-        self.assertEqual(self._session_cookie_value(headers), SESS, "the existing session is kept")
+        self.assertTrue(self._session_cookie_value(headers) == SESS, "the existing session is kept")
 
     def test_login_page_is_exempt(self):
         self.assertEqual(self._status("/login"), 200)
 
 
 class LegacyCookieMigration(_Server):
+    def test_two_tabs_migrating_at_once_get_the_same_session_and_the_same_key(self):
+        # Tabs a browser restores after the upgrade each send the old cookie before either response lands. Each
+        # is handed the same session and the same page key, so whichever response the browser keeps last, the
+        # cookie and the stored key are in step. (Compared as booleans: no value is printed.)
+        got = []
+        for page in ("/", "/chat"):
+            status, body, headers = self._req(page, extra_cookie="romp_token=" + TOK,
+                                              accept="text/html", sec_fetch="document")
+            self.assertEqual(status, 200, "the old cookie migrates on %s" % page)
+            got.append((self._session_cookie_value(headers) or "", body.decode("utf-8", "replace")))
+        (s1, b1), (s2, b2) = got
+        self.assertTrue(km._session_ok(s1) and km._session_ok(s2), "both responses carry a valid session")
+        self.assertTrue(s1 == s2, "both tabs are handed the same session")
+        seed = json.dumps(km._page_key(s1))
+        self.assertTrue(seed in b1 and seed in b2, "and each seeds that session's page key")
+        self.assertFalse(s1 == TOK, "the migration session is not the serve token")
+
+    def test_a_fresh_sign_in_mints_a_session_of_its_own(self):
+        # the shared session is the migration's alone: two ?token= sign-ins each mint their own
+        vals = []
+        for _ in range(2):
+            _, _, headers = self._req("/?token=" + TOK, accept="text/html", sec_fetch="document")
+            vals.append(self._session_cookie_value(headers) or "")
+        self.assertTrue(all(km._session_ok(v) for v in vals))
+        self.assertFalse(vals[0] == vals[1], "two sign-ins, two sessions")
+        self.assertFalse(km._migration_session() in vals, "neither is the migration session")
+
     def test_the_old_token_cookie_migrates_on_a_page_navigation_and_is_cleared(self):
         status, _, headers = self._req("/", extra_cookie="romp_token=" + TOK,
                                        accept="text/html", sec_fetch="document")
@@ -483,7 +690,7 @@ class LegacyCookieMigration(_Server):
                             for sc in self._set_cookies(headers)), "the old cookie is cleared")
 
     def test_the_old_token_cookie_is_refused_on_a_json_read_and_not_cleared(self):
-        # B1: the old cookie opens no data route, and it is NOT cleared here. Clearing it on a
+        # The old cookie opens no data route, and it is NOT cleared here. Clearing it on a
         # non-migrating response would sign out a dashboard left open across the upgrade (its next
         # poll or redial is not a navigation, so it would clear without migrating) and a second, older
         # kernel on the same host. It is cleared ONLY in the migrating page navigation (above).
@@ -494,7 +701,7 @@ class LegacyCookieMigration(_Server):
                          "the old cookie is not cleared outside the migrating navigation")
 
     def test_a_different_kernels_old_cookie_is_not_cleared_on_the_migrating_navigation(self):
-        # B1: the clear fires only when the old cookie's value is THIS kernel's token. A romp_token
+        # The clear fires only when the old cookie's value is THIS kernel's token. A romp_token
         # holding a DIFFERENT value (a second, older kernel on the same host) survives a login here.
         status, _, headers = self._req("/?token=" + TOK, extra_cookie="romp_token=another-kernels-token",
                                        accept="text/html", sec_fetch="document")
@@ -506,25 +713,82 @@ class LegacyCookieMigration(_Server):
 
 
 class NoPageDataInlined(_Server):
-    """Condition 3 census: a page or bundle served on the cookie alone carries no secret; the page
-    key reaches the browser only in the login seed. Red under a mutant that seeds the key on every
-    page (see build-checklist.md)."""
+    """What a request on the session cookie alone can read holds code and no session data, and the page key
+    reaches the browser only in the sign-in response. A census over every page route in the route table, on
+    both response paths (the cookie alone, and a ?token= sign-in navigation), over /sw.js, and over every file
+    under /media/. A synthetic session is planted in the kernel's session registry and names store, and a
+    keyed /sessions read shows it, so the plant took; no cookie-only response carries its name, id or folder,
+    nor the page key, the session id or the serve token. The built bundles under /dist/ are not assumed here
+    (this module runs without a build); tests/test_file_caps_browser.py runs the same census over them on a
+    lab kernel serving its dist."""
 
-    def test_a_cookie_only_page_carries_the_reader_but_neither_the_seed_nor_any_secret(self):
-        _, body, _ = self._req("/chat", cookie=SESS)
+    PLANT_SID = "77777777-8888-9999-aaaa-bbbbbbbbbbbb"
+    PLANT_NAME = "zqx-planted-web"
+    PLANT_DIR = "/srv/zqx-planted-notes-api"
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        km.NAMES.mkdir(parents=True, exist_ok=True)
+        (km.NAMES / cls.PLANT_SID).write_text("%s\t%s\t#9cd2ff\t#0c1a2e\n" % (cls.PLANT_NAME, cls.PLANT_DIR))
+        cls._live = km.Sessions.__dict__["live"]
+        km.Sessions.live = staticmethod(lambda: {cls.PLANT_SID: {"state": "idle", "backend": "sdk"}})
+        km._SESSIONS_LISTING["json"] = None
+
+    @classmethod
+    def tearDownClass(cls):
+        km.Sessions.live = cls._live
+        km._SESSIONS_LISTING["json"] = None
+        try:
+            (km.NAMES / cls.PLANT_SID).unlink()
+        except OSError:
+            pass
+        super().tearDownClass()
+
+    def _forbidden(self):
+        return (("the page key", KEY), ("the session id", SESS), ("the serve token", TOK),
+                ("a session's name", self.PLANT_NAME), ("a session's id", self.PLANT_SID),
+                ("a session's folder", self.PLANT_DIR))
+
+    def _pages(self):
+        return sorted(p for p in km._PAGE_RENDERERS if p)       # "" is the bare-path spelling of "/"
+
+    def test_the_planted_session_is_visible_to_a_keyed_read(self):
+        status, body, _ = self._req("/sessions", cookie=SESS, key=KEY)
+        self.assertEqual(status, 200)
         text = body.decode("utf-8", "replace")
-        self.assertIn("__rompPageKey", text, "the page-key reader is present")
-        self.assertNotIn(SEED_SET, text, "the key seed is not on a cookie-only page")
-        for secret in (KEY, SESS, TOK):
-            self.assertNotIn(secret, text, "no session id, page key or serve token is inlined")
+        self.assertIn(self.PLANT_NAME, text, "the plant took: the listing names the planted session")
+        self.assertIn(self.PLANT_SID, text)
 
-    def test_the_worker_and_a_bundle_carry_no_secret_and_the_worker_caches_nothing(self):
+    def test_no_cookie_only_response_carries_session_data_or_a_credential(self):
+        media = sorted("/media/" + n for n in os.listdir(km.MEDIA) if os.path.isfile(os.path.join(km.MEDIA, n)))
+        self.assertGreater(len(media), 3, "the census reads the asset tree: %d files" % len(media))
+        paths = self._pages() + list(km._STATIC_EXACT) + media
+        for path in paths:
+            status, body, headers = self._req(path, cookie=SESS)
+            self.assertEqual(status, 200, "the cookie alone serves %s" % path)
+            text = body.decode("latin-1")
+            for what, value in self._forbidden():
+                self.assertFalse(value in text, "%s carries %s" % (path, what))
+            self.assertFalse(SEED_SET in text, "%s carries the key seed" % path)
+            self.assertEqual(self._set_cookies(headers), [], "%s sets no cookie" % path)
         _, sw, _ = self._req("/sw.js", cookie=SESS)
         swtext = sw.decode("utf-8", "replace")
-        for secret in (KEY, SESS, TOK):
-            self.assertNotIn(secret, swtext, "the service worker inlines no secret")
         self.assertNotIn("caches.", swtext, "the service worker caches nothing (no page data cached)")
         self.assertNotIn("cache.addAll", swtext)
+
+    def test_the_page_key_is_in_the_sign_in_response_alone_and_once(self):
+        for path in self._pages():
+            status, body, headers = self._req(path + "?token=" + TOK, accept="text/html", sec_fetch="document")
+            self.assertEqual(status, 200, "a sign-in on %s" % path)
+            sv = self._session_cookie_value(headers) or ""
+            self.assertTrue(km._session_ok(sv), "%s: the sign-in set a session" % path)
+            text = body.decode("utf-8", "replace")
+            self.assertEqual(text.count(json.dumps(km._page_key(sv))), 1, "%s: the page key, exactly once" % path)
+            self.assertEqual(text.count(SEED_SET), 1, "%s: one seed" % path)
+            for what, value in self._forbidden()[2:]:
+                self.assertFalse(value in text, "%s's sign-in response carries %s" % (path, what))
+            self.assertFalse(sv in text, "%s's sign-in response carries its session id" % path)
 
 
 if __name__ == "__main__":

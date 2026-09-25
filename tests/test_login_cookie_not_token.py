@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """The login cookie's value is refused as the explicit token (kernel/kernel.py _authorize).
 
-The ruling's failing-before test, kept self-contained (it names none of the session-cookie helpers)
+The login cookie split's failing-before test, kept self-contained (it names none of the session-cookie helpers)
 so it runs against a kernel before OR after the change. A ?token= navigation returns the login
 cookie. Its value is read in-process and never printed; presenting that value as the explicit token
 (the X-Romp-Token header, or ?token=) authenticates nothing. At fa3ef54b5 the cookie's value IS the
@@ -69,7 +69,7 @@ class LoginCookieValue(unittest.TestCase):
                 break
         self.assertIsNotNone(value, "the login navigation sets a cookie")
         # the cookie's value is not the serve token, and is refused as the explicit token
-        self.assertNotEqual(value, TOK, "the login cookie must not carry the serve token")
+        self.assertFalse(value == TOK, "the login cookie must not carry the serve token")   # a boolean: no value printed
         self.assertEqual(self._req("/sessions", {"X-Romp-Token": value})[0], 403,
                          "the cookie value is not the X-Romp-Token")
         self.assertEqual(self._req("/sessions?token=" + value)[0], 403,
