@@ -195,15 +195,18 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   an environment variable, a host name, or another collection-time signal): a
   copy of the conftest whose `pytest_collectreport` takes the fixture out of
   each marked test is granted the licence, and a real run of that copy shows a
-  marked test reading a module-level write (planted). Two such signals differ
-  in the child by construction: which modules come before a test's module, and
-  how many (a real run collects every test module under `tests/`), and the
-  run's arguments (the child hands its four modules as files, where CI's step
-  hands no path and a developer's run may hand `tests/`). A copy of the conftest
-  that keys a hook on a module named `test_kernel_env_floor.py` coming earlier,
-  on a module collected fifth or later, or on a directory among the arguments is
-  granted, and under each road a real run of that copy reads the value a
-  module-level write or an earlier test left (planted). And
+  marked test reading a module-level write (planted). Some such signals differ
+  in the child by construction. One is the rest of the collection: which
+  modules come before a test's module and after it, and how many (the child
+  collects its four; a real run collects every test module under `tests/`,
+  hundreds of them after most modules). Another is the run's arguments (the
+  child hands its four modules as files, where CI's step hands no path and a
+  developer's run may hand `tests/`). A copy of the conftest that keys a hook
+  on a module named `test_kernel_env_floor.py` coming earlier, on a module
+  collected fifth or later, on a module that four or more modules follow, or on
+  a directory among the arguments is granted, and under each road a real run of
+  that copy reads the value a module-level write or an earlier test left
+  (planted). And
   `ROMP_MODELS_URL` (read at kernel import,
   port 9 of 127.0.0.1 and no other); a check over the table itself holds every
   licence to a per-write condition and every temporary one to a since date and a
