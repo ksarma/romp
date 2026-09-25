@@ -1326,9 +1326,12 @@ test('the phrase the script reads a lost browser by is a literal in inBrowser\'s
  *  the script reads as data, among them), and, for each line parseRoster keeps in that roster, the bundle's source
  *  (sourceOf's map) and every file of the tree it imports, transitively. An import is a string literal holding a
  *  relative specifier (./ or ../) directly after from or import, or as the one argument of import( ) or require( ),
- *  wherever it stands in the text, a comment or a string included, a loud over-read: the launcher's esbuild entry, a
- *  string that exports from "./file-view", brings in the modules openViewer bundles at run time, which the switch test
- *  does not call. It resolves to the first file of the tree among the specifier, the specifier with .ts, .tsx, .mts,
+ *  wherever it stands in the text, a comment or a string included, a loud over-read: the launcher's esbuild entry in
+ *  bundleViewer, a string that exports from "./file-view" and "./anchor-map", brings in the import graph of the bundle
+ *  openViewer builds and loads at run time. For a rostered leg that opens the viewer, that graph is code the leg runs and
+ *  these files are the true set; the roster's one leg today, the switch test, opens a page through inBrowser and never
+ *  calls openViewer, so for it they are a superset, kept so that a leg rostered later that opens the viewer is read with
+ *  no change here. It resolves to the first file of the tree among the specifier, the specifier with .ts, .tsx, .mts,
  *  .js, .mjs or .cjs appended, a .js specifier with .ts in place of .js, and its /index.ts or /index.js, and a
  *  specifier that resolves to none is red, naming it. Not followed: a specifier that is not relative (node:fs,
  *  playwright), a computed one (a template literal, a concatenation), and a file a module reads at run time by a path
