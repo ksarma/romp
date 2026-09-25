@@ -617,3 +617,86 @@ test("the classes that let a press pass through, a two-way pin (the file review'
   assert.deepEqual(dimDrift(derived, cut).missing.map((m) => m.split(" ")[0]), ["locate-toast"], "a class taken off the list is named missing (a property pin over the drift)");
   assert.deepEqual(dimDrift(derived, new Set([...listed, "plant-never-passes"])).stale, ["plant-never-passes"], "a class put on the list that no sheet lets a press pass through is named (a property pin over the drift)");
 });
+
+// ── the classes that would raise author content to the control's stacking level, both ways (the file review's round 16, extra5-1, the
+// covered sign) ── The picture's control rests at z-index 1 (the dressing sheets' `.fileview-md .fv-figopen` rule) and later in document
+// order than an author's markup, so it stays on top of any author element the sheets leave at z-index auto or 0. An author's element of
+// a page class that gives it a z-index at or above the control's is left at or above the control, so file-view.ts takes every such class
+// off a file document's author markup (dropStackClasses over SHEET_STACK_CLASSES), and the list is held here to every sheet a page of
+// either host loads (SHEETS), derived by the rule the list's docstring states and compared both ways, as the press-through classes are
+// above, with the same read for a rule that gives the z-index with no class to take (its subject and its other compounds name none) and
+// no id in its subject, which reaches author markup no drop of a class undoes, and is named. The open leg reads the drop's effect on the
+// gate and file-view-outline.test.ts runs it over the stand-in.
+/** The declarations of a block that leave what they apply to at or above the control's stacking level: a z-index at or above the
+ *  control's (one the reader cannot read as an integer, a var(), counted, the safe side; auto, initial, inherit, unset and revert are
+ *  not, they resolve to auto), and an animation naming keyframes that set such a z-index (`keyframes`). */
+function stacksOf(body: string, keyframes: ReadonlySet<string>): string[] {
+  const hits: string[] = [];
+  for (const d of splitTop(body, ";")) {
+    const at = d.indexOf(":");
+    if (at < 0) continue;
+    const p = d.slice(0, at).trim().toLowerCase(), v = d.slice(at + 1).trim().toLowerCase().replace("!important", "").trim();
+    if (p === "z-index") { const m = /^(-?\d+)$/.exec(v); if (!m) { if (!["auto", "initial", "inherit", "unset", "revert"].includes(v)) hits.push("z-index " + v); } else if (parseInt(m[1], 10) >= CONTROL_Z) hits.push("z-index " + v); }
+    else if (p === "animation" || p === "animation-name") { for (const k of v.split(/[\s,]+/)) if (keyframes.has(k)) hits.push("animation " + k); }
+  }
+  return hits;
+}
+/** The control's own stacking level, read off the dressing sheets: the z-index of the rule whose subject is the control's class
+ *  (`.fileview-md .fv-figopen`), which every listed class is measured at or above. */
+const CONTROL_Z = ((): number => {
+  for (const s of SHEETS) for (const r of cssRules(s.css)) if (/\.fv-figopen\s*$/.test(r.selector.trim())) { const m = /(?:^|;)\s*z-index\s*:\s*(-?\d+)/.exec(r.body); if (m) return parseInt(m[1], 10); }
+  throw new Error("the control's z-index rule (.fileview-md .fv-figopen) is not in the sheets");
+})();
+/** Every class the sheets would raise to the control's stacking level or past it by SHEET_STACK_CLASSES's rule, each with its rules
+ *  (sheet, selector, what raises it), and the rules whose selector yields no class and names no id in its subject (`untaken`). */
+function stackClasses(sheets: Array<{ name: string; css: string }>): { classes: Map<string, string[]>; untaken: string[] } {
+  const rules = sheets.flatMap((s) => cssRules(s.css).map((r) => ({ ...r, sheet: s.name })));
+  const keyframes = new Set<string>();
+  for (const r of rules) { const k = keyframesOf(r.chain); if (k && stacksOf(r.body, new Set()).length) keyframes.add(k); }
+  const classes = new Map<string, string[]>(), untaken: string[] = [];
+  const CLASS = /\.(-?[_a-zA-Z][_a-zA-Z0-9-]*)/g;
+  for (const r of rules) {
+    if (keyframesOf(r.chain)) continue;
+    const hits = stacksOf(r.body, keyframes);
+    if (!hits.length) continue;
+    for (const one of splitTop(r.selector, ",")) {
+      const sel = one.trim(), compounds = withoutNotHas(sel).trim().split(/\s*[>+~]\s*|\s+/).filter(Boolean);
+      const last = compounds[compounds.length - 1] || "";
+      const subject = [...last.matchAll(CLASS)].map((m) => m[1]);
+      const others = compounds.slice(0, -1).flatMap((c) => [...c.matchAll(CLASS)].map((m) => m[1]));
+      const why = r.sheet + ": " + sel + " (" + hits.join(", ") + ")";
+      const got = subject.length ? subject : others;
+      for (const c of got) classes.set(c, [...(classes.get(c) || []), why]);
+      if (!got.length && !/#-?[_a-zA-Z]/.test(last)) untaken.push(why);
+    }
+  }
+  return { classes, untaken };
+}
+/** SHEET_STACK_CLASSES read off file-view.ts's source: one array of string literals inside `new Set([` and `]);`. */
+function listedStackClasses(): Set<string> {
+  const m = /\nconst SHEET_STACK_CLASSES: ReadonlySet<string> = new Set\(\[\n([\s\S]*?)\n\]\);\n/.exec(VIEW);
+  assert.ok(m, "file-view.ts holds SHEET_STACK_CLASSES as one array of string literals (a sentence pin on the shape this read takes)");
+  const names: unknown[] = JSON.parse("[" + m![1] + "]");
+  assert.ok(names.every((n) => typeof n === "string"), "every member a string literal");
+  assert.equal(new Set(names).size, names.length, "no class listed twice");
+  return new Set(names as string[]);
+}
+test("the classes that would raise author content to the control's stacking level, a two-way pin (the file review's round 16, extra5-1, the covered sign): SHEET_STACK_CLASSES in file-view.ts, the classes dropStackClasses takes off every author element of a file document, equals the classes every sheet a page of either host loads gives a z-index at or above the control's (one not read counted), directly or by an animation, and no rule gives the z-index with no class to take and no id in its subject; the control's own z-index read off the sheets", () => {
+  const listed = listedStackClasses();
+  assert.equal(CONTROL_Z, 1, "the control rests at z-index 1 (read off the dressing sheets' .fv-figopen rule)");
+  const { classes: derived, untaken } = stackClasses(SHEETS);
+  assert.ok(derived.size >= 40, "the derivation reads the sheets: " + derived.size + " classes (a derivation that reads nothing is red; a property pin over the derived set's size)");
+  const drift = dimDrift(derived, listed);
+  assert.deepEqual(drift.missing, [], "each class a sheet would raise to the control's stacking level that SHEET_STACK_CLASSES lacks, with the rule that does it: add it to the list, in the same change as the rule (a property pin over the derived set against the list)");
+  assert.deepEqual(drift.stale, [], "each class SHEET_STACK_CLASSES lists that no sheet raises now: take it off the list, in the same change as the rule (a property pin over the derived set against the list)");
+  assert.deepEqual(untaken, [], "each rule that gives a z-index at or above the control's with no class for the drop to take and no id in its subject, which reaches an author's element no drop of a class undoes: key it on a class the list then takes, or take the z-index off (a property pin over the sheets' rules)");
+  const RENDERED = new Set<string>(["fv-dead", ...[web("md-config.ts"), web("math.ts")].flatMap((src) => [...src.matchAll(/\nexport const \w+_CLASS = "([\w-]+)";/g)].map((m) => m[1]))]);
+  assert.deepEqual([...listed].filter((c) => RENDERED.has(c)), [], "no listed class is one a markdown renderer writes before the sanitizer, which the drop over every element would strip from the viewer's own markup (a property pin over the two sets)");
+  const planted = { name: "planted", css: ".plant-z { z-index: 5; } .plant-z1 { z-index: 1; } .plant-z0 { z-index: 0; } .plant-zneg { z-index: -1; } .plant-zauto { z-index: auto; } .plant-zvar { z-index: var(--x); } .plant-zpsd::after { z-index: 3; } .plant-zsub span { z-index: 2; } .plant-znot:not(.plant-zneg2) { z-index: 4; } @keyframes plant-zkf { from { z-index: 9; } } .plant-zanim { animation: plant-zkf 1s; } aside { z-index: 7; } [data-plant] { z-index: 8; } #plant-id { z-index: 6; }" };
+  const withPlant = stackClasses([...SHEETS, planted]);
+  assert.deepEqual(dimDrift(withPlant.classes, listed).missing.map((m) => m.split(" ")[0]), ["plant-z", "plant-z1", "plant-zanim", "plant-znot", "plant-zpsd", "plant-zsub", "plant-zvar"], "a planted sheet's raising classes are named missing, the one at the control's own z-index, the pseudo-element's, the one above a subject that names no class and the animation's among them, and neither a z-index below the control (0, negative, auto), the :not() argument, nor the controls are (a property pin over the drift)");
+  assert.deepEqual(withPlant.untaken, ["planted: aside (z-index 7)", "planted: [data-plant] (z-index 8)"], "the element-keyed and the attribute-keyed plants are named as untaken, and the id-keyed one is not (a property pin over the read)");
+  const cut = new Set(listed); cut.delete("ctx-text");
+  assert.deepEqual(dimDrift(derived, cut).missing.map((m) => m.split(" ")[0]), ["ctx-text"], "a class taken off the list is named missing (a property pin over the drift)");
+  assert.deepEqual(dimDrift(derived, new Set([...listed, "plant-never-stacks"])).stale, ["plant-never-stacks"], "a class put on the list that no sheet raises is named (a property pin over the drift)");
+});

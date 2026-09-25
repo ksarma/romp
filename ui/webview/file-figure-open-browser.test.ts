@@ -3082,7 +3082,7 @@ const GATE_TEXT = "# Report\n\n" + PARA(1) + "\n\n![tall](" + WEB + "/tall.svg)\
   + "\n\n[![dl](" + WEB + "/dl.svg)](localhost:8080)\n\n" + Array.from({ length: 8 }, (_, i) => PARA(i + 30)).join("\n\n")
   + "\n\nA badge ![tiny](" + WEB + "/tiny.svg) in words.\n\n" + Array.from({ length: 16 }, (_, i) => PARA(i + 40)).join("\n\n") + "\n";
 const COVER_TEXT = "# Report\n\n## Alpha\n\n" + PARA(1) + "\n\n![w490](" + WEB + "/w490.svg)\n\n## Beta\n\n" + Array.from({ length: 12 }, (_, i) => PARA(i + 3)).join("\n\n") + "\n\n## Gamma\n\n" + PARA(20) + "\n";
-const OVERLAY_TEXT = "# Report\n\n" + PARA(1) + "\n\n![ov](" + WEB + "/ov.svg)\n\n" + '<div class="picker-overlay tx-starting"></div>' + "\n\n" + Array.from({ length: 12 }, (_, i) => PARA(i + 3)).join("\n\n") + "\n";
+const OVERLAY_TEXT = "# Report\n\n" + PARA(1) + "\n\n![ov](" + WEB + "/ov.svg)\n\n" + '<div id="pt" class="picker-overlay tx-starting"></div>' + "\n\n" + Array.from({ length: 12 }, (_, i) => PARA(i + 3)).join("\n\n") + "\n";
 type GateDevice = "fine" | "ctrl" | "touch" | "phone" | "laptop";
 type GateOpens = { popups: number; docs: number; urls: string[]; fileTabs: string[] };
 type GateRead = { sign: number[]; img: number[]; port: number[]; raw: number[]; z: number; inView: boolean; outside: boolean; signHit: boolean; base: string; active: string; pressed: boolean; pt: { x: number; y: number }; pt2: { x: number; y: number }; hit: string; hit2: string };
@@ -3368,52 +3368,58 @@ for (const surface of ["chat", "pane"] as Surface[]) {
       g.cell("the second Enter's opens, and the flyout still open", [[1, 1], false], [opensOf(await g.opens()), await g.page.evaluate(() => !(document.querySelector(".fileview-zoom-menu") as HTMLElement).hidden)]);
     });
   });
-  for (const device of ["fine", "touch"] as GateDevice[]) test("in a browser " + gateOn(device, surface).replace("a fine click", "a fine pointer") + ", the one gate's covered sign, an author's element laid over the figure (the coordinator's decisions 4 and 5): `<div class=\"picker-overlay tx-starting\">` after a loaded remote picture computes position fixed over the Rendered box; the body focused and Tab to the web control, then Enter opens nothing, and a second Enter nothing either (the disclosed cost: an overlay the reader cannot dismiss keeps that picture from opening; red at the head the file review's round 16 read by one open on the first Enter); a tap at the picture's point lands on the element itself and opens nothing at either head (a guard)", { timeout: 180000 }, async (t) => {
+  for (const device of ["fine", "touch"] as GateDevice[]) test("in a browser " + gateOn(device, surface).replace("a fine click", "a fine pointer") + ", the one gate's covered sign, an author's element of a page class the sheets would raise, laid over the figure (the coordinator's decisions 4 and 5, continued): `<div class=\"picker-overlay tx-starting\">`, which the sheets would position fixed over the Rendered box and give a z-index above the control's, has its raising class taken off, so it falls into the flow off the control; the body focused and Tab to the web control, then Enter opens once, and a tap at the picture's point opens once too, the control shown (red before this pass took the raising class off, where the overlay stood fixed over the control so a press reached the overlay and the picture never opened, the disclosed cost the file review's round 16 recorded; and red at the head the file review's round 16 read by one open on the first Enter)", { timeout: 180000 }, async (t) => {
     const rec: Record<string, unknown> = { scene: "overlay" };
     await gateCase(t, device, surface, OVERLAY_TEXT, rec, async (g) => {
-      const st = await g.page.evaluate(() => { const o = document.querySelector(".fileview-md .picker-overlay") as HTMLElement | null; const w = window as any; const c = w.__ctl("ov"); const r = c.getBoundingClientRect(); const e = document.elementFromPoint((r.left + r.right) / 2, (r.top + r.bottom) / 2); return { overlay: !!o, position: o ? getComputedStyle(o).position : null, overCentre: !!e && !!e.closest(".picker-overlay") }; });
+      const st = await g.page.evaluate(() => { const o = document.getElementById("user-content-pt") as HTMLElement | null; const w = window as any; const c = w.__ctl("ov"); const r = c.getBoundingClientRect(); const e = document.elementFromPoint((r.left + r.right) / 2, (r.top + r.bottom) / 2); return { overlay: !!o, classes: o ? o.getAttribute("class") : null, position: o ? getComputedStyle(o).position : null, overCentre: !!e && !!o && (e === o || o.contains(e)) }; });
       rec.state = st;
-      assert.ok(st.overlay && st.position === "fixed" && st.overCentre, "the author's element stands, fixed, over the control's centre (a precondition): " + JSON.stringify(st));
+      assert.ok(st.overlay, "the author's element stands (a precondition): " + JSON.stringify(st));
+      g.cell("the author's element after the paint: [its classes, its computed position, over the control's centre]", ["tx-starting", "static", false], [st.classes, st.position, st.overCentre]);
       await g.page.evaluate(() => { (document.querySelector(".fileview-body") as HTMLElement).focus(); });
       let tabs = 0;
       for (; tabs < 20; tabs++) { if (await g.page.evaluate(() => document.activeElement === (window as any).__ctl("ov"))) break; await g.page.keyboard.press("Tab"); await frames(g.page, 1); }
       rec.tabs = tabs;
       assert.ok(await g.page.evaluate(() => document.activeElement === (window as any).__ctl("ov")), "the keyboard on the control (a precondition)");
       await g.page.keyboard.press("Enter");
-      g.cell("the first Enter's opens", [0, 0], opensOf(await g.opens()));
-      await g.page.keyboard.press("Enter");
-      g.cell("the second Enter's opens", [0, 0], opensOf(await g.opens()));
+      g.cell("Enter on the control: its opens", [1, 1], opensOf(await g.opens()));
       if (device === "touch") {
         const r = await g.read("ov");
         await g.gesture("touch", r.pt.x, r.pt.y);
-        g.cell("guard: a tap at the picture's point, which the element takes (" + r.hit + "), opens", [0, 0], opensOf(await g.opens()));
+        g.cell("a tap at the picture's point (" + r.hit + "): its opens", [1, 1], opensOf(await g.opens()));
       }
     });
   });
 }
-// ── what lets a press pass through an author's element, off the markup (the file review's round 16, extra5-1, the covered sign) ── The
-// hit test at a gesture's start (elementFromPoint) reads the element a press would reach, and a press passes through an element a page
-// class sets pointer-events none on, one whose style attribute does, and an inert one, so such an element painted over the web control
-// while the gate read the control uncovered and the tab opened (elementsFromPoint skips them too, measured in Chromium, Firefox and
-// WebKit, so a read of the stack does not see them either). file-view.ts dropPressThrough takes the three off a file document's author
-// markup before any pass of the viewer's own. Four scenes, each after a loaded remote picture 300 by 200 near the report's top: the
-// locate-toast shape (a page class that sets position fixed, an opaque ground and pointer-events none) over the picture and its
-// control, whose class goes, so the element stands in the flow below the picture and a gesture opens with the control shown; and three
-// shapes of the full-screen overlay the gate refuses under (picker-overlay tx-starting): with a page class that sets pointer-events none
-// (fc-overlay-off), with that declaration in its style attribute, and inert, each of which the drop turns back into an element that
-// takes the press. The inline scene opens nothing at every head that carries the gate: the sanitizer's colour-only rule drops the
-// declaration before the viewer reads it (md-sanitize.ts colorOnlyStyle), so the viewer's own drop is red only under a sanitizer that
-// keeps the declaration, recorded in the checklist beside the head's green.
+// ── what lets a press pass through an author's element, or raises it over the control, off the markup (the file review's round 16,
+// extra5-1, the covered sign) ── The hit test at a gesture's start (elementFromPoint) reads the element a press would reach, and a press
+// passes through an element a page class sets pointer-events none on, one whose style attribute does, and an inert one; file-view.ts
+// dropPressThrough takes those off a file document's author markup, and dropStackClasses takes off the classes the sheets give a z-index
+// at or above the control's, so an author element the sheets would raise falls into the flow, below the control. Four scenes, each after
+// a loaded remote picture 300 by 200 near the report's top: the locate-toast shape (a page class the sheets both position fixed and let a
+// press pass through), whose class goes, so the element stands in the flow below the picture and a gesture opens with the control shown;
+// and three shapes of a full-screen overlay of picker-overlay tx-starting (the sheets position picker-overlay fixed and give it a z-index
+// above the control's): with a page class that sets pointer-events none (fc-overlay-off), with that declaration in its style attribute,
+// and inert. In every scene dropStackClasses takes picker-overlay off, so the overlay falls into the flow off the control and the gesture
+// opens with the control shown; the disclosed cost the file review's round 16 recorded (a full-screen overlay the reader could not
+// dismiss kept that picture from opening) is closed by that drop, so these scenes open once here where before it they opened nothing. The
+// two-way pin holding the raising list to the sheets is file-figure-open.test.ts's.
 const PT_WORDS = Array.from({ length: 260 }, (_, i) => "word" + (i % 17)).join(" ");
 const PT_OVERLAY = (cover: string): string => "# Report\n\n" + PARA(1) + "\n\n![ov](" + WEB + "/ov.svg)\n\n" + cover + "\n\n" + Array.from({ length: 12 }, (_, i) => PARA(i + 3)).join("\n\n") + "\n";
-const PRESS_THROUGH: Array<{ scene: string; what: string; text: string }> = [   // each element carries the id pt, which the sanitizer prefixes (user-content-pt), for the read to find it whatever its classes
-  { scene: "toast", what: "the locate-toast shape by its page class, `<div class=\"locate-toast\">` holding words", text: "# Report\n\n" + PARA(1) + "\n\n![ov](" + WEB + "/ov.svg)\n\n" + '<div id="pt" class="locate-toast">' + PT_WORDS + "</div>" + "\n" },
-  { scene: "class", what: "the overlay with a page class that sets pointer-events none, `<div class=\"picker-overlay tx-starting fc-overlay-off\">`", text: PT_OVERLAY('<div id="pt" class="picker-overlay tx-starting fc-overlay-off"></div>') },
-  { scene: "inline", what: "the overlay with pointer-events none in its style attribute", text: PT_OVERLAY('<div id="pt" class="picker-overlay tx-starting" style="pointer-events: none"></div>') },
-  { scene: "inert", what: "the overlay inert, `<div class=\"picker-overlay tx-starting\" inert>`", text: PT_OVERLAY('<div id="pt" class="picker-overlay tx-starting" inert></div>') },
+const PRESS_THROUGH: Array<{ scene: string; what: string; text: string; cls: string }> = [   // each element carries the id pt, which the sanitizer prefixes (user-content-pt), for the read to find it whatever its classes
+  { scene: "toast", what: "the locate-toast shape by its page class, `<div class=\"locate-toast\">` holding words", text: "# Report\n\n" + PARA(1) + "\n\n![ov](" + WEB + "/ov.svg)\n\n" + '<div id="pt" class="locate-toast">' + PT_WORDS + "</div>" + "\n", cls: "" },
+  { scene: "class", what: "the overlay with a page class that sets pointer-events none, `<div class=\"picker-overlay tx-starting fc-overlay-off\">`", text: PT_OVERLAY('<div id="pt" class="picker-overlay tx-starting fc-overlay-off"></div>'), cls: "tx-starting" },
+  { scene: "inline", what: "the overlay with pointer-events none in its style attribute", text: PT_OVERLAY('<div id="pt" class="picker-overlay tx-starting" style="pointer-events: none"></div>'), cls: "tx-starting" },
+  { scene: "inert", what: "the overlay inert, `<div class=\"picker-overlay tx-starting\" inert>`", text: PT_OVERLAY('<div id="pt" class="picker-overlay tx-starting" inert></div>'), cls: "tx-starting" },
 ];
+// After the viewer's passes each element holds no class the sheets let a press pass through (dropPressThrough) or raise to the control's
+// stacking level (dropStackClasses), no inert attribute and no pointer-events declaration, so it stands in the flow off the control and
+// the picture opens with the control shown. The overlay scenes carry the page class picker-overlay, which the sheets both position fixed
+// and give a z-index above the control's, so dropStackClasses takes it off and the overlay falls into the flow: this closes the disclosed
+// cost the file review's round 16 recorded (a full-screen overlay the reader could not dismiss kept that picture from opening), so those
+// scenes open once here where before this pass they opened nothing. The toast's page class the sheets let a press pass through, so
+// dropPressThrough already took it off.
 for (const surface of ["chat", "pane"] as Surface[]) for (const device of ["fine", "touch"] as GateDevice[]) for (const pt of PRESS_THROUGH) {
-  test("in a browser " + gateOn(device, surface).replace("a fine click", "a fine pointer") + ", the one gate's covered sign, an author's element a press would pass through, " + pt.what + " (the file review's round 16, extra5-1, the covered sign): " + (pt.scene === "toast" ? "after the paint the element holds no class the sheets let a press pass through and stands in the flow, off the control, so a gesture on the picture and Enter on the control each open once with the control shown" : "after the paint the element holds no class, attribute or style declaration that lets a press pass through it, a press at the control's centre reaches it, and a gesture at the picture's point and Enter on the control each open nothing") + " (red at the head the file review's round 16 read, which had no gate, and " + (pt.scene === "inline" ? "green under the gate by design, since the sanitizer's colour-only rule drops the declaration: the viewer's own drop is red under a sanitizer that keeps it" : "under the gate before the drop, whose hit test read through the element: " + (pt.scene === "toast" ? "the element painted over the control as a gesture opened" : "a gesture and Enter each opened once")) + ")", { timeout: 180000 }, async (t) => {
+  test("in a browser " + gateOn(device, surface).replace("a fine click", "a fine pointer") + ", the one gate's covered sign, an author's element a press would pass through or a page class would raise, " + pt.what + " (the file review's round 16, extra5-1, the covered sign): after the viewer's passes the element holds no class the sheets let a press pass through or raise to the control's stacking level, no inert attribute and no pointer-events declaration, so it stands in the flow off the control and a gesture on the picture and Enter on the control each open once with the control shown (" + (pt.scene === "toast" ? "red at the head the file review's round 16 read, which had no gate, where the element covered the control as a gesture opened" : "red before this pass took the raising page class off, where the overlay stood fixed over the control and no gesture opened, and at the head the file review's round 16 read, which had no gate") + ")", { timeout: 180000 }, async (t) => {
     const rec: Record<string, unknown> = { scene: "press-through " + pt.scene };
     await gateCase(t, device, surface, pt.text, rec, async (g) => {
       const st = await g.page.evaluate(() => {
@@ -3426,24 +3432,59 @@ for (const surface of ["chat", "pane"] as Surface[]) for (const device of ["fine
       });
       rec.state = st;
       assert.ok(st.found, "the author's element painted (the case's premise): " + JSON.stringify(st));
-      if (pt.scene === "toast") {
-        g.cell("the element after the paint: [its classes, over the control, what a press at the control's centre reaches]", ["", false, "the control"], [st.classes, st.over, st.hit]);
-      } else {
-        assert.ok(st.over, "the overlay fixed and over the control (a precondition): " + JSON.stringify(st));
-        g.cell("the overlay after the paint: [its classes, inert, its style attribute, its computed pointer-events, what a press at the control's centre reaches]", ["picker-overlay tx-starting", false, null, "auto", "the element"], [st.classes, st.inert, st.style, st.pe, st.hit]);
-      }
-      const want = pt.scene === "toast" ? [1, 1] : [0, 0];
+      g.cell("the element after the paint: [its classes, inert, its style attribute, its computed pointer-events, over the control, what a press at the control's centre reaches]", [pt.cls, false, null, "auto", false, "the control"], [st.classes, st.inert, st.style, st.pe, st.over, st.hit]);
       const r = await g.read("ov");
       rec.read = r;
       await g.gesture(device, r.pt.x, r.pt.y);
-      g.cell("a gesture at the picture's point (" + r.hit + "): its opens", want, opensOf(await g.opens()));
+      g.cell("a gesture at the picture's point (" + r.hit + "): its opens", [1, 1], opensOf(await g.opens()));
       await g.page.evaluate(() => { (document.querySelector(".fileview-body") as HTMLElement).focus(); });
       let tabs = 0;
       for (; tabs < 20; tabs++) { if (await g.page.evaluate(() => document.activeElement === (window as any).__ctl("ov"))) break; await g.page.keyboard.press("Tab"); await frames(g.page, 1); }
       rec.tabs = tabs;
       assert.ok(await g.page.evaluate(() => document.activeElement === (window as any).__ctl("ov")), "the keyboard on the control (a precondition)");
       await g.page.keyboard.press("Enter");
-      g.cell("Enter on the control: its opens", want, opensOf(await g.opens()));
+      g.cell("Enter on the control: its opens", [1, 1], opensOf(await g.opens()));
+    });
+  });
+}
+// ── the classes that would raise author content to the control's stacking level, off the markup (the file review's round 16, extra5-1,
+// the covered sign) ── The control rests at z-index 1 and later in document order than an author's markup, so it stays on top of author
+// content the sheets leave at z-index auto. An author's element of a page class that gives it a z-index at or above the control's is left
+// at or above the control; file-view.ts dropStackClasses takes every such class off a file document's author markup before any pass of
+// the viewer's own, so the control stays on top. Four scenes, each an author's svg of a stacking page class (ctx-text: position relative,
+// z-index 1, later in document order) after a loaded remote picture, the four svg shapes differing only in their own markup. After the
+// viewer's passes the element holds no class the sheets would raise and rests at z-index auto, so it is below the control; the gesture on
+// the picture and Enter on the control open with the control shown, and a tap does too. Whether a shape's own content stands above the
+// control before the drop is the private witness, kept out of the tree; the pins here read the element's class and computed z-index after
+// the viewer's passes, and the opens on the fine click, Enter and the tap.
+const STACK_SHAPES: Array<{ scene: string; svg: string }> = [
+  { scene: "shape 1", svg: '<svg id="probe" width="60" height="60" filter="drop-shadow(0px 0px 0 red)"><rect width="60" height="60" fill="red"/></svg>' },
+  { scene: "shape 2", svg: '<svg id="probe" width="60" height="60" overflow="visible"><rect width="60" height="60" fill="red" filter="drop-shadow(0px 0px 0 red)"/></svg>' },
+  { scene: "shape 3", svg: '<svg id="probe" width="60" height="60" overflow="visible"><defs><marker id="mk" markerUnits="userSpaceOnUse" markerWidth="100" markerHeight="100" overflow="visible"><rect x="-30" y="-30" width="60" height="60" fill="red"/></marker></defs><path d="M30 30 l0.01 0" stroke="red" stroke-width="0.1" fill="none" marker-end="url(#user-content-mk)"/></svg>' },
+  { scene: "shape 4", svg: '<svg id="probe" width="60" height="60" overflow="visible"><text x="30" y="30" font-size="2" fill="red" stroke="red" stroke-width="90" stroke-linejoin="round">x</text></svg>' },
+];
+const STACK_TEXT = (svg: string): string => "# Report\n\n" + PARA(1) + "\n\n![ov](" + WEB + "/ov.svg)\n\n" + '<span id="pt" class="ctx-text keep">' + svg + "</span>" + "\n\n" + Array.from({ length: 12 }, (_, i) => PARA(i + 3)).join("\n\n") + "\n";
+for (const surface of ["chat", "pane"] as Surface[]) for (const device of ["fine", "touch"] as GateDevice[]) for (const sh of STACK_SHAPES) {
+  test("in a browser " + gateOn(device, surface).replace("a fine click", "a fine pointer") + ", the one gate's covered sign, an author's svg of a stacking page class over a picture, " + sh.scene + " (the file review's round 16, extra5-1, the covered sign): after the viewer's passes the author's svg of ctx-text (position relative, z-index 1) holds no raising class and rests at z-index auto, so it is below the control, and a gesture on the picture" + (device === "fine" ? " and Enter on the control each" : "") + " open with the control shown (red at the head the file review's round 16 read, where the class stood and the svg rested at the control's z-index while the gesture opened)", { timeout: 180000 }, async (t) => {
+    const rec: Record<string, unknown> = { scene: "stack " + sh.scene };
+    await gateCase(t, device, surface, STACK_TEXT(sh.svg), rec, async (g) => {
+      const st = await g.page.evaluate(() => { const o = document.getElementById("user-content-pt"); const pr = document.getElementById("user-content-probe"); return { found: !!o && !!pr, classes: o ? o.getAttribute("class") : null, z: o ? getComputedStyle(o).zIndex : null }; });
+      rec.state = st;
+      assert.ok(st.found, "the author's element and its svg painted (the case's premise): " + JSON.stringify(st));
+      g.cell("the author's element after the paint: [its classes, its computed z-index]", ["keep", "auto"], [st.classes, st.z]);
+      const r = await g.read("ov");
+      rec.read = r;
+      await g.gesture(device, r.pt.x, r.pt.y);
+      g.cell("a gesture at the picture's point (" + r.hit + "): its opens", [1, 1], opensOf(await g.opens()));
+      if (device === "fine") {
+        await g.page.evaluate(() => { (document.querySelector(".fileview-body") as HTMLElement).focus(); });
+        let tabs = 0;
+        for (; tabs < 20; tabs++) { if (await g.page.evaluate(() => document.activeElement === (window as any).__ctl("ov"))) break; await g.page.keyboard.press("Tab"); await frames(g.page, 1); }
+        rec.tabs = tabs;
+        assert.ok(await g.page.evaluate(() => document.activeElement === (window as any).__ctl("ov")), "the keyboard on the control (a precondition)");
+        await g.page.keyboard.press("Enter");
+        g.cell("Enter on the control: its opens", [1, 1], opensOf(await g.opens()));
+      }
     });
   });
 }

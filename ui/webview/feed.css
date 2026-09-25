@@ -2088,7 +2088,11 @@ a.fileview-gh-note { border-style: dashed; }
    on at any value but auto (file-view.ts dropPressThrough over SHEET_PRESS_THROUGH_CLASSES, the list held to these sheets both ways in
    file-figure-open.test.ts), the inert attribute and a pointer-events declaration of its style, so a press there reaches it
    (the file review's round 16, extra5-1: an author's div of locate-toast, fixed, opaque and letting a press through, painted over the
-   control while a gesture opened the tab). An author's own link still opens its address with no dress, as it did
+   control while a gesture opened the tab). A page class can also leave an author's element at or above the control in stacking
+   order: the viewer takes off every element of a file's author markup the classes these sheets give a z-index at or above the
+   control's (file-view.ts dropStackClasses over SHEET_STACK_CLASSES, the list held to these sheets both ways in
+   file-figure-open.test.ts), so the control stays on top of author content (the file review's round 16, extra5-1). An author's
+   own link still opens its address with no dress, as it did
    before this follow-on. Byte-equal in both sheets
    (fileview-parity.test.ts); laid out in file-figure-open-browser.test.ts. */
 .fileview-md .fv-figopen { position: relative; z-index: 1; vertical-align: top; margin: 0; margin-inline: -28px 6px; top: 6px; padding: 3px; background: var(--bg); opacity: 0; }

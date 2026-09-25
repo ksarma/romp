@@ -1367,7 +1367,7 @@ test("the dimming classes off a figure's ancestors, over the render path (the fi
   assert.ok(spans.length === 3 && img && svg && box.querySelectorAll("image").length === 1, "the three author spans, the picture and the svg holding its image painted (the case's premise)");
   const read = { span1: spans[0].classes, img: img!.classes, span2: spans[1].classes, span3: spans[2].classes, svg: svg.classes };
   t.diagnostic("classes after the paint: " + JSON.stringify(read));
-  assert.deepEqual(read, { span1: ["keep"], img: ["mine"], span2: ["tag-chip-off", "fv-figopen", "keep"], span3: ["keep"], svg: ["keep"] }, "each element's classes after the paint: the listed classes off the picture and its ancestors, the svg image's too, the rest kept, and an author element holding no figure untouched (a property pin over the classes)");
+  assert.deepEqual(read, { span1: ["keep"], img: ["mine"], span2: ["tag-chip-off", "keep"], span3: ["keep"], svg: ["keep"] }, "each element's classes after the paint: the listed classes off the picture and its ancestors, the svg image's too, the rest kept, and an author element holding no figure keeps the dim classes dropDimmingClasses leaves it, but for fv-figopen, a class the sheets also give a z-index at or above the control's, which dropStackClasses takes off every element (the file review's round 16, extra5-1); a property pin over the classes)");
 });
 
 // ── what lets a press pass through an author element, off a file document's markup (the file review's round 16, extra5-1, the covered
@@ -1398,6 +1398,31 @@ test("what lets a press pass through an author element, off a file document's ma
     "only": [null, false, null],
     "untouched": ["plain", false, "color: gray"],
   }, "each element's classes, inert and style after the paint: a listed class, the inert attribute and every pointer-events declaration off, the rest kept (a property pin over the attributes)");
+});
+
+// ── the classes that would raise author content to the control's stacking level, off a file document's markup (the file review's round
+// 16, extra5-1, the covered sign): the render path takes off every author element the classes the sheets give a z-index at or above the
+// control's (file-view.ts SHEET_STACK_CLASSES), before any pass of the viewer's own, so an author element the sheets would leave at or
+// above the control drops below it and the control stays on top. A class the sheets give a z-index below the control's stays. The two-way
+// pin holding the list to the sheets is file-figure-open.test.ts's; the open leg reads the drop's effect on the stacking.
+test("the classes that would raise author content to the control's stacking level, off a file document's markup over the render path (the file review's round 16, extra5-1, the covered sign): an author's div of a page class the sheets would raise (ctx-text) keeps its other class alone; a div of a class the sheets give a z-index below the control's (rail-hit, z-index 0) keeps both; the control's own class (fv-figopen) on an element nested inside another author element goes and its other class stays; a div of another raising class (branch-chips) keeps its other class; an element the sheets do not name is untouched (a property pin over each element's classes after the paint; red at the head the file review's round 16 read, which kept every author class)", async (t) => {
+  const md = '# R\n\n<div class="ctx-text keep">a card</div>\n\n<div class="rail-hit other">a rail</div>\n\n'
+    + 'Words <span class="plain"><em class="fv-figopen mark">nested</em></span> here.\n\n<div class="branch-chips only">chips</div>\n\n<div class="untouched">plain</div>\n';
+  const o = await open(REPORT, md, t);
+  const box = o.body.querySelector(".fileview-md")!;
+  const byText = (s: string): El | undefined => box.querySelectorAll("div, em").find((x) => x.textContent === s);
+  const names = ["a card", "a rail", "nested", "chips", "plain"];
+  const els = names.map(byText);
+  assert.ok(els.every(Boolean), "each author element painted (the case's premise): " + JSON.stringify(names.map((n, i) => [n, !!els[i]])));
+  const read = Object.fromEntries(names.map((n, i) => [n, els[i]!.getAttribute("class")]));
+  t.diagnostic("classes after the paint: " + JSON.stringify(read));
+  assert.deepEqual(read, {
+    "a card": "keep",
+    "a rail": "rail-hit other",
+    "nested": "mark",
+    "chips": "only",
+    "plain": "untouched",
+  }, "each element's classes after the paint: a raising class off, a z-index below the control's kept, the rest kept (a property pin over the classes)");
 });
 
 // ── the sign-in rule's decode, bounded (the file review's round 16, regression-2): the decode ran to its fixed point, and a `%25` chain

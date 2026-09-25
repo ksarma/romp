@@ -4464,7 +4464,8 @@ const SHEET_DIM_CLASSES: ReadonlySet<string> = new Set([
  *  before the anchors' pass too, which gives a dead link its own fv-dead. Its cost: an author's element of a page class around a
  *  picture loses what that class gave it. The chat's md() does not run it (md-sanitize.ts is unchanged), and an author element laid
  *  over a figure rather than around it is the one gate's to read: signUncovered refuses a sign where a press would reach such an
- *  element, and dropPressThrough takes off the author's markup what would let a press pass through one. */
+ *  element, dropPressThrough takes off the author's markup what would let a press pass through one, and dropStackClasses takes off the
+ *  classes that would raise an author element to the control's stacking level, so the control stays on top. */
 function dropDimmingClasses(root: Element): void {
   root.querySelectorAll("img, image").forEach((fig) => {
     for (let e: Element | null = fig; e && e !== root; e = e.parentElement) {
@@ -4526,6 +4527,41 @@ function dropPressThrough(root: Element): void {
     if (text) e.setAttribute("style", text); else e.removeAttribute("style");
   });
 }
+/** The classes the page's sheets would raise to the picture's control's stacking level or past it (the file review's round 16,
+ *  extra5-1, the covered sign): each class a rule of a sheet some page of either host loads (ui/webview/host-sheets.mjs hostSheets)
+ *  gives a z-index at or above the control's, or an animation whose keyframes do, a value the reader cannot read as an integer
+ *  counted as at or above (the safe side); taken from the rule's subject as SHEET_PRESS_THROUGH_CLASSES's are (the classes of its
+ *  last compound outside :not() and :has(), or, where that names none, the classes of its other compounds). The control rests at
+ *  z-index 1 (these sheets' `.fileview-md .fv-figopen` rule) and later in document order than an author's markup, so it stays on top
+ *  of any author element the sheets leave at z-index auto or 0; only a page class that gives an author element a z-index at or above
+ *  the control's leaves it at or above the control (measured in Chromium, Firefox and WebKit on the chat modal and the Files pane:
+ *  with these classes gone, no author-reachable rule leaves an author element at or above the control). So dropStackClasses takes
+ *  them off every element of a file document's author markup, so the control stays on top. Held to the sheets both ways by
+ *  file-figure-open.test.ts, which derives the list by this rule, names each class the sheets would raise that the list lacks and each
+ *  listed class they no longer raise, and names each rule that gives the z-index with no class to take and no id in its subject: an
+ *  author's id is prefixed user-content-, so an id-keyed rule reaches no author element, while an element- or attribute-keyed one
+ *  would reach one, and no drop of a class undoes it. */
+const SHEET_STACK_CLASSES: ReadonlySet<string> = new Set([
+  "branch-chips", "chat-theme-yatharth", "cite-preview", "cmt-pop", "cmt-rail", "cmt-tick", "code-copy", "col-dragging",
+  "ctx-menu", "ctx-sub", "ctx-text", "dot", "dot-nav", "drop-over", "emoji-sec-h", "fc-float", "fconfirm-back", "feed-col",
+  "feed-col-head", "feed-sessmenu", "feed-toast", "file-preview-pop", "fileview-btn", "fileview-gutter", "fileview-outline",
+  "fileview-zoom-menu", "fitem-absorbing", "fl-hover", "focus-gutter", "fv-figopen", "glow-ruler", "locate-toast", "mention-pop",
+  "meta-menu", "meta-sub", "on", "pickdlg-overlay", "picker-dir-menu", "picker-overlay", "rail-band", "rail-day", "rail-ring",
+  "rail-sticky", "romp-tip", "romp-tl-tip", "rs-sub", "scroll-marks", "slash-pop", "tab-tip", "time-marker", "tx-landing-notice",
+  "tx-loading-anchor", "unread"
+]);
+/** A file document's author markup with the classes that would raise an element to the picture's control's stacking level or past it
+ *  taken off it (the file review's round 16, extra5-1, the covered sign), so an author element the sheets would leave at or above the
+ *  control drops below it and the control stays on top: on the sanitizer's body, before any pass of the viewer's own, every element
+ *  loses the classes of SHEET_STACK_CLASSES. Every element, not a figure's ancestors alone: an element the sheets would raise may
+ *  stand anywhere in the document. Its cost: an author's element of one of these page classes loses the stacking that class gave it.
+ *  The chat's md() does not run it (md-sanitize.ts is unchanged). */
+function dropStackClasses(root: Element): void {
+  root.querySelectorAll("[class]").forEach((e) => {
+    const stack = (e.getAttribute("class") || "").split(/\s+/).filter((c) => SHEET_STACK_CLASSES.has(c));
+    if (stack.length) e.classList.remove(...stack);
+  });
+}
 // Markdown rendered as the prose it means (the user 2026-08-09: Rendered is the default, Raw one click
 // away). The file is arbitrary bytes off a disk and marked emits raw HTML verbatim, so, exactly like the
 // chat's md() in render.ts, the output goes through the shared sanitizer (sanitizeMd, md-sanitize.ts)
@@ -4574,6 +4610,7 @@ function mdBlock(text: string, doc?: MdDocLoc): HTMLElement {
   const clean = sanitizeMd(dirty, mintHeadingIds);   // the sanitized <body>: DOMPurify's own document's, which never loads (below)
   if (doc && doc.kind === "file") dropDimmingClasses(clean);   // an author's dimming class off every figure's ancestors, before any pass of the viewer's own (dropDimmingClasses)
   if (doc && doc.kind === "file") dropPressThrough(clean);     // and off every author element what would let a press pass through it, so the hit test reads it (dropPressThrough)
+  if (doc && doc.kind === "file") dropStackClasses(clean);     // and off every author element the classes that would raise it to the control's stacking level, so the control stays on top (dropStackClasses)
   // Fenced blocks: highlight only a language the fence NAMES and this bundle registers (the same no-guessing rule as
   // langFor; an unnamed block stays plain rather than being painted at random). Then, for EVERY fence, named or not, the
   // chat's own dress (code-block.ts): the per-line rows that number the lines and make a soft-wrap read distinctly from a
@@ -5550,7 +5587,9 @@ function signShown(sign: Element): boolean {
  *  in its own window's coordinates, is the sign or inside it, in the sign's own document (elementFromPoint, which reads the element
  *  a press there would reach, so it sees the viewer's Outline popover, the text-size flyout and an author's element laid over the
  *  figure, from whose markup dropPressThrough has taken the page classes, the inert attribute and the style declarations that would
- *  let a press pass through it, while a control transparent at rest still counts as its own). The samples are the part's centre and its four quarter points:
+ *  let a press pass through it, while a control transparent at rest still counts as its own; author content the hit test does not see
+ *  stays below the control, since dropStackClasses took off the classes that would have raised it to the control's stacking level).
+ *  The samples are the part's centre and its four quarter points:
  *  inside the part, since a sign partly in view is in view and samples over its whole box meet the chrome above the body where
  *  the box leaves it (the sliver of a control's bottom inside the body); and a quarter of the way in, since the control's corners
  *  are rounded, and under a body zoom of 1.25 a point 2px in from a corner falls outside the curve onto the picture. A same-origin
