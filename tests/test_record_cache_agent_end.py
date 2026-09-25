@@ -1676,8 +1676,8 @@ _REPORT_MARKER = (_MARKER + ": a retired row leaves at one of this function's _b
 _ROW_ADDED = "a _bg_tasks row added, guarded by the id's absence"
 _ENDS_QUEUED = ("the record of ends already queued: it names no live agent, and a repeated end is harmless (in the cycle of "
                 "an earlier attempt it counts nothing; with the drop writes off a repeat in a later cycle counts again)")
-_GONE_ROAD = ("SdkBackend._on_session_gone, which queues every agent the dropped object knows when it is not detached, before "
-              "this drop or after its thread ends")
+_GONE_ROAD = ("SdkBackend._on_session_gone, which queues every agent the dropped object knows when it is not detached, after "
+              "this drop, as the object's thread ends")
 # (file, enclosing function, structure, operation) -> one (verdict, the executed road test that proves it, or the reason) per
 # site, in source order. QUEUES: the site's function calls _note_live_agents(..., False) or note_agent_live(..., False)
 # after a removal of a _subagents entry, a _bg_tasks row or a roster, and anywhere for a mirror write; ADD: a call with
