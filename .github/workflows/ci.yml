@@ -136,9 +136,10 @@ jobs:
         # near the 16 GB GitHub documents. The macOS cells stay serial under their 60-minute cap:
         # GitHub documents that runner for a public repository at 3 CPUs and 7 GB (arm64), below
         # the two-worker peak, and two workers have not been measured on it.
-        # The count keys on matrix.os, as timeout-minutes does, and names the one label the
-        # measurement ran on, rather than excluding macOS or matching every Linux runner
-        # (runner.os), so a runner the matrix adds later runs serially until it is measured.
+        # The count keys on matrix.os, as timeout-minutes does, and names the one label whose
+        # documented runner (4 CPUs, 16 GB) the four-CPU measurement was sized to, rather than
+        # excluding macOS or matching every Linux runner (runner.os), so a runner the matrix adds
+        # later runs serially until it is measured.
         # GitHub substitutes the expression into this line before the shell runs it. -n 0 is
         # xdist's in-process run, and pytest refuses -n without xdist, so every cell installs it.
         # The job cap above and its pin in tests/test_ci_bats_bound.py are romp-on/romp PR #2130

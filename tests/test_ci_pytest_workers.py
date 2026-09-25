@@ -8,14 +8,14 @@ documents its Linux runner for a public repository at 4 CPUs and 16 GB), the sui
 memory peak of 6.0 GB and 739 s with two workers at 10.9 GB (decimal, page cache included), about 5 GB a worker, and
 three workers peaked at 15.8 GB. GitHub documents the macOS runner for a public repository at 3 CPUs and 7 GB, below
 the two-worker peak, and two workers have not been measured on it, so the macOS cells stay serial under their 60-minute
-cap. The step's command sets the count through an expression on matrix.os: 2 for ubuntu-latest, the label the
-measurement ran on, and 0 (xdist's in-process run) for any other label, so a runner the matrix adds later runs serially
-too. The pins hold the ubuntu-latest command to one count, 2, and every other runner's to none or 0, and require a
-step before Run pytest that installs pytest-xdist, without which pytest refuses -n, 0 included. The job's cap and its pin in
-tests/test_ci_bats_bound.py are romp-on/romp PR #2130 as merged: their figures and run ids are romp-on/romp's Actions
-runs of its serial suite, and with two workers the measurement puts this fork's Linux cells at about half their serial
-time, well inside that cap. Source pins, as tests/test_ci_bats_bound.py: the workflow text read by line shape, with no
-YAML library in the test deps."""
+cap. The step's command sets the count through an expression on matrix.os: 2 for ubuntu-latest, the label whose
+documented runner (4 CPUs, 16 GB) the four-CPU measurement was sized to, and 0 (xdist's in-process run) for any other
+label, so a runner the matrix adds later runs serially too. The pins hold the ubuntu-latest command to one count, 2, and
+every other runner's to none or 0, and require a step before Run pytest that installs pytest-xdist, without which pytest
+refuses -n, 0 included. The job's cap and its pin in tests/test_ci_bats_bound.py are romp-on/romp PR #2130 as merged:
+their figures and run ids are romp-on/romp's Actions runs of its serial suite, and with two workers the measurement puts
+this fork's Linux cells at about half their serial time, well inside that cap. Source pins, as
+tests/test_ci_bats_bound.py: the workflow text read by line shape, with no YAML library in the test deps."""
 import os
 import re
 import shlex
@@ -144,7 +144,7 @@ class PythonJobWorkers(unittest.TestCase):
 
     def test_the_ubuntu_latest_cells_run_two_workers(self):
         self.assertIn("ubuntu-latest", self.labels, "the python job's matrix no longer names ubuntu-latest, the runner the "
-                                                    "two-worker measurement ran on: re-anchor this pin")
+                                                    "four-CPU measurement was sized to: re-anchor this pin")
         cmd = command_on(self.cmd, "ubuntu-latest")
         counts = worker_counts(cmd)
         self.assertEqual(counts, ["2"], "on ubuntu-latest the Run pytest step must set the xdist worker count once, to 2; it "
@@ -159,10 +159,10 @@ class PythonJobWorkers(unittest.TestCase):
                 cmd = command_on(self.cmd, label)
                 counts = worker_counts(cmd)
                 self.assertIn(counts, ([], ["0"]), "on %s the Run pytest step must run pytest serially, with no -n or -n 0; it "
-                                                   "runs %r, which sets %r. Two workers were measured on ubuntu-latest alone, "
-                                                   "and GitHub documents the macOS runner for a public repository at 3 CPUs "
-                                                   "and 7 GB, below the 10.9 GB peak two workers reached on ubuntu-latest"
-                                                   % (label, cmd, counts))
+                                                   "runs %r, which sets %r. Two workers were measured only under a four-CPU "
+                                                   "budget sized to the ubuntu-latest runner, and GitHub documents the macOS "
+                                                   "runner for a public repository at 3 CPUs and 7 GB, below the 10.9 GB peak "
+                                                   "two workers reached under that budget" % (label, cmd, counts))
 
     def test_a_step_before_it_installs_pytest_xdist(self):
         before = self.steps[:self.at]
