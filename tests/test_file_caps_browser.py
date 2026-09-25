@@ -20,10 +20,15 @@ the REAL chat page of a hermetic kernel in playwright's Chromium and checks ever
      goes to /login too. Signing in again through the /login form brings the page back.
   3. Two sign-ins racing in one browser end, in each tab, either signed in or on /login, never on a page whose requests
      are all refused. Two tabs of a browser that still holds the cookie of the version before this one, opened at the
-     same moment (tabs restored after the upgrade), both end signed in: each is handed the same session and key.
-     That old cookie, holding this kernel's token, is cleared by any response to a request that carries it beside a
-     valid session (a browser sends both when an earlier version, run after this one, set the old cookie again); a
-     browser with no session keeps it, and an old cookie holding another value is never cleared.
+     same moment (tabs restored after the upgrade), are never left refused either. When both tabs' requests carry the
+     old cookie, each is handed the same session and key, and both end signed in. When the second tab's request goes
+     out after the first response has set the session cookie, it carries that cookie instead, its response seeds no
+     key, and its page reads the key the first tab's page stores: a page that reads before that store lands on /login,
+     and opening / again there signs it in. A planted round sets up that order in any engine. The old cookie, holding
+     this kernel's token, is cleared by any response to a request that carries it beside a valid session (a browser
+     sends both after a rollback: an earlier version, run after this one, set the old cookie again, and this version
+     came back with the same token); a browser with no session keeps it, and an old cookie holding another value is
+     never cleared.
   4. A same-origin /file address typed where no markdown renderer runs carries the cap and opens: a code span holding
      one URL, a user todo's text and its link chip (in the chat and in the Waiting pane), and, in the viewer, a figure
      and a link the note writes with the scheme.
@@ -296,14 +301,33 @@ process.exit(0);
 
 MIGRATE = HEAD + r"""
 // two tabs of one browser that still holds the cookie the version before this one set (its value is the serve token),
-// opened at the same moment: each tab's request carries the old cookie, each response migrates it. Each tab must end
-// signed in (a fetch reads /sessions), since both responses hand the browser the same session and the same key. Each
-// migrating response (a document request that carried the old cookie and no session) must set the session cookie and
-// clear the old one. Any later request that still carries the old cookie beside the session must be answered with the
-// clear too. The round ends with a navigation, and a request after it must carry no old cookie. Whether the browser's
-// cookie list still names the old cookie is reported, not asserted: in Firefox the list has named an entry with an empty
-// value that had already expired, which no request carried.
+// opened at the same moment. A tab whose request carries the old cookie and no session is migrated: its response sets
+// the session cookie, clears the old one and seeds the key, and every migrating response hands out the same session
+// and key. So when both tabs' requests carry the old cookie, both end signed in (a fetch reads /sessions). When the
+// second tab's request goes out after the first response has set the session cookie, it carries that cookie instead,
+// its response seeds no key, and its page reads the key the first tab's page stores; a page that reads before that
+// store lands on /login. Either way no tab is left refused in place, and a tab on /login that opens / again ends
+// signed in. A request carrying the old cookie beside the session (a browser sends both after a rollback; none is
+// expected here) must be answered with the clear. The round ends with a navigation, and a request after it must carry
+// no old cookie. Whether the browser's cookie list still names the old cookie is reported, not asserted: in Firefox the
+// list has named an entry with an empty value that had already expired, which no request carried.
 const setOf = async (resp) => (await resp.headersArray()).filter((h) => h.name.toLowerCase() === "set-cookie").map((h) => h.value).join("\n");
+const endOf = async (p) => {
+  await p.waitForFunction(() => !!window.__rompPaneToggle || location.pathname === "/login", null, { timeout: cfg.deadline }).catch(() => {});
+  let st = onLogin(p) ? "login" : await p.evaluate(async () => (await fetch("/sessions")).status).catch(() => "navigated");
+  if (st !== 200 && st !== "login") st = (await waitLogin(p)) ? "login" : st;
+  return st;
+};
+// a tab that ended on /login opens / again, the way back its person takes (null for a tab that did not need it)
+const reopen = async (pages, ends) => {
+  const got = [];
+  for (let j = 0; j < pages.length; j++) {
+    if (ends[j] !== "login") { got.push(null); continue; }
+    await pages[j].goto(cfg.origin + "/").catch(() => {});
+    got.push(await endOf(pages[j]));
+  }
+  return got;
+};
 const runs = [];
 for (let i = 0; i < cfg.rounds; i++) {
   const ctx = await browser.newContext(VIEW);
@@ -323,12 +347,8 @@ for (let i = 0; i < cfg.rounds; i++) {
   } catch (e) {} });
   await Promise.all([p1.goto(cfg.origin + "/"), p2.goto(cfg.origin + "/")]);
   const ends = [];
-  for (const p of [p1, p2]) {
-    await p.waitForFunction(() => !!window.__rompPaneToggle || location.pathname === "/login", null, { timeout: cfg.deadline }).catch(() => {});
-    let st = onLogin(p) ? "login" : await p.evaluate(async () => (await fetch("/sessions")).status).catch(() => "navigated");
-    if (st !== 200 && st !== "login") st = (await waitLogin(p)) ? "login" : st;
-    ends.push(st);
-  }
+  for (const p of [p1, p2]) ends.push(await endOf(p));
+  const reopened = await reopen([p1, p2], ends);
   const jar = await ctx.cookies(cfg.origin);
   const legacyLeft = jar.some((c) => c.name === "romp_token");
   await p1.goto(cfg.origin + "/");
@@ -338,11 +358,43 @@ for (let i = 0; i < cfg.rounds; i++) {
                                     p1.evaluate(async () => (await fetch("/sessions?last=1")).status).catch(() => 0)]);
   const lastSent = (await last.allHeaders())["cookie"] || "";
   const after = await ctx.cookies(cfg.origin);
-  runs.push({ ends, migrating, beside, legacyLeft, sentOldAfterNext: /(^|; )romp_token=/.test(lastSent),
+  runs.push({ ends, reopened, migrating, beside, legacyLeft, sentOldAfterNext: /(^|; )romp_token=/.test(lastSent),
               listedAfterNext: after.some((c) => c.name === "romp_token"), sessions: jar.filter((c) => c.name.startsWith("romp_s_")).length });
   await ctx.close();
 }
 out.runs = runs;
+{ // planted: the second tab's request goes out after the first tab's migrating response has set the session cookie, and
+  // its page runs before the first tab's page stores the key. The first tab's response is fetched (the context's cookie
+  // jar takes its cookies) and held back from its page until the second tab has settled.
+  const ctx = await browser.newContext(VIEW);
+  await ctx.addCookies([{ name: "romp_token", value: cfg.token, url: cfg.origin }]);
+  const p1 = await ctx.newPage(), p2 = await ctx.newPage();
+  let release, fetched;
+  const held = new Promise((res) => { release = res; }), got = new Promise((res) => { fetched = res; });
+  const root = (u) => new URL(u).pathname === "/";
+  await p1.route(root, async (route) => {
+    const resp = await route.fetch();
+    fetched(resp.status());
+    await held;
+    await route.fulfill({ response: resp });
+  });
+  const first = p1.goto(cfg.origin + "/").catch(() => {});
+  const r = { firstStatus: await got };
+  const [q2] = await Promise.all([p2.waitForRequest((q) => new URL(q.url()).pathname === "/" && q.resourceType() === "document", { timeout: cfg.deadline }),
+                                  p2.goto(cfg.origin + "/").catch(() => {})]);
+  const sent2 = (await q2.allHeaders())["cookie"] || "";
+  r.secondSentOld = /(^|; )romp_token=/.test(sent2);
+  r.secondSentSession = /(^|; )romp_s_/.test(sent2);
+  const secondEnd = await endOf(p2);
+  release();
+  await first;
+  const ends = [await endOf(p1), secondEnd];
+  await p1.unroute(root);
+  r.ends = ends;
+  r.reopened = await reopen([p1, p2], ends);
+  out.planted = r;
+  await ctx.close();
+}
 fs.writeSync(1, "RESULT:" + JSON.stringify(out) + "\n");
 await browser.close();
 process.exit(0);
@@ -660,26 +712,45 @@ class ServedFileCapsAndPageKey(unittest.TestCase):
         self.assertTrue(r["paneKeyDropped"], "and drops the stale key")
         self.assertTrue(r["noKeyHop"], "a page with no key goes to /login as it loads")
 
-    def test_two_tabs_migrating_from_the_old_cookie_at_once_both_end_signed_in(self):
-        r = self._drive(MIGRATE, rounds=6)
-        self.assertEqual(len(r["runs"]), 6)
+    MIGRATE_ROUNDS = 6    # the migration scene's natural rounds per run (a longer record for a person sets more in a subclass)
+
+    def test_two_tabs_migrating_from_the_old_cookie_at_once_are_never_left_refused(self):
+        r = self._drive(MIGRATE, rounds=self.MIGRATE_ROUNDS)
+        self.assertEqual(len(r["runs"]), self.MIGRATE_ROUNDS)
         for run in r["runs"]:
-            self.assertEqual(run["ends"], [200, 200], "each tab ends signed in, never both on /login: %r" % r["runs"])
             self.assertTrue(run["migrating"], "a document request carried the old cookie and was migrated: %r" % r["runs"])
             self.assertTrue(all(m["setSession"] and m["cleared"] for m in run["migrating"]),
                             "each migrating response sets the session cookie and clears the old one: %r" % r["runs"])
+            for end in run["ends"]:
+                self.assertIn(end, (200, "login"), "each tab ends signed in or on /login, never refused in place: %r" % r["runs"])
+            if len(run["migrating"]) >= 2:
+                self.assertEqual(run["ends"], [200, 200], "when both tabs' requests were migrated, both end signed in: %r" % r["runs"])
+            self.assertIn(200, run["ends"], "the tab whose response migrated ends signed in: %r" % r["runs"])
+            for end, again in zip(run["ends"], run["reopened"]):
+                if end == "login":
+                    self.assertEqual(again, 200, "a tab on /login that opens / again ends signed in: %r" % r["runs"])
             self.assertEqual(run["sessions"], 1, "one session cookie: %r" % r["runs"])
             self.assertTrue(all(b["cleared"] for b in run["beside"]),
                             "a response to a request carrying the old cookie beside the session clears it: %r" % r["runs"])
             self.assertFalse(run["sentOldAfterNext"], "after the next navigation no request carries the old cookie: %r" % r["runs"])
-        # Reported, not asserted: rounds whose requests carried the old cookie beside the session (each answered with the
-        # clear, above), and rounds where the browser's cookie list still named the old cookie at the end. Firefox's list
-        # has named it in some rounds, as an entry with an empty value that had already expired, which no request carried.
+        planted = r["planted"]
+        self.assertEqual(planted["firstStatus"], 200, "planted: the first tab's response migrated: %r" % planted)
+        self.assertTrue(planted["secondSentSession"] and not planted["secondSentOld"],
+                        "planted: the second tab's request carried the session cookie the first response set: %r" % planted)
+        self.assertEqual(planted["ends"][0], 200, "planted: the first tab ends signed in: %r" % planted)
+        self.assertIn(planted["ends"][1], (200, "login"), "planted: the second tab ends signed in or on /login, never refused in place: %r" % planted)
+        if planted["ends"][1] == "login":
+            self.assertEqual(planted["reopened"][1], 200, "planted: opening / again signs the second tab in: %r" % planted)
+        # Reported, not asserted: rounds where a tab landed on /login (each signed in by opening / again, above), rounds
+        # whose requests carried the old cookie beside the session (each answered with the clear, above), and rounds
+        # where the browser's cookie list still named the old cookie at the end. Firefox's list has named it in some
+        # rounds, as an entry with an empty value that had already expired, which no request carried.
+        landed = sum(1 for run in r["runs"] if "login" in run["ends"])
         sent = sum(1 for run in r["runs"] if run["beside"])
         listed = sum(1 for run in r["runs"] if run["listedAfterNext"])
-        if sent or listed:
-            sys.stderr.write("migration scene: %d of %d rounds sent the old cookie beside the session, each cleared; the cookie "
-                             "list named it at the end of %d\n" % (sent, len(r["runs"]), listed))
+        sys.stderr.write("migration scene: a tab landed on /login in %d of %d rounds; the planted round's second tab ended %r; %d "
+                         "rounds sent the old cookie beside the session, each cleared; the cookie list named it at the end of %d\n"
+                         % (landed, len(r["runs"]), planted["ends"][1], sent, listed))
 
     def test_the_old_cookie_is_cleared_beside_a_session_and_kept_without_one(self):
         r = self._drive(RETAINED, other="an-older-kernels-value")
