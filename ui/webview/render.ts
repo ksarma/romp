@@ -83,6 +83,7 @@ import { injectedHead, type InjectedSource } from "./injected-source";
 import { subTabId, isSubId, subParts, subLabel, gistLines, stepLines, stepsNote, agentFoldLabel, subHeadParts, subWaitTail, openIconSvg, pinIconSvg, type SubMeta, type AgentGist, type AgentGistRow, type GistLine } from "./subagent-view";
 import { previewKind, previewFull, canPreview, fileUrl, retryFailedPreviews, refreshSettledPreviews, installMdImgHeal, mdImgPostPass, setLightboxNav, type LightboxNavEntry } from "./preview";
 import { capAuthoredFileUrls } from "./authored-file-caps";   // every authored-markdown renderer caps the /file URLs its author wrote (the list: authored-file-caps.test.ts)
+import { withFileCap } from "./file-cap";   // a typed address of this origin's /file route carries this page's cap (the code-span link below)
 import { openFileClick, type At } from "./file-view";                  // a clicked file WITH its gesture (pdf-new-tab.test.ts)
 import { openPathLink, linkifyPathTokens, selectionOpenIn } from "./path-links";   // the path matcher the chat's links are made from (a shared module)
 import { linkTarget, type PathLinkOptions } from "./path-links";   // a todo link's target (`docs/a.md#results`, `docs/a.md:12`): the one reader the hosts share (Slice 6 of plans/markdown-viewer.md)
@@ -2732,7 +2733,7 @@ function linkifyFileUris(root: HTMLElement, skipThumbs?: string[], spacePaths?: 
     if (!/^https?:\/\/\S+$/.test(t)) continue;
     if (code.closest("pre") || code.closest("a")) continue;
     const a = document.createElement("a");
-    a.href = t;
+    a.href = withFileCap(t);   // an address of this origin's /file route carries this page's cap (file-cap.ts)
     a.className = "url-code-link";
     a.title = t + " — opens in a new tab";
     code.replaceWith(a);

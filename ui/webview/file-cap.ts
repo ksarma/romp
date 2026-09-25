@@ -138,9 +138,11 @@ function kernelParam(q: URLSearchParams, name: string): string {
   return "";
 }
 
-/** A kernel /file URL as a message's author wrote it (a markdown image, a download link), with this page's cap for the
- *  host, path and sid it names. Any other URL (another origin, another route, a malformed host escape), or a page with no
- *  key, comes back unchanged. The bytes such a URL fetches stay in this browser (an element, or the user's own
+/** A kernel /file URL as someone wrote it (a markdown image, a download link, an address typed into a todo or a code
+ *  span), with this page's cap for the host, path and sid it names. An absolute URL comes back absolute and a
+ *  root-relative one root-relative, so a caller that sorts links by whether they carry a scheme sorts the capped URL
+ *  as it sorted the written one. Any other URL (another origin, another route, a malformed host escape), or a page with
+ *  no key, comes back unchanged. The bytes such a URL fetches stay in this browser (an element, or the user's own
  *  downloads). */
 export function withFileCap(url: string): string {
   try {
@@ -155,6 +157,6 @@ export function withFileCap(url: string): string {
     const cap = fileCap(host, kernelParam(u.searchParams, "path"), kernelParam(u.searchParams, "sid"));
     if (!cap) return url;
     u.searchParams.set("cap", cap);
-    return u.pathname + u.search + u.hash;
+    return /^\s*(?:[a-z][a-z0-9+.-]*:|\/\/)/i.test(url) ? u.href : u.pathname + u.search + u.hash;
   } catch { return url; }
 }

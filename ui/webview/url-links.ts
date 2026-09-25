@@ -25,6 +25,7 @@ import { textUnits, spanHolding, rewriteSpan, DEAD_TEXT } from "./path-links";
 import type { TextSpan } from "./path-links";
 import { installLinkOpener, anchorHrefAt } from "./link-opener";
 import type { OpenerDoc, OpenerPost, OpenerEnv } from "./link-opener";
+import { withFileCap } from "./file-cap";
 
 /** The class the URL anchors this module mints in prose wear; the sheets and the pane opener key on it. */
 export const URL_LINK_CLASS = "url-link";
@@ -110,7 +111,7 @@ export function linkifyUrls(root: HTMLElement, opts: UrlLinkOptions = {}): HTMLA
       if (!span) continue;
       const a = doc.createElement("a");
       a.className = cls;
-      a.setAttribute("href", s.href);   // as an attribute: the openers read getAttribute("href"), and a stand-in without a reflecting property then agrees with the browser
+      a.setAttribute("href", withFileCap(s.href));   // as an attribute: the openers read getAttribute("href"), and a stand-in without a reflecting property then agrees with the browser; a URL of this origin's /file route carries this page's cap (file-cap.ts), the text and title stay as typed
       a.target = "_blank";
       a.rel = "noopener noreferrer";
       a.title = s.href;
@@ -165,7 +166,7 @@ export function urlChipLabel(href: string): string {
 export function urlChip(href: string, chipClass: string): HTMLAnchorElement {
   const a = document.createElement("a");
   a.className = URL_LINK_CLASS + " " + chipClass;
-  a.setAttribute("href", href);
+  a.setAttribute("href", withFileCap(href));   // this origin's /file route carries this page's cap, as linkifyUrls's anchors do
   a.target = "_blank";
   a.rel = "noopener noreferrer";
   a.title = href;

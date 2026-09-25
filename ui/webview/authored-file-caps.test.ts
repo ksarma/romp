@@ -10,6 +10,14 @@
 // its reason rests on, and the census checks the function calls them. sanitizeMd reached any other way (a property access,
 // another name) is a failure naming the site, since a call by another route would count nothing.
 //
+// THE ANCHOR CENSUS. A /file URL can also reach the page as an anchor that no markdown renderer made: a URL typed into a
+// todo's or a note's text, a todo's link chip, a code span holding one URL. The population is DERIVED: every call that
+// creates an anchor element (`createElement("a")` on any document, or the viewer's `el("a", ...)` helper) in the non-test
+// sources under ui/, keyed by its file and the named function that holds it, equal to ANCHORS both ways. An anchor whose
+// href is typed text runs it through withFileCap (file-cap.ts) in that function; one whose href fileUrl builds calls
+// fileUrl there; one that sets no href sets none there; any other says where its href comes from. Anchors minted from a
+// markup string are not read here: the markdown renderers above are that population.
+//
 // THE PASS, in a real browser (headless Chromium through the extension's playwright; skips loudly without one, as the other
 // browser legs do): markdown with every attribute the pass reads, through marked and the real sanitizeMd, then
 // capAuthoredFileUrls under a page key. Each /file and /remote/<host>/file URL comes back with the cap file-cap.ts computes
@@ -37,13 +45,29 @@ const RENDERERS: Record<string, Renderer> = {
   "webview/render.ts:renderFilePreview": { kind: "capped" },      // a hover card's provider HTML
   "webview/render.ts:previewMdClean": { kind: "capped" },         // a hover card's rendered markdown file
   "webview/feed.ts:noticeBodyNodes": { kind: "capped" },          // a notice card's body
-  "webview/file-view.ts:mdBlock": {
-    kind: "disclosed",
-    why: "A file document's figures are re-pointed at /file through fileUrl (rewriteFigureSrcs), which carries the cap, " +
-         "and its links become paths the viewer opens (linkMarkdownAnchors), so no authored kernel URL reaches the browser " +
-         "as written. A URL document is a same-origin .md address (isMarkdownUrl), which is no kernel route.",
-    calls: ["rewriteFigureSrcs", "linkMarkdownAnchors"],
-  },
+  "webview/file-view.ts:mdBlock": { kind: "capped" },            // the viewer's markdown: a /file URL written with a scheme (fileUrl caps the rest)
+};
+
+type AnchorSite = { href: "typed" | "fileUrl" | "none" | "other"; why: string };
+/** Every function that creates an anchor element, by `file:function`, with where its href comes from. */
+const ANCHORS: Record<string, AnchorSite> = {
+  "webview/url-links.ts:linkifyUrls": { href: "typed", why: "a URL typed into a todo's or a note's text, or a file's prose in the viewer" },
+  "webview/url-links.ts:urlChip": { href: "typed", why: "a todo's own link, as its author gave it" },
+  "webview/render.ts:linkifyFileUris": { href: "typed", why: "a code span in a message whose whole text is one URL" },
+  "webview/preview.ts:openLightbox": { href: "fileUrl", why: "the lightbox's Download control" },
+  "webview/file-browse.ts:startDownload": { href: "fileUrl", why: "the file browser's download of a row" },
+  "webview/file-view.ts:startDownload": { href: "other", why: "the URL its callers hand it: the viewer's download address, which fileUrl builds with the cap" },
+  "webview/file-view.ts:apply": { href: "other", why: "the kernel's GitHub address for the open file (fileGitLink), on github.com and never this origin" },
+  "webview/file-view.ts:linkOut": { href: "other", why: "a URL document's own address, opened as it is; a document on this origin is a .md address, which names no kernel route" },
+  "webview/gear.js:lgRender": { href: "other", why: "the login flow's sign-in page, on the provider's own origin" },
+  "webview/pr-links.ts:linkifyTextNode": { href: "other", why: "a GitHub pull request or issue address, on github.com and never this origin" },
+  "webview/feed.ts:makeAskCard": { href: "none", why: "the card's session name, origin, blocked badge and todo mark: click targets" },
+  "webview/feed.ts:updateAskCard": { href: "none", why: "a delegation's name: a click target" },
+  "webview/feed.ts:makeGroupCard": { href: "none", why: "the group's session name: a click target" },
+  "webview/feed.ts:renderTreeNode": { href: "none", why: "a tree row's session name: a click target" },
+  "webview/feed.ts:renderModalNow": { href: "none", why: "the modal's agent name: a click target" },
+  "webview/feed.ts:makeSessHead": { href: "none", why: "a session header's name: a click target" },
+  "webview/feed.ts:ensureFocusSection": { href: "none", why: "the focus section's session name: a click target" },
 };
 
 /** The non-test TypeScript and JavaScript sources under ui/ (the webview's and the timeline's), by path from ui/. */
@@ -146,6 +170,57 @@ test("every capped renderer passes its sanitized body to capAuthoredFileUrls aft
   }
 });
 
+/** Every anchor-creating call under ui/, by `file:function`, with the function's node. */
+function anchorCensus(): { key: string; fn: ts.FunctionLikeDeclaration | null; sf: ts.SourceFile; line: number }[] {
+  const out: { key: string; fn: ts.FunctionLikeDeclaration | null; sf: ts.SourceFile; line: number }[] = [];
+  for (const rel of sources()) {
+    const text = fs.readFileSync(path.join(UI_ROOT, rel), "utf8");
+    if (!/createElement|\bel\(/.test(text)) continue;
+    const sf = ts.createSourceFile(rel, text, ts.ScriptTarget.Latest, true, rel.endsWith(".ts") ? ts.ScriptKind.TS : ts.ScriptKind.JS);
+    const visit = (n: ts.Node): void => {
+      if (ts.isCallExpression(n) && n.arguments.length && ts.isStringLiteralLike(n.arguments[0]) && n.arguments[0].text.toLowerCase() === "a") {
+        const e = n.expression;
+        if ((ts.isPropertyAccessExpression(e) && e.name.text === "createElement") || (ts.isIdentifier(e) && e.text === "el")) {
+          const fn = enclosingFn(n);
+          const line = sf.getLineAndCharacterOfPosition(n.getStart(sf)).line + 1;
+          out.push({ key: rel + ":" + ((fn && nameOf(fn)) || "<anonymous at " + line + ">"), fn, sf, line });
+        }
+      }
+      ts.forEachChild(n, visit);
+    };
+    visit(sf);
+  }
+  return out;
+}
+
+/** Whether `fn` writes an href: an `.href =` assignment or a setAttribute / setAttributeNS of an href. */
+function setsHref(fn: ts.Node, sf: ts.SourceFile): boolean {
+  let found = false;
+  const visit = (n: ts.Node): void => {
+    if (ts.isBinaryExpression(n) && n.operatorToken.kind === ts.SyntaxKind.EqualsToken && ts.isPropertyAccessExpression(n.left) && n.left.name.text === "href") found = true;
+    if (ts.isCallExpression(n) && ts.isPropertyAccessExpression(n.expression) && /^setAttribute(NS)?$/.test(n.expression.name.text)
+        && n.arguments.some((a) => ts.isStringLiteralLike(a) && /(^|:)href$/.test(a.text))) found = true;
+    ts.forEachChild(n, visit);
+  };
+  visit(fn);
+  return found;
+}
+
+test("every site under ui/ that creates an anchor is listed with where its href comes from, and a typed href is capped where it is minted", () => {
+  const sites = anchorCensus();
+  assert.ok(sites.length >= Object.keys(ANCHORS).length, "the census found the anchor sites (a census that finds nothing proves nothing): " + sites.length);
+  assert.deepEqual(Array.from(new Set(sites.map((s) => s.key))).sort(), Object.keys(ANCHORS).sort(),
+    "every function that creates an anchor is listed in ANCHORS (a new one: say where its href comes from, and cap a typed /file URL with withFileCap), and every listed one still does");
+  for (const s of sites) {
+    const a = ANCHORS[s.key];
+    assert.ok(s.fn, s.key + ": the anchor is made inside a function");
+    if (a.href === "typed") assert.ok(callsIn(s.fn!, s.sf, "withFileCap").length > 0, s.key + ": a typed href is run through withFileCap, so this origin's /file URL carries the cap");
+    else if (a.href === "fileUrl") assert.ok(callsIn(s.fn!, s.sf, "fileUrl").length > 0, s.key + ": the href is built by fileUrl, which adds the cap");
+    else if (a.href === "none") assert.ok(!setsHref(s.fn!, s.sf), s.key + ": listed as setting no href, and it sets none (one that does is listed by where it comes from)");
+    else assert.ok(a.why.length > 30, s.key + ": says where its href comes from");
+  }
+});
+
 // ── the pass itself, in a real browser ──────────────────────────────────────────────────────────────────
 const BUILD = { bundle: true, write: false, format: "iife", platform: "browser", target: "es2020",
   nodePaths: [path.join(EXT, "node_modules")], external: ["*.png", "*.svg", "*.woff", "*.ttf", "../media/*.woff2"], logLevel: "silent" };
@@ -178,6 +253,8 @@ const MD = [
   `<svg xmlns:xlink="${XLINK}" width="10" height="10"><image href="/file?${Q}"/><image xlink:href="/file?${Q}"/><a xlink:href="/file?${Q}&amp;download=1"><text>svg link</text></a></svg>`,
   '<a href="https://example.invalid/file?path=x">elsewhere</a> <a href="/files?path=x">files pane</a> <a href="/media/x.svg">media</a>',
   '<img alt="remote host" src="https://example.invalid/p.png">',
+  "![absolute image](http://romp.test/file?" + QM + ")",
+  "[absolute link](http://romp.test/file?" + QM + "&download=1)",
 ].join("\n\n");
 
 let pw: any = null;
@@ -235,7 +312,9 @@ test("capAuthoredFileUrls, in a browser, caps every /file URL an author wrote in
     const where = new Set(got.refs.filter((r: Ref) => /[?&]cap=/.test(r.url)).map((r: Ref) => r.where));
     for (const w of ["img@src", "a@href", "img@srcset", "source@srcset", "video@poster", "video@src", "track@src", "audio@src", "image@href", "image@xlink:href", "a@xlink:href"])
       assert.ok(where.has(w), "the pass capped a /file URL in " + w + ": " + JSON.stringify(Array.from(where)));
-    assert.ok(capped >= 12, "all the authored /file URLs were capped: " + capped);
+    assert.ok(capped >= 14, "all the authored /file URLs were capped: " + capped);
+    const absolute = got.refs.filter((r: Ref) => r.url.startsWith("http://romp.test/file?") && /[?&]cap=/.test(r.url)).map((r: Ref) => r.where).sort();
+    assert.deepEqual(absolute, ["a@href", "img@src"], "a /file URL written with its scheme is capped and stays absolute");
     assert.ok(got.refs.some((r: Ref) => r.url === "https://example.invalid/p.png"), "an image on another host is left as written");
     assert.deepEqual(errors, [], "no page errors");
   } finally {

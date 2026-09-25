@@ -133,21 +133,21 @@ const PY_DRIVER = [
   "    need, fhost = ns['_need'](u.path)",
   "    got = (q.get('cap') or [''])[0]",
   "    want = cap(src['key'], fhost, (q.get('path') or [''])[0], (q.get('sid') or [''])[0]) if need == 'file' else ''",
-  "    out['urls'].append([need, got == want and got != ''])",
+  "    out['urls'].append([need, got == want and got != '' and ns['_one_file_term_each'](q)])",
   "sys.stdout.write(json.dumps(out))",
 ].join("\n");
 
 /** The kernel's reading of the triples and URLs under `key`, by the kernel's own derivation code. */
 function kernelReads(key: string, triples: [string, string, string][], urls: string[]): { inputs: string[]; caps: string[]; urls: [string, boolean][] } {
-  const code = [kernelAssign("_FILE_CAP_LABEL"), kernelDef("_hmac_b64"), kernelDef("_cap_input"), kernelDef("_need", "    ").replace(/^@staticmethod\n/, "")];
+  const code = [kernelAssign("_FILE_CAP_LABEL"), kernelDef("_hmac_b64"), kernelDef("_cap_input"), kernelDef("_one_file_term_each"), kernelDef("_need", "    ").replace(/^@staticmethod\n/, "")];
   const r = spawnSync("python3", ["-c", PY_DRIVER], { input: JSON.stringify({ code, key, triples, urls }), encoding: "utf8", timeout: 60000, maxBuffer: 64 * 1024 * 1024 });
   assert.equal(r.status, 0, r.stderr);
   return JSON.parse(r.stdout);
 }
 
 test("at source: the kernel reads the cap, path and sid as the parity driver does (first value, parse_qs) and do_GET parses the query with parse_qs", () => {
-  assert.match(KERNEL, /_ct_eq\(\(q\.get\("cap"\) or \[""\]\)\[0\], _file_cap\(\s*sess, fhost, \(q\.get\("path"\) or \[""\]\)\[0\], \(q\.get\("sid"\) or \[""\]\)\[0\]\)\)/,
-               "_authorize compares the first cap against _file_cap over the first path and sid, the reads PY_DRIVER mirrors");
+  assert.match(KERNEL, /_one_file_term_each\(q\) and _ct_eq\(\(q\.get\("cap"\) or \[""\]\)\[0\], _file_cap\(\s*sess, fhost, \(q\.get\("path"\) or \[""\]\)\[0\], \(q\.get\("sid"\) or \[""\]\)\[0\]\)\)/,
+               "_authorize refuses a repeated path, sid or cap, then compares the first cap against _file_cap over the first path and sid, the reads PY_DRIVER mirrors");
   assert.match(KERNEL, /need, fhost = self\._need\(urlparse\(getattr\(self, "path", ""\) or ""\)\.path\)/, "_authorize classes the request path through _need, which PY_DRIVER runs");
   assert.match(KERNEL, /def do_GET\(self\):\n(?:.*\n){0,6}?\s+q = parse_qs\(u\.query\)/, "do_GET parses the query with parse_qs's defaults");
 });
@@ -212,7 +212,8 @@ test("withFileCap puts in every authored spelling of a /file URL the cap the ker
   ];
   const out = withPage(key, () => authored.map((u) => withFileCap(u)));
   out.forEach((u, i) => assert.notEqual(u, authored[i], "capped: " + authored[i]));
-  const read = kernelReads(key, [], out.map((u) => "http://romp.test" + u));
+  out.forEach((u, i) => assert.equal(/^http:\/\//.test(u), /^http:\/\//.test(authored[i]), "an absolute URL stays absolute and a root-relative one root-relative: " + authored[i]));
+  const read = kernelReads(key, [], out.map((u) => new URL(u, "http://romp.test/chat").href));
   read.urls.forEach(([need, ok], i) => {
     assert.equal(need, "file", authored[i]);
     assert.ok(ok, "the kernel reads a valid cap in the capped form of: " + authored[i]);

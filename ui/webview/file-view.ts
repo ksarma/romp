@@ -30,6 +30,7 @@ import { headVerdict, mtimeMoved, ABSENT } from "./file-comments-model";   // th
 import { kernelUrl } from "./media";
 import { quoteSrcLabel } from "./docreview";
 import { fileCommentsAction, panelMark } from "./file-comments";
+import { capAuthoredFileUrls } from "./authored-file-caps";   // a /file URL the document names with a scheme carries this page's cap (mdBlock)
 import { pictureDest } from "./file-comments";       // the authored source a failed figure's label names (armFigureLabels): the panel's own rule, not a second reading of data-fv-src
 import { readPlace, seatPlaceOutcome, followPlace, blockHolding, blockIndexAt, type Place } from "./reader-place";   // the reader's place across a paint (Slice 2 of plans/markdown-viewer.md); blockHolding: the block an open's `{ offset }` names, blockIndexAt: the block a remembered place's span starts, followPlace: the last measured place into the text a reload landed under a boxless body (Slice 6)
 import { sourceBlockSpans, renderedBlockElements } from "./anchor-map";   // the block table and its elements, for an open's `{ offset }` in the Rendered view (Slice 6 of plans/markdown-viewer.md)
@@ -4302,6 +4303,12 @@ function mdBlock(text: string, doc?: MdDocLoc): HTMLElement {
     // change in the gear reaches the next paint, and an open document through the settings listener the gate installs.
     gateRemoteFigures(clean, document.baseURI);
   }
+  // A /file URL of this origin that the document names as written, with its scheme (a figure `![](http://<this host>/file?...)`
+  // or a link to one), carries this page's cap, as every authored-markdown renderer's does (authored-file-caps.ts): the
+  // rewrite above re-points relative and absolute-path figures through fileUrl, which caps them, and leaves a URL with a
+  // scheme as written. Before the adoption, like every pass that sets a fetching attribute (the chain block above); an
+  // absolute URL stays absolute (file-cap.ts withFileCap), so linkMarkdownAnchors below still opens such a link in a new tab.
+  capAuthoredFileUrls(clean);
   // Adopted as they are, no re-parse here or after (the fence pass's re-parse ran above, before the chain), every fetching
   // attribute gated or repointed above, so the adoption starts no fetch to an unlisted host and none at a pre-rewrite URL, in
   // any engine; what it does start is the fetch of every figure left with a live attribute, the folder's through /file and an

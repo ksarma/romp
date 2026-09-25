@@ -7,9 +7,12 @@
 //
 // What the pass reads: every attribute a figure fetches through (figure-gate.ts figureRefs: an img's src and srcset, a
 // source's src and srcset, a video's src and poster, an audio's and a track's src, an svg image's href and xlink:href), and
-// every anchor's href and xlink:href. What it leaves: an svg's paint references and any CSS url(), which name documents
-// rather than files (a /file URL there is refused and draws nothing), and every URL that is not this origin's /file or
-// /remote/<host>/file route. With no page key (the VS Code webview) nothing changes.
+// every anchor's href and xlink:href. What it leaves: an svg's paint references and any CSS url(), which the pass does not
+// read (a /file URL there is refused and draws nothing), and every URL that is not this origin's /file or
+// /remote/<host>/file route. A URL written with a scheme stays absolute (file-cap.ts withFileCap). With no page key (the
+// VS Code webview) nothing changes. The surfaces that turn typed text into links outside the markdown renderers (a todo's
+// or a note's URL, a todo's link chip, a code span holding one URL) cap as they mint each anchor, through withFileCap
+// (url-links.ts, render.ts); the census of every site that creates an anchor holds them (authored-file-caps.test.ts).
 import { figureRefs, parseSrcset, serializeSrcset } from "./figure-gate";
 import { XLINK_NS } from "./md-links";
 import { withFileCap, hasPageKey } from "./file-cap";

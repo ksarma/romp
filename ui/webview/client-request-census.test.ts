@@ -123,6 +123,33 @@ test("every request primitive under ui/ is a listed site with its road to the ke
     "a new request primitive under ui/ carries no page key or cap unless it is written to: list it in UI_SITES with the road it takes, or use fetch (the wrapper adds the key), fileUrl (the cap) or a dial that appends __rompKeyQ()");
 });
 
+test("pdf.js is handed the PDF's bytes, never an address it would fetch in its worker", () => {
+  // The one worker the pages start is pdf.js's (UI_SITES above). A fetch inside a worker runs without the page-key script,
+  // and the fetch census (fetch-wrapper-census.test.ts) reads a bare fetch as the wrapped global, so what keeps the worker
+  // from requesting anything of the kernel is what getDocument is given: the bytes the page already fetched through the
+  // wrapper, and no url, cMapUrl, standardFontDataUrl, wasmUrl or iccUrl that would send pdf.js to fetch on its own.
+  const calls: string[] = [];
+  for (const rel of sources()) {
+    const text = fs.readFileSync(path.join(UI_ROOT, rel), "utf8");
+    if (!text.includes("getDocument")) continue;
+    const sf = ts.createSourceFile(rel, text, ts.ScriptTarget.Latest, true, rel.endsWith(".ts") ? ts.ScriptKind.TS : ts.ScriptKind.JS);
+    const visit = (n: ts.Node): void => {
+      if (ts.isCallExpression(n) && ts.isPropertyAccessExpression(n.expression) && n.expression.name.text === "getDocument") {
+        const arg = n.arguments[0];
+        const where = rel + ":" + holder(n);
+        assert.ok(arg && ts.isObjectLiteralExpression(arg), where + ": getDocument is handed an options object, not an address");
+        const keys = (arg as ts.ObjectLiteralExpression).properties.map((p) => (p.name ? p.name.getText(sf) : "<spread>"));
+        assert.ok(keys.includes("data"), where + ": it is handed the bytes (data)");
+        for (const k of keys) assert.ok(!/url$|^<spread>$/i.test(k), where + ": no address and no spread options pdf.js could fetch from: " + k);
+        calls.push(where);
+      }
+      ts.forEachChild(n, visit);
+    };
+    visit(sf);
+  }
+  assert.deepEqual(calls, ["webview/pdf-chunk.ts:makeRender"], "the one getDocument call, in the renderer makeRender returns (a new one is judged here)");
+});
+
 test("every listed socket dial builds its URL through a function that appends the page key", () => {
   const { fns } = uiCensus();
   for (const [site, builder] of Object.entries(DIAL_BUILDERS)) {
