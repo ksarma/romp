@@ -246,7 +246,8 @@ const ledger = read('upstream', '2026-09-18-track-guard-non-literal-targets.md')
 // name another system's list adds), anywhere in a word (nonINT, INThandlers, unSIGTHR). A name in lower or mixed case glued to letters beyond
 // an inflection is not read, since in lower case a name opens or ends many English words (print, still, interrupt, terminal, pipeline): the
 // third boundary the README pin states. signalNamesIn's text, the union of the two runs and nothing else, is the one reader every witness and
-// the README pin run, and THE READER pin in the test below holds that text.
+// the README pin run, and THE READER pin in the test below holds that text; THE SOURCE pin after it holds the line that declares it and the
+// one binding of each name it resolves.
 const SIGNAL_NAMES = ['HUP', 'INT', 'QUIT', 'ILL', 'TRAP', 'ABRT', 'IOT', 'BUS', 'FPE', 'KILL', 'USR1', 'SEGV', 'USR2', 'PIPE', 'ALRM', 'TERM',
   'STKFLT', 'CHLD', 'CLD', 'CONT', 'STOP', 'TSTP', 'TTIN', 'TTOU', 'URG', 'XCPU', 'XFSZ', 'VTALRM', 'PROF', 'WINCH', 'IO', 'POLL', 'PWR', 'SYS',
   'RTMIN', 'RTMAX', 'EMT', 'INFO', 'EXIT', 'ERR', 'DEBUG', 'RETURN', 'ZERR'];
@@ -317,6 +318,41 @@ test('the install guide, the hook\'s README row and the ledger entry say a name 
   const READER = '(text) => [...new Set([...(text.match(SIGNAL_WORD) || []), ...(text.match(SIGNAL_UPPER) || [])])]';
   assert.deepEqual({ signalNamesIn: Function.prototype.toString.call(signalNamesIn), flags: [SIGNAL_WORD.flags, SIGNAL_UPPER.flags] }, { signalNamesIn: READER, flags: ['gi', 'g'] },
     'THE READER: signalNamesIn is the union of SIGNAL_WORD\'s and SIGNAL_UPPER\'s matches, in that order, and nothing else, and the two patterns carry the flags stated, so what the witnesses and the premise pin hold of the two patterns is what the README pin reads; a rewrite of the text before or between the two runs, or of the names after them, reds here');
+  // THE SOURCE (the reviewer's ruling on the forty-fifth commit): THE READER compares signalNamesIn's text at run time, and a declaration
+  // rewritten to take SIGNAL_WORD, SIGNAL_UPPER or Set as a wrapper's parameter around the same text keeps that text equal, as does Set
+  // bound at module level; so this pin reads the file's own source, where either rewrite has to stand. The file holds DECLARATION,
+  // `const signalNamesIn = ` and READER, as one whole line. Then each name the reader resolves is bound on one line of the file, and Set on
+  // none. With that line blanked and every identifier that spells the name (unicode escapes decoded) turned into eval, which module code
+  // can neither bind nor assign, node's parser still accepts the file, so no other line binds or assigns the name in any scope, a call
+  // site's or a nested function's included; and a let of the name appended to the whole file is refused as a redeclaration, so that line
+  // binds the name at module level and is not text in a comment or a string, nor a declaration inside a block or a function.
+  // signalNamesIn's line is DECLARATION, and SIGNAL_WORD's and SIGNAL_UPPER's are the lines that open their declarations, so every pin that
+  // reads a pattern by name reads the object the reader resolves; with no line for Set, the file binds and assigns it nowhere, and the Set
+  // the reader constructs is the realm's (an assignment reds as a binding does, so `Set = ...`, which would replace the built-in where it
+  // stands, reds here too; a replacement made through globalThis or a property descriptor is a realm road, under THE REALM's precondition
+  // below). The parser is node's own (`node --check`, which runs nothing, in a separate process), since a regular expression over the text
+  // cannot tell code from a comment or see a destructured or escaped binding; the census's witnesses show that it reads those
+  const SOURCE = fs.readFileSync(fileURLToPath(import.meta.url), 'utf8');
+  const DECLARATION = `const signalNamesIn = ${READER};`;
+  const lines = SOURCE.split('\n');
+  assert.equal(lines.filter((l) => l === DECLARATION).length, 1, 'THE SOURCE: the file holds the reader\'s declaration, `const signalNamesIn = ` and READER, as one whole line; a declaration rewritten around the same text (a pattern or Set taken as a wrapper\'s parameter, a text THE READER still reads as READER) reds here');
+  const parse = (text) => spawnSync(process.execPath, ['--input-type=module', '--check', '-'], { input: text, encoding: 'utf8', env: {}, timeout: 60000 });
+  const asEval = (text, name) => text.replace(/(?:[$\p{ID_Continue}\u200c\u200d]|\\u[0-9A-Fa-f]{4}|\\u\{[0-9A-Fa-f]+\})+/gu,
+    (id) => (id.replace(/\\u(?:([0-9A-Fa-f]{4})|\{([0-9A-Fa-f]+)\})/g, (_, a, b) => String.fromCodePoint(Math.min(parseInt(a || b, 16), 0x10ffff))) === name ? 'eval' : id));
+  for (const w of ['const f = () => () => { { var S\\u0065t; } };', 'const { a: [, ...Set] } = { a: [] };', "import { x as Set } from 'y';", 'class \\u{53}et {}', 'Set = 1;']) {
+    assert.match(parse(asEval(w, 'Set')).stderr, /SyntaxError/, `the census reads ${w} as binding or assigning Set`);
+  }
+  const plain = parse(asEval("new Set([1]); Set.prototype.add; ({ Set: 1 }).Set; (x) => Set; /* Set = 1 */ 'var Set';", 'Set'));
+  assert.equal(plain.status, 0, `the census reads a construction, a property, a key, a reference, a comment and a string as neither binding nor assigning Set: ${plain.stderr}`);
+  for (const [name, declares] of [['signalNamesIn', (l) => l === DECLARATION], ['SIGNAL_WORD', (l) => l.startsWith('const SIGNAL_WORD = ')], ['SIGNAL_UPPER', (l) => l.startsWith('const SIGNAL_UPPER = ')]]) {
+    assert.equal(lines.filter(declares).length, 1, `THE SOURCE: one line of the file declares ${name}`);
+    const elsewhere = parse(asEval(lines.map((l) => (declares(l) ? '' : l)).join('\n'), name));
+    assert.equal(elsewhere.status, 0, `THE SOURCE: no line but its declaration binds or assigns ${name}, at module level or in any function or block, so every reading of the name resolves that declaration: ${elsewhere.stderr}`);
+    const again = parse(`${SOURCE}\nlet ${name};`);
+    assert.ok(again.status === 1 && again.stderr.includes(`SyntaxError: Identifier '${name}' has already been declared`), `THE SOURCE: ${name}'s declaration line binds it at module level, and is not text in a comment or a string nor a declaration inside a block or a function: ${again.status} ${again.stderr}`);
+  }
+  const bound = parse(asEval(SOURCE, 'Set'));
+  assert.equal(bound.status, 0, `THE SOURCE: the file binds and assigns Set nowhere, at module level or in any function or block, so the Set signalNamesIn constructs is the realm's; Set bound at module level, which THE READER cannot see, reds here: ${bound.stderr}`);
   // the witnesses of the two patterns' reach (the thirty-ninth commit): every name in each inflected form, bare and with SIG, as spelled and in
   // lower case, is read by SIGNAL_WORD, and every name glued to letters on either side in upper case by SIGNAL_UPPER, so a mutation that drops
   // an ending, the doubled letter, the dropped e or the glued reading reds here even while the committed row holds no such word
@@ -347,13 +383,19 @@ test('the install guide, the hook\'s README row and the ledger entry say a name 
   // RegExp global, unicode and unicodeSets getters, the Set constructor, Set.prototype.add, Set.prototype[Symbol.iterator] and the set
   // iterator's next, and Array.prototype[Symbol.iterator] and the array iterator's next; each witness reads its result with
   // Array.prototype.includes; the premise pin reads each pattern's source through the RegExp source getter; the flag assertion reads the
-  // RegExp unicode and unicodeSets getters; and THE READER reads signalNamesIn's text through Function.prototype.call and
+  // RegExp unicode and unicodeSets getters; THE READER reads signalNamesIn's text through Function.prototype.call and
   // Function.prototype.toString, and the flags through the RegExp flags getter and the eight flag getters it calls (hasIndices, global,
-  // ignoreCase, multiline, dotAll, unicode, unicodeSets, sticky). Out of scope, as one limit: a test that rewrites what a reading is handed
-  // (the row, or rest cut from it), that replaces a built-in or an accessor (where it stands, or for a pattern alone by an own property, a
-  // subclass or a proxy), or that rebinds a name the reading resolves (signalNamesIn at a call site, or SIGNAL_WORD, SIGNAL_UPPER or Set
-  // around signalNamesIn), before, between or after the readings; each changes the test itself, as an edit to an assertion's expected side
-  // does
+  // ignoreCase, multiline, dotAll, unicode, unicodeSets, sticky); and THE SOURCE reads this file through fs.readFileSync, cuts it with
+  // String.prototype.split, String.prototype.startsWith and Array.prototype.filter, map and join (and the Array [Symbol.species] getter
+  // filter and map read), rewrites it with String.prototype.replace, RegExp.prototype[Symbol.replace], RegExp.prototype.exec, the RegExp
+  // global and unicode getters, parseInt, Math.min and String.fromCodePoint, walks its tables with Array.prototype[Symbol.iterator] and the
+  // array iterator's next, reads the parser's answer with String.prototype.includes, and hands each text through
+  // child_process.spawnSync to node's parser, a separate process whose realm is not this one. Out of scope, as one limit, the residual of
+  // that precondition: a test that rewrites what a reading is handed (the row, or rest cut from it) or that replaces a built-in or an
+  // accessor (where it stands, or for a pattern alone by an own property, a subclass or a proxy), before, between or after the readings;
+  // each changes the test itself, as an edit to an assertion's expected side does. A name the reader resolves, rebound in this file, is not
+  // in that limit (a pattern or Set taken as a wrapper's parameter around signalNamesIn's text, Set bound at module level, signalNamesIn or
+  // a pattern bound again in any scope): it is text in the file, and THE SOURCE pin holds that text
   assert.ok(!SIGNAL_WORD.unicode && !SIGNAL_WORD.unicodeSets, 'the boundary witness runs every UTF-16 code unit, the units SIGNAL_WORD reads while it has no u or v flag; with either flag it reads a character above U+FFFF as one unit, and the witness must run those');
   // THE PREMISE the witnesses rely on for every form but the lower-case name (the forty-second commit, after the reviewer's verifier found
   // the forty-first commit's witnesses green under three mutants that each leave a README word unread: a SIG spelling unread after U+00A0, an
