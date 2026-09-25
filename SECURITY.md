@@ -196,73 +196,149 @@ the seven pane pages, the token login page, the too-large page and /sw.js, with
 the shim, the timeline boot and the shell scripts they inline), are read from
 kernel.py's syntax tree and scanned as browser text keyed kernel/kernel.py plus
 tool, with the DOM loads counted. The routes are derived from the calls of
-`_send` the scan reads (spelled `_send(...)` or `<x>._send(...)`; a call
-through a name computed at run time is not read) and every Content-Type header
-written outside `_send`, in every scanned Python file. A `_send` call's content
-type is read through the definition it reaches: the kernel's Handler._send
-writes its `ctype` parameter, so the call's third argument or its `ctype=`
-keyword; the postal bus's writes application/json; the session host's and its
-transport's write a frame to a Unix socket and answer no HTTP request
-(FRAME_WRITERS), and any other definition that writes no Content-Type fails the
-run. The type is read through a module name no code writes after binding it
-(one module-level assignment binds it, nothing else at module level binds it,
-and nothing in the file writes that name, in any scope: a subscript store or
-delete, a call `<name>.<method>(` of a method _MUTATORS or _DUNDER_MUTATORS
-lists, a call of such a method on a type _CONTAINER_TYPES lists with the name as
-its first argument (`dict.update(<name>, ...)`), a binding in a function that
-declares the name `global` (as the target of an assignment, an augmented
-assignment, a loop, a comprehension, a with or a walrus, or by an import, a def
-or class statement or an except clause) or a module-level augmented assignment),
-through a local whose every binding is read
-and through a dict literal's values; the part before any `;`, stripped and
-lower-cased, is compared with the types a browser runs script from
-(SCRIPT_TYPES: text/html; the XML types text/xml, application/xml, text/xsl and
-any type with a `+xml` suffix, image/svg+xml and application/xhtml+xml among
-them; and text/javascript under each name a browser takes for JavaScript,
-application/javascript among them). A script-running route's page body is the
-call's second positional argument, read only when the definition the call
-reaches writes its own second positional parameter as the body (its one
-`.write(<name>)` names that parameter) and the call passes that argument
-positionally, with no starred argument before it and no `**`; any other
-script-running call (a keyword body, a starred or `**` call, a definition whose
-written body is another parameter, a local or an expression) fails the run by
-name. The page function of each script-running route is followed to the text it
-returns or inlines. In that text the served pass reads a BoolOp's operands, a
-method call's receiver and a subscript's container when they name a module
-constant (a name one module-level assignment binds and nothing else binds
-there) or a local, the receiver of `.encode` or `.format_map` whatever it is, a
-class attribute the class body binds, a loop, unpacking or with target from its
-source, and a local container's appended or stored values; it passes over a base
-that carries no page text (an import that is its name's one module-level binding
-and is not rebound, a builtin that no module-level binding shadows and that is
-not rebound, a parameter, an except name, or a name the function binds from one
-of those), and over a bare module name that is such an import or such a builtin,
-or a function or a class that is its name's one module-level binding and is not
-rebound; a name is rebound when a function binds it under `global` or a
+`_send` the scan reads (spelled `_send(...)` or `<x>._send(...)`; a call through
+a name computed at run time is not read) and every Content-Type header written
+outside `_send`, in every scanned Python file. A `_send` call's content type is
+read through the definition it reaches, the one def or async def statement that
+binds `_send` in its file, direct in the call's own class body (a call through
+self) or in the module (a bare call): the kernel's Handler._send writes its
+`ctype` parameter, so the call's third argument or its `ctype=` keyword; the
+postal bus's writes application/json; the session host's and its transport's
+write a frame to a Unix socket and answer no HTTP request (FRAME_WRITERS), and
+any other definition that writes no Content-Type fails the run. So does each
+`_send` call in a file that binds `_send` more than once outside function bodies
+(the module and every class body counted together, a class body a function body
+defines included, since a class body is no function body, in any binding form
+but a comprehension's target, which binds only in its comprehension) or other
+than by one def statement direct in a class body or the module, or where a
+function or a class body binds it under a `global` declaration, rebinding the
+module's name at run time, each bare call that reaches a `_send` bound inside a
+function, a lambda, a
+comprehension or a class body around it, in any form (a parameter, a nested def,
+a loop target, a lambda's parameter and a comprehension's target among them; the
+line names the scope and the binding), each call that reaches no definition the
+census reads, the line saying why (a `_send` the call's own class body does not
+bind, for a call through self: inherited or set at run time; one reached through
+an object other than self, or through an attribute outside any class body; a
+`_send` no scope the bare call
+looks it up in binds, the module included; and, in a file that names `_send`
+nowhere but as the called name of those calls, so binds it nowhere at all, a
+definition the file does not hold), each call to a definition
+carrying any decorator, whose
+parameters the census does not read, and each bare call in a module that holds a
+star import. An override of `_send` in a subclass that another file defines is
+not read: a call
+through self is typed through its own class body's definition. The type is read
+through a module name no code writes after binding it (one plain single-name
+assignment binds it as a top-level statement, nothing else at module level binds
+it, a walrus in a def's
+or a class's header included, the module holds no star import, and nothing in
+the file writes that name, in any scope: a subscript store or delete, a call
+`<name>.<method>(` of a method _MUTATORS or _DUNDER_MUTATORS lists, a call of
+such a method on a type _CONTAINER_TYPES lists with the name as its first
+argument (`dict.update(<name>, ...)`), a binding in a function that declares the
+name `global` (as the target of an assignment, an augmented assignment, a loop,
+a comprehension, a with or a walrus, or by an import, a def or class statement
+or an except clause) or a module-level augmented assignment), through a local
+whose every binding is read (a walrus in a nested def's, class's or lambda's
+header is a binding it does not read) and through a dict literal's values; the
+part before any `;`, stripped and lower-cased, is compared with the types a
+browser runs script from (SCRIPT_TYPES: text/html; the XML types text/xml,
+application/xml, text/xsl and any type with a `+xml` suffix, image/svg+xml and
+application/xhtml+xml among them; and text/javascript under each name a browser
+takes for JavaScript, application/javascript among them). A script-running
+route's page body is the call's second positional argument, read only when the
+call passes it positionally, with no starred argument before it and no `**`, and
+the definition's one output is its one `<x>.write(<its second positional
+parameter>)`, nothing in a method's definition binding self again, in any form
+(a lambda's or a nested def's parameter among them), or declaring it global,
+every call in the definition being one the census reads: that
+write; send_response, send_header or end_headers on self; getattr of self with a
+string-constant name; isinstance, str or len, where neither the definition nor
+the module binds the name and the module holds no star import; or a method
+called on a parameter or on a value built from parameters and literals
+(`body.encode`, `(headers or {}).items()`), self and the name the write's stream
+hangs from never counting as a parameter here, and a parameter the definition
+rebinds counting only while every rebinding is such a value. Any other
+script-running call fails the run by name, its reason naming the road (a second
+write, a write through an alias, a print to a stream and a call the reader does
+not read among the reasons), among them a keyword body, a starred or `**` call,
+a definition whose one
+write is of another parameter, a local or an expression, or that writes nothing,
+and in the definition any other call, any other read of an attribute named
+`write`, `writelines`, `send`, `sendall`, `sendfile` or `sendmsg`, called or
+not, a string constant equal to one of those names and a reference to the
+write's receiver other than as its receiver. A stream the definition reaches
+through no name it spells (a module global holding the socket, written by a
+method the definition calls on self) is not read. The page function of each
+script-running route is followed to the text it returns or inlines, and a
+parameter a followed call omits is read from its default value as that argument
+would be, in the scope the def statement runs in (a default the pass cannot read
+is refused by name, among them a method's default naming a name its class body
+binds). A name the
+page function's scope binds, or for a function defined in it an enclosing
+function's scope, is decided by that scope and never by the module's binding: a
+local (a parameter the body also assigns, a walrus in a nested def's, class's or
+lambda's header, and a comprehension's target inside its comprehension among
+them) is read from its values as a bare name or a receiver and refused as a
+callee; a parameter or an except name is a value slot, refused as a callee when
+it shares a module function's name; a function defined in the page function is
+followed as a callee only as its name's one binding there; a name the function
+declares `global` is the module's binding, read as such; and any other binding
+refuses, a comprehension's target elsewhere in the function, a function-level
+import, a nested class, a del, a name a nonlocal declaration rebinds and a name
+bound two ways (two different binding forms in one scope, or a def or a class
+statement beside any other binding of it; every value form, an assignment,
+augmented or annotated, a loop, with or unpacking target and a walrus, is one
+form, and a parameter the body also binds by one is one local, read from its
+values) among them. In that text the served pass reads a
+BoolOp's operands, a method call's receiver and a subscript's container when
+they name a module constant (a name one plain single-name assignment binds as a
+top-level statement and nothing else binds at module level, in a module with no
+star import) or a local, the
+receiver of `.encode` or `.format_map` whatever it is, a class attribute the
+class body binds, a loop, unpacking or with target from its source, and a local
+container's appended or stored values; it passes over a base that carries no
+page text of its own (in a module that holds no star import, a top-level import
+statement that is its name's one module-level binding and is not rebound, or a
+builtin that no module-level binding shadows and that is not rebound, a call of
+super() excepted, whose methods are a base class's; a parameter, an except name,
+or a name the function binds from one of those),
+reading as text the arguments of a call of such a base or of a method on one
+(`dict(X).get(k)` and `json.loads(json.dumps(X))[0]` read X), and over a bare
+module name that is such an import or such a builtin, or, in such a module, a
+top-level def or class statement that is its name's one module-level binding and
+is not rebound; a name is rebound when a function binds it under `global` or a
 statement at module level writes it, in one of the forms listed above for a
 route's type, and by nothing else: a function's `X = []` of a local of the same
 name, or its `X.append(...)`, does not rebind it. It follows a call whose callee
-is a module
-function (its name's one module-level binding, not rebound), a function defined
-in the page function or a method of the route's class (to what it returns, any
-decorator on it not applied), a text method or a file read, or any other method
-(through its receiver, as above, so `_K.__call__(t)` on a module constant `_K`
-that holds a lambda reads `_K`, and a lambda is a value slot with no text), and
-it reads every call's arguments; a call to any other callee passes when the
-callee is
+is a module function (a top-level def statement that is its name's one
+module-level binding, not rebound, in a module with no star import, and bound by
+no function scope of the page), a function defined in the page function or a
+method of the route's class (to what it returns, any decorator on it not
+applied), a text method or a file read, or any other method (through its
+receiver, as above, so `_K.__call__(t)` on a module constant `_K` that holds a
+lambda reads `_K`, and a lambda is a value slot with no text), and it reads
+every call's arguments; a call to any other callee passes when the callee is
 such an import, such a builtin or a parameter. The run fails by name (SERVED) on
-any other reference to `_send` (a read of it that is not a call's function, or a
-string equal to `_send`), a content type the pass cannot read, a script-running
+any other reference to `_send` (a read of it that is not a call's function, a
+store or delete of an attribute so named, or a string equal to `_send`), a
+content type the pass cannot read, a script-running
 type written outside `_send`, a function that answers outside `_send` more often
 than it writes a Content-Type header, a container the module writes at run time,
 any other receiver or container, any other callee (a module constant, a local, a
 class, a subscript, a call and a lambda among them), any other bare module name
-(one bound other than by one assignment, an import, a function or a class beside
-another module-level binding, and a rebound import, builtin, function or class
-among them), and a route whose text the pass
-cannot read, unless the served allowlist, SERVED_ALLOW, names the place by its
-function and expression, with the number of places the entry covers and the
-reason (the two answers with no body, the CORS preflight's 204 and the
+(one bound other than by one assignment, one bound by an annotated, unpacking or
+chained assignment, one no module-level statement binds that a function or a
+class body binds under a `global` declaration, an import, a function or a class
+beside
+another module-level binding, an import, a def or a class bound once inside a
+module-level block and not by a top-level statement, a name bound once in any
+other form inside such a block's body, a name a star import may rebind, and a
+rebound import, builtin, function or class among them), and a route whose text
+the pass cannot read, unless the served allowlist, SERVED_ALLOW, names the place
+by its function and expression, with the number of places the entry covers and
+the reason (the two answers with no body, the CORS preflight's 204 and the
 websocket upgrade's 101, are named there); an entry that names nothing in the
 run, or covers a different number of places, fails the run too. In served text
 every `fetch(` and `import(` on a line is read by its own argument, and no
@@ -286,8 +362,14 @@ not count when `.`, `?`, `[` or `(` follows it past whitespace and comments,
 and a brace list that takes `default` does not count unless the same statement
 binds that name whole (`import { default as X }`), so a require in a later
 declarator, `require("http").get` read as a value, a destructured default, a
-require assigned after its declaration, a `.then()` callback of `import()` and
-a re-export are each refused. Second, on a walked line the scan reads (not in
+require assigned after its declaration, a `.then()` callback of `import()` and a
+re-export are each refused; and in a walked file a binding the patterns match
+whose specifier stands on a line led by `//`, `/*` or `*`, where the gate reads
+no module, is refused as a binding on a line led by `//`, `/*` or `*`, whose
+module the gate does not read; the webview leg's pin sees such a binding when
+the line
+is code (a `*`-led continuation of an import) and none on a comment line or in a
+template literal's text. Second, on a walked line the scan reads (not in
 served text), a require or import the gate cannot read is refused: a call of
 `require` in any other shape (whitespace or a comment before the paren, a
 template or a computed specifier), `require` as a bare value (followed by `;`,
@@ -305,24 +387,55 @@ as `module["require"]`, `require` beside an operator, a createRequire under
 another name) is no site and no line. A client is read through a call on the
 module or on a binding the patterns read: a dotted call on an inline require or
 on a name the file keeps the module under, or a call of a bare name the file
-binds from it. A client reached from such a binding any other way is no site
-and no line, among them a member alias (`const g = http.get`), a destructure
-from the binding (`const { get } = http`), a computed member, `.call` and an
-optional chain. The import gate reads a specifier in a literal require() or
+binds from it, each read only as spelled on one line with nothing between the
+require or the name, the dot, the method and the paren (`http.get(`), or between
+the bare name and the paren (`get(`), and `ws` by its constructor shape, read
+with whitespace before its paren too (`new WS (u)`, `new W.WebSocket (u)`). A
+client reached from such a binding any other way is no site and no line, among
+them a member alias (`const g = http.get`), a destructure from the binding
+(`const { get } = http`), a computed member, `.call`, an optional chain, a call
+spelled with whitespace or a comment around the dot or before the paren
+(`http . get(`, `http.get (`, `get (`) and a call split across lines before its
+paren (`http` at the end of one line and `.get(` at the start of the next); an
+inline require called either of the last two ways is refused by the first
+refusal. The import gate reads a specifier in a literal require() or
 import() spelled whole on one line (the name, its paren, the quoted specifier
 and the closing paren, with nothing between them but whitespace inside the
-parens), on a line that starts with import or export,
-on a line led by a closing brace in a walked file, and on a line led by `from`
-(in served text, by `from` or a closing brace) that continues an import or
-export statement that begins its own line; in a walked file it skips a
-comment-led line. Through a binding whose specifier the gate reads, `https`,
-`net` and `tls` still fail the run at the gate, so this residual reaches `http`,
-`ws` and `child_process`, the packages the list knows; through a binding the
-patterns read from a specifier the gate does not read (one on the line after a
-trailing `from`, in a require() or `await import()` split across lines, in a
-statement that does not begin its line, or on a comment-led line of a walked
-file) it reaches `https`, `net` and `tls` as well, save a split require on a
-walked line, which the second refusal refuses.
+parens), wherever it stands, in a side-effect import that begins its line
+(`import`, whitespace alone, then the quoted specifier), and in the first `from`
+string (`from`, whitespace alone, then a quoted specifier) on a line that starts
+with import or export or that continues an import or export statement that
+begins its own line and has not yet ended, and, in a walked file, any line led
+by a closing brace. In a walked file such a statement
+opens at `import` (not `import(` or `import.meta`), `export {`, `export *`,
+`export type {` or `export type *` and ends at the line where the gate reads its
+`from` string or at a line that ends with `;` outside a string and a comment;
+any line of it is read whatever leads it but a line led by `//`, `/*` or `*`,
+which is skipped, a binding on one refused by the first refusal. Over the walked
+files the webview
+leg's pin (ui/webview/import-gate-parse.test.ts) holds these reads equal to a
+TypeScript parse of the same files (the specifier of each import and export
+declaration, of `import X = require()`, of a require or import() call on a
+quoted literal and of an import type), both ways, keyed on file, line and
+specifier, and holds each require or import() call whose first argument is not a
+quoted literal to a line where the second refusal fires (an import() on a
+computed argument that is not a template, to a browser-computed-url site), so a
+specifier in a layout the line reader does not read is red there by file, line
+and specifier. Served text is not parsed, and the pin does not hold it: there
+such a statement opens at any line that starts with import or export (not
+`import(` or `import.meta`), a line continues it only when led by `from` or a
+closing brace, and no line is skipped as a comment. Through a binding whose
+specifier the gate reads, `https`, `net` and `tls` still fail the run at the
+gate, so this residual reaches `http`, `ws` and `child_process`, the packages
+the list knows; in served text, through a binding the patterns read from a
+specifier the gate does not read, among them one on the line after a trailing
+`from`, one on a continuation line led by anything but `from` or a closing
+brace, one in a require() or `await import()` split across lines and one in a
+statement that does not begin its line, it reaches `https`, `net` and `tls` as
+well. A comment between `from` (or a side-effect `import`) and its specifier is
+read by neither the gate nor the binding patterns, so in served text a client
+through it is no site and no line whatever the module, `https`, `net` and `tls`
+included, and a package outside KNOWN_JS_IMPORTS passes the gate.
 The first refusal also refuses a line that binds nothing to call, such as
 `import type http from "http"` or `let a: typeof import("http")`; no such line
 is live. An echo- or print-led shell line is skipped as a printed remedy only
@@ -331,22 +444,28 @@ body of every `$(...)` and backtick substitution, wherever it stands, are
 scanned by the interpreter arm and the tool list, so `echo "$body" | curl ...`
 and `echo "rate: $(curl ...)"` are sites and a remedy that names a tool inside
 quotes is not. On the browser and editor side a client the list names is a site
-through a call on each binding shape the patterns read, the connection family
-read through its bindings as the child_process family is: a `get` or `request`
-of `http` or `https`, a `connect` or `createConnection` of `net` and a
+through a dotted call on an inline require or on a name the file keeps the
+module under, a call of a bare name the file binds from it, or, for `ws`, its
+constructor shape (a call through a computed member, `.call` or an optional
+chain, one spelled with whitespace or a comment around the dot or with a comment
+before its paren, one spelled with whitespace before its paren other than `ws`'s
+constructor, which is read so too (`new WS (u)` and `new W.WebSocket (u)` are
+sites), or one split across lines before its paren is no site), the connection
+family read through its bindings as the child_process family is: a `get` or
+`request` of `http` or `https`, a `connect` or `createConnection` of `net` and a
 `connect` of `tls` through an inline require, a name the file keeps the module
 under (a require or an `await import()` assigned whole in the first declarator
 of its declaration, TypeScript's `import X = require()`, a namespace or default
 import, alone or the two in one statement, a default beside a brace list,
 `import { default as X }`), or a bare name the file binds from the module by a
-brace list, alone or beside a default, in an import, a destructured require or
-a destructured `await import()` (renamed or not), and `ws` by its constructor
+brace list, alone or beside a default, in an import, a destructured require or a
+destructured `await import()` (renamed or not), and `ws` by its constructor
 shape (`new <binding>(`, `new <namespace>.WebSocket(`, `new (require('ws'))(`),
-each an added arm beside the literal spellings (`http.get(`, `net.connect(`,
-the bare global `new WebSocket(`), a call the literal list already names on a
-line counted once under the same tool. NET and SUB are the script's lists of
-the connection and command primitives it reads. Four classes of outbound
-activity the scan cannot
+each an added arm beside the literal spellings (`http.get(`, `net.connect(`, the
+bare global `new WebSocket(`), a call the literal list already names on a line
+counted once under the same tool. NET and SUB are the script's lists of the
+connection and command primitives it reads. Four classes of outbound activity
+the scan cannot
 derive are named and counted in its table rather than left out: an external
 program started whose far end its arguments do not show (a shell, node, perl or
 python as the program, whether the kernel starts it, a shell script of romp's

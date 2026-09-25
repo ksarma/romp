@@ -1286,58 +1286,106 @@ ECHO_RULE = ("An echo- or print-led shell line is skipped as a printed remedy on
              "and the tool list, so `echo \"$body\" | curl ...` and `echo \"rate: $(curl ...)\"` are sites and a remedy that names a tool "
              "inside quotes is not.")
 SERVED_PAGES = ("The pages the kernel serves and its service worker's script, from its own string constants (the dashboard shell, the seven pane "
-                "pages, the token login page, the too-large page and /sw.js, with the shim, the timeline boot and the shell scripts they inline), "
-                "are read from kernel.py's syntax tree and scanned as browser text keyed kernel/kernel.py plus tool, with the DOM loads counted. "
-                "The routes are derived from the calls of `_send` the scan reads (spelled `_send(...)` or `<x>._send(...)`; a call through a name "
-                "computed at run time is not read) and every Content-Type header written outside `_send`, in every scanned Python file. A `_send` "
-                "call's content type is read through the definition it reaches: the kernel's Handler._send writes its `ctype` parameter, so the "
-                "call's third argument or its `ctype=` keyword; the postal bus's writes application/json; the session host's and its transport's "
-                "write a frame to a Unix socket and answer no HTTP request (FRAME_WRITERS), and any other definition that writes no Content-Type "
-                "fails the run. The type is read through a module name no code writes after binding it (one module-level assignment "
-                "binds it, nothing else at module level binds it, and nothing in the file writes that name, in any scope: a subscript "
-                "store or delete, a call `<name>.<method>(` of a method _MUTATORS or _DUNDER_MUTATORS lists, a call of such a method on "
-                "a type _CONTAINER_TYPES lists with the name as its first argument (`dict.update(<name>, ...)`), a binding in a function "
-                "that declares the name `global` (as the target of an assignment, an augmented assignment, a loop, a comprehension, a with "
-                "or a walrus, or by an import, a def or class statement or an except clause) or a module-level augmented assignment), "
-                "through a local whose every binding is read and through a dict "
-                "literal's values; the part before "
-                "any `;`, stripped and lower-cased, is compared with the types a browser runs script from (SCRIPT_TYPES: text/html; the XML types "
-                "text/xml, application/xml, text/xsl and any type with a `+xml` suffix, image/svg+xml and application/xhtml+xml among them; and "
-                "text/javascript under each name a browser takes for JavaScript, application/javascript among them). A script-running route's "
-                "page body is the call's second positional argument, read only when the definition the call reaches writes its own second "
-                "positional parameter as the body (its one `.write(<name>)` names that parameter) and the call passes that argument positionally, "
-                "with no starred argument before it and no `**`; any other script-running call (a keyword body, a starred or `**` call, a "
-                "definition whose written body is another parameter, a local or an expression) fails the run by name. The page function of each "
-                "script-running route is followed to the text it returns or inlines. In that text the served pass reads a BoolOp's operands, a "
-                "method call's receiver and a subscript's container when they name a module constant (a name one module-level assignment binds "
-                "and nothing else binds there) or a local, the receiver of `.encode` or `.format_map` whatever it is, a class attribute the class "
-                "body binds, a loop, unpacking or with target from its source, and a local container's appended or stored "
-                "values; it passes over a base that carries no page text (an import that is its name's one module-level binding and is not "
-                "rebound, a builtin that no module-level binding shadows and that is not rebound, a parameter, an except name, or a name "
-                "the function binds from one of those), and over a bare module name that is such an import or such a builtin, or a function "
-                "or a class that is its name's one module-level binding and is not rebound; a name is rebound when a function binds it "
-                "under `global` or a statement at module level writes it, in one of the forms listed above for a route's type, and by "
-                "nothing else: a function's `X = []` of a local of the same name, or its `X.append(...)`, does not rebind it. It follows a "
-                "call whose callee is "
-                "a module function (its name's one module-level binding, not rebound), a function defined in the page function or a method "
-                "of the route's class (to what it returns, any decorator on it not applied), a text method or a file read, or any other "
-                "method (through its receiver, as above, so `_K.__call__(t)` on a module constant `_K` that holds a lambda reads `_K`, and "
-                "a lambda is a value slot with no text), and it reads every call's arguments; a call to any other callee passes when the "
-                "callee is such an import, such a builtin or "
-                "a parameter. The run fails by name (SERVED) on any other reference to `_send` (a read of it that is not a call's function, "
-                "or a string equal to `_send`), a content type the pass cannot "
-                "read, a script-running type written outside `_send`, a function that answers outside `_send` more often than it "
-                "writes a Content-Type header, a container the module writes at run time, any other receiver or container, any "
-                "other callee (a module constant, a local, a class, a subscript, a call and a lambda among them), any other bare module "
-                "name (one bound other than by one assignment, an import, a function or a class beside another module-level binding, and a "
-                "rebound import, builtin, function or class among them), and a route whose text the pass cannot read, unless the served "
-                "allowlist, "
-                "SERVED_ALLOW, names the place by its function and expression, with the number of places the entry covers and "
-                "the reason (the two answers with no body, the CORS preflight's 204 and the websocket upgrade's 101, are named "
-                "there); an entry that names nothing in the run, or covers a different "
-                "number of places, fails the run too. In served text every `fetch(` and `import(` on a line is read by its own argument, and no "
-                "comment skip applies, since a joined constant is one line whatever it starts with. A file the page reads at run time is covered "
-                "by the walk when it is a scanned kind, and a stylesheet is named, not scanned.")
+                "pages, the token login page, the too-large page and /sw.js, with the shim, the timeline boot and the shell scripts they inline),"
+                " are read from kernel.py's syntax tree and scanned as browser text keyed kernel/kernel.py plus tool, with the DOM loads counted."
+                " The routes are derived from the calls of `_send` the scan reads (spelled `_send(...)` or `<x>._send(...)`; a call through a "
+                "name computed at run time is not read) and every Content-Type header written outside `_send`, in every scanned Python file. A "
+                "`_send` call's content type is read through the definition it reaches, the one def or async def statement that binds `_send` in "
+                "its file, direct in the call's own class body (a call through self) or in the module (a bare call): the kernel's Handler._send "
+                "writes its `ctype` parameter, so the call's third argument or its `ctype=` keyword; the postal bus's writes application/json; "
+                "the session host's and its transport's write a frame to a Unix socket and answer no HTTP request (FRAME_WRITERS), and any other "
+                "definition that writes no Content-Type fails the run. So does each `_send` call in a file that binds `_send` more than once "
+                "outside function bodies (the module and every class body counted together, a class body a function body defines included, since "
+                "a class body is no function body, in any binding form but a comprehension's target, which binds only in its comprehension) or "
+                "other than by one def statement direct in a class body or the module, or where a function or a class body binds it under a "
+                "`global` declaration, rebinding the module's name at run time, each bare call that reaches a `_send` bound inside a function, a "
+                "lambda, a comprehension or a class body around it, in any form "
+                "(a parameter, a nested def, a loop target, a lambda's parameter and a comprehension's target among them; the line names the scope "
+                "and the binding), each call that reaches no definition the census reads, the line saying why (a `_send` the call's own class "
+                "body does not bind, for a call through self: inherited or set at run time; one reached through an object other than self, or "
+                "through an attribute outside any class body; a `_send` no scope the bare call looks it up in binds, the module included; and, "
+                "in a file that names `_send` "
+                "nowhere but as the called name of those calls, so binds it nowhere at all, a definition the file does not hold), each call to a "
+                "definition carrying any decorator, whose parameters the census does not read, and each bare call in a module that holds a star "
+                "import. An override of `_send` in a subclass that another file defines is not read: a call through self is typed through its "
+                "own class body's definition. The type is read "
+                "through a module name no code writes after binding it (one plain single-name assignment binds it as a top-level statement, "
+                "nothing else at module level binds "
+                "it, a walrus in a def's or a class's header included, the module holds no star import, and nothing in the file writes that name,"
+                " in any scope: a subscript store or delete, a call `<name>.<method>(` of a method _MUTATORS or _DUNDER_MUTATORS lists, a call of"
+                " such a method on a type _CONTAINER_TYPES lists with the name as its first argument (`dict.update(<name>, ...)`), a binding in a"
+                " function that declares the name `global` (as the target of an assignment, an augmented assignment, a loop, a comprehension, a "
+                "with or a walrus, or by an import, a def or class statement or an except clause) or a module-level augmented assignment), "
+                "through a local whose every binding is read (a walrus in a nested def's, class's or lambda's header is a binding it does not "
+                "read) and through a dict literal's values; the part before any `;`, stripped and lower-cased, is compared with the types a "
+                "browser runs script from (SCRIPT_TYPES: text/html; the XML types text/xml, application/xml, text/xsl and any type with a `+xml` "
+                "suffix, image/svg+xml and application/xhtml+xml among them; and text/javascript under each name a browser takes for JavaScript, "
+                "application/javascript among them). A script-running route's page body is the call's second positional argument, read only when "
+                "the call passes it positionally, with no starred argument before it and no `**`, and the definition's one output is its one "
+                "`<x>.write(<its second positional parameter>)`, nothing in a method's definition binding self again, in any form (a lambda's "
+                "or a nested def's parameter among them), or declaring it global, every call in the definition being one the census reads: "
+                "that write; "
+                "send_response, send_header or end_headers on self; getattr of self with a string-constant name; isinstance, str or len, where "
+                "neither the definition nor the module binds the name and the module holds no star import; or a method called on a parameter or "
+                "on a value built from parameters and literals (`body.encode`, `(headers or {}).items()`), self and the name the write's stream "
+                "hangs from never counting as a parameter here, and a parameter the definition rebinds counting only while every rebinding is "
+                "such a value. Any other script-running call fails the run by name, its reason naming the road (a second write, a write through "
+                "an alias, a print to a stream and a call the reader does not read among the reasons), among them a keyword body, a starred or "
+                "`**` call, a definition"
+                " whose one write is of another parameter, a local or an expression, or that writes nothing, and in the definition any other "
+                "call, any other read of an attribute named `write`, `writelines`, `send`, `sendall`, `sendfile` or `sendmsg`, called or not, a "
+                "string constant equal to one of those names and a reference to the write's receiver other than as its receiver. A stream the "
+                "definition reaches through no name it spells (a module global holding the socket, written by a method the definition calls on "
+                "self) is not read. The page function of each script-running route is followed to the text it returns or inlines, and a "
+                "parameter a followed call omits is read from its default value as that argument would be, in the scope the def statement runs "
+                "in (a default the pass cannot read is refused by name, among them a method's default naming a name its class body binds). A "
+                "name the page"
+                " function's scope binds, or for a function defined in it an enclosing function's scope, is decided by that scope and never by "
+                "the module's binding: a local (a parameter the body also assigns, a walrus in a nested def's, class's or lambda's header, and a "
+                "comprehension's target inside its comprehension among them) is read from its values as a bare name or a receiver and refused as "
+                "a callee; a parameter or an except name is a value slot, refused as a callee when it shares a module function's name; a function"
+                " defined in the page function is followed as a callee only as its name's one binding there; a name the function declares "
+                "`global` is the module's binding, read as such; and any other binding refuses, a comprehension's target elsewhere in the "
+                "function, a function-level import, a nested class, a del, a name a nonlocal declaration rebinds and a name bound two ways (two "
+                "different binding forms in one scope, or a def or a class statement beside any other binding of it; every value form, an "
+                "assignment, augmented or annotated, a loop, with or unpacking target and a walrus, is one form, and a parameter the body also "
+                "binds by one is one local, read from its values) among them. In that text the served pass"
+                " reads a BoolOp's operands, a method call's receiver and a subscript's container when they name a module constant (a name one "
+                "plain single-name assignment binds as a top-level statement and nothing else binds at module level, in a module with no star "
+                "import) or a local, the receiver of "
+                "`.encode` or `.format_map` whatever it is, a class attribute the class body binds, a loop, unpacking or with target from its "
+                "source, and a local container's appended or stored values; it passes over a base that carries no page text of its own (in a "
+                "module that holds no star import, a top-level import statement that is its name's one module-level binding and is not rebound, "
+                "or a builtin that no module-level binding shadows and that is not rebound, a call of super() excepted, whose methods are a base "
+                "class's; a parameter, an except name, or a name the function binds from one of those), reading as text the arguments of a call "
+                "of such a base or of a method on one (`dict(X).get(k)` and "
+                "`json.loads(json.dumps(X))[0]` read X), and over a bare module name that is such an import or such a builtin, or, in such a "
+                "module, a top-level def or class"
+                " statement that is its name's one module-level binding and is not rebound; a name is rebound when a function binds it under "
+                "`global` or a statement at module level writes it, in one of the forms listed above for a route's type, and by nothing else: a "
+                "function's `X = []` of a local of the same name, or its `X.append(...)`, does not rebind it. It follows a call whose callee is a"
+                " module function (a top-level def statement that is its name's one module-level binding, not rebound, in a module with no star "
+                "import, and bound by no function scope of the page), a function defined in the page function or a method of the route's class "
+                "(to what it returns, any decorator on it not applied), a text method or a file read, or any other method (through its receiver, "
+                "as above, so `_K.__call__(t)` on a module constant `_K` that holds a lambda reads `_K`, and a lambda is a value slot with no "
+                "text), and it reads every call's arguments; a call to any other callee passes when the callee is such an import, such a builtin "
+                "or a parameter. The run fails by name (SERVED) on any other reference to `_send` (a read of it that is not a call's function, a "
+                "store or delete of an attribute so named, or a string equal to `_send`), a content type the pass cannot read, a script-running "
+                "type written outside `_send`, a function that"
+                " answers outside `_send` more often than it writes a Content-Type header, a container the module writes at run time, any other "
+                "receiver or container, any other callee (a module constant, a local, a class, a subscript, a call and a lambda among them), any "
+                "other bare module name (one bound other than by one assignment, one bound by an annotated, unpacking or chained assignment, one "
+                "no module-level statement binds that a function or a class body binds under a `global` declaration, an "
+                "import, a function or a class beside another module-level "
+                "binding, an import, a def or a class bound once inside a module-level block and not by a top-level statement, a name bound once "
+                "in any other form inside such a block's body, a name a star import may rebind, and a rebound import, builtin, function or class "
+                "among them), and a route whose text the pass cannot read, "
+                "unless the served allowlist, SERVED_ALLOW, names the place by its function and expression, with the number of places the entry "
+                "covers and the reason (the two answers with no body, the CORS preflight's 204 and the websocket upgrade's 101, are named there);"
+                " an entry that names nothing in the run, or covers a different number of places, fails the run too. In served text every "
+                "`fetch(` and `import(` on a line is read by its own argument, and no comment skip applies, since a joined constant is one line "
+                "whatever it starts with. A file the page reads at run time is covered by the walk when it is a scanned kind, and a stylesheet is"
+                " named, not scanned.")
 SERVED_REFUSED_SCAN = ("The whole of kernel.py is not scanned as text, since a text scan misreads Python and JS concatenations (a Python "
                        "method spelled like a client, a `from` inside a script split across Python literals).")
 SERVED_IMPORT_GATE = ("Over served text the import gate's statement form applies to a line that starts with import or export, "
@@ -1366,8 +1414,9 @@ ROUND_FOUR_SENTENCES = (("the echo rule", ECHO_RULE), ("the served pages", SERVE
 # refusals, JS_ALLOW, and the population a binding the patterns read still leaves unread; one text with SECURITY.md's, which
 # tests/test_security_price_feed.py holds, and with the ledger entry's census paragraph, which TheJavaScriptSideRefusesWhatItCannotRead
 # holds; TheAddedBindingShapesAreRead and TheJavaScriptSideRefusesWhatItCannotRead execute it); SERVED_PAGES above is the fifth
-# round's rewrite of the fourth round's sentence (F, G and H), one text with SECURITY.md's (tests/test_security_price_feed.py holds
-# that home); PAINT_ROAD_SENTENCE's last clause, what the caller census reds, is the sixth round's (tests-3), one text with that
+# round's rewrite of the fourth round's sentence (F, G and H), restated by the seventh round (A: the shapes each Python reader
+# reads, every other shape refused by name, and the two limits), one text with SECURITY.md's (tests/test_security_price_feed.py
+# holds that home); PAINT_ROAD_SENTENCE's last clause, what the caller census reds, is the sixth round's (tests-3), one text with that
 # census's messages, which tests/test_security_price_feed.py holds in the script's docstring and the paint row's where cell
 SERVED_LINE_RESIDUAL = ("A site in served text is listed at the first line of the string part that carries it. Text joined across implicitly "
                         "concatenated literals is one part, listed at its first line. On Python 3.10 and 3.11 an f-string part is listed at the "
@@ -1400,7 +1449,11 @@ UNREAD_BINDINGS = ("Two refusals cover what the JavaScript binding patterns and 
                    "when `.`, `?`, `[` or `(` follows it past whitespace and comments, and a brace list that takes `default` does not "
                    "count unless the same statement binds that name whole (`import { default as X }`), so a require in a later declarator, "
                    "`require(\"http\").get` read as a value, a destructured default, a require assigned after its declaration, a `.then()` "
-                   "callback of `import()` and a re-export are each refused. Second, on a walked line the scan reads (not in served text), "
+                   "callback of `import()` and a re-export are each refused; and in a walked file a binding the patterns match whose specifier "
+                   "stands on a line led by `//`, `/*` or `*`, where the gate reads no module, is refused as a binding on a line led by `//`, "
+                   "`/*` or `*`, whose module the gate does not read; the webview leg's pin sees such a binding when the line is code (a "
+                   "`*`-led continuation of an import) and none on a comment line or in a template literal's text. Second, on a "
+                   "walked line the scan reads (not in served text), "
                    "a require or import the gate cannot read is refused: a call of `require` in any other shape (whitespace or a comment "
                    "before the paren, a template or a computed specifier), `require` as a bare value (followed by `;`, `,`, `)`, `}`, `]` "
                    "or the end of the line, outside a string and a comment, where a quote opens a string to the same quote's "
@@ -1412,20 +1465,42 @@ UNREAD_BINDINGS = ("Two refusals cover what the JavaScript binding patterns and 
                    "when it is spelled in one of those shapes; one spelled another way (a "
                    "computed member such as `module[\"require\"]`, `require` beside an operator, a createRequire under another name) is no "
                    "site and no line. A client is read through a call on the module or on a binding the patterns read: a dotted call on an "
-                   "inline require or on a name the file keeps the module under, or a call of a bare name the file binds from it. A client "
-                   "reached from such a binding any other way is no site and no line, among them a member alias (`const g = http.get`), a "
-                   "destructure from the binding (`const { get } = http`), a computed member, `.call` and an optional chain. The import "
+                   "inline require or on a name the file keeps the module under, or a call of a bare name the file binds from it, each read "
+                   "only as spelled on one line with nothing between the require or the name, the dot, the method and the paren "
+                   "(`http.get(`), or between the bare name and the paren (`get(`), and `ws` by its constructor shape, read with whitespace "
+                   "before its paren too (`new WS (u)`, `new W.WebSocket (u)`). A client reached from such a binding any other way is no site "
+                   "and no line, among them a member alias (`const g = http.get`), a "
+                   "destructure from the binding (`const { get } = http`), a computed member, `.call`, an optional chain, a call spelled "
+                   "with whitespace or a comment around the dot or before the paren (`http . get(`, `http.get (`, `get (`) and a call "
+                   "split across lines before its paren (`http` at the end of one line and `.get(` at the start of the next); an inline "
+                   "require called either of the last two ways is refused by the first refusal. The import "
                    "gate reads a specifier in a literal require() or import() spelled whole on one line (the name, its paren, the quoted "
-                   "specifier and the closing paren, with nothing between them but whitespace inside the parens), on a line that starts "
-                   "with "
-                   "import or export, on a line led by a closing brace in a walked file, and on a line led by `from` (in served text, "
-                   "by `from` or a closing brace) that continues an import or export statement that begins its own line; in a walked "
-                   "file it skips a comment-led line. Through a binding whose specifier the gate reads, `https`, `net` and `tls` still "
-                   "fail the run at the gate, so this residual reaches `http`, `ws` and `child_process`, the packages the list knows; "
-                   "through a binding the patterns read from a specifier the gate does not read (one on the line after a trailing "
-                   "`from`, in a require() or `await import()` split across lines, in a statement that does not begin its line, or on a "
-                   "comment-led line of a walked file) it reaches `https`, `net` and `tls` as well, save a split require on a walked "
-                   "line, which the second refusal refuses. The first refusal also refuses a "
+                   "specifier and the closing paren, with nothing between them but whitespace inside the parens), wherever it stands, in "
+                   "a side-effect import that begins its line (`import`, whitespace alone, then the quoted specifier), and in the first "
+                   "`from` string (`from`, whitespace alone, then a quoted specifier) on a line that starts with import or export or that "
+                   "continues an import or export statement that begins its own line and has not yet ended, and, in a walked file, any line led "
+                   "by a closing brace. In a walked file such a statement opens at `import` (not `import(` or `import.meta`), `export {`, "
+                   "`export *`, `export type {` or `export type "
+                   "*` and ends at the line where the gate reads its `from` string or at a line that ends with `;` outside a string and a "
+                   "comment; any line of it is read whatever leads it but a line led by `//`, `/*` or `*`, which is skipped, a binding on one "
+                   "refused by the first refusal. Over the walked files the webview leg's pin (ui/webview/import-gate-parse.test.ts) holds these reads "
+                   "equal to a TypeScript parse of the same files (the specifier of each import and export declaration, of `import X = "
+                   "require()`, of a require or import() call on a quoted literal and of an import type), both ways, keyed on file, line "
+                   "and specifier, and holds each require or import() call whose first argument is not a quoted literal to a line where "
+                   "the second refusal fires (an import() on a computed argument that is not a template, to a browser-computed-url "
+                   "site), so a specifier in a layout the line reader does not read is red there by file, line and specifier. Served "
+                   "text is not parsed, and the pin does not hold "
+                   "it: there such a statement opens at any line that starts with import or export (not `import(` or `import.meta`), a "
+                   "line continues it only when led "
+                   "by `from` or a closing brace, and no line is skipped as a comment. Through a binding whose specifier the gate reads, "
+                   "`https`, `net` and `tls` still fail the run at the gate, so this residual reaches `http`, `ws` and `child_process`, "
+                   "the packages the list knows; in served text, through a binding the patterns read from a specifier the gate does not "
+                   "read, among them one on the line after a trailing `from`, one on a continuation line led by anything but `from` or a "
+                   "closing brace, one in a require() or `await import()` split across lines and one in a statement that does not begin "
+                   "its line, it reaches `https`, `net` and `tls` as well. A comment between `from` (or a side-effect `import`) and its "
+                   "specifier is read by neither the gate nor the binding patterns, so in served text a client through it is no site and "
+                   "no line whatever the module, `https`, `net` and `tls` included, and a package outside KNOWN_JS_IMPORTS passes the "
+                   "gate. The first refusal also refuses a "
                    "line that binds nothing to call, such as `import type http from \"http\"` or `let a: typeof import(\"http\")`; no such "
                    "line is live.")
 ROUND_FIVE_SENTENCES = (("the served scan's line-keying residual", SERVED_LINE_RESIDUAL), ("the paint road named and not counted", PAINT_ROAD_SENTENCE),
@@ -2077,22 +2152,44 @@ JS_ALLOW_PLACES = {("bin/romp-manager", "require.main"): "if (require.main === m
 MODULE_REASON = ("`module` opens nothing itself, but its createRequire makes a require the import gate cannot read, so a `createRequire(` call "
                  "is refused by name")
 # What a binding the patterns read still leaves unread (extra6-3 of the sixth round): a member alias and a destructure from a namespace binding,
-# held at their outcome (no site, no line), and a member alias of an https namespace, where the gate reads the specifier (IMPORT at 2)
-ALIASES_TEXT = ('import * as http from "http";\nimport * as hs from "https";\n\nexport function probeUnreadAliases(u: string): void {\n'
-                '  const g = http.get;\n  g(u);\n  const { request } = http;\n  request(u);\n  const gs = hs.get;\n  gs(u);\n}\n')
-# A statement split across lines, gated where the gate reads its specifier (since the sixth round, the texts stating the gate's true
-# population): an import led by `from` on the line after its clause (the continuation of a statement that begins its own line), a
-# brace list's closing line (read before too) and a non-family package's `from` line (the continuation alone reads it: no binding
-# pattern names the package), each an IMPORT line (2, 5, 9); and three bindings the patterns read whose specifier the gate does not
-# read, each no line of the gate (the population UNREAD_BINDINGS states): a specifier on the line after a trailing `from` (7), a
-# require split after its paren, whose paren line is the second refusal's (10) and whose specifier line is none (11), and a binding in
-# a comment line (14); no site, since every client is reached through a member alias
+# held at their outcome (no site, no line), and a member alias of an https namespace, where the gate reads the specifier (IMPORT at 2);
+# since the seventh round's review (its decision on "dotted call") also the calls the texts name as not read, each held at no site and no
+# line: whitespace or a comment around the dot or before the paren, on http's namespace (13 to 15), on a bare name bound from http (16)
+# and on child_process's namespace (21), and a call split across lines before its paren, after the name (17, 18) or after the dot (19,
+# 20), and on child_process's namespace (22, 23)
+ALIASES_TEXT = ('import * as http from "http";\nimport * as hs from "https";\nimport { get as hget } from "http";\n'
+                'import * as cp from "child_process";\n\nexport function probeUnreadAliases(u: string): void {\n'
+                '  const g = http.get;\n  g(u);\n  const { request } = http;\n  request(u);\n  const gs = hs.get;\n  gs(u);\n'
+                '  http . get(u);\n  http.get (u);\n  http /* a comment */ .get(u);\n  hget (u);\n  http\n    .request(u);\n  http.\n'
+                '    request(u);\n  cp . exec("git status");\n  cp\n    .spawn("git");\n}\n')
+# A statement split across lines, gated where the gate reads its specifier (since the sixth round, the texts stating the gate's
+# reads): an import led by `from` on the line after its clause (the continuation of a statement that begins its own line), a brace
+# list's closing line (read before too), a non-family package's `from` line (the continuation alone reads it: no binding pattern names
+# the package) and, since the seventh round's review, a non-family package's `from` string on a continuation line led by a name
+# (`  probeSplitN2 } from "probe-split-name";`, the tree's own layout for a long import, read whatever leads the line), each an IMPORT
+# line (2, 5, 9, 22); two bindings the patterns read whose specifier the line reader does not read, each no line of the gate: a
+# specifier on the line after a trailing `from` (7) and a require split after its paren, whose paren line is the second refusal's (10)
+# and whose specifier line is none (11); neither is in the tree, and over the walked files the webview leg's pin
+# (ui/webview/import-gate-parse.test.ts) holds the line reader's reads equal to a TypeScript parse, so either in a walked file of the
+# tree is red there, by file, line and specifier (UNREAD_BINDINGS); and a binding on a line led by `//`, `/*` or `*`, which the line
+# reader skips, refused by name since the seventh round's review (the first refusal: a binding on a line led by //, /* or *, whose
+# module the gate does not read), whatever the line is: a comment's line (14), which the pin's parse does not read either, an import's
+# `* as hs6` continuation led by `*` (27), a line of code the pin's parse reads, and a `//`-led line inside a template literal (29),
+# string text the pin's parse does not read. An `export function` line opens no statement in a walked file (the seventh round's review), so a
+# `from` string in a string literal on the next line is no gate line (24). No site, since every client is reached through a member alias
 SPLIT_TEXT = ('import * as hs1\n  from "https";\nimport {\n  get as hg2\n} from "https";\nimport * as hs3 from\n  "https";\n'
               'import { probeSplitX }\n  from "probe-split-pkg";\nconst hs4 = require(\n  "https"\n);\n/**\n * const hs5 = require("https");\n */\n'
               'export function probeSplitImports(u: string): void {\n  const g1 = hs1.get; g1(u); const g3 = hs3.get; g3(u); const g4 = hs4.get; g4(u);\n'
-              '  void hg2; void probeSplitX;\n}\n')
-SPLIT_GATED = {2: "https", 5: "https", 9: "probe-split-pkg"}
-SPLIT_UNGATED = (7, 11, 14)   # a binding's specifier after a trailing `from`, after a require's paren, in a comment line: no gate line
+              '  void hg2; void probeSplitX;\n}\n'
+              'import {\n  probeSplitN1,\n  probeSplitN2 } from "probe-split-name";\n'
+              'export function probeSplitNoOpen(): string {\n  return "x" + \' from "probe-split-over"\';\n}\n'
+              'import\n  * as hs6 from "https";\nconst probeSplitTpl = `\n// const hs7 = require("https");\n`;\n'
+              'export function probeSplitLed(u: string): void {\n  const g6 = hs6.get; g6(u); void probeSplitTpl;\n}\n')
+SPLIT_GATED = {2: "https", 5: "https", 9: "probe-split-pkg", 22: "probe-split-name"}
+SPLIT_UNGATED = (7, 11)   # a binding's specifier after a trailing `from`, after a require's paren: no gate line (the pin holds the tree)
+SPLIT_COMMENT = 14   # a binding on a comment's line: the first refusal's line (neither the gate nor the pin's parse reads a comment)
+SPLIT_LED = (27, 29)   # a binding on a line of code led by `*` and one on a `//`-led line of a template literal: the same refusal's lines
+SPLIT_NOT_OPENED = 24   # a `from` string in a string literal after an `export function` line, which opens no statement in a walked file
 SPLIT_PAREN = 10   # `const hs4 = require(`: the second refusal's line (a call of require the gate cannot read on its own line)
 # E, the served pages: the plants in kernel/kernel.py (each located by content in the copy after every plant has landed)
 BOOT_ANCHOR = "function post(m){api.postMessage(m);}\n"
@@ -2103,7 +2200,9 @@ BOOT_PLANTS = ('fetch("https://example.invalid/probe");\n'
                "import x from 'example-pkg';\n"
                "import {\n  y\n} from 'example-split-pkg';\n"
                "export const q = 1;\n"
-               "}else{alert('Pulled from '+q+' ok');}\n")
+               "}else{alert('Pulled from '+q+' ok');}\n"
+               "import {\n  y2,\n  z2 } from 'example-name-pkg';\n"
+               "import w from /* c */ 'example-comment-pkg';\n")
 SETTINGS_ANCHOR = '            "<script src=/dist/settings-page.js?v=%d></script></body></html>"'
 SETTINGS_PLANT = '            "<script>navigator.sendBeacon(\'https://example.invalid/t\',\'x\')</script>"\n'
 CHAT_BRANCH = ('            if p == "/chat":\n                _client_seen[0] = time.time()\n'
@@ -2380,7 +2479,10 @@ class TheAddedBindingShapesAreRead(_SharedRun):
     while no line is a site; over https the gate's own IMPORT lines stand beside them. probe-unread-aliases.ts holds what a binding
     the patterns read still leaves unread (extra6-3, planted at its outcome as the fifth round's I planted the residual): a member
     alias and a destructure from a namespace binding are no site and no line, and an https namespace's member alias fails the run
-    at the gate alone, which reads that import's own line (UNREAD_BINDINGS, the docstring's text, held here). No scan
+    at the gate alone, which reads that import's own line (UNREAD_BINDINGS, the docstring's text, held here). Since the seventh
+    round's review the same file holds the calls UNREAD_BINDINGS names as not read, each no site and no line: a call spelled with
+    whitespace or a comment around the dot or before the paren, on a namespace and on a bare name, and a call split across lines
+    before its paren, after the name or after the dot, over http and child_process. No scan
     is added: each alternative's line removed from a scratch copy of the script silences that arm's lines and no other, a red the
     fifth round's record carries (M40 to M46) and not a case of its own, since each such case would be a full scan; the sixth
     round's arms are recorded the same way. Every property is a line of these files, so the run's other members (appended to
@@ -2400,25 +2502,47 @@ class TheAddedBindingShapesAreRead(_SharedRun):
         _plant(cls.SPLIT, SPLIT_TEXT, cleanup)
 
     def test_a_split_statement_is_gated_at_its_continuing_line_and_the_other_split_specifiers_are_no_gate_line(self):
-        """Since the sixth round the import gate reads a `from`-led line (and in served text a brace-led one) that continues an
-        import or export statement that begins its own line, and no line but the ones UNREAD_BINDINGS names reads a specifier, as
-        the texts state the gate's population. probe-split-imports.ts (SPLIT_TEXT): over https the gate's line at the `from` line after a namespace
-        clause (2) and at a brace list's closing line (5, read at the sixth round's head too), and over a package no binding pattern
-        names at its `from` line (9); no gate line at a specifier on the line after a trailing `from` (7), at a split require's
-        specifier (11) or at a binding in a comment line (14), the three shapes UNREAD_BINDINGS names as bindings whose specifier
-        the gate does not read; the split require's paren line is the second refusal's (10). At the sixth round's head only 5 is a
-        line.
-        The arm whose removal reds 2 and 9 is the continuation state (2's `from` line is read by nothing else)."""
+        """Since the sixth round the import gate reads the `from` string on a line that continues an import or export statement
+        that begins its own line (in a walked file, since the seventh round's review, on any line of the statement whatever leads
+        it), and, in a walked file, any line led by a closing brace; there a statement opens only at `import`, `export {`, `export
+        *`, `export type {` or `export type *` (UNREAD_BINDINGS states
+        these reads, and the webview leg's pin, ui/webview/import-gate-parse.test.ts, holds them equal to a TypeScript parse over
+        the walked files of the tree). probe-split-imports.ts (SPLIT_TEXT): over https the gate's line at the `from` line after a
+        namespace clause (2) and at a brace list's closing line (5, read at the sixth round's head too), and over a package no
+        binding pattern names at its `from` line (9) and at a name-led continuation line (22, the tree's own layout for a long
+        import); no gate line at a specifier on the line after a trailing `from` (7) or at a split require's specifier (11), two
+        layouts the line reader does not read and the tree does not hold (the pin would be red on either in a walked file of the
+        tree); the split require's paren line is the second refusal's (10); a binding on a line led by `//`, `/*` or `*`, which the
+        line reader skips, is the first refusal's line by name (a binding on a line led by //, /* or *, whose module the gate does
+        not read), whatever the line is: a comment's line (14), which the pin's parse does not see either, a multi-line import's
+        `* as hs6` continuation (27), a line of code whose specifier the pin's parse reads (so in a walked file of the tree the pin
+        is red on it too), and a `//`-led line inside a template literal (29), string text the pin's parse does not read; and no
+        gate line at a `from` string in a string literal after an `export function` line (24), which opens no statement. At the
+        sixth round's head only 5 is a line; at the seventh round's head 2, 5 and 9, and 22, 14, 27 and 29 are none. The
+        statement state and its
+        completion here widen the gate's reads in walked files, a departure from the sixth round's ruling of no widening that
+        the seventh round's review accepted, since reading more is the safe side; served text keeps its reads.
+        The arms whose removal reds each: the continuation state for 2 and 9 (2's `from` line is read by nothing else); the read
+        of any line of an open statement, whatever leads it, for 22; the statement's narrower opening in a walked file for 24
+        (`export function` then opening one, the string's `from "probe-split-over"` is read); and the refusal of a binding on a
+        line led by `//`, `/*` or `*` for 14, 27 and 29 (no line again)."""
         out = self.out
         for line, pkg in SPLIT_GATED.items():
             self.assertRefused(self.rc, out, "IMPORT %s:%d imports %s, a package the census does not know" % (self.SPLIT, line, pkg))
         self.assertRefused(self.rc, out, _refusal(self.SPLIT, SPLIT_PAREN, ("spells", "a call of require in a shape the gate does not read", "require(")))
+        for line, expr in ((SPLIT_COMMENT, 'const hs5 = require("https")'), (SPLIT_LED[0], '* as hs6 from "https"'), (SPLIT_LED[1], 'const hs7 = require("https")')):
+            with self.subTest(plant="a binding on a line led by //, /* or *", line=line):
+                self.assertRefused(self.rc, out, "IMPORT %s:%d names https in %s, a binding on a line led by //, /* or *, whose module the gate "
+                                   "does not read: bind the module on a line the gate reads, or name the place in JS_ALLOW with its reason" % (self.SPLIT, line, expr))
         for line in SPLIT_UNGATED:
-            self.assertNotIn("IMPORT %s:%d " % (self.SPLIT, line), out, "a binding's specifier the gate does not read is no gate line "
-                             "(UNREAD_BINDINGS names the shape)")
+            self.assertNotIn("IMPORT %s:%d " % (self.SPLIT, line), out, "a binding's specifier the line reader does not read is no gate line "
+                             "(the webview leg's pin holds the tree's walked files to a TypeScript parse)")
+        self.assertNotIn("IMPORT %s:%d " % (self.SPLIT, SPLIT_NOT_OPENED), out, "an `export function` line opens no statement in a walked "
+                         "file, so a `from` string in a string literal on the next line is no gate line")
         self.assertEqual(sorted(int(ln.split(" ", 2)[1].rsplit(":", 1)[1]) for ln in _import_lines(out, self.SPLIT)),
-                         sorted(list(SPLIT_GATED) + [SPLIT_PAREN]),
-                         "the gate's line at each continuing line and the refusal at the split require's paren, and no other:\n"
+                         sorted(list(SPLIT_GATED) + [SPLIT_PAREN, SPLIT_COMMENT] + list(SPLIT_LED)),
+                         "the gate's line at each continuing line, the refusal at the split require's paren and at each binding on a "
+                         "line led by //, /* or *, and no other:\n"
                          + "\n".join(_import_lines(out, self.SPLIT)))
         self.assertFalse(_listed(out, self.SPLIT + ":"), "every client is reached through a member alias: no line of the file is a site")
 
@@ -2461,7 +2585,12 @@ class TheAddedBindingShapesAreRead(_SharedRun):
         out = self.out
         self.assertIn("a member alias (`const g = http.get`), a destructure from the binding (`const { get } = http`)", _inventory_docstring(),
                       "the docstring names the two shapes this file holds (its sentence is UNREAD_BINDINGS)")
-        self.assertFalse(_listed(out, self.ALIASES + ":"), "a client reached from a read binding other than by a call on it is no site")
+        self.assertIn("a call spelled with whitespace or a comment around the dot or before the paren (`http . get(`, `http.get (`, `get (`) "
+                      "and a call split across lines before its paren", _inventory_docstring(),
+                      "the docstring names the calls this file holds as not read (its sentence is UNREAD_BINDINGS)")
+        self.assertFalse(_listed(out, self.ALIASES + ":"), "a client reached from a read binding other than by a call the patterns read (a "
+                         "member alias, a destructure, a call spelled with a gap around the dot or before the paren, a call split across "
+                         "lines before its paren) is no site")
         self.assertEqual(_import_lines(out, self.ALIASES), ["IMPORT %s:2 imports https, a package the census does not know: a client that opens "
                                                             "connections or starts programs takes its primitives into JS or the child_process family; "
                                                             "either way add it to KNOWN_JS_IMPORTS with the reason" % self.ALIASES],
@@ -2682,11 +2811,12 @@ SERVED_COMPUTED_PLANTS = ("slot", "h4")   # the plants whose one site is the com
 # line by name here, each line held at the plant's own line (BC_PLANT_LINES, by content), save grl, held at no line. B: a route
 # typed through a module name the module writes after binding it (a subscript store, a rebind under `global`, a dunder mutator, a
 # container type's method naming it first, and an import, a def, a class statement or an except clause binding it under `global`); a
-# body the census does not read at the call's second positional argument (a definition that writes its third parameter, a class
-# whose second `_send` definition, the one Python binds, does so, a keyword body, a starred argument before the body, a `**`
-# spread); a reference to `_send` that is no call (an alias of the bound method, a bare read, a getattr naming it, a string equal to
-# `_send`). C: a bare module name bound other than by one assignment (only inside a try, a default and then a rebind, an import or a
-# def and then an assignment, a builtin-named name bound in a try) or rebound (an import, a def or a builtin a function binds under
+# body the census does not read at the call's second positional argument (a keyword body, a starred argument before the body, a `**`
+# spread; the definition that writes its third parameter, c3p, is a probe module of its own since the seventh round, below, since a
+# second `_send` in kernel/kernel.py would refuse every route of that file, and the class with two `_send` definitions, tsd, went with
+# it and is refused there as a `_send` bound more than once); a reference to `_send` that is no call (an alias of the bound method, a
+# bare read, a getattr naming it, a string equal to `_send`). C: a bare module name bound other than by one assignment (only
+# inside a try, a default and then a rebind, an import or a def and then an assignment, a builtin-named name bound in a try) or rebound (an import, a def or a builtin a function binds under
 # `global`, an import a statement at module level writes), and the same rule over a route's type (a type constant bound again under
 # an if); a call to a callee the pass does not follow (a module-constant lambda, a constant aliasing a function, functools.partial
 # through a constant, an instance read through a constant, a subscript dispatch, a callee that is itself a call, a class, a
@@ -2704,6 +2834,9 @@ BC_ROUTES = "".join((
     _fgh_route("c5g", 'return getattr(self, "_send")(200, "%s", "text/html")' % (FGH_PAGE % "c5g")),
     _fgh_route("c2t", 'return self._send(200, "<p>c2t</p>" + _PROBE_C2T, "text/html")'),
     _fgh_route("c2d", 'return self._send(200, "<p>c2d</p>" + _PROBE_C2D, "text/html")'),
+    _fgh_route("c1a", 'return self._send(200, "<p>c1a</p>" + _PROBE_C1A, "text/html")'),
+    _fgh_route("c1u", 'return self._send(200, "<p>c1u</p>" + _PROBE_C1U, "text/html")'),
+    _fgh_route("c1c", 'return self._send(200, "<p>c1c</p>" + _PROBE_C1C, "text/html")'),
     _fgh_route("x6l", 'return self._send(200, "<p>x6l</p>" + _PROBE_X6L("t"), "text/html")'),
     _fgh_route("x6a", 'return self._send(200, "<p>x6a</p>" + _PROBE_X6A("t"), "text/html")'),
     _fgh_route("x6p", 'return self._send(200, "<p>x6p</p>" + _PROBE_X6P(), "text/html")'),
@@ -2741,10 +2874,11 @@ BC_DEFS = "\n\n" + "\n\n\n".join((
     '_PROBE_C1S = {"page": "application/json"}\n_PROBE_C1S["page"] = "text/html"',
     '_PROBE_C1G = "application/json"\n\n\ndef _probe_c1g_set():\n    global _PROBE_C1G\n    _PROBE_C1G = "text/html"',
     '_PROBE_C2CT = "text/plain"\nif _PROBE_C2CT == "text/plain":\n    _PROBE_C2CT = "text/html"',
-    'class _ProbeC3(object):\n    def _send(self, code, ctype, body):\n        self.send_header("Content-Type", ctype)\n'
-    '        self.wfile.write(body)\n\n    def do_GET(self):\n        return self._send(200, "text/html", "%s")' % (FGH_PAGE % "c3p"),
     'try:\n    _PROBE_C2T = "%s"\nexcept Exception:\n    pass' % (FGH_PAGE % "c2t"),
     '_PROBE_C2D = "<p>none</p>"\ntry:\n    _PROBE_C2D = "%s"\nexcept Exception:\n    pass' % (FGH_PAGE % "c2d"),
+    '_PROBE_C1A: str = "%s"' % (FGH_PAGE % "c1a"),
+    '_PROBE_C1U, _PROBE_C1V = "%s", "<p>none</p>"' % (FGH_PAGE % "c1u"),
+    '_PROBE_C1C = _PROBE_C1D = "%s"' % (FGH_PAGE % "c1c"),
     '_PROBE_X6L = lambda t: "%s" + t' % (FGH_PAGE % "x6l"),
     'def _probe_x6a_page(t):\n    return "%s" + t\n\n\n_PROBE_X6A = _probe_x6a_page' % (FGH_PAGE % "x6a"),
     'def _probe_x6p_page(t):\n    return "%s" + t\n\n\n_PROBE_X6P = functools.partial(_probe_x6p_page, "t")' % (FGH_PAGE % "x6p"),
@@ -2764,9 +2898,6 @@ BC_DEFS = "\n\n" + "\n\n\n".join((
     'def _probe_rbc():\n    return "<p>none</p>"\n\n\n_probe_rbc = lambda: "%s"' % (FGH_PAGE % "rbc"),
     'format = lambda t: "%s" + t' % (FGH_PAGE % "bic"),
     'try:\n    ascii = "%s"\nexcept Exception:\n    pass' % (FGH_PAGE % "bit"),
-    'class _ProbeTwoSends(object):\n    def _send(self, code, body, ctype):\n        self.send_header("Content-Type", ctype)\n'
-    '        self.wfile.write(body)\n\n    def _send(self, code, ctype, body):\n        self.send_header("Content-Type", ctype)\n'
-    '        self.wfile.write(body)\n\n    def do_GET(self):\n        return self._send(200, "text/html", "%s")' % (FGH_PAGE % "tsd"),
     '_PROBE_GTI = "application/json"\n\n\ndef _probe_gti_set():\n    global _PROBE_GTI\n    import json as _PROBE_GTI',
     '_PROBE_GTF = "application/json"\n\n\ndef _probe_gtf_set():\n    global _PROBE_GTF\n    from json import dumps as _PROBE_GTF',
     '_PROBE_GTD = "application/json"\n\n\ndef _probe_gtd_set():\n    global _PROBE_GTD\n\n    def _PROBE_GTD():\n        return "text/html"',
@@ -2792,7 +2923,6 @@ _NOT_SECOND = "the definition's written body is not its second positional parame
 # (the plant, its tag, the SERVED line with the tag's line in place of %d); B's, then C's
 BC_ROUTE_REFUSED = (("B1 a dict constant a subscript store rewrites types a route", "c1s", _TYPE_UNREAD % "_PROBE_C1S['page']"),
                     ("B1 a constant rebound under global types a route", "c1g", _TYPE_UNREAD % "_PROBE_C1G"),
-                    ("B2 a definition that writes its third parameter as the body", "c3p", _BODY_UNREAD % ("_ProbeC3._send", _NOT_SECOND, "_ProbeC3.do_GET")),
                     ("B2 a body passed by keyword", "c3k", _BODY_UNREAD % ("Handler._send", "a keyword body", "Handler.do_GET")),
                     ("B2 a starred argument before the body", "c3s", _BODY_UNREAD % ("Handler._send", "a starred argument", "Handler.do_GET")),
                     ("B2 a ** spread", "c3d", _BODY_UNREAD % ("Handler._send", "a ** argument", "Handler.do_GET")),
@@ -2806,15 +2936,19 @@ BC_ROUTE_REFUSED = (("B1 a dict constant a subscript store rewrites types a rout
                     ("B3 a string equal to _send through operator.attrgetter", "sra", _SEND_REF % "'_send'"),
                     ("B3 a string equal to _send through __getattribute__", "srg", _SEND_REF % "'_send'"),
                     ("B3 a string equal to _send as a key of vars()", "srv", _SEND_REF % "'_send'"),
-                    ("B2 a class's second _send definition, the one Python binds, writes its third parameter as the body", "tsd",
-                     _BODY_UNREAD % ("_ProbeTwoSends._send", _NOT_SECOND, "_ProbeTwoSends.do_GET")),
                     ("B1 a type constant an import under global rebinds types a route", "gti", _TYPE_UNREAD % "_PROBE_GTI"),
                     ("B1 a type constant a from-import under global rebinds types a route", "gtf", _TYPE_UNREAD % "_PROBE_GTF"),
                     ("B1 a type constant a def under global rebinds types a route", "gtd", _TYPE_UNREAD % "_PROBE_GTD"),
                     ("B1 a type constant a class statement under global rebinds types a route", "gtc", _TYPE_UNREAD % "_PROBE_GTC"),
                     ("B1 a type constant an except clause under global rebinds types a route", "gte", _TYPE_UNREAD % "_PROBE_GTE"))
-BC_TEXT_REFUSED = (("C1 a module name bound only inside a try", "c2t", _TEXT_UNREAD % ("_PROBE_C2T", "a module name bound other than by one assignment")),
+_IN_BLOCK_BODY = "a module name bound once inside a module-level block, not by a top-level statement"   # since the seventh round's review
+# since the seventh round's review too: a name one top-level annotated, unpacking or chained assignment binds is no constant, and says so
+_ASSIGN_FORM = "a module name bound by an annotated, unpacking or chained assignment, which the census does not read as a constant"
+BC_TEXT_REFUSED = (("C1 a module name bound only inside a try", "c2t", _TEXT_UNREAD % ("_PROBE_C2T", _IN_BLOCK_BODY)),
                    ("C1 a default and then a rebind", "c2d", _TEXT_UNREAD % ("_PROBE_C2D", "a module name bound other than by one assignment")),
+                   ("C1 a module name one annotated assignment binds", "c1a", _TEXT_UNREAD % ("_PROBE_C1A", _ASSIGN_FORM)),
+                   ("C1 a module name one unpacking assignment binds", "c1u", _TEXT_UNREAD % ("_PROBE_C1U", _ASSIGN_FORM)),
+                   ("C1 a module name one chained assignment binds", "c1c", _TEXT_UNREAD % ("_PROBE_C1C", _ASSIGN_FORM)),
                    ("C1 a type constant bound again under an if", "c2ct", _TYPE_UNREAD % "_PROBE_C2CT"),
                    ("C2 a module-constant lambda", "x6l", _TEXT_UNREAD % ("_PROBE_X6L('t')", "a call")),
                    ("C2 a module constant aliasing a function", "x6a", _TEXT_UNREAD % ("_PROBE_X6A('t')", "a call")),
@@ -2831,22 +2965,595 @@ BC_TEXT_REFUSED = (("C1 a module name bound only inside a try", "c2t", _TEXT_UNR
                    ("C1 a def rebound by an assignment", "rbd", _TEXT_UNREAD % ("_probe_rbd", _REBOUND)),
                    ("C1 a def rebound by an assignment, called", "rbc", _TEXT_UNREAD % ("_probe_rbc()", "a call")),
                    ("C1 a builtin-named module constant, called", "bic", _TEXT_UNREAD % ("format('t')", "a call")),
-                   ("C1 a builtin-named name bound inside a try", "bit", _TEXT_UNREAD % ("ascii", _REBOUND)),
+                   ("C1 a builtin-named name bound inside a try", "bit", _TEXT_UNREAD % ("ascii", _IN_BLOCK_BODY)),
                    ("C1 an import a function rebinds under global", "gri", _TEXT_UNREAD % ("_PROBE_GRI", _REBOUND)),
                    ("C1 a def a function rebinds under global, called", "grd", _TEXT_UNREAD % ("_probe_grd()", "a call")),
                    ("C1 a builtin a function rebinds under global", "grb", _TEXT_UNREAD % ("hex", _REBOUND)),
                    ("C1 an import a module-level statement writes", "grm", _TEXT_UNREAD % ("_PROBE_GRM", _REBOUND)))
-BC_PLANT_LINES = (("c1s", '_PROBE_C1S["page"])'), ("c1g", "_PROBE_C1G)"), ("c2ct", "_PROBE_C2CT)"), ("c3p", _fgh_mark("c3p")),
+BC_PLANT_LINES = (("c1s", '_PROBE_C1S["page"])'), ("c1g", "_PROBE_C1G)"), ("c2ct", "_PROBE_C2CT)"),
                   ("c3k", _fgh_mark("c3k")), ("c3s", _fgh_mark("c3s")), ("c3d", _fgh_mark("c3d")), ("c5a", "reply = self._send"),
                   ("c5n", "_c5n = _send"), ("c5g", 'return getattr(self, "_send")'), ("c2t", "+ _PROBE_C2T,"), ("c2d", "+ _PROBE_C2D,"),
+                  ("c1a", "+ _PROBE_C1A,"), ("c1u", "+ _PROBE_C1U,"), ("c1c", "+ _PROBE_C1C,"),
                   ("x6l", '_PROBE_X6L("t")'), ("x6a", '_PROBE_X6A("t")'), ("x6p", "_PROBE_X6P()"), ("x6i", "_PROBE_X6I = _ProbeX6Page()"),
                   ("x6s", '_PROBE_X6S["k"]("t")'), ("x6c", '_probe_x6c_factory()("t")'), ("x6k", '_ProbeX6K("t")'), ("x6o", '_pg("t")'),
                   ("wsi", '_PROBE_WSI["page"])'), ("wdu", '_PROBE_WDU["page"])'), ("wco", '_PROBE_WCO["page"])'), ("wla", "+ _PROBE_WLA[0],"),
                   ("wsa", '"".join(_PROBE_WSA)'), ("srb", 'builtins.getattr(self, "_send")'), ("sra", 'operator.attrgetter("_send")'),
                   ("srg", 'self.__getattribute__("_send")'), ("srv", 'vars(type(self))["_send"]'), ("rbi", "+ _PROBE_RBI,"), ("rbk", '+ _PROBE_RBK("t"),'), ("rbd", "+ _probe_rbd,"),
-                  ("rbc", "+ _probe_rbc(),"), ("bic", '+ format("t"),'), ("bit", "+ ascii,"), ("tsd", _fgh_mark("tsd")),
+                  ("rbc", "+ _probe_rbc(),"), ("bic", '+ format("t"),'), ("bit", "+ ascii,"),
                   ("gti", "_PROBE_GTI)"), ("gtf", "_PROBE_GTF)"), ("gtd", "_PROBE_GTD)"), ("gtc", "_PROBE_GTC)"), ("gte", "_PROBE_GTE)"),
                   ("gri", "+ _PROBE_GRI,"), ("grd", "+ _probe_grd(),"), ("grb", '"<p>grb</p>" + hex,'), ("grm", "+ _PROBE_GRM,"))
+
+# A of the seventh round (2026-09-25), the Python readers failing closed, planted in the same pass. The shapes a reader does not
+# read each refuse by name with the reason the ruling's table gives; the two limits each hold a witness at its outcome. In
+# kernel/kernel.py's text: do_GET branches before the /chat branch (A_ROUTES) with what they read appended at the module's end
+# (A_DEFS): (a) a walrus in each part of a module-level def's or class's header, and in a def inside a module-level if, beside the
+# name's one assignment, as a page's name and as a route's type; (c) a walrus in a nested def's, class's or lambda's header inside a
+# page function (read as a local with its value) and inside do_GET (a route's type unresolved); (d) a callee, a bare name and a
+# receiver the page function's scope binds in a form the reader does not read as the module's (a local, a loop, with or
+# comprehension target, a parameter and an except name sharing a module function's name, a function-level import, a nested class,
+# a nested def beside an assignment, a del, a global, a nonlocal), and a parameter callee sharing no module function's name, which
+# stays a value slot; (e) an import, a def and a class bound once inside a module-level block, in each role; and the cross-file
+# override's witness route. In walked Python files of their own (A_FILES, each a synthetic module under kernel/, since a
+# file-wide refusal (g) or a star import (b) decides every route in its file): (b) a star import's four roles and a bare `_send`
+# call under it; (f) a decorated `_send` at both reaches; (g) a `_send` bound more than once or other than by one def statement;
+# (h) a `_send` definition that writes anything besides its page parameter, each road; the sixth round's c3p and tsd plants, moved
+# here from kernel/kernel.py (a second `_send` there would refuse every route of that file); the limits' witnesses; and, since the
+# seventh round's review, (r) a bare `_send` call a scope around it binds and a call that reaches no definition the census reads, each
+# with a reason true for it, and the receiver bases that are calls (cb). The walrus in an annotation (hda, hdv, hdw, hdr) parses on
+# every interpreter and does not compile on 3.14, where a walrus in an annotation is a syntax error at compile time; the census only
+# parses, so those plants read the same on every cell.
+A_PAGE_NONE = "<p>none</p>"   # the value a probe name's one assignment binds, beside the binding the reader must not miss
+
+
+def _a_text(tag, expr):
+    """A do_GET branch serving `"<p><tag></p>" + <expr>` as text/html: expr is the page text a reader must read or refuse."""
+    return _fgh_route(tag, 'return self._send(200, "<p>%s</p>" + %s, "text/html")' % (tag, expr))
+
+
+def _a_walrus(tag):
+    """The page text a header walrus binds (a fetch tagged `<tag>w`, never read at either head): the binding the reader must see."""
+    return FGH_PAGE % (tag + "w")
+
+
+A_HEADER = (("hdd", '@_probe_h_deco(_PROBE_HDD := "%s")\ndef _probe_hdd():\n    return None'),
+            ("hdp", 'def _probe_hdp(page=(_PROBE_HDP := "%s")):\n    return page'),
+            ("hdk", 'def _probe_hdk(*, page=(_PROBE_HDK := "%s")):\n    return page'),
+            ("hda", 'def _probe_hda(page: (_PROBE_HDA := "%s")):\n    return page'),
+            ("hdv", 'def _probe_hdv(*pages: (_PROBE_HDV := "%s")):\n    return pages'),
+            ("hdw", 'def _probe_hdw(**pages: (_PROBE_HDW := "%s")):\n    return pages'),
+            ("hdr", 'def _probe_hdr() -> (_PROBE_HDR := "%s"):\n    return None'),
+            ("hcd", '@_probe_h_deco(_PROBE_HCD := "%s")\nclass _ProbeHcd(object):\n    pass'),
+            ("hcb", 'class _ProbeHcb((_PROBE_HCB := "%s").__class__):\n    pass'),
+            ("hck", 'class _ProbeHck(object, page=(_PROBE_HCK := "%s")):\n    pass'),
+            ("hif", 'if True:\n    def _probe_hif(page=(_PROBE_HIF := "%s")):\n        return page'))
+A_HEADER_PARTS = {"hdd": "a def's decorator", "hdp": "a positional default", "hdk": "a keyword-only default", "hda": "an argument's annotation",
+                  "hdv": "the *args annotation", "hdw": "the **kwargs annotation", "hdr": "the return annotation", "hcd": "a class's decorator",
+                  "hcb": "a class's base", "hck": "a class's keyword", "hif": "a def inside a module-level if (its default)"}
+A_CALLEES = ("dl", "dt", "dw", "dp", "de", "di", "dc", "dx", "dq")   # the (d) callees sharing a module function's name: each has one, its page tagged
+A_ROUTES = "".join(tuple(_a_text(tag, "_PROBE_%s" % tag.upper()) for tag, _ in A_HEADER) + (
+    _fgh_route("hct", 'return self._send(200, "%s", _PROBE_HCT)' % (FGH_PAGE % "hct")),
+    _a_text("cnd", "_probe_cnd_page()"), _a_text("cnc", "_probe_cnc_page()"), _a_text("cnl", "_probe_cnl_page()"),
+    _fgh_route("ctd", 'def _pctd(t=(_PROBE_CTD := "text/html")):', "    return t", 'return self._send(200, "%s", _PROBE_CTD)' % (FGH_PAGE % "ctd")),
+    _fgh_route("ctc", 'class _Pctc((_PROBE_CTC := "text/html").__class__):', "    pass", 'return self._send(200, "%s", _PROBE_CTC)' % (FGH_PAGE % "ctc")),
+    _fgh_route("ctl", '_pctl = lambda t=(_PROBE_CTL := "text/html"): t', 'return self._send(200, "%s", _PROBE_CTL)' % (FGH_PAGE % "ctl"))) + tuple(
+    _a_text(tag, "_probe_%s_page(%s)" % (tag, "str" if tag in ("dp", "dpn", "dm") else ""))
+    for tag in A_CALLEES + ("dr", "db", "dv", "dg", "dd", "dn", "dm", "dk", "ds", "dpn")) + (
+    _a_text("er", '_PROBE_ER.dumps("x")'), _a_text("ec", '_probe_ec("x")'), _a_text("eb", "_PROBE_EB"), _a_text("ed", "_probe_ed()"),
+    _fgh_route("lox", 'return self._send(200, "%s", "text/html")' % (FGH_PAGE % "lox"))))
+
+
+def _a_make(tag):
+    """The module function a (d) callee shares its name with: its page tagged `<tag>`, scanned only if the reader wrongly follows it."""
+    return 'def _probe_%s_make(t):\n    return "%s" + t' % (tag, FGH_PAGE % tag)
+
+
+A_DEFS = "\n\n" + "\n\n\n".join(("def _probe_h_deco(page):\n    return lambda f: f",) + tuple(
+    '_PROBE_%s = "%s"\n\n\n%s' % (tag.upper(), A_PAGE_NONE, text % _a_walrus(tag)) for tag, text in A_HEADER) + (
+    '_PROBE_HCT = "application/json"\n\n\nclass _ProbeHct(object, ctype=(_PROBE_HCT := "text/html")):\n    pass',
+    '_PROBE_CND = "%s"\n\n\ndef _probe_cnd_page():\n    def _pick(page=(_PROBE_CND := "%s")):\n        return page\n    return _PROBE_CND' % (A_PAGE_NONE, FGH_PAGE % "cnd"),
+    '_PROBE_CNC = "%s"\n\n\ndef _probe_cnc_page():\n    class _Pick((_PROBE_CNC := "%s").__class__):\n        pass\n    return _PROBE_CNC' % (A_PAGE_NONE, FGH_PAGE % "cnc"),
+    '_PROBE_CNL = "%s"\n\n\ndef _probe_cnl_page():\n    _pick = lambda page=(_PROBE_CNL := "%s"): page\n    return _PROBE_CNL' % (A_PAGE_NONE, FGH_PAGE % "cnl"),
+    '_PROBE_CTD = "application/json"\n_PROBE_CTC = "application/json"\n_PROBE_CTL = "application/json"',
+    _a_make("dl") + '\n\n\ndef _probe_dl_page():\n    _probe_dl_make = str\n    return _probe_dl_make("t")',
+    _a_make("dt") + '\n\n\ndef _probe_dt_page():\n    for _probe_dt_make in (str,):\n        return _probe_dt_make("t")\n    return ""',
+    _a_make("dw") + '\n\n\ndef _probe_dw_page():\n    with open(__file__) as _probe_dw_make:\n        return _probe_dw_make("t")',
+    _a_make("dp") + '\n\n\ndef _probe_dp_page(_probe_dp_make):\n    return _probe_dp_make("t")',
+    _a_make("de") + '\n\n\ndef _probe_de_page():\n    try:\n        return ""\n    except Exception as _probe_de_make:\n        return _probe_de_make("t")',
+    _a_make("di") + '\n\n\ndef _probe_di_page():\n    from json import dumps as _probe_di_make\n    return _probe_di_make("t")',
+    _a_make("dc") + '\n\n\ndef _probe_dc_page():\n    class _probe_dc_make(str):\n        pass\n    return _probe_dc_make("t")',
+    _a_make("dx") + '\n\n\ndef _probe_dx_page():\n    _probe_dx_make = str\n    return _probe_dx_make("t").replace("a", "b")',
+    _a_make("dq") + '\n\n\ndef _probe_dq_page():\n    return "".join([_probe_dq_make("t") for _probe_dq_make in (str,)])',
+    'def _probe_dr_page():\n    def _probe_dr_make(t):\n        return t\n    _probe_dr_make = lambda t: "%s" + t\n    return _probe_dr_make("t")' % (FGH_PAGE % "dr"),
+    '_PROBE_DB = "%s"\n\n\ndef _probe_db_page():\n    import json as _PROBE_DB\n    return _PROBE_DB' % (FGH_PAGE % "db"),
+    '_PROBE_DV = {"k": "%s"}\n\n\ndef _probe_dv_page():\n    import json as _PROBE_DV\n    return _PROBE_DV.get("k", "")' % (FGH_PAGE % "dv"),
+    '_PROBE_DG = "%s"\n\n\ndef _probe_dg_page():\n    global _PROBE_DG\n    _PROBE_DG = "%s"\n    return _PROBE_DG' % (FGH_PAGE % "dg", A_PAGE_NONE),
+    '_PROBE_DD = "%s"\n\n\ndef _probe_dd_page():\n    return _PROBE_DD\n    del _PROBE_DD' % (FGH_PAGE % "dd"),
+    'def _probe_dn_page():\n    _probe_dn_text = "%s"\n\n    def _probe_dn_set():\n        nonlocal _probe_dn_text\n        _probe_dn_text = "%s"\n'
+    '    _probe_dn_set()\n    return _probe_dn_text' % (A_PAGE_NONE, FGH_PAGE % "dn"),
+    '_PROBE_DM = "%s"\n\n\ndef _probe_dm_page(v):\n    match v:\n        case _PROBE_DM:\n            pass\n    return _PROBE_DM' % (FGH_PAGE % "dm"),
+    '_PROBE_DK = "%s"\n\n\ndef _probe_dk_page():\n    _probe_dk_all = [_PROBE_DK for _PROBE_DK in ("a",)]\n    return _PROBE_DK' % (FGH_PAGE % "dk"),
+    '_PROBE_DS = "%s"\n\n\ndef _probe_ds_page():\n    _PROBE_DS: str\n    return _PROBE_DS' % (FGH_PAGE % "ds"),
+    'def _probe_dpn_page(_probe_dpn_render):\n    return _probe_dpn_render("t")',
+    'if True:\n    import json as _PROBE_ER',
+    'if True:\n    from json import dumps as _probe_ec',
+    'try:\n    import json as _PROBE_EB\nexcept ImportError:\n    pass',
+    'if True:\n    def _probe_ed():\n        return "%s"' % (FGH_PAGE % "ed"))) + "\n"
+# The probe modules. A_SEND is a `_send` the census reads (a method writing its ctype parameter and its body parameter, and only
+# the calls (h) reads), with a slot for more lines before its write; A_JSON_SEND writes application/json, so a call typed through it
+# is no route; a module-level `_send` writes through _H, a module name, having no self.
+A_SEND = ("    def _send(self, code, body, ctype):\n        self.send_response(code)\n        self.send_header(\"Content-Type\", ctype)\n"
+          "        self.end_headers()\n%s        self.wfile.write(body)\n")
+A_JSON_SEND = ("    def _send(self, code, body, ctype):\n        self.send_response(code)\n        self.send_header(\"Content-Type\", \"application/json\")\n"
+               "        self.end_headers()\n        self.wfile.write(body)\n")
+A_MODULE_SEND = 'def _send(code, body, ctype):\n    _H.send_header("Content-Type", %s)\n    _H.wfile.write(body)\n'
+
+
+def _a_indent(text, n=4):
+    """Every non-empty line of text indented by n more spaces."""
+    return "".join((" " * n + ln if ln.strip() else ln) for ln in text.splitlines(True))
+
+
+def _a_module(tag, send="", head="", tail="", call=None, branches=None):
+    """A probe module: `head`, then class Handler holding `send` (its `_send` definition or definitions, or nothing) and a do_GET
+    serving /probe-<tag> (`call`, its return line; by default the page tagged <tag> through self._send as text/html; `branches`,
+    several (tag, return line) pairs, replaces it), then `tail`."""
+    branches = branches or ((tag, call or 'return self._send(200, "%s", "text/html")' % (FGH_PAGE % tag)),)
+    get = "".join('        if p == "/probe-%s":\n            %s\n' % b for b in branches)
+    return ("%sclass Handler(object):\n%s%s    def do_GET(self):\n        p = self.path\n%s        return None\n%s"
+            % (head + "\n\n\n" if head else "", send, "\n" if send else "", get, "\n\n" + tail if tail else ""))
+
+
+def _a_extra(tag):
+    """The text a (h) definition writes besides its page parameter, bound to _EXTRA: a fetch tagged `<tag>x`, never scanned."""
+    return '_EXTRA = "%s"' % (FGH_PAGE % (tag + "x"))
+
+
+A_H_ROADS = (("hw2", "a second write of an expression", "        self.wfile.write(_EXTRA.encode())\n", "", "a second write"),
+             ("hwl", "writelines", "        self.wfile.writelines([_EXTRA.encode()])\n", "", "a second write"),
+             ("hal", "w = self.wfile.write; w(page)", "        w = self.wfile.write\n        w(_EXTRA.encode())\n", "", "a write through an alias"),
+             ("hga", 'getattr(self.wfile, "write")(page)', '        getattr(self.wfile, "write")(_EXTRA.encode())\n', "", "a write method named by a string"),
+             ("hpr", "print(page, file=self.wfile)", "        print(_EXTRA, file=self.wfile)\n", "", "a print to a stream"),
+             ("hsa", "self.connection.sendall(page)", "        self.connection.sendall(_EXTRA.encode())\n", "", "a second write"),
+             ("hsl", "s = self.connection.sendall; s(page)", "        s = self.connection.sendall\n        s(_EXTRA.encode())\n", "", "a write through an alias"),
+             ("hgs", 'getattr(self.connection, "sendall")(page)', '        getattr(self.connection, "sendall")(_EXTRA.encode())\n', "",
+              "a write method named by a string"),
+             ("hjd", 'json.dump(page, self.request.makefile("w"))', '        json.dump(_EXTRA, self.request.makefile("w"))\n', "import json\n\n",
+              "a call the reader does not read"),
+             ("hcf", "shutil.copyfileobj(src, self.wfile)", '        shutil.copyfileobj(open(__file__, "rb"), self.wfile)\n', "import shutil\n\n",
+              "a call the reader does not read"),
+             ("hhs", "helper(self, page)", "        _probe_helper(self, _EXTRA)\n", "", "a call the reader does not read"),
+             ("hhr", "helper(self.request, page)", "        _probe_helper(self.request, _EXTRA)\n", "", "a call the reader does not read"),
+             ("hrr", "a reference to the stream beside its write", '        self.send_header("X-Stream", str(self.wfile))\n', "",
+              "a reference to the write's receiver other than as its receiver"),
+             ("hbs", "len bound at module level", '        self.send_header("Content-Length", str(len(body)))\n', "len = lambda t: 0\n",
+              "a call the reader does not read"),
+             ("hpb", "a method on a parameter the definition rebinds to the socket", "        cache = self.connection\n        cache.flush_page(_EXTRA)\n", "",
+              "a call the reader does not read"),
+             # a builtin _body_param reads (len, str) bound inside the definition in another form, and a parameter rebound so, each a local
+             # or a rebinding the reader counts since the seventh round's review (extra5-1), each then "a call the reader does not read"
+             ("hbi", "len bound by an import in the definition", "        from json import dumps as len\n"
+              "        self.send_header(\"Content-Length\", str(len(body)))\n", "", "a call the reader does not read"),
+             ("hbd", "str bound by a def statement in the definition", "        def str(x):\n            return x\n"
+              "        self.send_header(\"X-Probe\", str(body))\n", "", "a call the reader does not read"),
+             ("hbc", "str bound by a class statement in the definition", "        class str(object):\n            pass\n"
+              "        self.send_header(\"X-Probe\", str(body))\n", "", "a call the reader does not read"),
+             ("hbm", "len bound by a match capture in the definition", "        match code:\n            case len:\n                pass\n"
+              "        self.send_header(\"Content-Length\", str(len(body)))\n", "", "a call the reader does not read"),
+             ("hbr", "len bound by a match mapping's rest in the definition", "        match {}:\n            case {**len}:\n                pass\n"
+              "        self.send_header(\"Content-Length\", str(len(body)))\n", "", "a call the reader does not read"),
+             ("hbe", "len bound by an except name in the definition", "        try:\n            pass\n        except Exception as len:\n            pass\n"
+              "        self.send_header(\"Content-Length\", str(len(body)))\n", "", "a call the reader does not read"),
+             ("hbx", "len deleted in the definition", "        self.send_header(\"Content-Length\", str(len(body)))\n        del len\n", "",
+              "a call the reader does not read"),
+             ("hpi", "a method on a parameter the definition rebinds by an import", "        import json as cache\n        cache.flush_page(_EXTRA)\n", "",
+              "a call the reader does not read"),
+             ("hpd", "a method on a parameter the definition rebinds by a def statement", "        def cache():\n            pass\n"
+              "        cache.flush_page(_EXTRA)\n", "", "a call the reader does not read"),
+             # the same builtins bound by a parameter of a lambda or a def nested in the definition, of each kind (a positional parameter
+             # with a default, a keyword-only one, `*args`), and a parameter of the definition rebound by a lambda's parameter or a nested
+             # def's `**kwargs` of its name, each counted as the definition's own binding
+             ("hla", "len bound by a lambda's parameter in the definition", "        [body].sort(key=lambda x, len=print: len(x))\n", "",
+              "a call the reader does not read"),
+             ("hls", "str bound by a lambda's keyword-only parameter in the definition", "        [body].sort(key=lambda x, *, str=print: str(x))\n", "",
+              "a call the reader does not read"),
+             ("hdl", "len bound by a nested def's parameter in the definition", "        def _probe_nest(len=print):\n            return len(body)\n",
+              "", "a call the reader does not read"),
+             ("hdi", "isinstance bound by a nested def's *args in the definition", "        def _probe_nest(*isinstance):\n"
+              "            return isinstance(body, bytes)\n", "", "a call the reader does not read"),
+             ("hpl", "a method on a parameter a lambda's parameter in the definition rebinds",
+              "        [body].sort(key=lambda x, cache=print: cache.flush_page(x))\n", "", "a call the reader does not read"),
+             ("hpk", "a method on a parameter a nested def's **kwargs in the definition rebinds", "        def _probe_nest(**cache):\n"
+              "            cache.flush_page(_EXTRA)\n", "", "a call the reader does not read"),
+             # the method's self bound again inside the definition (by an assignment, a lambda's parameter or an import) or declared
+             # global in a class body nested in it: a header call or a getattr on self there could reach an object other than the
+             # handler, so the definition refuses whole, its reason naming the rebinding or the declaration (extra5-1's reader, read at the reviewed head)
+             ("hya", "self rebound by an assignment in the definition", "        self = socket\n        self.send_header(\"X-Probe\", \"1\")\n",
+              "import socket\n\n", "a definition that rebinds self"),
+             ("hyl", "self rebound by a lambda's parameter in the definition",
+              "        [body].sort(key=lambda x, self=socket: self.send_header(\"X-Probe\", x))\n", "import socket\n\n", "a definition that rebinds self"),
+             ("hyi", "self rebound by an import in the definition", "        import socket as self\n        getattr(self, \"create_connection\")\n", "",
+              "a definition that rebinds self"),
+             ("hyg", "self declared global in a class body in the definition", "        class _Probe(object):\n            global self\n"
+              "            self.send_header(\"X-Probe\", \"1\")\n", "", "a definition that declares self global")) + (
+    # and self bound as a type parameter of a class statement in the definition, on the interpreters that parse the form (3.12 and
+    # later; on 3.10 and 3.11 it is a syntax error, which the walk names as a PARSE line)
+    (("hyt", "self rebound by a type parameter in the definition", "        class _Probe[self]:\n            self.send_header(\"X-Probe\", \"1\")\n",
+      "", "a definition that rebinds self"),) if sys.version_info >= (3, 12) else ())
+# (h) roads whose definition is not A_SEND with a slot: a definition that writes nothing, one whose one write is a sendall, and a
+# module-level `_send` that hangs its headers and a second call off a handler parameter (the name its stream hangs from is no value)
+A_H_OTHER = (("hnw", "a definition that writes nothing", _a_module("hnw", (A_SEND % "").replace("        self.wfile.write(body)\n", "")), "no write the census reads"),
+             ("hso", "a definition whose one write is a sendall", _a_module("hso", (A_SEND % "").replace("self.wfile.write(body)", "self.connection.sendall(body)")),
+              "a write through sendall"),
+             ("hmh", "a module-level _send calling a second method on its handler parameter",
+              _a_module("hmh", head=_a_extra("hmh") + '\n\n\ndef _send(code, body, ctype, h=None):\n    h.send_header("Content-Type", ctype)\n'
+                        "    h.flush_page(_EXTRA)\n    h.wfile.write(body)\n",
+                        call='return _send(200, "%s", "text/html", self)' % (FGH_PAGE % "hmh")), "a call the reader does not read"))
+A_H_HELPERS = {"hhs": "def _probe_helper(h, t):\n    h.wfile.write(t.encode())\n", "hhr": "def _probe_helper(sock, t):\n    sock.sendall(t.encode())\n"}
+
+
+def _a_h_module(tag, extra, head):
+    send = A_SEND % extra
+    if tag in ("hpb", "hpi", "hpd", "hpl", "hpk"): send = send.replace("def _send(self, code, body, ctype):", "def _send(self, code, body, ctype, cache=None):")
+    return _a_module(tag, send, head=head + _a_extra(tag), tail=A_H_HELPERS.get(tag, ""))
+
+
+def _a_rel(tag):
+    """A probe module's path: a walked Python file under kernel/, named by its plant's tag."""
+    return "kernel/probe_%s.py" % tag
+
+
+A_CALL_BASE_HEAD = ('import json\n\n_PROBE_CBD = {"k": "%s"}\n_PROBE_CBL = ["%s"]\n_PROBE_CBJ = ["%s"]\n\n\n'
+                    'def _probe_dj_page():\n    json = lambda t: {"k": "%s"}\n    return json("t").get("k")'
+                    % (FGH_PAGE % "cbd", FGH_PAGE % "cbl", FGH_PAGE % "cbj", FGH_PAGE % "dj")
+                    + '\n\n\n_PROBE_CCA = {"k": "%s"}\n_PROBE_CCK = {"k": "%s"}\n_PROBE_CCB = {"k": "%s"}\n\n\n'
+                    'def _probe_ccb_page(q, k):\n    return (q or dict(_PROBE_CCB)).copy().get(k)'
+                    % (FGH_PAGE % "cca", FGH_PAGE % "cck", FGH_PAGE % "ccb"))
+# The scopes around a bare `_send` call (the seventh round's review), each call in a method of its own in one probe module whose
+# module-level `_send` writes application/json, so a call typed through it is no route: (the tag, the method's body at column 0 with %s
+# for the tag's page, the scope the SERVED line names, the forms it names), and for a call Python sends to the module's def, which the
+# census types (no line), None and None: a global declaration with no binding beside it, a call in a nested def's header, in a
+# comprehension's first iterable or in a lambda's default, and a comprehension's target outside its comprehension
+A_BARE = (("bfw", 'with open(__file__) as _send:\n    return _send(200, "%s", "text/html")', None, "a with target"),
+          ("bfa", '_send = str\nreturn _send(200, "%s", "text/html")', None, "an assignment"),
+          ("bfu", '_send += str\nreturn _send(200, "%s", "text/html")', None, "an augmented assignment"),
+          ("bfn", '_send: object = str\nreturn _send(200, "%s", "text/html")', None, "an annotated assignment"),
+          ("bfo", '_send: object\nreturn _send(200, "%s", "text/html")', None, "an annotation"),
+          ("bfz", 'if (_send := str):\n    pass\nreturn _send(200, "%s", "text/html")', None, "a walrus"),
+          ("bfj", '_all = [(_send := x) for x in (str,)]\nreturn _send(200, "%s", "text/html")', None, "a walrus"),
+          ("bfr", 'return _send(200, "%s", "text/html")\ndel _send', None, "a del"),
+          ("bfi", 'from json import dumps as _send\nreturn _send(200, "%s", "text/html")', None, "an import"),
+          ("bfe", 'try:\n    pass\nexcept Exception as _send:\n    pass\nreturn _send(200, "%s", "text/html")', None, "an except name"),
+          ("bfm", 'match 1:\n    case _send:\n        pass\nreturn _send(200, "%s", "text/html")', None, "a match capture"),
+          ("bfc", 'class _send(object):\n    pass\nreturn _send(200, "%s", "text/html")', None, "a class statement"),
+          ("bfq", 'return [_send(200, "%s", "text/html") for _send in (str,)][0]', "a comprehension around the call", "a comprehension's target"),
+          ("bfy", 'return (lambda _send: _send(200, "%s", "text/html"))(str)', "a lambda around the call", "a parameter"),
+          ("bfk", '_send = str\n\ndef _inner():\n    nonlocal _send\n    _send = repr\n    return _send(200, "%s", "text/html")\nreturn _inner()',
+           "the enclosing function Handler._probe_bfk._inner", "an assignment, under a nonlocal declaration"),
+          ("bfv", '_send = str\n\ndef _inner():\n    return _send(200, "%s", "text/html")\nreturn _inner()', None, "an assignment"),
+          ("bgs", '_send = str\n\ndef _inner():\n    global _send\n    return _send(200, "%s", "text/html")\nreturn _inner()', None, None),
+          ("bgh", 'def _inner(page=_send(200, "%s", "text/html")):\n    _send = page\n    return _send\nreturn _inner()', None, None),
+          ("bgi", 'return [x for x in _send(200, "%s", "text/html") for _send in (x,)]', None, None),
+          ("bgl", 'return (lambda _send=_send(200, "%s", "text/html"): 0)()', None, None),
+          ("bgq", '_all = [0 for _send in (1,)]\nreturn _send(200, "%s", "text/html")', None, None))
+A_BARE_MODULE = (A_MODULE_SEND % '"application/json"' + "\n\nclass Handler(object):\n" + "\n".join(
+    "    def _probe_%s(self):\n%s" % (tag, _a_indent(body % (FGH_PAGE % tag) + "\n", 8)) for tag, body, _, _ in A_BARE))
+A_DEFAULT_HEAD = ('_PROBE_ZDK = "%s"\n_PROBE_ZDU = lambda: "%s"\n\n\n'
+                  'def _probe_zdp_page(msg, route="%s"):\n    return "<p>" + msg + "</p>" + route\n\n\n'
+                  'def _probe_zdk_page(msg, *, tail=_PROBE_ZDK):\n    return msg + tail\n\n\n'
+                  'def _probe_zdn_page():\n    _t = "%s"\n\n    def _pick(page=_t):\n        return page\n    return "<p>zdn</p>" + _pick()\n\n\n'
+                  'def _probe_zdo_page():\n    _t = "%s"\n\n    def _pick(page=_t):\n        return page\n\n    def _inner():\n'
+                  '        _t = "%s"\n        return _pick()\n    return "<p>zdo</p>" + _inner()\n\n\n'
+                  'def _probe_zdu_page(msg, tail=_PROBE_ZDU()):\n    return msg + tail\n\n\n'
+                  'def _probe_zds_page(msg, route="%s"):\n    return msg + route'
+                  % (FGH_PAGE % "zdk", FGH_PAGE % "zdu", FGH_PAGE % "zdp", FGH_PAGE % "zdn", FGH_PAGE % "zdo", A_PAGE_NONE, FGH_PAGE % "zdsx"))
+A_DEFAULT_METHODS = ('    _PROBE_ZDC = "%s"\n\n    def _probe_zdm(self, extra="%s"):\n        return "<p>zdm</p>" + extra\n\n'
+                     '    def _probe_zdc(self, extra=_PROBE_ZDC):\n        return "<p>zdc</p>" + extra\n' % (FGH_PAGE % "zdc", FGH_PAGE % "zdm"))
+A_DEFAULT_BRANCHES = (("zdp", 'return self._send(200, _probe_zdp_page("hi"), "text/html")'),
+                      ("zdk", 'return self._send(200, _probe_zdk_page("<p>zdk</p>"), "text/html")'),
+                      ("zdm", 'return self._send(200, self._probe_zdm(), "text/html")'),
+                      ("zdn", 'return self._send(200, _probe_zdn_page(), "text/html")'),
+                      ("zdo", 'return self._send(200, _probe_zdo_page(), "text/html")'),
+                      ("zdc", 'return self._send(200, self._probe_zdc(), "text/html")'),
+                      ("zdu", 'return self._send(200, _probe_zdu_page("<p>zdu</p>"), "text/html")'),
+                      ("zds", 'return self._send(200, _probe_zds_page("<p>zds</p>", "<p>ok</p>"), "text/html")'))
+A_STAR_HEAD = ("from .pages import *\n\n_PROBE_BSP = \"%s\"\n_PROBE_BST = \"application/json\"\n\n\ndef _probe_bsf():\n    return \"%s\""
+               % (A_PAGE_NONE, A_PAGE_NONE))
+A_FILES = tuple((_a_rel(tag), text) for tag, text in (
+    ("c3p", "class _ProbeC3(object):\n    def _send(self, code, ctype, body):\n        self.send_header(\"Content-Type\", ctype)\n"
+            "        self.wfile.write(body)\n\n    def do_GET(self):\n        return self._send(200, \"text/html\", \"%s\")\n" % (FGH_PAGE % "c3p")),
+    ("tsd", "class _ProbeTwoSends(object):\n    def _send(self, code, body, ctype):\n        self.send_header(\"Content-Type\", ctype)\n"
+            "        self.wfile.write(body)\n\n    def _send(self, code, ctype, body):\n        self.send_header(\"Content-Type\", ctype)\n"
+            "        self.wfile.write(body)\n\n    def do_GET(self):\n        return self._send(200, \"text/html\", \"%s\")\n" % (FGH_PAGE % "tsd")),
+    ("star", _a_module("bsp", A_SEND % "", head=A_STAR_HEAD, branches=(
+        ("bsp", 'return self._send(200, "<p>bsp</p>" + _PROBE_BSP, "text/html")'), ("bsf", 'return self._send(200, "<p>bsf</p>" + _probe_bsf(), "text/html")'),
+        ("bsb", 'return self._send(200, "<p>bsb</p>" + format("x"), "text/html")'), ("bst", 'return self._send(200, "%s", _PROBE_BST)' % (FGH_PAGE % "bst"))))),
+    ("bsc", _a_module("bsc", head="from .pages import *\n\n\n" + A_MODULE_SEND % "ctype", call='return _send(200, "%s", "text/html")' % (FGH_PAGE % "bsc"))),
+    ("fst", _a_module("fst", "    @staticmethod\n" + _a_indent(A_MODULE_SEND % "ctype"))),
+    ("fkw", _a_module("fkw", "    @staticmethod\n" + _a_indent((A_MODULE_SEND % "ctype").replace("(code, body, ctype)", "(code, body, *, ctype)")),
+                      call='return self._send(200, "%s", ctype="text/html")' % (FGH_PAGE % "fkw"))),
+    ("fcm", _a_module("fcm", "    @classmethod\n" + (A_SEND % "").replace("(self, code, body, ctype)", "(cls, code, body, ctype)").replace("self.", "cls."))),
+    ("fmd", _a_module("fmd", head="def _probe_deco(f):\n    return f\n\n\n@_probe_deco\n" + A_MODULE_SEND % "ctype",
+                      call='return _send(200, "%s", "text/html")' % (FGH_PAGE % "fmd"))),
+    ("gic", _a_module("gic", A_JSON_SEND + "\n    if True:\n" + _a_indent(A_SEND % ""))),
+    ("git", _a_module("git", A_JSON_SEND + "\n    try:\n" + _a_indent(A_SEND % "") + "    except Exception:\n        pass\n")),
+    ("giw", _a_module("giw", A_JSON_SEND + "\n    with open(__file__):\n" + _a_indent(A_SEND % ""))),
+    ("gim", _a_module("gim", head=A_MODULE_SEND % '"application/json"' + "\n\nif True:\n" + _a_indent(A_MODULE_SEND % "ctype"),
+                      call='return _send(200, "%s", "text/html")' % (FGH_PAGE % "gim"))),
+    ("gmt", _a_module("gmt", head=A_MODULE_SEND % '"application/json"' + "\n\ntry:\n" + _a_indent(A_MODULE_SEND % "ctype") + "except Exception:\n    pass\n",
+                      call='return _send(200, "%s", "text/html")' % (FGH_PAGE % "gmt"))),
+    ("gmw", _a_module("gmw", head=A_MODULE_SEND % '"application/json"' + "\n\nwith open(__file__):\n" + _a_indent(A_MODULE_SEND % "ctype"),
+                      call='return _send(200, "%s", "text/html")' % (FGH_PAGE % "gmw"))),
+    ("gas", _a_module("gas", A_JSON_SEND + "\n    _send = _probe_gas_send\n",
+                      tail=(A_SEND % "").replace("    def _send(self,", "def _probe_gas_send(self,").replace("\n        ", "\n    "))),
+    ("gsc", "class _ProbeBase(object):\n" + A_JSON_SEND + "\n    def do_GET(self):\n        return self._send(200, \"%s\", \"text/html\")\n\n\n"
+            "class Handler(_ProbeBase):\n" % (FGH_PAGE % "gsc") + A_SEND % ""),
+    ("gio", _a_module("gio", "    if True:\n" + _a_indent(A_SEND % ""))),
+    ("gao", _a_module("gao", "    _send = _probe_gao_send\n",
+                      tail=(A_SEND % "").replace("    def _send(self,", "def _probe_gao_send(self,").replace("\n        ", "\n    "))),
+    ("lgs", _a_module("lgs", "    def end_headers(self):\n        _PROBE_SOCK.sendall(_EXTRA.encode())\n\n" + A_SEND % "",
+                      head="_PROBE_SOCK = None\n" + _a_extra("lgs"))),
+    ("lox", "from .kernel import Handler\n\n\nclass _ProbeLoxHandler(Handler):\n" + (A_SEND % "").replace("(self, code, body, ctype)", "(self, code, ctype, body)")),
+    ("lfb", _a_module("lfb", A_SEND % "", tail="def _probe_lfb_make():\n    class _ProbeSub(Handler):\n"
+                      + _a_indent((A_SEND % "").replace("(self, code, body, ctype)", "(self, code, ctype, body)")) + "    return _ProbeSub\n")),
+    # (g)'s population is the module and every class body, one a function body defines included (a factory's class read, fac; two defs
+    # in such a class, gnc); a file naming `_send` nowhere but in its calls keeps the true reason (zsb); (g)'s import and header-walrus
+    # forms
+    ("fac", "def _probe_fac_make():\n" + _a_indent(_a_module("fac", A_SEND % "")) + "    return Handler\n"),
+    ("gnc", A_MODULE_SEND % '"application/json"' + "\n\ndef _probe_gnc_make():\n" + _a_indent(_a_module("gnc", A_JSON_SEND + "\n" + A_SEND % ""))
+            + "    return Handler\n"),
+    ("zsb", "from .kernel import Handler as _ProbeBase\n\n\n" + _a_module("zsb").replace("class Handler(object):", "class Handler(_ProbeBase):")),
+    ("gip", _a_module("gip", A_SEND % "" + "    from .kernel import _probe_gip_send as _send\n")),
+    ("ghw", _a_module("ghw", A_SEND % "", head="def _probe_ghw_pick(page=(_send := None)):\n    return page\n")),
+    # a local sharing the module's `json` import, called as a receiver base (dj), and receiver bases that are calls of a builtin or
+    # of an import (cbd, cbl, cbj), in a module whose `json`, `dict` and `list` nothing rebinds (kernel.py's planted text writes `dict`
+    # and `list` at module level, the wdu and wla plants, so neither is exempt there)
+    ("cb", _a_module("cb", A_SEND % "", head=A_CALL_BASE_HEAD, branches=(
+        ("dj", 'return self._send(200, "<p>dj</p>" + _probe_dj_page(), "text/html")'),
+        ("cbd", 'return self._send(200, "<p>cbd</p>" + dict(_PROBE_CBD).get("k", ""), "text/html")'),
+        ("cbl", 'return self._send(200, "<p>cbl</p>" + list(_PROBE_CBL)[0], "text/html")'),
+        ("cbj", 'return self._send(200, "<p>cbj</p>" + json.loads(json.dumps(_PROBE_CBJ))[0], "text/html")'),
+        ("cca", 'return self._send(200, "<p>cca</p>" + dict(_PROBE_CCA).copy().get("k"), "text/html")'),
+        ("cck", 'return self._send(200, "<p>cck</p>" + dict(**_PROBE_CCK)["k"], "text/html")'),
+        ("ccb", 'return self._send(200, "<p>ccb</p>" + _probe_ccb_page(None, "k"), "text/html")')))),
+    # a bare `_send` call a scope around it binds (a parameter, a nested def and a loop target in do_GET, beside a module-level def
+    # writing application/json; a nested def with no module-level def), and a call that reaches no
+    # definition the census reads in a file that binds `_send` (a base class's in the same file, through super(), and a bare call in
+    # a file whose one `_send` is a method)
+    ("bfp", _a_module("bfp", head=A_MODULE_SEND % '"application/json"', call='return _send(200, "%s", "text/html")' % (FGH_PAGE % "bfp"))
+            .replace("    def do_GET(self):\n", "    def do_GET(self, _send=None):\n")),
+    ("bfd", _a_module("bfd", head=A_MODULE_SEND % '"application/json"', call='return _send(200, "%s", "text/html")' % (FGH_PAGE % "bfd"))
+            .replace("        p = self.path\n", "        p = self.path\n" + _a_indent(A_MODULE_SEND % "ctype", 8))),
+    ("bfl", _a_module("bfl", head=A_MODULE_SEND % '"application/json"', call='return _send(200, "%s", "text/html")' % (FGH_PAGE % "bfl"))
+            .replace("        p = self.path\n", "        p = self.path\n        for _send in (str,):\n            pass\n")),
+    ("clo", _a_module("clo", call='return _send(200, "%s", "text/html")' % (FGH_PAGE % "clo"))
+            .replace("        p = self.path\n", "        p = self.path\n" + _a_indent(A_MODULE_SEND % "ctype", 8))),
+    ("inh", "class _ProbeBase(object):\n" + A_SEND % "" + "\n\n" + _a_module("inh").replace("class Handler(object):", "class Handler(_ProbeBase):")),
+    ("sup", "from .kernel import Handler as _ProbeBase\n\n\n" + _a_module("sup", A_SEND % "", call='return super()._send(200, "%s", "text/html")'
+            % (FGH_PAGE % "sup")).replace("class Handler(object):", "class Handler(_ProbeBase):")),
+    ("bnm", _a_module("bnm", A_SEND % "", call='return _send(200, "%s", "text/html")' % (FGH_PAGE % "bnm"))),
+    # every other binding form, and the scopes a call does not reach (A_BARE), in one module; and a bare call in a class body that binds `_send`
+    ("bfx", A_BARE_MODULE),
+    ("bcb", _a_module("bcb", A_SEND % "" + '    _probe_bcb = _send(None, 200, "%s", "text/html")\n' % (FGH_PAGE % "bcb"), call="return None")),
+    # a function (or its method) that binds `_send` under a `global` declaration, rebinding the module's name, refuses every `_send`
+    # call of its file: beside a module-level def (wglb, by an import; bfg, by an assignment in a
+    # method whose own bare call it is) and with none (vglc, by a def statement)
+    ("wglb", _a_module("wglb", head=A_MODULE_SEND % '"application/json"' + "\n\ndef _probe_use_html():\n    global _send\n    from .pages import html_send as _send\n",
+                       call='return _send(200, "%s", "text/html")' % (FGH_PAGE % "wglb"))),
+    ("vglc", _a_module("vglc", head="def _probe_install():\n    global _send\n\n" + _a_indent(A_MODULE_SEND % "ctype"),
+                       call='return _send(200, "%s", "text/html")' % (FGH_PAGE % "vglc"))),
+    ("bfg", A_MODULE_SEND % '"application/json"' + "\n\nclass Handler(object):\n    def _probe_bfg(self):\n        global _send\n        _send = str\n"
+            '        return _send(200, "%s", "text/html")\n' % (FGH_PAGE % "bfg")),
+    # a comprehension's target named `_send` binds in the comprehension's own scope, never the class body's or the module's, so the
+    # file's one direct def types its route: in a class body (ygcp) and at module level (ygcm)
+    ("ygcp", _a_module("ygcp", A_SEND % "" + '    _probe_names = [0 for _send in ("a", "b")]\n')),
+    ("ygcm", _a_module("ygcm", A_SEND % "", head='_probe_names = [0 for _send in ("a", "b")]')),
+    # an attribute store of `_send`, refused at its place as a reference to `_send` other than a call, as a read or a setattr
+    # string is: the class's own def, application/json, types the route, and at run time the call reaches the stored function
+    ("wats", _a_module("wats", A_JSON_SEND, head="from .pages import html_send as _probe_html_send", tail="Handler._send = _probe_html_send\n")),
+    # a super() call as a receiver base: its methods are a base class's, page text the census does not follow
+    ("wspg", "class _ProbeBase(object):\n    def page(self):\n        return \"%s\"\n\n\n" % (FGH_PAGE % "wspg")
+             + _a_module("wspg", A_SEND % "", call='return self._send(200, "<p>wspg</p>" + super().page(), "text/html")').replace(
+                 "class Handler(object):", "class Handler(_ProbeBase):")),
+    # a `_send` call through an attribute outside any class body: self (vmsf) or another object (yhms) in a module function of a
+    # file whose class binds `_send`, and self in a module function of a file whose module binds it (modh)
+    ("vmsf", _a_module("vmsf", A_SEND % "", call="return None", tail='def _probe_serve(self):\n    return self._send(200, "%s", "text/html")\n' % (FGH_PAGE % "vmsf"))),
+    ("yhms", _a_module("yhms", A_SEND % "", call="return None", tail='def _probe_serve(h):\n    return h._send(200, "%s", "text/html")\n' % (FGH_PAGE % "yhms"))),
+    ("modh", A_MODULE_SEND % "ctype" + '\n\ndef _probe_reply(self):\n    return self._send(200, "%s", "text/html")\n' % (FGH_PAGE % "modh")),
+    # a module name only a function binds, under a `global` declaration: refused with its own reason, not the reasonless line
+    ("xgo", _a_module("xgo", A_SEND % "", head='def _probe_init():\n    global _PROBE_XGO\n    _PROBE_XGO = "%s"' % (FGH_PAGE % "xgo"),
+                      call='return self._send(200, "<p>xgo</p>" + _PROBE_XGO, "text/html")')),
+    # the same name bound under the declaration by a match capture (xgm), a star capture (xgs) or a mapping's rest (xgr); and a module
+    # constant a function rebinds so, a container the module writes at run time, as one rebound by an assignment there is (xgc)
+    ("xgm", _a_module("xgm", A_SEND % "", head='def _probe_init(v):\n    global _PROBE_XGM\n    match v:\n        case _PROBE_XGM:\n            pass',
+                      call='return self._send(200, "<p>xgm</p>" + _PROBE_XGM, "text/html")')),
+    ("xgs", _a_module("xgs", A_SEND % "", head='def _probe_init(v):\n    global _PROBE_XGS\n    match v:\n        case [*_PROBE_XGS]:\n            pass',
+                      call='return self._send(200, "<p>xgs</p>" + _PROBE_XGS, "text/html")')),
+    ("xgr", _a_module("xgr", A_SEND % "", head='def _probe_init(v):\n    global _PROBE_XGR\n    match v:\n        case {**_PROBE_XGR}:\n            pass',
+                      call='return self._send(200, "<p>xgr</p>" + _PROBE_XGR, "text/html")')),
+    ("xgc", _a_module("xgc", A_SEND % "", head='_PROBE_XGC = "%s"\n\n\ndef _probe_init(v):\n    global _PROBE_XGC\n    match v:\n        case _PROBE_XGC:\n'
+                      '            pass' % (FGH_PAGE % "xgc"), call='return self._send(200, "<p>xgc</p>" + _PROBE_XGC, "text/html")')),
+    # the defaults of a followed function's parameters a call omits: read as the call's argument would be, in the scope the def
+    # statement runs in (zdp a module function's positional default, zdk a keyword-only default through a module constant, zdm a
+    # method's, zdn a nested def's through the enclosing function's local, zdo the same called from another nested function that binds
+    # the name too); refused by name when the reader cannot read them (zdc a method's default naming a name the class body binds, zdu
+    # a call the pass does not follow); and a default the call passes is not read (zds)
+    ("zdf", _a_module("zdf", A_SEND % "" + A_DEFAULT_METHODS, head=A_DEFAULT_HEAD, branches=A_DEFAULT_BRANCHES))) + tuple(
+    (tag, _a_h_module(tag, extra, head)) for tag, _, extra, head, _ in A_H_ROADS) + tuple((tag, text) for tag, _, text, _ in A_H_OTHER))
+A_STAR = _a_rel("star")
+# The plants' lines, by content: kernel/kernel.py's join SERVED_PLANT_LINES; each probe module's are located in its own text
+A_KERNEL_LINES = (tuple((tag, "+ _PROBE_%s," % tag.upper()) for tag, _ in A_HEADER)
+                  + tuple((tag, _fgh_mark(tag)) for tag in ("hct", "cnd", "cnc", "cnl", "ctd", "ctc", "ctl", "lox"))
+                  + tuple((tag, 'return _probe_%s_make("t")' % tag) for tag in ("dl", "dt", "dw", "dp", "de", "di", "dc", "dr"))
+                  + (("dx", 'return _probe_dx_make("t").replace'), ("dq", '[_probe_dq_make("t") for'), ("db", "return _PROBE_DB"),
+                     ("dv", "return _PROBE_DV.get("), ("dg", "return _PROBE_DG"), ("dd", "return _PROBE_DD"), ("dn", "return _probe_dn_text"),
+                     ("dm", "return _PROBE_DM"), ("dk", "return _PROBE_DK"), ("ds", "return _PROBE_DS"),
+                     ("dpn", 'return _probe_dpn_render("t")'), ("er", '+ _PROBE_ER.dumps("x"),'), ("ec", '+ _probe_ec("x"),'), ("eb", "+ _PROBE_EB,"),
+                     ("ed", "+ _probe_ed(),")))
+A_FILE_LINES = dict((rel, ((rel.split("_", 1)[1][:-3], _fgh_mark(rel.split("_", 1)[1][:-3])),)) for rel, _ in A_FILES
+                    if rel not in (A_STAR, _a_rel("lox"), _a_rel("cb"), _a_rel("bfx"), _a_rel("zdf")))
+A_FILE_LINES[_a_rel("bfx")] = tuple((tag, _fgh_mark(tag)) for tag, _, _, _ in A_BARE)
+A_FILE_LINES[A_STAR] = (("bsp", "+ _PROBE_BSP,"), ("bsf", "+ _probe_bsf(),"), ("bsb", '+ format("x"),'), ("bst", _fgh_mark("bst")))
+A_FILE_LINES[_a_rel("cb")] = (("dj", 'return json("t").get("k")'),) + tuple((tag, _fgh_mark(tag)) for tag in ("cbd", "cbl", "cbj", "cca", "cck", "ccb"))
+# the plants whose SERVED line stands at another line than their page's fetch: the store (wats), the route's receiver (wspg, xgo,
+# xgm, xgs, xgr, xgc) and a refused default (zdc, zdu); zdf's read defaults at the line of each fetch
+A_FILE_LINES[_a_rel("wats")] = (("wats", "Handler._send = _probe_html_send"),)
+A_FILE_LINES[_a_rel("wspg")] = (("wspg", "+ super().page(),"),)
+A_FILE_LINES.update((_a_rel(tag), ((tag, "+ _PROBE_%s," % tag.upper()),)) for tag in ("xgo", "xgm", "xgs", "xgr", "xgc"))
+A_FILE_LINES[_a_rel("zdf")] = tuple((tag, _fgh_mark(tag)) for tag in ("zdp", "zdk", "zdm", "zdn", "zdo")) + (
+    ("zdc", "extra=_PROBE_ZDC"), ("zdu", "tail=_PROBE_ZDU()"))
+_A_TEXT = "SERVED %s:%%d builds a served page from %s (%s), text the census did not read"
+_A_TYPE = "SERVED %s:%%d serves a response whose content type the census cannot resolve (%s in Handler.do_GET)"
+_A_MEMO = ("SERVED %s:%%d builds a served page from %s, a container the module writes at run time: name it in SERVED_ALLOW with the walked "
+           "file its value comes from")
+_A_TWICE = ("SERVED %s:%%d calls _send on %s, a _send bound more than once, or other than by one def statement, in %s: the census types a call "
+            "only through the one def statement that binds _send in a class body or the module")
+_A_DECORATED = "SERVED %s:%%d answers through %s, a decorated _send definition, whose parameters the census does not read (in %s)"
+_A_REACH = "SERVED %s:%%d calls _send on %s, %s: the census cannot read the response's content type"
+_INHERITED = "a _send the call's own class body does not bind (inherited or set at run time, which the census does not follow)"
+_REACH_OTHER = "a _send reached through an object other than self, which the census does not follow"
+_REACH_OUTSIDE = "a _send reached through an attribute outside any class body, which the census does not follow"
+_GLOBAL_SEND = "a _send the function %s binds under a global declaration (%s), rebinding the module's name at run time"
+_SEND_STORE = ("SERVED %s:%%d refers to _send other than by a call the scan reads (%s in <module>): the routes are the calls spelled "
+               "_send(...) or <x>._send(...); call it so, or name the place in SERVED_ALLOW with its reason")
+_SUPER = "a call of super(), whose methods are a base class's, which the census does not follow"
+_GLOBAL_ONLY = "a module name no module-level statement binds, bound at run time under a global declaration"
+_CLASS_DEFAULT = "a method's default naming a name the class body binds, which the census does not read as a scope"
+_STAR = "a module name a star import may rebind"
+_IN_BLOCK = "a module name bound once inside a module-level block, not by a top-level import, def or class statement"
+
+
+def _a_body(rel, via, why, where):
+    """The unread-body line of a script-running call through `via` in `rel`, with %d for the call's line."""
+    return ("SERVED %s:%%d serves text/html through %s, whose page body the census does not read (%s, in %s): the census reads a body as the "
+            "call's second positional argument, the parameter the definition writes; pass it so" % (rel, via, why, where))
+
+
+# (the plant, its tag, the SERVED line at the fix with the tag's line in place of %d), each the table's outcome with its reason
+A_REFUSED = (tuple(("(a) a walrus in %s" % A_HEADER_PARTS[tag], tag, _A_TEXT % (KERNEL_PATH, "_PROBE_" + tag.upper(), _REBOUND)) for tag, _ in A_HEADER) + (
+    ("(a) a walrus in a class's keyword, a route's type", "hct", _A_TYPE % (KERNEL_PATH, "_PROBE_HCT")),
+    ("(b) a page constant under a star import", "bsp", _A_TEXT % (A_STAR, "_PROBE_BSP", _STAR)),
+    ("(b) a followed def under a star import", "bsf", _A_TEXT % (A_STAR, "_probe_bsf()", _STAR)),
+    ("(b) a builtin under a star import", "bsb", _A_TEXT % (A_STAR, "format('x')", _STAR)),
+    ("(b) a type constant under a star import", "bst", _A_TYPE % (A_STAR, "_PROBE_BST")),
+    ("(b) a bare _send call under a star import", "bsc", "SERVED %s:%%d calls _send on _send, %s: the census cannot read the response's content type" % (_a_rel("bsc"), _STAR)),
+    ("(c) a walrus in a nested def's default, a route's type", "ctd", _A_TYPE % (KERNEL_PATH, "_PROBE_CTD")),
+    ("(c) a walrus in a nested class's base, a route's type", "ctc", _A_TYPE % (KERNEL_PATH, "_PROBE_CTC")),
+    ("(c) a walrus in a lambda's default, a route's type", "ctl", _A_TYPE % (KERNEL_PATH, "_PROBE_CTL")),
+    ("(d) a local assignment's callee", "dl", _A_TEXT % (KERNEL_PATH, "_probe_dl_make('t')", "a call")),
+    ("(d) a loop target's callee", "dt", _A_TEXT % (KERNEL_PATH, "_probe_dt_make('t')", "a call")),
+    ("(d) a with target's callee", "dw", _A_TEXT % (KERNEL_PATH, "_probe_dw_make('t')", "a call")),
+    ("(d) a parameter's callee sharing a module function's name", "dp", _A_TEXT % (KERNEL_PATH, "_probe_dp_make('t')", "a parameter sharing a module function's name")),
+    ("(d) an except name's callee sharing a module function's name", "de", _A_TEXT % (KERNEL_PATH, "_probe_de_make('t')", "an except name sharing a module function's name")),
+    ("(d) a function-level import alias's callee", "di", _A_TEXT % (KERNEL_PATH, "_probe_di_make('t')", "a name the function binds by an import")),
+    ("(d) a nested class's callee", "dc", _A_TEXT % (KERNEL_PATH, "_probe_dc_make('t')", "a name the function binds by a class statement")),
+    ("(d) a local's callee through the text-method arm", "dx", _A_TEXT % (KERNEL_PATH, "_probe_dx_make('t')", "a call")),
+    ("(d) a comprehension target's callee", "dq", _A_TEXT % (KERNEL_PATH, "_probe_dq_make('t')", "a call")),
+    ("(d) a nested def rebound by an assignment", "dr", _A_TEXT % (KERNEL_PATH, "_probe_dr_make('t')", "a name the function binds two ways")),
+    ("(d) a function-level import shadowing a module constant, as a bare name", "db", _A_TEXT % (KERNEL_PATH, "_PROBE_DB", "a name the function binds by an import")),
+    ("(d) a function-level import shadowing a module constant, as a receiver", "dv", _A_TEXT % (KERNEL_PATH, "_PROBE_DV.get('k', '')", "a name the function binds by an import")),
+    ("(d) a global declaration names the module's binding, a memo", "dg", _MEMO_UNREAD % "_PROBE_DG"),
+    ("(d) a name the function deletes", "dd", _A_TEXT % (KERNEL_PATH, "_PROBE_DD", "a name the function deletes")),
+    ("(d) a name a nonlocal declaration rebinds", "dn", _A_TEXT % (KERNEL_PATH, "_probe_dn_text", "a name a nonlocal declaration rebinds")),
+    ("(d) a match capture", "dm", _A_TEXT % (KERNEL_PATH, "_PROBE_DM", "a name the function binds another way")),
+    ("(d) a comprehension target read outside its comprehension", "dk", _A_TEXT % (KERNEL_PATH, "_PROBE_DK", "a name a comprehension binds")),
+    ("(d) a name an annotation alone makes local", "ds", _A_TEXT % (KERNEL_PATH, "_PROBE_DS", "a name the function binds another way")),
+    ("(d) a local sharing a module import's name, called as a receiver base", "dj", _A_TEXT % (_a_rel("cb"), "json('t').get('k')", "a call")),
+    ("(d) a super() call as a receiver base", "wspg", _A_TEXT % (_a_rel("wspg"), "super().page()", _SUPER)),
+    ("(e) an import bound once in a module-level block, as a receiver", "er", _A_TEXT % (KERNEL_PATH, "_PROBE_ER.dumps('x')", _IN_BLOCK)),
+    ("(e) an import bound once in a module-level block, as a callee", "ec", _A_TEXT % (KERNEL_PATH, "_probe_ec('x')", _IN_BLOCK)),
+    ("(e) an import bound once in a module-level block, as a bare name", "eb", _A_TEXT % (KERNEL_PATH, "_PROBE_EB", _IN_BLOCK)),
+    ("(e) a def bound once in a module-level block, called", "ed", _A_TEXT % (KERNEL_PATH, "_probe_ed()", _IN_BLOCK)),
+    ("(e) a module name only a function binds, under a global declaration", "xgo", _A_TEXT % (_a_rel("xgo"), "_PROBE_XGO", _GLOBAL_ONLY)),
+    ("(e) a module name only a function binds, by a match capture under a global declaration", "xgm", _A_TEXT % (_a_rel("xgm"), "_PROBE_XGM", _GLOBAL_ONLY)),
+    ("(e) a module name only a function binds, by a star capture under a global declaration", "xgs", _A_TEXT % (_a_rel("xgs"), "_PROBE_XGS", _GLOBAL_ONLY)),
+    ("(e) a module name only a function binds, by a match mapping's rest under a global declaration", "xgr",
+     _A_TEXT % (_a_rel("xgr"), "_PROBE_XGR", _GLOBAL_ONLY)),
+    ("(e) a module constant a function rebinds by a match capture under a global declaration, a memo", "xgc", _A_MEMO % (_a_rel("xgc"), "_PROBE_XGC")),
+    ("(p) a method's default naming a name the class body binds", "zdc", _A_TEXT % (_a_rel("zdf"), "_PROBE_ZDC", _CLASS_DEFAULT)),
+    ("(p) a default the pass does not follow: a call of a module constant", "zdu", _A_TEXT % (_a_rel("zdf"), "_PROBE_ZDU()", "a call")),
+    ("(f) a staticmethod route", "fst", _A_DECORATED % (_a_rel("fst"), "Handler._send", "Handler.do_GET")),
+    ("(f) a keyword-only staticmethod", "fkw", _A_DECORATED % (_a_rel("fkw"), "Handler._send", "Handler.do_GET")),
+    ("(f) a classmethod", "fcm", _A_DECORATED % (_a_rel("fcm"), "Handler._send", "Handler.do_GET")),
+    ("(f) a decorated module-level _send, called bare", "fmd", _A_DECORATED % (_a_rel("fmd"), "_send", "Handler.do_GET")),
+    ("(g) a def inside an if in a class body", "gic", _A_TWICE % (_a_rel("gic"), "self._send", _a_rel("gic"))),
+    ("(g) a def inside a try in a class body", "git", _A_TWICE % (_a_rel("git"), "self._send", _a_rel("git"))),
+    ("(g) a def inside a with in a class body", "giw", _A_TWICE % (_a_rel("giw"), "self._send", _a_rel("giw"))),
+    ("(g) a def inside an if at module level", "gim", _A_TWICE % (_a_rel("gim"), "_send", _a_rel("gim"))),
+    ("(g) a def inside a try at module level", "gmt", _A_TWICE % (_a_rel("gmt"), "_send", _a_rel("gmt"))),
+    ("(g) a def inside a with at module level", "gmw", _A_TWICE % (_a_rel("gmw"), "_send", _a_rel("gmw"))),
+    ("(g) a def followed by an assignment", "gas", _A_TWICE % (_a_rel("gas"), "self._send", _a_rel("gas"))),
+    ("(g) a subclass in the same file overriding _send", "gsc", _A_TWICE % (_a_rel("gsc"), "self._send", _a_rel("gsc"))),
+    ("(g) the one binding a def inside an if", "gio", _A_TWICE % (_a_rel("gio"), "self._send", _a_rel("gio"))),
+    ("(g) the one binding an assignment", "gao", _A_TWICE % (_a_rel("gao"), "self._send", _a_rel("gao"))),
+    ("(g) two direct defs in one class (the sixth round's tsd plant)", "tsd", _A_TWICE % (_a_rel("tsd"), "self._send", _a_rel("tsd"))),
+    ("(g) two defs in a class a function body defines, beside a module-level def", "gnc", _A_TWICE % (_a_rel("gnc"), "self._send", _a_rel("gnc"))),
+    ("(g) a subclass a function body defines, overriding _send in the same file", "lfb", _A_TWICE % (_a_rel("lfb"), "self._send", _a_rel("lfb"))),
+    ("(g) an import binding _send in the class body after its def", "gip", _A_TWICE % (_a_rel("gip"), "self._send", _a_rel("gip"))),
+    ("(g) a walrus binding _send in a module-level def's default", "ghw", _A_TWICE % (_a_rel("ghw"), "self._send", _a_rel("ghw"))),
+    ("(g) no binding of _send in the file at all: a subclass of another file's class", "zsb",
+     _A_REACH % (_a_rel("zsb"), "self._send", "a definition this file does not hold")),
+    ("(g) a function binding _send under a global declaration by an import, beside a module-level def", "wglb",
+     _A_REACH % (_a_rel("wglb"), "_send", _GLOBAL_SEND % ("_probe_use_html", "an import"))),
+    ("(g) a function binding _send under a global declaration by a def statement, with no module-level def", "vglc",
+     _A_REACH % (_a_rel("vglc"), "_send", _GLOBAL_SEND % ("_probe_install", "a def statement"))),
+    ("(g) a method binding _send under a global declaration, its own bare call", "bfg",
+     _A_REACH % (_a_rel("bfg"), "_send", _GLOBAL_SEND % ("Handler._probe_bfg", "an assignment"))),
+    ("(r) a bare _send call in a function a parameter of which binds _send", "bfp",
+     _A_REACH % (_a_rel("bfp"), "_send", "a _send the enclosing function Handler.do_GET binds (a parameter)")),
+    ("(r) a bare _send call in a function whose nested def binds _send", "bfd",
+     _A_REACH % (_a_rel("bfd"), "_send", "a _send the enclosing function Handler.do_GET binds (a def statement)")),
+    ("(r) a bare _send call in a function whose loop binds _send", "bfl",
+     _A_REACH % (_a_rel("bfl"), "_send", "a _send the enclosing function Handler.do_GET binds (a loop target)")),
+    ("(r) a bare _send call of a def its function holds, in a file with no other binding", "clo",
+     _A_REACH % (_a_rel("clo"), "_send", "a _send the enclosing function Handler.do_GET binds (a def statement)")),
+    ("(r) a call through self of a _send a base class in the same file binds", "inh", _A_REACH % (_a_rel("inh"), "self._send", _INHERITED)),
+    ("(r) a call through super() in a file whose class binds _send", "sup", _A_REACH % (_a_rel("sup"), "super()._send", _REACH_OTHER)),
+    ("(r) a call through self in a module function of a file whose class binds _send", "vmsf", _A_REACH % (_a_rel("vmsf"), "self._send", _REACH_OUTSIDE)),
+    ("(r) a call through another object in a module function of a file whose class binds _send", "yhms", _A_REACH % (_a_rel("yhms"), "h._send", _REACH_OUTSIDE)),
+    ("(r) a call through self in a module function of a file whose module binds _send", "modh", _A_REACH % (_a_rel("modh"), "self._send", _REACH_OUTSIDE)),
+    ("(r) an attribute store of _send at module level", "wats", _SEND_STORE % (_a_rel("wats"), "Handler._send")),
+    ("(r) a bare _send call in a file whose one _send is a method", "bnm",
+     _A_REACH % (_a_rel("bnm"), "_send", "a _send no scope the bare call looks it up in binds, the module included")),
+    ("(r) a bare _send call in a class body that binds _send", "bcb", _A_REACH % (_a_rel("bcb"), "_send", "a _send the class body of Handler around the call binds (a def statement)")),
+    ("B2 a definition that writes its third parameter as the body (the sixth round's c3p plant)", "c3p",
+     _a_body(_a_rel("c3p"), "_ProbeC3._send", _NOT_SECOND, "_ProbeC3.do_GET"))) + tuple(
+    ("(h) %s" % label, tag, _a_body(_a_rel(tag), "Handler._send", why, "Handler.do_GET")) for tag, label, _, _, why in A_H_ROADS) + tuple(
+    ("(h) %s" % label, tag, _a_body(_a_rel(tag), "_send" if tag == "hmh" else "Handler._send", why, "Handler.do_GET")) for tag, label, _, why in A_H_OTHER) + tuple(
+    ("(r) a bare _send call %s binds by %s (%s)" % (scope or "its method", forms, tag), tag, _A_REACH % (_a_rel("bfx"), "_send", "a _send %s binds (%s)" % (
+        scope or "the enclosing function Handler._probe_" + tag, forms))) for tag, _, scope, forms in A_BARE if forms))
+# (the plant, its tag, the file) whose page's fetch is read, UNCLASSIFIED at the tag's line: (c)'s walrus values read as locals, and the
+# limits' witnesses held at their outcome (the census reads the route through its own class body's definition, and the override in
+# another file, or the stream the end_headers method reaches, is not read; a same-file override in a class a function body defines is
+# (g)'s, lfb above, since (g) counts that class body)
+A_READ = (("(c) a walrus in a nested def's default inside a page function, read as a local", "cnd", KERNEL_PATH),
+          ("(c) a walrus in a nested class's base inside a page function, read as a local", "cnc", KERNEL_PATH),
+          ("(c) a walrus in a lambda's default inside a page function, read as a local", "cnl", KERNEL_PATH),
+          ("limit: an override of _send in a subclass another file defines", "lox", KERNEL_PATH),
+          ("limit: a stream an end_headers method reaches through a module global", "lgs", _a_rel("lgs")))
+# read at the fix: (g)'s population holds a class body a function body defines, so a factory's class with its one direct def types its
+# route (fac); and a receiver base that is a call of a builtin or an import has its arguments read as text (the tree's own
+# `dict(_PANE_ORDER).get(...)` spelling), each constant's fetch UNCLASSIFIED at its line
+A_G_READ = (("(g) a class a function body defines, its one direct def, read", "fac", _a_rel("fac")),
+            ("(g) a comprehension's target named _send in a class body, its own scope's, read", "ygcp", _a_rel("ygcp")),
+            ("(g) a comprehension's target named _send at module level, its own scope's, read", "ygcm", _a_rel("ygcm")))
+# read at the fix: the default of a parameter a followed function's call omits, as the call's argument would be, each default's
+# fetch UNCLASSIFIED at its line
+A_DEFAULT_READ = (("(p) a module function's positional default", "zdp", _a_rel("zdf")),
+                  ("(p) a module function's keyword-only default through a module constant", "zdk", _a_rel("zdf")),
+                  ("(p) a method's default", "zdm", _a_rel("zdf")),
+                  ("(p) a nested def's default through the enclosing function's local", "zdn", _a_rel("zdf")),
+                  ("(p) a nested def's default, called from a nested function that binds the same name", "zdo", _a_rel("zdf")))
+A_CALL_BASE = (("(d) a builtin's call as a receiver base: dict(X).get(k)", "cbd", _a_rel("cb")),
+               ("(d) a builtin's call as a container: list(X)[0]", "cbl", _a_rel("cb")),
+               ("(d) an import's calls as a container: json.loads(json.dumps(X))[0]", "cbj", _a_rel("cb")),
+               ("(d) a builtin's call under a method call, as a receiver base: dict(X).copy().get(k)", "cca", _a_rel("cb")),
+               ("(d) a builtin's call with a ** argument, as a container: dict(**X)[k]", "cck", _a_rel("cb")),
+               ("(d) a BoolOp inside a call chain, as a receiver base: (p or dict(X)).copy().get(k)", "ccb", _a_rel("cb")))
+# the page texts no reader may scan at the fix: each header walrus's value, each (d) callee's module function, the (e) def's page and
+# the lambda a nested def is rebound to, each refused plant's own page, each (h) road's extra text and the witness stream's text
+A_UNREAD_MARKS = (tuple(_fgh_mark(tag + "w") for tag, _ in A_HEADER) + tuple(_fgh_mark(t) for t in A_CALLEES + ("dr", "db", "dv", "dg", "dd", "dn", "dm", "dk", "ds", "ed"))
+                  + tuple(_fgh_mark(tag) for _, tag, _ in A_REFUSED if tag not in A_CALLEES) + tuple(_fgh_mark(tag + "x") for tag, _, _, _, _ in A_H_ROADS)
+                  + (_fgh_mark("hmhx"), _fgh_mark("lgsx"), _fgh_mark("zdsx")) + tuple(_fgh_mark(tag) for tag, _, _, forms in A_BARE if forms is None))
 
 
 
@@ -2877,32 +3584,35 @@ def _plant_lines(text, specs, where):
 SERVED_KEY = ("tests/test_price_feed_census.py", "the served pass over the planted kernel.py")   # parse_cache.derived's key
 SERVED_PLANT_LINES = ((("fetch", 'fetch("https://example.invalid/probe");'), ("alert", "}else{alert('Pull from '+h+' failed');}"),
                        ("import", "import x from 'example-pkg';"), ("split_import", "} from 'example-split-pkg';"),
-                       ("alert_after_export", "}else{alert('Pulled from '+q+' ok');}"), ("settings_def", "def _settings_page():"),
+                       ("alert_after_export", "}else{alert('Pulled from '+q+' ok');}"), ("served_name_led", "  z2 } from 'example-name-pkg';"),
+                       ("served_comment", "import w from /* c */ 'example-comment-pkg';"), ("settings_def", "def _settings_page():"),
                        ("settings_anchor", SETTINGS_ANCHOR.strip()), ("probe_read", '    return (UI / "probe.html").read_text()'),
                        ("fstring", 'fetch(\'https://example.invalid/f\')'), ("slot", '"<script>fetch(\'%s\')</script>" % p'),
                        ("body_param", 'return self._send(200, body, "text/html")'))
-                      + FGH_PLANT_LINES + BC_PLANT_LINES)   # the plants' lines, located by content once all have landed; a tuple of names, one per occurrence
+                      + FGH_PLANT_LINES + BC_PLANT_LINES + A_KERNEL_LINES)   # the plants' lines, located by content once all have landed; a tuple of names, one per occurrence
 SERVED_PLANTS = ((BOOT_ANCHOR, BOOT_ANCHOR + BOOT_PLANTS), (SETTINGS_ANCHOR, SETTINGS_PLANT + SETTINGS_ANCHOR),
                  (CHAT_BRANCH, ROUTE_PLANTS + CHAT_BRANCH), (SEND_ANCHOR, SEND_PLANT + SEND_ANCHOR),
                  (CHAT_BRANCH, FGH_ROUTES + CHAT_BRANCH), (SEND_ANCHOR, FGH_HANDLER + SEND_ANCHOR),
                  (DRIFT_JS_ANCHOR, H1_PLANT + DRIFT_JS_ANCHOR), (DRIFT_CSS_ANCHOR, DRIFT_CSS_ANCHOR + H2_PLANT),
-                 (SLICE_SEND, SLICE_LITERAL), (CHAT_BRANCH, BC_ROUTES + CHAT_BRANCH))   # (anchor, text), in the order they land
+                 (SLICE_SEND, SLICE_LITERAL), (CHAT_BRANCH, BC_ROUTES + CHAT_BRANCH), (CHAT_BRANCH, A_ROUTES + CHAT_BRANCH))   # (anchor, text), in the order they land
 
 
 def _served_text(text):
     """kernel/kernel.py's text with TheServedPagesAreScanned's plants applied: SERVED_PLANTS in order (_replace_text, so an anchor
     that is absent or repeated is a broken mutation), then PROBE_PAGE_DEF, FGH_DEFS and BC_DEFS appended as _append lands a block. The
-    plants: the boot's fetch, socket, opener, alert and import, the settings page's beacon, the probe, f-string and
+    plants: the boot's fetch, socket, opener, alert and import (since the seventh round's review with two of the shapes of served
+    text's gate residual), the settings page's beacon, the probe, f-string and
     format-slot routes and the method serving a parameter, and, since the fifth round, F, G and H's: the F1 to F10 and F12
     routes, the G routes with their module definitions and Handler's G5 attribute and G11 method, the H4 to H7 routes and
     the residual's R1 to R3 routes,
-    H1 and H2 in the drift banner's joined constants, and F11's respelled _file_slice type, and since the sixth round B and C's
-    routes and module definitions (BC_ROUTES, BC_DEFS). The plants' one writer: the served
-    pass parses this text, and the command-line case writes it into the scope copy's kernel/kernel.py, so the two plant sets
-    cannot drift."""
+    H1 and H2 in the drift banner's joined constants, and F11's respelled _file_slice type, since the sixth round B and C's
+    routes and module definitions (BC_ROUTES, BC_DEFS), and since the seventh round A's (A_ROUTES, A_DEFS; A's probe modules,
+    A_FILES, are files of their own, which the pass parses and the command-line case plants beside this text). The plants' one
+    writer: the served pass parses this text, and the command-line case writes it into the scope copy's kernel/kernel.py, so the
+    two plant sets cannot drift."""
     for old, new in SERVED_PLANTS:
         text = _replace_text(text, old, new, KERNEL_PATH)
-    return text + ("" if text.endswith("\n") else "\n") + PROBE_PAGE_DEF + FGH_DEFS + BC_DEFS
+    return text + ("" if text.endswith("\n") else "\n") + PROBE_PAGE_DEF + FGH_DEFS + BC_DEFS + A_DEFS
 
 
 def _served_build():
@@ -2920,12 +3630,16 @@ def _served_build():
     problem lines, its entry in served, and the SERVED_ALLOW and FRAME_WRITERS hits keyed on it) with the planted text's, keeps
     the tree's files and skipped (kernel.py is still a file), and re-sorts the sites as scan sorts them; a scan() change it does
     not replicate (a Result field it does not carry, a filter on routes or on served sites) is red in the command-line case.
-    Held here: the tree's run served kernel/kernel.py alone (a second file with routes would need the splice widened; refused,
-    not assumed) and the script has the served pass at all (a script without it, the archive of the reviewed head, is refused by
-    name, so every case of the class reds with this message and not with an error). The walk-time gate over kernel.py's Python
-    imports is not re-run over the planted text here; the command-line case runs it, so a plant that added a Python import would
-    differ there. F, G and H's plants ride this one pass (the fifth round): they add no scan, and each is held by its own
-    assertion in the class over this pass's output; the arm-removed reds are served-pass-only runs recorded outside the tree."""
+    Held here: the tree's run served kernel/kernel.py alone (a second file of the tree with routes would need the splice widened;
+    refused, not assumed) and the script has the served pass at all (a script without it, the archive of the reviewed head, is
+    refused by name, so every case of the class reds with this message and not with an error). Since the seventh round the pass
+    scans A's probe modules too (A_FILES, walked Python files under kernel/ the tree does not hold, each a file of its own since a
+    file-wide refusal or a star import decides every route in its file): each is parsed, scanned with its walk-time import gate,
+    and read by served_texts in the walk's order (kernel/kernel.py first, then the modules by path, the tree's own files between
+    them adding no line), and its path joins the file list, as a run over a copy carrying them lists them. The walk-time import
+    gate runs here over every planted file, kernel.py's text included. F, G and H's plants ride this one pass (the fifth round):
+    they add no scan, and each is held by its own assertion in the class over this pass's output; the arm-removed reds are
+    served-pass-only runs recorded outside the tree."""
     mod = script_module(ROOT)
     for name in ("Result", "Scan", "served_texts", "Site"):
         if not hasattr(mod, name):
@@ -2937,25 +3651,40 @@ def _served_build():
                              "file's contributions alone" % (KERNEL_PATH, base.res.served))
     text = _served_text(KERNEL)
     at = _plant_lines(text, SERVED_PLANT_LINES, KERNEL_PATH + " (planted)")
-    tree = ast.parse(text, filename=KERNEL_PATH)
+    # the probe modules (A_FILES, the seventh round), each a walked Python file the tree does not hold, in the walk's order: every
+    # one sorts after kernel/kernel.py under kernel/, and the tree's files between them add no problem line (the tree runs clean)
+    probes = sorted(A_FILES)
+    for rel, ptext in probes:
+        at.update(_plant_lines(ptext, A_FILE_LINES.get(rel, ()), rel))
+    planted = [(KERNEL_PATH, ast.parse(text, filename=KERNEL_PATH))] + [(rel, ast.parse(ptext, filename=rel)) for rel, ptext in probes]
     res = mod.Result()
-    res.files, res.skipped = list(base.res.files), base.res.skipped
-    sc = mod.Scan(KERNEL_PATH, res)
-    sc.visit(tree)
-    mod.served_texts(KERNEL_PATH, tree, sorted(sc.routes, key=lambda r: r[0].lineno), res)
+    res.files, res.skipped = list(base.res.files) + [rel for rel, _ in probes], base.res.skipped
+    served = []
+    for rel, tree in planted:   # the walk's order: each file's scan and its import gate, then the served pass over every file with routes
+        sc = mod.Scan(rel, res)
+        sc.visit(tree)
+        for m, line in sc.imports:
+            if m not in mod.KNOWN_IMPORTS:
+                res.problems.append("IMPORT %s:%d imports %s, a module the census does not know: a client that opens connections takes its "
+                                    "primitives into NET or SUB; either way add it to KNOWN_IMPORTS with the reason" % (rel, line, m))
+        if sc.routes:
+            served.append((rel, tree, sorted(sc.routes, key=lambda r: r[0].lineno)))
+    for rel, tree, routes in served:
+        mod.served_texts(rel, tree, routes, res)
+    names = {rel for rel, _ in planted}
     merged = mod.Result()
     merged.files, merged.skipped = res.files, res.skipped
-    merged.sites = [x for x in base.res.sites if x.file != KERNEL_PATH] + res.sites
-    merged.dom = [d for d in base.res.dom if d[0] != KERNEL_PATH] + res.dom
-    merged.served_files = [f for f in base.res.served_files if f[0] != KERNEL_PATH] + res.served_files
-    merged.problems = [p for p in base.res.problems if KERNEL_PATH + ":" not in p] + res.problems
-    merged.served = [r for r in base.res.served if r != KERNEL_PATH] + res.served
-    # the allowlist and frame-writer hits keyed on kernel.py are the planted pass's; every other file's are the tree's, so
+    merged.sites = [x for x in base.res.sites if x.file not in names] + res.sites
+    merged.dom = [d for d in base.res.dom if d[0] not in names] + res.dom
+    merged.served_files = [f for f in base.res.served_files if f[0] not in names] + res.served_files
+    merged.problems = [p for p in base.res.problems if not any(r + ":" in p for r in names)] + res.problems
+    merged.served = [r for r in base.res.served if r not in names] + res.served
+    # the allowlist and frame-writer hits keyed on the planted files are the planted pass's; every other file's are the tree's, so
     # problems() reads the same SERVED ALLOW places a real run over the planted copy reads (a whole-file scan would too). The
     # reviewed head's Result carries no such records (its script has no SERVED_ALLOW), so there the splice reads none and each
     # case reds at its own assertion rather than as an error in this build
     base_hits, pass_hits = getattr(base.res, "allow_hits", {}), getattr(res, "allow_hits", {})
-    merged.allow_hits = {k: v for k, v in base_hits.items() if (k[1] if k[0] == "frame" else k[0]).split(":", 1)[0] != KERNEL_PATH}
+    merged.allow_hits = {k: v for k, v in base_hits.items() if (k[1] if k[0] == "frame" else k[0]).split(":", 1)[0] not in names}
     merged.allow_hits.update(pass_hits)
     merged.sites.sort(key=mod.Site.tuple)
     run = _run_of(mod, ROOT, merged)
@@ -2977,7 +3706,9 @@ class TheServedPagesAreScanned(_Scope):
     script-running types; a text/html or text/javascript literal before it). Planted in kernel/kernel.py's text (the served
     pass, served_pass; a run over a planted copy before the fifth round): a third-party fetch, a second socket and a second
     opener in _TIMELINE_BOOT (the fetch UNCLASSIFIED, the two rowed tools moving their keys' counts: the keyed-by-tool
-    residual), a brace-led alert and an import statement there (the narrowed import gate), a sendBeacon in the settings page's
+    residual), a brace-led alert and an import statement there (the narrowed import gate; since the seventh round's review also
+    two of the shapes of served text's gate residual, a name-led continuation line and a comment between `from` and its specifier,
+    each held at no line), a sendBeacon in the settings page's
     template (UNCLASSIFIED at the template's own lines), a route serving a file the walk does not scan and a method serving
     text/html from a parameter (each a SERVED line by name), an f-string page (its fetch UNCLASSIFIED: the branch executed) and
     a page whose fetch URL is a Python format slot (the computed class). Since the fifth round F, G and H's plants ride the same
@@ -2993,7 +3724,11 @@ class TheServedPagesAreScanned(_Scope):
     the sixth round B and C's plants ride it too, each a SERVED line by name: a route typed through a written module name, a
     body the census does not read, a reference to `_send` that is no call, a container the module writes, a module name bound
     other than by one assignment or rebound and a callee the pass does not follow; beside them an import a function writes
-    only through a local of its own is held at no line. None adds a
+    only through a local of its own is held at no line. Since the seventh round A's plants ride it too, in kernel/kernel.py's
+    text and in probe modules of their own under kernel/ (A_FILES, which the command-line case plants beside kernel.py): each
+    shape a Python reader does not read refused by name with its reason, (c)'s walrus values read as locals, and the two
+    limits' witnesses held at their outcome; since that round's review, the defaults of the parameters a followed
+    call omits read (the (p) plants). None adds a
     socket or an opener, so the rowed keys' counts move by the boot's two plants alone. At the tree the shim's and the shell's
     sockets, the boot's dead opener and the worker's clients.openWindow list on local-kernel, the four fetches whose route
     literal a caller passes list as computed, and the four pane stylesheets are named, not scanned. The pass is the class's
@@ -3056,11 +3791,24 @@ class TheServedPagesAreScanned(_Scope):
         self.assertNotIn("IMPORT kernel/kernel.py:%d " % self.at["alert_after_export"], out,
                          "after an export statement that ended on its line, a brace-led line is any block's last line, not an import")
 
-    def assertFetchUnclassifiedAt(self, n, tag, why):
-        """A plant page's fetch (FGH_PAGE with `tag`) is named on the UNCLASSIFIED line at line n of the planted kernel.py and
-        listed at that line with no road."""
-        self.assertIn("kernel/kernel.py:%d" % n, unclassified(self.out), "%s: the page's fetch is UNCLASSIFIED at line %d\n%s" % (why, n, gates(self.out)))
-        self.assertListed(self.out, r"^kernel/kernel\.py:%d  fetch  fetch\('https://example\.invalid/%s'\)  in -  -> UNCLASSIFIED$" % (n, re.escape(tag)), why)
+    def test_served_text_keeps_its_gate_and_the_two_named_shapes_are_its_residual(self):
+        """The seventh round's review widened the gate's reads in walked files only; served text keeps SERVED_IMPORT_GATE, and the
+        pin that holds the walked files to a TypeScript parse does not parse it (UNREAD_BINDINGS states the residual for served text
+        alone). The two shapes the residual names on their own, planted in the boot script, are held at their outcome, no line: a
+        continuation line led by a name (`  z2 } from 'example-name-pkg';`, which a walked file reads) and a comment between `from`
+        and the specifier (`import w from /* c */ 'example-comment-pkg';`, which neither the gate nor the binding patterns read), so
+        both packages, outside KNOWN_JS_IMPORTS, pass the gate. Were the widening to reach served text, the first would be an IMPORT
+        line."""
+        out = self.out
+        for name, pkg in (("served_name_led", "example-name-pkg"), ("served_comment", "example-comment-pkg")):
+            self.assertNotIn("IMPORT kernel/kernel.py:%d " % self.at[name], out, "served text's residual: %s is no gate line" % name)
+            self.assertNotIn(" imports %s," % pkg, out, "served text's residual: %s passes the gate" % pkg)
+
+    def assertFetchUnclassifiedAt(self, n, tag, why, rel=KERNEL_PATH):
+        """A plant page's fetch (FGH_PAGE with `tag`) is named on the UNCLASSIFIED line at line n of the planted file (kernel.py,
+        or since the seventh round a probe module, `rel`) and listed at that line with no road."""
+        self.assertIn("%s:%d" % (rel, n), unclassified(self.out), "%s: the page's fetch is UNCLASSIFIED at %s:%d\n%s" % (why, rel, n, gates(self.out)))
+        self.assertListed(self.out, r"^%s:%d  fetch  fetch\('https://example\.invalid/%s'\)  in -  -> UNCLASSIFIED$" % (re.escape(rel), n, re.escape(tag)), why)
 
     def test_a_routes_type_is_read_through_a_constant_a_keyword_a_local_and_every_script_running_type(self):
         """F of the fifth round, a route's content type: each plant is a do_GET branch, and since the fifth round a `_send`
@@ -3192,17 +3940,18 @@ class TheServedPagesAreScanned(_Scope):
         argument (wdu, `dict.update`; wco, `collections.OrderedDict.update`), and a type constant a function binds under `global` by
         an import (gti), a from-import (gtf), a def (gtd), a class statement (gtc) and an except clause (gte), the written names
         routes_of threads through _ctype_values and _dict_of. B2: a script-running route whose body the census does not read at the
-        call's second positional argument: a definition whose one write names its third parameter (c3p, a class of its own with
-        `_send(self, code, ctype, body)`), a class whose second `_send` definition, the one Python binds, does so (tsd), a body
-        passed by keyword (c3k), a starred argument before the body (c3s) and a `**` spread (c3d); the keyword body's page is no
-        site (refused, not read). B3: a reference to `_send` that is no call the scan reads: an alias of the bound method (c5a), a
-        bare `_send` read (c5n), a getattr naming it (c5g), and a string equal to `_send` (srb `builtins.getattr`, sra
+        call's second positional argument: a body passed by keyword (c3k), a starred argument before the body (c3s) and a `**`
+        spread (c3d); the keyword body's page is no site (refused, not read). (The definition whose one write names its third
+        parameter, c3p, and the class with two `_send` definitions, tsd, are probe modules of their own since the seventh round,
+        held in test_a_send_definition_the_census_does_not_read_whole_refuses_its_routes_by_name: a second `_send` in
+        kernel/kernel.py would refuse every route of that file, and tsd is refused there as a `_send` bound more than once.) B3:
+        a reference to `_send` that is no call the scan reads: an alias of the bound method (c5a), a bare `_send` read (c5n), a
+        getattr naming it (c5g), and a string equal to `_send` (srb `builtins.getattr`, sra
         `operator.attrgetter`, srg `__getattribute__`, srv a key of `vars()`). The arm whose removal reds each: the written names
         for c1s and c1g, the dunder mutators for wsi, the container type's first argument for wdu and wco, and the binding under
         `global` recorded for an import (gti), a from-import (gtf), a def or class statement (gtd and gtc) and an except clause
-        (gte), each plant then typed by its literal, application/json, and silent; the definition's body parameter for c3p (its type
-        argument then read as the body, silent); the last definition read for tsd (the first then read, its type argument the page,
-        silent); the call's positional check for c3k (the run then dies with an IndexError, the defect at the sixth round's head),
+        (gte), each plant then typed by its literal, application/json, and silent; the call's positional check for c3k (the run then
+        dies with an IndexError, the defect at the sixth round's head),
         c3s and c3d (each then read at the call's second argument, its page's fetch UNCLASSIFIED); and the attribute and bare-name
         reads of `_send` for c5a and c5n, the getattr read for c5g and the string's read for srb to srv (each silent). At the sixth
         round's head c3s and c3d are read at call.args[1] (each page's fetch UNCLASSIFIED), c3k crashes the run, and every other
@@ -3215,14 +3964,22 @@ class TheServedPagesAreScanned(_Scope):
 
     def test_a_page_text_past_the_constants_and_the_followed_calls_is_refused_by_name(self):
         """C of the sixth round, the served text's refusals (correctness-2, extra6-2), each a SERVED line at the plant's own line.
-        C1: the served pass's constants are the names one module-level assignment binds and nothing else binds there
-        (_module_consts), and a bare module name that is no constant passes only as an import, a function or a class that is its
+        C1: the served pass's constants are the names one plain single-name assignment binds as a top-level statement and nothing
+        else binds at module level (_module_consts), and a bare module name that is no constant passes only as an import, a function
+        or a class that is its
         name's one module-level binding, or a builtin no module-level binding shadows, and in each case only when nothing rebinds
         the name (no function binds it under `global` and no statement at module level writes it; a write through a function's local
-        of the same name does not count): a name bound only inside a module-level try (c2t), a default rebound inside a try (c2d),
-        an import rebound by an assignment (rbi), a def rebound by one (rbd), a builtin-named name bound inside a try (bit), an
-        import a function rebinds under `global` (gri), a builtin so rebound (grb) and an import a statement at module level writes
-        (grm) are each refused as "a module name bound other than by one assignment"; a rebound import called (rbk), a rebound def
+        of the same name does not count): a name bound only inside a module-level try (c2t) and a builtin-named name bound inside a
+        try (bit), each bound once and not by a top-level statement, are refused as "a module name bound once inside a module-level
+        block, not by a top-level statement" (since the seventh round's review; the sixth round's reason, "a module name bound other
+        than by one assignment", was false for a name one assignment binds); a name one top-level annotated (c1a), unpacking (c1u)
+        or chained (c1c) assignment binds, bound once and no constant, is refused as "a module name bound by an annotated, unpacking
+        or chained assignment, which the census does not read as a constant" (since the seventh round's review; the reason before,
+        "a module name bound other than by one assignment", was false for them); a default rebound inside a try (c2d), an import
+        rebound
+        by an assignment (rbi), a def rebound by one (rbd), an import a function rebinds under `global` (gri), a builtin so rebound
+        (grb) and an import a statement at module level writes (grm) are each refused as "a module name bound other than by one
+        assignment"; a rebound import called (rbk), a rebound def
         called (rbc) and a def a function rebinds under `global`, called (grd), none a function the pass follows, and a
         builtin-named module constant called (bic) are refused as "a call"; an import a function writes only through a local of its
         own (grl) keeps its exemption and is no line; and the route typing reads the same constants, so a type constant bound again
@@ -3232,7 +3989,9 @@ class TheServedPagesAreScanned(_Scope):
         constant (x6i, refused at the constant's own line, where its value calls the class), a subscript dispatch (x6s), a callee
         that is itself a call (x6c), a class (x6k) and a local-bound callee (x6o). A list and a set constant a container type's
         method writes (wla `list.append`, wsa `set.add`) are containers the module writes, refused where a page reads them. The arm
-        whose removal reds each: the Name arm's classification for c2t and c2d, the one-binding count for c2d and c2ct (c2d then
+        whose removal reds each: the Name arm's classification for c2t and c2d, the block-body reason in _Served._module_why for c2t
+        and bit (the sixth round's reason again), its assignment-form reason for c1a, c1u and c1c, and the count's record of those
+        forms (each the sixth round's reason again), the one-binding count for c2d and c2ct (c2d then
         read as its default, c2ct typed text/plain), the refusal of any other callee for x6l to x6k, and _base's local-bound callee
         for x6o (the local then passed as a name the body binds); the one-binding check on an import in _base's name arm for rbi and
         in its call arm for rbk, on a function for rbd and on a followed module function for rbc; the builtin check after the
@@ -3240,12 +3999,263 @@ class TheServedPagesAreScanned(_Scope):
         and grm and in _Served._builtin for grb, and a write by a statement at module level recorded as a rebind for grm (each then
         silent, since each page's literal part is a piece); and the container type's first argument for wla and wsa. A write through
         a function's local recorded as a rebind reds grl. At the sixth round's head rbi and rbd are read (each page's fetch
-        UNCLASSIFIED) and every other plant is silent."""
+        UNCLASSIFIED) and every other plant is silent; at the reviewed head c1a, c1u and c1c are refused with the sixth round's
+        reason."""
         for plant, tag, line in BC_TEXT_REFUSED:
             with self.subTest(plant=plant):
                 self.assertRefused(self.rc, self.out, line % self.at[tag])
         self.assertEqual([ln for ln in self.out.splitlines() if "_PROBE_GRL" in ln], [],
                          "an import whose name a function writes only through a local of its own (grl) keeps its exemption: no line")
+
+    def assertARefused(self, groups):
+        """Each A_REFUSED plant of the groups (the label's leading `(a)` and so on) is its SERVED line at the fix, at its tag's line."""
+        for plant, tag, line in A_REFUSED:
+            if plant.split(" ", 1)[0] in groups:
+                with self.subTest(plant=plant):
+                    self.assertRefused(self.rc, self.out, line % self.at[tag])
+
+    def test_a_module_name_a_header_walrus_a_star_import_or_a_block_binds_is_refused_by_name(self):
+        """A of the seventh round, the one-binding count and _Served's module names (correctness-1, extra9-1, extra9-3), each a
+        SERVED line at the plant's own line. (a) A walrus in a module-level def's or class's header binds the module's name: a
+        def's decorator, a positional default, a keyword-only default, an argument's annotation, the *args and the **kwargs
+        annotation, the return annotation, a class's decorator, base and keyword, and a def inside a module-level if, each
+        beside the name's one assignment, refused as "a module name bound other than by one assignment", and a class keyword's
+        walrus beside a type constant's assignment, a type the census cannot resolve (hct). (b) Under `from .pages import *`
+        (relative, so no IMPORT line), in a probe module of its own: a page constant, a followed def and a builtin, each refused
+        as "a module name a star import may rebind", a type constant unresolved, and a bare `_send` call refused by the same
+        reason (bsc). (e) An import, a def and a class bound once inside a module-level block are refused with the reason naming
+        the block, as a receiver (er), a callee (ec), a bare name (eb) and a def called as a followed function (ed); and a module
+        name no module-level statement binds, which only a function binds under a `global` declaration, is refused with a reason
+        saying so, not with the reasonless line, whatever form binds it there: an assignment (xgo), a match capture (xgm), a star
+        capture (xgs) or a match mapping's rest (xgr), each in a probe module of its own since the seventh round's review. A
+        module constant a function rebinds by a match capture under the declaration is a container the module writes at run
+        time, as one an assignment there rebinds is (xgc).
+        At the reviewed head every (a) and (b) plant is silent (the constant's first assignment read, the def followed, the builtin
+        exempt, the type application/json) but bsc, whose page is read, and every (e) plant is refused with another reason or
+        none (er "a module name bound other than by one assignment", ec and ed "a call", eb, xgo, xgm, xgs and xgr no reason) but
+        xgc, whose constant is read (its fetch listed). The arm whose removal
+        reds each: the count's walk of a header for every (a) plant, and each part of _header for its own plants (decorators for
+        hdd, positional defaults for hdp and hif, keyword-only defaults for hdk, the arguments' annotations for hda, the *args
+        annotation for hdv, the **kwargs annotation for hdw, the return annotation for hdr, a class's decorators, bases and
+        keywords for hcd, hcb, and hck and hct; the parts are shared with (c), whose plants red under the part each uses,
+        positional defaults for cnd, cnl, ctd and ctl and bases for cnc and ctc); the empty constant map under a star import for
+        bsp and bst, the star checks in _Served._sole for bsf and in _Served._builtin for bsb, and routes_of's for bsc;
+        _module_why's block arm for er, ec, eb and ed, and _Served's names from the count's walk for eb (the reasonless line
+        again); for xgo, resolve's reading of a name only a global declaration binds (the reasonless line again) and _module_why's
+        arm for it (then "a module name bound other than by one assignment"); and Scan's record of a match capture bound under the
+        declaration (Result.rebinds), the capture's for xgm, xgs and xgc, the star capture's for xgs and the mapping's rest's for
+        xgr (xgm, xgs and xgr then the reasonless line, xgc's constant read)."""
+        self.assertARefused(("(a)", "(b)", "(e)"))
+
+    def test_a_name_the_page_functions_scope_binds_is_decided_by_that_scope(self):
+        """A of the seventh round, the function-scope readers (correctness-1's function scope, correctness-2, and the rulings on a
+        parameter or an except name as a callee, a name bound two ways and a comprehension's target). (c) A walrus in a nested
+        def's default, a nested class's base or a lambda's default inside a page function binds that function's name:
+        _Served._locals reads it as a local with its value, so its page's fetch is listed UNCLASSIFIED at the walrus's line and
+        the module constant beside it is not read (cnd, cnc, cnl), and inside do_GET the same walrus leaves a route's type
+        unresolved (_scopes_of: ctd, ctc, ctl). (d) A callee, a bare name or a receiver the page function's scope binds is
+        decided by that scope, never by the module's binding: a callee a local assignment, a loop target, a with target or a
+        comprehension target binds, or a local reached through the text-method arm, is refused as "a call" (dl, dt, dw, dq, dx);
+        a parameter and an except name sharing a module function's name are refused as such (dp, de); a function-level import
+        and a nested class are refused by their form (di, dc), and so is a function-level import shadowing a module constant as
+        a bare name and as a receiver (db, dv); a nested def rebound by an assignment is a name bound two ways (dr); a del, a
+        nonlocal declaration, a match capture, a comprehension's target read outside its comprehension and a name an annotation
+        alone makes local refuse (dd, dn, dm, dk, ds); a `global` declaration names the module's binding, here a container the
+        function writes, refused as one (dg); a parameter callee that shares no module function's name stays a value slot with
+        no line (dpn); and a local sharing a module import's name, called as a receiver base (`json = lambda ...` and then
+        `json("t").get("k")`, in a probe module of its own whose `json` import nothing rebinds), is refused as "a call" by
+        _base's own scope check (dj), the lambda's text never scanned; and a receiver base that is a call of super() is refused by
+        name (wspg, since the seventh round's review: `super().page()`, whose method is a base class's page text,
+        which a builtin's exemption passed). No module function's page, and no module constant a scope shadows, is scanned. At the
+        reviewed head wspg and every (c) plant are silent (each (c) plant's module constant read), and of (d) the callees sharing a
+        module function's name follow
+        that function (its page's fetch listed at its own line), db, dv, dd, dm, dk and ds read the module constant, and dr, dg
+        and dn are silent. The arm whose removal reds each: the header read in _Served._locals for cnd, cnc and cnl and in
+        _scopes_of for ctd, ctc and ctl; _scoped's refusal of a local callee for dl, dt, dw, dq and dx; its refusal of a
+        parameter or an except name sharing a module function's name for dp and de, and the name's being a module function's for
+        dpn; the import form recorded for di, db and dv, the class form for dc, the one-binding condition on a followed nested
+        def for dr, the global declaration recorded for dg, the del for dd, the nonlocal declaration a nested function holds for
+        dn, the match capture for dm, the comprehension's target for dk and any other store for ds; and _base's scope check in
+        its Call arm for dj, which the reviewed head refuses as "a call" too (without the check the module's `json` import is
+        exempt and the base passes with no line); and _base's refusal of a super() call for wspg (then exempt as a builtin's call,
+        silent)."""
+        self.assertARefused(("(c)", "(d)"))
+        for plant, tag, rel in A_READ[:3]:
+            with self.subTest(plant=plant):
+                self.assertFetchUnclassifiedAt(self.at[tag], tag, "the walrus's value is read as a local and its text scanned", rel)
+        with self.subTest(plant="(d) a parameter's callee sharing no module function's name"):
+            self.assertEqual([ln for ln in self.out.splitlines() if "_probe_dpn" in ln], [], "a value slot, as the table keeps it: no line")
+
+    def test_a_send_definition_the_census_does_not_read_whole_refuses_its_routes_by_name(self):
+        """A of the seventh round, routes_of and _body_param (correctness-3, extra5-2, extra5-1), each plant a probe module of its
+        own, each a SERVED line at the call's line. (f) A `_send` carrying any decorator refuses, since its parameters are not
+        read, at both reaches: a staticmethod, a keyword-only staticmethod and a classmethod reached through self, and a
+        decorated module function reached by a bare call. (g) A file that binds `_send` more than once outside function bodies
+        (the module and every class body counted together, a class body a function body defines included, since a class body
+        is no function body), or other than by one def statement direct in a class body or the module, refuses every `_send`
+        call in it: a def inside an if, a try and a with, in a class body and at module level, a def followed by an assignment,
+        a subclass overriding `_send` in the same file, two direct defs in one class (the sixth round's tsd plant), as the one
+        binding a def inside an if and an assignment, two defs in a class a function body defines beside a module-level def
+        (gnc), a subclass a function body defines overriding `_send` in the same file (lfb), an import binding `_send` in the
+        class body after its def (gip) and a walrus binding it in a module-level def's default (ghw); and, since the seventh round's
+        review, a file where a function binds `_send` under a `global` declaration, rebinding the module's name at
+        run time, refuses every `_send` call in it with a reason naming the function and the binding: by an import beside a
+        module-level def (wglb), by a def statement with none (vglc), and by an assignment in a method whose own bare call it is
+        (bfg). A comprehension's target named `_send` binds only in its comprehension, so a file whose one direct def is beside
+        one in a class body (ygcp) or at module level (ygcm) is read, its page's fetch listed. A file that names `_send`
+        nowhere but as its calls' called name keeps the true reason, a definition this file does not hold (zsb, a subclass of
+        another file's class; a call that reaches no definition the census reads in a file that names `_send` besides is the (r)
+        case's), and a factory's class,
+        defined in a function body with its one direct def, is read (fac, its page's
+        fetch listed). (h) A definition that writes anything besides its page parameter refuses with the road
+        named: a second write of an expression, writelines, a sendall on the connection ("a second write"), an alias of the
+        write or of sendall ("a write through an alias"), a getattr naming write or sendall ("a write method named by a
+        string"), a print to the stream, json.dump into the request's file, shutil.copyfileobj into the stream, a helper handed
+        self or the request, a builtin the module rebinds and a method on a parameter the definition rebinds to the socket ("a
+        call the reader does not read"), a second reference to the stream, a definition that writes nothing, one whose one write
+        is a sendall, and a module-level `_send` calling a second method on its handler parameter; and, since the seventh round's
+        review, len, str or isinstance bound inside the definition by an import, a def or class statement, a parameter of a lambda
+        or a def nested in it (a positional parameter, a keyword-only one or `*args`), a match capture, a match mapping's rest, an
+        except name or a del, and a method on a parameter the definition rebinds by an import, a def statement, a lambda's parameter
+        or a nested def's `**kwargs` ("a call the reader does not read": the builtin is then the definition's own name, and the
+        parameter holds no value built from parameters), and self bound again inside the definition by an assignment (hya), a
+        lambda's parameter (hyl), an import (hyi) or, on 3.12 and later, a class statement's type parameter (hyt), each with a
+        header call on it but hyi, which takes a getattr of it ("a definition that rebinds self"), or declared global in a class
+        body nested in it, with a header call there (hyg, "a definition that declares self global"): the call could reach an
+        object other than the handler. Beside them the sixth round's
+        c3p keeps its reason in a probe module of its own. At the reviewed head the staticmethod, the (g) plants with an earlier
+        def and every (h) road are typed or read (silent, or the page's fetch listed while the other written text is never
+        scanned), the keyword-only staticmethod is refused with a false reason, the classmethod and the decorated module
+        function are read, tsd is typed through its last def, and the two (g) plants whose one binding is no direct def say the
+        file holds no definition; gnc is typed through its class's last def and read, lfb, gip and ghw are read, zsb has the
+        true reason it has here, and fac is read; wglb is silent (typed through the module's def, application/json), vglc and bfg
+        say the file holds no definition, ygcp and ygcm are read, and the (h) roads the seventh round's review added for len, str,
+        isinstance, a rebound parameter and a rebound or global self are read. The arm whose removal reds each: the decorator
+        refusal for (f); the file's binding check for (g), its count for tsd and gsc and its def-statement condition for gio and
+        gao; the count's reach into
+        a function body's class statements for gnc and lfb, its import form for gip and its walk of a def's header for ghw; the
+        pass for a file with no binding for zsb (then the (g) line, whose reason presupposes a binding the file does not have);
+        for fac the reach and that pass together, either of which reads it (with both removed it is the (g) line); the refusal of
+        a file whose `_send` a function rebinds under a `global` declaration for wglb, vglc and bfg (then wglb typed and silent, vglc
+        the no-scope reason and bfg the reason naming its method's binding), and _global_binder's condition that the declaring
+        body binds the name for bgs (the (r) case's, then refused); _send_bindings's leaving a comprehension's targets to it for
+        ygcp and ygcm (each then the (g) line); for (h) the string arm for hga and hgs,
+        the alias arm for hal and hsl, the second-write arm for hw2, hwl and hsa, the print's reason for hpr, the refusal of any
+        other call for hpr, hjd, hcf, hhs, hhr, hbs, hpb and hmh, the receiver arm for hrr, the builtin's module binding for
+        hbs, a rebound parameter's values for hpb, the stream's own name for hmh, the no-write reason for hnw and the single
+        write's method for hso; and _body_param's record of the other binding forms, each form's arm for its plants (the def and
+        class statements for hbd, hbc and hpd, the import for hbi and hpi, the except name and the match capture for hbe and hbm
+        (one arm), the match mapping's rest for hbr, the del for hbx and a nested def's or lambda's parameter, of every kind, for
+        hla, hls, hdl, hdi, hpl and hpk; and its record of a parameter so rebound for hpi, hpd, hpl and hpk; each then read, its
+        page's fetch listed); and _body_param's refusal of a definition that rebinds self for hya, hyl, hyi and hyt (its store
+        arm for hya, its other forms' for hyl and hyi, its type parameters' for hyt) and of one that declares it global for hyg
+        (each then read, its page's fetch listed)."""
+        self.assertARefused(("(f)", "(g)", "(h)", "B2"))
+        for plant, tag, rel in A_G_READ:
+            with self.subTest(plant=plant):
+                self.assertFetchUnclassifiedAt(self.at[tag], tag, "the route is typed through its own class body's one def and read", rel)
+
+    def test_a_send_call_that_reaches_no_definition_the_census_reads_is_refused_with_a_reason_true_for_it(self):
+        """routes_of since the seventh round's review (the (r) plants, in probe modules of their own), each a SERVED line at the
+        call's line whose reason is true for its shape. A bare `_send` call reaches the `_send` the nearest scope around it binds,
+        as Python looks the name up, and never the module's past it (_bare_send_binding): calls in do_GET, which binds `_send` by a
+        parameter (bfp), a nested def (bfd) or a loop target (bfl) beside a module-level def writing application/json, and a call
+        of a def do_GET holds in a file with no other binding of `_send` (clo), are each refused naming the function and the
+        binding; and in one module (probe_bfx.py, A_BARE) every other form a method binds it by, each named: a with target, an
+        assignment, augmented or annotated, an annotation alone, a walrus (in the method, and in a comprehension in it), a del, an
+        import, an except name, a match capture, a class statement, a comprehension's target and a lambda's parameter around the
+        call, an assignment under a nonlocal declaration in a nested function, and an
+        enclosing function's assignment; and a call in a class body that binds `_send` (bcb). The same module holds five calls
+        Python sends to the module's def, which the census types (application/json, so no route and no line): a global
+        declaration with no binding beside it in a function whose enclosing function binds `_send` (bgs), a call in a nested def's
+        header (bgh), in a comprehension's first iterable (bgi) and in a lambda's default (bgl), each beside a binding of the
+        scope the call does not stand in, and a comprehension's target outside its comprehension (bgq). A call that reaches no
+        definition the census reads, in a file that names `_send` besides its calls, is refused saying why: a call through self in
+        a subclass whose base class in the same file binds `_send` (inh: its own class body does not bind it, inherited or set at
+        run time), a call through super() in a file whose class binds it (sup: an object other than self), a call through an
+        attribute outside any class body (since the seventh round's review, whose reason for such a call named a
+        class body: vmsf through self and yhms through another object in a module function of a file whose class binds `_send`,
+        modh through self in one whose module binds it), and a bare call in a file whose one `_send` is a method (bnm: no scope
+        the bare call looks it up in binds it, the module included). A file that names `_send` nowhere but as its calls' called
+        name keeps "a definition this file does not hold" (zsb, the (g) case's). An attribute store of `_send` at module level,
+        `Handler._send = f`, which the class's calls reach at run time, is refused at its place as a reference to `_send` other
+        than a call, as a read or a setattr string is (wats, since the seventh round's review). At the reviewed head the calls typed through a
+        module def are silent (application/json, no route), wats is silent, and every other plant here says the file does not
+        hold the definition. The arm whose removal reds each: routes_of's check
+        of the scopes around a bare call for every refused bare call (each typed through the module's def and silent, clo, bcb and
+        bnm then the no-scope reason); in _binding_forms each form's record for its plant (the parameter for bfp and bfy, the def
+        statement for bfd and clo, the class statement for bfc, the import for bfi, the except name for bfe, the match capture for
+        bfm, and each target's name for its plant, then "a store"), the comprehension's parts walked for bfj, and its targets left
+        to it for bgq; in _call_scopes the lambda's body alone for bgl, the comprehension's first iterable left out for bgi, the
+        header left out for bgh, and a class body counted only as the call's own scope for bnm; the global declaration's stop for
+        bgs; the file-wide name check (_names_send) for inh, sup and bnm (each then saying the file does not hold the
+        definition); the class-body condition of the reach reason for vmsf, yhms and modh (each then "an object other than self");
+        and the attribute store's read as a reference for wats (then silent)."""
+        self.assertARefused(("(r)",))
+        for tag, _, _, forms in A_BARE:
+            if forms is None:
+                with self.subTest(plant="(r) a bare _send call Python sends to the module's def (%s)" % tag):
+                    self.assertEqual([ln for ln in self.out.splitlines() if "%s:%d " % (_a_rel("bfx"), self.at[tag]) in ln], [],
+                                     "the call reaches the module's def, which the census types (application/json): no line")
+
+    def test_the_two_limits_hold_their_witnesses_and_no_refused_text_is_scanned(self):
+        """The two limits the seventh round states, each held by a witness at its outcome, and what no reader scans at the fix. An
+        override of `_send` in a subclass another file defines (kernel/probe_lox.py subclasses kernel.py's Handler and writes
+        its third parameter) is not read: the call is typed through its own class body's definition, its page's fetch listed at
+        its line, and no line names the override (a same-file override in a class a function body defines, probe_lfb's, is
+        (g)'s, since (g) counts that class body). A stream a definition reaches
+        through no name it spells is not read: probe_lgs's end_headers writes more text through a module global holding the
+        socket while its `_send` makes only the calls (h) reads, so the route is read, its page's fetch listed, and the other
+        text is never scanned. No header walrus's value, no module function or constant a scope shadows, no page of a refused
+        route and no extra text a (h) road writes is a site at the fix."""
+        for plant, tag, rel in A_READ[3:]:
+            with self.subTest(plant=plant):
+                self.assertFetchUnclassifiedAt(self.at[tag], tag, "the route is typed through its own class body's definition and read", rel)
+        with self.subTest(plant="limits: no line names an override or a witness's refusal"):
+            self.assertEqual([ln for ln in self.out.splitlines() if _a_rel("lox") in ln or ln.startswith("SERVED " + _a_rel("lgs"))], [])
+        with self.subTest(plant="no text a reader refuses or does not reach is a site"):
+            self.assertEqual([ln for ln in self.out.splitlines() if SITE_LINE.match(ln) and any(m in ln for m in A_UNREAD_MARKS)], [])
+
+    def test_a_call_a_receiver_derives_through_has_its_arguments_read_as_text(self):
+        """A receiver or a container that derives through a call of a builtin or of an import (a base with no page text of its
+        own) has that call's arguments read as text, as a bare name is read, in a probe module of its own whose `json`, `dict`
+        and `list` nothing rebinds: `dict(_PROBE_CBD).get("k", "")` (the tree's own spelling, kernel.py's
+        `dict(_PANE_ORDER).get(...)` in _pane_label), `list(_PROBE_CBL)[0]` and `json.loads(json.dumps(_PROBE_CBJ))[0]`, each
+        constant's fetch UNCLASSIFIED at its line; and, one for each descent of _chain_args (the seventh round's review), a
+        method call on the builtin's call (`dict(_PROBE_CCA).copy().get("k")`: an attribute's value, then the call's receiver), a
+        `**` argument (`dict(**_PROBE_CCK)["k"]`: a keyword's value) and a BoolOp inside the chain
+        (`(q or dict(_PROBE_CCB)).copy().get(k)`, in a page function whose q and k are parameters), each read the same way. At the
+        reviewed head each is silent: _base found the base exempt and receiver read none of the call's arguments. The arm whose
+        removal reds all six: receiver's read of the arguments of the calls an exempt base derives through (_chain_args); and
+        within _chain_args, its attribute and subscript arm reds cca and ccb, its call arm's descent to the receiver cca and ccb,
+        its call arm's keyword values cck, and its BoolOp arm ccb."""
+        for plant, tag, rel in A_CALL_BASE:
+            with self.subTest(plant=plant):
+                self.assertFetchUnclassifiedAt(self.at[tag], tag, "the call's argument is read as text", rel)
+
+    def test_a_parameter_a_followed_call_omits_is_read_from_its_default(self):
+        """The default of each parameter of a followed function that the call omits is read as the call's argument would be (the
+        tree's too-large page, `_too_large_page(msg, name, q, route="/file")`, is called without `route`, and the default is page
+        text), in the scope the def statement runs in, in a probe module of its own
+        (kernel/probe_zdf.py): a module function's positional default (zdp), a keyword-only default through a module constant (zdk),
+        a method's default (zdm), a nested def's default through the enclosing function's local (zdn), and the same called from
+        another nested function that binds the name too (zdo, the default read in the enclosing function's scope, where its def
+        statement runs), each default's fetch UNCLASSIFIED at its line. A default the reader cannot read is refused by name: a
+        method's default naming a name the class body binds (zdc; the census does not read a class body as a scope) and a call the
+        pass does not follow (zdu, a module constant's lambda called). A default the call passes is not read (zds, its fetch no
+        site). At the reviewed head every one is silent: a parameter was a value slot and its default never read. The arm whose
+        removal reds each: the read of the defaults in the module-function arm for zdp, zdk and zdu, in the method arm for zdm and
+        zdc, and in the nested-def arm for zdn and zdo; the scope a nested def's defaults run in for zdo (without it the calling
+        function's own binding is read, a text with no fetch); the class-body check for zdc (then the reasonless line, the class
+        attribute bound nowhere the module's scope reads); and the check that the call passes the parameter for zds (its fetch
+        then a site)."""
+        for plant, tag, rel in A_DEFAULT_READ:
+            with self.subTest(plant=plant):
+                self.assertFetchUnclassifiedAt(self.at[tag], tag, "the default of a parameter the call omits is read as its argument", rel)
+        self.assertARefused(("(p)",))
+        with self.subTest(plant="(p) a default the call passes"):
+            self.assertEqual([ln for ln in self.out.splitlines() if SITE_LINE.match(ln) and _fgh_mark("zdsx") in ln], [],
+                             "the call passes the parameter: its default is not read")
 
     def test_the_served_texts_own_sites_are_rowed_or_computed_and_its_stylesheets_named(self):
         rc, out, _ = tree_run()
@@ -3286,6 +4296,8 @@ class TheServedPagesAreScanned(_Scope):
         carry, a splice line dropped and a lost exit code are each red here (M35 to M39 in the round's record). One full scan, in a
         child. A case of its own and not a shared run's member: its import plant would join the credentials run's IMPORT set."""
         self.plant(KERNEL_PATH, _served_text(KERNEL))
+        for rel, text in A_FILES:   # the seventh round's probe modules, the files the pass scans beside kernel/kernel.py
+            self.plant(rel, text)
         self.assertCommandLine(scope_copy(), self.rc, self.out, timeout=300)
 
 

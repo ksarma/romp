@@ -528,6 +528,20 @@ BINDING_ARM = ("a `get` or `request` of `http` or `https`, a `connect` or `creat
                "an import, a destructured require or a destructured `await import()` (renamed or not), and `ws` by its constructor shape (`new "
                "<binding>(`, `new <namespace>.WebSocket(`, `new (require('ws'))(`), each an added arm beside the literal spellings (`http.get(`, "
                "`net.connect(`, the bare global `new WebSocket(`), a call the literal list already names on a line counted once under the same tool")
+# The arm's lead-in in the section (extra6-3 of the sixth round, carried in the seventh round's review): the calls the patterns read in
+# the binding paragraph's own words (UNREAD_BINDINGS: a dotted call on an inline require or on a name the file keeps the module under,
+# or a bare name's call), `ws`'s constructor shape as a clause of its own, and the spellings that are no site, scoped so it stays true
+# for that constructor, which the arm reads with whitespace before its paren (`new WS (u)`, `new W.WebSocket (u)`: sites)
+# (tests/test_price_feed_census.py holds the spaced and split spellings at no site in its aliases plant); the lead-in it replaced
+# called every call on a read binding a site, and a call through an optional chain or a computed member on one is none
+CLIENT_SITE_READ = "a dotted call on an inline require or on a name the file keeps the module under"
+CLIENT_SITE_LEAD = ("a client the list names is a site through " + CLIENT_SITE_READ + ", a call of a bare name the file binds from it, or, "
+                    "for `ws`, its constructor shape (a call through a computed member, `.call` or an optional chain, one spelled with "
+                    "whitespace or a comment around the dot or with a comment before its paren, one spelled with whitespace before its paren "
+                    "other than `ws`'s constructor, which is read so too (`new WS (u)` and `new W.WebSocket (u)` are sites), or one split "
+                    "across lines before its paren is no site), the connection family read through its bindings as the child_process family "
+                    "is: ")
+CLIENT_SITE_LEAD_WITHDRAWN = "a client the list names is a site through a call on each binding shape the patterns read"
 # the dashboard's headers, as Handler._send writes them on every page: the browser witness pins them by value from the same lines
 DASHBOARD_HEADERS = {"X-Content-Type-Options": "nosniff", "X-Frame-Options": "SAMEORIGIN", "Content-Security-Policy": "frame-ancestors 'self'",
                      "Referrer-Policy": "same-origin"}
@@ -1349,9 +1363,14 @@ class TheSectionIsTheTables(_Pins):
         self.assertQuoted(UNREAD_BINDINGS, flat, self.DOC, "the two JavaScript refusals and what a read binding leaves unread, beside the "
                           "disclosure (correctness-3 of the fifth round; correctness-4, extra6-1, extra7-2 and extra6-3 of the sixth)")
         self.assertLess(flat.index(DISCLOSURE), flat.index(UNREAD_BINDINGS), "%s: the refusals and the residual follow the rule they qualify" % self.DOC)
-        self.assertQuoted("a client the list names is a site through a call on each binding shape the patterns read, the connection family "
-                          "read through its bindings as the child_process family is: " + BINDING_ARM, flat, self.DOC,
-                          "the arm's lead-in says a call on a read binding is a site, not every use of one (extra6-3 of the sixth round)")
+        self.assertNotIn(CLIENT_SITE_LEAD_WITHDRAWN, flat, "%s: the withdrawn lead-in is gone: it called every call on a read binding a "
+                         "site, and a call through an optional chain or a computed member on one is none (extra6-3)" % self.DOC)
+        self.assertQuoted(CLIENT_SITE_LEAD + BINDING_ARM, flat, self.DOC,
+                          "the arm's lead-in names the calls the patterns read (a dotted call, a bare name's call and, for ws, the "
+                          "constructor shape, read with whitespace before its paren too) and the spellings that are no site, none of them "
+                          "a spelling the arm reads (extra6-3 of the sixth round, carried in the seventh's review)")
+        self.assertIn(CLIENT_SITE_READ + ", or a call of a bare name the file binds from it", UNREAD_BINDINGS,
+                      "the lead-in carries the binding paragraph's own text (UNREAD_BINDINGS)")
         self.assertLess(flat.index(UNREAD_BINDINGS), flat.index(ECHO_RULE), "%s: the echo rule follows, as in the docstring" % self.DOC)
         doc = re.match(r'(?s)\A(?:#[^\n]*\n)*"""(.*?)"""', INVENTORY_SRC)
         self.assertTrue(doc, "%s opens with a module docstring" % INVENTORY)

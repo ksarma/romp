@@ -6,6 +6,7 @@ from tools/, each with its road from the table below. Run from the repository ro
     python3 scripts/network-inventory.py [root]            the sites, one line each, then the summary and the gates
     python3 scripts/network-inventory.py --table [root]    the road table the ledger entry and SECURITY.md are written from
     python3 scripts/network-inventory.py --write-expected  rewrite scripts/network-inventory-expected.json from a clean run
+    python3 scripts/network-inventory.py --js-reads [root] the walked JavaScript files and the import gate's reads, as JSON
 
 Standard library only. The script exits 1, naming the reason, on: a site with no road (UNCLASSIFIED); a row naming no site
 (STALE ROW); no sites at all (a broken scan or moved roots); a declared root that is missing (SCOPE); a Python file that does
@@ -13,11 +14,14 @@ not parse (PARSE); an import the census does not know, a family module's specifi
 or a require or import on a walked line that the import gate cannot read, each unless JS_ALLOW names it, and an entry there
 that names nothing or covers a different number of places (IMPORT); a road with no table entry or a table entry with no road
 (TABLE); a served route whose content type, receiver, container, callee or text the served pass cannot read, a reference to
-`_send` other than a call the scan reads (a read of it that is not a call's function, or a string equal to `_send`), a
+`_send` other than a call the scan reads (a read of it that is not a call's function, a store or delete of an attribute so named,
+or a string equal to `_send`), a
 script-running type written outside `_send`, a function that answers outside `_send`
-more often than it writes a Content-Type header, or a `_send` definition that writes none and is not a named frame writer, each
-unless SERVED_ALLOW names it, a script-running route whose page body it does not read, and an allowlist entry that names nothing
-or covers a different number of places (SERVED); and any figure that differs from the committed counts in
+more often than it writes a Content-Type header, a `_send` definition that writes none and is not a named frame writer, a call of
+a `_send` its file binds more than once outside function bodies, or other than by one def statement, of a decorated `_send` or,
+bare, in a module that
+holds a star import, each unless SERVED_ALLOW names it, a script-running route whose page body it does not read, and an allowlist
+entry that names nothing or covers a different number of places (SERVED); and any figure that differs from the committed counts in
 scripts/network-inventory-expected.json (COUNTS): the totals, the counts by kind, by class, by road and by row key. So a scan
 that finds fewer sites than the committed count, a file the walk stopped opening, or a second site inside a function that
 already has a row is a loud line, not a clean report.
@@ -118,46 +122,70 @@ statement, a default beside a brace list, `import { default as X }`), or a bare 
 list, alone or beside a default, in an import, a destructured require or a destructured `await import()` (renamed or not), and
 `ws` by its constructor shape (`new <binding>(`, `new <namespace>.WebSocket(`, `new (require('ws'))(`), each an added arm beside
 the literal spellings (`http.get(`, `net.connect(`, the bare global `new WebSocket(`), a call the literal list already names on
-a line counted once under the same tool; and an import gate over every package the scoped files import or require, read in a
-literal require() or import() spelled whole on one line (the name, its paren, the quoted specifier and the closing paren, with
-nothing between them but whitespace inside the parens), on a line that starts with import or export, on a line led by a closing
-brace (a multi-line import's last line) and on a line led by `from` that continues an import or export statement that begins its
-own line, and not on a comment-led line: a specifier that does not start with `.`, `/` or
-`*` names a package (its first path segment, two for a scoped package, `node:` dropped), and a package outside
-KNOWN_JS_IMPORTS fails the run (IMPORT). The shell and browser sides are matched by a named list with no completeness gate: a
-tool or a client the lists do not name is no site and no line; the Python side's gate is module-granular: an import outside the
-allow-list fails the run, and a primitive of a known module outside NET and SUB is not a site. Two refusals cover what the
-JavaScript binding patterns and the import gate do not read, each an IMPORT line unless the JavaScript allowlist, JS_ALLOW,
-names the place by its file and expression, with the number of places the entry covers and the reason; an entry that names
-nothing in the run, or covers a different number of places, fails the run too. First, a literal specifier of a family module
+a line counted once under the same tool; and an import gate over every package the scoped files import or require, read where its
+line reader reads a specifier (a literal require() or import() spelled whole on one line, a side-effect import that begins its
+line, and the first `from` string on a line that starts with import or export or that continues an import or export statement that
+begins its own line, and, in a walked file, any line led by a closing brace; the sentences after the two refusals below state each
+read, and over the walked files the webview leg's pin holds the reads equal to a TypeScript parse of the same files): a specifier
+that does not start with `.`, `/` or `*` names a package (its first path segment, two for a scoped package, `node:` dropped), and
+a package outside KNOWN_JS_IMPORTS fails the run (IMPORT). The shell and browser sides are matched by a named list with no
+completeness gate: a tool or a client the lists do not name is no site and no line; the Python side's gate is module-granular: an
+import outside the allow-list fails the run, and a primitive of a known module outside NET and SUB is not a site. Two refusals
+cover what the JavaScript binding patterns and the import gate do not read, each an IMPORT line unless the JavaScript allowlist,
+JS_ALLOW, names the place by its file and expression, with the number of places the entry covers and the reason; an entry that
+names nothing in the run, or covers a different number of places, fails the run too. First, a literal specifier of a family module
 (`http`, `https`, `net`, `tls`, `ws` or `child_process`) that the import gate reads is read only where a binding the patterns
 read takes the module from it, whole or by names, or an arm reads a call through it (`require('http').request(`); a require or
 an `await import()` taken whole does not count when `.`, `?`, `[` or `(` follows it past whitespace and comments, and a brace
 list that takes `default` does not count unless the same statement binds that name whole (`import { default as X }`), so a
 require in a later declarator, `require("http").get` read as a value, a destructured default, a require assigned after its
-declaration, a `.then()` callback of `import()` and a re-export are each refused. Second, on a walked line the scan reads (not
-in served text), a require or import the gate cannot read is refused: a call of `require` in any other shape (whitespace or a
-comment before the paren, a template or a computed specifier), `require` as a bare value (followed by `;`, `,`, `)`, `}`, `]`
-or the end of the line, outside a string and a comment, where a quote opens a string to the same quote's next occurrence on the
-line that no backslash escapes, `/*` outside a string opens a comment to the next `*/` on the line or the line's end, and `//`
-outside a string opens a comment to the line's end), any `.require(` call, any member access on `require`, a
-`createRequire(` call, and an `import(` with a template specifier or with whitespace or a comment before its paren. So every
-literal specifier of a family module that the gate reads is read or refused, and on a walked line every require the gate
-cannot read is refused when it is spelled in one of those shapes; one spelled another way (a computed member such as
+declaration, a `.then()` callback of `import()` and a re-export are each refused; and in a walked file a binding the patterns
+match whose specifier stands on a line led by `//`, `/*` or `*`, where the gate reads no module, is refused as a binding on a line
+led by `//`, `/*` or `*`, whose module the gate does not read; the webview leg's pin sees such a binding when the line is code (a
+`*`-led continuation of an import) and none on a comment line or in a template literal's text.
+Second, on a walked line the scan reads (not in served text), a require or import the gate cannot read is refused: a call of
+`require` in any other shape (whitespace or a comment before the paren, a template or a computed specifier), `require` as a bare
+value (followed by `;`, `,`, `)`, `}`, `]` or the end of the line, outside a string and a comment, where a quote opens a string to
+the same quote's next occurrence on the line that no backslash escapes, `/*` outside a string opens a comment to the next `*/` on
+the line or the line's end, and `//` outside a string opens a comment to the line's end), any `.require(` call, any member access
+on `require`, a `createRequire(` call, and an `import(` with a template specifier or with whitespace or a comment before its
+paren. So every literal specifier of a family module that the gate reads is read or refused, and on a walked line every require
+the gate cannot read is refused when it is spelled in one of those shapes; one spelled another way (a computed member such as
 `module["require"]`, `require` beside an operator, a createRequire under another name) is no site and no line. A client is
 read through a call on the module or on a binding the patterns read: a dotted call on an inline require or on a name the file
-keeps the module under, or a call of a bare name the file binds from it. A client reached from such a binding any other way is
-no site and no line, among them a member alias (`const g = http.get`), a destructure from the binding (`const { get } =
-http`), a computed member, `.call` and an optional chain. The import gate reads a specifier in a literal require() or import()
+keeps the module under, or a call of a bare name the file binds from it, each read only as spelled on one line with nothing
+between the require or the name, the dot, the method and the paren (`http.get(`), or between the bare name and the paren (`get(`),
+and `ws` by its constructor shape, read with whitespace before its paren too (`new WS (u)`, `new W.WebSocket (u)`). A client
+reached from such a binding any other way is no site and no line, among them a member alias (`const g =
+http.get`), a destructure from the binding (`const { get } = http`), a computed member, `.call`, an optional chain, a call
+spelled with whitespace or a comment around the dot or before the paren (`http . get(`, `http.get (`, `get (`) and a call split
+across lines before its paren (`http` at the end of one line and `.get(` at the start of the next); an inline require called
+either of the last two ways is refused by the first refusal. The import gate reads a specifier in a literal require() or import()
 spelled whole on one line (the name, its paren, the quoted specifier and the closing paren, with nothing between them but
-whitespace inside the parens), on a line that starts with import or export, on a line led by a closing brace in a walked file, and
-on a line led by `from` (in served text, by `from` or a closing brace) that continues an import or export statement that begins
-its own line; in a walked file it skips a comment-led line. Through a binding whose specifier the gate reads, `https`, `net` and
-`tls` still fail the run at the gate, so this residual reaches `http`, `ws` and `child_process`, the packages the list knows;
-through a binding the patterns read from a specifier the gate does not read (one on the line after a trailing `from`, in a
-require() or `await import()` split across lines, in a statement that does not begin its line, or on a comment-led line of a
-walked file) it reaches `https`, `net` and `tls` as well, save a split require on a walked line, which the second refusal
-refuses. The first refusal also refuses a line that binds nothing to call, such as `import type http from
+whitespace inside the parens), wherever it stands, in a side-effect import that begins its line (`import`, whitespace alone, then
+the quoted specifier), and in the first `from` string (`from`, whitespace alone, then a quoted specifier) on a line that starts
+with import or export or that continues an import or export statement that begins its own line and has not yet ended, and, in a
+walked file, any line led by a closing brace. In a walked file such a statement opens at `import` (not `import(` or
+`import.meta`), `export {`, `export *`, `export type {` or
+`export type *` and ends at the line where the gate reads its `from` string or at a line that ends with `;` outside a string and a
+comment; any line of it is read whatever leads it but a line led by `//`, `/*` or `*`, which is skipped, a binding on one refused
+by the first refusal. Over the walked files the webview leg's pin (ui/webview/import-gate-parse.test.ts) holds these reads equal
+to a
+TypeScript parse of the same files (the specifier of each import and export declaration, of `import X = require()`, of a require
+or import() call on a quoted literal and of an import type), both ways, keyed on file, line and specifier, and holds each require
+or import() call whose first argument is not a quoted literal to a line where the second refusal fires (an import() on a computed
+argument that is not a template, to a browser-computed-url site), so a specifier in a layout the line reader does not read is red
+there by file, line and specifier. Served text is not parsed, and the pin does not hold it: there such a statement opens at any
+line that starts with import or export (not `import(` or `import.meta`), a line continues it only when led by `from` or a closing
+brace, and no line is skipped as a comment. Through a binding whose specifier the gate reads, `https`, `net` and `tls` still fail
+the run at the gate, so this residual reaches `http`, `ws` and `child_process`, the packages the list knows; in served text,
+through a binding the patterns read from a specifier the gate does not read, among them one on the line after a trailing `from`,
+one on a continuation line led by anything but `from` or a closing brace, one in a require() or `await import()` split across
+lines and one in a statement that does not begin its line, it reaches `https`, `net` and `tls` as well. A comment between `from`
+(or a side-effect `import`) and its specifier is read by neither the gate nor the binding patterns, so in served text a client
+through it is no site and no line whatever the module, `https`, `net` and `tls` included, and a package outside KNOWN_JS_IMPORTS
+passes the gate.
+The first refusal also refuses a line that binds nothing to call, such as `import type http from
 "http"` or `let a: typeof import("http")`; no such line is live. An echo- or print-led shell line
 is skipped as a printed remedy only when nothing live follows the printed text: the text outside quotes and the body of every
 `$(...)` and backtick substitution, wherever it stands, are scanned by the interpreter arm and the tool list, so `echo "$body" |
@@ -167,50 +195,100 @@ pages, the token login page, the too-large page and /sw.js, with the shim, the t
 are read from kernel.py's syntax tree and scanned as browser text keyed kernel/kernel.py plus tool, with the DOM loads counted.
 The routes are derived from the calls of `_send` the scan reads (spelled `_send(...)` or `<x>._send(...)`; a call through a name
 computed at run time is not read) and every Content-Type header written outside `_send`, in every scanned Python file. A `_send`
-call's content type is read through the definition it reaches: the kernel's Handler._send writes its `ctype` parameter, so the
-call's third argument or its `ctype=` keyword; the postal bus's writes application/json; the session host's and its transport's
-write a frame to a Unix socket and answer no HTTP request (FRAME_WRITERS), and any other definition that writes no Content-Type
-fails the run. The type is read through a module name no code writes after binding it (one module-level assignment binds it,
-nothing else at module level binds it, and nothing in the file writes that name, in any scope: a subscript store or delete, a
-call `<name>.<method>(` of a method _MUTATORS or _DUNDER_MUTATORS lists, a call of such a method on a type _CONTAINER_TYPES
-lists with the name as its first argument (`dict.update(<name>, ...)`), a binding in a function that declares the name `global`
-(as the target of an assignment, an augmented assignment, a loop, a comprehension, a with or a walrus, or by an import, a def or
-class statement or an except clause) or a module-level augmented assignment), through a local whose every binding is read and
-through a dict literal's values; the part before
-any `;`, stripped and lower-cased, is compared with the types a browser runs script from (SCRIPT_TYPES: text/html; the XML types
-text/xml, application/xml, text/xsl and any type with a `+xml` suffix, image/svg+xml and application/xhtml+xml among them; and
-text/javascript under each name a browser takes for JavaScript, application/javascript among them). A script-running route's
-page body is the call's second positional argument, read only when the definition the call reaches writes its own second
-positional parameter as the body (its one `.write(<name>)` names that parameter) and the call passes that argument positionally,
-with no starred argument before it and no `**`; any other script-running call (a keyword body, a starred or `**` call, a
-definition whose written body is another parameter, a local or an expression) fails the run by name. The page function of each
-script-running route is followed to the text it returns or inlines. In that text the served pass reads a BoolOp's operands, a
-method call's receiver and a subscript's container when they name a module constant (a name one module-level assignment binds
-and nothing else binds there) or a local, the receiver of `.encode` or `.format_map` whatever it is, a class attribute the class
-body binds, a loop, unpacking or with target from its source, and a local container's appended or stored values; it passes over
-a base that carries no page text (an import that is its name's one module-level binding and is not rebound, a builtin that no
-module-level binding shadows and that is not rebound, a parameter, an except name, or a name the function binds from one of
-those), and over a bare module name that is such an import or such a builtin, or a function or a class that is its name's one
-module-level binding and is not rebound; a name is rebound when a function binds it under `global` or a statement at module level
-writes it, in one of the forms listed above for a route's type, and by nothing else: a function's `X = []` of a local of the same
-name, or its `X.append(...)`, does not rebind it. It follows a call whose callee is a module function (its name's one module-level
-binding, not
-rebound), a function defined in the page function or a method of the route's class (to what it returns, any decorator on it not
-applied), a text method or a file read, or any other method (through its receiver, as above, so `_K.__call__(t)` on a module
-constant `_K` that holds a lambda reads `_K`, and a lambda is a value slot with no text), and it reads every call's arguments; a
-call to any other callee passes when the callee is such an import, such a builtin or a
-parameter. The run fails by name (SERVED) on any other reference to `_send` (a read of it that is not a call's function, or a
-string equal to `_send`), a content type the pass cannot read, a script-running type written outside `_send`, a function that
+call's content type is read through the definition it reaches, the one def or async def statement that binds `_send` in its
+file, direct in the call's own class body (a call through self) or in the module (a bare call): the kernel's Handler._send
+writes its `ctype` parameter, so the call's third argument or its `ctype=` keyword; the postal bus's writes application/json;
+the session host's and its transport's write a frame to a Unix socket and answer no HTTP request (FRAME_WRITERS), and any other
+definition that writes no Content-Type fails the run. So does each `_send` call in a file that binds `_send` more than once
+outside function bodies (the module and every class body counted together, a class body a function body defines included, since a
+class body is no function body, in any binding form but a comprehension's target, which binds only in its comprehension) or other
+than by one def statement direct in a class body or the module, or where a function or a class body binds it under a `global`
+declaration, rebinding the module's name at run time, each bare call that reaches a `_send` bound inside a function, a lambda, a
+comprehension or a class body around it, in any form (a
+parameter, a nested def, a loop target, a lambda's parameter and a comprehension's target among them; the line names the scope and
+the binding), each call that reaches no definition the census reads, the line saying why (a `_send` the call's own class body does
+not bind, for a call through self: inherited or set at run time; one reached through an object other than self, or through an
+attribute outside any class body; a
+`_send` no scope the bare call looks it up in binds, the module included; and, in a file that names `_send` nowhere but as the
+called name of those calls, so binds it nowhere at all, a definition the file does not hold), each call to a definition carrying
+any decorator, whose parameters the census does not read,
+and each bare call in a module that holds a star import. An
+override of `_send` in a subclass that another file defines is not read: a call through self is typed through its own class body's
+definition. The type is read
+through a module name no code writes after binding it (one plain single-name assignment binds it as a top-level statement, nothing
+else at module level binds it, a walrus in a def's or a class's header included, the module holds no star import, and nothing in
+the file writes that name,
+in any scope: a subscript store or delete, a call `<name>.<method>(` of a method _MUTATORS or _DUNDER_MUTATORS lists, a call of
+such a method on a type _CONTAINER_TYPES lists with the name as its first argument (`dict.update(<name>, ...)`), a binding in a
+function that declares the name `global` (as the target of an assignment, an augmented assignment, a loop, a comprehension, a
+with or a walrus, or by an import, a def or class statement or an except clause) or a module-level augmented assignment),
+through a local whose every binding is read (a walrus in a nested def's, class's or lambda's header is a binding it does not
+read) and through a dict literal's values; the part before any `;`, stripped and lower-cased, is compared with the types a
+browser runs script from (SCRIPT_TYPES: text/html; the XML types text/xml, application/xml, text/xsl and any type with a `+xml`
+suffix, image/svg+xml and application/xhtml+xml among them; and text/javascript under each name a browser takes for JavaScript,
+application/javascript among them). A script-running route's page body is the call's second positional argument, read only when
+the call passes it positionally, with no starred argument before it and no `**`, and the definition's one output is its one
+`<x>.write(<its second positional parameter>)`, nothing in a method's definition binding self again, in any form (a lambda's or a
+nested def's parameter among them), or declaring it global, every call in the definition being one the census reads: that write;
+send_response, send_header or end_headers on self; getattr of self with a string-constant name; isinstance, str or len, where
+neither the definition nor the module binds the name and the module holds no star import; or a method called on a parameter or
+on a value built from parameters and literals (`body.encode`, `(headers or {}).items()`), self and the name the write's stream
+hangs from never counting as a parameter here, and a parameter the definition rebinds counting only while every rebinding is
+such a value. Any other script-running call fails the run by name, its reason naming the road (a second write, a write through an
+alias, a print to a stream and a call the reader does not read among the reasons), among them a keyword body, a starred or `**`
+call, a definition whose one write is of another parameter, a local or an expression, or that writes nothing, and in the
+definition any other call, any other read of an attribute named `write`, `writelines`, `send`, `sendall`, `sendfile` or `sendmsg`,
+called or not, a string constant equal to one of those names and a reference to the write's receiver other than as its receiver. A
+stream the definition reaches through no name it spells (a module global holding the socket, written by a method the definition
+calls on self) is not read. The page function of each script-running route is followed to the text it returns or inlines, and a
+parameter a followed call omits is read from its default value as that argument would be, in the scope the def statement runs in
+(a default the pass cannot read is refused by name, among them a method's default naming a name its class body binds). A name
+the page function's scope binds, or for a function defined in it an enclosing function's scope, is decided by that scope and never
+by the module's binding: a local (a parameter the body also assigns, a walrus in a nested def's, class's or lambda's header, and a
+comprehension's target inside its comprehension among them) is read from its values as a bare name or a receiver and refused as
+a callee; a parameter or an except name is a value slot, refused as a callee when it shares a module function's name; a function
+defined in the page function is followed as a callee only as its name's one binding there; a name the function declares `global`
+is the module's binding, read as such; and any other binding refuses, a comprehension's target elsewhere in the function, a
+function-level import, a nested class, a del, a name a nonlocal declaration rebinds and a name bound two ways (two different
+binding forms in one scope, or a def or a class statement beside any other binding of it; every value form, an assignment,
+augmented or annotated, a loop, with or unpacking target and a walrus, is one form, and a parameter the body also binds by one is
+one local, read from its values) among them. In that text the served pass reads a
+BoolOp's operands, a method call's receiver and a subscript's container when they name a module constant (a name one plain
+single-name assignment binds as a top-level statement and nothing else binds at module level, in a module with no star import) or
+a local, the receiver of
+`.encode` or `.format_map` whatever it is, a class attribute the class body binds, a loop, unpacking or with target from its
+source, and a local container's appended or stored values; it passes over a base that carries no page text of its own (in a module
+that holds no star import, a top-level import statement that is its name's one module-level binding and is not rebound, or a
+builtin that no module-level binding shadows and that is not rebound, a call of super() excepted, whose methods are a base
+class's; a parameter, an except name, or a name the function binds from one of those), reading as text the arguments of a call of
+such a base or of a method on one (`dict(X).get(k)` and
+`json.loads(json.dumps(X))[0]` read X), and over a bare module name that is such an import or such a builtin, or, in such a
+module, a top-level def or class
+statement that is its name's one module-level binding and is not rebound; a name is rebound when a function binds it under
+`global` or a statement at module level writes it, in one of the forms listed above for a route's type, and by nothing else: a
+function's `X = []` of a local of the same name, or its `X.append(...)`, does not rebind it. It follows a call whose callee is a
+module function (a top-level def statement that is its name's one module-level binding, not rebound, in a module with no star
+import, and bound by no function scope of the page), a function defined in the page function or a method of the route's class
+(to what it returns, any decorator on it not applied), a text method or a file read, or any other method (through its receiver,
+as above, so `_K.__call__(t)` on a module constant `_K` that holds a lambda reads `_K`, and a lambda is a value slot with no
+text), and it reads every call's arguments; a call to any other callee passes when the callee is such an import, such a builtin
+or a parameter. The run fails by name (SERVED) on any other reference to `_send` (a read of it that is not a call's function, a
+store or delete of an attribute so named, or a string equal to `_send`), a content type the pass cannot read, a script-running
+type written outside `_send`, a function that
 answers outside `_send` more often than it writes a Content-Type header, a container the module writes at run time, any other
 receiver or container, any other callee (a module constant, a local, a class, a subscript, a call and a lambda among them), any
-other bare module name (one bound other than by one assignment, an import, a function or a class beside another module-level
-binding, and a rebound import, builtin, function or class among them), and a route whose text the pass cannot read, unless the
-served allowlist, SERVED_ALLOW, names the place by
-its function and expression, with the number of places the entry covers and the reason (the two answers with no body, the CORS
-preflight's 204 and the websocket upgrade's 101, are named there); an entry that names nothing in the run, or covers a different
-number of places, fails the run too. In served text every `fetch(` and `import(` on a line is read by its own argument, and no
-comment skip applies, since a joined constant is one line whatever it starts with. A file the page reads at run time is covered
-by the walk when it is a scanned kind, and a stylesheet is named, not scanned. A site in served text is listed
+other bare module name (one bound other than by one assignment, one bound by an annotated, unpacking or chained assignment, one no
+module-level statement binds that a function or a class body binds under a `global` declaration, an
+import, a function or a class beside another module-level
+binding, an import, a def or a class bound once inside a module-level block and not by a top-level statement, a name bound once in
+any other form inside such a block's body, a name a star import may rebind, and a rebound import, builtin, function or class among
+them), and a route whose text the pass cannot read,
+unless the served allowlist, SERVED_ALLOW, names the place by its function and expression, with the number of places the entry
+covers and the reason (the two answers with no body, the CORS preflight's 204 and the websocket upgrade's 101, are named there);
+an entry that names nothing in the run, or covers a different number of places, fails the run too. In served text every `fetch(`
+and `import(` on a line is read by its own argument, and no comment skip applies, since a joined constant is one line whatever
+it starts with. A file the page reads at run time is covered by the walk when it is a scanned kind, and a stylesheet is named,
+not scanned. A site in served text is listed
 at the first line of the string part that carries it. Text joined across implicitly concatenated literals is one part, listed at
 its first line. On Python 3.10 and 3.11 an f-string part is listed at the line where the expression before it ends, so a part
 that starts on a later line (after a `}` on a line of its own, or in the next literal of a concatenation) is listed early. The
@@ -633,8 +711,14 @@ class Result(object):
         # (file, expression), a file with no colon, so no key of one list is a key of another), and per Python file the module
         # names some code writes after binding them (a subscript store or delete, a mutating call, a binding under `global`): the
         # run-time memos; and per Python file the rebinds, the names a function binds under `global` or a statement at module level
-        # writes, each of which costs an import, a function, a class or a builtin its exemption in the served pass (_Served._sole)
-        self.allow_hits, self.writes, self.rebinds = {}, {}, {}
+        # writes, each of which costs an import, a function, a class or a builtin its exemption in the served pass (_Served._sole); and
+        # per Python file every `global` declaration in a function or class body, (the enclosing defs, the names it declares), which
+        # _global_binder reads to name the body that binds a declared name (routes_of's file-wide refusal of a `_send` so bound, and
+        # _Served._module_why's reason for a module name only such a body binds)
+        self.allow_hits, self.writes, self.rebinds, self.global_decls = {}, {}, {}, {}
+        # line_scan's import gate: each specifier its forms loop reads, (file, line, specifier), and each walked line where the
+        # refusal of a require or import the gate cannot read fires, excused by JS_ALLOW or not, (file, line); js_reads hands both out
+        self.reads, self.unread = [], []
     def emit(self, *a):
         self.sites.append(Site(*a))
 
@@ -685,13 +769,17 @@ class Scan(ast.NodeVisitor):
         self.defs, self.routes = [], []   # the enclosing def nodes; the routes of a served page or script (routes_of, for served_texts)
         # the route candidates, each (call, its enclosing defs, "Class.function"): every `_send` call, every Content-Type header
         # written with send_header, every send_response; every other reference to `_send` (a read of it that is not a call's
-        # function, or a string equal to `_send`), each refused in routes_of; and the module names written after their binding (Result.writes)
+        # function, a store or delete of an attribute so named, or a string equal to `_send`), each refused in routes_of; and the
+        # module names written after their binding (Result.writes)
         self.sends, self.ctype_writes, self.responds, self.send_refs, self.send_funcs = [], [], [], [], set()
         self.globals, self.writes, self.rebinds = [set()], res.writes.setdefault(rel, {}), res.rebinds.setdefault(rel, {})
+        self.global_decls = res.global_decls.setdefault(rel, [])
+        self.inner_classes = []   # the class statements whose nearest enclosing def is a function, which _send_bindings counts (Scan.enter)
     def visit_Module(self, n):   # the walk, then the routes read from its candidates
         self.generic_visit(n); self.routes = routes_of(self.rel, n, self, self.res)
     def visit_Global(self, n):
         self.globals[-1].update(n.names)
+        if self.defs: self.global_decls.append((tuple(self.defs), tuple(n.names)))   # Result.global_decls
     def write(self, name, line, rebind=False):
         """A write of a name (Result.writes); a binding under `global` (rebind) or a write by a statement at module level is also a
         rebind of the module's name (Result.rebinds), and any other write inside a function or a class body is a write only."""
@@ -705,8 +793,15 @@ class Scan(ast.NodeVisitor):
     def visit_ExceptHandler(self, n):   # `except E as X` under `global X`
         if n.name: self.global_bind(n.name, n.lineno)
         self.generic_visit(n)
-    def visit_Attribute(self, n):   # an `<x>._send` read other than as a call's function (`reply = self._send`)
-        if n.attr == "_send" and isinstance(n.ctx, ast.Load) and id(n) not in self.send_funcs: self.send_ref(n)
+    def visit_MatchAs(self, n):   # a match capture under `global X`: `case X:`, `case [X]:`, `case ... as X:`
+        if n.name: self.global_bind(n.name, n.lineno)
+        self.generic_visit(n)
+    visit_MatchStar = visit_MatchAs   # `case [*X]:`
+    def visit_MatchMapping(self, n):   # a match mapping's rest under `global X`: `case {**X}:`
+        if n.rest: self.global_bind(n.rest, n.lineno)
+        self.generic_visit(n)
+    def visit_Attribute(self, n):   # an `<x>._send` read other than as a call's function (`reply = self._send`), stored (`Handler._send = f`) or deleted
+        if n.attr == "_send" and id(n) not in self.send_funcs: self.send_ref(n)
         self.visit(n.value)   # the one child that holds nodes (attr is a string; the ctx marker holds none and no visitor reads it)
     def send_ref(self, n):
         self.send_refs.append((n, tuple(self.defs), ".".join(self.stack) or "<module>"))
@@ -796,6 +891,7 @@ class Scan(ast.NodeVisitor):
             for x, d in list(zip(a.args[len(a.args) - len(a.defaults):], a.defaults)) + list(zip(a.kwonlyargs, a.kw_defaults)):
                 if d is not None and self.prim(d): b[x.arg] = self.prim(d)
         self.global_bind(n.name, n.lineno)   # a def or class statement under `global`, bound in the enclosing scope
+        if isinstance(n, ast.ClassDef) and self.defs and not isinstance(self.defs[-1], ast.ClassDef): self.inner_classes.append(n)
         self.stack.append(n.name); self.binds.append(b); self.defs.append(n); self.globals.append(set()); self.generic_visit(n)
         self.globals.pop(); self.defs.pop(); self.binds.pop(); self.stack.pop()
     visit_FunctionDef = visit_AsyncFunctionDef = visit_ClassDef = enter
@@ -928,7 +1024,8 @@ def _binding_patterns(mod):
     return re.compile(spec), names, spaces, mod
 
 
-_CP_MODULE, _CP_NAMES, _CP_SPACES, _CP_NAME = _binding_patterns("child_process")
+_CP_PATTERNS = _binding_patterns("child_process")
+_CP_MODULE, _CP_NAMES, _CP_SPACES, _CP_NAME = _CP_PATTERNS
 _CP_RENAME = re.compile(r"\s+as\s+|\s*:\s*")   # the `as` or `:` that renames a destructured member
 # The connection family read through the same bindings (an added arm beside JS's literal spellings): module -> the members that
 # open a connection; the tool a site is keyed on is the literal list's own name (`http.get` for http and https alike). ws is
@@ -1099,19 +1196,33 @@ def _js_argv(fn, text):
 _JS_FROM = re.compile(r"\bfrom\s*(['\"])([^'\"]+)\1")
 _JS_SIDE_EFFECT = re.compile(r"import\s*(['\"])([^'\"]+)\1")
 _JS_REQUIRE = re.compile(r"(?<![\w.$])(?:require|import)\(\s*(['\"])([^'\"]+)\1\s*\)")
-_JS_STATEMENT = re.compile(r"(?:import|export)\b(?!\s*[(.])")   # the first line of an import or export statement (not `import(`, `import.meta`)
+_JS_STATEMENT = re.compile(r"(?:import|export)\b(?!\s*[(.])")   # served text: the first line of an import or export statement (not `import(`, `import.meta`)
+# A walked file: the first line of a statement that can take a `from` string, `import` (not `import(`, `import.meta`), `export {`,
+# `export *`, `export type {` or `export type *`; `export function` and the like open none, so a `from` in a string after one is not
+# read as a specifier
+_JS_OPENS = re.compile(r"import\b(?!\s*[(.])|export\s*(?:type\s*)?[{*]")
 
 
 def _js_specifiers(s, served=False, cont=False):
     """The module specifiers a JavaScript or TypeScript line imports or requires, as their matches over the line (group 2 the
-    specifier, group 0 the form as spelled): an import or export statement's `from` string, on a line that starts with import or
-    export, or that starts with `from` or `}` and continues an import or export statement that begins its own line and has no
-    specifier yet (`cont`, line_scan's state: `import * as h` and then `from "https"` on the next line), a side-effect import, and
-    every literal require() and import() spelled whole on the line. In a walked file a line led by `}` is read whatever began it
-    (a multi-line import's closing line); in served text, where a `}` leads any block, only as such a continuation."""
+    specifier, group 0 the form as spelled): every literal require() and import() spelled whole on the line (the name, its paren,
+    the quoted specifier and the closing paren, with nothing between them but whitespace inside the parens), wherever it stands;
+    a side-effect import that begins its line (`import`, whitespace alone, then the quoted specifier); and the first `from` string
+    (`from`, whitespace alone, then a quoted specifier) on a line that starts with import or export or that continues an import or
+    export statement that begins its own line and has no specifier yet (`cont`, line_scan's state), and, in a walked file, any
+    line led by a closing brace. In a walked file a continuation line is read whatever leads it (`import {`, then `  get } from
+    "https"`); in served text, where a `}` leads any block, only a continuation line led by `from` or `}`, so a specifier on a
+    continuation line led by anything but `from` or a closing brace is not read there, one of the served residual's shapes
+    (UNREAD_BINDINGS, among them a specifier after a trailing `from`, a require() or `await import()` split across lines and a
+    statement that does not begin its line). A comment between `from` (or a side-effect `import`) and its specifier is read by
+    neither this reader nor the binding patterns: in served text a client through it is no site and no line whatever the module,
+    `https`, `net` and `tls` included, and a package outside KNOWN_JS_IMPORTS passes the gate. Over the walked files the webview
+    leg's pin (ui/webview/import-gate-parse.test.ts) holds these reads, as line_scan records them (Result.reads), equal to a
+    TypeScript parse of the same files, so there that comment, and any layout this reader does not read, is red by file, line and
+    specifier; served text is not parsed."""
     if "import" not in s and "require" not in s and "from" not in s: return []   # every shape below spells one of the three
     out = []
-    if s.startswith(("import", "export")) or (not served and s.startswith("}")) or (cont and (s.startswith("}") or _JS_FROM.match(s))):
+    if s.startswith(("import", "export")) or (not served and (cont or s.startswith("}"))) or (cont and (s.startswith("}") or _JS_FROM.match(s))):
         m = _JS_FROM.search(s)
         if m: out.append(m)
         m = _JS_SIDE_EFFECT.match(s)
@@ -1210,6 +1321,60 @@ def _line_starts(text):
     return out
 
 
+_LED = ("//", "*", "/*")   # line_scan's comment test for a JavaScript line: the stripped line starts with one of these
+_BREAKS = re.compile("[\r\x0b\x0c\x1c\x1d\x1e\x85\u2028\u2029]")   # the line breaks str.splitlines cuts at besides \n
+
+
+def _led_at(text, i):
+    """Whether the line of text that holds index i, as str.splitlines cuts it, is led by `//`, `/*` or `*`, for an index where a
+    specifier's opening quote stands: the line's text before i, from the last line break, with the quote and the character after
+    it, stripped of its leading whitespace, starts with one of those (the test line_scan makes of the whole stripped line, since
+    the quote is no whitespace and no token is longer than two characters)."""
+    head = text[text.rfind("\n", 0, i) + 1:i]
+    cut = None
+    for cut in _BREAKS.finditer(head): pass
+    return ((head[cut.end():] if cut else head) + text[i:i + 2]).lstrip().startswith(_LED)
+
+
+def _specifier_starts(text, mod):
+    """Every index of text where a quoted specifier of the module starts, as _binding_patterns's first pattern spells it (a quote,
+    `node:` or not, the module's name, a quote), found by str.find: each index that pattern matches at, overlapping ones
+    included."""
+    for q in "'\"":
+        for pre in ("", "node:"):
+            needle = q + pre + mod
+            i = text.find(needle)
+            while i >= 0:
+                if text[i + len(needle):i + len(needle) + 1] in ("'", '"'): yield i
+                i = text.find(needle, i + 1)
+
+
+def _comment_bindings(text, mods=None):
+    """The binding matches of a walked JavaScript or TypeScript file whose specifier stands on a line led by `//`, `/*` or `*`
+    (a comment's line, or a line of code so led, such as an import's `* as h` continuation): the patterns match over the whole
+    text, so such a binding binds its name, while line_scan skips the line and the import gate reads no module there; the
+    webview leg's pin sees such a binding when the line is code and none on a comment line or in a template literal's text.
+    {line number: [(column, module, the match's text on that line)]}, one per module on a line, over every family module's
+    patterns (_binding_patterns), counted or not; empty for a file that names no family module. line_scan refuses each.
+    `mods`: the family modules the file names, as line_scan's binding reads found them (_names_module), or None to test each
+    here. A token prefilter keeps the patterns off a file where they can find nothing: every pattern ends at the module's quoted
+    specifier (_binding_patterns's first pattern) or at a paren that only whitespace separates from it, so a match whose end stands
+    on a led line holds the specifier on that line, and the patterns run over a file for a module only when a specifier of that
+    module stands on a led line (_specifier_starts, _led_at); the outcome on every line is the same."""
+    out, starts, lines = {}, None, None
+    for p in (_CP_PATTERNS,) + tuple(_NET_PATTERNS[m] for m in tuple(NET_FAMILY) + ("ws",)):
+        if (p[3] not in mods) if mods is not None else not _names_module(text, p): continue
+        if not any(_led_at(text, i) for i in _specifier_starts(text, p[3])): continue   # no specifier of the module on a led line
+        if starts is None: starts, lines = _line_starts(text), text.splitlines()
+        for rx in (p[1], p[2]):
+            for m in rx.finditer(text):
+                at = next(k for k in range(len(starts) - 1, -1, -1) if starts[k] <= m.end() - 1)   # the specifier's line
+                if not lines[at].strip().startswith(("//", "*", "/*")): continue
+                lo = max(m.start(), starts[at])
+                if all(x[1] != p[3] for x in out.get(at + 1, ())): out.setdefault(at + 1, []).append((lo - starts[at], p[3], text[lo:m.end()].strip()))
+    return out
+
+
 def _specifier_read(mod, end, ln, lo, hi, cp, nb):
     """Whether a family module's literal specifier, spelled at ln[lo:hi] and ending at text offset `end`, is read: a counted
     binding of the module ends there (_module_bindings), or a match of the module's arm spans it, a call read through it
@@ -1296,31 +1461,56 @@ def _live_remainder(text):
 
 
 def line_scan(rel, kind, text, res, base=0, dom=None, served=False):
-    """The shell or JavaScript sites, the DOM loads and the package gate over one file's text (read once, by scan). For a page
-    the kernel serves (served_texts), `base` offsets the line numbers to the constant's place in its Python file, `dom` forces
-    the DOM arm on (None keeps the rule: the browser and editor roots), and `served` reads a line led by `}` as a statement's
-    `from` line only where it continues an import or export statement (_js_specifiers). Two refusals ride the JavaScript lines,
-    each excused only by JS_ALLOW: a family module's specifier the gate reads that no counted binding and no arm reads
-    (_specifier_read), wherever the gate reads, and in a walked file (not served text) a require or import the gate cannot read
-    (_js_unread_requires)."""
+    """The shell or JavaScript sites, the DOM loads and the package gate over one file's text (read once, by scan). For a page the
+    kernel serves (served_texts), `base` offsets the line numbers to the constant's place in its Python file, `dom` forces the DOM
+    arm on (None keeps the rule: the browser and editor roots), and `served` keeps served text's statement form. The gate reads a
+    specifier in a literal require() or import() spelled whole on one line, wherever it stands, in a side-effect import that
+    begins its line (`import`, whitespace alone, then the quoted specifier), and in the first `from` string (`from`, whitespace
+    alone, then a quoted specifier) on a line that starts with import or export or that continues an import or export statement
+    that begins its own line and has not yet ended, and, in a walked file, any line led by a closing brace (_js_specifiers). In
+    served text a statement opens at any line that starts with import or export (_JS_STATEMENT: not `import(` or `import.meta`),
+    a line continues it only when led by `from` or `}`, and no line is skipped as a comment, so there a specifier on a continuation
+    line led by anything but `from` or a closing brace is not read, one of the served residual's shapes (UNREAD_BINDINGS). In a
+    walked file a statement opens only where _JS_OPENS matches, and any line of it is read for its `from` string but a line led
+    by `//`, `/*` or `*`, which is skipped (a comment's line, or a line of code so led, such as an import's `* as h`
+    continuation). Either way it ends at the line whose `from` string or side-effect specifier the gate reads, or at a line that
+    ends with `;` outside a string and a comment (_js_code). A comment between `from` (or a side-effect `import`) and its specifier
+    is read by neither the gate nor the binding patterns: in served text a client through it is no site and no line whatever the
+    module, `https`, `net` and `tls` included, and a package outside KNOWN_JS_IMPORTS passes the gate; in a walked file the webview
+    leg's pin reds it. Every specifier the forms loop reads is recorded as (file, line, specifier) in res.reads, and every walked
+    line where the second refusal below fires, excused or not, as (file, line) in res.unread: the --js-reads mode (js_reads) hands
+    both to the webview leg's pin, which holds them to a TypeScript parse of the walked files. Two refusals ride the JavaScript
+    lines, each excused only by JS_ALLOW: first, a family module's specifier the gate reads that no counted binding and no arm
+    reads (_specifier_read), wherever the gate reads, and in a walked file a binding the patterns match whose specifier stands
+    on a line led by `//`, `/*` or `*`, which the line reader skips (_comment_bindings), refused as a binding on a line led by
+    `//`, `/*` or `*`, whose module the gate does not read (the pin's parse sees such a binding when the line is code, an
+    import's `*`-led continuation, and none on a comment line or in a template literal's text); second, in a walked file
+    (not served text), a require or import the gate cannot read (_js_unread_requires)."""
     tools, any_tool, comment = (JS_RX, JS_ANY, ("//", "*", "/*")) if kind == "js" else (SH_RX, SH_ANY, ("#",))
     if dom is None: dom = kind == "js" and rel.startswith(tuple(d + "/" for d in JS_ROOTS))
     cp = _cp_bindings(text) if kind == "js" else None
     nb = _net_bindings(text) if kind == "js" else None
     first, starts = base + 1, None   # the text's first line number; its line offsets (_line_starts), made at the first family specifier
     stmt = False   # an import or export statement that begins its own line has no specifier yet and has not ended (_js_specifiers's `cont`)
+    held = (_comment_bindings(text, [m for m in FAMILY if m in nb["read"] or m == _CP_NAME and cp is not None and _names_module(text, _CP_PATTERNS)])
+            if kind == "js" and not served else {})   # a walked file's bindings on lines led by //, /* or *, refused below
     for i, ln in enumerate(text.splitlines(), base + 1):
         s = ln.strip(); live = ln; seen = set()
-        if s.startswith(comment) and not served: continue   # served text: a joined constant is one line whatever it starts with, never a comment
+        if s.startswith(comment) and not served:   # served text: a joined constant is one line whatever it starts with, never a comment
+            for col, mod, expr in held.get(i - first + 1, ()):   # a binding the patterns read where the gate reads no module: refused by name
+                _js_refuse(res, rel, i, col, expr, "IMPORT %s:%d names %s in %s, a binding on a line led by //, /* or *, whose module the gate does not read: "
+                           "bind the module on a line the gate reads, or name the place in JS_ALLOW with its reason" % (rel, i, mod, expr[:80]))
+            continue
         if kind == "sh" and s.startswith(("echo ", "print(")):   # a printed remedy is not a request: only what follows the printed text
             live = _live_remainder(s[5:] if s.startswith("echo ") else s[6:])   # live (_live_remainder) is scanned, and a line with nothing live is skipped
             if not live.strip(): continue
         if kind == "js":
             forms = _js_specifiers(s, served, stmt)
             said = any(f.re is _JS_FROM or f.re is _JS_SIDE_EFFECT for f in forms)
-            if _JS_STATEMENT.match(s): stmt = not said and not _js_code(s).rstrip().endswith(";")   # begun here, and not ended on its line
+            if (_JS_STATEMENT if served else _JS_OPENS).match(s): stmt = not said and not _js_code(s).rstrip().endswith(";")   # begun here, and not ended on its line
             elif stmt and (said or _js_code(s).rstrip().endswith(";")): stmt = False   # its specifier read, or a statement ended with no `from`
             for f in forms:
+                res.reads.append((rel, i, f.group(2)))
                 pkg = _js_package(f.group(2))
                 if pkg and pkg not in KNOWN_JS_IMPORTS:
                     res.problems.append("IMPORT %s:%d imports %s, a package the census does not know: a client that opens connections or starts programs "
@@ -1337,6 +1527,7 @@ def line_scan(rel, kind, text, res, base=0, dom=None, served=False):
                                "with its reason" % (rel, i, mod, f.group(0)))
             if not served:   # walked files only: a require or import the gate cannot read
                 for col, what, expr in _js_unread_requires(ln):
+                    res.unread.append((rel, i))
                     _js_refuse(res, rel, i, col, expr,
                                "IMPORT %s:%d spells a require or import the import gate cannot read (%s: %s): require a module as "
                                "require(\"<module>\") or import(\"<module>\"), the quote right after the paren, or name the place in JS_ALLOW "
@@ -1402,10 +1593,15 @@ _CONTAINER_TYPES = frozenset(("dict", "list", "set") + tuple("collections." + t 
     "OrderedDict", "defaultdict", "Counter", "deque", "ChainMap", "UserDict", "UserList")))
 # The served pass's allowlist, keyed on the code and never a line number: ("file:function", the expression as ast.unparse spells
 # it) -> (the number of places the entry covers, the reason). A route candidate whose content type the census cannot resolve, a
-# reference to `_send` other than a call the scan reads (a read of it that is not a call's function, or a string equal to
-# `_send`), a script-running type written outside `_send`, a response answered outside `_send` with no Content-Type header, a
-# container the module writes at run time, a receiver or container the pass does not read, a callee the pass does not follow, a
-# bare module name bound other than by one assignment, and a file a page reads that the walk does not scan are each a SERVED line unless named here (a route whose body the census does not read is not
+# call of a `_send` its file binds more than once outside function bodies, or other than by one def statement, or rebinds under a
+# `global` declaration in a function or a class body, a call of a decorated `_send`, and a bare call of a `_send` a scope around
+# the call binds or in a module that holds a star import (each keyed on the call's function, `self._send` or `_send`), a reference to
+# `_send` other than a call the scan reads (a read of it that is not a call's function, a store or delete of an attribute so named,
+# or a string equal to `_send`), a script-running type written outside `_send`, a response
+# answered outside `_send` with no Content-Type header, a container the module writes at run time, a receiver or container the
+# pass does not read, a callee the pass does not follow, a bare module name the pass does not read, a name the page function's
+# scope binds in a form the pass refuses, and a file a page reads that the walk does not scan are each a SERVED line unless named
+# here (a route whose body the census does not read is not
 # excused here: it is passed as the call's second positional argument or refused); an entry that names nothing in the run, or
 # covers a different number of places (distinct source positions), is a SERVED ALLOW line, so a new place under an entry's key
 # is read or named, never excused by it.
@@ -1444,6 +1640,9 @@ SERVED_ALLOW = {
  ("kernel/kernel.py:_code_ident", "_CODE_IDENT[0]"): (1,
   "a run-time memo: the identity of the kernel code this process runs, a hash of the tree's files (a lab names one in "
   "ROMP_CODE_IDENT in its place); no page text"),
+ ("kernel/kernel.py:_kernel_sha", "_SHA"): (1,
+  "a run-time memo: the git short sha of the code the kernel runs, which /sw.js reaches through _sw_version, the function declaring "
+  "the name `global` so the module's binding is read; the kernel's own build sha, not page data, and no page text"),
  ("kernel/kernel.py:_names_parts", "(NAMES / str(sid)).read_text()"): (1,
   "the names registry, runtime session data (a session's working directory and tab fields), which the too-large page's message "
   "reaches through the path it names (_resolve_open_path, _cwd_of); it holds no page text"),
@@ -1457,9 +1656,23 @@ FRAME_WRITERS = {
 }
 
 
+def _header(n):
+    """The parts of a def's, a class's or a lambda's header that run in the scope that defines it, so a walrus there binds that
+    scope's name: a def's decorators, its positional and keyword-only defaults, every argument's annotation (`*args` and `**kwargs`
+    included) and the return annotation; a class's decorators, bases and keyword values; a lambda's defaults. Everything but the
+    body."""
+    if isinstance(n, ast.ClassDef): return n.decorator_list + n.bases + [k.value for k in n.keywords]
+    a = n.args
+    parts = list(a.defaults) + [x for x in a.kw_defaults if x is not None]
+    if isinstance(n, ast.Lambda): return parts
+    parts += [x.annotation for x in a.posonlyargs + a.args + a.kwonlyargs + [a.vararg, a.kwarg] if x is not None and x.annotation is not None]
+    return n.decorator_list + parts + ([n.returns] if n.returns is not None else [])
+
+
 def _scopes_of(defs):
     """(parameters, single-name bindings, names bound another way) per enclosing function, innermost first: the scopes a content
-    type's names are resolved in."""
+    type's names are resolved in. A nested def's, class's or lambda's header is read as the function's own statements (a walrus
+    there binds the function's name another way), and its body is not."""
     out = []
     for d in reversed(defs):
         if isinstance(d, ast.ClassDef): continue
@@ -1468,8 +1681,8 @@ def _scopes_of(defs):
         single, other, stack = {}, set(), list(d.body)
         while stack:
             n = stack.pop()
-            if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)): other.add(n.name); continue
-            if isinstance(n, ast.Lambda): continue
+            if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)): other.add(n.name); stack.extend(_header(n)); continue
+            if isinstance(n, ast.Lambda): stack.extend(_header(n)); continue
             if isinstance(n, ast.Assign) and len(n.targets) == 1 and isinstance(n.targets[0], ast.Name):
                 single.setdefault(n.targets[0].id, []).append(n.value); stack.append(n.value); continue
             if isinstance(n, ast.AnnAssign) and isinstance(n.target, ast.Name) and n.value is not None:
@@ -1483,25 +1696,45 @@ def _scopes_of(defs):
     return out
 
 
-_CONSTS = weakref.WeakKeyDictionary()   # a module's tree -> (its _module_consts, its _module_bound): routes_of and the served pass read them once per tree
+_CONSTS = weakref.WeakKeyDictionary()   # a module's tree -> (its _module_consts, its _module_bound, its _module_info): routes_of and the served pass read them once per tree
+_STAR = "a module name a star import may rebind"
+_IN_BLOCK = "a module name bound once inside a module-level block, not by a top-level import, def or class statement"
+_IN_BLOCK_BODY = "a module name bound once inside a module-level block, not by a top-level statement"
+_ASSIGN_FORM = "a module name bound by an annotated, unpacking or chained assignment, which the census does not read as a constant"
+_GLOBAL_ONLY = "a module name no module-level statement binds, bound at run time under a global declaration"
+_SUPER = "a call of super(), whose methods are a base class's, which the census does not follow"
+_CLASS_DEFAULT = "a method's default naming a name the class body binds, which the census does not read as a scope"
 
 
 def _module_consts(tree):
     """The module names the served pass and the route typing read as constants, each with its value: a name bound by one top-level
-    single-name assignment and by no other binding at module level. The count walks the module's statements outside def, class
+    plain single-name assignment (not annotated, unpacking or chained) and by no other binding at module level. The count walks the module's statements outside def, class
     and import bodies and takes every Name stored or deleted there (a comprehension's target among them, which errs toward
-    refusing), with the names a def, a class, an import, an except clause or a match pattern binds there; so a name bound twice
-    (a default and then a rebind), or bound once inside a try, if, for or with block, is no constant here. Computed once per
-    tree (_CONSTS, keyed on the tree object and holding no tree alive); neither reader writes the map."""
+    refusing), with the names a def, a class, an import, an except clause or a match pattern binds there, and it walks every part
+    of a def's or a class's header but the body (decorators, defaults, annotations, the return annotation, bases and keywords:
+    _header), so a walrus there binds the module's name; so a name bound twice (a default and then a rebind, or a header walrus
+    beside the assignment), or bound once inside a try, if, for or with block, is no constant here. A module that holds a star
+    import (`from x import *`) wherever the count walks has no constant at all, since that import may bind any name. Computed once
+    per tree (_CONSTS, keyed on the tree object and holding no tree alive); neither reader writes the map."""
     return _module_scope(tree)[0]
 
 
 def _module_bound(tree):
     """The number of module-level bindings of each name the module binds there, by _module_consts's count (a name absent is
-    bound nowhere at module level): the served pass exempts an import, a function or a class only as the name's one binding,
-    and a builtin only where no module-level binding shadows it, and neither where Result.rebinds records the name (a binding
-    under `global` in a function, a write by a statement at module level: _Served._sole and _Served._builtin)."""
+    bound nowhere at module level): the served pass exempts a top-level import (def, class) statement only as the name's one
+    binding, and a builtin only where no module-level binding shadows it, and neither where Result.rebinds records the name (a
+    binding under `global` in a function, a write by a statement at module level) or the module holds a star import, which may
+    rebind any name (_Served._sole and _Served._builtin)."""
     return _module_scope(tree)[1]
+
+
+def _module_info(tree):
+    """What the count saw besides the numbers: whether the module holds a star import (star), the names whose one module-level
+    binding is an import, a def or a class statement inside a module-level block rather than a top-level statement (block), the
+    names bound in any other form inside a module-level block's body (inblock: an assignment inside a try, say), the names a
+    def statement binds anywhere the count walks (defs), and the names a top-level annotated, unpacking or chained assignment
+    binds (assigned: `X: str = ...`, `X, Y = ...`, `X = Y = ...`), which are no constants."""
+    return _module_scope(tree)[2]
 
 
 def _module_scope(tree):
@@ -1511,21 +1744,36 @@ def _module_scope(tree):
 
 
 def _module_consts_of(tree):
-    count, stack = {}, list(tree.body)
+    count, stack, star, block, defs, inblock, assigned = {}, [(n, True) for n in tree.body], False, set(), set(), set(), set()
     while stack:
-        n = stack.pop()
-        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)): count[n.name] = count.get(n.name, 0) + 1; continue
+        n, top = stack.pop()
+        if top is True and (isinstance(n, ast.AnnAssign) and n.value is not None
+                            or isinstance(n, ast.Assign) and not (len(n.targets) == 1 and isinstance(n.targets[0], ast.Name))):
+            # a top-level annotated, unpacking or chained assignment: its names are no constant (assigned)
+            assigned.update(t.id for tg in (n.targets if isinstance(n, ast.Assign) else [n.target]) for t in ast.walk(tg)
+                            if isinstance(t, ast.Name) and isinstance(t.ctx, ast.Store))
+        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            count[n.name] = count.get(n.name, 0) + 1
+            if not top: block.add(n.name)
+            if not isinstance(n, ast.ClassDef): defs.add(n.name)
+            stack.extend((h, False) for h in _header(n)); continue   # the header runs at module level; the body is the function's or the class's
         if isinstance(n, (ast.Import, ast.ImportFrom)):
-            for a in n.names: k = (a.asname or a.name).split(".")[0]; count[k] = count.get(k, 0) + 1
+            for a in n.names:
+                if a.name == "*": star = True; continue
+                k = (a.asname or a.name).split(".")[0]; count[k] = count.get(k, 0) + 1
+                if not top: block.add(k)
             continue
-        if isinstance(n, ast.Name) and isinstance(n.ctx, (ast.Store, ast.Del)): count[n.id] = count.get(n.id, 0) + 1
-        elif isinstance(n, ast.ExceptHandler) and n.name: count[n.name] = count.get(n.name, 0) + 1
-        elif isinstance(n, (ast.MatchAs, ast.MatchStar)) and n.name: count[n.name] = count.get(n.name, 0) + 1
-        elif isinstance(n, ast.MatchMapping) and n.rest: count[n.rest] = count.get(n.rest, 0) + 1
-        stack.extend(ast.iter_child_nodes(n))
-    return ({n.targets[0].id: n.value for n in tree.body
-             if isinstance(n, ast.Assign) and len(n.targets) == 1 and isinstance(n.targets[0], ast.Name) and count.get(n.targets[0].id) == 1},
-            count)
+        if isinstance(n, ast.Name) and isinstance(n.ctx, (ast.Store, ast.Del)): count[n.id] = count.get(n.id, 0) + 1; got = n.id
+        elif isinstance(n, ast.ExceptHandler) and n.name: count[n.name] = count.get(n.name, 0) + 1; got = n.name
+        elif isinstance(n, (ast.MatchAs, ast.MatchStar)) and n.name: count[n.name] = count.get(n.name, 0) + 1; got = n.name
+        elif isinstance(n, ast.MatchMapping) and n.rest: count[n.rest] = count.get(n.rest, 0) + 1; got = n.rest
+        else: got = None
+        if got is not None and top is None: inblock.add(got)   # bound inside a module-level block's body, not by a top-level statement
+        # a statement below the top level stands in a block's body: what it binds, and what its parts bind, is marked None (inblock)
+        stack.extend((c, None if top is None or (top is False and isinstance(n, ast.stmt)) else False) for c in ast.iter_child_nodes(n))
+    consts = {} if star else {n.targets[0].id: n.value for n in tree.body
+                              if isinstance(n, ast.Assign) and len(n.targets) == 1 and isinstance(n.targets[0], ast.Name) and count.get(n.targets[0].id) == 1}
+    return consts, count, {"star": star, "block": block, "defs": defs, "inblock": inblock, "assigned": assigned}
 
 
 def _dict_of(e, consts, scopes, written):
@@ -1593,45 +1841,321 @@ def _is_ctype_write(c):
             and isinstance(c.args[0], ast.Constant) and isinstance(c.args[0].value, str) and c.args[0].value.lower() == "content-type")
 
 
-def _body_param(d, pos):
-    """The parameter a `_send` definition writes as its page body, or None: its second positional parameter (`pos`, self
-    dropped for a method), when its one `<x>.write(<name>)` call names it, whatever the definition rebinds that name to before
-    the write (the kernel's Handler._send encodes `body` in place). A definition that writes another parameter, a local or an
-    expression, or has more than one such write, has no body parameter the census reads."""
-    names = [c.args[0].id for c in ast.walk(d) if isinstance(c, ast.Call) and isinstance(c.func, ast.Attribute) and c.func.attr == "write"
-             and len(c.args) == 1 and not c.keywords and isinstance(c.args[0], ast.Name)]
-    return names[0] if len(names) == 1 and len(pos) > 1 and names[0] == pos[1] else None
+_WRITE_NAMES = ("write", "writelines", "send", "sendall", "sendfile", "sendmsg")   # the stream and socket methods that put text on the wire
+_HEADER_CALLS = ("send_response", "send_header", "end_headers")                   # the header methods a `_send` calls on self
+_BODY_BUILTINS = ("isinstance", "str", "len")                                     # the builtins a `_send` may call
 
 
-def _unread_body(call, param):
+def _body_param(d, pos, me, tree):
+    """(the parameter a `_send` definition writes as its page body, None), or (None, why the census does not read it). The body
+    is its second positional parameter (`pos`, self dropped for a method), read only when the definition's one output is its one
+    `<x>.write(<that parameter>)`, whatever the definition rebinds that name to before the write (the kernel's Handler._send
+    encodes `body` in place), and every call in the definition is one the census reads: that write; send_response, send_header or
+    end_headers on self (`me`, a method's first parameter; a module function has none); getattr of self with a string-constant
+    name; isinstance, str or len, where neither the definition nor the module binds the name and the module holds no star
+    import; or a method called on a parameter or on a value built from parameters and literals (`body.encode`,
+    `(headers or {}).items()`), self and the name the write's stream hangs from never counting as a parameter here, and a
+    parameter the definition rebinds counting only while every rebinding is such a value. The definition binds a name in any
+    binding form _binding_forms names, anywhere inside it: a store (an assignment, a loop, with or comprehension target, a
+    walrus), a def or class statement, a parameter of a def or lambda nested in it, an import, an except name, a match capture
+    or a del; a parameter rebound other than by a single-name assignment or walrus (by a loop or with target, an unpacking, a def
+    or class statement, a nested def's or lambda's parameter of its name, an import, an except name, a match capture or a del)
+    takes no value built from parameters. A method's definition that binds self again in any of those forms or as a type
+    parameter, anywhere inside it (an assignment to it, a lambda's or a nested def's parameter named self among them), or declares
+    it global there refuses whole, each with its reason ("a definition that rebinds self", "a definition that declares self
+    global"): a header call or a getattr on self could then reach an object other than the handler. Anything
+    else refuses, each with its road named: a string constant equal to a write method's name (write, writelines, send, sendall,
+    sendfile or sendmsg), any other read of an attribute so named, called or not (an alias of the write, a second write, a write
+    through another of those methods), a print, any other call, no such write, a reference to the write's receiver other than as
+    its receiver, and a write of anything but the second positional parameter. A stream the definition reaches through no name
+    it spells (a module global holding the socket, written by a method `_send` calls on self) is not read."""
+    a = d.args
+    params = set(pos) | {x.arg for x in a.kwonlyargs} | ({a.vararg.arg} if a.vararg else set()) | ({a.kwarg.arg} if a.kwarg else set())
+    params.discard(me)
+    nodes = list(ast.walk(d))
+    stores = {}   # a parameter's rebindings in the definition, each the value it takes (None for a loop, with or other target)
+    for n in nodes:
+        if isinstance(n, (ast.Assign, ast.AugAssign, ast.AnnAssign, ast.NamedExpr)):
+            for tg in (n.targets if isinstance(n, ast.Assign) else [n.target]):
+                for t in ast.walk(tg):
+                    if isinstance(t, ast.Name) and t.id in params:
+                        stores.setdefault(t.id, []).append(n.value if isinstance(tg, ast.Name) else None)
+        elif isinstance(n, (ast.For, ast.AsyncFor, ast.With, ast.AsyncWith, ast.comprehension, ast.ExceptHandler)):
+            tgts = [n.target] if isinstance(n, (ast.For, ast.AsyncFor, ast.comprehension)) else [i.optional_vars for i in n.items] if isinstance(n, (ast.With, ast.AsyncWith)) else []
+            for tg in tgts:
+                for t in ast.walk(tg) if tg is not None else ():
+                    if isinstance(t, ast.Name) and t.id in params: stores.setdefault(t.id, []).append(None)
+            if isinstance(n, ast.ExceptHandler) and n.name in params: stores.setdefault(n.name, []).append(None)
+    # the names the definition binds in the other forms _binding_forms names (a def or class statement, a parameter of a def or
+    # lambda nested in it, an import, an except name, a match capture, a del): each a local here, and a parameter so rebound takes
+    # no value built from parameters; the definition's own parameters are `params`
+    own = {id(x) for x in a.posonlyargs + a.args + a.kwonlyargs + [a.vararg, a.kwarg] if x is not None}
+    others = set()
+    for n in nodes:
+        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) and n is not d: got = (n.name,)
+        elif isinstance(n, ast.arg) and id(n) not in own: got = (n.arg,)   # every kind: positional, keyword-only, `*args`, `**kwargs`
+        elif isinstance(n, (ast.Import, ast.ImportFrom)): got = tuple((a.asname or a.name).split(".")[0] for a in n.names)
+        elif isinstance(n, (ast.ExceptHandler, ast.MatchAs, ast.MatchStar)): got = (n.name,) if n.name else ()
+        elif isinstance(n, ast.MatchMapping): got = (n.rest,) if n.rest else ()
+        elif isinstance(n, ast.Name) and isinstance(n.ctx, ast.Del): got = (n.id,)
+        else: continue
+        others.update(got)
+        for x in got:
+            if x in params and not isinstance(n, ast.ExceptHandler): stores.setdefault(x, []).append(None)   # an except name's is above
+    local = {t.id for t in nodes if isinstance(t, ast.Name) and isinstance(t.ctx, ast.Store)} | others | params | ({me} if me else set())
+    bound, star = _module_bound(tree), _module_info(tree)["star"]
+    # a method's self (`me`) bound again anywhere inside the definition, as a store, in any form above or as a type parameter (3.12,
+    # binding its name in the scope it heads), or declared global there: a header call or a getattr on self could then reach an
+    # object other than the handler, so the definition is refused whole
+    if me and (me in others or any(isinstance(t, ast.Name) and t.id == me and isinstance(t.ctx, ast.Store) for t in nodes)
+               or any(type(t).__name__ in ("TypeVar", "ParamSpec", "TypeVarTuple") and t.name == me for t in nodes)):
+        return None, "a definition that rebinds %s" % me
+    if me and any(isinstance(n, ast.Global) and me in n.names for n in nodes): return None, "a definition that declares %s global" % me
+
+    def built(e, seen=()):
+        """A value built from parameters and literals: a literal, a parameter (every rebinding of it such a value), and a BoolOp,
+        a BinOp, a unary expression, a conditional's branches, a container, an f-string or a method call over those."""
+        if isinstance(e, ast.Constant): return True
+        if isinstance(e, ast.Name):
+            return e.id in params and (e.id in seen or all(v is not None and built(v, seen + (e.id,)) for v in stores.get(e.id, ())))
+        if isinstance(e, ast.BoolOp): return all(built(v, seen) for v in e.values)
+        if isinstance(e, ast.BinOp): return built(e.left, seen) and built(e.right, seen)
+        if isinstance(e, ast.UnaryOp): return built(e.operand, seen)
+        if isinstance(e, ast.IfExp): return built(e.body, seen) and built(e.orelse, seen)
+        if isinstance(e, (ast.Tuple, ast.List, ast.Set)): return all(built(x, seen) for x in e.elts)
+        if isinstance(e, ast.Dict): return all(built(x, seen) for x in e.keys + e.values if x is not None)
+        if isinstance(e, ast.JoinedStr): return all(built(v.value if isinstance(v, ast.FormattedValue) else v, seen) for v in e.values)
+        if isinstance(e, ast.Call): return isinstance(e.func, ast.Attribute) and e.func.attr not in _WRITE_NAMES and built(e.func.value, seen)
+        return False
+
+    if any(isinstance(n, ast.Constant) and n.value in _WRITE_NAMES for n in nodes): return None, "a write method named by a string"
+    writes = [n for n in nodes if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and n.func.attr in _WRITE_NAMES]
+    called = {id(w.func) for w in writes}
+    if any(isinstance(n, ast.Attribute) and n.attr in _WRITE_NAMES and id(n) not in called for n in nodes): return None, "a write through an alias"
+    if len(writes) > 1: return None, "a second write"
+    if writes and writes[0].func.attr != "write": return None, "a write through %s" % writes[0].func.attr
+    root = writes[0].func.value if writes else None
+    while isinstance(root, (ast.Attribute, ast.Subscript, ast.Call)): root = root.func if isinstance(root, ast.Call) else root.value
+    if isinstance(root, ast.Name): params.discard(root.id)   # the name the stream hangs from is no value: `h.anything(...)` on it is no value method
+    for c in sorted((n for n in nodes if isinstance(n, ast.Call)), key=lambda n: (n.lineno, n.col_offset)):
+        f = c.func
+        if writes and c is writes[0]: continue
+        if isinstance(f, ast.Attribute) and isinstance(f.value, ast.Name) and me and f.value.id == me and f.attr in _HEADER_CALLS: continue
+        if (isinstance(f, ast.Name) and f.id == "getattr" and me and len(c.args) in (2, 3) and not c.keywords and isinstance(c.args[0], ast.Name)
+                and c.args[0].id == me and isinstance(c.args[1], ast.Constant) and isinstance(c.args[1].value, str)): continue
+        if isinstance(f, ast.Name) and f.id in _BODY_BUILTINS and f.id not in local and f.id not in bound and not star: continue
+        if isinstance(f, ast.Attribute) and built(f.value): continue
+        return None, "a print to a stream" if isinstance(f, ast.Name) and f.id == "print" else "a call the reader does not read"
+    if writes:
+        w = writes[0]; recv = w.func.value
+        if sum(1 for n in nodes if type(n) is type(recv) and ast.unparse(n) == ast.unparse(recv)) > 1:
+            return None, "a reference to the write's receiver other than as its receiver"
+        if len(w.args) == 1 and not w.keywords and isinstance(w.args[0], ast.Name) and len(pos) > 1 and w.args[0].id == pos[1]: return pos[1], None
+        return None, "the definition's written body is not its second positional parameter"
+    return None, "no write the census reads"
+
+
+def _unread_body(call, param, why=None):
     """Why the census does not read a route's page body from this `_send` call (None when it reads `call.args[1]`): the
-    definition's body parameter (_body_param) is None, or the call does not pass that argument positionally with no starred
-    argument before it, or it spreads a mapping with `**`."""
-    if param is None: return "the definition's written body is not its second positional parameter"
+    definition's body parameter (_body_param) is None, with the reason that gave, or the call does not pass that argument
+    positionally with no starred argument before it, or it spreads a mapping with `**`."""
+    if param is None: return why or "the definition's written body is not its second positional parameter"
     if any(k.arg is None for k in call.keywords): return "a ** argument"
     if any(isinstance(a, ast.Starred) for a in call.args[:2]): return "a starred argument"
     if len(call.args) < 2: return "a keyword body" if any(k.arg == param for k in call.keywords) else "no body argument"
     return None
 
 
+_COMPS = (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)
+
+
+def _send_bindings(tree, inner):
+    """Every binding of `_send` in one file outside function bodies, each (the node, whether it is a def or async def statement
+    direct in the module's body or a class's body): the module and every class body counted together, a class body defined inside
+    a function body included, since a class body is never a function body (its statements bind the class's names, not the
+    function's), while a binding in a function body itself is not counted (the function's own; one under a `global` declaration,
+    which binds the module's name, refuses the file by itself in routes_of: _global_binder); a def, an async def or a class
+    statement, an assignment, a loop or with target, a walrus (in a header too: _header), an import, an except clause, a match
+    capture or a del; a comprehension binds its targets alone (Python 3), as _binding_forms reads it, so its target is no binding
+    here, and a walrus in its parts binds the scope around it. Inside a function body only a class statement's body is counted:
+    `inner`, the class statements whose nearest enclosing def is a function, as Scan's own walk records them (Scan.inner_classes),
+    each body walked here, so no second walk enters a function body."""
+    out, stack = [], [(n, True) for n in tree.body] + [(b, True) for c in inner for b in c.body]
+    while stack:
+        n, direct = stack.pop()
+        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            if n.name == "_send": out.append((n, direct))
+            stack.extend((h, False) for h in _header(n)); continue   # the body is the function's; a class statement in it is one of `inner`
+        if isinstance(n, ast.ClassDef):
+            if n.name == "_send": out.append((n, False))
+            stack.extend((h, False) for h in _header(n)); stack.extend((b, True) for b in n.body); continue
+        if isinstance(n, ast.Lambda): stack.extend((h, False) for h in _header(n)); continue
+        if isinstance(n, _COMPS):   # its targets are its own; a walrus in its parts binds this scope's name
+            stack.extend((c, False) for c in ast.iter_child_nodes(n) if not isinstance(c, ast.comprehension))
+            stack.extend((c, False) for g in n.generators for c in [g.iter] + g.ifs); continue
+        if isinstance(n, (ast.Import, ast.ImportFrom)): out.extend((n, False) for a in n.names if (a.asname or a.name).split(".")[0] == "_send")
+        elif isinstance(n, ast.Name) and isinstance(n.ctx, (ast.Store, ast.Del)) and n.id == "_send": out.append((n, False))
+        elif isinstance(n, ast.ExceptHandler) and n.name == "_send": out.append((n, False))
+        elif isinstance(n, (ast.MatchAs, ast.MatchStar)) and n.name == "_send": out.append((n, False))
+        elif isinstance(n, ast.MatchMapping) and n.rest == "_send": out.append((n, False))
+        stack.extend((c, False) for c in ast.iter_child_nodes(n))
+    return out
+
+
+def _names_send(tree, calls):
+    """Whether the file names `_send` anywhere but as the called name of its `_send` calls (`calls`): any other node with a field
+    equal to it, a name or an attribute in any role, a parameter, an import alias, a def, class or except name, a match capture, a
+    keyword or a string among them (every binding of the name has such a field). A file that names it nowhere else binds it
+    nowhere at all; one that does may bind it (this errs toward saying so)."""
+    called = {id(c.func) for c in calls}
+    return any(v == "_send" for n in ast.walk(tree) if id(n) not in called for _, v in ast.iter_fields(n))
+
+
+def _binding_forms(scope, name):
+    """(the forms by which one scope binds a name, each named for a SERVED line; the declaration the scope makes of the name, "global",
+    "nonlocal" or None): a def's or a lambda's parameters, and the statements of a def's, a lambda's or a class's own body, where a
+    nested def's or class's header and a lambda's defaults count and their bodies do not (a def or a class statement, an
+    assignment, an augmented or annotated assignment, an annotation alone, a loop, with or except target, a walrus, a del, an
+    import, a match capture, any other store); a comprehension binds its targets alone, and a walrus inside it binds the name of the
+    scope around it."""
+    if isinstance(scope, _COMPS):
+        return ["a comprehension's target" for g in scope.generators for t in ast.walk(g.target) if isinstance(t, ast.Name) and t.id == name], None
+    forms, declared = [], None
+    if not isinstance(scope, ast.ClassDef):
+        a = scope.args
+        if any(x.arg == name for x in a.posonlyargs + a.args + a.kwonlyargs + [a.vararg, a.kwarg] if x is not None): forms.append("a parameter")
+    stack = [(n, None) for n in (scope.body if isinstance(scope.body, list) else [scope.body])]
+    while stack:
+        n, how = stack.pop()
+        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            if n.name == name: forms.append("a class statement" if isinstance(n, ast.ClassDef) else "a def statement")
+            stack.extend((h, None) for h in _header(n)); continue
+        if isinstance(n, ast.Lambda): stack.extend((h, None) for h in _header(n)); continue
+        if isinstance(n, _COMPS):   # its targets are its own; a walrus in its parts binds this scope's name
+            stack.extend((c, None) for c in ast.iter_child_nodes(n) if not isinstance(c, ast.comprehension))
+            stack.extend((c, None) for g in n.generators for c in [g.iter] + g.ifs); continue
+        if isinstance(n, ast.Name):
+            if n.id == name and isinstance(n.ctx, (ast.Store, ast.Del)): forms.append(how or ("a del" if isinstance(n.ctx, ast.Del) else "a store"))
+            continue
+        if isinstance(n, (ast.Global, ast.Nonlocal)):
+            if name in n.names: declared = "global" if isinstance(n, ast.Global) else "nonlocal"
+            continue
+        if isinstance(n, (ast.Import, ast.ImportFrom)):
+            forms.extend("an import" for a in n.names if (a.asname or a.name).split(".")[0] == name); continue
+        if isinstance(n, ast.ExceptHandler) and n.name == name: forms.append("an except name")
+        elif isinstance(n, (ast.MatchAs, ast.MatchStar)) and n.name == name or isinstance(n, ast.MatchMapping) and n.rest == name: forms.append("a match capture")
+        labels = {}   # a target's subtree, named by the statement that binds it
+        if isinstance(n, (ast.For, ast.AsyncFor)): labels[id(n.target)] = "a loop target"
+        elif isinstance(n, ast.withitem) and n.optional_vars is not None: labels[id(n.optional_vars)] = "a with target"
+        elif isinstance(n, ast.Assign): labels.update((id(t), "an assignment") for t in n.targets)
+        elif isinstance(n, ast.AugAssign): labels[id(n.target)] = "an augmented assignment"
+        elif isinstance(n, ast.AnnAssign): labels[id(n.target)] = "an annotated assignment" if n.value is not None else "an annotation"
+        elif isinstance(n, ast.NamedExpr): labels[id(n.target)] = "a walrus"   # a del's target is named by its own context above
+        stack.extend((c, labels.get(id(c), how)) for c in ast.iter_child_nodes(n))
+    return forms, declared
+
+
+def _call_scopes(call, defs, tree):
+    """The scopes a bare call looks its name up in, innermost first: the lambdas and comprehensions around the call inside its
+    innermost def or class (the module when there is none), a lambda only when the call stands in its body and a comprehension
+    not when the call stands in its first iterable; that def or class when the call stands in its body, not its header; then the
+    enclosing defs and classes outward. The module's own binding is the caller's to read after."""
+    root = defs[-1] if defs else tree
+    body = {id(s) for s in root.body}
+    stack, path, inbody = [(c, (), id(c) in body) for c in ast.iter_child_nodes(root)], None, True
+    while stack:
+        n, around, top = stack.pop()
+        if n is call: path, inbody = around, top; break
+        if isinstance(n, ast.Lambda):
+            stack.extend((c, around + (n,) if c is n.body else around, top) for c in ast.iter_child_nodes(n)); continue
+        if isinstance(n, _COMPS):
+            first = n.generators[0].iter
+            stack.extend((c, around + (n,), top) for c in ast.iter_child_nodes(n) if not isinstance(c, ast.comprehension))
+            for g in n.generators:
+                stack.extend((c, around if c is first else around + (n,), top) for c in [g.target, g.iter] + g.ifs)
+            continue
+        stack.extend((c, around, top) for c in ast.iter_child_nodes(n))
+    inner = list(reversed(path or ()))
+    return inner + ([root] if defs and inbody else []) + list(reversed(defs[:-1]))
+
+
+def _bare_send_binding(call, defs, tree):
+    """Why a bare `_send` call does not reach the module's binding, or None when it does: as Python looks the name up, the nearest
+    scope around the call that binds `_send` in any form decides (_call_scopes, _binding_forms), a class body only as the call's
+    own scope, and a `global` declaration on the way, with no binding beside it, hands the name to the module. The reason names
+    the scope and each form that binds it there."""
+    chain = _call_scopes(call, defs, tree)
+    for k, sc in enumerate(chain):
+        if isinstance(sc, ast.ClassDef) and k > 0: continue   # a class body's names are no scope of a function or comprehension in it
+        forms, declared = _binding_forms(sc, "_send")
+        if forms:
+            if isinstance(sc, ast.Lambda): what = "a lambda around the call"
+            elif isinstance(sc, _COMPS): what = "a comprehension around the call"
+            else:
+                name = ".".join(d.name for d in defs[:defs.index(sc) + 1])
+                what = ("the class body of %s around the call" if isinstance(sc, ast.ClassDef) else "the enclosing function %s") % name
+            return "a _send %s binds (%s%s)" % (what, _forms_said(forms), ", under a %s declaration" % declared if declared else "")
+        if declared == "global": return None
+    return None
+
+
+def _forms_said(forms):
+    """The binding forms _binding_forms names, each once, sorted and joined for a SERVED line (`a def statement and an import`)."""
+    kinds = sorted(set(forms))
+    return kinds[0] if len(kinds) == 1 else ", ".join(kinds[:-1]) + " and " + kinds[-1]
+
+
+def _global_binder(decls, name):
+    """The first function or class body, in source order, that declares `name` global and binds it there in any form
+    (_binding_forms), so rebinding the module's name at run time: (its enclosing defs, innermost last; the forms), from one file's
+    declarations (Result.global_decls, Scan's record of every `global` declaration in a function or class body); None when none
+    does (a declaration with no binding beside it only reads the module's name)."""
+    for defs, names in decls:
+        if name in names:
+            forms, declared = _binding_forms(defs[-1], name)
+            if forms and declared == "global": return defs, forms
+    return None
+
+
 def routes_of(rel, tree, sc, res):
     """The routes of one Python file's served pages and scripts, read from its candidates (Scan.sends, Scan.ctype_writes,
     Scan.responds and Scan.send_refs): every `_send` call the scan reads (spelled `_send(...)` or `<x>._send(...)`) is typed
-    through the `_send` definition it reaches in this file (the class body's or the module's last `def _send`, a later
-    assignment to `_send` in that body not followed; the parameter that definition's Content-Type write names, by position or keyword, or the value it writes: the
-    kernel's Handler._send its `ctype`, the postal bus's application/json),
-    and a call to a definition that writes no Content-Type is a frame writer's (FRAME_WRITERS) or a SERVED line; the type is
+    through the `_send` definition it reaches in this file, the one def or async def statement that binds `_send` there, direct
+    in the call's own class body (a call through self) or in the module (a bare call): the parameter that definition's
+    Content-Type write names, by position or keyword, or the value it writes (the kernel's Handler._send its `ctype`, the postal
+    bus's application/json). A file that binds `_send` more than once outside function bodies (the module and every class body
+    counted together, a class body a function body defines included, in any binding form but a comprehension's target, which binds
+    only in its comprehension: _send_bindings) or other than by one def statement direct in a class body or the module, or where a
+    function or a class body binds it under a `global` declaration, rebinding the module's name at run time (_global_binder over
+    Result.global_decls), is a SERVED line at each of its `_send` calls, and so is a bare call that
+    reaches a `_send` bound inside a function, a lambda, a comprehension or a class body around it, in any form, the line naming the
+    scope and the binding (_bare_send_binding: Python calls that binding, not the module's), a call that reaches no definition the
+    census reads, the line saying why (a `_send` the call's own class body does not bind, for a call through self: inherited or set
+    at run time; one reached through an object other than self, or through an attribute outside any class body; a `_send` no
+    scope the bare call looks it up in
+    binds, the module included; and, in a file that names `_send` nowhere but as the called name of those calls, so binds it nowhere
+    at all (_names_send), a definition this file does not hold), a call of a definition carrying any decorator, whose parameters the
+    census does not read, and a bare call in a module
+    that holds a star import
+    (_module_info); an override of `_send` in a subclass another file defines is not read, a call through self typed through its
+    own class body's definition. A call to a definition that writes no Content-Type is a frame writer's (FRAME_WRITERS) or a SERVED line; the type is
     resolved (_ctype_values, through a module name no code writes after binding it: _module_consts less the names Result.writes
-    records) and a script-running one (_script_type) makes the call a route whose text the served pass reads; an unresolved
-    type is a SERVED line. A route's page body is the call's second positional argument, read only when the definition writes
-    that parameter as its body (_body_param) and the call passes it positionally with no starred argument before it and no
-    `**`; any other script-running call (a keyword body, a starred or `**` call, a definition whose written body is another
-    parameter, a local or an expression) is a SERVED line by name (_unread_body) and no route. Any other reference to `_send` (a
-    read of it that is not a call's function, or a string equal to `_send`) is a SERVED line; a call through a name computed at
+    records, and through a local whose every binding _scopes_of reads) and a script-running one (_script_type) makes the call a
+    route whose text the served pass reads; an unresolved type is a SERVED line. A route's page body is the call's second
+    positional argument, read only when the call passes it positionally with no starred argument before it and no `**` and the
+    definition's one output is its one write of that parameter, nothing in a method's definition binding self again or declaring it
+    global, every call in it one _body_param reads, and a stream the
+    definition reaches through no name it spells (a module global holding the socket, written by a method the definition calls on
+    self) is not read; any other script-running call (a keyword body, a starred or `**` call, a definition with any other output,
+    whose written body is another parameter, a local or an expression, or that writes nothing) is a SERVED line by name, its
+    reason naming the road (_unread_body), and no route. Any other reference to `_send` (a read of it that is not a call's
+    function, a store or delete of an attribute so named, or a string equal to `_send`) is a SERVED line; a call through a name
+    computed at
     run time is not read. Every Content-Type header written outside a `_send` definition is typed the same way, and a script-running
     one is a SERVED line (the served pass follows a page's text through `_send` alone); a function outside `_send` that answers
     (send_response) more often than it writes a Content-Type header is a SERVED line, the browser typing that body by sniffing
-    it. SERVED_ALLOW excuses a place by its function and expression, save an unread body. Returns the routes, (call, the
+    it. SERVED_ALLOW excuses a place by its function and expression (a `_send` call's place by the call's function, `self._send` or
+    `_send`), save an unread body. Returns the routes, (call, the
     enclosing function, the class name, the script-running type, the body expression), sorted by line."""
     consts = _module_consts(tree)
     written = {x for x in res.writes.get(rel, {}) if x in consts}   # the module names some code writes after binding them
@@ -1663,18 +2187,57 @@ def routes_of(rel, tree, sc, res):
             return None
         return script[0] if script else None
 
+    rebound = None   # why every `_send` call of the file is refused when a function or class body binds `_send` under a `global` declaration
+    one_def = None   # whether the file binds `_send` outside function bodies at most once, and that once by a def statement direct in a body (_send_bindings)
+    anywhere = None   # whether the file names `_send` anywhere but as its calls' called name (_names_send), read for a call that reaches no definition
     for call, defs, where in sc.sends:
         fn = next((x for x in reversed(defs) if not isinstance(x, ast.ClassDef)), None)
         cls = next((x for x in reversed(defs) if isinstance(x, ast.ClassDef)), None)
         f, d, method = call.func, None, False
+        if rebound is None:   # a body that binds `_send` under a `global` declaration rebinds the module's name at run time: every call refused
+            got = _global_binder(res.global_decls.get(rel, ()), "_send")
+            rebound = ("a _send %s binds under a global declaration (%s), rebinding the module's name at run time" % (
+                ("the class body of %s" if isinstance(got[0][-1], ast.ClassDef) else "the function %s") % ".".join(x.name for x in got[0]),
+                _forms_said(got[1])) if got else False)
+        if rebound:
+            if not allowed(where, f, call):
+                res.problems.append("SERVED %s:%d calls _send on %s, %s: the census cannot read the response's content type"
+                                    % (rel, call.lineno, ast.unparse(f)[:40], rebound))
+            continue
+        if one_def is None:
+            binds = _send_bindings(tree, sc.inner_classes)
+            one_def = len(binds) == 1 and isinstance(binds[0][0], (ast.FunctionDef, ast.AsyncFunctionDef)) and binds[0][1]
+            if not binds: one_def = True   # no binding in that population: each call reaches no definition the census reads, refused below by its reach
+        if not one_def and not allowed(where, f, call):
+            res.problems.append("SERVED %s:%d calls _send on %s, a _send bound more than once, or other than by one def statement, in %s: the "
+                                "census types a call only through the one def statement that binds _send in a class body or the module"
+                                % (rel, call.lineno, ast.unparse(f)[:40], rel)); continue
+        if not one_def: continue
         if isinstance(f, ast.Attribute) and isinstance(f.value, ast.Name) and f.value.id == "self" and cls is not None:
-            d = next((b for b in reversed(cls.body) if isinstance(b, (ast.FunctionDef, ast.AsyncFunctionDef)) and b.name == "_send"), None); method = True   # the last, as Python binds it
+            d = next((b for b in cls.body if isinstance(b, (ast.FunctionDef, ast.AsyncFunctionDef)) and b.name == "_send"), None); method = True   # the file's one binding, when this class body holds it
         elif isinstance(f, ast.Name):
+            why = _bare_send_binding(call, defs, tree) or (_STAR if _module_info(tree)["star"] else None)   # a scope around the call binds it, or a star import may
+            if why is not None:
+                if not allowed(where, f, call):
+                    res.problems.append("SERVED %s:%d calls _send on %s, %s: the census cannot read the response's content type"
+                                        % (rel, call.lineno, ast.unparse(f)[:40], why))
+                continue
             d = funcs.get("_send")
-        if d is None:
-            res.problems.append("SERVED %s:%d calls _send on %s, a definition this file does not hold: the census cannot read the response's "
-                                "content type" % (rel, call.lineno, ast.unparse(f)[:40])); continue
+        if d is None:   # the call reaches no definition the census reads: why, by the reach
+            if anywhere is None: anywhere = _names_send(tree, [c for c, _, _ in sc.sends])
+            why = ("a definition this file does not hold" if not anywhere else
+                   "a _send the call's own class body does not bind (inherited or set at run time, which the census does not follow)" if method else
+                   "a _send no scope the bare call looks it up in binds, the module included" if isinstance(f, ast.Name) else
+                   "a _send reached through an object other than self, which the census does not follow" if cls is not None else
+                   "a _send reached through an attribute outside any class body, which the census does not follow")
+            res.problems.append("SERVED %s:%d calls _send on %s, %s: the census cannot read the response's content type"
+                                % (rel, call.lineno, ast.unparse(f)[:40], why)); continue
         dkey = "%s:%s%s" % (rel, cls.name + "." if method else "", d.name)
+        if d.decorator_list:   # a decorator may rewrite the signature: its parameters are not read, at either reach
+            if not allowed(where, f, call):
+                res.problems.append("SERVED %s:%d answers through %s, a decorated _send definition, whose parameters the census does not read (in %s)"
+                                    % (rel, call.lineno, dkey.split(":", 1)[1], where))
+            continue
         if id(d) not in typed: typed[id(d)] = [c for c in ast.walk(d) if _is_ctype_write(c)]
         writes = typed[id(d)]
         if not writes:
@@ -1682,9 +2245,10 @@ def routes_of(rel, tree, sc, res):
             res.problems.append("SERVED %s:%d answers through %s, which writes no Content-Type header: name it in FRAME_WRITERS if it answers "
                                 "no HTTP request, or type its answer" % (rel, call.lineno, dkey.split(":", 1)[1])); continue
         a = d.args; pos = [x.arg for x in a.posonlyargs + a.args]; defaults = dict(zip(pos[len(pos) - len(a.defaults):], a.defaults))
+        me = pos[0] if method and pos else None
         if method: pos = pos[1:]
-        if ("body", id(d)) not in typed: typed[("body", id(d))] = _body_param(d, pos)
-        unread = _unread_body(call, typed[("body", id(d))])
+        if ("body", id(d)) not in typed: typed[("body", id(d))] = _body_param(d, pos, me, tree)
+        unread = _unread_body(call, *typed[("body", id(d))])
         for w in writes:
             v = w.args[1]
             if isinstance(v, ast.Name) and v.id in pos + [x.arg for x in a.kwonlyargs]:   # the type is the call's argument for that parameter
@@ -1731,64 +2295,118 @@ class _Served(object):
     """The text a route's page is served from, followed through the module's syntax tree: the body expression of each route
     (routes_of: the call's second positional argument) resolved to its string constants (a literal, an f-string's parts, `+` and
     `%` operands and the argument tuple, a conditional's branches, a BoolOp's operands, a starred value, a comprehension's element
-    with its targets read from their source, a module constant by name (a name one module-level assignment binds and nothing else
-    binds there: _module_consts), a local by every binding it has in the function, a `.format`, `.join`, `.replace` or `.strip`
-    receiver and its arguments, and every `return` of a module function, a function defined in the page function or a `self.`
-    method the page calls), each a piece (label, its own line, text, the part it came from) for line_scan; a local bound to a
-    `.read_text()` or `.read()` is a file slot the walk covers or names. A method call's receiver and a subscript's container are
-    read when they name a module constant or a local, and so are the receiver of `.encode` or `.format_map` whatever it is and a
-    class attribute the class body binds (`self.X`, `Cls.X`); a name the function binds as a loop, unpacking or with target, or by
-    a walrus, is read from that source, and a local container's appended or stored values are its values too; a module container
-    some code writes after binding it (a write Result.writes records, as the served sentence lists them) is a run-time memo, and it
-    and any other receiver or container are refused by name unless the base carries no page text (an import that is its name's
-    one module-level binding, a builtin no module-level binding shadows, a parameter or a name bound from one, a BoolOp over
-    those) or SERVED_ALLOW names the place. A call is followed only as listed here (a file read, a text method's receiver, a
-    module function that is its name's one module-level binding, a function defined in the page function, a method of the
-    route's class, and any other method call through its receiver as above, so `_K.__call__(t)` on a constant holding a lambda
-    reads `_K` and finds a value slot), each followed function read to its own returns with any decorator on it not applied, and
-    every call's arguments are read as text; any other callee passes when _base finds it such an import, such a builtin or a
-    parameter, and is refused by name otherwise (a module constant, a local, a class, a subscript, a call and a lambda literal
-    among them) unless SERVED_ALLOW names the place. A bare module name that is no constant passes when it is such an import or
-    such a builtin, or a function or a class that is its name's one module-level binding, and any other (one bound other than by
-    one assignment, an import, a function or a class beside another module-level binding, and a rebound import, builtin, function
-    or class among them) is refused by name unless SERVED_ALLOW names the place. An import, a builtin, a function or a class
-    passes in none of these places, and a module function is not followed, when its name is rebound (Result.rebinds: a function
-    binds it under `global`, or a statement at module level writes it); no other write counts, a function's write through a
-    local of the same name among them. A parameter in the
-    body, a comparison, a unary expression and a lambda are value slots (no text); anything else is text the census did not
-    read, a SERVED problem by name, as is a route whose body yields no piece and no file slot."""
+    with its targets read from their source, a module constant by name (a name one plain single-name assignment binds as a top-level
+    statement and nothing else binds at module level, a header walrus included, in a module with no star import: _module_consts), a
+    local by every binding it has in
+    the function, a `.format`, `.join`, `.replace` or `.strip` receiver and its arguments, and every `return` of a module function,
+    a function defined in the page function or a `self.` method the page calls), each a piece (label, its own line, text, the
+    part it came from) for line_scan; a local bound to a `.read_text()` or `.read()` is a file slot the walk covers or names.
+
+    A name the page function's scope binds, or for a nested context an enclosing function's scope, is decided by that scope and
+    never by the module's binding (_scoped over the binding forms _locals records, row (d) of the seventh round): a local (a
+    parameter the body also assigns, a walrus in a nested def's, class's or lambda's header, a comprehension's target inside its
+    comprehension) is read from its values as a bare name or a receiver and refused as "a call" as a callee; a parameter or an
+    except name is a value slot, refused as a callee when it shares a module function's name; a function defined in the page
+    function is followed only as its name's one binding there; a name the function declares `global` is the module's binding,
+    read as such; and any other binding is refused by its form (a comprehension's target elsewhere in the function, a
+    function-level import, a nested class, a del, a name a nonlocal declaration rebinds, any other store, and a name bound two
+    ways, meaning two different binding forms in one scope, or a def or a class statement beside any other binding of the name;
+    every value form, an assignment, augmented or annotated, a loop, with or unpacking target and a walrus, is one form, and a
+    parameter the body also binds by one is one local, read from its values).
+
+    A method call's receiver and a subscript's container are read when they name a module constant or a local, and so are the
+    receiver of `.encode` or `.format_map` whatever it is and a class attribute the class body binds (`self.X`, `Cls.X`); a name
+    the function binds as a loop, unpacking or with target, or by a walrus, is read from that source, and a local container's
+    appended or stored values are its values too; a module container some code writes after binding it (a write Result.writes
+    records, as the served sentence lists them) is a run-time memo, and it and any other receiver or container are refused by
+    name unless the base carries no page text of its own (a top-level import statement that is its name's one module-level
+    binding, a builtin no module-level binding shadows, a call of super() excepted, whose methods are a base class's, each in a
+    module with no star import; a parameter or a name bound from
+    one, a BoolOp over those; a call of one of those or of a method on one, whose arguments are read as text: `dict(X).get(k)`
+    reads X, _chain_args) or SERVED_ALLOW names the place, and a call base the reader does not resolve is refused by name. A call
+    is followed only as listed here (a file read, a text method's receiver, a
+    module function that is a top-level def statement and its name's one module-level binding, bound by no function scope of the
+    context, a function defined in the page function, a method of the route's class, and any other method call through its
+    receiver as above, so `_K.__call__(t)` on a constant holding a lambda reads `_K` and finds a value slot), each followed
+    function read to its own returns with any decorator on it not applied, and the default of each of its parameters the call
+    omits read as that argument would be, in the scope its def statement runs in (_defaults), and every call's arguments are read
+    as text; any
+    other callee passes when _base finds it such an import, such a builtin or a parameter, and is refused by name otherwise (a
+    module constant, a local, a class, a subscript, a call and a lambda literal among them) unless SERVED_ALLOW names the place.
+    A bare module name that is no constant passes when it is such an import or such a builtin, or a top-level def or class
+    statement that is its name's one module-level binding, and any other (one bound other than by one assignment, one bound by an
+    annotated, unpacking or chained assignment, an import, a function or a class beside another module-level binding, one bound once
+    inside a module-level block and not by a top-level
+    statement, a name a star import may rebind, and a rebound import, builtin, function or class among them) is refused by name,
+    with the reason _module_why gives, unless SERVED_ALLOW names the place. The module's names are the count's own
+    (_module_bound), so every module-level binding is classified here and none falls to the reasonless line, and a name no
+    module-level statement binds that a function or a class body binds under a `global` declaration is refused with its own
+    reason (_global_only). An import, a builtin,
+    a function or a class passes in none of these places, and a module function is not followed, when its name is rebound
+    (Result.rebinds: a function binds it under `global`, or a statement at module level writes it) or the module holds a star
+    import; no other write counts, a function's write through a local of the same name among them. A parameter in the body is a
+    value slot whose text is its argument's, read at the call, or, where a followed call omits it, its default's (_defaults); a
+    comparison, a unary expression and a lambda are value slots (no text); anything else is text the census did not read, a
+    SERVED problem by name, as is a route whose body yields no piece and no file slot."""
     def __init__(self, rel, tree, res):
-        self.rel, self.res, self.consts, self.funcs, self.methods, self.names = rel, res, {}, {}, {}, set(dir(builtins))
-        self.imports, self.builtins, self.class_attrs = set(), set(dir(builtins)), {}
-        self.consts = _module_consts(tree)   # a name bound by one module-level assignment and nothing else at module level
-        self.bound = _module_bound(tree)     # every module-level binding's count: an import, a function or a class is exempt as a name's one binding
-        for node in tree.body:
+        self.rel, self.res, self.consts, self.funcs, self.methods = rel, res, {}, {}, {}
+        self.imports, self.builtins, self.class_attrs, self.classes = set(), set(dir(builtins)), {}, {}
+        self.consts = _module_consts(tree)   # a name bound by one top-level plain single-name assignment and nothing else at module level
+        self.bound = _module_bound(tree)     # every module-level binding's count: a top-level import, def or class is exempt as a name's one binding
+        info = _module_info(tree)
+        self.star, self.block, self.defs, self.inblock, self.assigned = info["star"], info["block"], info["defs"], info["inblock"], info["assigned"]
+        for node in tree.body:   # the top-level statements: the imports, functions and classes exempt or followed as a name's one binding
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)): self.funcs[node.name] = node
             elif isinstance(node, ast.ClassDef):
+                self.classes[node.name] = node
                 self.methods[node.name] = {n.name: n for n in node.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
                 self.class_attrs[node.name] = {n.targets[0].id: n.value for n in node.body
                                                if isinstance(n, ast.Assign) and len(n.targets) == 1 and isinstance(n.targets[0], ast.Name)}
-            if isinstance(node, (ast.Import, ast.ImportFrom)):
-                bound = {(a.asname or a.name).split(".")[0] for a in node.names}; self.names.update(bound); self.imports.update(bound)
-            else: self.names.update(n.id for n in ast.walk(node) if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Store)) if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) else None
-        self.names.update(self.funcs); self.names.update(self.methods)   # every module-level binding: a bare name of one not a constant is
-        # classified by _base (resolve's Name arm): an import, a function or a class that is the name's one module-level binding, or a
-        # builtin no module-level binding shadows, is a value slot when nothing rebinds the name (self.rebound), and any other is refused
+            if isinstance(node, (ast.Import, ast.ImportFrom)): self.imports.update((a.asname or a.name).split(".")[0] for a in node.names if a.name != "*")
+        # every module-level binding, from the count's own walk, and the builtins: a bare name of one not a constant is classified by
+        # _base (resolve's Name arm): a top-level import, def or class statement that is the name's one module-level binding, or a
+        # builtin no module-level binding shadows, is a value slot when nothing rebinds the name (self.rebound) and the module holds no
+        # star import, and any other is refused with the reason _module_why gives
+        self.names = set(dir(builtins)) | set(self.bound)
         self.memos = {x for x in res.writes.get(rel, {}) if x in self.consts}   # the module containers some code writes (Scan's walk)
         self.rebound = set(res.rebinds.get(rel, {}))   # the names a function binds under `global` or a module-level statement writes
         self.pieces, self.files, self.problems = [], [], []
         self.held = []   # every locals map a context built, held for the pass: a local read is keyed on its map's id, never reused
+        self.scopes = {}   # id(function) -> (the function, its _locals): each function's body walked once per pass, each context given copies
+        self.def_ctx = {}   # id(nested function) -> (the function, the context of the function its def statement stands in): its defaults' scope
 
     @staticmethod
     def _locals(fn):
         """(name -> every value bound to it in the function's own body: a single-name assignment, an augmented or annotated one, a
         loop, unpacking or with target's source, a walrus, and a local container's appended or stored values; the other names the
-        body binds (an except name, a deleted name); the functions defined inside it), nested defs not entered."""
-        out, bound, nested, stack, src, mut = {}, set(), {}, list(fn.body), {}, {}
+        body binds (an except name, a deleted name); the functions defined inside it; name -> the forms that bind it in the
+        function's scope, for row (d): "value" for a name with values here, "comp" for a comprehension's target, "except", "import",
+        "def", "class", "del", "match", "store" for any other name a store binds, "global" and "nonlocal" for a declaration, and
+        "nonlocal" too for a name a function or class nested in this one declares nonlocal). Nested defs, classes and lambdas are
+        not entered, but a def's or a class's header and a lambda's defaults are read as this function's statements (_header), so a
+        walrus there is a local with its value."""
+        out, bound, nested, stack, src, mut, forms, stores, comp = {}, set(), {}, list(fn.body), {}, {}, {}, set(), set()
+
+        def form(name, how): forms.setdefault(name, []).append(how)
         while stack:
             n = stack.pop()
-            if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)): nested[n.name] = n; continue
-            if isinstance(n, (ast.ClassDef, ast.Lambda)): continue
+            if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                if isinstance(n, ast.ClassDef): form(n.name, "class")
+                else: nested[n.name] = n; form(n.name, "def")
+                for m in ast.walk(n):   # a nonlocal declaration inside it rebinds a name of this scope the reader does not see
+                    if isinstance(m, ast.Nonlocal):
+                        for x in m.names: form(x, "nonlocal")
+                stack.extend(_header(n)); continue
+            if isinstance(n, ast.Lambda): stack.extend(_header(n)); continue
+            if isinstance(n, (ast.Import, ast.ImportFrom)):
+                for a in n.names: form((a.asname or a.name).split(".")[0], "import")
+            elif isinstance(n, (ast.Global, ast.Nonlocal)):
+                for x in n.names: form(x, "global" if isinstance(n, ast.Global) else "nonlocal")
+            elif isinstance(n, ast.comprehension):
+                comp.update(t.id for t in ast.walk(n.target) if isinstance(t, ast.Name))
+            elif isinstance(n, (ast.MatchAs, ast.MatchStar)) and n.name: form(n.name, "match")
+            elif isinstance(n, ast.MatchMapping) and n.rest: form(n.rest, "match")
+            elif isinstance(n, ast.Name) and isinstance(n.ctx, ast.Del): form(n.id, "del")
             if isinstance(n, ast.Assign) and len(n.targets) == 1 and isinstance(n.targets[0], ast.Name): out.setdefault(n.targets[0].id, []).append(n.value)
             elif isinstance(n, ast.AugAssign) and isinstance(n.target, ast.Name): out.setdefault(n.target.id, []).append(n.value)
             elif isinstance(n, ast.AnnAssign) and isinstance(n.target, ast.Name) and n.value is not None: out.setdefault(n.target.id, []).append(n.value)
@@ -1804,8 +2422,8 @@ class _Served(object):
                     for t in (ast.walk(it.optional_vars) if it.optional_vars is not None else ()):
                         if isinstance(t, ast.Name): src.setdefault(t.id, []).append(it.context_expr)
             elif isinstance(n, ast.NamedExpr): src.setdefault(n.target.id, []).append(n.value)
-            elif isinstance(n, ast.Name) and isinstance(n.ctx, ast.Store): bound.add(n.id)
-            elif isinstance(n, ast.ExceptHandler) and n.name: bound.add(n.name)
+            elif isinstance(n, ast.Name) and isinstance(n.ctx, ast.Store): bound.add(n.id); stores.add(n.id)
+            elif isinstance(n, ast.ExceptHandler) and n.name: bound.add(n.name); form(n.name, "except")
             if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and n.func.attr in _MUTATORS and isinstance(n.func.value, ast.Name):
                 mut.setdefault(n.func.value.id, []).extend(n.args + [k.value for k in n.keywords])
             if isinstance(n, ast.Assign):
@@ -1816,7 +2434,10 @@ class _Served(object):
         bound -= set(src)
         for k, v in mut.items():
             if k in out: out[k] = out[k] + v
-        return out, bound, nested
+        for k in out: form(k, "value")
+        for k in comp: form(k, "comp")
+        for k in stores - set(out) - comp: form(k, "store")
+        return out, bound, nested, forms
 
     @staticmethod
     def _returns(fn):
@@ -1830,15 +2451,52 @@ class _Served(object):
 
     def _ctx(self, fn, cls, outer=None, where=None):
         """(the value-slot names: parameters and the other names the body binds, the locals, the class, the nested functions, the
-        place's name for SERVED_ALLOW); a nested function's context (outer given) sees the enclosing function's names and locals
-        under its own."""
+        place's name for SERVED_ALLOW, name -> the forms that bind it in the innermost function scope that binds it: _locals's and
+        "param"); a nested function's context (outer given) sees the enclosing function's names and locals under its own, and its
+        own binding of a name decides over the enclosing one's. A name the function declares `global` names the module's binding:
+        it is no local here, and the module's binding is read."""
         a = fn.args
         params = {x.arg for x in a.posonlyargs + a.args + a.kwonlyargs} | ({a.vararg.arg} if a.vararg else set()) | ({a.kwarg.arg} if a.kwarg else set())
-        local, bound, nested = self._locals(fn)
+        got = self.scopes.get(id(fn))
+        if got is None: got = self.scopes[id(fn)] = (fn, self._locals(fn))   # the function held with its entry, so its id is never reused
+        local, bound, nested, forms = got[1]
+        local, bound, nested, forms = dict(local), set(bound), dict(nested), {k: list(v) for k, v in forms.items()}
+        for p in params: forms.setdefault(p, []).append("param")
+        gl = {k for k, v in forms.items() if "global" in v}
         if outer is not None:
-            params, local, nested = params | outer[0], dict(outer[1], **local), dict(outer[3], **nested)
+            params, local, nested, forms = params | outer[0], dict(outer[1], **local), dict(outer[3], **nested), dict(outer[5], **forms)
+        for k in gl: local.pop(k, None); nested.pop(k, None)
         self.held.append(local)
-        return params | bound, local, cls, nested, where or fn.name
+        ctx = (params | bound) - gl, local, cls, nested, where or fn.name, forms
+        for k, n in got[1][2].items():   # the defs this function holds run their defaults here (_defaults)
+            if k not in gl: self.def_ctx[id(n)] = (n, ctx)
+        return ctx
+
+    def _defaults(self, call, fn, bound, dctx, label, done, cls_node=None):
+        """Read the default value of each parameter of a followed function that the call may omit, as the call's argument would be
+        read, since the omitted parameter takes that value: a positional parameter the call's plain positional arguments do not
+        reach (the first `bound` bound already, self for a method; none past a starred argument) and no keyword names, and a
+        keyword-only one no keyword names, each read once per route in the context of the scope its def statement runs in (dctx:
+        the module's for a module function or a method, the enclosing function's for one defined in it). Every default of a function
+        carrying a decorator is read, since a decorator may change which argument binds a parameter. A method's default that names
+        a name the class body binds is refused by name (the census does not read a class body as a scope), and so is any default
+        the reader cannot read, as resolve refuses it."""
+        a = fn.args
+        pos = a.posonlyargs + a.args
+        kw = {k.arg for k in call.keywords if k.arg}
+        plain = next((i for i, x in enumerate(call.args) if isinstance(x, ast.Starred)), len(call.args))
+        pairs = list(zip(pos[len(pos) - len(a.defaults):], a.defaults)) + [(x, v) for x, v in zip(a.kwonlyargs, a.kw_defaults) if v is not None]
+        for x, v in pairs:
+            i = pos.index(x) if x in pos else None
+            if not fn.decorator_list and (i is not None and i - bound < plain or x.arg in kw and x not in a.posonlyargs): continue   # the call passes it
+            if ("default", id(v)) in done: continue
+            done.add(("default", id(v)))
+            if cls_node is not None and any(isinstance(n, ast.Name) and _binding_forms(cls_node, n.id)[0] for n in ast.walk(v)):
+                if not self._allowed(dctx[4], v):
+                    self.problems.append("SERVED %s:%d builds a served page from %s (%s), text the census did not read"
+                                         % (self.rel, v.lineno, ast.unparse(v)[:60], _CLASS_DEFAULT))
+                continue
+            self.resolve(v, dctx, label, done)
 
     def _path(self, e, local=None, depth=0):
         """The repository-relative path a pathlib expression spells: `ROOT / "ui" / "x.css"` through the module's constants (and a
@@ -1875,41 +2533,98 @@ class _Served(object):
                                  "with the walked file its value comes from" % (self.rel, whole.lineno, ast.unparse(whole)[:60]))
 
     def _sole(self, name):
-        """Whether the module binds the name exactly once at module level (_module_bound) and never rebinds it (Result.rebinds: no
-        function binds it under `global` and no statement at module level writes it): an import, a def or a class is exempt as the
-        name's one binding, never beside another (`from json import dumps as X` and then `X = ...`) or rebound (`global X` and then
-        `X = ...` in a function); a write inside a function through a local of the same name (`quote = []`) does not count."""
-        return self.bound.get(name, 0) == 1 and name not in self.rebound
+        """Whether the module binds the name exactly once at module level (_module_bound), never rebinds it (Result.rebinds: no
+        function binds it under `global` and no statement at module level writes it) and holds no star import, which may rebind
+        any name: a top-level import, def or class statement is exempt as the name's one binding, never beside another (`from json
+        import dumps as X` and then `X = ...`) or rebound (`global X` and then `X = ...` in a function); a write inside a function
+        through a local of the same name (`quote = []`) does not count."""
+        return not self.star and self.bound.get(name, 0) == 1 and name not in self.rebound
 
     def _builtin(self, name):
         """A builtin no module-level binding shadows and nothing rebinds: a name the module binds (`format = lambda ...`, one bound
         in a try) is the module's, never the builtin, and so is one a function binds under `global` or a module-level statement
-        writes (Result.rebinds)."""
-        return name in self.builtins and name not in self.bound and name not in self.rebound
+        writes (Result.rebinds), and every name in a module that holds a star import."""
+        return not self.star and name in self.builtins and name not in self.bound and name not in self.rebound
+
+    def _module_why(self, name):
+        """Why a module name the pass does not read is refused: a star import may rebind it; its one module-level binding is an
+        import, a def or a class statement inside a module-level block (if, try, with, for, while, match), not a top-level one; its
+        one module-level binding is of any other form inside such a block's body (an assignment inside a try, say); its one
+        module-level binding is a top-level annotated, unpacking or chained assignment (`X: str = ...`, `X, Y = ...`, `X = Y = ...`),
+        which the count takes as a binding and _module_consts does not read; no module-level statement binds it and a function or
+        class body binds it under a `global` declaration (_global_only), so it is bound only at run time; or it is bound other than
+        by one assignment."""
+        if self.star: return _STAR
+        if self.bound.get(name, 0) == 1 and name in self.block: return _IN_BLOCK
+        if self.bound.get(name, 0) == 1 and name in self.inblock: return _IN_BLOCK_BODY
+        if self.bound.get(name, 0) == 1 and name in self.assigned: return _ASSIGN_FORM
+        if self._global_only(name): return _GLOBAL_ONLY
+        return "a module name bound other than by one assignment"
+
+    def _global_only(self, name):
+        """Whether no module-level statement binds the name, it is no builtin, and a function or class body binds it under a
+        `global` declaration (Result.rebinds records the name; _global_binder finds the body), so it is bound only at run time."""
+        return (not self.bound.get(name) and name not in self.builtins and name in self.rebound
+                and _global_binder(self.res.global_decls.get(self.rel, ()), name) is not None)
+
+    def _scoped(self, name, ctx, callee=False):
+        """How the page function's own scope, or for a nested context an enclosing function's, decides a name it binds (row (d) of
+        the seventh round): None when no function scope of the context binds it, or declares it `global` (the module's binding
+        decides); otherwise ('local', None) for a local with values (a parameter the body also assigns among them), read from
+        those values as a bare name or a receiver and refused as "a call" as a callee; ('exempt', why) for a parameter or an except
+        name, a value slot, but refused as a callee when it shares a module function's name; ('follow', None) for a callee that is a
+        nested def, the name's one binding in the scope, and ('unread', "a function or class object") for that def as a bare name or
+        a receiver; and ('unread', why) for everything else: a comprehension's target, a function-level import, a nested class, a
+        del, a match capture, a name a nonlocal declaration rebinds, any other store, and a name bound two ways (two different
+        binding forms in one scope, or a nested def or class beside any other binding; every value form, an assignment, augmented
+        or annotated, a loop, with or unpacking target and a walrus, is the one form "value", and a parameter the body also binds
+        by one is one local)."""
+        forms = ctx[5].get(name)
+        if not forms or "global" in forms: return None
+        kinds = set(forms)
+        if "nonlocal" in kinds: return "unread", "a name a nonlocal declaration rebinds"
+        if "value" in kinds and kinds <= {"value", "param"}: return ("unread", "a call") if callee else ("local", None)
+        if kinds in ({"param"}, {"except"}):
+            if callee and name in self.defs:
+                return "unread", "a parameter sharing a module function's name" if "param" in kinds else "an except name sharing a module function's name"
+            return "exempt", "a parameter or a name the body binds"
+        if forms == ["def"]: return ("follow", None) if callee else ("unread", "a function or class object")
+        if len(kinds) > 1 or len(forms) > 1 and kinds & {"def", "class"}: return "unread", "a name the function binds two ways"
+        return "unread", {"comp": "a name a comprehension binds", "import": "a name the function binds by an import",
+                          "class": "a name the function binds by a class statement", "del": "a name the function deletes"}.get(
+                              forms[0], "a name the function binds another way")
 
     def _base(self, e, ctx):
-        """What a receiver or a container derives from: ('exempt', why) for a base that carries no page text (an import that is the
-        name's one module-level binding, a builtin no module-level binding shadows, each with nothing rebinding the name: _sole and
-        _builtin; a parameter or a name the body binds from one, a BoolOp over those), ('readable', why) for one resolve reads,
-        ('unread', why) otherwise."""
-        params, local, cls, nested, where = ctx
+        """What a receiver or a container derives from: ('exempt', why) for a base that carries no page text of its own (a top-level
+        import that is the name's one module-level binding, a builtin no module-level binding shadows (a call of super() is refused:
+        its methods are a base class's), each with nothing rebinding
+        the name and no star import in the module: _sole and _builtin; a parameter or a name the body binds from one, a BoolOp over
+        those; a call of one of those, or of a method on one, whose arguments receiver reads as text: _chain_args), ('readable',
+        why) for one resolve reads, ('unread', why) otherwise, a call the reader does not resolve among them. A name the page
+        function's scope binds is decided by that scope (_scoped) before the module's binding, as a bare name and as a callee."""
+        params, local, cls, nested, where, scope = ctx
         if isinstance(e, (ast.Constant, ast.JoinedStr, ast.List, ast.Tuple, ast.Dict, ast.Set, ast.BinOp, ast.IfExp)): return "readable", "an expression"
         if isinstance(e, ast.Name):
-            if e.id in local or e.id in self.consts: return "readable", "a name"
+            v = self._scoped(e.id, ctx)
+            if v is not None: return ("readable", "a name") if v[0] == "local" else v
+            if e.id in self.consts: return "readable", "a name"
             if e.id in params: return "exempt", "a parameter or a name the body binds"
             if e.id in self.imports and self._sole(e.id): return "exempt", "an import"
             if self._builtin(e.id): return "exempt", "a builtin"
-            if e.id in nested or ((e.id in self.funcs or e.id in self.methods) and self._sole(e.id)): return "unread", "a function or class object"
-            return "unread", "a module name bound other than by one assignment"
+            if (e.id in self.funcs or e.id in self.methods) and self._sole(e.id): return "unread", "a function or class object"
+            return "unread", self._module_why(e.id)
         if isinstance(e, (ast.Attribute, ast.Subscript)): return self._base(e.value, ctx)
         if isinstance(e, ast.Call):
             f = e.func
             if isinstance(f, ast.Name):
-                if f.id in nested or (f.id in self.funcs and self._sole(f.id)): return "unread", "a function's return"
-                if f.id in local: return "unread", "a call"   # a local-bound callee: its value is not followed to a return
+                v = self._scoped(f.id, ctx, callee=True)
+                if v is not None: return ("unread", "a function's return") if v[0] == "follow" else v
+                if f.id in self.funcs and self._sole(f.id): return "unread", "a function's return"
                 if f.id in self.imports and self._sole(f.id): return "exempt", "an import"
+                if f.id == "super" and self._builtin(f.id): return "unread", _SUPER   # its methods are a base class's, page text of their own
                 if self._builtin(f.id): return "exempt", "a builtin"
                 if f.id in params: return "exempt", "a parameter or a name the body binds"
+                if self.star or f.id in self.bound and f.id in self.block and self.bound[f.id] == 1: return "unread", self._module_why(f.id)
                 return "unread", "a call"
             if isinstance(f, ast.Attribute):
                 if isinstance(f.value, ast.Name) and f.value.id == "self" and cls and f.attr in self.methods.get(cls, {}): return "unread", "a method's return"
@@ -1923,27 +2638,46 @@ class _Served(object):
     def receiver(self, r, whole, ctx, label, done):
         """The receiver of a method call, or the container of a subscript or an attribute, `r` in the page expression `whole`: a
         name bound as a module constant or a local is read (a run-time memo is named in SERVED_ALLOW or refused); a BoolOp is
-        looked through to each operand; a base that carries no page text passes; anything else is a SERVED line by name unless
-        SERVED_ALLOW names the place."""
-        params, local, cls, nested, where = ctx
+        looked through to each operand; a base that carries no page text of its own passes, and the arguments of every call it
+        derives through are read as text (_chain_args: `dict(X).get(k)` reads X); anything else is a SERVED line by name unless
+        SERVED_ALLOW names the place, a call the reader does not resolve among them. A name the page function's scope binds is
+        decided by that scope (_scoped) before the module's binding."""
+        params, local, cls, nested, where, scope = ctx
         if isinstance(r, ast.BoolOp):
             for v in r.values: self.receiver(v, whole, ctx, label, done)
             return
-        if isinstance(r, ast.Name) and (r.id in local or (r.id in self.consts and r.id not in params)):
-            if r.id not in local and r.id in self.memos: self._memo(r.id, whole, where); return
-            self.resolve(r, ctx, label, done); return
+        if isinstance(r, ast.Name):
+            v = self._scoped(r.id, ctx)
+            if v is not None and v[0] == "local": self.resolve(r, ctx, label, done); return
+            if v is None and r.id in self.consts and r.id not in params:
+                if r.id in self.memos: self._memo(r.id, whole, where); return
+                self.resolve(r, ctx, label, done); return
         kind, why = self._base(r, ctx)
-        if kind == "exempt": return
+        if kind == "exempt":   # no page text of its own, but a call it derives through carries its arguments' (`dict(X).get(k)` reads X)
+            for a in self._chain_args(r): self.resolve(a, ctx, label, done)
+            return
         if kind == "readable": self.resolve(r, ctx, label, done); return
         if not self._allowed(where, whole):
             self.problems.append("SERVED %s:%d builds a served page from %s (%s), text the census did not read"
                                  % (self.rel, whole.lineno, ast.unparse(whole)[:60], why))
 
+    @staticmethod
+    def _chain_args(e):
+        """The arguments of every call a receiver or a container derives through, down the path _base reads (an attribute's or a
+        subscript's value, a method call's receiver, a BoolOp's operands), innermost first: each is read as text, as a bare name
+        is, since a builtin's, an import's, a parameter's or a method's arguments are page text (`dict(X)`, `list(X)`, `sorted(X)`
+        and `json.loads(json.dumps(X))` carry X's values)."""
+        if isinstance(e, (ast.Attribute, ast.Subscript)): return _Served._chain_args(e.value)
+        if isinstance(e, ast.Call): return _Served._chain_args(e.func) + list(e.args) + [k.value for k in e.keywords]
+        if isinstance(e, ast.BoolOp): return [a for v in e.values for a in _Served._chain_args(v)]
+        return []
+
     def resolve(self, e, ctx, label, done):
         """Add the text `e` evaluates to under ctx (the value-slot names, the locals, the class, the nested functions, the place's
-        name) as pieces and file slots; `done` holds the names already followed for this route, so a constant, a function or a
-        local is read once per route and a cycle stops."""
-        params, local, cls, nested, where = ctx
+        name, the scope's binding forms) as pieces and file slots; `done` holds the names already followed for this route, so a
+        constant, a function or a local is read once per route and a cycle stops. A name, a receiver's base and a callee the page
+        function's scope binds are decided by that scope (_scoped) before the module's binding."""
+        params, local, cls, nested, where, scope = ctx
         if isinstance(e, ast.Constant):
             if isinstance(e.value, str): self.pieces.append((label, e.lineno, e.value, (e.lineno, e.col_offset, -1)))
         elif isinstance(e, ast.JoinedStr):   # each part keyed at its own line: the part's on 3.12 and later, else where the expression before it ends
@@ -1964,7 +2698,8 @@ class _Served(object):
             for g in e.generators:
                 for n in ast.walk(g.target):
                     if isinstance(n, ast.Name): names.add(n.id); loc[n.id] = [g.iter]
-            self.held.append(loc); self.resolve(e.elt, (params - names, loc, cls, nested, where), label, done)
+            # a target is the comprehension's own local, read from its source, and a callee so bound is refused as "a call"
+            self.held.append(loc); self.resolve(e.elt, (params - names, loc, cls, nested, where, dict(scope, **{n: ["value"] for n in names})), label, done)
         elif isinstance(e, ast.Dict):
             for x in e.keys + e.values:
                 if x is not None: self.resolve(x, ctx, label, done)
@@ -1975,19 +2710,25 @@ class _Served(object):
         elif isinstance(e, ast.BoolOp):
             for x in e.values: self.resolve(x, ctx, label, done)
         elif isinstance(e, ast.Name):
-            if e.id in local:
+            v = self._scoped(e.id, ctx)
+            if v is not None and v[0] == "local":
                 key = ("local", id(local), e.id)   # a local read once per function per route: `x = x.replace(...)` reads itself
                 if key in done: return
                 done.add(key)
-                for v in local[e.id]:
-                    if isinstance(v, ast.Call) and isinstance(v.func, ast.Attribute) and v.func.attr in _READ_CALLS:   # a file read bound to a slot
-                        self.files.append((label, v.lineno, e.id, self._path(v.func.value, local), where, v))
-                    else: self.resolve(v, ctx, label, done)
+                for val in local.get(e.id, ()):
+                    if isinstance(val, ast.Call) and isinstance(val.func, ast.Attribute) and val.func.attr in _READ_CALLS:   # a file read bound to a slot
+                        self.files.append((label, val.lineno, e.id, self._path(val.func.value, local), where, val))
+                    else: self.resolve(val, ctx, label, done)
+            elif v is not None:   # a value slot the scope binds (a parameter, an except name) or a nested function passes; any other form is refused
+                if v[0] == "unread" and v[1] != "a function or class object" and not self._allowed(where, e):
+                    self.problems.append("SERVED %s:%d builds a served page from %s (%s), text the census did not read"
+                                         % (self.rel, e.lineno, ast.unparse(e)[:60], v[1]))
             elif e.id in self.consts:
                 if e.id in self.memos and e.id not in params: self._memo(e.id, e, where)
-                elif e.id not in done: done.add(e.id); self.resolve(self.consts[e.id], (set(), {}, None, {}, e.id), e.id, done)
+                elif e.id not in done: done.add(e.id); self.resolve(self.consts[e.id], (set(), {}, None, {}, e.id, {}), e.id, done)
             elif e.id in params or e.id in nested: pass   # a value slot: a parameter or a name the body binds, a nested function
-            elif e.id in self.names:   # a module-level binding that is no constant: an import, a builtin, a function or a class passes
+            elif e.id in self.names or self._global_only(e.id):   # a module-level binding that is no constant (an import, a builtin, a
+                # function or a class passes), or a name only a function or class body binds, under a global declaration
                 kind, why = self._base(e, ctx)
                 if kind == "unread" and why != "a function or class object" and not self._allowed(where, e):
                     self.problems.append("SERVED %s:%d builds a served page from %s (%s), text the census did not read"
@@ -1998,20 +2739,29 @@ class _Served(object):
             f = e.func
             if isinstance(f, ast.Attribute) and f.attr in _READ_CALLS: self.files.append((label, e.lineno, ast.unparse(f.value)[:40], self._path(f.value), where, e))
             elif isinstance(f, ast.Attribute) and f.attr in _TEXT_CALLS + _FOLLOW_ANY: self.resolve(f.value, ctx, label, done)
-            elif isinstance(f, ast.Name) and f.id in nested:   # a function defined inside the page function, over its names
-                key = ("nested", id(nested[f.id]))
-                if key not in done:
-                    done.add(key); fn = nested[f.id]
-                    for r in self._returns(fn): self.resolve(r, self._ctx(fn, cls, ctx, where + "." + f.id), label + "." + f.id, done)
+            elif isinstance(f, ast.Name) and self._scoped(f.id, ctx, callee=True) is not None:   # a callee the scope binds: never the module's
+                kind, why = self._scoped(f.id, ctx, callee=True)
+                if kind == "follow":   # a function defined inside the page function, the name's one binding there, over its names
+                    key, fn = ("nested", id(nested[f.id])), nested[f.id]
+                    if key not in done:
+                        done.add(key)
+                        for r in self._returns(fn): self.resolve(r, self._ctx(fn, cls, ctx, where + "." + f.id), label + "." + f.id, done)
+                    self._defaults(e, fn, 0, self.def_ctx.get(id(fn), (None, ctx))[1], label + "." + f.id, done)
+                elif kind != "exempt" and not self._allowed(where, e):
+                    self.problems.append("SERVED %s:%d builds a served page from %s (%s), text the census did not read"
+                                         % (self.rel, e.lineno, ast.unparse(e)[:60], why))
             elif isinstance(f, ast.Name) and f.id in self.funcs and self._sole(f.id):   # a module function, the name's one module-level binding
+                fn = self.funcs[f.id]
                 if f.id not in done:
-                    done.add(f.id); fn = self.funcs[f.id]
+                    done.add(f.id)
                     for r in self._returns(fn): self.resolve(r, self._ctx(fn, None, None, f.id), f.id, done)
+                self._defaults(e, fn, 0, (set(), {}, None, {}, f.id, {}), f.id, done)
             elif isinstance(f, ast.Attribute) and isinstance(f.value, ast.Name) and f.value.id == "self" and cls and f.attr in self.methods.get(cls, {}):
-                key = cls + "." + f.attr
+                key, fn = cls + "." + f.attr, self.methods[cls][f.attr]
                 if key not in done:
-                    done.add(key); fn = self.methods[cls][f.attr]
+                    done.add(key)
                     for r in self._returns(fn): self.resolve(r, self._ctx(fn, cls, None, key), key, done)
+                self._defaults(e, fn, 1, (set(), {}, None, {}, key, {}), key, done, self.classes[cls])
             elif isinstance(f, ast.Attribute): self.receiver(f.value, e, ctx, label, done)   # any other method call: its receiver
             else:   # any other callee: an import, a builtin or a parameter passes (_base), anything else is refused by name
                 kind, why = self._base(e, ctx)
@@ -2027,7 +2777,7 @@ class _Served(object):
             if owner and e.attr in self.class_attrs.get(owner, {}):   # a class attribute the class body binds
                 key = ("class attribute", owner, e.attr)
                 if key not in done:
-                    done.add(key); self.resolve(self.class_attrs[owner][e.attr], (set(), {}, owner, {}, owner + "." + e.attr), owner + "." + e.attr, done)
+                    done.add(key); self.resolve(self.class_attrs[owner][e.attr], (set(), {}, owner, {}, owner + "." + e.attr, {}), owner + "." + e.attr, done)
             else: self.receiver(base, e, ctx, label, done)
         elif isinstance(e, (ast.Compare, ast.UnaryOp, ast.Lambda, ast.BinOp, ast.Slice)):
             pass   # a value slot: no text of its own (a BinOp here is arithmetic or a pathlib join, not the `+` or `%` above)
@@ -2038,7 +2788,7 @@ class _Served(object):
         for call, fn, cls, ctype, body in routes:   # the body routes_of read: the call's second positional argument
             before = len(self.pieces), len(self.files)
             where = ((cls + ".") if cls is not None else "") + fn.name if fn is not None else "<module>"
-            ctx = self._ctx(fn, cls, None, where) if fn is not None else (set(), {}, cls, {}, "<module>")
+            ctx = self._ctx(fn, cls, None, where) if fn is not None else (set(), {}, cls, {}, "<module>", {})
             self.resolve(body, ctx, fn.name if fn is not None else "<module>", set())
             if (len(self.pieces), len(self.files)) == before:
                 self.problems.append("SERVED %s:%d serves %s from %s, text the census did not read"
@@ -2086,6 +2836,20 @@ def scan(root):
                 res.emit("bootstrap.sh", 3, "curl", "the documented one-liner: " + ln.strip("# \n")[:50], "-", T["bootstrap.sh:curl"], None, "sh")
     res.sites.sort(key=Site.tuple)
     return res
+
+
+def js_reads(root):
+    """The walked JavaScript and TypeScript files and what the import gate reads in them, for the webview leg's pin
+    (ui/webview/import-gate-parse.test.ts), which holds the reads equal to a TypeScript parse of the same files: the walk, and
+    line_scan over each file of the js kind as scan reads it, with no Python scan and no served pass (the --js-reads mode).
+    Returns (the files in the walk's order, the Result line_scan filled)."""
+    res = Result(); files = []
+    for rel, kind in walk(root, res):
+        if kind != "js": continue
+        files.append(rel)
+        with open(os.path.join(root, rel), encoding="utf-8", errors="replace") as fh: text = fh.read()
+        line_scan(rel, kind, text, res)
+    return files, res
 
 
 def figures(res):
@@ -2208,10 +2972,18 @@ def render_table(res, fig, out):
 
 def main(argv):
     args = [a for a in argv if not a.startswith("--")]; flags = {a for a in argv if a.startswith("--")}
-    unknown = flags - {"--table", "--write-expected"}
-    if unknown or len(args) > 1:
-        sys.stderr.write("usage: network-inventory.py [--table | --write-expected] [root]\n"); return 2
+    unknown = flags - {"--table", "--write-expected", "--js-reads"}
+    if unknown or len(args) > 1 or ("--js-reads" in flags and len(flags) > 1):
+        sys.stderr.write("usage: network-inventory.py [--table | --write-expected | --js-reads] [root]\n"); return 2
     root = os.path.abspath(args[0] if args else ".")
+    if "--js-reads" in flags:   # the walk and the JavaScript line scan alone: no figure, no gate but a missing root
+        files, res = js_reads(root)
+        scope = [p for p in res.problems if p.startswith("SCOPE")]
+        if scope:
+            sys.stderr.write("\n".join(scope) + "\n"); return 1
+        json.dump({"files": files, "reads": res.reads, "unread": res.unread,
+                   "computed": [[s.file, s.line] for s in res.sites if s.prim == "import()" and s.cls == "browser-computed-url"]}, sys.stdout)
+        sys.stdout.write("\n"); return 0
     res = scan(root); fig = figures(res)
     path = os.path.join(root, EXPECTED); expected = None
     if os.path.isfile(path):
