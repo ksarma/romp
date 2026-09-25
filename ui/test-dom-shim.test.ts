@@ -483,7 +483,7 @@ const ALLOWLIST_MAX = 0;
 // lowers it.
 const NON_DOM_EDGES: Array<[string, string, number]> = [   // [file, why its edge-named key is no DOM edge, edge-initialising lines the detector reads]
   ["webview/card-subgoals.test.ts", "a goal fixture's children array holds ids (strings): a data tree the card renders, not a DOM", 1],
-  ["webview/chat-foreign-frame.test.ts", "stub receiving windows handed to windowSender to name a sender: one whose parent is a stub shell ({ name }), and a VS Code frame whose parent is the frame itself; no assertion compares the objects, only call counts and render.ts's text (the file is byte-identical to the patch prepared for upstream, whose tree has no shim)", 2],
+  ["webview/chat-foreign-frame.test.ts", "stub receiving windows, bound as the lifted handler's window and handed to windowSender to name a sender: one whose parent is a stub shell ({ name }), a VS Code frame whose parent is the frame itself and one whose parent is deleted (undefined); and a sandboxed sending frame whose parent is the same stub shell; no assertion compares the objects, only call counts and render.ts's text (the file has a counterpart in the patch prepared for upstream, whose tree has no shim)", 4],
   ["webview/composer-placeholder.test.ts", "phParts's placeholder record names the far host's prefix under a `host` key (a string or null): the composer's words, not a DOM edge (upstream's T355 test)", 7],
   ["webview/feed-viewer-focus-browser.test.ts", "a feed frame's card carries its goal tree, whose one node has an empty children array: the card model the feed renders, not a DOM", 1],
   ["webview/tab-snapshot-view.test.ts", "a list model's children are plain rows of an id and a text with no edge back, so a dump is the rows", 1],

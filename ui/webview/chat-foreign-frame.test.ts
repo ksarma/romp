@@ -1,13 +1,16 @@
 // The chat's frame handler ignores a window message from a foreign sender (window-sender.ts): a window that is not this
 // document, not its embedder (the romp shell), not on this document's origin, and not this document's own dispatch of a
-// kernel frame. Every other sender is heard as before: the shell's split-column adopt, the file viewer's editorSelection,
-// a sibling column's forwarded frames, the kernel's frames, and every message the VS Code webview host forwards from the
-// extension. VS Code's script in the webview's frame replaces window.parent with the frame itself (older releases delete
-// it), so the host is heard as a window on the webview's origin, a peer, and never as the embedder; the legs below model
-// that frame both ways.
+// kernel frame. A message with no source that carries an origin is not dispatch: a frame removed right after it posts
+// can leave its message sourceless, so such a message is judged by its origin alone. Every other sender is heard as
+// before: the shell's split-column adopt, the file viewer's editorSelection, a sibling column's forwarded frames, the
+// kernel's frames, and every message the VS Code webview host forwards from the extension. VS Code's script in the
+// webview's frame replaces window.parent with the frame itself (older releases delete it), so the host is heard as a
+// window on the webview's origin, a peer, and never as the embedder; the legs below model that frame both ways.
 // The handler is lifted out of render.ts verbatim, transpiled and executed over stubs: every free identifier it reaches
-// resolves to an inert stub except the effect functions below, which count, and windowSender, which is the real helper
-// over a stub receiving window (node has no window): W for a chat in the romp shell, or one of the two VS Code frames.
+// resolves to an inert stub except the effect functions below, which count, windowSender, which is the real helper, and
+// window and location (node has neither), which are the receiving window the leg models and its location: W for a chat
+// in the romp shell, or one of the two VS Code frames. windowSender reads that same window, so a check the handler
+// spells with window or location sees the window the helper sees. Any other name read on those stand-ins is the stub.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -36,16 +39,29 @@ function liftHandler(): string {
 
 const SID = "11111111-2222-3333-4444-555555555555";
 const ORIGIN = "http://127.0.0.1:1";
-const SHELL = { name: "the shell" };
+/** The inert stub every unbound free identifier of the lifted handler resolves to: any read on it is the stub again, a
+ *  call returns undefined, a write is dropped. */
+const stub: any = new Proxy(function () { /* inert */ }, {
+  get: (_t, k) => (k === Symbol.toPrimitive ? () => "" : stub),
+  apply: () => undefined,
+  set: () => true,
+});
+/** A stand-in built on a Proxy: the keys it is given are real, and any other name read on it is the stub, so the handler
+ *  can call window.requestAnimationFrame on a receiving window while its parent and location stay the modelled ones. */
+function standIn<T extends object>(o: T): T {
+  return new Proxy(o, { get: (t, k) => (typeof k === "string" && !(k in t) ? stub : Reflect.get(t, k)) });
+}
+const SHELL = standIn({ name: "the shell" });
 type Win = { parent?: unknown; location: { origin: string } };
-const W: Win = { parent: SHELL, location: { origin: ORIGIN } };
+const W: Win = standIn({ parent: SHELL, location: standIn({ origin: ORIGIN }) });
 // VS Code's webview frame: its origin is the webview's, and VS Code's script there sets window.parent to the frame
-// itself, or deletes it in older releases. The host forwards the extension's messages from its own window on that origin.
+// itself, or deletes it in older releases (then window.parent reads undefined). The host forwards the extension's
+// messages from its own window on that origin.
 const VSCODE_ORIGIN = "vscode-webview://11111111-2222-3333-4444-555555555555";
 const VSCODE_HOST = { name: "the VS Code webview host" };
-const W_VSCODE: Win = { location: { origin: VSCODE_ORIGIN } };
+const W_VSCODE: Win = standIn({ location: standIn({ origin: VSCODE_ORIGIN }) });
 W_VSCODE.parent = W_VSCODE;
-const W_VSCODE_OLDER: Win = { location: { origin: VSCODE_ORIGIN } };
+const W_VSCODE_OLDER: Win = standIn({ parent: undefined, location: standIn({ origin: VSCODE_ORIGIN }) });
 type Sent = { source: unknown; origin: string; to?: Win };   // to: the receiving window, W when absent
 const HEARD: Record<string, Sent> = {
   self: { source: W, origin: ORIGIN },
@@ -53,28 +69,32 @@ const HEARD: Record<string, Sent> = {
   "a peer (a second chat column)": { source: { name: "a second chat column" }, origin: ORIGIN },
   "a peer (the VS Code webview host, the frame's window.parent replaced)": { source: VSCODE_HOST, origin: VSCODE_ORIGIN, to: W_VSCODE },
   "a peer (the VS Code webview host, the frame's window.parent deleted)": { source: VSCODE_HOST, origin: VSCODE_ORIGIN, to: W_VSCODE_OLDER },
+  "a peer (a sourceless post on this document's origin)": { source: null, origin: ORIGIN },
   dispatch: { source: null, origin: "" },
 };
 const FOREIGN: Record<string, Sent> = {
-  "a sandboxed frame (opaque origin)": { source: { name: "a sandboxed frame" }, origin: "null" },
+  // a sandboxed pane beside the chat in the romp shell: its parent is the chat's parent
+  "a sandboxed frame (opaque origin)": { source: { name: "a sandboxed frame", parent: SHELL }, origin: "null" },
   "a page on another origin": { source: { name: "another page" }, origin: "https://example.invalid" },
   "a sandboxed frame inside the VS Code webview": { source: { name: "a sandboxed frame" }, origin: "null", to: W_VSCODE },
+  // a frame removed right after it posts can leave its message with no source; its origin is still set
+  "a sandboxed frame that is gone (no source, opaque origin)": { source: null, origin: "null" },
+  "a page on another origin that is gone (no source)": { source: null, origin: "https://example.invalid" },
+  "a sandboxed frame inside the VS Code webview that is gone (no source)": { source: null, origin: "null", to: W_VSCODE },
 };
 
 type Counts = Record<string, number>;
 const EFFECTS = ["adoptSessionState", "seedEditorQuote", "upsert", "retryFailedPreviews"];
 
-/** The lifted handler over stubs, with a counter per effect function, receiving as window w. The handler is sloppy-mode
- *  code here (esbuild's transform adds no strict prologue), which `with` needs. */
+/** The lifted handler over stubs, with a counter per effect function, receiving as window w: the handler's window and
+ *  location are w and w.location, the objects windowSender reads. The handler is sloppy-mode code here (esbuild's
+ *  transform adds no strict prologue), which `with` needs. */
 function handlerOverStubs(w: Win = W): { handle: (data: unknown, from: Sent) => void; calls: Counts } {
   const calls: Counts = {};
-  const stub: any = new Proxy(function () { /* inert */ }, {
-    get: (_t, k) => (k === Symbol.toPrimitive ? () => "" : stub),
-    apply: () => undefined,
-    set: () => true,
-  });
   const named: Record<string, unknown> = {
     windowSender: (e: { source?: unknown; origin?: unknown }) => windowSender(e, w),
+    window: w,
+    location: w.location,
   };
   for (const f of EFFECTS) { calls[f] = 0; named[f] = () => { calls[f]++; }; }
   const scope = new Proxy(named, {
