@@ -2765,8 +2765,10 @@ _DEFS = (ast.FunctionDef, ast.AsyncFunctionDef)
 
 def _peer_state_lock_census(source):
     """The census of PEER_STATE's lock over the bus's `source`, derived by AST, never listed. Returns {"writers",
-    "iterations": [[function, line, text]], "protected", "takers": [function], "callSites": {function: n}, "refused":
-    [text]}. The rules (the reviewer's round-5 ruling A, and decision 6 at its end):
+    "iterations", "writerReads", "mirrorReads": [[function, line, text]], "protected", "takers", "writerFunctions",
+    "writerReach", "mirrorTree": [function], "mirrorHolds": [[function, line]], "callSites": {function: n}, "refused":
+    [text]}. The rules (the reviewer's round-5 ruling A, and decision 6 at its end; the last two, round 6 of fork PR
+    #897, the verifier's findings at the fiftieth commit):
       WRITERS, the rule the ruling's scan used: a store, delete or augmented assignment whose target is a subscript
         or attribute rooted at PEER_STATE or at a name bound to a ROW reached from it (PEER_STATE.get, .setdefault,
         .pop, PEER_STATE[k], a value target of a loop over PEER_STATE.items() or .values(), and so on through a copy
@@ -2790,7 +2792,19 @@ def _peer_state_lock_census(source):
         protected call of a function that takes the lock, at any depth (the lock does not re-enter); and, the one
         lock order (_REMOTE_SIDS_LOCK, then this one), a protected `with _REMOTE_SIDS_LOCK` or call of
         _write_remote_sids or of any function that takes _REMOTE_SIDS_LOCK. Calls resolve by name, a method call
-        by its attribute name, both over-approximating."""
+        by its attribute name, both over-approximating.
+      READS IN A WRITER'S FUNCTION: every read of the name, the three atomic ones included, in a function holding a
+        writer node (or nested in one) is protected as above, and so is every read in a function such a function
+        reaches by a reference outside the lock, to any depth (references resolve as calls do): a read-modify-write
+        never reads outside its hold, whether the read sits in the function or in a helper called before the hold.
+        Refused: "read outside the lock in <function>, ...", naming the function holding the read.
+      ONE MIRROR WRITE, ONE COPY: the functions one mirror write reaches (_write_remote_sids and every function a
+        reference in a reached function names, to a fixpoint) hold ONE `with _PEER_STATE_LOCK`, not under a loop and
+        in a function the write reaches by one call outside a loop at each step up to _write_remote_sids, and every
+        read of the name among them, the atomic ones included, sits inside it: every table input of one write, each
+        row's linkDown mark and each seenAt the lost-carry clear reads among them, comes from one moment of the table.
+        Refused, each prefixed "one copy:": no hold, a second hold, a hold under a loop or reached other than by one
+        call, and a read outside the one hold."""
     tree = ast.parse(source)
     nodes = list(ast.walk(tree))
     parent, scopes = {}, {}
@@ -3061,9 +3075,125 @@ def _peer_state_lock_census(source):
             if callee in order_takers:
                 refused.append("order: %s calls %s, which takes %s or writes the mirror, under the lock (line %d)"
                                % (fname(scope(node)), callee, _ORDER_LOCK, node.lineno))
+
+    # ── every read of the name, the atomic ones included (round 6 of fork PR #897, the verifier's findings at the
+    # fiftieth commit) ──
+    loads = [n for n in nodes if isinstance(n, ast.Name) and n.id == _TABLE and isinstance(n.ctx, ast.Load)]
+
+    def within(node, fns):                            # inside one of the defs `fns`, at any depth of nesting
+        sc = scope(node)
+        while sc is not None:
+            if sc in fns:
+                return True
+            sc = scope(sc)
+        return False
+
+    def inside(node, hold):                           # inside the BODY of the `with` node `hold`, within its own function
+        child, p = node, parent.get(node)
+        while p is not None and not isinstance(p, _FUNCS):
+            if p is hold and any(child is b for b in p.body):
+                return True
+            child, p = p, parent.get(p)
+        return False
+
+    def in_loop(node):                                # under a loop or a comprehension of its own function
+        p = parent.get(node)
+        while p is not None and not isinstance(p, _FUNCS):
+            if isinstance(p, (ast.For, ast.AsyncFor, ast.While, ast.comprehension)):
+                return True
+            p = parent.get(p)
+        return False
+
+    def reach(roots):                                 # the defs `roots` and, to a fixpoint, every def a reference in a
+        out, frontier = set(), list(roots)            # reached def names (by name; a method by its attribute name)
+        while frontier:
+            d = frontier.pop()
+            if d in out:
+                continue
+            out.add(d)
+            for node in ast.walk(d):
+                nm = node.id if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load) else (
+                    node.attr if isinstance(node, ast.Attribute) and isinstance(node.ctx, ast.Load) else None)
+                frontier.extend(defs.get(nm, ()))
+        return out
+
+    # READS IN A WRITER'S FUNCTION: a function holding a writer node reads the table only under the lock (lexically, or
+    # in a function every call site of which holds it), so a read-modify-write never reads outside its hold; and so does
+    # every function it reaches by a reference outside the lock, to any depth (a read hoisted into a helper called
+    # before the hold is the same read)
+    writer_fns = {scope(n) for n in writers if isinstance(scope(n), _DEFS)}
+    iteration_ids = {id(n) for n in iterations}       # (an iteration outside the lock is refused above, once)
+    writer_reads = [n for n in loads if within(n, writer_fns)]
+    for n in writer_reads:
+        if id(n) not in iteration_ids and not locked(n):
+            refused.append("read outside the lock in %s, a function that writes the table or nests in one (line %d: %s)"
+                           % (line(n)[0], n.lineno, line(n)[2]))
+    reached_from, frontier = {}, []                   # each def reached, with the reference outside the lock it was reached by
+    for node in nodes:
+        nm = node.id if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load) else (
+            node.attr if isinstance(node, ast.Attribute) and isinstance(node.ctx, ast.Load) else None)
+        if nm in defs and within(node, writer_fns) and not locked(node):
+            frontier.extend((d, "%s line %d" % (fname(scope(node)), node.lineno)) for d in defs[nm])
+    while frontier:
+        d, via = frontier.pop()
+        if d in reached_from:
+            continue
+        reached_from[d] = via
+        for node in ast.walk(d):
+            nm = node.id if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load) else (
+                node.attr if isinstance(node, ast.Attribute) and isinstance(node.ctx, ast.Load) else None)
+            frontier.extend((d2, via) for d2 in defs.get(nm, ()) if d2 not in reached_from)
+    for n in loads:
+        if id(n) in iteration_ids or within(n, writer_fns) or locked(n):
+            continue
+        sc = scope(n)
+        while sc is not None and sc not in reached_from:
+            sc = scope(sc)
+        if sc is not None:
+            refused.append("read outside the lock in %s, which a function that writes the table reaches outside the lock "
+                           "(line %d: %s; reached from %s)" % (line(n)[0], n.lineno, line(n)[2], reached_from[sc]))
+
+    # ONE MIRROR WRITE, ONE COPY: every function the mirror write reaches (_write_remote_sids and, to a fixpoint, every
+    # function a reference in a reached function names, by name, a method by its attribute name) reads the table only
+    # inside ONE `with` on the lock, taken once per write (not under a loop, in a function the write reaches by one call
+    # outside a loop, up to the write), so every input of one write comes from one moment of the table
+    tree = reach(defs.get(_ORDER_WRITER, ()))
+    holds = [n for n in nodes if is_with(n, _TABLE_LOCK) and within(n, tree)]
+    mirror_reads = [n for n in loads if within(n, tree)]
+    if tree and not holds:
+        refused.append("one copy: the mirror write takes no copy of the table under the lock")
+    if len(holds) > 1:
+        for h in holds:
+            refused.append("one copy: the mirror write holds the lock more than once, a second copy of the table, in %s "
+                           "(line %d)" % (fname(scope(h)), h.lineno))
+    if len(holds) == 1:
+        hold = holds[0]
+        if in_loop(hold):
+            refused.append("one copy: the mirror write's copy is taken under a loop in %s (line %d)"
+                           % (fname(scope(hold)), hold.lineno))
+        fn, seen = scope(hold), set()
+        while isinstance(fn, _DEFS) and fn.name != _ORDER_WRITER and fn not in seen:
+            seen.add(fn)
+            sites = [r for r in refs.get(fn.name, ()) if within(r, tree)]
+            if len(sites) != 1 or not is_call(sites[0]) or in_loop(sites[0]):
+                refused.append("one copy: the mirror write's copy is taken in %s, which the write reaches other than by "
+                               "one call outside a loop (%s)" % (fn.name, ", ".join(
+                                   "%s line %d" % (fname(scope(r)), r.lineno) for r in sites) or "no reference"))
+                break
+            fn = scope(sites[0])
+            while fn is not None and not isinstance(fn, _DEFS):
+                fn = scope(fn)
+    for n in mirror_reads:
+        if not any(inside(n, h) for h in holds[:1]):
+            refused.append("one copy: the mirror write reads the table outside its one copy in %s (line %d: %s)"
+                           % (line(n)[0], n.lineno, line(n)[2]))
     return {"writers": [line(n) for n in writers], "iterations": [line(n) for n in iterations],
             "protected": sorted(protected), "takers": sorted(table_takers),
             "callSites": {n: len(rs) for n, rs in refs.items() if n in protected},
+            "writerFunctions": sorted({d.name for d in writer_fns}), "writerReads": [line(n) for n in writer_reads],
+            "writerReach": sorted({d.name for d in reached_from}),
+            "mirrorTree": sorted({d.name for d in tree}), "mirrorHolds": [line(h)[:2] for h in holds],
+            "mirrorReads": [line(n) for n in mirror_reads],
             "refused": refused}
 
 
@@ -3077,7 +3207,12 @@ class PeerStateLock(unittest.TestCase):
     from the bus's source by AST and refuses a node outside the lock, a re-entry and a lock-order inversion; the
     interleavings through the real recorders are tests/test_dead_session_staleness.py ReaderFollowsTheWriter's
     test_the_recorders_race_* witnesses (executed, the reader's answer). Each census rule has a plant here that it refuses by
-    name, and the census over the bus's own source must find non-empty populations, so a census that reads nothing fails."""
+    name, and the census over the bus's own source must find non-empty populations, so a census that reads nothing fails.
+    Two rules joined at round 6 of fork PR #897, on the verifier's findings at the fiftieth commit: a function that writes
+    the table reads it only under the lock (the fold's previous-row read hoisted before its hold passed every other pin
+    and lost a far host's word under stress), and one mirror write reads the table only through its one copy (its link
+    marks and seenAt read from the live table gave a write a torn table; the interleavings are
+    tests/test_dead_session_staleness.py ReaderFollowsTheWriter's test_one_mirror_write_* witnesses)."""
 
     SOURCE = Path(os.path.realpath(os.path.join(BIN, "romp-postal-service"))).read_text()
     BASE = None                                       # the bus's own refusals, read once (the plants add to them)
@@ -3085,10 +3220,22 @@ class PeerStateLock(unittest.TestCase):
     def _plant(self, text):
         """The census over the bus's source with `text` planted at its end, its refusals reduced to the ones the plant
         adds: each plant pins a rule of the census, whatever the bus's own source holds."""
+        return self._over(self.SOURCE + "\n\n" + text)
+
+    def _mutant(self, *edits):
+        """The census over the bus's source with each (old, new) edit applied, each `old` found exactly once (a plant
+        whose text the source no longer holds fails here, loudly), reduced as _plant's is."""
+        source = self.SOURCE
+        for old, new in edits:
+            self.assertEqual(source.count(old), 1, "the mutation's text is in the bus's source once: %r" % old)
+            source = source.replace(old, new)
+        return self._over(source)
+
+    def _over(self, source):
         if PeerStateLock.BASE is None:
             PeerStateLock.BASE = set(_peer_state_lock_census(self.SOURCE)["refused"])
         base = PeerStateLock.BASE
-        got = _peer_state_lock_census(self.SOURCE + "\n\n" + text)
+        got = _peer_state_lock_census(source)
         got["refused"] = [r for r in got["refused"] if r not in base]
         return got
 
@@ -3169,6 +3316,108 @@ class PeerStateLock(unittest.TestCase):
                         got["refused"])
         got = self._plant("def _planted_order():\n    with _REMOTE_SIDS_LOCK:\n        with _PEER_STATE_LOCK:\n            pass\n")
         self.assertEqual(got["refused"], [], "the control: the one order, _REMOTE_SIDS_LOCK then the table's lock")
+
+    # ── the two rules of round 6 of fork PR #897's verifier's findings at the fiftieth commit ──
+
+    def test_a_writers_function_reads_the_table_only_under_the_lock_and_one_mirror_write_reads_one_copy(self):
+        """The populations of the two rules, derived from the bus's own source: the functions holding a writer node and
+        their reads of the table (the fold's previous-row read among them, inside its hold), and the functions one mirror
+        write reaches, whose one read of the table is the snapshot, inside the write's one hold (the link-mark and
+        seenAt reads the verifier named among the functions reached, each reading the copy)."""
+        got = _peer_state_lock_census(self.SOURCE)
+        self.assertEqual(got["refused"], [])
+        self.assertTrue({"peer_exchange_apply", "peer_exchange_handle", "peer_update"} <= set(got["writerFunctions"]),
+                        "the writers' functions were derived: %r" % got["writerFunctions"])
+        self.assertIn("peer_exchange_apply", [fn for fn, _, _ in got["writerReads"]],
+                      "the fold's previous-row read is in the population: %r" % got["writerReads"])
+        self.assertTrue({"_remote_sids_document", "_direct_row_speaks", "_link_down", "_link_up", "_source_link_down",
+                         "_source_link_up", "_remote_sids_lost_cleared", "heard_since"} <= set(got["mirrorTree"]),
+                        "the functions one mirror write reaches were derived to the link and seenAt reads: %r"
+                        % got["mirrorTree"])
+        self.assertEqual([fn for fn, _ in got["mirrorHolds"]], ["_remote_sids_document"], "one hold, the snapshot's")
+        self.assertEqual([fn for fn, _, _ in got["mirrorReads"]], ["_remote_sids_document"],
+                         "one read of the table in the whole write, the snapshot's")
+
+    def test_the_census_refuses_a_read_hoisted_out_of_a_writers_hold_by_name(self):
+        """A read of the table in a function that writes it, outside the lock: the verifier's mutation (the fold's
+        previous-row read hoisted before its `with`, which lost a far host's word in the hook-free stress while every
+        other pin passed), the same shape planted, its atomic forms (a subscript read, a membership test), a read in a
+        nested helper and one in a helper called before the hold; each refused by name, beside controls it accepts."""
+        got = self._mutant(
+            ("    with _PEER_STATE_LOCK:                           # the previous row's read, the row's store and the fold: one step, so",
+             "    prev_row = PEER_STATE.get(host)\n"
+             "    with _PEER_STATE_LOCK:                           # the previous row's read, the row's store and the fold: one step, so"),
+            ('_via_held(resp.get("presence") or [], bus_id, "answer", PEER_STATE.get(host))}',
+             '_via_held(resp.get("presence") or [], bus_id, "answer", prev_row)}'))
+        self.assertTrue(any(r.startswith("read outside the lock in peer_exchange_apply,") for r in got["refused"]),
+                        "the verifier's hoisted read: %r" % got["refused"])
+        hoisted = ("def _planted_hoisted(host, row):\n    prev = PEER_STATE.get(host)\n    with _PEER_STATE_LOCK:\n"
+                   "        PEER_STATE[host] = dict(row, held=_via_held([], \"\", \"answer\", prev))\n")
+        got = self._plant(hoisted)
+        self.assertTrue(any(r.startswith("read outside the lock in _planted_hoisted,") for r in got["refused"]),
+                        got["refused"])
+        got = self._plant("def _planted_hoisted(host, row):\n    with _PEER_STATE_LOCK:\n        prev = PEER_STATE.get(host)\n"
+                          "        PEER_STATE[host] = dict(row, held=_via_held([], \"\", \"answer\", prev))\n")
+        self.assertEqual(got["refused"], [], "the control: the read inside the hold")
+        for form in ("prev = PEER_STATE[host]", "prev = host in PEER_STATE"):
+            got = self._plant("def _planted_atomic(host, row):\n    %s\n    with _PEER_STATE_LOCK:\n"
+                              "        PEER_STATE[host] = dict(row, prev=bool(prev))\n" % form)
+            self.assertTrue(any(r.startswith("read outside the lock in _planted_atomic,") for r in got["refused"]),
+                            "%s: %r" % (form, got["refused"]))
+        got = self._plant("def _planted_nesting(host, row):\n    def prev():\n        return PEER_STATE.get(host)\n"
+                          "    p = prev()\n    with _PEER_STATE_LOCK:\n        PEER_STATE[host] = dict(row, prev=p)\n")
+        self.assertTrue(any(r.startswith("read outside the lock in prev,") for r in got["refused"]), got["refused"])
+        helper = "def _planted_prev_row(host):\n    return PEER_STATE.get(host)\n"
+        got = self._plant(helper + "def _planted_helper_hoist(host, row):\n    prev = _planted_prev_row(host)\n"
+                          "    with _PEER_STATE_LOCK:\n        PEER_STATE[host] = dict(row, prev=prev)\n")
+        self.assertTrue(any(r.startswith("read outside the lock in _planted_prev_row,") and "_planted_helper_hoist" in r
+                            for r in got["refused"]), "a read hoisted into a helper called before the hold: %r" % got["refused"])
+        got = self._plant(helper + "def _planted_helper_hoist(host, row):\n    with _PEER_STATE_LOCK:\n"
+                          "        PEER_STATE[host] = dict(row, prev=_planted_prev_row(host))\n")
+        self.assertEqual(got["refused"], [], "the control: the helper called inside the hold, its one call site")
+
+    def test_the_census_refuses_a_mirror_write_that_reads_the_live_table_or_a_second_copy_by_name(self):
+        """One mirror write reads the table only through its one copy. Refused by name: a function the write reaches
+        reading the live table's mark (the fiftieth commit's _link_down) or seenAt (its heard_since), a second hold (a
+        second copy), a copy taken under a loop, and a copy taken in a helper the write reaches by two calls; accepted:
+        the same functions reading the copy, and a copy taken once, in the write or in a helper it calls once."""
+        first = (self.SOURCE + "\n\n").count("\n") + 1   # the line a plant starts on, after the bus's last line
+        got = self._plant("def _link_down(host, table):\n    return bool((PEER_STATE.get(host) or {}).get(\"linkDown\"))\n")
+        self.assertTrue(any(r.startswith("one copy: the mirror write reads the table outside its one copy in _link_down "
+                                         "(line %d:" % (first + 1)) for r in got["refused"]),
+                        "the live mark: %r" % got["refused"])
+        got = self._plant("def _link_down(host, table):\n    return bool((table.get(host) or {}).get(\"linkDown\"))\n")
+        self.assertEqual(got["refused"], [], "the control: the mark read from the copy")
+        got = self._plant("def _remote_sids_lost_cleared(lost, table):\n    def heard_since(host):\n"
+                          "        return bool((PEER_STATE.get(host) or {}).get(\"seenAt\"))\n    return heard_since(\"x\")\n")
+        self.assertTrue(any(r.startswith("one copy: the mirror write reads the table outside its one copy in heard_since")
+                            for r in got["refused"]), "the live seenAt: %r" % got["refused"])
+        head = ("PEER_STATE = {}\ndef _write_remote_sids():\n    with _REMOTE_SIDS_LOCK:\n"
+                "        return _remote_sids_document()\n")      # a write over a source of its own: whatever the bus holds
+        second = head + ("def _remote_sids_document():\n    with _PEER_STATE_LOCK:\n"
+                         "        table = {h: dict(st) for h, st in PEER_STATE.items()}\n"
+                         "    return _remote_sids_lost_cleared(table)\n"
+                         "def _remote_sids_lost_cleared(table):\n    with _PEER_STATE_LOCK:\n"
+                         "        seen = PEER_STATE.get(\"x\")\n    return bool(seen)\n")
+        refused = _peer_state_lock_census(second)["refused"]
+        self.assertTrue(any(r.startswith("one copy: the mirror write holds the lock more than once") and
+                            "_remote_sids_lost_cleared (line 10)" in r for r in refused), "a second copy: %r" % refused)
+        loop = head + ("def _remote_sids_document():\n    rows = {}\n    for h in list(PEERS):\n        with _PEER_STATE_LOCK:\n"
+                       "            rows[h] = dict(PEER_STATE.get(h) or {})\n    return rows\n")
+        self.assertTrue(any(r.startswith("one copy: the mirror write's copy is taken under a loop in _remote_sids_document")
+                            for r in _peer_state_lock_census(loop)["refused"]), _peer_state_lock_census(loop)["refused"])
+        copy = "def _copy():\n    with _PEER_STATE_LOCK:\n        return {h: dict(st) for h, st in PEER_STATE.items()}\n"
+        twice = head + "def _remote_sids_document():\n    return _copy(), _copy()\n" + copy
+        self.assertTrue(any(r.startswith("one copy: the mirror write's copy is taken in _copy, which the write reaches other "
+                                         "than by one call outside a loop") for r in _peer_state_lock_census(twice)["refused"]),
+                        _peer_state_lock_census(twice)["refused"])
+        once = head + "def _remote_sids_document():\n    table = _copy()\n    return [h for h in table]\n" + copy
+        self.assertEqual(_peer_state_lock_census(once)["refused"], [], "the control: a helper the write calls once")
+        inline = head + ("def _remote_sids_document():\n    with _PEER_STATE_LOCK:\n"
+                         "        table = {h: dict(st) for h, st in PEER_STATE.items()}\n    return [h for h in table]\n")
+        got = _peer_state_lock_census(inline)
+        self.assertEqual((got["refused"], [fn for fn, _ in got["mirrorHolds"]]), ([], ["_remote_sids_document"]),
+                         "the control: the copy taken once, in the write")
 
 
 if __name__ == "__main__":

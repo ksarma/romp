@@ -4090,17 +4090,22 @@ def _remote_sids_lost(path, now, cause):
     return {}, {"cause": "previous mirror unreadable (%s)" % cause, "at": int(now)}
 
 
-def _remote_sids_lost_cleared(lost):
+def _remote_sids_lost_cleared(lost, table):
     """True when the lost-carry mark `lost` is CLEARED at this write (round 3 of fork PR #897, the reviewer's ruling of
     14:57Z, the twenty-second commit). The rule, event-keyed and never a timer: this bus process read the kernel's list
     of links at its start (_seed_peers_from_kernel set _PEERS_SEEDED), PEERS holds at least one DIALABLE row (a port: a
     link the kernel holds, up or down; an origin-only row is no link), and every such host has been HEARD in this process
     no earlier than the mark's second: its PEER_STATE row carries a seenAt, the exchange's own stamp, and that stamp is at
-    or after `at`. A row with no seenAt (a refusal or drift note, no exchange landed) is not heard, as it is no source in
-    the document (_remote_sids_document); until the twenty-third commit such a row, or no row at all, read as second 0,
-    so a mark whose second is 0, which the carry and the judge's reader both accept, cleared with no host heard (the
-    reviewer's verifier, by execution). The event is the exchange that makes the last of them heard; the write after it
-    drops the mark and says so once in the bus log, stating what the mirror knows after the clear (below).
+    or after `at`. The row is read from `table`, the writer's one copy of PEER_STATE, the copy its rows come from
+    (_remote_sids_document), never the live table: a host whose first exchange is stored after that copy was taken is
+    in none of this write's rows, and reading its seenAt live cleared the mark over the rows the write lacked, so a
+    session only that host names answered rule 5 in the write's document (round 6 of fork PR #897, the reviewer's
+    verifier at the fiftieth commit, by execution). A row with no seenAt (a refusal or drift note, no exchange landed) is not heard,
+    as it is no source in the document (_remote_sids_document); until the twenty-third commit such a row, or no row
+    at all, read as second 0, so a mark whose second is 0, which the carry and the judge's reader both accept, cleared
+    with no host heard (the reviewer's verifier, by execution). The event is the exchange that makes the last of them
+    heard; the write after it drops the mark and says so once in the bus log, stating what the mirror knows after the
+    clear (below).
     Why that set: a heard host's own row is rebuilt from memory at every write, and so is its current word about the
     hosts it gossips, which covers every far host the hub has heard in ITS current process (a bus forgets no host it
     has heard until it restarts, and gossips each one's last roster whatever that host's link), so once every host the
@@ -4160,18 +4165,24 @@ def _remote_sids_lost_cleared(lost):
         return False
     links = [h for h, p in list(PEERS.items()) if p.get("port")]
 
-    def heard_since(host):                            # a seenAt, the exchange's own stamp, at or after the mark's second
-        seen = (PEER_STATE.get(host) or {}).get("seenAt")
+    def heard_since(host):                            # a seenAt, the exchange's own stamp, at or after the mark's second,
+        seen = (table.get(host) or {}).get("seenAt")  # in the writer's copy of the table, the one its rows come from
         return bool(seen) and int(seen) >= lost["at"]
     return bool(links) and all(heard_since(h) for h in links)
 
 
-def _link_down(host):
+def _link_down(host, table):
     """True when the kernel holds `host`'s tunnel DOWN, or has since this bus last heard the host. Two reads,
     either sufficient: PEERS[host]["up"] is False on a DIALABLE row (a row with a port; the kernel's /peer
     notify writes it through peer_update, transitions being the events, and _peer_loop exits on it), or
     PEER_STATE[host] carries the mark the down notify set, which the next exchange from the host clears by
-    replacing the row (peer_exchange_handle, peer_exchange_apply). So a host is out of link-down once BOTH
+    replacing the row (peer_exchange_handle, peer_exchange_apply). The mark is read from `table`, the mirror
+    writer's one copy of PEER_STATE, taken under _PEER_STATE_LOCK with the rows the write builds
+    (_remote_sids_document), so the mark and the row it belongs to come from the same moment. Read from the live
+    table (until round 6 of fork PR #897, the reviewer's verifier at the fiftieth commit, by execution), a host's
+    exchange stored after the copy was taken, following the up notify, paired the copy's row, from before the drop,
+    with the new row's missing mark: the old roster spoke for the host, a hub's word about a session started there
+    since folded into it, and that session answered rule 5. So a host is out of link-down once BOTH
     hold, the link up and the host heard since the link dropped, and neither alone: the up notify with
     nothing heard since the drop leaves the mark (the roster it reported before the drop says nothing about
     a session started there since); an exchange heard while the kernel holds the link down (the far side
@@ -4211,10 +4222,10 @@ def _link_down(host):
     p = PEERS.get(host) or {}
     if p.get("port") and not p.get("up"):
         return True
-    return bool((PEER_STATE.get(host) or {}).get("linkDown"))
+    return bool((table.get(host) or {}).get("linkDown"))   # the writer's copy, never the live table
 
 
-def _link_up(host):
+def _link_up(host, table):
     """True when the kernel holds `host`'s tunnel UP and this bus has heard the host since the link last dropped:
     PEERS[host] is a DIALABLE row (has a port) with up True, and _link_down does not hold (the mark the down
     notify set on PEER_STATE[host] keeps this False until the host's next exchange replaces the row, so the up
@@ -4222,12 +4233,13 @@ def _link_up(host):
     third state, neither down nor up, is a host with no link state: no PEERS row (never notified), an
     origin-only row (no port), or a name the kernel does not dial (a far bus under the hostname it declares
     before the fold). Such a source vouches for presence alone (_remote_sids_document, `vouchesAbsence`), as does
-    a source with its link known up whose last exchange served a cached roster (`answered` False there)."""
+    a source with its link known up whose last exchange served a cached roster (`answered` False there). `table` is
+    the writer's one copy of PEER_STATE, as for _link_down."""
     p = PEERS.get(host) or {}
-    return bool(p.get("port") and p.get("up")) and not _link_down(host)
+    return bool(p.get("port") and p.get("up")) and not _link_down(host, table)
 
 
-def _source_link_down(key, row):
+def _source_link_down(key, row, table):
     """The held-down link that makes one mirror row unreachable: a peer host's own (_link_down of its key, the
     name the row is filed under, which is the alias the kernel dials once this bus's dial has folded the peer
     there and its declared hostname before that, a name with no link state: _link_down has the two-sided
@@ -4235,16 +4247,17 @@ def _source_link_down(key, row):
     it and a hub the kernel holds down cannot carry fresh word about anyone (the hub the row names in `via`;
     a second hub gossiping the same far host is its own row under its own key, via:<hub>/<far>, following its
     own link); none for a legacy
-    heartbeat or the legacy list, whose keys carry a colon no PEERS row can match (heard and the TTL alone)."""
+    heartbeat or the legacy list, whose keys carry a colon no PEERS row can match (heard and the TTL alone). `table`
+    is the writer's one copy of PEER_STATE (_link_down)."""
     kind = row.get("kind")
     if kind == "via":
-        return _link_down(str(row.get("via") or ""))
+        return _link_down(str(row.get("via") or ""), table)
     if kind == "peer":
-        return _link_down(str(key))
+        return _link_down(str(key), table)
     return False
 
 
-def _source_link_up(key, row):
+def _source_link_up(key, row, table):
     """The known-up link that lets one mirror row vouch for a sid's ABSENCE (_link_up, the same link per kind as
     _source_link_down): a peer host's own under the name the row is filed under (the alias the kernel dials once
     this bus's dial has folded the peer there; its declared hostname before that, which the kernel does not
@@ -4253,12 +4266,13 @@ def _source_link_up(key, row):
     False for a legacy heartbeat or the legacy list, which have no link at all (under the legacy singleton scheme
     the heartbeat vouches by its own TTL instead; in peer mode it vouches for presence alone: _remote_sids_document,
     `vouchesAbsence`). The link is one of the two gates on absence there; the
-    other is the row's `answered` bit, an answered listing behind the roster."""
+    other is the row's `answered` bit, an answered listing behind the roster. `table` is the writer's one copy of
+    PEER_STATE (_link_down)."""
     kind = row.get("kind")
     if kind == "via":
-        return _link_up(str(row.get("via") or ""))
+        return _link_up(str(row.get("via") or ""), table)
     if kind == "peer":
-        return _link_up(str(key))
+        return _link_up(str(key), table)
     return False
 
 
@@ -4270,13 +4284,14 @@ def _remote_sids_via_key(hub, far):
     return REMOTE_SIDS_VIA + str(hub) + "/" + str(far)
 
 
-def _direct_row_speaks(peers, far, far_bus):
+def _direct_row_speaks(peers, far, far_bus, table):
     """The key of the heard peer row that SPEAKS FOR a far host at this write, or None. `peers` is the table of the
-    hosts heard in this bus process (the PEER_STATE rows with a seenAt: never a carried row); a row speaks for `far`
-    when it carries that bus id (`far_bus`, the viaBus a hub stamps on its gossip: the identity that survives
-    nickname drift, since the far host's own row may sit under the alias the kernel dials rather than the name the
-    hub knows it by), or is filed under that name and does not carry a DIFFERENT known bus id, AND the kernel does
-    not hold its link down under the name it is filed under (_link_down), AND its roster is an ANSWERED listing
+    hosts heard in this bus process (the PEER_STATE rows with a seenAt: never a carried row), and `table` the whole
+    copy they come from, the writer's one copy of PEER_STATE, from which _link_down reads each row's mark; a row
+    speaks for `far` when it carries that bus id (`far_bus`, the viaBus a hub stamps on its gossip: the identity that
+    survives nickname drift, since the far host's own row may sit under the alias the kernel dials rather than the
+    name the hub knows it by), or is filed under that name and does not carry a DIFFERENT known bus id, AND the
+    kernel does not hold its link down under the name it is filed under (_link_down), AND its roster is an ANSWERED listing
     (`presenceAnswered`, the bit its last exchange carried, which both recorders keep on the row; round 3 of fork PR
     #897, the reviewer's verifier at the eleventh commit, by execution through the real builder, handler, writer and
     reader). Both identities are tried: a hub that
@@ -4309,7 +4324,7 @@ def _direct_row_speaks(peers, far, far_bus):
         row_bus = str(st.get("busId") or "")
         same_bus = bool(far_bus and row_bus == far_bus)
         other_bus = bool(far_bus and row_bus and row_bus != far_bus)
-        if ((same_bus or (key == far and not other_bus)) and not _link_down(str(key))
+        if ((same_bus or (key == far and not other_bus)) and not _link_down(str(key), table)
                 and st.get("presenceAnswered") is True):   # ...and its roster an answered listing, not a cache
             return str(key)
     return None
@@ -5042,9 +5057,16 @@ def _remote_sids_document(now, previous, owned=frozenset(), lost=None):
                                                    "expired": now - ts >= HEARTBEAT_TTL, "answered": True,
                                                    "seenAt": int(ts), "name": name or "?"}
     with _PEER_STATE_LOCK:                            # the snapshot under the table's lock, nested inside _REMOTE_SIDS_LOCK
-        peers = {h: dict(st) for h, st in PEER_STATE.items() if st.get("seenAt")}   # (the one order): never between a
-    #                                                   recorder's read of a row and its store, or between the fold's forget
-    #                                                   of a row and the move of its held words (round 6 of fork PR #897)
+        table = {h: dict(st) for h, st in PEER_STATE.items()}   # (the one order): never between a recorder's read
+    #                                                   of a row and its store, or between the fold's forget of a row and
+    #                                                   the move of its held words (round 6 of fork PR #897). This write's
+    #                                                   ONE copy of the table, every row (a marked row may lack a seenAt):
+    #                                                   every table read below is a read of it, each row's linkDown mark
+    #                                                   (_link_down) and each seenAt the lost-carry clear reads included,
+    #                                                   never of the live table, so a recorder's store after the copy
+    #                                                   cannot pair a host's roster from the copy with its mark or seenAt
+    #                                                   from after it (the reviewer's verifier at the fiftieth commit)
+    peers = {h: st for h, st in table.items() if st.get("seenAt")}   # the hosts heard in this process
     for host, st in peers.items():                    # every heard host's own rows first...
         row = {"kind": "peer", "sids": [], "heard": True, "expired": False, "seenAt": int(st.get("seenAt") or 0),
                "answered": st.get("presenceAnswered") is True}   # its last exchange carried an answered listing
@@ -5066,7 +5088,7 @@ def _remote_sids_document(now, previous, owned=frozenset(), lost=None):
             far, far_bus = str(far), str(pa.get("viaBus") or "")
             if far_bus:
                 current_word.add((str(host), far_bus))
-            if _direct_row_speaks(peers, far, far_bus):
+            if _direct_row_speaks(peers, far, far_bus, table):
                 folded.add(_remote_sids_via_key(host, far))
                 continue                              # heard directly, its link not held down, its roster answered: its own row speaks
             row = hosts.setdefault(_remote_sids_via_key(host, far),
@@ -5088,7 +5110,7 @@ def _remote_sids_document(now, previous, owned=frozenset(), lost=None):
         if prev.get("busId") and prev["busId"] in heard_bus:
             continue                                  # the same bus, heard under its dialable name
         if prev.get("kind") == "via" and (key in folded
-                                          or _direct_row_speaks(peers, prev.get("host"), prev.get("viaBus"))
+                                          or _direct_row_speaks(peers, prev.get("host"), prev.get("viaBus"), table)
                                           or str(prev.get("via") or "") in renamed
                                           or (prev.get("viaBus")
                                               and (str(prev.get("via") or ""), str(prev["viaBus"])) in current_word)):
@@ -5110,8 +5132,8 @@ def _remote_sids_document(now, previous, owned=frozenset(), lost=None):
     legacy = not peers_on()                           # the legacy singleton scheme, read at this write: a heartbeat row
     for key, row in hosts.items():                    # vouches for absence by its TTL there and there alone
         row["sids"] = sorted({str(s) for s in row["sids"]})
-        row["linkDown"] = _source_link_down(key, row)         # the link state at THIS write, heard or carried
-        row["linkUp"] = _source_link_up(key, row)             # ...known up, and the host heard since it last dropped
+        row["linkDown"] = _source_link_down(key, row, table)  # the link state at THIS write, heard or carried
+        row["linkUp"] = _source_link_up(key, row, table)      # ...known up, and the host heard since it last dropped
         row["reachable"] = bool(row["heard"] and not row["expired"] and not row["linkDown"])   # vouches for presence
         row["vouchesAbsence"] = bool(row["heard"] and not row["expired"] and row["answered"]    # ...and for absence only
                                      and (row["linkUp"]                                         # with the link known up and
@@ -5119,7 +5141,7 @@ def _remote_sids_document(now, previous, owned=frozenset(), lost=None):
         #                                                                                          mode a beat is a local session's
         #                                                                                          (round 3 of fork PR #897)
     doc = {"v": 2, "busStarted": BUS_EPOCH, "writtenAt": int(now), "hosts": hosts}
-    if lost is not None and _remote_sids_lost_cleared(lost):
+    if lost is not None and _remote_sids_lost_cleared(lost, table):
         _remote_sids_say("the remote-sids mirror's lost-carry mark of %s is cleared: every host the kernel holds a link to "
                          "has been heard since; a session on a host that no linked host hears now is outside every source "
                          "after the clear, as on a first start, and the judge's rule 5 can presume it closed while a host "
@@ -5294,8 +5316,12 @@ _PEER_STATE_LOCK = threading.Lock()        # PEER_STATE's one lock (round 6 of f
 #                                            read-modify-write of the table holds it: each recorder from its canonicalization (the
 #                                            handler) or its previous-row read (the fold) through the row's store and
 #                                            _drop_peer_name_dupes, the down notify's membership test and mark, the dialer's drift and
-#                                            refusal notes, and the /peer-exchange route's canonicalization; the mirror's snapshot and
-#                                            every iteration of the table take their copy under it. The two recorders run at once by
+#                                            refusal notes, and the /peer-exchange route's canonicalization, and a function holding one
+#                                            of those writes, and whatever it reaches outside the lock, reads the table only under it;
+#                                            the mirror's snapshot and every iteration of the table take their copy under it, and one
+#                                            mirror write reads the table only through its one copy, each row's link mark and seenAt
+#                                            included (_remote_sids_document; round 6 of fork PR #897, the reviewer's verifier at the
+#                                            fiftieth commit, by execution). The two recorders run at once by
 #                                            design (the handler for a peer's dial, the dialer for the fold of its answer: _inflight
 #                                            below), and each derives a hub's held words from the row it replaces, so without it a
 #                                            roster one road stored between the other's read and its store lost a far host's

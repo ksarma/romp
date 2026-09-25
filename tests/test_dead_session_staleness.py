@@ -2972,6 +2972,155 @@ with As(us):
 out["roads"][road]["heardAfter"] = sorted(h for h, st in us.PEER_STATE.items() if st.get("seenAt"))
 out["roads"][road]["heldAfter"] = held_words(us, HUB)
 step(road, "raced", us, newOnFar=S["new"], nobody=S["nobody"], other=S["other"])
+# ONE MIRROR WRITE, ONE COPY (round 6 of fork PR #897, a verifier's finding at the fiftieth commit): the fiftieth commit's
+# writer took its snapshot of the table under the lock, then read each row's linkDown mark (_link_down) and, for the
+# lost-carry clear, each linked host's seenAt from the LIVE table, so a recorder's store landing between the two gave one
+# write a torn table. Each road is DETERMINISTIC, no sleep: a mirror write on another thread's behalf (the monitor's poll)
+# runs on the main thread and is held at the named read, after its snapshot, while B's dial is handled on a second thread;
+# the gate opens only when that thread has blocked on _REMOTE_SIDS_LOCK, which the held write holds (the handler stores
+# its row before its own write takes that lock), or on the table's lock, or has finished; both locks are instrumented
+# and installed by assignment (at the forty-ninth commit the table's lock is set and nothing reads it), and a bounded
+# wait that expires fails the road and never opens the gate. B's own write then waits, bounded, until the held write's
+# document has been read
+def torn(bus, gate_name, host, second, read_held):
+    opened, done, release = threading.Event(), threading.Event(), threading.Event()
+    got = {"gate": None, "storedAtGate": None, "secondError": None, "secondDone": False}
+    def run():
+        try:
+            second()
+        except BaseException as e:
+            got["secondError"] = "%s: %s" % (type(e).__name__, e)
+        finally:
+            done.set()
+            opened.set()
+    t = threading.Thread(target=run, daemon=True)
+    locks = {name: GateLock(opened) for name in ("_REMOTE_SIDS_LOCK", "_PEER_STATE_LOCK")}
+    saved = {name: bus.__dict__.get(name) for name in locks}
+    real_gate, real_doc = getattr(bus, gate_name), bus._remote_sids_document
+    def gated(*a, **k):
+        if got["gate"] is None and threading.current_thread() is threading.main_thread():
+            got["gate"] = "waiting"
+            t.start()
+            if not opened.wait(30):                # bounded: expiry fails the road and never opens the gate
+                got["gate"] = "expired"
+                raise RuntimeError("the gate's wait expired: the dial neither blocked nor finished")
+            blocked = [name for name, lk in sorted(locks.items()) if lk.blocked]
+            got["gate"] = (blocked or ["done" if done.is_set() else "opened"])[0]
+            st = bus.PEER_STATE.get(host) or {}    # the dial's row, stored inside the held write's window
+            got["storedAtGate"] = [bool(st.get("seenAt")), bool(st.get("linkDown")),
+                                   sorted(pa.get("id") for pa in st.get("presence") or [] if not pa.get("via"))]
+        return real_gate(*a, **k)
+    def doc(*a, **k):
+        if threading.current_thread() is t:
+            release.wait(30)                       # the dial's own write waits until the held write's document is read
+        return real_doc(*a, **k)
+    for name, lk in locks.items():
+        lk.watch = t
+        setattr(bus, name, lk)
+    setattr(bus, gate_name, gated)
+    bus._remote_sids_document = doc
+    try:
+        bus._write_remote_sids()                   # the held write (it logs and keeps the previous file if the gate raised)
+        read_held()
+    finally:
+        release.set()
+        if t.ident is not None:
+            t.join(30)
+        got["secondDone"] = done.is_set()
+        setattr(bus, gate_name, real_gate)
+        bus._remote_sids_document = real_doc
+        for name, v in saved.items():
+            if v is None:
+                delattr(bus, name)
+            else:
+                setattr(bus, name, v)
+    return got
+def b_down_hub_names(road):                        # B held down while the hub names a session started on B; B's link up
+    us = fresh_us(); b, hub = other(road, "b"), other(road, "hub")
+    LISTINGS["b"], LISTINGS["hub"] = [S["other"]], [S["hubsid"]]
+    notify(us, B, True); notify(us, HUB, True)
+    dial(b, B, us, US); dial(b, B, hub, HUB); dial(hub, HUB, us, US)
+    notify(us, B, False)                           # the kernel holds B down; a session (goss) starts on B; the hub names it
+    LISTINGS["b"] = [S["other"], S["goss"]]
+    dial(b, B, hub, HUB); dial(hub, HUB, us, US)
+    notify(us, B, True)                            # the up notify: B's row keeps the mark until B is heard again
+    with As(b):
+        breq = b.build_exchange_request(US, wait=False)   # B's first dial since, answered, naming the session
+    breq["host"] = B
+    return us, breq
+# (1) the link mark: the held write's copy has B's row from before the drop, marked; B's first dial since is stored while
+# the write is held at its first _direct_row_speaks, replacing the row with one that carries no mark
+road = "oneCopyLinkMark"
+us, breq = b_down_hub_names(road)
+step(road, "bUpNotified", us, goss=S["goss"], other=S["other"], nobody=S["nobody"])
+def handle_b(bus=us, req=breq, road=road):
+    out["roads"][road]["handled"] = [bus.peer_exchange_handle(req)[1]]
+with As(us):
+    out["roads"][road]["torn"] = torn(us, "_direct_row_speaks", B, handle_b,
+                                      lambda: step(road, "held", us, goss=S["goss"], other=S["other"], nobody=S["nobody"]))
+step(road, "afterB", us, goss=S["goss"], other=S["other"], nobody=S["nobody"])
+# the serial controls: the same write whole before B's dial, and after it
+road = "oneCopyLinkMarkWriteFirst"
+us, breq = b_down_hub_names(road)
+with As(us):
+    us._write_remote_sids()
+step(road, "written", us, goss=S["goss"], nobody=S["nobody"])
+with As(us):
+    out["roads"][road]["handled"] = [us.peer_exchange_handle(breq)[1]]
+step(road, "afterB", us, goss=S["goss"], nobody=S["nobody"])
+road = "oneCopyLinkMarkDialFirst"
+us, breq = b_down_hub_names(road)
+with As(us):
+    out["roads"][road] = {"handled": [us.peer_exchange_handle(breq)[1]]}
+    us._write_remote_sids()
+step(road, "written", us, goss=S["goss"], nobody=S["nobody"])
+# (2) the lost-carry clear: our bus starts over a previous mirror cut short (the mark), the kernel's list of links read at
+# its start names B and C, and C is heard since the mark; B's first dial is stored while the write is held at the clear's
+# read, after its copy, which does not have B
+def seed(bus, links):                              # the kernel's tunnel list read at the bus's start, every link up
+    body = json.dumps({"tunnels": [{"host": h, "busPort": 50002, "status": "up"} for h in links], "known": []}).encode()
+    class Answer:
+        def read(self):
+            return body
+        def __enter__(self):
+            return self
+        def __exit__(self, *exc):
+            return False
+    real = bus.urllib.request.urlopen
+    bus.urllib.request.urlopen = lambda req, timeout=None: Answer()
+    try:
+        bus._seed_peers_from_kernel()
+    finally:
+        bus.urllib.request.urlopen = real
+    return bus._PEERS_SEEDED[0]
+def mark(bus):                                     # our mirror's lost-carry mark, or None
+    try:
+        return json.loads((bus.STATE / "remote-sids").read_text()).get("carryLost")
+    except (OSError, ValueError):
+        return "unreadable"
+road = "oneCopyLostClear"
+us = fresh_us(); b, c = other(road, "b"), other(road, "c")
+LISTINGS["b"], LISTINGS["c"] = [S["other"]], [S["csid"]]
+(us.STATE / "remote-sids").write_text('{"v": 2, "hosts": {')   # a previous mirror cut short: no write reads it whole
+out["roads"][road] = {"seeded": seed(us, [B, C])}   # the kernel's list of links at the bus's start, both up; the mark
+dial(c, C, us, US)                                 # C heard since the mark, answered, its link up: it vouches; B not heard
+out["roads"][road]["markBefore"] = mark(us)
+step(road, "cHeard", us, other=S["other"], csid=S["csid"], nobody=S["nobody"])
+with As(us):
+    us._write_remote_sids()                        # the serial control before B: the same write whole
+step(road, "writtenBeforeB", us, other=S["other"], nobody=S["nobody"])
+with As(b):
+    breq = b.build_exchange_request(US, wait=False)   # B's first dial, answered, naming its session
+breq["host"] = B
+def handle_b_lost(bus=us, req=breq, road=road):
+    out["roads"][road]["handled"] = [bus.peer_exchange_handle(req)[1]]
+def read_held_lost(bus=us, road=road):
+    out["roads"][road]["markHeld"] = mark(bus)
+    step(road, "held", bus, other=S["other"], csid=S["csid"], nobody=S["nobody"])
+with As(us):
+    out["roads"][road]["torn"] = torn(us, "_remote_sids_lost_cleared", B, handle_b_lost, read_held_lost)
+out["roads"][road]["markAfter"] = mark(us)
+step(road, "afterB", us, other=S["other"], csid=S["csid"], nobody=S["nobody"])
 print(json.dumps(out))
 """, HERE, BIN, str(others), json.dumps(ROAD_SIDS), R_US, R_B, R_C, R_HUB, R_F, R_HUB2, R_HUB_DECL, R_G, R_HUB_DECL2],
                              capture_output=True, text=True, env=full, cwd=str(home), timeout=120)
@@ -5040,6 +5189,102 @@ print(json.dumps(out))
                                  ([200], [R_C, R_HUB], [[R_F, S["other"]]]),
                                  "the fold forgot the declared row, and the alias's row holds the word")
                 self.assertEqual(self._road(got, name, "raced", "other"), RULE_4)
+
+    # ── ONE MIRROR WRITE, ONE COPY (round 6 of fork PR #897, a verifier's finding at the fiftieth commit): the writer took
+    # its snapshot of the table under the lock and then read each row's linkDown mark and each linked host's seenAt from
+    # the live table, so a recorder's store between the two gave one write a torn table. postal_service.py
+    # _remote_sids_document reads every table input of a write from its one copy. Two deterministic interleavings through
+    # the real writer and handler (the roads child's torn(): a mirror write on the main thread held at the named read,
+    # after its copy, while B's dial is handled on a second thread; the gate opened by that dial blocking on the lock the
+    # write holds, never by a sleep), each asserting the reader's answer in the held write's document, and the serial
+    # controls ──
+
+    def _torn(self, got, name):
+        torn = got["roads"][name]["torn"]
+        self.assertEqual((torn["gate"], torn["secondError"], torn["secondDone"]), ("_REMOTE_SIDS_LOCK", None, True),
+                         "the gate opened on B's dial blocking on the lock the held write holds, and never expired: %r" % torn)
+        self.assertEqual(torn["storedAtGate"][:2], [True, False],
+                         "B's row was stored inside the held write's window, heard and with no mark: %r" % torn)
+        self.assertEqual(got["roads"][name]["handled"], [200], "B's dial was recorded")
+
+    def test_one_mirror_write_reads_a_hosts_link_mark_from_its_one_copy_so_a_dial_stored_after_it_cannot_fold_a_hubs_word_away(self):
+        """The link mark. Our kernel holds B down; a session (goss) starts on B and the hub names it; the up notify
+        arrives, and B's row keeps the down notify's mark until B is heard again, so the hub's word naming goss stands
+        beside it (rule 4). A mirror write (the monitor's poll) takes its copy, and B's first dial since, answered and
+        naming goss, is stored while that write is held at its first _direct_row_speaks. Reading the mark from the live
+        table, the fiftieth commit's write paired B's row from its copy (answered, from before the drop, without goss)
+        with the new row's missing mark: B's old row spoke for B with its link up, the hub's word folded into it, goss was
+        in no row, and it answered [true, 5, no-reachable-host-names-it] in that write's document while the hub vouched.
+        Reading it from the copy, B's row is held down in that write and the hub's word stands: rule 4. Red at the
+        fiftieth and forty-ninth commits with this module overlaid (the reader's answer); the serial controls are the
+        next test."""
+        S = ROAD_SIDS
+        for shape, got in self.roads.items():
+            with self.subTest(shape=shape):
+                name = "oneCopyLinkMark"
+                self.assertEqual(self._road(got, name, "held", "goss"), RULE_4,
+                                 "THE ONE COPY: the held write reads B's mark from its copy, so B's row from before the drop "
+                                 "does not speak and the hub's word naming the session stands (with the mark read from the "
+                                 "live table [true, 5, no-reachable-host-names-it])")
+                self._torn(got, name)
+                self.assertEqual(got["roads"][name]["torn"]["storedAtGate"][2], sorted([S["other"], S["goss"]]),
+                                 "the row stored in the window names the session")
+                held = got["roads"][name]["held"]["rows"]
+                self.assertEqual((held[R_B][1], held[R_B][6], held.get(R_VIA_B, [None] * 7)[6]),
+                                 (True, [S["other"]], sorted([S["other"], S["goss"]])),
+                                 "in the held write B's row is its copy's, held down, and the hub's word stands beside it")
+                self.assertEqual(self._road(got, name, "bUpNotified", "goss"), RULE_4,
+                                 "the premise: after the up notify, before B is heard, the hub's word names the session")
+                self.assertEqual(self._road(got, name, "afterB", "goss"), RULE_4, "B's own write: its row names the session")
+                self.assertEqual(self._road(got, name, "held", "nobody"), RULE_5, "a sid nothing names, while the hub vouches")
+
+    def test_the_serial_controls_of_the_link_mark_road_answer_rule_4_in_both_orders(self):
+        """The serial controls of the road above: the same mirror write whole before B's dial, and after it. Each reads
+        rule 4 for goss, at this head and at the fiftieth, so the rule 5 the interleaving read there is the torn table's,
+        not the road's."""
+        S = ROAD_SIDS
+        for shape, got in self.roads.items():
+            with self.subTest(shape=shape):
+                for name, steps in (("oneCopyLinkMarkWriteFirst", ("written", "afterB")),
+                                    ("oneCopyLinkMarkDialFirst", ("written",))):
+                    self.assertEqual(got["roads"][name]["handled"], [200], name)
+                    for st in steps:
+                        self.assertEqual(self._road(got, name, st, "goss"), RULE_4, "%s %s" % (name, st))
+
+    def test_one_mirror_write_reads_each_linked_hosts_seenat_from_its_one_copy_so_a_first_dial_stored_after_it_cannot_clear_the_mark(self):
+        """The lost-carry clear. Our bus starts over a previous mirror cut short, so its writes carry the lost-carry
+        mark; the kernel's list of links read at its start names B and C, and C is heard since the mark, answered with
+        its link up, so it vouches for absence while the mark stands and B, not heard, keeps it (the clear needs every
+        linked host heard since: _remote_sids_lost_cleared). A mirror write takes its copy, which does not have B, and
+        B's first dial, answered and naming B's session, is stored while that write is held at the clear's read.
+        Reading seenAt from the live table, the fiftieth commit's write found B heard, cleared the mark and wrote a
+        document without B's rows, so B's session was in no row and answered [true, 5, no-reachable-host-names-it] while
+        C vouched. Reading it from the copy, B is not heard in that write and the mark stands: cannot-determine. B's own
+        write then clears the mark with B's rows in it (rule 4). The write whole before B's dial is the serial control
+        (the mark stands). Red at the fiftieth and forty-ninth commits with this module overlaid (the reader's answer)."""
+        S = ROAD_SIDS
+        for shape, got in self.roads.items():
+            with self.subTest(shape=shape):
+                name = "oneCopyLostClear"
+                road = got["roads"][name]
+                self.assertTrue(isinstance(road["markBefore"], dict) and road["markBefore"].get("at"),
+                                "the premise: the writes carry the lost-carry mark: %r" % road["markBefore"])
+                self.assertEqual(self._road(got, name, "held", "other"), CARRY_LOST(road["markBefore"]),
+                                 "THE ONE COPY: the held write reads B's seenAt from its copy, where B is not heard, so the "
+                                 "mark stands (with seenAt read from the live table the mark cleared over the rows the write "
+                                 "lacked: [true, 5, no-reachable-host-names-it])")
+                self._torn(got, name)
+                self.assertEqual(road["torn"]["storedAtGate"][2], [S["other"]], "the row stored in the window names B's session")
+                self.assertEqual((road["markHeld"], sorted(road["held"]["rows"])), (road["markBefore"], [R_C]),
+                                 "the held write carries the mark and C's row alone, its copy's")
+                self.assertTrue(road["seeded"], "the kernel's list of links was read at the bus's start")
+                self.assertEqual(self._road(got, name, "cHeard", "other"), CARRY_LOST(road["markBefore"]),
+                                 "the premise: C heard since the mark, B not: the mark stands")
+                self.assertEqual(self._road(got, name, "cHeard", "csid"), RULE_4)
+                self.assertEqual(self._road(got, name, "writtenBeforeB", "other"), CARRY_LOST(road["markBefore"]),
+                                 "the serial control: the same write whole before B's dial keeps the mark")
+                self.assertEqual((self._road(got, name, "afterB", "other"), road["markAfter"]), (RULE_4, None),
+                                 "B's own write: B heard since the mark, the mark clears with B's rows in the document")
 
     def test_a_peer_mode_beat_vouches_for_presence_alone_and_the_legacy_scheme_keeps_its_ttl_vouch(self):
         """Round 3 of fork PR #897, the reviewer's ruling on its refuters' finding (the peer-mode beat phase of the class
