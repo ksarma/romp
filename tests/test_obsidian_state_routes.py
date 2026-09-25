@@ -2324,9 +2324,10 @@ class StoreFlowReach(unittest.TestCase):
 
     def test_the_path_kept_where_another_function_can_read_it_is_refused(self):
         """_PATH_STORED, by line: the path assigned to a subscript or attribute whatever its root, to a name declared
-        global, or handed to a method of a value other than .get, directly or as the key sorted runs on it. The
-        controls keep it in a plain local, look it up (directly or by a .get key), hand it to a module's function, or
-        store a value read from the file."""
+        global, or handed to a method of a value other than .get, directly or as a keyword sorted or json.loads runs
+        on it (sorted's key, json.loads' object_hook), whichever method it is (.append, .stat). The controls keep it
+        in a plain local, look it up (directly or by a .get key), hand it to a module's function, or store a value
+        read from the file."""
         cases = [
             ("a name declared global", 'def f():\n    global P\n    P = jd.STATE / "session-flags.json"\n', [3]),
             ("a subscript of a module-level name", 'def f():\n    PATHS["flags"] = jd.STATE / "session-flags.json"\n', [2]),
@@ -2343,6 +2344,12 @@ class StoreFlowReach(unittest.TestCase):
              [3]),
             ("a method of a value handed to sorted as its key",
              'def f():\n    p = jd.STATE / "session-flags.json"\n    sorted([p], key=REG.append)\n'
+             '    return p.stat().st_size\n', [3]),
+            ("a method of a value handed to json.loads as its object_hook",
+             'def f():\n    p = jd.STATE / "session-flags.json"\n'
+             '    return json.loads(p.read_text(), object_hook=REG.append)\n', [3]),
+            ("a method other than .append handed to sorted as its key",
+             'def f():\n    p = jd.STATE / "session-flags.json"\n    sorted([p], key=REG.stat)\n'
              '    return p.stat().st_size\n', [3]),
             ("a plain local (not one)", 'def f():\n    p = jd.STATE / "session-flags.json"\n    return p.stat().st_size\n',
              None),
@@ -2682,15 +2689,18 @@ class StoreFlowReach(unittest.TestCase):
     def test_a_callable_a_read_runs_is_read_or_refused(self):
         """A callable a call runs is the function's code (the reviewer's ruling on round 2 of fork PR #909, extra5-2).
         A lambda, or a name bound only to defs or lambdas of the function's own scope, handed to a call is read with its
-        parameters, of every kind, bound from the call's other arguments and its receiver (_bindings), so its writes are
-        the function's, wherever in the function the call stands: the first group. Every other keyword value handed to
-        sorted or json.loads beside the path, but a constant, is a call by its spelling (_CALLBACK_READS), outside
-        READS unless it is a read: a function of the module by name, also where a scope nested in the function binds
-        that name to a def or lambda of its own (the call in the function's scope runs the module's), a class by cls, a
-        parse or pairs hook, a data name, a call's result, an if-else, an or, a walrus, a ** spread, a subscript, and
-        nothing exempt for holding the path (a nested class, a list, a parameter's default); a name bound to a nested
-        def and bound again to another callable is no callback, so it is spelled by its name. Each case reads one key
-        of what the function sends outside READS; the controls are the next test's."""
+        parameters, of every kind (positional-only, positional, *args, keyword-only, **kwargs), bound from the call's
+        other arguments and its receiver (_bindings), so its writes are the function's, wherever in the function the
+        call stands and in whichever block of the function's own statements the def stands: the first group. Every
+        other keyword value handed to sorted or json.loads beside the path, but a constant, is a call by its spelling
+        (_CALLBACK_READS), outside READS unless it is a read: a function of the module by name, also where a scope
+        nested in the function binds that name to a def or lambda of its own (the call in the function's scope runs
+        the module's), a class by cls, each of json.loads' hooks (object_hook, object_pairs_hook, parse_float,
+        parse_int, parse_constant), a data name (sorted's reverse, and strict, which json.loads hands on to cls), a
+        call's result, an if-else, an or, a walrus, a ** spread, a subscript, and nothing exempt for holding the path (a
+        nested class, a list, a parameter's default); a name bound to a nested def and bound again to another callable
+        is no callback, so it is spelled by its name. Each case reads one key of what the function sends outside READS;
+        the controls are the next test's."""
         p = '    p = jd.STATE / "session-flags.json"\n'
         d, d0 = 'def r(sid):\n' + p, 'def r():\n' + p   # the reader's head, with a parameter and without
         t = '    return p.stat().st_size\n'
@@ -2706,6 +2716,15 @@ class StoreFlowReach(unittest.TestCase):
              "open", [3]),
             ("a nested def with a positional-only parameter",
              d + '    def poke(q, /):\n        %s\n        return 0\n    sorted([p], key=poke)\n' % w + t, "open", [4]),
+            ("a nested def with a keyword-only parameter, handed to json.loads as cls",
+             d0 + '    def poke(*, q=None):\n        open(q, "w").write("{}")\n        return 0\n'
+             '    return json.loads(p.read_text(), cls=poke)\n', "open", [4]),
+            ("a nested def taking **kwargs, handed to json.loads as cls",
+             d0 + '    def poke(**kw):\n        open(kw["q"], "w").write("{}")\n        return 0\n'
+             '    return json.loads(p.read_text(), cls=poke)\n', "open", [4]),
+            ("a nested def in an if block, handed by its name in the same block",
+             d + '    if sid:\n        def poke(q):\n            %s\n            return 0\n'
+             '        sorted([p], key=poke)\n' % w + t, "open", [5]),
             ("a nested def handed by its name from an inner def's call",
              d + '    def poke(q):\n        %s\n        return 0\n    def inner():\n'
              '        return sorted([p], key=poke)\n    inner()\n' % w + t, "open", [4]),
@@ -2727,6 +2746,12 @@ class StoreFlowReach(unittest.TestCase):
              d0 + '    return json.loads(p.read_text(), parse_float=_pf)\n', "_pf", [3]),
             ("json.loads' object_pairs_hook naming a function",
              d0 + '    return json.loads(p.read_text(), object_pairs_hook=_ph)\n', "_ph", [3]),
+            ("json.loads' parse_int naming a function",
+             d0 + '    return json.loads(p.read_text(), parse_int=_pi)\n', "_pi", [3]),
+            ("json.loads' parse_constant naming a function",
+             d0 + '    return json.loads(p.read_text(), parse_constant=_pc)\n', "_pc", [3]),
+            ("a data name json.loads hands on to cls, strict",
+             'def r(flag):\n' + p + '    return json.loads(p.read_text(), strict=flag)\n', "flag", [3]),
             ("a data name beside the path, sorted's reverse",
              'def r(rev):\n' + p + '    sorted([p], reverse=rev)\n' + t, "rev", [3]),
             ("a call's result as the key", d + '    sorted([p], key=functools.partial(_poke, sid))\n' + t, "<Call>",
@@ -2762,13 +2787,15 @@ class StoreFlowReach(unittest.TestCase):
 
     def test_a_read_handed_no_callable_passes_and_map_stays_outside_reads(self):
         """The callback rule's controls, green with it and without it, by design: the strict reader's keyword
-        (`expect=dict`, the one keyword the readers hand a READS call) and a nested def key that only reads hand nothing
-        outside READS, and map, which takes its callable positionally and is not in READS, is a call outside READS
-        either way. The first and second read all a function sends outside READS, the third the key map."""
+        (`expect=dict`, the one keyword the readers hand a READS call), a read as sorted's key (`key=str`, a keyword
+        value whose spelling is a read, which passes) and a nested def key that only reads hand nothing outside READS,
+        and map, which takes its callable positionally and is not in READS, is a call outside READS either way. The
+        first three read all a function sends outside READS, the fourth the key map."""
         p = '    p = jd.STATE / "session-flags.json"\n'
         d0 = 'def r():\n' + p
         cases = [
             ("the strict reader's keyword", d0 + '    return _read_state_json(p, expect=dict)\n', None, None),
+            ("a read as sorted's key", d0 + '    sorted([p], key=str)\n    return p.stat().st_size\n', None, None),
             ("a nested def key that only reads",
              d0 + '    def key(q):\n        return q.stat().st_mtime\n    ps = sorted([p], key=key)\n'
              '    return ps[0].stat().st_size\n', None, None),
