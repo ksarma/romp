@@ -6335,11 +6335,17 @@ class SdkSession:
         #   the agent's own task end, and the client teardown (see _reconcile_workflow_agents / _drop_live_work).
         #   Keeps the session 'working' while any run and surfaces a live count on the lane. Every add and every end is
         #   queued for the kernel's record cache (_note_live_agents), which releases an ended agent's parsed transcript.
-        #   An end is queued from its exact event even for an agent this object never held, as on the object that
-        #   reattaches after a kernel restart, which knows an agent already running only through a Task agent's row in
-        #   _bg_tasks (seeded from the reg's mirror) or a Workflow run's roster in _wf_agents; and where the CLI's end
-        #   ends every agent inside it, each agent this object knows through any of the three is queued
-        #   (_known_agents_locked). SdkBackend.note_agent_live lists the roads, and the agents no road can name.
+        #   An end is queued from its exact event even for an agent this object never held (the stop hook, the agent's
+        #   task end, a turn-end report listing its row as ended, its workflow slot's done or error state, a re-minted
+        #   slot, the run's end), as on the object that reattaches after a kernel restart, which knows an agent already
+        #   running only through a Task agent's row in _bg_tasks (seeded from the reg's mirror, or adopted from a report)
+        #   or a Workflow run's roster in _wf_agents. Where the CLI's end ends every agent inside it (the reconnect
+        #   teardown, the CLI's end when not detached), each agent this object knows through any of the three is queued
+        #   (_known_agents_locked); a boot or a thread's wake queues the Task agents of the reg's dead mirror. Not queued,
+        #   since nothing names them: a Workflow run's agents with no roster here, a subagent the old kernel knew only by
+        #   its start hook whose stop is lost, and a Task agent whose row was minted from a progress frame with no type
+        #   (SdkBackend.note_agent_live says why); their entries fall to the quiescent drop, the count cap or the byte
+        #   budget.
         self._bg_tasks: dict[str, dict] = {}         # LIVE background tasks (a run_in_background Bash, a bg agent):
         #   task_id -> {"desc","type","since","toolUseId","lastTool"}. Fed by the CLI's DESIGNED task lifecycle
         #   stream (system/task_started..task_updated — see _on_message), terminal statuses clear — so an idle
@@ -21780,8 +21786,12 @@ class SdkBackend:
             # start, so its _subagents lacks the agent. A detached session's CLI lives on under its host, so its agents have
             # not ended; the object that reattaches to it queues each one's end from its own end event (the SubagentStop,
             # the Task agent's task end or a turn-end report listing its row as ended, the workflow slot's done or error
-            # state, its re-minted slot or its run's end) or from this road when that CLI ends. An agent no structure names
-            # queues nothing here (note_agent_live's residuals).
+            # state, its re-minted slot or its run's end) or from this road when that CLI ends. Nothing is queued here for
+            # an agent no structure names: a Workflow run's agents with no roster on this object (a run seeded from the
+            # mirror that a turn-end report retired, or one that ended or lost its CLI before any progress frame), a
+            # subagent the old kernel knew only by its start hook whose stop is lost, and a Task agent whose row was minted
+            # from a progress frame with no type (note_agent_live says why); their entries fall to the quiescent drop, the
+            # count cap or the byte budget.
             with sess._sub_lock:
                 gone_agents = sess._known_agents_locked()
                 sess._subagents.clear()
