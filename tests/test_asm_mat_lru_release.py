@@ -67,6 +67,17 @@ class _Stand:
     """A weakrefable stand-in for a freed list: its reference is planted as an entry, then the stand-in is dropped."""
 
 
+class _Resurrector:
+    """A finalizer in a garbage cycle (it refers to itself) holding a list: its __del__ puts the list in `keep`, so the
+    collection that runs it brings the list back."""
+
+    def __init__(self, la, keep):
+        self.la, self.keep, self.cycle = la, keep, self
+
+    def __del__(self):
+        self.keep.append(self.la)
+
+
 def _reset():
     with em._MAT_LOCK:                                             # the LRU and its counters are process-wide: per test
         em._MAT_LRU.clear()
@@ -744,6 +755,59 @@ class CollectionEvent(Synthetic):
         self.assertIs(la[0], a0)
         self.assertEqual(la._ref.n, len(la), "the reference's row count covers every slot")
 
+
+class Resurrected(Synthetic):
+    """A list a finalizer resurrects inside a garbage cycle: the collector clears the list's weak reference, and runs its
+    callback, before it runs the finalizer, so the list comes back holding a reference that reads None. Red before the
+    registration minted a fresh reference for such a list: every entry it registered held the cleared reference, dead
+    from birth, and each re-read of a built slot counted one `expired` more than `collected`. No kernel path resurrects a
+    list today."""
+
+    def test_a_list_a_finalizer_resurrects_registers_live_entries_again(self):
+        """After the resurrection its entries are live, expired equals collected, the cap evicts them, release() reaches the
+        list through its index's minted references, and the list's next free queues its fresh reference, whose drain
+        removes the entry it holds."""
+        k = 3
+        ix, la = _mint(k, "R")
+        for i in range(k):
+            la[i]
+        own, keep = la._ref, []
+        res = _Resurrector(la, keep)                               # the cycle holds the list's one other reference
+        del ix, la, res
+        gc.collect()
+        self.assertEqual(len(keep), 1, "the finalizer ran and brought the list back")
+        la = keep.pop()
+        self.assertIsNone(own(), "the collector cleared the list's reference before the finalizer ran")
+        trace = []
+        for _ in range(3):
+            la[0]                                                  # a built slot read again
+            st = em.asm_index_stats()
+            trace.append((_entries(id(la)), st["expired"] - st["collected"]))
+        self.assertEqual(trace, [((1, 0), 0)] * 3,
+                         "after each re-read the list's entries read (live, dead) = (1, 0) and expired minus collected is 0")
+        self.assertIs(la._ref(), la, "the list holds a reference that reads it")
+        for i in range(1, k):
+            la[i]                                                  # the other built slots, stripped by the drain, register again
+        self.assertEqual(_entries(id(la)), (k, 0), "every entry of the resurrected list is live")
+        st = em.asm_index_stats()
+        self.assertEqual((st["expired"], st["collected"]), (k, k), "expired equals collected: the k entries the drain removed")
+        em._MAT_CAP = k
+        ixb, lb = _mint(1, "S")
+        lb[0]                                                      # one over the cap: the oldest entry is the list's slot 0
+        st = em.asm_index_stats()
+        self.assertEqual((st["evictions"], st["expired"]), (1, k), "the cap evicted the list's oldest entry as a live one")
+        self.assertEqual(_built(la), list(range(1, k)), "...and put the placeholder back in its slot")
+        self.assertEqual(la._index.release(), k - 1, "release() reached the list through its index's minted references")
+        self.assertEqual(_entries(id(la)), (0, 0))
+        self.assertEqual(_built(la), [])
+        la[0]                                                      # built and registered again, under the fresh reference
+        wl = weakref.ref(la)
+        del la
+        self.assertIsNone(wl(), "the list is freed")
+        self.assertEqual(ixb.release(), 1)                         # the release drains first, then pops lb's own entry
+        st = em.asm_index_stats()
+        self.assertEqual((_entries(), st["collected"]), ((0, 0), k + 1),
+                         "the list's free queued its fresh reference and the drain removed the one entry it held")
 
 if __name__ == "__main__":
     unittest.main()

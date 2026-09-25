@@ -5082,12 +5082,20 @@ _MAT_COLLECTED = collections.deque()  # the _ListRef of every LazyAtoms freed si
 
 class _ListRef(weakref.ref):
     """A LazyAtoms list's own weak reference, carrying the list's id and row count (`lid`, `n`): the list is unhashable,
-    and gone when the callback runs. Every LRU entry of the list holds THIS reference, so it stays reachable from _MAT_LRU
-    for as long as the list has an entry, and the callback runs however the list dies, at its last decref or inside a
-    reference cycle only the collector frees: the collector runs no callback for a weak reference that is itself garbage,
-    so a reference kept only on the index would be garbage with a list and index collected together, and the list's
-    entries would stay. `n` covers every slot because a list's length is fixed at mint: LazyAtoms refuses every in-place
-    list method (append, extend, insert, pop, remove, clear, reverse, sort, item assignment and deletion, += and *=)."""
+    and the reference reads None by the time the callback runs. Every LRU entry of the list holds THIS reference, so it
+    stays reachable from _MAT_LRU for as long as the list has an entry, and the callback runs however the list dies, at
+    its last decref or inside a reference cycle only the collector frees: the collector runs no callback for a weak
+    reference that is itself garbage, so a reference kept only on the index would be garbage with a list and index
+    collected together, and the list's entries would stay. `n` covers every slot because a list's length is fixed at
+    mint: LazyAtoms refuses every in-place list method (append, extend, insert, pop, remove, clear, reverse, sort, item
+    assignment and deletion, += and *=).
+    A list a finalizer resurrects in a collection comes back holding a reference the collector cleared (it clears weak
+    references, and runs their callbacks, before it runs finalizers). The entries that held it leave as dead ones (at the
+    drain, or at the trim when the collection falls between a registration's drain and its trim), and _mat_register mints
+    the list a fresh reference at its next registration. The slots those entries described keep their atoms with no entry
+    until a read registers them again; a slot never read again stays built with no entry, which `resident` does not count
+    and the cap cannot reach, as before the collection event, when the trim stripped such a slot. No kernel path
+    resurrects a list."""
     __slots__ = ("lid", "n")
 
 
@@ -5147,15 +5155,25 @@ def _materialize_caller():
 
 
 def _mat_register(la, i):
-    """Under _MAT_LOCK: la's slot i joins the LRU at its young end under la's OWN weak reference (its _ListRef). An entry
+    """Under _MAT_LOCK: la's slot i joins the LRU at its young end under la's OWN weak reference (its _ListRef). A list a
+    finalizer resurrected holds a reference the collector cleared (see _ListRef): it gets a fresh one here, stored on the
+    list and appended to its index's _minted, so the entry is live, the cap evicts it and release() reaches it. An entry
     already under the key that is not la's (since the drain runs first, only an entry the queue never held: a missed
     callback, or a planted test entry) is popped first and counted `expired`, and popped rather than assigned over, since
     an assignment to a standing key keeps the key's old position and the fresh entry would sit at the old end, first to go."""
     key = (id(la), i)
+    ref = la._ref
+    if ref() is not la:
+        ref = _ListRef(la, _mat_collected)
+        ref.lid, ref.n = id(la), len(la._rows)
+        la._ref = ref
+        minted = getattr(la._index, "_minted", None)      # as in LazyAtoms.__init__: a stand-in index may carry no list
+        if minted is not None:
+            minted.append(ref)
     old = _MAT_LRU.pop(key, None)
     if old is not None and old[0]() is not la:
         _ASM_INDEX_STATS["expired"] += 1
-    _MAT_LRU[key] = (la._ref, i)
+    _MAT_LRU[key] = (ref, i)
 
 
 def _mat_trim():
@@ -5181,9 +5199,9 @@ def _mat_drain():
     collected list dropped) and `collected`. An entry is removed only when it holds the freed list's own reference, never by
     id alone (a guard: a list's callback queues it before its id can be reused, and every registration drains first, so no
     live list's entry sits under a queued list's key; a dead entry the queue never held is left for the trim); no slot is
-    touched (the list is gone). The cost is one dict lookup per row of each freed list, the walk release() pays for a live
-    index. It runs before each registration and at each release, never in the /perf read (asm_index_stats changes
-    nothing)."""
+    touched (the list is gone, or a finalizer resurrected it: see _ListRef). The cost is one dict lookup per row of each
+    freed list, the walk release() pays for a live index. It runs before each registration and at each release, never in
+    the /perf read (asm_index_stats changes nothing)."""
     q = _MAT_COLLECTED
     n = 0
     while q:
@@ -5643,10 +5661,12 @@ def asm_index_stats():
                 "userFacts": sum(len(ix._user_facts) for ix in list(_LIVE_INDEXES))}   # a GAUGE: the light facts resident across the
 #                                                                                       live indexes (a dropped index takes its cache with it)
 #   resident is len(_MAT_LRU): the live entries plus those of lists freed since the last registration or release (this read drains
-#   nothing, so a snapshot changes no state). released, expired and collected are the counters the removal roads bump (the LRU's weak
-#   ownership, measured 2026-09-15; the collection event, 2026-09-24): collected counts what the drain removed. While resident has
-#   stayed under the cap, expired minus collected counts only _mat_register's pops, entries whose list's callback never queued them;
-#   once the cap binds, the trim's dead branch also counts entries of lists freed since the last drain, with no callback missed.
+#   nothing, so a snapshot changes no state). A list a finalizer resurrected can hold built slots whose entries left as dead ones
+#   and that nothing has read since, and resident does not count them, as it did not before the collection event (see _ListRef).
+#   released, expired and collected are the counters the removal roads bump (the LRU's weak ownership, measured 2026-09-15; the
+#   collection event, 2026-09-24): collected counts what the drain removed. While resident has stayed under the cap, expired minus
+#   collected counts only _mat_register's pops, entries whose list's callback never queued them; once the cap binds, the trim's dead
+#   branch also counts entries of lists freed since the last drain, with no callback missed.
 #   A resident count that keeps rising while evictions stays flat is the leak signal.
 _ASM_CKPT_CAP = 16 * 1024 * 1024   # a document past this is not written (counted): that session parses whole as today
 _ASM_CKPT_STATS = {"written": 0, "restored": 0, "fallbacks": {}, "skipped": {}, "hydratedBytes": 0, "hydratedAtoms": 0,

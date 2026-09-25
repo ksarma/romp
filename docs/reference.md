@@ -3151,7 +3151,10 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   over 32 KiB, never under 500,000; the LRU holds each turn's atom list by a
   weak reference, and a freed list's entries leave at the next build,
   re-registration or release, so `resident` is the live entries plus those
-  of lists freed since the last of those. Before 2026-09-15 a strong
+  of lists freed since the last of those. A list a finalizer resurrects (no
+  kernel path does) can keep built slots whose entries left as dead ones,
+  and `resident` does not count those slots until a read registers them
+  again, as it did not before 2026-09-24. Before 2026-09-15 a strong
   reference kept every superseded generation's atoms, and its whole index
   behind them, resident until they aged past the cap, about 1.2 GiB on a box
   whose LRU sat at its cap of a million entries, and live atoms
