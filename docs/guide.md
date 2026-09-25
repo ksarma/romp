@@ -560,8 +560,9 @@ tab, and a picture from the web opens its address in a new tab, as a link to tha
 does, but only while its button, or on a small picture its dashed border, is on the screen
 with nothing over it that would take a click: a click, a tap, Enter or Space while it is off
 the screen or covered
-(by the list of headings the **Outline** button opens, or the menu of the text size
-buttons, say) opens nothing and scrolls it into view,
+(by the list of headings the **Outline** button opens, the menu of the text size
+buttons, or something the file itself lays over the picture, say) opens nothing and
+scrolls it into view,
 and the next one opens once it shows (a button partly on the screen counts as shown), and
 the button and the picture both show that before the click: the button's
 tooltip says it opens a new tab at the address's host, its border is dashed and its glyph
