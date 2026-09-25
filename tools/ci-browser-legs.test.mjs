@@ -36,7 +36,8 @@
 //     --test over the roster array (no xargs, so node's status is the step's on every platform) with the reporter
 //     scripts/ci-browser-legs-reporter.mjs beside the spec reporter; run on synthetic trees with a stub node on PATH
 //     that records the node --test call and writes the record a case hands it, run through a link to the tree on every
-//     platform (so the post-run read's key on the physical path is held where the temporary directory is no link), it
+//     platform (so the post-run read's key, which the script's comment above its awk pass states, is held where the
+//     temporary directory is no link), it
 //     refuses a missing roster file, a stale line, a duplicate, a missing bundle and a malformed line (nine malformed
 //     shapes: six shown with their whitespace as bash's %q spells it, and three non-canonical spellings), each red
 //     naming the line and the remedy; runs the pre-run checks alone under --check (the script's header states how it
@@ -108,16 +109,21 @@ function jobs(text) {
  *  its name. Its comments are its lines whose first non-blank character is #, and `code` the rest, a line with a # after
  *  code included. Its fields are its code lines of eight spaces, a field of letters and -, and a colon, the rest of the
  *  line trimmed as the value, and its opening line when that is `      - <field>: ` and a value, a later line of a field
- *  replacing an earlier one; a field at another indent, a field holding a digit or _, and a quoted field key are not
- *  read. Its table: STEPS_ROWS, run by the test after it.
- *  Its env, the env reader, which reads every step and fails closed: a line in the block it cannot read is refused,
- *  named by its line (the step's envRefused), rather than read past. An env line is a code line of exactly eight spaces
- *  and then `env:`, and the block begins after the step's env line when only whitespace follows its colon. An env line
- *  with anything else after its colon (an inline mapping, a comment, an alias) is refused, and so is a second env line
- *  in the step, each opening a block read the same way. The block runs to the first code line that is not blank and
- *  whose leading run of spaces and tabs holds no tab and eight spaces or fewer. A blank line (empty, or whitespace
- *  alone by \s at any length) and a # line (dropped from the code lines above, at any indent, inside a block scalar's
- *  text too) neither end the block nor are read. Inside it, a line of exactly ten spaces, then a key of letters, digits
+ *  replacing an earlier one; a field at another indent, a field holding a digit or _, a quoted field key, and a line
+ *  holding a carriage return, U+2028 or U+2029, which the value's . does not match, are not read as a field (U+0085, which
+ *  it matches, stays in the value). Its table: STEPS_ROWS, run by the test after it.
+ *  Its env, the env reader, which reads every step and fails closed: a line it cannot read is refused, named by its
+ *  line (the step's envRefused), rather than read past. A line of the step holding a carriage return or a Unicode line
+ *  break (U+0085, U+2028, U+2029) is refused wherever it sits in the step, a # line included: YAML ends a line there,
+ *  and this reader, which splits at a line feed alone, would read what follows the break as part of the line. An env
+ *  line is a code line of exactly eight spaces and then `env:`, and the block begins after the step's env line when
+ *  only whitespace follows its colon. An env line with anything else after its colon (an inline mapping, a comment, an
+ *  alias) is refused, and so is a second env line in the step, each opening a block read the same way. The block runs
+ *  to the first line that is not blank, not a comment, and whose leading run of spaces and tabs holds no tab and eight
+ *  spaces or fewer. A blank line (empty, or whitespace alone by \s at any length) and a comment (spaces and tabs alone
+ *  before its #, at any indent, inside a block scalar's text too) neither end the block nor are read, and a line with
+ *  any other character before its # (a no-break space, which YAML reads as the start of a key) is not a comment.
+ *  Inside it, a line of exactly ten spaces, then a key of letters, digits
  *  and _ beginning with a letter or _, then a colon and a space, is read as that key, its value the rest of the line
  *  trimmed: a block-scalar indicator (`NOTE: |`, `FOO: >-`) is read as the value, and a colon followed by spaces alone
  *  as an empty value, each an extra key, a loud red. Every other line in the block is refused: a quoted key, a key led
@@ -145,14 +151,16 @@ function steps(job) {
     s.env = {};
     s.envRefused = [];
     let block = false, envLines = 0;
-    for (const l of s.code) {
+    for (const l of s.lines) {
+      if (/[\r\u0085\u2028\u2029]/.test(l)) { s.envRefused.push(l); continue; }
+      if (/^\s*$/.test(l) || /^[ \t]*#/.test(l)) continue;
       if (/^        env:/.test(l)) {
         envLines++;
         block = true;
         if (envLines > 1 || !/^        env:\s*$/.test(l)) s.envRefused.push(l);
         continue;
       }
-      if (!block || /^\s*$/.test(l)) continue;
+      if (!block) continue;
       const lead = /^[ \t]*/.exec(l)[0];
       if (!lead.includes('\t') && lead.length <= 8) { block = false; continue; }
       const e = /^          ([A-Za-z_][A-Za-z0-9_]*): (.*)$/.exec(l);
@@ -180,6 +188,10 @@ const STEPS_ROWS = [
   { what: 'a field holding a digit is not read', lines: ['      - name: A', '        run2: x'], steps: [{ name: 'A', fields: { name: 'A' } }] },
   { what: 'a quoted field key is not read', lines: ['      - name: A', '        "working-directory": x'], steps: [{ name: 'A', fields: { name: 'A' } }] },
   { what: 'a later line of a field replaces an earlier one', lines: ['      - run: a', '        run: b'], steps: [{ name: null, fields: { run: 'b' } }] },
+  { what: 'a field line ending in a carriage return is not read', lines: ['      - name: A', '        run: x\r'], steps: [{ name: 'A', fields: { name: 'A' } }] },
+  { what: 'an opener ending in a carriage return: its name read, trimmed, and its field not read', lines: ['      - name: A\r'], steps: [{ name: 'A', fields: {} }] },
+  { what: 'a field line holding U+2028 is not read', lines: ['      - name: A', '        run: a\u2028b'], steps: [{ name: 'A', fields: { name: 'A' } }] },
+  { what: 'a field line holding U+0085 is read, the character in its value', lines: ['      - name: A', '        run: a\u0085b'], steps: [{ name: 'A', fields: { name: 'A', run: 'a\u0085b' } }] },
 ];
 test('steps()\' table: each row\'s steps, names and fields read as steps()\' docstring states', () => {
   const wrong = [];
@@ -225,6 +237,13 @@ const ENV_ROWS = [
   { what: 'a comment after env:, refused, its block read', lines: ['        env: # the switch', ENV_ON], env: ENV_SW, refused: ['        env: # the switch'] },
   { what: 'an alias after env:, refused', lines: ['        env: *x'], env: {}, refused: ['        env: *x'] },
   { what: 'a second env line, refused, its block read', lines: ['        env:', ENV_ON, '        timeout-minutes: 5', '        env:', ENV_NO], env: ENV_BOTH, refused: ['        env:'] },
+  { what: 'a # line holding a carriage return with NODE_OPTIONS after it, refused', lines: ['        env:', ENV_ON, '          # a comment\r' + ENV_NO], env: ENV_SW, refused: ['          # a comment\r' + ENV_NO] },
+  { what: 'a # line holding U+0085 with NODE_OPTIONS after it, refused', lines: ['        env:', ENV_ON, '          # a comment\u0085' + ENV_NO], env: ENV_SW, refused: ['          # a comment\u0085' + ENV_NO] },
+  { what: 'a key line ending in a carriage return, refused', lines: ['        env:', ENV_ON, ENV_NO + '\r'], env: ENV_SW, refused: [ENV_NO + '\r'] },
+  { what: 'a value holding U+2028, refused', lines: ['        env:', ENV_ON, '          FOO: a\u2028b'], env: ENV_SW, refused: ['          FOO: a\u2028b'] },
+  { what: 'a line before the env line holding U+2029, refused where it sits', lines: ['        timeout-minutes: 5\u2029        env:', '        env:', ENV_ON], env: ENV_SW, refused: ['        timeout-minutes: 5\u2029        env:'] },
+  { what: 'a # line led by a no-break space, refused (YAML reads a key there)', lines: ['        env:', ENV_ON, '          \u00a0#NODE_OPTIONS: x'], env: ENV_SW, refused: ['          \u00a0#NODE_OPTIONS: x'] },
+  { what: 'a # line led by spaces and a tab, a comment, not the end of the block', lines: ['        env:', ENV_ON, ' \t # a comment', ENV_NO], env: ENV_BOTH, refused: [] },
 ];
 test('the env reader\'s table: each row\'s env and refused lines read as steps()\' docstring states', () => {
   const wrong = [];
@@ -250,10 +269,12 @@ function jobCap(job) {
 }
 
 /** The tokens of a comment read as file paths, over the comment with its line breaks and # markers folded to one space: a
- *  token of letters, digits, _, . and - joined by /, each segment beginning with a letter and the last ending in a suffix
- *  that begins with a letter (\.[A-Za-z][\w-]*), not preceded by a word character, ., /, <, > or -. A path of another
- *  shape is not read, so it is not checked: one with no such suffix (a directory, out-tests/), a leading ../ or /, a
- *  segment beginning with ., _, - or a digit (.github/workflows/x.yml, vscode-extension/.x, upstream/2026-x.md). A token
+ *  token of letters, digits, _, . and - joined by /, each segment beginning with a letter, each . of the last segment
+ *  followed by a letter, a digit, _ or -, and the last ending in a suffix that begins with a letter (\.[A-Za-z][\w-]*),
+ *  not preceded by a word character, ., /, <, > or -. A path of another shape is not read, so it is not checked: one
+ *  with no such suffix (a directory, out-tests/), a leading ../ or /, a segment beginning with ., _, - or a digit
+ *  (.github/workflows/x.yml, vscode-extension/.x, upstream/2026-x.md), a last segment holding two dots in a row
+ *  (a/b..c.ts). A token
  *  ends where a word ends, whatever follows it, so the leading part of a longer path is read, and checked, when it has the
  *  shape: a/b.c/d/ is read as a/b.c, and docs/notes.d/readme as docs/notes.d. A path holding a character outside the
  *  token's (@, +, $, ~, a backslash, among others) is read as the pieces that character splits it into, each read only
@@ -293,6 +314,9 @@ const PATH_TOKEN_ROWS = [
   ['the object alone', 'Promise', []],
   ['a Latin abbreviation', 'e.g. a case', ['e.g']],
   ['a path across a comment\'s line break and # marker', 'the file\n# a/b.toml', ['a/b.toml']],
+  ['a last segment holding two dots in a row', 'a/b..c.ts', []],
+  ['a dot followed by - in the last segment', 'a/b.-c.ts', ['a/b.-c.ts']],
+  ['two dots in a row in a directory segment', 'a..b/c.ts', ['a..b/c.ts']],
 ];
 test('PATH_TOKEN\'s table: each row\'s tokens read as PATH_TOKEN\'s docstring states', () => {
   const wrong = PATH_TOKEN_ROWS.filter(([, text, reads]) => !isDeepStrictEqual(commentPaths(text), reads))
@@ -311,7 +335,7 @@ test('the step exists once in the ' + JOB + ' job, directly after the Chromium i
   assert.equal(at, install + 1, 'the step is directly after the Chromium install step, by the two steps\' places among the job\'s steps (the legs need the browser it installs); order: ' + JSON.stringify(names));
   assert.ok(install > testAt, 'the Chromium install step is placed after the Test step, by the two steps\' places (an install or a cache before the Test step is the install pin\'s read, its docstring)');
   const step = all[at];
-  assert.deepEqual(step.envRefused, [], 'the step\'s env block holds no line the env reader refuses (its docstring in tools/ci-browser-legs.test.mjs states what it reads and what it refuses), each named here: ' + JSON.stringify(step.envRefused));
+  assert.deepEqual(step.envRefused, [], 'the step holds no line the env reader refuses (its docstring in tools/ci-browser-legs.test.mjs states what it reads and what it refuses), each named here: ' + JSON.stringify(step.envRefused));
   assert.deepEqual(step.env, { [SWITCH]: '"1"' }, 'the step\'s env, as the env reader reads it (its docstring in tools/ci-browser-legs.test.mjs states what it reads and what it refuses), is the switch alone, set to "1"');
   assert.equal(step.fields.run, RUN_LINE, 'the run line calls the script, which runs node --test over the roster');
   assert.ok(!('working-directory' in step.fields), 'no working-directory field among the step\'s fields (steps() states what it reads): the roster, the script and out-tests/ are under the job\'s default, vscode-extension/');
@@ -500,17 +524,19 @@ test('the step is bounded twice: its own timeout-minutes fits the margin under t
 
 /** The install pin: over the steps before the step named Test, as steps() splits the job, it reads a Playwright install
  *  by the union of two reads, so a spelling either reads is read. The first is each step's run field as steps() reads it
- *  (an eight-space `run:` line, or the step's `- run:` opener, its value trimmed) when it begins npx playwright install and
- *  then a word boundary. The second is those steps' code lines (their lines but their # lines, joined) read for run: npx
- *  playwright install and a word boundary after a line's leading whitespace, so a run: nested under with: and a step whose
- *  fields sit at ten spaces are read too. By the word boundary, npx playwright install-deps is read as well. It reads a
- *  Playwright cache from the same code lines, after a line's leading whitespace: path: ~/.cache/ms-playwright with only
- *  whitespace after it, and key: playwright-. A spelling outside them is not read: a run: whose command is on the next
- *  line, another launcher, another key. The code-line patterns are those of the gate-adopt pin in
+ *  (steps()' docstring states its field spellings, the step's `- run:` opener among them) when it begins npx playwright
+ *  install and then a word boundary. The second is those steps' code lines (their lines but their # lines, joined) read
+ *  for run: npx playwright install and a word boundary directly after a line's leading whitespace, so a run: nested under
+ *  with: and a run: line of a step whose fields sit at ten spaces are read too. By the word boundary, npx playwright
+ *  install-deps is read as well. It reads a Playwright cache from the same code lines, after a line's leading whitespace:
+ *  path: ~/.cache/ms-playwright with only whitespace after it, and key: playwright-. A spelling outside them is not read:
+ *  a run: whose command is on the next line, another launcher, another key, and a run: after the dash of a line steps()
+ *  does not read as a step's opener with that field (a step whose fields sit at ten spaces, more than one space after the
+ *  dash, a tab after the opener's run:). The code-line patterns are those of the gate-adopt pin in
  *  tools/markdown-viewer-plan-gate-adopt.test.mjs (its installBefore and cacheBefore), but the two pins read different
  *  regions (the gate-adopt pin reads the region its npmTestJob docstring states), differ on the run fields steps() reads
- *  where the code-line pattern does not (the step's `- run:` opener, and more than one space after run:), which this pin
- *  reads and the gate-adopt pin does not, and hold different directions: this pin holds that pin's CI_SKIP direction
+ *  that the code-line pattern does not (the step's `- run:` opener among them), which this pin reads and the gate-adopt
+ *  pin does not, and hold different directions: this pin holds that pin's CI_SKIP direction
  *  alone. Under the plan's CI_RUN sentence the gate-adopt pin requires an install before the Test step, and this pin
  *  refuses any install it reads there, whatever engines it names. Returns the Test step's place and what was read. Its
  *  table: INSTALL_ROWS, run by the test after it. */
@@ -534,6 +560,10 @@ const INSTALL_ROWS = [
   ['an unnamed step\'s "- run:" opener, read through steps()', ['      - run: npx playwright install chromium', ...TEST_LINES], true, false],
   ['a "- run:" opener with a name: line after it, read through steps()', ['      - run: npx playwright install chromium', '        name: Install', ...TEST_LINES], true, false],
   ['two spaces after run:, read through steps()', ['      - name: Install', '        run:  npx playwright install chromium', ...TEST_LINES], true, false],
+  ['a tab after an eight-space run:, read through steps()', ['      - name: Install', '        run:\tnpx playwright install chromium', ...TEST_LINES], true, false],
+  ['a ten-space step\'s opener holding run:, read by neither', ['      -   run: npx playwright install chromium', '          name: Early install', ...TEST_LINES], false, false],
+  ['two spaces after the dash of an opener holding run:, read by neither', ['      -  run: npx playwright install chromium', ...TEST_LINES], false, false],
+  ['a tab after the opener\'s run:, read by neither', ['      - run:\tnpx playwright install chromium', ...TEST_LINES], false, false],
   ['install-deps, read by the word boundary after install', ['      - name: Deps', '        run: npx playwright install-deps', ...TEST_LINES], true, false],
   ['a longer word than install, not read', ['      - name: Install', '        run: npx playwright installer', ...TEST_LINES], false, false],
   ['a step whose fields sit at ten spaces, read by the code-line pattern', ['      -   name: Install', '          run: npx playwright install chromium', ...TEST_LINES], true, false],
@@ -799,9 +829,9 @@ test('the script exists, is executable, runs node --test over the roster array (
  *  script's mktemp makes the record file: `tmp` in its result is that directory, and `record` is the path the script handed
  *  its reporter as the destination, read from the argument after --test-reporter=./scripts/ci-browser-legs-reporter.mjs in
  *  the stub's log (null when node was not started). The tree sits in a base directory beside a link to it, and `root` is
- *  the link: the script runs through it on every platform, so its post-run read, which keys the roster's lines by the
- *  physical path (pwd -P) as node resolves a bundle, is held on a plain temporary directory too (ubuntu, where the Shell
- *  job runs), not only where os.tmpdir() sits behind a link; a key on the logical path reds every leg that passed. `ext` is
+ *  the link: the script runs through it on every platform, so its post-run read's key (the script's comment above its
+ *  awk pass states it) is held on a plain temporary directory too (ubuntu, where the Shell job runs), not only where
+ *  os.tmpdir() sits behind a link: a key on the logical path would red every leg that passed. `ext` is
  *  the physical path of the tree's vscode-extension, as node spells a bundle in its record, and `rec(bundle, fields...)`
  *  spells one record line for that bundle (the reporter's eight fields, the path first). `prefix` is the base directory's
  *  name before the six characters mkdtemp adds: cbl- unless a case names another, as the case of a directory whose name
@@ -1078,7 +1108,7 @@ test('after node --test the script derives per rostered leg that a test of its b
   // it): an ordinary failure of the leg, no LOST line, no label of the script's, node's red passed through
   const quoted = run(A + '\n', { report: rec(A, 'fail', 'test', '-', 'test', 'leg a opens the page', 'the leg failed under the switch; the child run printed: ' + LOST, 'testCodeFailure'), exit: 1 });
   assert.equal(quoted.status, 1, 'node\'s failure stands');
-  assert.ok(!quoted.err.includes('the runner lost its browser'), 'a message that quotes the phrase after other text is not a lost browser (LOST reads the start of the message):\n' + quoted.err);
+  assert.ok(!quoted.err.includes('the runner lost its browser'), 'a message that quotes the phrase after other text is not a lost browser (the lost-browser read the script\'s header states):\n' + quoted.err);
   assert.equal(quoted.err, '', 'an ordinary failure gets no label of the script\'s:\n' + quoted.err);
   // the switch set to yes, a row of the script's switch-state read (its comment in the script states what it reads): the
   // skip's red names the value and gives the set-switch remedy
@@ -1100,7 +1130,9 @@ test('after node --test the script derives per rostered leg that a test of its b
   // foreign file-level failure and a foreign failure whose message begins with inBrowser's phrase are node's red at its
   // exit 1, with no line of the script's. With no pass of A's own, A is red as unrun, its tally counting none of the
   // foreign skip, todo, suite and file-level results, and no skip is named. A foreign pass alone is not that row: a pass
-  // is none of the tallied kinds, so its zero tally holds under a script that credits foreign results to A's tally
+  // is none of the tallied kinds, so its zero tally holds under a script that credits foreign results to A's tally. A
+  // foreign failure outside a todo with no result of A's own is node's red at its exit 1, and A is still red as unrun
+  // beside it, the failure counting nothing for A
   const H = 'out-tests/ui/webview/helper.js';
   const FOREIGN_ROWS = [
     { what: 'a foreign skip and a foreign failure inside a todo beside A\'s counting pass: exit 0, nothing on stderr', exit: 0, status: 0, err: (e) => e === '',
@@ -1110,6 +1142,9 @@ test('after node --test the script derives per rostered leg that a test of its b
     { what: 'a foreign pass, skip, todo, suite result and file-level pass with no pass of A\'s own: A red as unrun with a zero tally, no skip named', exit: 0, status: 1,
       err: (e) => e.includes(UNRUN + '0 skipped, 0 todo, 0 suite and 0 file-level results for it)') && !e.includes('skipped with'),
       report: rec(H, 'pass', 'test', '-', 'test', 'a helper pass', '', '-') + rec(H, 'pass', 'test', 'skip', 'test', 'a helper skip', 'why', '-') + rec(H, 'pass', 'test', 'todo', 'test', 'a helper todo', '', '-') + rec(H, 'pass', 'suite', '-', 'test', 'a helper suite', '', '-') + rec(H, 'pass', 'test', '-', 'file-level', H, '', '-') },
+    { what: 'a foreign failure outside a todo with no result of A\'s own: node\'s exit 1, A red as unrun with a zero tally', exit: 1, status: 1,
+      err: (e) => e.includes(UNRUN + '0 skipped, 0 todo, 0 suite and 0 file-level results for it)'),
+      report: rec(H, 'fail', 'test', '-', 'test', 'a helper test', 'the helper is broken', 'testCodeFailure') },
   ];
   const foreignWrong = [];
   for (const row of FOREIGN_ROWS) {
