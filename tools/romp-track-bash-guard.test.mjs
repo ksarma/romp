@@ -11667,15 +11667,18 @@ test("round 7 of fork PR #780 review, thirty-third commit, THE CLEARED ENVIRONME
 //   for such a D succeeded anywhere in the leg; since the fifty-fourth commit a success outside those directories (an execve of another path
 //   whose last component is N) finds nothing (the reviewer's ruling at 17:18Z, F2). This is the reviewer's simpler rule: one failed call in
 //   a directory the record shows, where the full rule asks for a failure in every directory of the PATH in force. N is REFUSED, and so
-//   missing, when a call found it in such a directory and every execve of N there failed, none succeeding (M2: EACCES with no success, a
-//   present-but-refusing program, is absent). A path P is MISSING when an execve of P, in a directory no such PATH holds, failed and no
+//   missing, when a call on D/N succeeded for such a directory D (a stat, say), at least one execve of D/N for such a D failed (EACCES,
+//   say), and no execve of D/N for such a D succeeded. With MISSING, that is M2 as this rule holds it: a name with at least one failed
+//   execve in a directory the record shows, and none succeeding, is missing. M2 reads the execve road only. A lookup that runs no execve
+//   is no refusal: where dash's stat finds a file and its faccessat2 fails with EACCES, dash runs no execve, and that stat finds N where
+//   its directory is one the record shows. A path P is MISSING when an execve of P, in a directory no such PATH holds, failed and no
 //   execve of P succeeded. And a PROBE, a failed call other than an execve whose program, call and arguments after the path are those of a
 //   lookup THE LOOKUP ROADS measure in a directory a record shows (probeKey; measured here, the stat of bash, dash, sh and python3 and zsh's
 //   access and open), on D/N for a directory D the record does not show, makes N missing whatever else found it: the PATH in force for that
 //   lookup (one a shell set in its own memory, `PATH=/x; q`) cannot be recovered from the record (F3). Each missing name or path reds the
-//   leg, unless the row's entry in LEGITIMATE LOOKUPS excuses it (its name, the program that made every call of it, and the file that
-//   program had opened before; the loop counts them). An execve whose environment strace did not print reds too: the PATH in force for that
-//   process's lookups cannot then be recovered from the record.
+//   leg, unless the row's entry in LEGITIMATE LOOKUPS excuses it (its name, the program that made every call of it, and, where the entry
+//   names one, the file that program had opened before; the loop counts them). An execve whose environment strace did not print reds too:
+//   the PATH in force for that process's lookups cannot then be recovered from the record.
 //   Rule 1 (the fifty-second commit's, kept): an execve invocation whose every attempt failed reds where the row's text spells its program,
 //   even where another invocation found that program (a command of the leg ran nothing). An absent invocation of a program the text never
 //   spells, which another invocation found, is printed as an INFO line.
@@ -11892,8 +11895,9 @@ const roadKey = (o, name, readNames) => `${o.program} (${o.leg ? "the leg's shel
 // lookup. `probes` the probes a lookup makes, as THE LOOKUP ROADS measure them (null: no call outside those directories is read). The kinds:
 //   `name`: a call on D/N failed for a directory D the record shows, and no call on D/N for such a D succeeded (a success elsewhere, an
 //   execve of another path whose last component is N among them, finds nothing: F2);
-//   `refused`: N was found in such a directory, and every execve of N there failed (EACCES, say), none succeeding (M2: a present-but-refusing
-//   program is absent);
+//   `refused`: a call on D/N succeeded for such a directory D, at least one execve of D/N for such a D failed (EACCES, say), and no execve
+//   of D/N for such a D succeeded (M2, the execve road only: a lookup that runs no execve, as dash's where its faccessat2 fails with
+//   EACCES on a file its stat found, is no refusal);
 //   `path`: an execve of a path P in a directory no such PATH holds failed, and no execve of P succeeded;
 //   `probe`: a call of a probe's shape on D/N failed for a directory D the record does not show, so the PATH in force for that lookup (a
 //   PATH a shell set in its own memory, say) cannot be recovered from the record (F3), whatever else found N
@@ -11957,12 +11961,13 @@ const missingLine = (m) => {
 };
 // LEGITIMATE LOOKUPS (the reviewer's rulings at 14:33Z, condition 4, and 17:18Z): per committed row, each name its legs look up and do not
 // find by design, as [the name, the program that looks it up, the file that program opened before the lookup (null where the lookup is the
-// program's own), the reason, measured on this box]. A miss is legitimate only where every one of its calls was made by that program, in a
-// process that had opened that file before the call; the loop counts each, and prints an entry no leg used on this runner (another runner's
-// system profile tests for other files, or for none). No exemption by a name's pattern. Measured on this box's PATH (under the PATH shim
-// that hides zsh, zsh5, rzsh and perf, RT-zsh-zdotdir-i does not run): each is a probe of a lookup's shape in a directory the record does
-// not show, and no committed row's record shows a name missing in a directory it shows. The login bash of RT-bash-login-home reads
-// this box's system profile, whose scripts test for files that are not there; zsh -i in RT-zsh-zdotdir-i opens its ZDOTDIR's .zshenv
+// program's own), the reason, measured on this box]. A miss is legitimate only where every one of its calls was made by that program and,
+// where the entry names a file, in a process that had opened that file before the call (an entry naming none, RT-zsh-zdotdir-i's for
+// .zshenv, excuses its program's miss with no earlier open); the loop counts each, and prints an entry no leg used on this runner (another
+// runner's system profile tests for other files, or for none). No exemption by a name's pattern. Measured on this box's PATH (under the
+// PATH shim that hides zsh, zsh5, rzsh and perf, RT-zsh-zdotdir-i does not run): each is a probe of a lookup's shape in a directory the
+// record does not show, and no committed row's record shows a name missing in a directory it shows. The login bash of RT-bash-login-home
+// reads this box's system profile, whose scripts test for files that are not there; zsh -i in RT-zsh-zdotdir-i opens its ZDOTDIR's .zshenv
 // before its .zshrc, and the row writes only the .zshrc.
 const LEGITIMATE_LOOKUPS = {
   'RT-bash-login-home': [
@@ -11994,8 +11999,8 @@ const recordReading = (text, cwd, run, { PATH = process.env.PATH, searchDirs = n
   for (const inv of invs) if (!inv.ok && (spells(path.basename(inv.argv[0] || '')) || spells(path.basename(inv.attempts[0].filename)))) faults.push(absentLine(inv));
   const words = [];
   programsInvoked(text, { collect: words });
-  // THE LOOKUP RULE, by name, over every call of the record; a LEGITIMATE LOOKUPS entry excuses a miss whose every call its program made, in
-  // a process that had opened the entry's file before it
+  // THE LOOKUP RULE, by name, over every call of the record; a LEGITIMATE LOOKUPS entry excuses a miss whose every call its program made
+  // (and, where the entry names a file, made in a process that had opened that file before the call)
   const measured = searchDirs === null || probes === null ? lookupRoads() : null;
   const look = lookupReading(rec.calls, searchDirs === null ? measured.searchDirs : searchDirs, { operand: (p) => text.includes(p), probes: probes === null ? measured.probes : probes, readNames: readNamesOf(text) });
   const openedBefore = (c, file) => rec.calls.some((x, k) => k < c.i && x.pid === c.pid && /^open/.test(x.sys) && x.ok && x.path === file);
@@ -16110,9 +16115,9 @@ test("round 7 of fork PR #780 review, fifty-first commit, THE CLEARED ENVIRONMEN
 // the fifty-second's re-verify's five rows (F1's three, F2's two), verbatim: each is faulted in every shell, through the loop the test
 // measures by, and a text whose programs run is faulted in none. Since the fifty-fourth commit (the reviewer's ruling at 17:18Z on the
 // fifty-third's re-verify) both pins read its F1 (a program word the walk cannot resolve, on a segment that looks nothing up), F2 (a name
-// found only by a path in no directory the record shows), F3 (a probe in a directory the record does not show) and M2 (a refusing
-// program): the first as synthetic records, the second as that re-verify's rows verbatim and one witness each whose missing name stands where
-// the walk reads no word. THE LOOKUP ROADS' self-test follows them. (2) Ruling E narrowed: the last
+// found only by a path in no directory the record shows), F3 (a probe in a directory the record does not show) and M2 (a program whose
+// execve failed where a lookup found it): the first as synthetic records, the second as that re-verify's rows verbatim and one witness
+// each whose missing name stands where the walk reads no word. THE LOOKUP ROADS' self-test follows them. (2) Ruling E narrowed: the last
 // pin reads the placements the three matrices derived in this process (THE WRITE'S PLACE, at rowsNotRun), holds each to what its runs
 // showed, prints the split, and holds the gate, with the zsh family as the absent set, to not run exactly the rows whose `needs` list zsh
 // and the rows placed inside zsh.
@@ -16127,7 +16132,7 @@ const straceStat = (pid, file, ok) => `${pid} newfstatat(AT_FDCWD, ${straceQuote
 const STRACE_ENOENT = ') = -1 ENOENT (No such file or directory)';
 // bash's and dash's lookup of a name they do not find, as the record shows it: a failed stat in each directory of the synthetic PATH
 const lookupMiss = (pid, name) => ['/usr/local/bin', '/usr/bin', '/bin'].map((d) => straceStat(pid, `${d}/${name}`, false));
-test("round 7 of fork PR #780 review, fifty-second and fifty-third commits, THE LOOKUP RECORD read in process (the reviewer's rulings at 12:24Z, condition (1), and 14:33Z, conditions 2 and 3): a name a process looked up in a directory the record shows and found nowhere reds by that name, whatever text it stood in (the re-verify's F1: a -c operand holding an expansion) and whatever else ran with its operands (its F2), a name found in any such directory is no miss, a failed execve of a path no PATH holds reds, a PATH among env's arguments and the directories searched with no PATH count, and a directory no PATH holds is none of the rule's; an execve whose environment strace did not print reds, its PATH unrecoverable; an invocation whose every attempt failed reds where the text spells its program; every program word the walk reads must be attributable by name or path, a vouched one on a segment run on a condition exempt and an unvouched one not; a string strace cut short, a call that never returned and a record without the leg's shell red as unreadable, and a call the kernel restarts is read at its restart; a missing program the text never spells reds too, and an absent invocation of one another invocation found is kept apart, not judged; and the loop over every listed command faults no leg whose record finds each program word and every leg whose record holds an absent invocation; and, since the fifty-fourth commit (the reviewer's ruling at 17:18Z), a program word the walk cannot resolve reds where no execve its literal operands attribute to it, one to one and unclaimed by any word the walk reads or names, ran (F1), a name run only by a path in no directory the record shows is missing (F2), a failed probe in a directory the record does not show reds and a failed call of no probe's shape does not (F3), a name whose every execve failed where a lookup found it is refused (M2), and a LEGITIMATE LOOKUPS entry excuses only its program's miss after that program opened the entry's file", () => {
+test("round 7 of fork PR #780 review, fifty-second and fifty-third commits, THE LOOKUP RECORD read in process (the reviewer's rulings at 12:24Z, condition (1), and 14:33Z, conditions 2 and 3): a name a process looked up in a directory the record shows and found nowhere reds by that name, whatever text it stood in (the re-verify's F1: a -c operand holding an expansion) and whatever else ran with its operands (its F2), a name found in any such directory is no miss, a failed execve of a path no PATH holds reds, a PATH among env's arguments and the directories searched with no PATH count, and a directory no PATH holds is none of the rule's; an execve whose environment strace did not print reds, its PATH unrecoverable; an invocation whose every attempt failed reds where the text spells its program; every program word the walk reads must be attributable by name or path, a vouched one on a segment run on a condition exempt and an unvouched one not; a string strace cut short, a call that never returned and a record without the leg's shell red as unreadable, and a call the kernel restarts is read at its restart; a missing program the text never spells reds too, and an absent invocation of one another invocation found is kept apart, not judged; and the loop over every listed command faults no leg whose record finds each program word and every leg whose record holds an absent invocation; and, since the fifty-fourth commit (the reviewer's ruling at 17:18Z), a program word the walk cannot resolve reds where no execve its literal operands attribute to it, one to one and unclaimed by any word the walk reads or names, ran (F1), a name run only by a path in no directory the record shows is missing (F2), a failed probe in a directory the record does not show reds and a failed call of no probe's shape does not (F3), a name a lookup found in a directory the record shows, with at least one failed execve and no successful one in such a directory, is refused (M2, the execve road only), and a LEGITIMATE LOOKUPS entry excuses only its program's miss and, where it names a file, only after that program opened it", () => {
   const SELF = straceExec(100, '/usr/bin/sh', ['sh', '-c', 'x']);
   const sleepVouched = realPresence('sleep').ok && realPresence('sleep', { PATH: VOUCH_PATH }).ok;
   // [what, the command, the record's lines, the faults: each pattern matches one, and there are no others, the reading's options]
@@ -16148,7 +16153,7 @@ test("round 7 of fork PR #780 review, fifty-second and fifty-third commits, THE 
     ["a failed call of no probe's shape outside those directories is none of the rule's (the loader's access of /etc/ld.so.preload)", 'cp a b', [SELF, '100 access("/etc/ld.so.preload", R_OK) = -1 ENOENT (No such file or directory)', straceExec(101, '/usr/bin/cp', ['cp', 'a', 'b'])], []],
     ["F2: a program of the name run by a path in no directory the record shows finds nothing", 'bash -c "$x"; /opt/b/q', [SELF, straceExec(101, '/usr/bin/bash', ['bash', '-c', 'q']), ...lookupMiss(101, 'q'), straceExec(102, '/opt/b/q', ['/opt/b/q'])], [/^q is missing: each of its 3 lookup calls failed \(newfstatat ENOENT\)/]],
     ['and one run from such a directory finds it', 'bash -c "$x"; /usr/bin/q', [SELF, straceExec(101, '/usr/bin/bash', ['bash', '-c', 'q']), ...lookupMiss(101, 'q'), straceExec(102, '/usr/bin/q', ['/usr/bin/q'])], []],
-    ['M2: a name found in such a directory whose every execve there failed is refused, a present-but-refusing program absent', 'bash -c "$x"', [SELF, straceExec(101, '/usr/bin/bash', ['bash', '-c', 'q']), straceStat(101, '/usr/local/bin/q', false), straceStat(101, '/usr/bin/q', true), straceExec(102, '/usr/bin/q', ['q'], ') = -1 EACCES (Permission denied)')], [/^q is refused: its one execve in a directory the record shows failed \(execve EACCES\) and none succeeded, though a lookup there found it/]],
+    ['M2: a name found in such a directory, with a failed execve there and no execve of it there succeeding, is refused', 'bash -c "$x"', [SELF, straceExec(101, '/usr/bin/bash', ['bash', '-c', 'q']), straceStat(101, '/usr/local/bin/q', false), straceStat(101, '/usr/bin/q', true), straceExec(102, '/usr/bin/q', ['q'], ') = -1 EACCES (Permission denied)')], [/^q is refused: its one execve in a directory the record shows failed \(execve EACCES\) and none succeeded, though a lookup there found it/]],
     ['and a name one execve there ran is not', 'bash -c "$x"', [SELF, straceExec(101, '/usr/bin/bash', ['bash', '-c', 'q']), straceExec(102, '/usr/local/bin/q', ['q'], STRACE_ENOENT), straceExec(102, '/usr/bin/q', ['q'])], []],
     ['a LEGITIMATE LOOKUPS entry excuses a miss its program made after opening its file', 'e=q; eval "$e"', [SELF, '100 openat(AT_FDCWD, "/etc/q780.sh", O_RDONLY) = 3', straceStat(100, '/opt/q780/q', false)], [], { legit: [['q', 'sh', '/etc/q780.sh', 'a synthetic reason']] }],
     ['and none made before that open, or by another program', 'e=q; eval "$e"', [SELF, straceStat(100, '/opt/q780/q', false), '100 openat(AT_FDCWD, "/etc/q780.sh", O_RDONLY) = 3'], [/^q is missing: its one lookup call in a directory the record does not show failed/], { legit: [['q', 'sh', '/etc/q780.sh', 'a synthetic reason']] }],
@@ -16241,7 +16246,7 @@ test("round 7 of fork PR #780 review, fifty-second and fifty-third commits, THE 
       // F2, F3 and M2 (the same ruling): the re-verify's A2, A1b, A1c and A5b verbatim, and one witness each whose missing name stands where the
       // walk reads no word (a -c operand or an eval text holding an expansion), so the rule it witnesses is the only one that reds it: a
       // program of the name run by a path in no directory the record shows (F2), a PATH a shell set in its own memory (F3), and a file on a
-      // PATH the record shows that the leg cannot execute (M2; A5b is one)
+      // PATH the record shows that the leg cannot execute, whose execve fails (M2; A5b is one, bash doing the lookup)
       ['A2-basename', `mkdir -p ../scratch/b; printf '#!/bin/sh\\n' > ../scratch/b/q780v-no-such-program; chmod +x ../scratch/b/q780v-no-such-program; z=q780v-no-such-program; $z -c 'env -i SHLVL=1 bash -c true' 2>/dev/null; ../scratch/b/$z`, true],
       ['A1b-inproc-path', `PATH=/nonexistent-q780v; z=q780v-no-such-program; $z -c 'env -i SHLVL=1 bash -c true' 2>/dev/null`, true],
       ['A1c-inproc-path-eval', `v=PATH; eval "$v=/nonexistent-q780v"; z=q780v-no-such-program; $z -c 'env -i SHLVL=1 bash -c true' 2>/dev/null; true`, true],
