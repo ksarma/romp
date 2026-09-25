@@ -9950,7 +9950,7 @@ r10b_long_witness() {   # <rule> <suffix>: the rule's witness under a long name 
     r10b_long_witness freemius-secret-key .php
 }
 
-@test "round 10b (G): the path-scoped copies' directories are made past the argument limit: 4,000 one-line .yaml files in one commit, pushed for real with the stack limit lowered to 512 KB in the case's own subshell (an exec's arguments then capped at 128 KB), pass, both byte figures agreeing (red at eee3938a8: one mkdir took every directory, exited 126 on Argument list too long, and set -e ended the hook with no romp line)" {
+@test "round 10b (G): the path-scoped copies' directories are made past the argument limit: 4,000 one-line .yaml files in one commit, pushed for real with the stack limit lowered to 512 KB in the case's own subshell (an exec's arguments then capped at 128 KB), pass, both byte figures agreeing (red at eee3938a8: one mkdir took every directory, exited 126 on Argument list too long, and set -e ended the hook with no romp line); and 4,000 more, pushed the same way under a TMPDIR three 80-character runs of CJK characters deep in a UTF-8 locale, pass too, each batch sized by the scratch path's length in bytes (round 10b2; red under the length in characters: mkdir's exec failed on Argument list too long, and set -e ended the hook with no romp line)" {
     r9d_base
     mkdir -p "$REPO/k8s"
     for ((i = 1; i <= 4000; i++)); do printf 'name: probe\n' > "$REPO/k8s/f$i.yaml"; done
@@ -9970,6 +9970,36 @@ r10b_long_witness() {   # <rule> <suffix>: the rule's witness under a long name 
     [[ "$output" != *"romp pre-push"* ]]
     [[ "$output" != *"Argument list too long"* ]]
     [ "$(grep -o 'INF scanned ~[0-9]* bytes' <<< "$output")" = "$(printf 'INF scanned ~56000 bytes\nINF scanned ~56000 bytes')" ]   # 4,000 pieces of 14 bytes, then their copies
+    [ "$(git -C "$TEST_DIR/remote.git" rev-parse refs/heads/main)" = "$(git -C "$REPO" rev-parse HEAD)" ]
+    # Round 10b2 (the r10b audit's probe): the batch is sized by the scratch path's length in BYTES. In a UTF-8
+    # locale bash's ${#scratch} counts characters, so a scratch path under a TMPDIR named past ASCII made a batch
+    # larger in bytes than it was counted. The locale is set for the push, the first of two that counts the run
+    # of CJK characters as 80, and the geometry is checked first: under the character count one batch's argument
+    # strings alone pass 128 KB, so the push below is red there whatever else the environment holds.
+    c="$(printf '\344\270\255%.0s' $(seq 1 80))"                               # 80 CJK characters, 240 bytes
+    td="$TEST_DIR/$c/$c/$c"
+    mkdir -p "$td"
+    loc=""
+    for l in C.UTF-8 en_US.UTF-8; do
+        if [ "$(LC_ALL=$l bash -c 'printf %s "${#1}"' _ "$c" 2>/dev/null)" = 80 ]; then loc=$l; break; fi
+    done
+    [ -n "$loc" ] || { echo "no UTF-8 locale (C.UTF-8, en_US.UTF-8) in which bash counts the run as 80 characters: the push cannot tell the two counts apart"; false; }
+    s="$td/romp-pre-push.XXXXXX"                                                # the scratch path the hook's mktemp makes, its length
+    sc="$(LC_ALL=$loc bash -c 'printf %s "${#1}"' _ "$s")"
+    sb="$(LC_ALL=C bash -c 'printf %s "${#1}"' _ "$s")"
+    [ $((65536 / (sc + 32) * (sb + 14))) -gt 131072 ] || {                      # a batch by characters, each argument the path, /creds.p/, four digits and its NUL
+        echo "a batch sized by the path's $sc characters carries $((65536 / (sc + 32) * (sb + 14))) bytes of arguments, not past 131072: TEST_DIR ($TEST_DIR) is too long for this witness"; false; }
+    mkdir -p "$REPO/k8s2"
+    for ((i = 1; i <= 4000; i++)); do printf 'name: probe\n' > "$REPO/k8s2/f$i.yaml"; done
+    git -C "$REPO" add k8s2
+    git -C "$REPO" commit -qm "4,000 more yaml files"
+    git -C "$REPO" config core.hooksPath "$TEST_DIR/hooks"
+    run env TMPDIR="$td" LC_ALL="$loc" bash -c 'ulimit -s 512 && exec git -C "$1" push origin main' _ "$REPO"
+    git -C "$REPO" config core.hooksPath "$TEST_DIR/no-hooks"
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"romp pre-push"* ]]
+    [[ "$output" != *"Argument list too long"* ]]
+    [ "$(grep -o 'INF scanned ~[0-9]* bytes' <<< "$output")" = "$(printf 'INF scanned ~56000 bytes\nINF scanned ~56000 bytes')" ]   # the second commit's 4,000 pieces, then their copies
     [ "$(git -C "$TEST_DIR/remote.git" rev-parse refs/heads/main)" = "$(git -C "$REPO" rev-parse HEAD)" ]
 }
 

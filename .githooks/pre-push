@@ -883,12 +883,17 @@
 # exact only with the file left out); a file its git mode skips by a
 # directory in its path (node_modules, a vendored tree) has no directory here
 # and is scanned. A repository config's path allowlist keyed on a file's real
-# name or its directory matches no copy, whose name is the fixed stem, so the
-# copy is scanned instead, the safe side (until round 10b such an allowlist
-# skipped the copy, and the push was refused on the figure); one keyed on a
-# suffix alone still skips the copy and refuses the push on the figure; and a
-# config that drops any of the five rules makes the run fail, refused as a
-# scan that could not complete.
+# name matches no copy, whose name is the fixed stem, so the copy is scanned
+# instead, the safe side (until round 10b such an allowlist skipped the copy,
+# and the push was refused on the figure), unless that name is one a copy
+# can carry: nuget.config (the copy of every file whose name ends so, in any
+# case, is named nuget.config), or a number and a lower-case suffix
+# (12.yaml); one keyed on a directory of the path never matched a copy, whose
+# one directory is its piece's number, unless that directory is a number
+# (12/); one keyed on a suffix alone, or on a name or a directory the copy
+# carries, skips the copy and refuses the push on the figure;
+# and a config that drops any of the five rules makes the run fail, refused
+# as a scan that could not complete.
 # What the pieces cost, as three facts: gitleaks' path exemptions (lockfiles,
 # node_modules and vendored trees, images, fonts, documents, go.sum and the
 # rest of its global allowlist, and its per-rule path allowlists) do not reach
@@ -3665,7 +3670,7 @@ merge_binary_reads() {   # <count of routed paths the feed recorded>
 # run made; a push the scanner would not run over reads no version.
 scan_credentials() {
     local gl local_ref local_sha _remote_ref remote_sha revs rev peeled peeled_read nfed record n what
-    local rdone rpieces rbytes rpbytes rbin rest piece fsha fpath fterm data pdone plisted pbig nbig pcount scanning step pk
+    local rdone rpieces rbytes rpbytes rbin rest piece fsha fpath fterm data pdone plisted pbig nbig pcount scanning sbytes step pk
     local -a cfg ix_sha ix_path pdirs
     if ! credential_scan_armed; then
         [ -n "${ROMP_NO_GITLEAKS:-}" ] && return 0     # a skip asked for: silent
@@ -3839,11 +3844,17 @@ scan_credentials() {
         # system's argument limit that one mkdir failed (E2BIG, status 126),
         # and set -e ended the hook with bash's line and no romp line on a
         # clean push (until round 10b; the round 9 refuters, 2026-09-25). Each
-        # mkdir takes as many as fit in 64 KB at the scratch path's length,
-        # half the 128 KB Linux allows any exec's arguments however low the
-        # stack limit; a mkdir that fails ends the hook under set -e, as every
-        # writer in the scratch directory does (the header's scratch
-        # paragraph).
+        # mkdir takes as many as fit in 64 KB at the scratch path's length in
+        # bytes, half the 128 KB Linux allows any exec's arguments however low
+        # the stack limit. That length is counted under LC_ALL=C: in a UTF-8
+        # locale ${#scratch} counts characters, and until round 10b2 a scratch
+        # path named past ASCII made a batch larger in bytes than it was
+        # counted, so under a low stack limit mkdir could fail on Argument
+        # list too long, a clean push refused with no romp line (the r10b
+        # audit, 2026-09-25: a TMPDIR of three 80-character runs of CJK
+        # characters, ulimit -s 512). A mkdir that fails ends the hook under
+        # set -e, as every writer in the scratch directory does (the header's
+        # scratch paragraph).
         if [ "$scanning" -eq 1 ] && [ -s "$scratch/creds.pindex" ]; then
             pdirs=()
             while IFS=$'\t' read -r -u 6 piece fpath fterm; do
@@ -3851,7 +3862,8 @@ scan_credentials() {
                 case "$piece" in ''|*[!0-9]*) continue ;; esac
                 pdirs+=("$scratch/creds.p/$piece")
             done 6< "$scratch/creds.pindex"
-            step=$(( 65536 / (${#scratch} + 32) )); [ "$step" -ge 1 ] || step=1
+            sbytes=$(LC_ALL=C; printf '%s' "${#scratch}")
+            step=$(( 65536 / (sbytes + 32) )); [ "$step" -ge 1 ] || step=1
             pk=0
             while [ "$pk" -lt "${#pdirs[@]}" ]; do
                 mkdir -- "${pdirs[@]:pk:step}"

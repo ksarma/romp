@@ -633,13 +633,16 @@ setup_gitleaks_stub() {   # <exit-code>: records its args and the bytes it is ha
     # gitleaks' count line and writes one record naming piece 1 to the report
     # path after -r, in the shape of the hook's report template (the piece, a
     # tab, the rule, a tab, a closing dot), so the hook's line naming the
-    # commit and file can be asserted.
+    # commit and file can be asserted. Asked its version, it answers a
+    # release's dotted version above the floor the hook's version gate reads
+    # (gitleaks 8.25.0) and records nothing, so the args file holds the scans.
     unset ROMP_NO_GITLEAKS
     GL_ARGS="$TEST_DIR/gitleaks.args"
     GL_FEED="$TEST_DIR/gitleaks.feed"
     export ROMP_GITLEAKS="$TEST_DIR/gitleaks-stub"
     cat > "$ROMP_GITLEAKS" <<EOF
 #!/usr/bin/env bash
+if [ "\$1" = version ]; then echo 8.30.1; exit 0; fi
 echo "\$@" >> "$GL_ARGS"
 echo "stub scanner ran" >&2
 # every file under the directory it runs in, fed and counted (why: setup_gitleaks_stub)
