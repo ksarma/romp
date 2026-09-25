@@ -19,11 +19,11 @@
 // the first, second and last no module uses at this head, and the third is in the browser modules
 // `grep -l 'sanitizeMd(marked\.parse' ui/webview/*.test.ts` lists, split by whether the page declares a `<div class="fileview-md">`
 // (`grep -l 'class="fileview-md"'` over those); the fourth test below recomputes both sets and holds the two lists and the three
-// counts here to them. The probe is in 10 browser modules: 6 whose pages declare no such div and fill a chat body, a bubble or a
-// plain `#out` div with it (md-sanitize-chat-links-browser.test.ts, md-sanitize-chat-schemeless-browser.test.ts,
+// counts here to them. The probe is in 11 browser modules: 7 whose pages declare no such div and fill a chat body, a bubble or a
+// plain div with it (md-sanitize-chat-links-browser.test.ts, md-sanitize-chat-schemeless-browser.test.ts,
 // md-sanitize-chat-modified-click-browser.test.ts, md-sanitize-chat-fragment-browser.test.ts,
-// md-config-math-inks-browser.test.ts and md-sanitize-postpass-browser.test.ts) and 4 whose pages declare one, the viewer's box,
-// and fill it that way (md-config-mark-classes-browser.test.ts, md-config-feed-callout-tints-browser.test.ts,
+// md-config-math-inks-browser.test.ts, md-sanitize-postpass-browser.test.ts and authored-file-caps.test.ts) and 4 whose pages
+// declare one, the viewer's box, and fill it that way (md-config-mark-classes-browser.test.ts, md-config-feed-callout-tints-browser.test.ts,
 // md-config-callout-title-ink-browser.test.ts and md-config-chat-styles-browser.test.ts), over fixtures with no unclosed inline
 // tag (marked.parse and viewerHtml render each of their six fixtures the same, executed in Chromium at the closing check of the
 // slice's PR review, 2026-09-19). The fifth test holds the upstream ledger entry's list of converted stand-ins to the callers of
