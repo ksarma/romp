@@ -95,6 +95,39 @@ const payload = (command, cwd = proj, tool = 'Bash') => JSON.stringify({ tool_na
 const targets = (command, cwd = proj) => extractWriteTargets(command, cwd).targets.map((t) => t.path).sort();
 const ROMP_NOUNS = /\b(romp|card|board|column|goal|nudge|dashboard|panel|viewer|dismiss\w*|cleared)\b/i;
 
+// THE ONE PRESENCE FUNCTION and THE OVERRIDE (round 7 of fork PR #780 review, fiftieth commit; the reviewer's conditions on CI run
+// 36109232805, 2026-09-25). Every check of whether this machine has a program goes through presenceOf: the shell probe below, the named
+// programs, THE INVOKED PROGRAM's gate (at namedPresent), and the rows tests' own program checks (toolPresent, hasProgram). The real check
+// comes first: a path by its existence and its exec bit (a relative path from the leg's cwd), a name by a PATH lookup, or the record a caller
+// measured (the shell probe's spawn, which also reads bash's version). This box cannot make /usr/bin/zsh absent without elevated
+// privileges, and its runs never use them: by name, absence is reproduced for real (a PATH of links to every program but the hidden ones,
+// the round's runner-env-node.sh), and by path only through THE OVERRIDE, ROMP_TEST_ABSENT_PROGRAMS, read here and nowhere else: names
+// separated by blanks or commas, each a program this machine has that the run treats as absent, a path counting as absent when its last
+// component is listed. It applies only where the real check found the program present, so every NOT RUN line names its source: "is not on
+// this runner" (the real check, by the probe's spawn or the PATH lookup) or "is not on this runner (no executable file at that path)" (the
+// real filesystem check), against "is treated as absent by the test override ROMP_TEST_ABSENT_PROGRAMS, which lists zsh (present on this
+// machine)". The override is a disclosed box-side reproduction only and NEVER WHAT CI RELIES ON: a pin at the end of this file reds when it
+// is set while GITHUB_ACTIONS or CI is, so CI's green for a row that runs a program by its path rests on the runner's real filesystem check.
+const ABSENT_OVERRIDE = 'ROMP_TEST_ABSENT_PROGRAMS';
+const absentSet = (value, label) => ({ names: new Set(String(value || '').split(/[\s,]+/).filter(Boolean)), label });
+// set while GITHUB_ACTIONS or CI is, THE OVERRIDE is refused: not read here, and the pin at the end of this file reds on it
+const overrideInCi = (env) => ((env.GITHUB_ACTIONS || env.CI) && env[ABSENT_OVERRIDE] !== undefined ? `THE OVERRIDE is set while the run is in CI (${ABSENT_OVERRIDE}=${JSON.stringify(env[ABSENT_OVERRIDE])}, ${env.GITHUB_ACTIONS ? 'GITHUB_ACTIONS' : 'CI'} set): CI's absences must come from the real check, so unset it there` : null);
+const OVERRIDE_ABSENT = absentSet(overrideInCi(process.env) === null ? process.env[ABSENT_OVERRIDE] : '', `the test override ${ABSENT_OVERRIDE}`);
+const isExecFile = (file) => { try { if (!fs.statSync(file).isFile()) return false; fs.accessSync(file, fs.constants.X_OK); return true; } catch { return false; } };
+const BY_PATH_WHY = 'is not on this runner (no executable file at that path)';
+// the real check alone: a path by its existence and exec bit (a relative one from `cwd`), a name by a lookup over `PATH` (default this process's)
+const realPresence = (program, { PATH = process.env.PATH, cwd = null } = {}) => {
+  if (program.includes('/')) return isExecFile(path.resolve(cwd || process.cwd(), program)) ? { ok: true, why: null } : { ok: false, why: BY_PATH_WHY };
+  return String(PATH || '').split(':').some((d) => d !== '' && isExecFile(path.join(d, program))) ? { ok: true, why: null } : { ok: false, why: 'is not on this runner' };
+};
+// the real check (or the record `real` a caller measured), then the absent set (THE OVERRIDE, or one a pin hands in) for a program found present
+const presenceOf = (program, { absent = OVERRIDE_ABSENT, real = null, PATH, cwd } = {}) => {
+  const r = real || realPresence(program, { PATH, cwd });
+  if (!r.ok) return r;
+  const base = program.slice(program.lastIndexOf('/') + 1);
+  return absent.names.has(base) ? { ...r, ok: false, why: `is treated as absent by ${absent.label}, which lists ${base} (present on this machine)`, source: 'absent set' } : r;
+};
+
 // The shells this runner has, through ONE probe. Every real-shell evidence leg below asks shellsFor for the shells it wants: a
 // shell that is missing, or present but below the version floor the file's legs need, is reported LOUDLY on stderr, once per
 // leg with the leg's line, and its leg does not run; it never passes in silence and never reds with a value mismatch (the
@@ -111,7 +144,9 @@ const SHELL_FLOOR = { bash: [4, 3] };   // bash 4.3 for `declare -n`; nothing he
 // The probe reads no startup file of the account's (round 7 of fork PR #780 review, thirty-second commit, the round's verifiers): it ran
 // `zsh -c true` under the inherited environment, so zsh read ~/.zshenv and the probe ran whatever that file runs; zsh now takes -f, bash
 // --norc and --noprofile, and the environment is PATH alone, so bash reads no BASH_ENV either (dash reads nothing when not interactive).
-const probeShell = (sh) => {
+// The probe's record is the real check THE ONE PRESENCE FUNCTION starts from (the fiftieth commit), so THE OVERRIDE reaches the shells too.
+const probeShell = (sh) => presenceOf(sh, { real: probeShellRun(sh) });
+const probeShellRun = (sh) => {
   const r = _spawnSync(sh, sh === 'bash' ? ['--norc', '--noprofile', '-c', 'printf %s "$BASH_VERSION"'] : sh === 'zsh' ? ['-f', '-c', 'true'] : ['-c', 'true'], { encoding: 'utf8', env: { PATH: process.env.PATH } });
   if (r.status !== 0) return { ok: false, why: 'is not on this runner' };
   const floor = SHELL_FLOOR[sh];
@@ -142,15 +177,246 @@ const shellsFor = (list, what = null, present = SHELL_PROBE, report = (line) => 
 // busybox either). So a row whose command names a program this box lacks is NOT RUN by name, the same loud line
 // through shellsFor, and its in-process verdict alone is compared, never a red on evidence the box cannot give and never a
 // silent pass. The programs: the probe's three shells, by the probe; `sh`, `ksh` and `busybox` (the matrices' other consumers
-// and the rows tests' residual rows) by `command -v`, the fixtures' own `absent` accounting.
+// and the rows tests' residual rows) by THE ONE PRESENCE FUNCTION's PATH lookup (`command -v` before the fiftieth commit), the fixtures'
+// own `absent` accounting.
 const NAMED_PROGRAMS = ['sh', 'ksh', 'busybox'];
-const NAMED_PROBE = { ...SHELL_PROBE, ...Object.fromEntries(NAMED_PROGRAMS.map((p) => [p, { ok: _spawnSync('sh', ['-c', `command -v ${p}`], { encoding: 'utf8' }).status === 0, why: 'is not on this runner' }])) };
+const NAMED_PROBE = { ...SHELL_PROBE, ...Object.fromEntries(NAMED_PROGRAMS.map((p) => [p, presenceOf(p)])) };
 // the programs a command spells as words; a name glued to a path, an extension or a longer word is not one (`/bin/sh`, `x.sh`, the `sh` of `bash`)
 const programsNamed = (cmd, table = NAMED_PROBE) => Object.keys(table).filter((p) => new RegExp(`(?<![\\w./-])${p}(?![\\w./-])`).test(cmd));
-// true when every program the command names is on this box; else the NOT RUN line per missing one, naming `what`, and false
-const namedPresent = (cmd, what, table = NAMED_PROBE, report = (line) => console.error(line)) => {
+// THE INVOKED PROGRAM (round 7 of fork PR #780 review, fiftieth commit; the reviewer's conditions on CI run 36109232805, 2026-09-25). The
+// gate keyed on the programs a command NAMES from the table above, each spelled as a bare word, so a row whose bash leg ran
+// `/usr/bin/zsh --emulate sh -c '..'` passed it (a name glued to a path is none of its words) and the row's bash and dash legs ran a zsh the
+// CI runner does not have: bash said "No such file or directory", no shell wrote, and the row went red (C-path-zsh-emu-nad, not ok 920),
+// while every pre-push run passed on a box that has zsh. The class is every row whose command runs, from a shell's leg or behind a wrapper,
+// a program the runner may lack, by name or by an absolute or relative path, whichever program it is. So the gate also derives, from the
+// row's own command text, THE PROGRAM EACH COMMAND SEGMENT RUNS, and asks THE ONE PRESENCE FUNCTION whether that program is on this
+// machine; a program that is not here makes the row NOT RUN with the reason, one line per program, its verdict still asserted, never a
+// silent skip and never a false pass. The derivation reads the text with the hook's lexer (the segments, their words after quote removal,
+// their command and process substitutions and here-documents), and per segment: the reserved words and the words a shell reads as its own
+// are no program (SHELL_OWN); assignments are stepped past; a wrapper (WRAPPERS: exec, command, env, nice, timeout, xargs and the rest) is
+// stepped past with its options and operands, itself a program where it is one; the word after them is the program. The texts a shell runs
+// are read the same way, to a depth of eight: a shell's operands that hold a blank or an operator (its -c text, however its options are
+// spelled), the here-documents and here-strings it is fed, what echo, printf or cat pipe into it or print in a process substitution it reads,
+// and the texts eval, trap, emulate -c, alias, env -S, flock -c, su -c, find -exec and capsh's `--` run. The rows here bind and make their
+// own programs on purpose, so three readings keep the gate to programs this machine is asked for: a name the command binds (a function, an
+// alias, a hashed path, zsh's `=name` and its function table) is no program; a text that REBINDS how names resolve (an alias of any kind,
+// hash, PATH, autoload, zmodload and the rest) has no program read by name, since it resolves its names itself; and a path the text also
+// names elsewhere (a copy of cp it makes, or links, before it runs it) is no program of this machine's. Where the rows run a program that
+// was absent on purpose where their evidence was measured, THE RECORDED ABSENCES below say so per row, and the gate turns for it. What the
+// derivation does not read, stated as its class: a program word that is an expansion (`$z -c ..`, `"$(command -v zsh)"`, a tilde), holds a
+// blank, or is spelled by name in a text that REBINDS names, where the table's bare-word reading above still holds a program the text spells;
+// and a program a shell reaches by a road the list above does not follow (a script file's own lines, a `(( ))` or `$((` body read as
+// commands, an array's elements, a pattern a `case` or zsh's `for NAME (..)` holds). A miss there runs the leg, and where its program is
+// absent the leg reds by name on that machine, never a false pass. The lexer is the hook's own, so a defect in it that drops a segment drops
+// that segment's program here with the same consequence, a red and not a pass; the pin at the end of this file holds the derivation to an
+// independent reading of the text for the zsh family over every row the legs gated.
+// the words a shell reads as its own, never a program it looks up: the reserved words, and the builtins of bash, zsh (its modules' among them)
+// and dash
+const SHELL_OWN = new Set(['!', '{', '}', '[[', ']]', '((', '))', 'if', 'then', 'elif', 'else', 'fi', 'case', 'esac', 'for', 'foreach', 'select', 'while', 'until', 'do', 'done', 'in', 'end', 'function', '.', ':', '[', 'alias', 'autoload', 'bg', 'bind', 'bindkey', 'break', 'builtin', 'bye', 'caller', 'cd', 'chdir', 'compgen', 'complete', 'compopt', 'continue', 'declare', 'dirs', 'disable', 'disown', 'echo', 'emulate', 'enable', 'eval', 'exit', 'export', 'false', 'fc', 'fg', 'float', 'functions', 'getln', 'getopts', 'hash', 'help', 'history', 'integer', 'jobs', 'kill', 'let', 'limit', 'local', 'logout', 'mapfile', 'popd', 'print', 'printf', 'private', 'pushd', 'pushln', 'pwd', 'read', 'readarray', 'readonly', 'rehash', 'return', 'sched', 'set', 'setopt', 'shift', 'shopt', 'source', 'suspend', 'test', 'times', 'trap', 'true', 'type', 'typeset', 'ulimit', 'umask', 'unalias', 'unfunction', 'unhash', 'unlimit', 'unset', 'unsetopt', 'vared', 'wait', 'whence', 'where', 'which', 'zcompile', 'zformat', 'zle', 'zmodload', 'zparseopts', 'zstyle', 'sysopen', 'sysread', 'sysseek', 'syswrite', 'zsystem', 'zf_chgrp', 'zf_chmod', 'zf_chown', 'zf_ln', 'zf_mkdir', 'zf_mv', 'zf_rm', 'zf_rmdir', 'zf_sync', 'zstat', 'zselect', 'zsocket', 'ztcp', 'zpty']);
+// a wrapper runs the command after its options and operands: `arg` the options that take the next word, `operands` the words before the
+// command, `assign` the NAME=VALUE words it takes, `text` the options whose next word is a command line it runs, `query` an option under which
+// it runs nothing, `sub` a subcommand word first, `own` a shell's own word (no program looked up)
+const WRAPPERS = {
+  exec: { own: true, arg: ['-a'] }, command: { own: true, query: /^-[a-zA-Z]*[vV]/ }, time: { own: true, arg: ['-f', '-o', '--format', '--output'] },
+  noglob: { own: true }, nocorrect: { own: true }, '-': { own: true }, coproc: { own: true }, repeat: { own: true, operands: 1 },
+  nohup: {}, eatmydata: {}, fakeroot: {}, setsid: {}, setpriv: {},
+  env: { arg: ['-u', '--unset', '-C', '--chdir', '-a', '--argv0'], text: ['-S', '--split-string'], assign: true },
+  nice: { arg: ['-n', '--adjustment'] }, timeout: { arg: ['-s', '--signal', '-k', '--kill-after'], operands: 1 },
+  stdbuf: { arg: ['-i', '-o', '-e', '--input', '--output', '--error'] }, ionice: { arg: ['-c', '--class', '-n', '--classdata', '-p', '--pid', '-P', '--pgid', '-u', '--uid'] },
+  chrt: { operands: 1 }, taskset: { operands: 1 }, chroot: { arg: ['--userspec', '--groups'], operands: 1 },
+  xargs: { arg: ['-a', '--arg-file', '-d', '--delimiter', '-E', '-I', '-L', '-n', '--max-args', '-P', '--max-procs', '-s', '--max-chars', '--process-slot-var'] },
+  sudo: { arg: ['-u', '--user', '-g', '--group', '-C', '--close-from', '-D', '--chdir', '-h', '--host', '-p', '--prompt', '-R', '--chroot', '-T', '--command-timeout', '-U', '--other-user', '-r', '--role', '-t', '--type'], assign: true },
+  doas: { arg: ['-u', '-C'] },
+  strace: { arg: ['-e', '-o', '-p', '-s', '-u', '-E', '-I', '-b', '-a', '-O', '-S', '-P', '-X', '--output'] },
+  ltrace: { arg: ['-e', '-o', '-p', '-s', '-u', '-a', '-n', '-l', '-F', '-A', '-D', '-x', '-L'] },
+  perf: { sub: true, arg: ['-e', '--event', '-o', '--output', '-p', '--pid', '-t', '--tid', '-C', '--cpu', '-G', '--cgroup', '-r', '--repeat', '-x', '--field-separator', '-I', '--interval-print', '-D', '--delay', '-F', '--freq', '-c', '--count', '-m', '--mmap-pages', '-u', '--uid', '-j', '--branch-filter', '--post', '--pre', '--control'] },
+  unshare: { arg: ['-S', '--setuid', '-G', '--setgid', '-R', '--root', '-w', '--wd', '--map-user', '--map-group', '--map-users', '--map-groups', '--propagation', '--setgroups'] },
+  nsenter: { arg: ['-t', '--target', '-S', '--setuid', '-G', '--setgid'] },
+  prlimit: { arg: ['-p', '--pid', '-o', '--output'] },
+  flock: { arg: ['-w', '--timeout', '-E', '--conflict-exit-code'], text: ['-c', '--command'], operands: 1 },
+};
+// a program whose operands, here-documents and fed text are a script it runs (a list for reading texts, never for presence)
+const SCRIPT_SHELL = /^(?:sh|r?bash|dash|r?zsh\d*|ksh\d*|mksh|pdksh|oksh|lksh|yash|posh|ash|hush|t?csh|fish|busybox)$/;
+const ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*(?:\[[^\]]*\])?\+?=/;
+const SCRIPT_TEXT = /[\s;&|<>()`$]/;   // an operand of a shell that reads as a command line, not an option or a name
+// the names a command binds as a function, an alias or a hashed path, read over its whole text (a name bound anywhere is no program anywhere
+// in it): `f()` (zsh's `f g ()` too), `function f`, `alias f=..`, `hash -p PATH f` (the path glued or apart), zsh's `hash f=PATH`, `functions[f]=..` and
+// `autoload f`
+const hashedNames = (text) => [...text.matchAll(/(?:^|[\s;&|(){}`'"])hash\s+([^\n;&|'"]*)/g)].flatMap((m) => {
+  const out = [];
+  const ws = m[1].trim().split(/\s+/).filter(Boolean);
+  for (let i = 0; i < ws.length; i++) {
+    if (ws[i] === '-p') i++;
+    else if (/^-/.test(ws[i])) continue;
+    else out.push(ws[i].includes('=') ? ws[i].slice(0, ws[i].indexOf('=')) : ws[i]);
+  }
+  return out;
+});
+const definedNames = (text) => new Set([
+  ...[...text.matchAll(/(?:^|[\s;&|(){}`'"])(?:function\s+)?((?:[A-Za-z_][\w.:+-]*[ \t]+)*[A-Za-z_][\w.:+-]*)\s*\(\s*\)/g)].flatMap((m) => m[1].split(/[ \t]+/)),
+  ...[...text.matchAll(/(?:^|[\s;&|(){}`'"])function\s+([^\s(){};|&'"]+)/g)].map((m) => m[1]),
+  ...[...text.matchAll(/(?:^|[\s;&|(){}`'"])alias\s+(?:-\S+\s+)*['"]?([^\s=;|&'"]+)['"]?=/g)].map((m) => m[1]),
+  ...hashedNames(text),
+  ...[...text.matchAll(/(?:^|[\s;&|(){}`'"])functions\[([^\]]+)\]=/g)].map((m) => m[1].replace(/^['"]|['"]$/g, '')),
+  ...[...text.matchAll(/(?:^|[\s;&|(){}`'"])autoload\s+((?:-\S+\s+)*)([^\n;&|'"]*)/g)].flatMap((m) => m[2].trim().split(/\s+/).filter((n) => n && !/^[-+]/.test(n))),
+]);
+// a text that rebinds how a name resolves (an alias of any kind, a hashed path, a PATH, path or fpath of its own, autoload, enable, zmodload,
+// a function or command table entry, a handler for a name not found) resolves its names itself, in forms the reader does not all read (an alias whose
+// name is an expansion, an alias of an alias, zsh's global and suffix aliases, a copy of cp under a wrapper's name first on its PATH)
+const REBINDS = /(?:^|[\s;&|(){}`'"])(?:alias|hash|autoload|enable|zmodload|command_not_found_handler?|functions\[|commands\[|(?:PATH|path|fpath)(?:\+?=|\[))/;
+// every program the command text runs, in the order its segments run them (wrappers included), each once: by name unless the text REBINDS
+// names, and by path unless the text names that path elsewhere too (as an operand or a redirection's target: a file the text makes, copies
+// or links before it runs it)
+const programsInvoked = (cmd) => {
+  const found = [];
+  const defined = definedNames(cmd);
+  const rebound = REBINDS.test(cmd);
+  const mentions = (p) => cmd.split(p).length - 1;   // how often the text spells a path, in any position
+  const asProgram = new Map();   // how often the walk read each path as the program a segment runs
+  const note = (word) => { asProgram.set(word, (asProgram.get(word) || 0) + 1); if (!found.includes(word)) found.push(word); };
+  const lexOf = (text) => { try { return lex(text); } catch (e) { throw new Error(`THE INVOKED PROGRAM: the command text could not be read (${e.message}): ${String(text).slice(0, 200)}`); } };
+  // the text a segment of echo, printf or cat prints, as a shell it feeds reads it: echo's literal operands joined by a blank (its leading
+  // options set aside), printf's one operand or its operands under a format of %s, %b and blanks alone (printf -v prints nothing), cat's
+  // here-documents; a text holding no blank or operator is no command line
+  const printedBy = (s) => {
+    const head = s.words[0] ? s.words[0].text : '';
+    const ops = s.words.slice(1);
+    let texts = [];
+    if (head === 'echo') { let j = 0; while (j < ops.length && /^-[neE]+$/.test(ops[j].text)) j++; if (ops.slice(j).every((w) => w.literal)) texts = [ops.slice(j).map((w) => w.text).join(' ').replace(/\\n/g, '\n')]; }   // \n a newline, as dash's and zsh's echo and `echo -e` print it
+    else if (head === 'printf' && ops.length && ops.every((w) => w.literal) && ops[0].text !== '-v') {
+      if (ops.length === 1) texts = [ops[0].text.replace(/\\n/g, '\n')];
+      else if (/^(?:%[sb]|\s|\\n)+$/.test(ops[0].text)) texts = [ops.slice(1).map((w) => w.text).join(' ')];
+    } else if (head === 'cat') texts = s.heredocs;
+    return texts.filter((t) => SCRIPT_TEXT.test(t.trim()));
+  };
+  const readText = (text, depth) => {
+    if (depth > 8 || typeof text !== 'string' || text.trim() === '') return;
+    const segs = lexOf(text).segments;
+    let inCase = 0;
+    let inForList = false;
+    for (let k = 0; k < segs.length; k++) {
+      const seg = segs[k];
+      for (const s of seg.subs) readText(s, depth + 1);
+      for (const v of seg.viaSubs || []) if (v.via !== guard.CONSTRUCT_HEADS['(('].via && v.via !== guard.CONSTRUCT_HEADS['$(('].via) readText(v.text, depth + 1);
+      const head = seg.words[0] ? seg.words[0].text : '';
+      const last = seg.words.length ? seg.words[seg.words.length - 1].text : '';
+      if (inForList) { if (seg.op === ')') inForList = false; continue; }
+      if (seg.op === '(' && /^[A-Za-z_][A-Za-z0-9_]*(?:\[[^\]]*\])?\+?=$/.test(last)) { inForList = true; continue; }   // an array's elements, `c=(..)`, `c+=(..)`
+      if (head === 'case') { inCase++; continue; }
+      if (head === 'esac') { inCase = Math.max(0, inCase - 1); continue; }
+      if (inCase && seg.op === ')') continue;   // a pattern
+      if ((head === 'for' || head === 'foreach' || head === 'select') && seg.op === '(') { inForList = true; continue; }
+      readSegment(seg, k > 0 && /^\|&?$/.test(segs[k - 1].op) ? segs[k - 1] : null, depth);
+    }
+  };
+  const readSegment = (seg, feeder, depth) => {
+    const words = seg.words;
+    let i = 0;
+    for (let steps = 0; i < words.length && steps < 32; steps++) {
+      const w = words[i];
+      const word = w.text;
+      if (!w.literal || word === '' || word.includes('\u0000') || /^~/.test(w.raw || '')) return;   // an expansion in the program's place (a tilde's HOME among them): not derived
+      if (/\s/.test(word)) return;   // a command word holding a blank (`"$(echo 'cp a b')"`): a name no machine's PATH or filesystem ships
+      if (ASSIGNMENT.test(word)) { i++; continue; }
+      if (['!', '{', '}', 'if', 'then', 'elif', 'else', 'fi', 'while', 'until', 'do', 'done', 'end'].includes(word)) { i++; continue; }
+      if (['for', 'foreach', 'select', 'case', '[[', '((', 'function'].includes(word)) return;
+      if (defined.has(word) || word.startsWith('=')) return;   // a name the command binds, or zsh's `=name` (an expansion to a path)
+      if (rebound && !word.includes('/')) return;   // a name in a text that REBINDS names: it resolves the name itself
+      const base = word.slice(word.lastIndexOf('/') + 1);
+      if (word.includes('/') && Object.hasOwn(WRAPPERS, base) && mentions(word) > 1) { note(word); return; }   // a path the text also names (a copy it makes under a wrapper's name): no wrapper of this machine's
+      const spec = Object.hasOwn(WRAPPERS, base) ? WRAPPERS[base] : null;
+      if (spec) {
+        if (!spec.own || word.includes('/')) note(word);
+        i++;
+        if (spec.sub) i++;
+        if (base === 'coproc' && i + 1 < words.length && ['{', '('].includes(words[i + 1].text)) i++;   // coproc NAME { .. }
+        let operands = spec.operands || 0;
+        while (i < words.length) {
+          const t = words[i].text;
+          if (t === '--') { i++; break; }
+          if (spec.query && spec.query.test(t)) return;
+          if (spec.text && spec.text.includes(t)) { if (words[i + 1]) readText(words[i + 1].text, depth + 1); i += 2; continue; }
+          if (spec.arg && spec.arg.includes(t)) { i += 2; continue; }
+          if (t === '-' || /^-./.test(t)) { i++; continue; }
+          if ((spec.assign || spec.own) && ASSIGNMENT.test(t)) { i++; continue; }
+          if (operands > 0) { operands--; i++; continue; }
+          break;
+        }
+        continue;
+      }
+      if (/^[-+]./.test(word)) return;   // an option where a program would stand (an inner text such as `-e -c`)
+      const rest = words.slice(i + 1);
+      if (SHELL_OWN.has(word)) { readOwn(word, rest, depth); return; }
+      if (defined.has(word)) return;
+      note(word);
+      if (SCRIPT_SHELL.test(base)) {
+        for (const r of rest) if (r.literal && SCRIPT_TEXT.test(r.text)) readText(r.text, depth + 1);
+        for (const h of seg.heredocs) readText(h, depth + 1);
+        if (feeder) for (const t of printedBy(feeder)) readText(t, depth + 1);
+        for (const s of seg.subs) for (const inner of lexOf(s).segments) for (const t of printedBy(inner)) readText(t, depth + 1);
+      } else if (base === 'find') {
+        for (let j = 0; j < rest.length; j++) if (['-exec', '-execdir', '-ok', '-okdir'].includes(rest[j].text)) { const end = rest.findIndex((x, n) => n > j && (x.text === ';' || x.text === '+')); readSegment({ words: rest.slice(j + 1, end < 0 ? rest.length : end), heredocs: [], subs: [] }, null, depth + 1); }
+      } else if (base === 'capsh') {
+        const dd = rest.findIndex((x) => x.text === '--');
+        if (dd >= 0) readSegment({ words: [{ text: '/bin/bash', literal: true, raw: '/bin/bash' }, ...rest.slice(dd + 1)], heredocs: [], subs: [] }, null, depth + 1);
+      } else if (base === 'su' || base === 'runuser' || base === 'script') {
+        const c = rest.findIndex((x) => x.text === '-c' || x.text === '--command');
+        if (c >= 0 && rest[c + 1]) readText(rest[c + 1].text, depth + 1);
+      }
+      return;
+    }
+  };
+  const readOwn = (word, rest, depth) => {
+    if (rest.some((r) => !r.literal)) return;   // a text holding an expansion is not read
+    const lits = rest.map((r) => r.text);
+    if (word === 'eval') readText(lits.join(' '), depth + 1);
+    else if (word === 'trap') { const ops = lits.filter((t) => t !== '--'); if (ops.length >= 2 && !/^-/.test(ops[0])) readText(ops[0], depth + 1); }
+    else if (word === 'emulate') { const c = lits.indexOf('-c'); if (c >= 0 && lits[c + 1] !== undefined) readText(lits[c + 1], depth + 1); }
+    else if (word === 'alias') { for (const t of lits) { const m = t.match(/^[^=]+=(.*)$/s); if (m) readText(m[1], depth + 1); } }
+    else if (word === 'mapfile' || word === 'readarray') { const c = lits.indexOf('-C'); if (c >= 0 && lits[c + 1] !== undefined) readText(lits[c + 1], depth + 1); }
+  };
+  readText(cmd, 0);
+  return found.filter((p) => !p.includes('/') || mentions(p) <= (asProgram.get(p) || 0));
+};
+// every command a leg gated with the default table, by its text: the row id the caller named (the population THE INVOKED PROGRAM's pin reads)
+const GATED_ROWS = new Map();
+const gatedRowId = (what) => what.replace(/^the residual table's /, '').split(', whose command names it')[0];
+// THE RECORDED ABSENCES: the programs a row runs that were ABSENT where its evidence was measured, by design (the row runs a path or a name
+// no system it targets has, or one it makes or binds itself before it runs it), derived by running THE INVOKED PROGRAM over every row the
+// legs gate on the box that measured them (the round's r7-cifix-harvest). A program absent here changes nothing for such a row (its writers
+// were measured without it), so for a program the record holds for the row, the gate turns: the row is NOT RUN where the program IS present
+// (its evidence there would not be the evidence measured), and runs where it is absent. Every other program is gated on its presence. The
+// pin at the end of this file holds each entry to a program the gate derives for its row, so the record names no program a row does not run.
+const RECORDED_ABSENT_GROUPS = [
+  ['a path named after a shell builtin, run to measure that no file answers to it (a system that ships one, as some distributions do, gives other evidence), and the name its alias would have bound', {
+    'S21-slash-set': ['/usr/bin/set'], 'S21-slash-set-head': ['/usr/bin/set'], 'S21-slash-set-script': ['/usr/bin/set'], 'S21-slash-set-root': ['/usr/bin/set'],
+    'S21-slash-set-notes': ['/usr/bin/set'], 'S21-slash-set-under-sh': ['/usr/bin/set'], 'S21-slash-rel-set': ['./set'], 'S21-slash-shift': ['/usr/bin/shift'],
+    'S21-slash-eval-set': ['/usr/bin/eval'], 'S21-slash-source-heredoc-set': ['/usr/bin/source'], 'S21-slash-dot-heredoc-set': ['./.'], 'S21-slash-emulate-set': ['/usr/bin/emulate'],
+    'S21-slash-cd': ['/usr/bin/cd'], 'S21-slash-pushd': ['/usr/bin/pushd'], 'S21-slash-export': ['/usr/bin/export'], 'S21-slash-unset-default': ['/usr/bin/unset'],
+    'S21-slash-read': ['/usr/bin/read'], 'S21-ctl-slash-alias': ['/usr/bin/alias', 'c'],
+  }],
+  ['a name no system has, run to measure the shells failing to find it', { 'P5-ctl-head-literal-unknown-cmd': ['frobnicate'] }],
+  ['a word the lexer reads as a command where zsh reads glob syntax, which bash and dash stop at as a syntax error and never run', { 'RT-zsh-glob-group': ['r', 'eport.md'], 'RT-zsh-null-glob-qualifier': ['N', '../base/report.md'] }],
+  ["the words after a subscript's operator, which a shell that splits `X[a;b]=a` there runs as a command no system has", { 'E28-split-semicolon': ['b]=a'], 'E28-split-pipe': ['b]=a'], 'E28-split-newline': ['b]=a'] }],
+];
+const RECORDED_ABSENT = Object.fromEntries(RECORDED_ABSENT_GROUPS.flatMap(([why, rows]) => Object.entries(rows).map(([id, programs]) => [id, { programs, why }])));
+// true when every program the command names or invokes is on this box; else the NOT RUN line per missing one, naming `what`, and false.
+// The table's programs spelled bare (programsNamed) keep their table's record; every program THE INVOKED PROGRAM derives is asked of THE
+// ONE PRESENCE FUNCTION. `opts` is for the pins: `absent` an absent set in place of THE OVERRIDE, `PATH` a PATH the real check alone reads
+// for every program (the table's records set aside), `cwd` the directory a relative path is found from (default this process's).
+const namedPresent = (cmd, what, table = NAMED_PROBE, report = (line) => console.error(line), { absent = OVERRIDE_ABSENT, PATH = null, cwd = null } = {}) => {
+  if (table === NAMED_PROBE && what != null && !GATED_ROWS.has(cmd)) GATED_ROWS.set(cmd, String(what));
   const named = programsNamed(cmd, table);
-  return shellsFor(named, what, table, report).length === named.length;
+  const all = [...named, ...programsInvoked(cmd).filter((p) => !named.includes(p))];
+  const tableRecord = (p) => (table[p] !== null && typeof table[p] === 'object' ? table[p] : { ok: !!table[p], why: table[p] ? null : 'is not on this runner' });
+  const id = what == null ? null : gatedRowId(String(what));
+  const recorded = id !== null && Object.hasOwn(RECORDED_ABSENT, id) ? RECORDED_ABSENT[id] : null;
+  const recordOf = (p) => {
+    if (recorded && recorded.programs.includes(p)) return realPresence(p, { PATH: PATH === null ? undefined : PATH, cwd }).ok ? { ok: false, why: `is on this runner, where the row's evidence was measured without it (THE RECORDED ABSENCES: ${recorded.why})` } : { ok: true, why: null };
+    return PATH !== null ? presenceOf(p, { absent, PATH, cwd }) : presenceOf(p, { absent, cwd, real: Object.hasOwn(table, p) ? tableRecord(p) : null });
+  };
+  const records = Object.fromEntries(all.map((p) => [p, recordOf(p)]));
+  return shellsFor(all, what, records, report).length === all.length;
 };
 // the matrix rows whose EVIDENCE needs a program this box lacks: row id -> the program, for the run to skip and the summary to name.
 // Round 6's second commit (ruling E; round 5's regression-3): the skip was keyed on the program a row NAMES, but in the heredoc-body
@@ -4610,6 +4876,7 @@ test('the addendum, item 4, and round 5: every real-shell evidence leg of this f
     fs.writeFileSync(path.join(stub, stubShell), '#!/bin/sh\nexit 1\n', { mode: 0o755 });
     const env = { ...process.env, PATH: `${stub}:${process.env.PATH}` };
     delete env.NODE_TEST_CONTEXT;   // the runner marks its children with it, and a marked `node --test` runs no file ("called recursively")
+    delete env[ABSENT_OVERRIDE];   // the child's absences are real, made by its PATH; THE OVERRIDE would stand in for them
     const child = spawnSync(process.execPath, ['--test', '--test-name-pattern=the addendum, item 2', fileURLToPath(import.meta.url)], { encoding: 'utf8', env, timeout: 180000 });
     const out = `${child.stdout}\n${child.stderr}`;
     const notRun = out.split('\n').filter((l) => /NOT RUN: real zsh is not on this runner, so its evidence leg did not run: (builtin|command|time|env) cd \(/.test(l));
@@ -6856,7 +7123,7 @@ test("round 5's fifth addendum, second fix-up, the rows: an expansion nested in 
         else if (expect[0] === 'text') assert.ok(h.reason.includes(expect[1]), `${id}: refused, the reason including (${expect[1]}): ${h.reason.split('\n')[0]}`);   // round 6: a reading the resolver could not establish
         else assert.ok(NOT_LITERAL.test(h.reason) && h.reason.includes(expect[1]), `${id}: refused as not literal, the reason including (${expect[1]}): ${h.reason.split('\n')[0]}`);
       }
-      if (namedPresent(cmd, `${id}, whose command names it: ${cmd}`)) for (const shell of shellsFor(A, id)) {   // a program the command names and this box lacks: NOT RUN by name, the row's verdict above still asserted
+      if (namedPresent(cmd, `${id}, whose command names it: ${cmd}`, NAMED_PROBE, undefined, { cwd: at })) for (const shell of shellsFor(A, id)) {   // a program the command names and this box lacks: NOT RUN by name, the row's verdict above still asserted
         const r = w.run(cmd, at, shell);
         assert.equal(r.changed, writers.includes(shell), `${id}: run unguarded, ${shell} ${writers.includes(shell) ? 'writes' : 'leaves'} the tracked subset: ${cmd}: ${r.stderr}`);
       }
@@ -7079,7 +7346,7 @@ test("round 5's fifth addendum, third fix-up, the rows: an unquoted here-documen
         else if (expect[0] === 'text') assert.ok(h.reason.includes(expect[1]), `${id}: refused, the reason including (${expect[1]}): ${h.reason.split('\n')[0]}`);
         else assert.ok(NOT_LITERAL.test(h.reason) && h.reason.includes(expect[1]), `${id}: refused as not literal, the reason including (${expect[1]}): ${h.reason.split('\n')[0]}`);
       }
-      if (namedPresent(cmd, `${id}, whose command names it: ${cmd}`)) for (const shell of shellsFor(A, id)) {   // a program the command names and this box lacks: NOT RUN by name, the row's verdict above still asserted
+      if (namedPresent(cmd, `${id}, whose command names it: ${cmd}`, NAMED_PROBE, undefined, { cwd: at })) for (const shell of shellsFor(A, id)) {   // a program the command names and this box lacks: NOT RUN by name, the row's verdict above still asserted
         const r = w.run(cmd, at, shell);
         assert.equal(r.changed, writers.includes(shell), `${id}: run unguarded, ${shell} ${writers.includes(shell) ? 'writes' : 'leaves'} the tracked subset: ${cmd}: ${r.stderr}`);
       }
@@ -7599,7 +7866,7 @@ test("round 6, the rows: the four readings round 5 found allowing a write the ba
         else if (expect[0] === 'text') assert.ok(h.reason.includes(expect[1]) && (expect[1] !== GLOB || h.reason.includes(UNREAD)), `${id}: refused, the reason including (${expect[1]}): ${h.reason.split('\n')[0]}`);
         else assert.ok(NOT_LITERAL.test(h.reason) && h.reason.includes(expect[1]), `${id}: refused as not literal, the reason including (${expect[1]}): ${h.reason.split('\n')[0]}`);
       }
-      if (namedPresent(cmd, `${id}, whose command names it: ${cmd}`)) for (const shell of shellsFor(A, id)) {
+      if (namedPresent(cmd, `${id}, whose command names it: ${cmd}`, NAMED_PROBE, undefined, { cwd: at })) for (const shell of shellsFor(A, id)) {
         const r = w.run(cmd, at, shell);
         assert.equal(r.changed, writers.includes(shell), `${id}: run unguarded, ${shell} ${writers.includes(shell) ? 'writes' : 'leaves'} the tracked subset: ${cmd}: ${r.stderr}`);
       }
@@ -7721,7 +7988,7 @@ test("round 6, second commit, THE ALIAS ROAD and THE HEAD SPLICE: an alias the c
         assert.ok(h.reason.includes(expect[1]), `${id}: refused, the reason including (${expect[1]}): ${h.reason.split('\n')[0]}`);
       }
       assert.equal(w.hook(cmd, w.cwds.out).status, 0, `${id}: from a cwd in no project the relative write reaches no tracked file: ${cmd}`);
-      if (namedPresent(cmd, `${id}, whose command names it: ${cmd}`)) for (const shell of shellsFor(A, id)) {
+      if (namedPresent(cmd, `${id}, whose command names it: ${cmd}`, NAMED_PROBE, undefined, { cwd: at })) for (const shell of shellsFor(A, id)) {
         const r = w.run(cmd, at, shell);
         assert.equal(r.changed, writers.includes(shell), `${id}: run unguarded, ${shell} ${writers.includes(shell) ? 'writes' : 'leaves'} the tracked subset: ${cmd}: ${r.stderr}`);
       }
@@ -7792,7 +8059,7 @@ test("round 6, second commit, THE OUTPUT MODEL: a subshell or a `{ }` group of e
         else if (expect[0] === 'text') assert.ok(h.reason.includes(expect[1]), `${id}: refused, the reason including (${expect[1]}): ${h.reason.split('\n')[0]}`);
         else if (expect[0] === 'literal') assert.ok(NOT_LITERAL.test(h.reason) && h.reason.includes(expect[1]), `${id}: refused as not literal: ${h.reason.split('\n')[0]}`);
       }
-      if (namedPresent(cmd, `${id}, whose command names it: ${cmd}`)) for (const shell of shellsFor(A, id)) {
+      if (namedPresent(cmd, `${id}, whose command names it: ${cmd}`, NAMED_PROBE, undefined, { cwd: at })) for (const shell of shellsFor(A, id)) {
         const r = w.run(cmd, at, shell);
         assert.equal(r.changed, writers.includes(shell), `${id}: run unguarded, ${shell} ${writers.includes(shell) ? 'writes' : 'leaves'} the tracked subset: ${cmd}: ${r.stderr}`);
       }
@@ -8276,7 +8543,7 @@ test("round 6, second commit, THE RESIDUAL TABLE: every shape the round could na
   process.env.HOME = w.HOME;
   try {
     const A = ['bash', 'zsh', 'dash'];
-    const toolPresent = (p) => _spawnSync('sh', ['-c', `command -v ${p}`], { encoding: 'utf8' }).status === 0;   // `sh` is not a shell of the probe: plumbing, as the NAMED_PROBE's own `command -v`
+    const toolPresent = (p) => presenceOf(p).ok;   // THE ONE PRESENCE FUNCTION (the fiftieth commit; `command -v` before it), as the NAMED_PROBE's own
     let ran = 0;
     let lacking = 0;    // a program this box lacks, the row's own or one its command names
     let refusing = 0;   // a program this box has that refuses to run the command (THE REFUSING PROGRAM)
@@ -8288,8 +8555,8 @@ test("round 6, second commit, THE RESIDUAL TABLE: every shape the round could na
       const cmd = w.fill(raw);
       const h = w.hook(cmd, w.cwds[cwd]);
       assert.equal(h.status, 0, `${id}: allowed from the row's cwd, ${cwd} (the residual): ${cmd}: ${h.reason}`);
-      if (program && !toolPresent(program)) { console.error(`NOT RUN: real ${program} is not on this runner, so its evidence leg did not run: the residual table's ${id}`); lacking++; notRunIds.push(id); continue; }
-      if (!namedPresent(cmd, `the residual table's ${id}, whose command names it`)) { lacking++; notRunIds.push(id); continue; }
+      if (program && !toolPresent(program)) { console.error(`NOT RUN: real ${program} ${presenceOf(program).why}, so its evidence leg did not run: the residual table's ${id}`); lacking++; notRunIds.push(id); continue; }
+      if (!namedPresent(cmd, `the residual table's ${id}, whose command names it`, NAMED_PROBE, undefined, { cwd: w.cwds[cwd] })) { lacking++; notRunIds.push(id); continue; }
       const results = shellsFor(A, `the residual table's ${id}`).map((shell) => [shell, w.run(cmd, w.cwds[cwd], shell)]);
       const writerLegs = results.filter(([shell]) => writers.includes(shell));
       if (program && writerLegs.length && writerLegs.every(([, r]) => !r.changed)) {   // every writer leg left the subset unchanged: the program's refusal, or a defect
@@ -8311,7 +8578,7 @@ test("round 6, second commit, THE RESIDUAL TABLE: every shape the round could na
     // not run are exactly these, so a NOT RUN never stands in for a miss the box could have measured, and on a box whose every program
     // runs (this one: the list is empty) the table is a full measurement
     const presentShells = shellsFor(A, null, SHELL_PROBE, () => {});   // the probe's lines stand above, once per row
-    const cannot = RESIDUAL_TABLE.filter(([id, , program, raw, writers, cwd = 'nad']) => { const cmd = w.fill(raw); return (program && !toolPresent(program)) || !namedPresent(cmd, null, NAMED_PROBE, () => {}) || (program && refusalOf(cmd, w.cwds[cwd], w.env, presentShells.filter((s) => writers.includes(s)), { program, witness: witnessOf(id) }) !== null); }).map((r) => r[0]);
+    const cannot = RESIDUAL_TABLE.filter(([id, , program, raw, writers, cwd = 'nad']) => { const cmd = w.fill(raw); return (program && !toolPresent(program)) || !namedPresent(cmd, `the residual table's ${id}, whose command names it`, NAMED_PROBE, () => {}, { cwd: w.cwds[cwd] }) || (program && refusalOf(cmd, w.cwds[cwd], w.env, presentShells.filter((s) => writers.includes(s)), { program, witness: witnessOf(id) }) !== null); }).map((r) => r[0]);
     assert.deepEqual(notRunIds, cannot, `the rows not run are exactly the rows this box cannot run, derived from its programs (${cannot.length}: ${cannot.join(', ') || 'none'})`);
     // the property on the hook header names every class of the table, in the words RESIDUAL_CLASSES pairs with it
     const header = fs.readFileSync(HOOK, 'utf8').replace(/\n\/\/ ?/g, ' ').replace(/\s+/g, ' ');
@@ -8391,6 +8658,7 @@ test("round 6, second commit (rulings E and tests-2), a runner lacking zsh repro
     const bin = linkAllBut(dir, ['zsh']);
     const env = { ...process.env, PATH: bin };
     delete env.NODE_TEST_CONTEXT;
+    delete env[ABSENT_OVERRIDE];   // the child's absences are real, made by its PATH; THE OVERRIDE would stand in for them
     const r = _spawnSync(process.execPath, ['--test', '--test-name-pattern', 'the piped-script matrix|the stdin-script matrix|the heredoc-body matrix', fileURLToPath(import.meta.url)], { env, encoding: 'utf8', timeout: 900000, maxBuffer: 64 * 1024 * 1024 });
     const out = String(r.stdout || '') + String(r.stderr || '');
     assert.equal(r.status, 0, `the child passes without zsh: ${out.slice(0, 3000)}`);
@@ -8551,7 +8819,7 @@ test("round 6, third commit, the rows: zsh's unbraced flags (`$=`, `$^`, `$~`) a
         else assert.ok(NOT_LITERAL.test(h.reason) && h.reason.includes(expect[1]), `${id}: refused as not literal, the reason including (${expect[1]}): ${h.reason.split('\n')[0]}`);
       }
       assert.equal(w.hook(cmd, w.cwds.out).status, 0, `${id}: from a cwd in no project the relative write reaches no tracked file: ${cmd}`);
-      if (namedPresent(cmd, `${id}, whose command names it: ${cmd}`)) for (const shell of shellsFor(A, id)) {
+      if (namedPresent(cmd, `${id}, whose command names it: ${cmd}`, NAMED_PROBE, undefined, { cwd: at })) for (const shell of shellsFor(A, id)) {
         const r = w.run(cmd, at, shell);
         assert.equal(r.changed, writers.includes(shell), `${id}: run unguarded, ${shell} ${writers.includes(shell) ? 'writes' : 'leaves'} the tracked subset: ${cmd}: ${r.stderr}`);
       }
@@ -8764,7 +9032,7 @@ test("round 6, fourth commit, the rows: a `<` on the descriptor a script operand
       }
       w.build();
       assert.equal(w.hook(cmd, w.cwds.out).status, 0, `${id}: from a cwd in no project the relative write reaches no tracked file: ${cmd}`);
-      if (namedPresent(cmd, `${id}, whose command names it: ${cmd}`)) for (const shell of shellsFor(A, id)) {
+      if (namedPresent(cmd, `${id}, whose command names it: ${cmd}`, NAMED_PROBE, undefined, { cwd: at })) for (const shell of shellsFor(A, id)) {
         const r = w.run(cmd, at, shell);
         assert.equal(r.changed, writers.includes(shell), `${id}: run unguarded, ${shell} ${writers.includes(shell) ? 'writes' : 'leaves'} the tracked subset: ${cmd}: ${r.stderr}`);
       }
@@ -8968,7 +9236,7 @@ test("round 6, fifth commit, the rows: the parameter's value joins a default wor
       }
       w.build();
       assert.equal(w.hook(cmd, w.cwds.out).status, 0, `${id}: from a cwd in no project the relative write reaches no tracked file: ${cmd}`);
-      if (namedPresent(cmd, `${id}, whose command names it: ${cmd}`)) for (const shell of shellsFor(A, id)) {
+      if (namedPresent(cmd, `${id}, whose command names it: ${cmd}`, NAMED_PROBE, undefined, { cwd: at })) for (const shell of shellsFor(A, id)) {
         const r = w.run(cmd, at, shell);
         assert.equal(r.changed, writers.includes(shell), `${id}: run unguarded, ${shell} ${writers.includes(shell) ? 'writes' : 'leaves'} the tracked subset: ${cmd}: ${r.stderr}`);
       }
@@ -9257,7 +9525,7 @@ test("round 6, sixth commit, the rows: a printer with a redirection or followed 
       }
       w.build();
       assert.equal(w.hook(cmd, w.cwds.out).status, 0, `${id}: from a cwd in no project the relative write reaches no tracked file: ${cmd}`);
-      if (namedPresent(cmd, `${id}, whose command names it: ${cmd}`)) for (const shell of shellsFor(A, id)) {
+      if (namedPresent(cmd, `${id}, whose command names it: ${cmd}`, NAMED_PROBE, undefined, { cwd: at })) for (const shell of shellsFor(A, id)) {
         const r = w.run(cmd, at, shell);
         assert.equal(r.changed, writers.includes(shell), `${id}: run unguarded, ${shell} ${writers.includes(shell) ? 'writes' : 'leaves'} the tracked subset: ${cmd}: ${r.stderr}`);
       }
@@ -9403,7 +9671,7 @@ test("round 6, seventh commit, the rows: a command name resolved to a printer is
       }
       w.build();
       assert.equal(w.hook(cmd, w.cwds.out).status, 0, `${id}: from a cwd in no project the relative write reaches no tracked file: ${cmd}`);
-      if (namedPresent(cmd, `${id}, whose command names it: ${cmd}`)) for (const shell of shellsFor(A, id)) {
+      if (namedPresent(cmd, `${id}, whose command names it: ${cmd}`, NAMED_PROBE, undefined, { cwd: at })) for (const shell of shellsFor(A, id)) {
         const r = w.run(cmd, at, shell);
         assert.equal(r.changed, writers.includes(shell), `${id}: run unguarded, ${shell} ${writers.includes(shell) ? 'writes' : 'leaves'} the tracked subset: ${cmd}: ${r.stderr}`);
       }
@@ -9602,7 +9870,7 @@ test("round 6, eighth commit, the rows: a resolved printer behind every wrapper 
         if (outside === 'allow') assert.equal(o.status, 0, `${id}: from a cwd in no project the relative write reaches no tracked file: ${cmd}: ${o.reason}`);
         else assert.equal(o.status, 2, `${id}: from a cwd in no project the stated cost refuses: ${cmd}`);
       }
-      if (namedPresent(cmd, `${id}, whose command names it: ${cmd}`)) for (const shell of shellsFor(A, id)) {
+      if (namedPresent(cmd, `${id}, whose command names it: ${cmd}`, NAMED_PROBE, undefined, { cwd: at })) for (const shell of shellsFor(A, id)) {
         const r = w.run(cmd, at, shell);
         assert.equal(r.changed, writers.includes(shell), `${id}: run unguarded, ${shell} ${writers.includes(shell) ? 'writes' : 'leaves'} the tracked subset: ${cmd}: ${r.stderr}`);
       }
@@ -9906,7 +10174,7 @@ test("round 6, ninth commit, the rows: a positional list of several elements at 
         if (outside === 'allow') assert.equal(o.status, 0, `${id}: from a cwd in no project the relative write reaches no tracked file: ${cmd}: ${o.reason}`);
         else assert.equal(o.status, 2, `${id}: from a cwd in no project the stated cost refuses: ${cmd}`);
       }
-      if (namedPresent(cmd, `${id}, whose command names it: ${cmd}`)) for (const shell of shellsFor(A, id)) {
+      if (namedPresent(cmd, `${id}, whose command names it: ${cmd}`, NAMED_PROBE, undefined, { cwd: at })) for (const shell of shellsFor(A, id)) {
         const r = w.run(cmd, at, shell);
         assert.equal(r.changed, writers.includes(shell), `${id}: run unguarded, ${shell} ${writers.includes(shell) ? 'writes' : 'leaves'} the tracked subset: ${cmd}: ${r.stderr}`);
       }
@@ -10022,7 +10290,7 @@ test("round 6, tenth commit, the rows: a double-quoted `\"$*\"` joins the positi
         if (outside === 'allow') assert.equal(o.status, 0, `${id}: from a cwd in no project the relative write reaches no tracked file: ${cmd}: ${o.reason}`);
         else assert.equal(o.status, 2, `${id}: from a cwd in no project the stated cost refuses: ${cmd}`);
       }
-      if (namedPresent(cmd, `${id}, whose command names it: ${cmd}`)) for (const shell of shellsFor(A, id)) {
+      if (namedPresent(cmd, `${id}, whose command names it: ${cmd}`, NAMED_PROBE, undefined, { cwd: at })) for (const shell of shellsFor(A, id)) {
         const r = w.run(cmd, at, shell);
         assert.equal(r.changed, writers.includes(shell), `${id}: run unguarded, ${shell} ${writers.includes(shell) ? 'writes' : 'leaves'} the tracked subset: ${cmd}: ${r.stderr}`);
       }
@@ -10164,7 +10432,7 @@ test("round 6, eleventh commit, the rows: a positional slice whose offset or len
         if (outside === 'allow') assert.equal(o.status, 0, `${id}: from a cwd in no project the relative write reaches no tracked file: ${cmd}: ${o.reason}`);
         else assert.equal(o.status, 2, `${id}: from a cwd in no project the stated cost refuses: ${cmd}`);
       }
-      if (namedPresent(cmd, `${id}, whose command names it: ${cmd}`)) for (const shell of shellsFor(A, id)) {
+      if (namedPresent(cmd, `${id}, whose command names it: ${cmd}`, NAMED_PROBE, undefined, { cwd: at })) for (const shell of shellsFor(A, id)) {
         const r = w.run(cmd, at, shell);
         assert.equal(r.changed, writers.includes(shell), `${id}: run unguarded, ${shell} ${writers.includes(shell) ? 'writes' : 'leaves'} the tracked subset: ${cmd}: ${r.stderr}`);
       }
@@ -10331,7 +10599,7 @@ test("round 6, twelfth commit, the rows: zsh's unbraced positional subscript (`$
         if (outside === 'allow') assert.equal(o.status, 0, `${id}: from a cwd in no project the relative write reaches no tracked file: ${cmd}: ${o.reason}`);
         else assert.equal(o.status, 2, `${id}: from a cwd in no project the stated cost refuses: ${cmd}`);
       }
-      if (namedPresent(cmd, `${id}, whose command names it: ${cmd}`)) for (const shell of shellsFor(A, id)) {
+      if (namedPresent(cmd, `${id}, whose command names it: ${cmd}`, NAMED_PROBE, undefined, { cwd: at })) for (const shell of shellsFor(A, id)) {
         const r = w.run(cmd, at, shell);
         assert.equal(r.changed, writers.includes(shell), `${id}: run unguarded, ${shell} ${writers.includes(shell) ? 'writes' : 'leaves'} the tracked subset: ${cmd}: ${r.stderr}`);
       }
@@ -10446,6 +10714,7 @@ test("round 6, fifteenth commit, the runner's shape reproduced: the escape reade
   try {
     const env = { ...process.env, PATH: `${refusingPerf(dir)}:${linkAllBut(dir, ['zsh'])}` };
     delete env.NODE_TEST_CONTEXT;
+    delete env[ABSENT_OVERRIDE];   // the child's absences are real, made by its PATH; THE OVERRIDE would stand in for them
     const r = _spawnSync(process.execPath, ['--test', '--test-name-pattern', 'round 6, the escape readers by execution|round 6, second commit, THE RESIDUAL TABLE', fileURLToPath(import.meta.url)], { env, encoding: 'utf8', timeout: 900000, maxBuffer: 64 * 1024 * 1024 });
     const out = String(r.stdout || '') + String(r.stderr || '');
     assert.equal(r.status, 0, `the child passes on the runner's shape: ${out.slice(0, 3000)}`);
@@ -10491,7 +10760,7 @@ const refusalWorld = () => {
   const env = (bin = null) => ({ PATH: bin ? `${bin}:${process.env.PATH}` : process.env.PATH, HOME: dir, LC_ALL: 'C.UTF-8' });
   return { dir, cwd: path.join(dir, 'docs'), witness: path.join(dir, 'scratch', 'ran-probe'), env, rm: () => fs.rmSync(dir, { recursive: true, force: true }) };
 };
-const hasProgram = (p) => _spawnSync('sh', ['-c', `command -v ${p}`], { encoding: 'utf8' }).status === 0;   // plumbing, as the table's toolPresent
+const hasProgram = (p) => presenceOf(p).ok;   // THE ONE PRESENCE FUNCTION (the fiftieth commit; `command -v` before it), as the table's toolPresent
 const PERF_CMD = 'perf stat -o /dev/null cp ../base/report.md report.md';   // RT-perf-stat's command
 const RUNNER_REASON = 'Error: Access to performance monitoring and observability operations is limited.';
 
@@ -10567,7 +10836,7 @@ test("round 7 of fork PR #780 review, thirtieth commit, THE REFUSING PROGRAM's c
     ];
     for (const [p, what, cmd] of real) {
       if (hasProgram(p)) cases.push([what, cmd, r.env(), { program: p, witness: r.witness }, null]);
-      else console.error(`NOT RUN: real ${p} is not on this runner, so its evidence leg did not run: THE REFUSING PROGRAM's condition (ii), ${what}`);
+      else console.error(`NOT RUN: real ${p} ${presenceOf(p).why}, so its evidence leg did not run: THE REFUSING PROGRAM's condition (ii), ${what}`);
     }
     assert.deepEqual(cases.map(([what, cmd, env, opts]) => [what, refusalOf(cmd, r.cwd, env, shells, opts)]), cases.map(([what, , , , want]) => [what, want]), `condition (ii) in ${shells.join(', ')}`);
     assert.ok(!fs.existsSync(r.witness), 'no witness is left behind');
@@ -10642,7 +10911,7 @@ test("round 7 of fork PR #780 review, thirtieth commit, THE RECORDED REFUSAL SHA
     const got = [];
     const want = [];
     for (const [p, cmd, env] of PROVOKED) {
-      if (!hasProgram(p)) { console.error(`NOT RUN: real ${p} is not on this runner, so its evidence leg did not run: THE RECORDED REFUSAL SHAPES, ${p}'s refusal`); continue; }
+      if (!hasProgram(p)) { console.error(`NOT RUN: real ${p} ${presenceOf(p).why}, so its evidence leg did not run: THE RECORDED REFUSAL SHAPES, ${p}'s refusal`); continue; }
       const witness = path.join(r.dir, 'scratch', `ran-${p}`);
       const direct = probeRan(shells[0], cmd, r.cwd, env, witness);   // runProbe's run, so a command the program detaches is seen as run
       assert.ok(!String(direct.stderr || '').includes(PROBE_GUARD_LINE), `THE PROBE'S RUN: ${p}'s provoked probe ran without the fourth pipe, so it ran nothing and its absent witness says nothing (exit ${direct.status})`);
@@ -10748,7 +11017,7 @@ test("round 7 of fork PR #780 review, thirty-first commit, THE REFUSING PROGRAM'
       ['V2', 'V2: the copy as a background job holding the standard streams', plantedPerf(r.dir, 'v2', `"$@" &\n${refuse}`), null],
     ];
     if (hasProgram('setsid')) cases.push(['V3', 'V3: the copy under setsid, its standard streams on /dev/null', plantedPerf(r.dir, 'v3', `setsid "$@" </dev/null >/dev/null 2>&1 &\n${refuse}`), null]);
-    else console.error("NOT RUN: real setsid is not on this runner, so its evidence leg did not run: THE REFUSING PROGRAM's condition (iii), V3");
+    else console.error(`NOT RUN: real setsid ${presenceOf('setsid').why}, so its evidence leg did not run: THE REFUSING PROGRAM's condition (iii), V3`);
     cases.push(['V5', 'V5: the copy under a delayed nohup, its standard streams on /dev/null', plantedPerf(r.dir, 'v5', `nohup sh -c 'sleep 1; exec "$@"' sh "$@" </dev/null >/dev/null 2>&1 &\n${refuse}`), null]);
     const got = [];
     const want = [];
@@ -10786,7 +11055,7 @@ test("round 7 of fork PR #780 review, thirty-first commit, THE REFUSING PROGRAM'
         got.push(['B1: the copy detached with every descriptor closed, released after the call', sh, reason, atReturn, madeOnceReleased]);
         want.push(['B1: the copy detached with every descriptor closed, released after the call', sh, RUNNER_REASON, [], true]);
       }
-    } else console.error("NOT RUN: real timeout or mkfifo is not on this runner, so its evidence leg did not run: THE REFUSING PROGRAM's disclosed residual, B1");
+    } else console.error(`NOT RUN: real ${['timeout', 'mkfifo'].filter((p) => !hasProgram(p)).map((p) => `${p} ${presenceOf(p).why}`).join(', and real ')}, so its evidence leg did not run: THE REFUSING PROGRAM's disclosed residual, B1`);
     assert.deepEqual(got, want, `condition (iii) over a detached command in ${shells.join(', ')}`);
     assert.deepEqual(fs.readdirSync(scratch), [], 'no witness appears after its call has returned but B1\'s, released and cleared above (T1\'s descendant, which outlives its call, runs no command)');
   } finally {
@@ -10945,7 +11214,7 @@ test("round 7 of fork PR #780 review, thirty-second commit, THE REFUSING PROGRAM
       ['V1: the copy in a delayed subshell, its standard streams on /dev/null', plantedPerf(r.dir, 'v1', `( sleep 1; "$@" ) </dev/null >/dev/null 2>&1 &\n${refuse}`), true],
     ];
     if (hasProgram('setsid')) cases.push(['V3: the copy under setsid, its standard streams on /dev/null', plantedPerf(r.dir, 'v3', `setsid "$@" </dev/null >/dev/null 2>&1 &\n${refuse}`), true]);
-    else console.error("NOT RUN: real setsid is not on this runner, so its evidence leg did not run: THE REFUSING PROGRAM's direct run, V3");
+    else console.error(`NOT RUN: real setsid ${presenceOf('setsid').why}, so its evidence leg did not run: THE REFUSING PROGRAM's direct run, V3`);
     cases.push(['V5: the copy under a delayed nohup, its standard streams on /dev/null', plantedPerf(r.dir, 'v5', `nohup sh -c 'sleep 1; exec "$@"' sh "$@" </dev/null >/dev/null 2>&1 &\n${refuse}`), true]);
     const got = [];
     const want = [];
@@ -11211,7 +11480,7 @@ test("round 7 of fork PR #780 review, thirty-third commit, THE CLEARED ENVIRONME
 
 test("round 7 of fork PR #780 review, thirty-third commit, THE CLEARED ENVIRONMENT by execution: every command CLEARED_LEGS lists, run in every present shell over a fresh world from its row's cwd under strace (every process traced, the startup files under the account's home watched), opens none of them, while the instrument sees the roads it watches in a world's home: a bash leg with no SHLVL whose standard input is a socket opens the world's ~/.bashrc, and so does a bash a dash leg starts, a zsh leg opens the world's .zshenv, and SHLVL 1 or zsh's -f shuts each; where strace is absent, or refuses to run in its recorded shape, a NOT RUN line, and any other failure of it reds", () => {
   const WHAT = 'THE CLEARED ENVIRONMENT by execution';
-  if (!hasProgram('strace')) { console.error(`NOT RUN: real strace is not on this runner, so its evidence leg did not run: ${WHAT}`); return; }
+  if (!hasProgram('strace')) { console.error(`NOT RUN: real strace ${presenceOf('strace').why}, so its evidence leg did not run: ${WHAT}`); return; }
   const check = spawnSync('strace', ['-f', '-qq', '-o', '/dev/null', 'true'], { encoding: 'utf8', env: { PATH: process.env.PATH }, timeout: 20000 });
   if (check.status !== 0) {   // a refusal is NOT RUN only in its recorded shape (THE REFUSING PROGRAM's (ii)); any other failure reds
     assert.ok(REFUSAL_SHAPES.strace.some((shape) => shape.test(String(check.stderr || ''))), `strace fails to trace \`true\` with no refusal recorded for it (exit ${check.status}): ${String(check.stderr || '').slice(0, 300)}`);
@@ -11257,7 +11526,7 @@ test("round 7 of fork PR #780 review, thirty-third commit, THE CLEARED ENVIRONME
     const none = [];
     let lacking = 0;
     for (const [text, [id, cwd, , program]] of CLEARED_LEGS) {
-      if (program && !hasProgram(program)) { console.error(`NOT RUN: real ${program} is not on this runner, so its evidence leg did not run: ${WHAT}, ${id}`); lacking++; continue; }
+      if (program && !hasProgram(program)) { console.error(`NOT RUN: real ${program} ${presenceOf(program).why}, so its evidence leg did not run: ${WHAT}, ${id}`); lacking++; continue; }
       for (const shell of shells) {
         w.build();
         got.push([id, shell, measure([shell, ...shellArgv(shell, text)], w.cwds[cwd], w.env)]);
@@ -11627,7 +11896,7 @@ test("round 7, seventeenth commit, the rows: a brace list beside a spliced print
         const o = w.hook(cmd, w.cwds.out);
         assert.equal(o.status, 0, `${id}: from a cwd in no project the relative write reaches no tracked file: ${cmd}: ${o.reason}`);
       }
-      if (namedPresent(cmd, `${id}, whose command names it: ${cmd}`)) for (const shell of shellsFor(A, id)) {
+      if (namedPresent(cmd, `${id}, whose command names it: ${cmd}`, NAMED_PROBE, undefined, { cwd: at })) for (const shell of shellsFor(A, id)) {
         const r = w.run(cmd, at, shell);
         assert.equal(r.changed, writers.includes(shell), `${id}: run unguarded, ${shell} ${writers.includes(shell) ? 'writes' : 'leaves'} the tracked subset: ${cmd}: ${r.stderr}`);
       }
@@ -11815,7 +12084,7 @@ test("round 7, eighteenth commit, the rows: a resolved substitution that leaves 
         const o = w.hook(cmd, w.cwds.out);
         assert.equal(o.status, 0, `${id}: from a cwd in no project the relative write reaches no tracked file: ${cmd}: ${o.reason}`);
       }
-      if (namedPresent(cmd, `${id}, whose command names it: ${cmd}`)) for (const shell of shellsFor(A, id)) {
+      if (namedPresent(cmd, `${id}, whose command names it: ${cmd}`, NAMED_PROBE, undefined, { cwd: at })) for (const shell of shellsFor(A, id)) {
         const r = w.run(cmd, at, shell);
         assert.equal(r.changed, writers.includes(shell), `${id}: run unguarded, ${shell} ${writers.includes(shell) ? 'writes' : 'leaves'} the tracked subset: ${cmd}: ${r.stderr}`);
       }
@@ -12056,7 +12325,7 @@ test("round 7, nineteenth commit, the rows: a `set` or `shift` in a subshell, a 
         const o = w.hook(cmd, w.cwds.out);
         assert.equal(o.status, 0, `${id}: from a cwd in no project the relative write reaches no tracked file: ${cmd}: ${o.reason}`);
       }
-      if (namedPresent(cmd, `${id}, whose command names it: ${cmd}`)) for (const shell of shellsFor(A, id)) {
+      if (namedPresent(cmd, `${id}, whose command names it: ${cmd}`, NAMED_PROBE, undefined, { cwd: at })) for (const shell of shellsFor(A, id)) {
         const r = w.run(cmd, at, shell);
         assert.equal(r.changed, writers.includes(shell), `${id}: run unguarded, ${shell} ${writers.includes(shell) ? 'writes' : 'leaves'} the tracked subset: ${cmd}: ${r.stderr}`);
       }
@@ -12343,7 +12612,7 @@ test("round 7, twentieth commit, the rows: a `set` or `shift` inside an `emulate
         const o = w.hook(cmd, w.cwds.out);
         assert.equal(o.status, 0, `${id}: from a cwd in no project the relative write reaches no tracked file: ${cmd}: ${o.reason}`);
       }
-      if (namedPresent(cmd, `${id}, whose command names it: ${cmd}`)) for (const shell of shellsFor(A, id)) {
+      if (namedPresent(cmd, `${id}, whose command names it: ${cmd}`, NAMED_PROBE, undefined, { cwd: at })) for (const shell of shellsFor(A, id)) {
         const r = w.run(cmd, at, shell);
         assert.equal(r.changed, writers.includes(shell), `${id}: run unguarded, ${shell} ${writers.includes(shell) ? 'writes' : 'leaves'} the tracked subset: ${cmd}: ${r.stderr}`);
       }
@@ -12591,7 +12860,7 @@ test("round 7, twenty-first commit, the rows: a `set`, `shift` or `cd` inside a 
         const o = w.hook(cmd, w.cwds.out);
         assert.equal(o.status, 0, `${id}: from a cwd in no project the relative write reaches no tracked file: ${cmd}: ${o.reason}`);
       }
-      if (namedPresent(cmd, `${id}, whose command names it: ${cmd}`)) for (const shell of shellsFor(A, id)) {
+      if (namedPresent(cmd, `${id}, whose command names it: ${cmd}`, NAMED_PROBE, undefined, { cwd: at })) for (const shell of shellsFor(A, id)) {
         const r = w.run(cmd, at, shell);
         assert.equal(r.changed, writers.includes(shell), `${id}: run unguarded, ${shell} ${writers.includes(shell) ? 'writes' : 'leaves'} the tracked subset: ${cmd}: ${r.stderr}`);
       }
@@ -12805,7 +13074,7 @@ test("round 7, twenty-second commit, the rows: a `.` or `source` of a text the g
         const o = w.hook(cmd, w.cwds.out);
         assert.equal(o.status, 0, `${id}: from a cwd in no project the relative write reaches no tracked file: ${cmd}: ${o.reason}`);
       }
-      if (namedPresent(cmd, `${id}, whose command names it: ${cmd}`)) for (const shell of shellsFor(A, id)) {
+      if (namedPresent(cmd, `${id}, whose command names it: ${cmd}`, NAMED_PROBE, undefined, { cwd: at })) for (const shell of shellsFor(A, id)) {
         const r = w.run(cmd, at, shell);
         assert.equal(r.changed, writers.includes(shell), `${id}: run unguarded, ${shell} ${writers.includes(shell) ? 'writes' : 'leaves'} the tracked subset: ${cmd}: ${r.stderr}`);
       }
@@ -13081,7 +13350,7 @@ test("round 7, twenty-third commit, the rows: THE UNHELD ROAD by construction: e
         const o = w.hook(cmd, w.cwds.out);
         assert.equal(o.status, 0, `${id}: from a cwd in no project the relative write reaches no tracked file: ${cmd}: ${o.reason}`);
       }
-      if (namedPresent(cmd, `${id}, whose command names it: ${cmd}`)) for (const shell of shellsFor(A, id)) {
+      if (namedPresent(cmd, `${id}, whose command names it: ${cmd}`, NAMED_PROBE, undefined, { cwd: at })) for (const shell of shellsFor(A, id)) {
         const r = w.run(cmd, at, shell);
         assert.equal(r.changed, writers.includes(shell), `${id}: run unguarded, ${shell} ${writers.includes(shell) ? 'writes' : 'leaves'} the tracked subset: ${cmd}: ${r.stderr}`);
       }
@@ -13223,6 +13492,8 @@ const E61_ROWS = (() => {
       ["C-cxo-glued-nad", "nad", "zsh -cxoextendedglob 'cp ../base/report.md report.md'", A, 'name'],
       ["C-co-glued-na", "na", "zsh -coextendedglob 'cp base/report.md docs/report.md'", A, 'name'],
       ["C-emu-co-glued-nad", "nad", "zsh --emulate sh -coextendedglob 'cp ../base/report.md report.md'", A, 'name'],
+      // runs zsh by its path from every leg: its verdict is asserted everywhere, and its zsh road is exercised where zsh is present (a local
+      // box) and NOT RUN on the runner, which has no zsh (THE INVOKED PROGRAM, the fiftieth commit; CI run 36109232805 ran it and went red)
       ["C-path-zsh-emu-nad", "nad", "/usr/bin/zsh --emulate sh -c 'cp ../base/report.md report.md'", A, 'name'],
       ["F-emu-sh-mv", "nad", "zsh --emulate sh -c 'mv ../base/report.md report.md'", A, 'name'],
       ["F-emu-sh-redirect", "nad", "zsh --emulate sh -c 'echo x > report.md'", A, 'name'],
@@ -13593,7 +13864,7 @@ for (const [group, what] of E61_GROUPS) {
           const o = w.hook(cmd, w.cwds.out);
           assert.equal(o.status, 0, `${id}: from a cwd in no project the relative write reaches no tracked file: ${cmd}: ${o.reason}`);
         }
-        if (namedPresent(cmd, `${id}, whose command names it: ${cmd}`)) for (const shell of shellsFor(['bash', 'zsh', 'dash'], id)) {
+        if (namedPresent(cmd, `${id}, whose command names it: ${cmd}`, NAMED_PROBE, undefined, { cwd: at })) for (const shell of shellsFor(['bash', 'zsh', 'dash'], id)) {
           const r = w.run(cmd, at, shell);
           assert.equal(r.changed, writers.includes(shell), `${id}: run unguarded, ${shell} ${writers.includes(shell) ? 'writes' : 'leaves'} the tracked subset: ${cmd}: ${r.stderr}`);
         }
@@ -13651,7 +13922,7 @@ test("round 7, twenty-fifth commit, the rows: every row of the ninth residual cl
     const GLUED_EXPANSION = ['text', 'glues an element of the positional parameters to another expansion'];
     const SAME_COMMAND = ['text', 'in the same command'];
     const VALUE_NOT_READ = ['text', 'is composed from `$1`'];
-    const toolPresent = (p) => _spawnSync('sh', ['-c', `command -v ${p}`], { encoding: 'utf8' }).status === 0;   // plumbing, as the table's own check
+    const toolPresent = (p) => presenceOf(p).ok;   // THE ONE PRESENCE FUNCTION, as the table's own check
     // [id, cwd, command, the shells that write (measured), the verdict ('allow', 'name', or ['text', a substring of the reason]), the verdict from a cwd in
     // no project ('allow' unless given; null: not asked, the row's own cwd is that cwd or the row says why), the program the row needs besides the shells]
     const rows = [
@@ -13948,8 +14219,8 @@ test("round 7, twenty-fifth commit, the rows: every row of the ninth residual cl
         const o = w.hook(cmd, w.cwds.out);
         assert.equal(o.status, 0, `${id}: from a cwd in no project the relative operand names no tracked file: ${cmd}: ${o.reason}`);
       }
-      if (program && !toolPresent(program)) { console.error(`NOT RUN: real ${program} is not on this runner, so its evidence leg did not run: ${id}`); return; }
-      if (namedPresent(cmd, `${id}, whose command names it: ${cmd}`)) for (const shell of shellsFor(A, id)) {
+      if (program && !toolPresent(program)) { console.error(`NOT RUN: real ${program} ${presenceOf(program).why}, so its evidence leg did not run: ${id}`); return; }
+      if (namedPresent(cmd, `${id}, whose command names it: ${cmd}`, NAMED_PROBE, undefined, { cwd: at })) for (const shell of shellsFor(A, id)) {
         const r = w.run(cmd, at, shell);
         assert.equal(r.changed, writers.includes(shell), `${id}: run unguarded, ${shell} ${writers.includes(shell) ? 'writes' : 'leaves'} the tracked subset: ${cmd}: ${r.stderr}`);
       }
@@ -14011,7 +14282,7 @@ test("round 7, twenty-sixth commit, the rows: a modeled writer's `--` option not
     const N = [];
     const RECOGNISE = ['text', 'which I do not recognise'];   // rule (f): a `--` (or short) option the exact table does not know
     const OWN_PROCESS = ['text', 'my own process'];           // extra6-3: /proc or /dev/fd resolved through the hook's own process
-    const toolPresent = (p) => _spawnSync('sh', ['-c', `command -v ${p}`], { encoding: 'utf8' }).status === 0;
+    const toolPresent = (p) => presenceOf(p).ok;
     // [id, cwd, command, the shells that write (measured), the verdict ('allow', 'name', or ['text', a substring]), the verdict
     // from a cwd in no project ('allow' unless given; null: not asked, the target is absolute via `~`/`$HOME`, refused anywhere),
     // the program the row needs besides the shells]
@@ -14103,8 +14374,8 @@ test("round 7, twenty-sixth commit, the rows: a modeled writer's `--` option not
         const o = w.hook(cmd, w.cwds.out);
         assert.equal(o.status, 0, `${id}: from a cwd in no project the relative operand names no tracked file: ${cmd}: ${o.reason}`);
       }
-      if (program && !toolPresent(program)) { console.error(`NOT RUN: real ${program} is not on this runner, so its evidence leg did not run: ${id}`); return; }
-      if (namedPresent(cmd, `${id}, whose command names it: ${cmd}`)) for (const shell of shellsFor(A, id)) {
+      if (program && !toolPresent(program)) { console.error(`NOT RUN: real ${program} ${presenceOf(program).why}, so its evidence leg did not run: ${id}`); return; }
+      if (namedPresent(cmd, `${id}, whose command names it: ${cmd}`, NAMED_PROBE, undefined, { cwd: at })) for (const shell of shellsFor(A, id)) {
         const r = w.run(cmd, at, shell);
         assert.equal(r.changed, writers.includes(shell), `${id}: run unguarded, ${shell} ${writers.includes(shell) ? 'writes' : 'leaves'} the tracked subset: ${cmd}: ${r.stderr}`);
       }
@@ -14162,7 +14433,7 @@ test("round 7, twenty-seventh commit, the rows: a `..` after a /proc-magic compo
     const A = ['bash', 'zsh', 'dash'];
     const N = [];
     const OWN_PROCESS = ['text', 'my own process'];   // extra6-3: a /proc-magic prefix resolved through the hook's own process
-    const toolPresent = (p) => _spawnSync('sh', ['-c', `command -v ${p}`], { encoding: 'utf8' }).status === 0;
+    const toolPresent = (p) => presenceOf(p).ok;
     // [id, cwd, command, the shells that write (measured), the verdict (['text', a substring]), the verdict from a cwd in no
     // project ('allow': nothing is protected there), the program the row needs besides the shells]
     const rows = [
@@ -14224,8 +14495,8 @@ test("round 7, twenty-seventh commit, the rows: a `..` after a /proc-magic compo
         const o = w.hook(cmd, w.cwds.out);
         assert.equal(o.status, 0, `${id}: from a cwd in no project nothing is protected: ${cmd}: ${o.reason}`);
       }
-      if (program && !toolPresent(program)) { console.error(`NOT RUN: real ${program} is not on this runner, so its evidence leg did not run: ${id}`); return; }
-      if (namedPresent(cmd, `${id}, whose command names it: ${cmd}`)) for (const shell of shellsFor(A, id)) {
+      if (program && !toolPresent(program)) { console.error(`NOT RUN: real ${program} ${presenceOf(program).why}, so its evidence leg did not run: ${id}`); return; }
+      if (namedPresent(cmd, `${id}, whose command names it: ${cmd}`, NAMED_PROBE, undefined, { cwd: at })) for (const shell of shellsFor(A, id)) {
         const r = w.run(cmd, at, shell);
         assert.equal(r.changed, writers.includes(shell), `${id}: run unguarded, ${shell} ${writers.includes(shell) ? 'writes' : 'leaves'} the tracked subset: ${cmd}: ${r.stderr}`);
       }
@@ -14478,7 +14749,7 @@ const e28Judge = (w, [id, cwd, raw, writers, expect, outside = 'allow']) => {
     const o = w.hook(cmd, w.cwds.out);
     assert.equal(o.status, 0, `${id}: from a cwd in no project the relative write reaches no tracked file: ${cmd}: ${o.reason}`);
   }
-  if (namedPresent(cmd, `${id}, whose command names it: ${cmd}`)) for (const shell of shellsFor(['bash', 'zsh', 'dash'], id)) {
+  if (namedPresent(cmd, `${id}, whose command names it: ${cmd}`, NAMED_PROBE, undefined, { cwd: at })) for (const shell of shellsFor(['bash', 'zsh', 'dash'], id)) {
     const r = w.run(cmd, at, shell);
     assert.equal(r.changed, writers.includes(shell), `${id}: run unguarded, ${shell} ${writers.includes(shell) ? 'writes' : 'leaves'} the tracked subset: ${cmd}: ${r.stderr}`);
   }
@@ -14752,7 +15023,7 @@ const e29Judge = (w, [id, cwd, raw, writers, expect, outside = 'allow']) => {
   w.build();
   verdict(w.hook(cmd, at), expect, `from ${cwd}`);
   if (outside != null) { w.build(); verdict(w.hook(cmd, w.cwds.out), outside, 'from a cwd in no project'); }
-  if (namedPresent(cmd, `${id}, whose command names it: ${cmd}`)) for (const shell of shellsFor(['bash', 'zsh', 'dash'], id)) {
+  if (namedPresent(cmd, `${id}, whose command names it: ${cmd}`, NAMED_PROBE, undefined, { cwd: at })) for (const shell of shellsFor(['bash', 'zsh', 'dash'], id)) {
     const r = w.run(cmd, at, shell);
     assert.equal(r.changed, writers.includes(shell), `${id}: run unguarded, ${shell} ${writers.includes(shell) ? 'writes' : 'leaves'} the tracked subset: ${cmd}: ${r.stderr}`);
   }
@@ -14913,7 +15184,7 @@ const e36Judge = (w, [id, cwd, raw, writers, expect, outside = 'allow', notIn = 
   w.build();
   verdict(w.hook(cmd, at), expect, `from ${cwd}`);
   if (outside != null) { w.build(); verdict(w.hook(cmd, w.cwds.out), outside, 'from a cwd in no project'); }
-  if (namedPresent(cmd, `${id}, whose command names it: ${cmd}`)) for (const shell of shellsFor(['bash', 'zsh', 'dash'], id)) {
+  if (namedPresent(cmd, `${id}, whose command names it: ${cmd}`, NAMED_PROBE, undefined, { cwd: at })) for (const shell of shellsFor(['bash', 'zsh', 'dash'], id)) {
     const r = w.run(cmd, at, shell);
     assert.equal(r.changed, writers.includes(shell), `${id}: run unguarded, ${shell} ${writers.includes(shell) ? 'writes' : 'leaves'} the tracked subset: ${cmd}: ${r.stderr}`);
   }
@@ -14942,4 +15213,109 @@ test("round 7 of fork PR #780 review, thirty-sixth commit: the population by gro
   assert.ok(hook.includes("if (w.literal && /^[-+]./.test(w.text)) { if (/^-[A-Za-z]*n/.test(w.text)) kind = 'ref'; continue; }") && hook.includes("if (!w.literal && kind === null) kind = 'maybe';"), 'THE NAMEREF: -n in any cluster before the first operand, or an option word the shell fills in (behaviour: E36-ref-rn, E36-ref-option-apart, E36-ref-option-word-unread, E36-ref-trailing-option)');
   assert.ok(hook.includes("for (let k = w.text.indexOf('='); k >= 0; k = w.text.indexOf('=', k + 1)) if (k + 1 < w.text.length) one(sliceWord(w, k + 1));") && hook.includes('if (/^-[^-]/.test(w.text)) for (let k = 2; k < w.text.length; k++) one(sliceWord(w, k));'), "THE OPERAND'S VALUE: after each `=` and at each place after a short option's letter (behaviour: E36-val-dd-key, E36-val-sort-glued, E36-val-sort-cluster)");
   assert.ok(hook.includes("if (eq > 0 && IDENTIFIER.test(w.text.slice(0, eq)) && w.text[eq + 1] === '~'"), "THE OPERAND'S VALUE: bash's `~` after an assignment-shaped word's `=` (behaviour: E36-val-dd-tilde-out)");
+});
+
+// ── round 7 of fork PR #780 review, fiftieth commit (2026-09-25): THE INVOKED PROGRAM's pins, and THE OVERRIDE's ─────────────────────────
+//
+// CI run 36109232805 went red on C-path-zsh-emu-nad (not ok 920): its bash and dash legs ran /usr/bin/zsh, which the runner does not have,
+// and the gate, reading the programs a command names as bare words, let them run. The reviewer ruled the class closed by rule, derived by
+// running and gated on the presence of the program each row invokes (THE INVOKED PROGRAM, at namedPresent, and THE ONE PRESENCE FUNCTION
+// with THE OVERRIDE, above the shell probe). The first pin runs the gate over every row the legs above gated in this process (GATED_ROWS,
+// so it runs last and reds when the rows did not run here), with the zsh family handed in as the absent set, and holds its NOT RUN rows equal
+// to an independent reading of each row's text: the rows whose text spells zsh, zsh5 or rzsh as a word or as a path's last component. A
+// synthetic row that runs a missing path or a missing name, bare, behind wrappers, inside another shell's text, piped into a shell or in a
+// substitution, is NOT RUN with the real check's reason (the rule is no zsh check: fish, or a path that is not there, is covered the same
+// way). The second holds that the real check alone decides with no absent set: under a PATH of links to every program but the zsh family,
+// every row that spells a zsh-family program bare is NOT RUN with the real check's reason and no line names an absent set. The third holds
+// THE OVERRIDE unset wherever the run is in CI.
+const ZSH_FAMILY = 'zsh zsh5 rzsh'.split(' ');
+// the independent reading: the zsh-family names a text spells as a word or as the last component of a path, anywhere in it
+const zshSpelled = (cmd) => ZSH_FAMILY.filter((n) => new RegExp(`(?:^|[\\s;&|(){}<>'"\`=])(?:[^\\s;&|(){}<>'"\`=]*/)?${n}(?=$|[\\s;&|(){}<>'"\`])`).test(cmd));
+const notRunProgram = (line) => (line.match(/^NOT RUN: real (\S+) /) || [])[1];
+const reLiteral = (t) => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+test("round 7 of fork PR #780 review, fiftieth commit, THE INVOKED PROGRAM over every row the legs gated (the reviewer's conditions on CI run 36109232805): with the zsh family as the absent set, a row is not run, a line naming a zsh-family program, exactly where its text spells one as a word or a path's last component (C-path-zsh-emu-nad by /usr/bin/zsh among them), each line with the real check's reason or the absent set's; and a synthetic row running a missing path or a missing name, bare, behind wrappers, inside another shell's text, piped into a shell or in a substitution, is not run with the real check's reason (runs last: it reads the rows the legs above gated)", () => {
+  assert.ok(GATED_ROWS.size > 0, 'the legs above gated rows in this process (this pin reads what they gated: run the whole file)');
+  const ids = new Set([...GATED_ROWS.values()].map(gatedRowId));
+  assert.deepEqual(Object.values(E61_ROWS).flat().map((r) => r[0]).filter((id) => !ids.has(id)), [], "every row of THE OPTION GRAMMAR's table, where CI's red stood, was gated here");
+  const absent = absentSet(ZSH_FAMILY.join(' '), "the pin's absent set");
+  const reasonOf = (p) => new RegExp(`^NOT RUN: real ${reLiteral(p)} (?:is not on this runner(?: \\(no executable file at that path\\))?|is treated as absent by the pin's absent set, which lists ${reLiteral(p.slice(p.lastIndexOf('/') + 1))} \\(present on this machine\\)), so its evidence leg did not run: `);
+  const disagree = [];
+  const badLines = [];
+  const members = [];
+  for (const [cmd, what] of GATED_ROWS) {
+    const lines = [];
+    namedPresent(cmd, what, NAMED_PROBE, (l) => lines.push(l), { absent });
+    const zshLines = lines.filter((l) => ZSH_FAMILY.includes(wordBase(notRunProgram(l) || '')));
+    for (const l of zshLines) if (!reasonOf(notRunProgram(l)).test(l) || !l.includes(what)) badLines.push(l.slice(0, 300));
+    if ((zshLines.length > 0) !== (zshSpelled(cmd).length > 0)) disagree.push(`${gatedRowId(what)}: the gate ${zshLines.length ? 'NOT RUN' : 'runs it'}, the text ${zshSpelled(cmd).length ? `spells ${zshSpelled(cmd).join(', ')}` : 'spells none'}: ${cmd.slice(0, 200)}`);
+    if (zshLines.length) members.push([gatedRowId(what), zshLines.map(notRunProgram)]);
+  }
+  assert.deepEqual(disagree, [], 'the gate NOT RUNs a row for a zsh-family program exactly where its text spells one');
+  assert.deepEqual(badLines, [], "each line names the program, the real check's reason or the absent set's, and the row");
+  assert.ok(members.some(([id, programs]) => id === 'C-path-zsh-emu-nad' && programs.includes('/usr/bin/zsh')), 'the row CI ran is a member, by its path');
+  // THE RECORDED ABSENCES name only programs their rows run, each row one the legs gated here
+  const cmdOf = new Map([...GATED_ROWS].map(([cmd, what]) => [gatedRowId(what), cmd]));
+  assert.deepEqual(Object.entries(RECORDED_ABSENT).flatMap(([id, { programs }]) => programs.filter((p) => !cmdOf.has(id) || !programsInvoked(cmdOf.get(id)).includes(p)).map((p) => `${id}: ${p}`)), [], 'each recorded absence is a program the gate derives for its row, a row gated here');
+  console.log(`# THE INVOKED PROGRAM over ${GATED_ROWS.size} gated commands: ${members.length} not run for the zsh family (${members.filter(([, ps]) => ps.some((p) => p.includes('/'))).length} of them by a path: ${members.filter(([, ps]) => ps.some((p) => p.includes('/'))).map(([id]) => id).join(', ')})`);
+  // the rule is no zsh check: a missing path or a missing name, wherever the text runs it, is NOT RUN with the real check's reason; a copy of the
+  // table, so these synthetic commands stay out of GATED_ROWS
+  const FISH = '/nonexistent/bin/fish';
+  const NAME = 'q780-no-such-program';
+  const synthetic = [
+    [`${FISH} -c 'cp ../base/report.md report.md'`, FISH, BY_PATH_WHY],
+    [`env -i X=1 nice -n 5 timeout 5 ${FISH} -c x`, FISH, BY_PATH_WHY],
+    [`bash -c '${FISH} -c x'`, FISH, BY_PATH_WHY],
+    [`echo '${FISH} -c x' | bash`, FISH, BY_PATH_WHY],
+    [`x=$(${FISH} -c x); cp ../base/report.md "$x"`, FISH, BY_PATH_WHY],
+    [`${NAME} -c 'cp ../base/report.md report.md'`, NAME, 'is not on this runner'],
+    [`command ${NAME} x`, NAME, 'is not on this runner'],
+    [`bash -o errexit -c "${NAME} x"`, NAME, 'is not on this runner'],
+  ];
+  const got = [];
+  const want = [];
+  for (const [cmd, program, why] of synthetic) {
+    const lines = [];
+    got.push([cmd, namedPresent(cmd, `synthetic: ${cmd}`, { ...NAMED_PROBE }, (l) => lines.push(l)), lines.map((l) => l.split(', so its evidence leg')[0])]);
+    want.push([cmd, false, [`NOT RUN: real ${program} ${why}`]]);
+  }
+  assert.deepEqual(got, want, "each synthetic row is NOT RUN, one line naming its missing program and the real check's reason");
+  assert.equal(namedPresent("bash -c 'cp ../base/report.md report.md'", 'a present program', { ...NAMED_PROBE }, () => assert.fail('a present program is not reported')), true, 'a row whose programs are present runs');
+});
+test("round 7 of fork PR #780 review, fiftieth commit, THE INVOKED PROGRAM's real check alone decides with no absent set (the reviewer's condition (6)): under a PATH of links to every program but the zsh family, every gated row that spells a zsh-family program bare is not run, its line giving the real check's reason, and no line of any gated row names an absent set (runs last, as the pin above)", () => {
+  assert.ok(GATED_ROWS.size > 0, 'the legs above gated rows in this process (run the whole file)');
+  const dir = outsideDir();
+  try {
+    const bin = linkAllBut(dir, ZSH_FAMILY);
+    const none = absentSet('', 'no absent set');
+    const bare = (cmd) => ZSH_FAMILY.filter((n) => new RegExp(`(?<![\\w./-])${n}(?![\\w./-])`).test(cmd));
+    const got = [];
+    const want = [];
+    let byName = 0;
+    for (const [cmd, what] of GATED_ROWS) {
+      const lines = [];
+      namedPresent(cmd, what, NAMED_PROBE, (l) => lines.push(l), { absent: none, PATH: bin });
+      assert.deepEqual(lines.filter((l) => /is treated as absent by/.test(l)), [], `no absent set decides: ${gatedRowId(what)}`);
+      const names = bare(cmd);
+      if (!names.length) continue;
+      byName++;
+      const invoked = programsInvoked(cmd);
+      got.push([gatedRowId(what), lines.filter((l) => names.includes(notRunProgram(l))).map((l) => l.split(', so its evidence leg')[0]).sort()]);
+      want.push([gatedRowId(what), names.filter((n) => programsNamed(cmd, NAMED_PROBE).includes(n) || invoked.includes(n)).map((n) => `NOT RUN: real ${n} is not on this runner`).sort()]);
+    }
+    assert.deepEqual(got, want, "every by-name member is NOT RUN with the real check's reason under the PATH that lacks the zsh family");
+    assert.ok(byName > 0 && got.every(([, ls]) => ls.length > 0), `by-name members measured (${byName}), each NOT RUN`);
+    console.log(`# THE INVOKED PROGRAM's real check, no absent set, a PATH without the zsh family: ${byName} gated rows spell a zsh-family program bare, each not run with the real check's reason`);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+test("round 7 of fork PR #780 review, fiftieth commit, THE OVERRIDE is never what CI relies on (the reviewer's condition (6), 08:28Z): wherever GITHUB_ACTIONS or CI is set, ROMP_TEST_ABSENT_PROGRAMS is unset, or this pin reds loudly and the override is not read; the predicate pinned against synthetic environments", () => {
+  assert.equal(overrideInCi(process.env), null, overrideInCi(process.env) || '');
+  if (process.env.GITHUB_ACTIONS || process.env.CI) assert.equal(OVERRIDE_ABSENT.names.size, 0, 'in CI no program is treated as absent by the override');
+  assert.deepEqual([
+    overrideInCi({ GITHUB_ACTIONS: 'true', [ABSENT_OVERRIDE]: 'zsh' }) !== null,
+    overrideInCi({ CI: 'true', [ABSENT_OVERRIDE]: '' }) !== null,
+    overrideInCi({ GITHUB_ACTIONS: 'true' }) !== null,
+    overrideInCi({ CI: 'true' }) !== null,
+    overrideInCi({ [ABSENT_OVERRIDE]: 'zsh zsh5 rzsh' }) !== null,
+    overrideInCi({}) !== null,
+  ], [true, true, false, false, false, false], 'the override set in CI (GITHUB_ACTIONS or CI) is the only refused shape');
 });
