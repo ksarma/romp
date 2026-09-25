@@ -136,6 +136,7 @@ check; and JSON true alone counting as answered at the dialer's fold, the writer
 tests/test_dead_session_staleness.py ReaderFollowsTheWriter
 runs this writer and the judge's reader together over one root; tests/test_postal_bus_lifetime.py
 MonitorTick pins the poll's write. SYNTHETIC fixtures only: private synthetic sids, hostname TESTHOST."""
+import ast
 import builtins
 import contextlib
 import io
@@ -2750,6 +2751,424 @@ class Mirror(unittest.TestCase):
         lines = [ln for ln in err.getvalue().splitlines() if "remote-sids mirror was not written" in ln]
         self.assertEqual(len(lines), 1, "said once per distinct text, never swallowed: %r" % err.getvalue())
         self.assertIn("the judge reads the previous one", lines[0])
+
+
+
+# ── PEER_STATE's ONE LOCK (round 6 of fork PR #897, the reviewer's round-5 ruling A) ──
+_TABLE, _TABLE_LOCK = "PEER_STATE", "_PEER_STATE_LOCK"
+_ORDER_LOCK, _ORDER_WRITER = "_REMOTE_SIDS_LOCK", "_write_remote_sids"
+_MUTATORS = frozenset({"pop", "popitem", "setdefault", "update", "clear", "append", "extend", "insert", "remove", "add",
+                       "discard", "sort", "reverse", "__setitem__", "__delitem__", "__ior__"})
+_FUNCS = (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)
+_DEFS = (ast.FunctionDef, ast.AsyncFunctionDef)
+
+
+def _peer_state_lock_census(source):
+    """The census of PEER_STATE's lock over the bus's `source`, derived by AST, never listed. Returns {"writers",
+    "iterations": [[function, line, text]], "protected", "takers": [function], "callSites": {function: n}, "refused":
+    [text]}. The rules (the reviewer's round-5 ruling A, and decision 6 at its end):
+      WRITERS, the rule the ruling's scan used: a store, delete or augmented assignment whose target is a subscript
+        or attribute rooted at PEER_STATE or at a name bound to a ROW reached from it (PEER_STATE.get, .setdefault,
+        .pop, PEER_STATE[k], a value target of a loop over PEER_STATE.items() or .values(), and so on through a copy
+        of the table's items, whose rows are still the live rows); a call of a mutating method on either; a rebinding
+        of the name. A row handed to a function binds that function's parameter (a starred parameter collects rows),
+        so a writer in the callee is a writer too; names propagate to a fixpoint, flow-insensitively (a name once
+        bound to a row stays one in its function), and a nested function reads its enclosing functions' names. A
+        store or a mutating call rooted at a local container of rows (a copy of the items, a dict of rows) is a
+        writer where it reaches a row: a store from depth two, a call from depth one.
+      ITERATIONS: every read of the name PEER_STATE other than the three atomic ones (a .get(...) call, a subscript
+        read, a membership test): .items(), .values(), a loop, a copy, the name handed on. This covers the two
+        readers the ruling names, the canonicalization (_canon_peer_name, reading every row) and the mirror's
+        snapshot, and decision 6's live iterations, each of which takes its copy under the lock.
+      A node of either population is PROTECTED when it sits lexically inside a `with _PEER_STATE_LOCK` of its own
+        function, or in a function every reference to which is a call that is itself protected (a least fixpoint
+        over the functions, keyed by name: a function referenced other than by a call, or with no reference, is
+        never protected by its callers). The module scope is exempt by its scope, not by name: it runs at import,
+        before any thread starts (the declaration is its one node).
+      Refused, each naming the function and line: an unprotected writer or iteration (with the call sites outside
+        the lock, for a function protected by none); a `with _PEER_STATE_LOCK` in a protected context, or a
+        protected call of a function that takes the lock, at any depth (the lock does not re-enter); and, the one
+        lock order (_REMOTE_SIDS_LOCK, then this one), a protected `with _REMOTE_SIDS_LOCK` or call of
+        _write_remote_sids or of any function that takes _REMOTE_SIDS_LOCK. Calls resolve by name, a method call
+        by its attribute name, both over-approximating."""
+    tree = ast.parse(source)
+    nodes = list(ast.walk(tree))
+    parent, scopes = {}, {}
+    for node in nodes:
+        for child in ast.iter_child_nodes(node):
+            parent[child] = node
+
+    def scope(node):                                  # the nearest enclosing def or lambda, or None (the module scope)
+        if node not in scopes:
+            p = parent.get(node)
+            scopes[node] = p if p is None or isinstance(p, _FUNCS) else scope(p)
+        return scopes[node]
+
+    def fname(sc):
+        return sc.name if isinstance(sc, _DEFS) else ("<lambda>" if sc is not None else "<module>")
+
+    def names(e, name):
+        return (isinstance(e, ast.Name) and e.id == name) or (isinstance(e, ast.Attribute) and e.attr == name)
+
+    def is_with(node, name):
+        return isinstance(node, (ast.With, ast.AsyncWith)) and any(names(i.context_expr, name) for i in node.items)
+
+    def lexically_in(node, name):                     # inside the BODY of a `with <name>` within its own function
+        child, p = node, parent.get(node)
+        while p is not None and not isinstance(p, _FUNCS):
+            if is_with(p, name) and any(child is b for b in p.body):
+                return True
+            child, p = p, parent.get(p)
+        return False
+
+    defs = {}
+    for node in nodes:
+        if isinstance(node, _DEFS):
+            defs.setdefault(node.name, []).append(node)
+    refs = {n: [] for n in defs}
+    for node in nodes:
+        nm = node.id if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load) else (
+            node.attr if isinstance(node, ast.Attribute) and isinstance(node.ctx, ast.Load) else None)
+        if nm in refs:
+            refs[nm].append(node)
+
+    def is_call(r):
+        p = parent.get(r)
+        return isinstance(p, ast.Call) and p.func is r
+
+    # ── the rows: a kind per name per function, to a fixpoint ──
+    env = {}
+
+    def look(name, sc):
+        while True:
+            k = env.get(sc, {}).get(name)
+            if k or sc is None:
+                return k
+            sc = scope(sc)
+
+    def kind(e, sc):
+        if isinstance(e, ast.Name):
+            return "table" if e.id == _TABLE else look(e.id, sc)
+        if isinstance(e, ast.Call):
+            f = e.func
+            if isinstance(f, ast.Attribute):
+                if kind(f.value, sc) in ("table", "rowsdict"):
+                    return {"get": "row", "setdefault": "row", "pop": "row", "items": "items", "values": "rows",
+                            "copy": "rowsdict"}.get(f.attr)
+                return None
+            if isinstance(f, ast.Name) and e.args:
+                ka = kind(e.args[0], sc)
+                if f.id in ("list", "tuple", "sorted", "reversed", "iter"):
+                    return ka if ka in ("items", "rows") else None
+                if f.id == "dict" and ka in ("table", "rowsdict", "items"):
+                    return "rowsdict"
+            return None
+        if isinstance(e, ast.Subscript):
+            kv = kind(e.value, sc)
+            return "row" if kv in ("table", "rowsdict", "rows", "pair") else None
+        if isinstance(e, ast.BoolOp):
+            for v in e.values:
+                k = kind(v, sc)
+                if k:
+                    return k
+            return None
+        if isinstance(e, ast.IfExp):
+            return kind(e.body, sc) or kind(e.orelse, sc)
+        if isinstance(e, (ast.NamedExpr, ast.Starred)):
+            return kind(e.value, sc)
+        if isinstance(e, ast.DictComp):
+            return "rowsdict" if kind(e.value, sc) == "row" else None
+        if isinstance(e, (ast.ListComp, ast.GeneratorExp, ast.SetComp)):
+            if kind(e.elt, sc) == "row":
+                return "rows"
+            if isinstance(e.elt, ast.Tuple) and any(kind(x, sc) == "row" for x in e.elt.elts):
+                return "items"
+            return None
+        if isinstance(e, (ast.List, ast.Tuple, ast.Set)):
+            return "rows" if any(kind(x, sc) == "row" for x in e.elts) else None
+        return None
+
+    def element(k):                                   # what one step of an iteration over a value of kind k yields
+        return {"items": "pair", "rows": "row"}.get(k)
+
+    def bind(t, k, sc):
+        if not k:
+            return False
+        if isinstance(t, ast.Name):
+            d = env.setdefault(sc, {})
+            if d.get(t.id):
+                return False
+            d[t.id] = k
+            return True
+        if isinstance(t, (ast.Tuple, ast.List)) and k == "pair" and len(t.elts) == 2:
+            return bind(t.elts[1], "row", sc)
+        if isinstance(t, ast.Starred):
+            return bind(t.value, k, sc)
+        return False
+
+    def bind_param(d, name, k):
+        e = env.setdefault(d, {})
+        if not k or e.get(name):
+            return False
+        e[name] = k
+        return True
+
+    changed, rounds = True, 0
+    while changed and rounds < 50:
+        changed, rounds = False, rounds + 1
+        for node in nodes:
+            sc = scope(node)
+            if isinstance(node, ast.Assign):
+                for t in node.targets:
+                    changed |= bind(t, kind(node.value, sc), sc)
+            elif isinstance(node, (ast.AnnAssign, ast.NamedExpr)) and node.value is not None:
+                changed |= bind(node.target, kind(node.value, sc), sc)
+            elif isinstance(node, (ast.For, ast.AsyncFor, ast.comprehension)):
+                changed |= bind(node.target, element(kind(node.iter, sc)), sc)
+            elif isinstance(node, ast.withitem) and node.optional_vars is not None:
+                changed |= bind(node.optional_vars, kind(node.context_expr, sc), sc)
+            elif isinstance(node, ast.Call):
+                callee = node.func.id if isinstance(node.func, ast.Name) else (
+                    node.func.attr if isinstance(node.func, ast.Attribute) else None)
+                for d in defs.get(callee, ()):
+                    params = [a.arg for a in d.args.posonlyargs + d.args.args]
+                    if isinstance(node.func, ast.Attribute) and params and params[0] in ("self", "cls"):
+                        params = params[1:]
+                    for i, a in enumerate(node.args):
+                        k = kind(a, sc)
+                        if isinstance(a, ast.Starred):
+                            if d.args.vararg is not None:
+                                changed |= bind_param(d, d.args.vararg.arg, k if k in ("rows", "items") else None)
+                        elif i < len(params):
+                            changed |= bind_param(d, params[i], k)
+                        elif d.args.vararg is not None:
+                            changed |= bind_param(d, d.args.vararg.arg, "rows" if k == "row" else k)
+                    for kw in node.keywords:
+                        k = kind(kw.value, sc)
+                        if kw.arg in params or kw.arg in [a.arg for a in d.args.kwonlyargs]:
+                            changed |= bind_param(d, kw.arg, k)
+                        elif d.args.kwarg is not None:
+                            changed |= bind_param(d, d.args.kwarg.arg, "rowsdict" if k == "row" else None)
+
+    def rooted(e, sc, container_depth):              # a chain rooted at the table or a row (or deep enough in a container)
+        depth = 0
+        while isinstance(e, (ast.Subscript, ast.Attribute)):
+            e, depth = e.value, depth + 1
+        k = kind(e, sc) if isinstance(e, ast.Name) else None
+        return k in ("table", "row") or (k in ("rowsdict", "rows", "items", "pair") and depth >= container_depth)
+
+    # ── the populations ──
+    writers, iterations = [], []
+    for node in nodes:
+        sc = scope(node)
+        targets = []
+        if isinstance(node, ast.Assign):
+            targets = node.targets
+        elif isinstance(node, (ast.AugAssign, ast.AnnAssign)):
+            targets = [node.target]
+        elif isinstance(node, ast.Delete):
+            targets = node.targets
+        elif isinstance(node, (ast.For, ast.AsyncFor, ast.comprehension, ast.NamedExpr)):
+            targets = [node.target]
+        elif isinstance(node, ast.withitem) and node.optional_vars is not None:
+            targets = [node.optional_vars]
+        for t in targets:
+            flat = t.elts if isinstance(t, (ast.Tuple, ast.List)) else [t]
+            for x in flat:
+                x = x.value if isinstance(x, ast.Starred) else x
+                if isinstance(x, ast.Name) and x.id == _TABLE:
+                    writers.append(x)                 # a rebinding of the name
+                elif isinstance(x, (ast.Subscript, ast.Attribute)) and rooted(x, sc, 2):
+                    writers.append(x)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr in _MUTATORS:
+            recv = node.func.value
+            if (isinstance(recv, ast.Name) and kind(recv, sc) in ("table", "row")) or (
+                    isinstance(recv, (ast.Subscript, ast.Attribute)) and rooted(recv, sc, 1)):
+                writers.append(node)
+        if isinstance(node, ast.Name) and node.id == _TABLE and isinstance(node.ctx, ast.Load):
+            p = parent.get(node)
+            atomic = ((isinstance(p, ast.Attribute) and p.value is node and p.attr == "get" and is_call(p))
+                      or (isinstance(p, ast.Subscript) and p.value is node)
+                      or (isinstance(p, ast.Compare) and any(c is node for c in p.comparators)
+                          and all(isinstance(o, (ast.In, ast.NotIn)) for o in p.ops)))
+            if not atomic:
+                iterations.append(node)
+
+    protected = set()
+
+    def locked(node):
+        if lexically_in(node, _TABLE_LOCK):
+            return True
+        sc = scope(node)
+        return isinstance(sc, _DEFS) and sc.name in protected
+
+    changed = True
+    while changed:
+        changed = False
+        for name, rs in refs.items():
+            if name not in protected and rs and all(is_call(r) and locked(r) for r in rs):
+                protected.add(name)
+                changed = True
+
+    def takers(lock, also=()):                        # the functions that take `lock`, at any depth of their calls
+        out = set(also)
+        for node in nodes:
+            if is_with(node, lock) and isinstance(scope(node), _DEFS):
+                out.add(scope(node).name)
+        changed = True
+        while changed:
+            changed = False
+            for node in nodes:
+                if isinstance(node, ast.Call):
+                    callee = node.func.id if isinstance(node.func, ast.Name) else (
+                        node.func.attr if isinstance(node.func, ast.Attribute) else None)
+                    sc = scope(node)
+                    if callee in out and isinstance(sc, _DEFS) and sc.name not in out:
+                        out.add(sc.name)
+                        changed = True
+        return out
+
+    table_takers, order_takers = takers(_TABLE_LOCK), takers(_ORDER_LOCK, (_ORDER_WRITER,))
+
+    def line(n):
+        return [fname(scope(n)), n.lineno, " ".join((ast.get_source_segment(source, n) or "").split())[:100]]
+
+    refused = []
+    for label, pop in (("writer", writers), ("iteration", iterations)):
+        for n in pop:
+            sc = scope(n)
+            if sc is None or locked(n):
+                continue                              # the module scope runs at import, before any thread starts
+            outside = []
+            if isinstance(sc, _DEFS) and not lexically_in(n, _TABLE_LOCK):
+                outside = ["%s line %d" % (fname(scope(r)), r.lineno) for r in refs.get(sc.name, ())
+                           if not (is_call(r) and locked(r))]
+            refused.append("%s outside the lock in %s (line %d: %s)%s" % (
+                label, line(n)[0], n.lineno, line(n)[2],
+                "; its references outside it: " + ", ".join(outside) if outside else
+                ("; no call site" if isinstance(sc, _DEFS) and not refs.get(sc.name) else "")))
+    for node in nodes:
+        if is_with(node, _TABLE_LOCK) and locked(node):
+            refused.append("re-entry: a with on the lock under the lock in %s (line %d)" % (fname(scope(node)), node.lineno))
+        if is_with(node, _ORDER_LOCK) and locked(node):
+            refused.append("order: %s taken under the lock in %s (line %d)" % (_ORDER_LOCK, fname(scope(node)), node.lineno))
+        if isinstance(node, ast.Call) and locked(node):
+            callee = node.func.id if isinstance(node.func, ast.Name) else (
+                node.func.attr if isinstance(node.func, ast.Attribute) else None)
+            if callee in table_takers:
+                refused.append("re-entry: %s calls %s, which takes the lock, under the lock (line %d)"
+                               % (fname(scope(node)), callee, node.lineno))
+            if callee in order_takers:
+                refused.append("order: %s calls %s, which takes %s or writes the mirror, under the lock (line %d)"
+                               % (fname(scope(node)), callee, _ORDER_LOCK, node.lineno))
+    return {"writers": [line(n) for n in writers], "iterations": [line(n) for n in iterations],
+            "protected": sorted(protected), "takers": sorted(table_takers),
+            "callSites": {n: len(rs) for n, rs in refs.items() if n in protected},
+            "refused": refused}
+
+
+class PeerStateLock(unittest.TestCase):
+    """PEER_STATE's ONE LOCK (round 6 of fork PR #897, the reviewer's round-5 ruling A, and decision 6 at its end). The two
+    recorders run at once by design, the handler for a peer's dial and the dialer for the fold of its answer, and each
+    derives a hub's held words from the row it replaces; with no lock, a roster one stored between the other's read and its
+    store lost a far host's unanswered word, and a session whose mail rode it answered rule 5 while another row vouched
+    (every vote of the round reproduced it through the real recorders). _PEER_STATE_LOCK is held by every read-modify-write
+    of the table and every iteration takes its copy under it. The census (_peer_state_lock_census) derives both populations
+    from the bus's source by AST and refuses a node outside the lock, a re-entry and a lock-order inversion; the
+    interleavings through the real recorders are tests/test_dead_session_staleness.py ReaderFollowsTheWriter's
+    test_the_recorders_race_* witnesses (executed, the reader's answer). Each census rule has a plant here that it refuses by
+    name, and the census over the bus's own source must find non-empty populations, so a census that reads nothing fails."""
+
+    SOURCE = Path(os.path.realpath(os.path.join(BIN, "romp-postal-service"))).read_text()
+    BASE = None                                       # the bus's own refusals, read once (the plants add to them)
+
+    def _plant(self, text):
+        """The census over the bus's source with `text` planted at its end, its refusals reduced to the ones the plant
+        adds: each plant pins a rule of the census, whatever the bus's own source holds."""
+        if PeerStateLock.BASE is None:
+            PeerStateLock.BASE = set(_peer_state_lock_census(self.SOURCE)["refused"])
+        base = PeerStateLock.BASE
+        got = _peer_state_lock_census(self.SOURCE + "\n\n" + text)
+        got["refused"] = [r for r in got["refused"] if r not in base]
+        return got
+
+    def test_every_read_modify_write_and_iteration_of_peer_state_holds_its_one_lock(self):
+        got = _peer_state_lock_census(self.SOURCE)
+        self.assertEqual(got["refused"], [], "every writer and every iteration of PEER_STATE sits under _PEER_STATE_LOCK, "
+                                             "lexically or through every call site; no re-entry; the one lock order")
+        self.assertTrue(got["writers"] and got["iterations"] and got["takers"],
+                        "the census derived its populations from the source: an empty one proves nothing (%r)" % got)
+        self.assertTrue(any(fn != "<module>" for fn, _, _ in got["writers"]), "writers beyond the module's declaration")
+        self.assertIn("_exchange_peer_name", got["protected"],
+                      "the ruled reader: the canonicalization reads every row, and both of _exchange_peer_name's call sites "
+                      "(the handler and the /peer-exchange route) hold the lock")
+        self.assertGreaterEqual(got["callSites"].get("_exchange_peer_name", 0), 2, "both call sites were derived: %r" % got)
+        self.assertIn("_canon_peer_name", got["protected"], "reached only through _exchange_peer_name")
+        self.assertIsInstance(pm._PEER_STATE_LOCK, type(threading.Lock()), "a plain lock (it does not re-enter)")
+        for other in ("_REMOTE_SIDS_LOCK", "_peer_lock", "_outbox_lock"):
+            self.assertIsNot(pm._PEER_STATE_LOCK, getattr(pm, other), "one lock per subject: not %s" % other)
+
+    def test_the_census_refuses_a_planted_writer_outside_the_lock_by_name(self):
+        got = self._plant("def _planted_writer(host):\n    st = PEER_STATE.get(host)\n    st[\"planted\"] = True\n")
+        self.assertTrue(any("writer outside the lock in _planted_writer" in r for r in got["refused"]), got["refused"])
+        got = self._plant("def _planted_writer(host):\n    with _PEER_STATE_LOCK:\n        st = PEER_STATE.get(host)\n"
+                          "        st[\"planted\"] = True\n")
+        self.assertEqual(got["refused"], [], "the control: the same writer under the lock is accepted")
+
+    def test_the_census_refuses_a_planted_helper_with_one_call_site_outside_the_lock_by_name(self):
+        helper = ("def _planted_helper(host):\n    PEER_STATE[host][\"planted\"] = True\n"
+                  "def _planted_locked_caller(host):\n    with _PEER_STATE_LOCK:\n        _planted_helper(host)\n")
+        got = self._plant(helper)
+        self.assertEqual(got["refused"], [], "the control: a helper every call site of which holds the lock is accepted")
+        self.assertIn("_planted_helper", got["protected"])
+        got = self._plant(helper + "def _planted_unlocked_caller(host):\n    _planted_helper(host)\n")
+        self.assertTrue(any("writer outside the lock in _planted_helper" in r and "_planted_unlocked_caller" in r
+                            for r in got["refused"]), got["refused"])
+        got = self._plant(helper + "_PLANTED_HOOK = _planted_helper\n")
+        self.assertTrue(any("writer outside the lock in _planted_helper" in r and "<module>" in r for r in got["refused"]),
+                        "a reference other than a call protects nothing: %r" % got["refused"])
+
+    def test_the_census_refuses_a_planted_iteration_outside_the_lock_by_name(self):
+        got = self._plant("def _planted_iteration():\n    return [h for h, st in PEER_STATE.items()]\n")
+        self.assertTrue(any("iteration outside the lock in _planted_iteration" in r for r in got["refused"]), got["refused"])
+        got = self._plant("def _planted_iteration():\n    return sorted(PEER_STATE)\n")
+        self.assertTrue(any("iteration outside the lock in _planted_iteration" in r for r in got["refused"]), got["refused"])
+        got = self._plant("def _planted_iteration():\n    with _PEER_STATE_LOCK:\n        rows = list(PEER_STATE.items())\n"
+                          "    return [h for h, st in rows]\n")
+        self.assertEqual(got["refused"], [], "the control: the copy taken under the lock, iterated after it")
+
+    def test_the_census_refuses_a_copied_row_written_outside_the_lock_and_a_row_handed_to_a_function_that_writes_it(self):
+        got = self._plant("def _planted_copy_writer():\n    with _PEER_STATE_LOCK:\n        rows = list(PEER_STATE.items())\n"
+                          "    for h, st in rows:\n        st[\"planted\"] = True\n")
+        self.assertTrue(any("writer outside the lock in _planted_copy_writer" in r for r in got["refused"]),
+                        "a copy of the items holds the live rows: %r" % got["refused"])
+        got = self._plant("def _planted_mutator(row):\n    row.setdefault(\"planted\", True)\n"
+                          "def _planted_hand(host):\n    _planted_mutator(PEER_STATE.get(host))\n")
+        self.assertTrue(any("writer outside the lock in _planted_mutator" in r and "_planted_hand" in r
+                            for r in got["refused"]), got["refused"])
+        got = self._plant("def _planted_varargs(*rows):\n    for r in rows:\n        r[\"planted\"] = True\n"
+                          "def _planted_hand(host):\n    _planted_varargs(None, PEER_STATE.get(host))\n")
+        self.assertTrue(any("writer outside the lock in _planted_varargs" in r for r in got["refused"]),
+                        "a starred parameter collects the rows handed to it: %r" % got["refused"])
+
+    def test_the_census_refuses_a_planted_reentry_and_a_planted_lock_order_inversion_by_name(self):
+        taker = ("def _planted_taker():\n    with _PEER_STATE_LOCK:\n        pass\n"
+                 "def _planted_mid():\n    return _planted_taker()\n")
+        got = self._plant(taker + "def _planted_reentry():\n    with _PEER_STATE_LOCK:\n        return _planted_mid()\n")
+        self.assertTrue(any("re-entry: _planted_reentry calls _planted_mid" in r for r in got["refused"]),
+                        "a call under the lock of a function that takes it, at any depth: %r" % got["refused"])
+        got = self._plant(taker + "def _planted_reentry():\n    _planted_mid()\n")
+        self.assertEqual(got["refused"], [], "the control: the same call outside the lock")
+        got = self._plant("def _planted_inner():\n    with _PEER_STATE_LOCK:\n        pass\n"
+                          "def _planted_outer():\n    with _PEER_STATE_LOCK:\n        _planted_inner()\n")
+        self.assertTrue(any("re-entry" in r and "_planted_inner" in r for r in got["refused"]), got["refused"])
+        got = self._plant("def _planted_order():\n    with _PEER_STATE_LOCK:\n        _write_remote_sids()\n")
+        self.assertTrue(any("order: _planted_order calls _write_remote_sids" in r for r in got["refused"]), got["refused"])
+        got = self._plant("def _planted_order():\n    with _PEER_STATE_LOCK:\n        with _REMOTE_SIDS_LOCK:\n            pass\n")
+        self.assertTrue(any("order: _REMOTE_SIDS_LOCK taken under the lock in _planted_order" in r for r in got["refused"]),
+                        got["refused"])
+        got = self._plant("def _planted_order():\n    with _REMOTE_SIDS_LOCK:\n        with _PEER_STATE_LOCK:\n            pass\n")
+        self.assertEqual(got["refused"], [], "the control: the one order, _REMOTE_SIDS_LOCK then the table's lock")
 
 
 if __name__ == "__main__":

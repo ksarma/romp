@@ -2873,7 +2873,9 @@ class Handler(BaseHTTPRequestHandler):
                 now = time.time()
                 direct_bus = _direct_bus_ids()
                 listed = {a["id"] for a in agents if a.get("id")}
-                for host, st in PEER_STATE.items():
+                with _PEER_STATE_LOCK:             # a copy under the table's lock: a recorder's add mid-iteration raises
+                    peer_rows = list(PEER_STATE.items())
+                for host, st in peer_rows:
                     age = int(now - (st.get("seenAt") or 0))
                     for pa in st.get("presence") or []:
                         if _via_duplicate(pa, direct_bus):
@@ -2938,8 +2940,11 @@ class Handler(BaseHTTPRequestHandler):
             # The relays in a 200 leave with this write (2026-09-08): _send writes through the handler's
             # unbuffered wfile (wbufsize 0 — sendall), so a return means the socket took the bytes and a
             # dead socket raises here. Returned → the flight ends carried; raised → freed, nothing left,
-            # they ride the next exchange (a re-relay is deduped over there).
-            host = _exchange_peer_name(data)
+            # they ride the next exchange (a re-relay is deduped over there). The name is read under the table's
+            # lock in a hold of its own, after the handler has returned and released it (never nested: the lock
+            # does not re-enter), since the canonicalization reads every row (round 6 of fork PR #897)
+            with _PEER_STATE_LOCK:
+                host = _exchange_peer_name(data)
             try:
                 self._send(payload, status)
             except Exception:
@@ -3754,12 +3759,13 @@ def peer_update(data):
         return {"error": uerr}, 400
     PEERS[host] = {"port": port, "up": up, "at": int(time.time()),
                    "token": tok, "trust": trust}
-    if not up and host in PEER_STATE:
-        # Heard before the link dropped: the roster its last exchange reported is not the host's word for
-        # what runs there now, so the row carries the mark _link_down reads until the host is heard again.
-        # The next exchange from it REPLACES the row (peer_exchange_handle, peer_exchange_apply) and so
-        # clears the mark: the event, not the up notify (round 2 of fork PR #897, the reviewer's ruling).
-        PEER_STATE[host]["linkDown"] = True
+    with _PEER_STATE_LOCK:                           # the membership test and the mark, one step (round 6 of fork PR #897)
+        if not up and host in PEER_STATE:
+            # Heard before the link dropped: the roster its last exchange reported is not the host's word for
+            # what runs there now, so the row carries the mark _link_down reads until the host is heard again.
+            # The next exchange from it REPLACES the row (peer_exchange_handle, peer_exchange_apply) and so
+            # clears the mark: the event, not the up notify (round 2 of fork PR #897, the reviewer's ruling).
+            PEER_STATE[host]["linkDown"] = True
     _peer_threads_reconcile(host)                    # an up peer gets its dialer; a down one is woken to exit
     _write_remote_sids()                             # the link state gates reachability: the mirror follows the notify at once
     return {"ok": True, "up": sum(1 for p in PEERS.values() if p["up"])}, 200
@@ -3771,7 +3777,9 @@ def _direct_bus_ids():
     aliases on different hosts (the user 2026-08-12, whose directly connected box was also listed
     "reachable via relay" under the hub's name for it, and whose mail could hop the hub)."""
     out = set()
-    for h, st in PEER_STATE.items():
+    with _PEER_STATE_LOCK:                             # a copy under the table's lock (_PEER_STATE_LOCK)
+        peer_rows = list(PEER_STATE.items())
+    for h, st in peer_rows:
         if (PEERS.get(h) or {}).get("port") and st.get("busId"):
             out.add(st["busId"])
     return out
@@ -3803,7 +3811,9 @@ def via_reach():
     difference can't sneak the duplicate back in)."""
     now, out = int(time.time()), {}
     direct_bus = _direct_bus_ids()
-    for hub, st in PEER_STATE.items():
+    with _PEER_STATE_LOCK:                             # a copy under the table's lock (_PEER_STATE_LOCK)
+        peer_rows = list(PEER_STATE.items())
+    for hub, st in peer_rows:
         age = int(now - (st.get("seenAt") or 0))
         for pa in st.get("presence") or []:
             far = pa.get("via")
@@ -3841,7 +3851,9 @@ def holds_payload(exclude_host):
     mail held for approval on the far spoke (the user 2026-07-25: a hold two machines away used to
     be invisible everywhere but on that machine's own dashboard)."""
     out = list(_hold_rows())
-    for h, st in PEER_STATE.items():
+    with _PEER_STATE_LOCK:                             # a copy under the table's lock (_PEER_STATE_LOCK)
+        peer_rows = list(PEER_STATE.items())
+    for h, st in peer_rows:
         if h == exclude_host:
             continue
         for hd in st.get("holds") or []:
@@ -3854,7 +3866,9 @@ def remote_holds():
     """Every hold we know about on OTHER machines, stamped with the machine that HOLDS it (`atHost`
     = the via label when relayed, else the direct peer). The kernel proxies this to the popover."""
     out = []
-    for h, st in PEER_STATE.items():
+    with _PEER_STATE_LOCK:                             # a copy under the table's lock (_PEER_STATE_LOCK)
+        peer_rows = list(PEER_STATE.items())
+    for h, st in peer_rows:
         for hd in st.get("holds") or []:
             out.append(dict(hd, atHost=hd.get("via") or h))
     return out
@@ -4337,6 +4351,9 @@ def _via_held(presence, bus, road, *prevs):
     answer's omission released the word, and a session whose mail the hub's dial had carried answered rule 5). So each
     word carries `hubRoad`, the road of the roster that last named it, and an omission by the other road holds it
     until the naming road's next exchange omits the host too (cost (h) of _remote_sids_document, the restricted side).
+    The two roads' recorders run at once, and each calls this under _PEER_STATE_LOCK, held from its read of the row it
+    replaces (a `prevs` entry) through its store, so no roster is stored between them and its words lost (round 6 of
+    fork PR #897, the reviewer's round-5 ruling A).
     That omission is the host's answering exchange with an EMPTY listing, its sessions all ended: the release (until
     the thirty-second commit the word stayed held for the process's life, every sid on this machine at
     cannot-determine; the reviewer's verifier at the thirty-first, by execution); or an empty cache, the host's bus
@@ -4934,6 +4951,14 @@ def _remote_sids_document(now, previous, owned=frozenset(), lost=None):
           no further exchange, until the hub names the host again, the host's own row speaks for it here or this bus
           restarts (tests/test_dead_session_staleness.py ReaderFollowsTheWriter
           test_cost_h_a_far_hosts_word_named_on_the_hubs_dial_stays_held_across_our_dials_until_the_hubs_next_dial_omits_it).
+          The hold rests on each roster being recorded whole, one road after the other, and the two recorders run at
+          once: each holds _PEER_STATE_LOCK from its read of the hub's row through its store and the fold, so the
+          other road's roster is never stored between them and its word lost (round 6 of fork PR #897, the
+          reviewer's round-5 ruling A; before it, a race of the two recorders dropped the word from both the
+          stored presence and the held words: tests/test_dead_session_staleness.py ReaderFollowsTheWriter
+          test_the_recorders_race_the_fold_holding_inside_its_read_while_the_hubs_dial_is_recorded_keeps_the_word_held,
+          test_the_recorders_race_the_handler_holding_inside_its_read_while_our_dials_answer_is_folded_keeps_the_word_held
+          and test_the_recorders_race_the_fold_of_a_restarted_hubs_declared_row_holding_inside_the_move_while_its_next_dial_is_recorded_keeps_the_word_held).
     Costs (c) and (e) are ACCEPTED as restricted-side costs (the reviewer's ruling): at the branch's base the judge
     never reached rule 5 at all, so every state the arm holds at cannot-determine was unsettled there too, and the
     arm trades a false rule 5, a live session presumed closed, for a card that stays unsettled until the user
@@ -5016,7 +5041,10 @@ def _remote_sids_document(now, previous, owned=frozenset(), lost=None):
         hosts[REMOTE_SIDS_HEARTBEAT + str(sid)] = {"kind": "heartbeat", "sids": [str(sid)], "heard": True,
                                                    "expired": now - ts >= HEARTBEAT_TTL, "answered": True,
                                                    "seenAt": int(ts), "name": name or "?"}
-    peers = {h: st for h, st in list(PEER_STATE.items()) if st.get("seenAt")}
+    with _PEER_STATE_LOCK:                            # the snapshot under the table's lock, nested inside _REMOTE_SIDS_LOCK
+        peers = {h: dict(st) for h, st in PEER_STATE.items() if st.get("seenAt")}   # (the one order): never between a
+    #                                                   recorder's read of a row and its store, or between the fold's forget
+    #                                                   of a row and the move of its held words (round 6 of fork PR #897)
     for host, st in peers.items():                    # every heard host's own rows first...
         row = {"kind": "peer", "sids": [], "heard": True, "expired": False, "seenAt": int(st.get("seenAt") or 0),
                "answered": st.get("presenceAnswered") is True}   # its last exchange carried an answered listing
@@ -5262,6 +5290,21 @@ _peer_wakes = {}                           # host -> threading.Event (long-poll 
 _peer_threads = {}                         # host -> Thread (one dialer loop per up peer)
 _peer_pending = {}                         # host -> {"acks": [mid], "bounces": [{mid, why}]} for the NEXT request
 _peer_lock = threading.Lock()
+_PEER_STATE_LOCK = threading.Lock()        # PEER_STATE's one lock (round 6 of fork PR #897, the reviewer's round-5 ruling A). Every
+#                                            read-modify-write of the table holds it: each recorder from its canonicalization (the
+#                                            handler) or its previous-row read (the fold) through the row's store and
+#                                            _drop_peer_name_dupes, the down notify's membership test and mark, the dialer's drift and
+#                                            refusal notes, and the /peer-exchange route's canonicalization; the mirror's snapshot and
+#                                            every iteration of the table take their copy under it. The two recorders run at once by
+#                                            design (the handler for a peer's dial, the dialer for the fold of its answer: _inflight
+#                                            below), and each derives a hub's held words from the row it replaces, so without it a
+#                                            roster one road stored between the other's read and its store lost a far host's
+#                                            unanswered word. One lock over the table, not one per host: the fold pops one name's row
+#                                            and writes another's, and the canonicalization reads every row. Lock order:
+#                                            _REMOTE_SIDS_LOCK, then this one; a holder of this one never takes _REMOTE_SIDS_LOCK,
+#                                            never calls _write_remote_sids and never takes this one again (it does not re-enter).
+#                                            tests/test_postal_remote_sids_mirror.py PeerStateLock derives the population and checks
+#                                            each rule
 _outbox_lock = threading.Lock()            # serializes an outbox record's listing-into-flight, carry mark and
 #                                            unlink (recall, ack, bounce): none interleaves (_relays_for, _flight_done)
 _inflight = {}                             # host -> {flight id: {mid}}: the records each OPEN exchange is carrying, from
@@ -5847,7 +5890,9 @@ def presence_payload(exclude_host):
     never sent the field reads unanswered, the restricted side."""
     rows, answered = _local_presence_checked()
     out = list(rows)
-    for h, st in PEER_STATE.items():
+    with _PEER_STATE_LOCK:                             # a copy under the table's lock: a recorder's add mid-iteration
+        peer_rows = list(PEER_STATE.items())           # raised out of the builder (round 6 of fork PR #897)
+    for h, st in peer_rows:
         if h == exclude_host:
             continue
         for pa in st.get("presence") or []:
@@ -6207,7 +6252,9 @@ def _canon_peer_name(host, bus_id):
     """The name to file a peer's exchange under: the DIALABLE alias when `bus_id` proves this is a bus
     we already peer with under another name (see BUS_ID above). The alias row is the one the kernel
     notifies, the dialer runs on, and the user tiered — so it wins over a self-declared hostname. No
-    bus_id (older peer) → the declared name stands, exactly as before."""
+    bus_id (older peer) → the declared name stands, exactly as before. It reads every row, so it runs under
+    _PEER_STATE_LOCK, held by each caller of _exchange_peer_name (the handler through its row's store; the
+    /peer-exchange route in a hold of its own; round 6 of fork PR #897)."""
     if not bus_id or (PEERS.get(host) or {}).get("port"):
         return host   # a dialable name stands as itself; two dialable names is the kernel's dedupe
     for k, st in PEER_STATE.items():
@@ -6233,7 +6280,11 @@ def _drop_peer_name_dupes(host, bus_id):
     may have taken before the forgotten row's, the words move held (at the thirty-second commit released
     there) and the hub's next dial, filed under the alias, releases them if it omits the host; when the hub's
     own dial under a new name folds it (its hostname changed within its process, which self_host reads live),
-    the same road, its omission releases them."""
+    the same road, its omission releases them. It runs under _PEER_STATE_LOCK, held by its two callers (the
+    recorders) through the row's store and this fold, and does not take the lock itself (it does not re-enter):
+    the pop, the staying row's read and its store are one step, so the other recorder cannot replace the staying
+    row between them and leave the moved words on a row no longer in the table (round 6 of fork PR #897, the
+    reviewer's round-5 ruling A)."""
     if not bus_id:
         return
     for k in [k for k, st in PEER_STATE.items()
@@ -6325,7 +6376,13 @@ def peer_exchange_handle(data, flight=None):
     the flight carried once _send returned (2026-09-08), and freed when it raised — nothing here
     touches the record or the wire form. The dialer's `presenceAnswered` (whether its listing answered for
     the roster it sent; round 3 of fork PR #897) is recorded on its PEER_STATE row for the deadness mirror,
-    JSON true alone counting, and our own bit rides the response beside our presence (presence_payload)."""
+    JSON true alone counting, and our own bit rides the response beside our presence (presence_payload). This
+    recorder and peer_exchange_apply run at once by design, this one on the handler's thread for a peer's dial
+    and that one on the dialer's thread for the fold of the same peer's answer, and each derives the hub's held
+    words (_via_held) from the row it replaces; each holds _PEER_STATE_LOCK from its canonicalization (here) or
+    its previous-row read (there) through its store and _drop_peer_name_dupes, and releases it before the
+    mirror's write, which is why a far host's word one recorder records is not lost to the other (round 6 of fork
+    PR #897, the reviewer's round-5 ruling A)."""
     host = str((data or {}).get("host") or "").strip()
     if not host:
         return {"error": "host required"}, 400
@@ -6335,37 +6392,43 @@ def peer_exchange_handle(data, flight=None):
     # Canonicalize BEFORE anything keys on the name: presence files under the alias (no duplicate
     # session rows), and the relays below are trust-judged under the alias the user actually tiered.
     bus_id = str((data or {}).get("busId") or "")
-    host = _exchange_peer_name(data)
-    if not _safe_id(host):
-        # An unkeyable name would HALF-work: presence lands (PEER_STATE is a dict), but outbox_put
-        # refuses it as a path component, so every reply parks "unreachable" with no error anywhere
-        # (2026-08-11). Refuse the whole exchange instead — loud on the dialer's side (_peer_loop
-        # logs the refusal) — unless the canonicalization above already folded the junk into a
-        # checked-in alias, which is the existing self-heal and still works. Updated dialers never
-        # declare such a name (self_host falls back); this guards against un-updated ones.
-        return {"error": "unsafe host name %r — this machine's hostname fails path-safety; fix its "
-                         "hostname (or set ROMP_POSTAL_HOST) and redial" % host}, 400
-    PEER_STATE[host] = {"presence": data.get("presence") or [], "epoch": data.get("epoch"),
-                        "holds": data.get("holds") or [], "seenAt": int(time.time()),
-                        # whether the dialer's listing answered for this roster (round 3 of fork PR #897): JSON true
-                        # alone counts, so a payload lacking the field, an older peer's, reads unanswered, the
-                        # restricted side, and cannot reopen the road the field closes (_remote_sids_document)
-                        "presenceAnswered": data.get("presenceAnswered") is True,
-                        # the road this roster came by, the dialer's request, which _via_held stamps on the words it
-                        # names (round 4, the thirty-third commit)
-                        "road": "dial",
-                        # a far host's unanswered word this roster no longer names stays held, heard in this process,
-                        # until the hub names that host again, the same hub process omits it on the road that named
-                        # it, or this bus restarts (_via_held; round 4, the thirty-first commit to the thirty-third)
-                        "viaHeld": _via_held(data.get("presence") or [], bus_id, "dial", PEER_STATE.get(host))}
-    if bus_id:
-        PEER_STATE[host]["busId"] = bus_id
-        _drop_peer_name_dupes(host, bus_id)
+    with _PEER_STATE_LOCK:                           # the canonicalization, the row's store and the fold: one step, so the
+        #                                              fold of our dial's answer (peer_exchange_apply, the dialer's thread)
+        #                                              cannot store its roster between this read of the row and this store
+        #                                              (round 6 of fork PR #897, the reviewer's round-5 ruling A)
+        host = _exchange_peer_name(data)
+        if not _safe_id(host):
+            # An unkeyable name would HALF-work: presence lands (PEER_STATE is a dict), but outbox_put
+            # refuses it as a path component, so every reply parks "unreachable" with no error anywhere
+            # (2026-08-11). Refuse the whole exchange instead, loud on the dialer's side (_peer_loop
+            # logs the refusal), unless the canonicalization above already folded the junk into a
+            # checked-in alias, which is the existing self-heal and still works. Updated dialers never
+            # declare such a name (self_host falls back); this guards against un-updated ones.
+            return {"error": "unsafe host name %r — this machine's hostname fails path-safety; fix its "
+                             "hostname (or set ROMP_POSTAL_HOST) and redial" % host}, 400
+        row = {"presence": data.get("presence") or [], "epoch": data.get("epoch"),
+               "holds": data.get("holds") or [], "seenAt": int(time.time()),
+               # whether the dialer's listing answered for this roster (round 3 of fork PR #897): JSON true
+               # alone counts, so a payload lacking the field, an older peer's, reads unanswered, the
+               # restricted side, and cannot reopen the road the field closes (_remote_sids_document)
+               "presenceAnswered": data.get("presenceAnswered") is True,
+               # the road this roster came by, the dialer's request, which _via_held stamps on the words it
+               # names (round 4, the thirty-third commit)
+               "road": "dial",
+               # a far host's unanswered word this roster no longer names stays held, heard in this process,
+               # until the hub names that host again, the same hub process omits it on the road that named
+               # it, or this bus restarts (_via_held; round 4, the thirty-first commit to the thirty-third)
+               "viaHeld": _via_held(data.get("presence") or [], bus_id, "dial", PEER_STATE.get(host))}
+        if bus_id:                                   # the busId and theirTier stamps join the row, so it is stored whole
+            row["busId"] = bus_id
+        if data.get("tier"):                         # the dialer's declared tier-of-us (additive; older peers omit it)
+            row["theirTier"] = str(data["tier"])
+        PEER_STATE[host] = row
+        if bus_id:
+            _drop_peer_name_dupes(host, bus_id)
     _write_remote_sids()                           # presence changed: refresh the deadness mirror, AFTER the busId
     #                                                fold, so this write already has one row per bus (the stale
     #                                                name's row gone with it, not one write later)
-    if data.get("tier"):                             # the dialer's declared tier-of-us (additive; older peers omit it)
-        PEER_STATE[host]["theirTier"] = str(data["tier"])
     for mid in data.get("acks") or []:               # the dialer confirmed relays landed — end-to-end:
         _ack_arrived(host, mid)                      # a forwarded one relays its ack back to the origin
     for b in data.get("bounces") or []:              # ...or refused them → backward, or to our sender
@@ -6449,7 +6512,13 @@ def peer_exchange_apply(host, req_sent, resp, flight=None):
     stay parked for the next request. Likewise a response-carried read WE could not apply gets no
     readAck, so the dialed side keeps it and re-sends it. The response's `presenceAnswered` is recorded on the
     PEER_STATE row as the handler records the request's (round 3 of fork PR #897): the two recorders are the
-    whole population of the bit's writers, and the mirror reads the row."""
+    whole population of the bit's writers, and the mirror reads the row. The two recorders run at once by design,
+    this one on the dialer's thread and peer_exchange_handle on the handler's for the same peer's dial, and each
+    derives the hub's held words (_via_held) from the row it replaces; each holds _PEER_STATE_LOCK from that read
+    through its store and _drop_peer_name_dupes, and releases it before the mirror's write, which is why a far
+    host's word one recorder records is not lost to the other (round 6 of fork PR #897, the reviewer's round-5
+    ruling A: before it, a roster stored between the other's read and its store was in neither the stored
+    presence nor the held words)."""
     p = _pending(host)
     with _peer_lock:
         p["acks"] = [a for a in p["acks"] if a not in (req_sent.get("acks") or [])]
@@ -6462,20 +6531,26 @@ def peer_exchange_apply(host, req_sent, resp, flight=None):
             continue                                 # the dialed side could not take it: it rides again
         readbox_del(host, r)
     bus_id = str(resp.get("busId") or "")
-    PEER_STATE[host] = {"presence": resp.get("presence") or [], "epoch": resp.get("epoch"),
-                        "holds": resp.get("holds") or [], "seenAt": int(time.time()),
-                        "presenceAnswered": resp.get("presenceAnswered") is True,   # the dialed side's bit: the same
-                        #                                                            rule as the handler's recorder
-                        "road": "answer",                            # this roster's road, its answer to our dial (_via_held)
-                        "viaHeld": _via_held(resp.get("presence") or [], bus_id, "answer", PEER_STATE.get(host))}   # ...and its held words
-    if bus_id:                                       # the dialed alias is canonical for this bus: fold any
-        PEER_STATE[host]["busId"] = bus_id           # row it left under its self-declared hostname
-        _drop_peer_name_dupes(host, bus_id)
+    with _PEER_STATE_LOCK:                           # the previous row's read, the row's store and the fold: one step, so
+        #                                              the handler of the peer's own dial (another thread) cannot store its
+        #                                              roster between them (round 6 of fork PR #897, the reviewer's round-5
+        #                                              ruling A)
+        row = {"presence": resp.get("presence") or [], "epoch": resp.get("epoch"),
+               "holds": resp.get("holds") or [], "seenAt": int(time.time()),
+               "presenceAnswered": resp.get("presenceAnswered") is True,   # the dialed side's bit: the same
+               #                                                            rule as the handler's recorder
+               "road": "answer",                            # this roster's road, its answer to our dial (_via_held)
+               "viaHeld": _via_held(resp.get("presence") or [], bus_id, "answer", PEER_STATE.get(host))}   # ...and its held words
+        if bus_id:                                   # the dialed alias is canonical for this bus: the stamps join the
+            row["busId"] = bus_id                    # row, so it is stored whole
+        if resp.get("tier"):                         # the dialed side's declared tier-of-us
+            row["theirTier"] = str(resp["tier"])
+        PEER_STATE[host] = row
+        if bus_id:                                   # fold any row it left under its self-declared hostname
+            _drop_peer_name_dupes(host, bus_id)
     _write_remote_sids()                           # presence changed: refresh the deadness mirror, after the fold
     #                                                (the write reads PEER_STATE, so the folded name's row is
     #                                                gone from this write; the writer drops the carried one by busId)
-    if resp.get("tier"):                             # the dialed side's declared tier-of-us
-        PEER_STATE[host]["theirTier"] = str(resp["tier"])
     for mid in resp.get("acks") or []:
         _ack_arrived(host, mid)
     for b in resp.get("bounces") or []:
@@ -6537,7 +6612,9 @@ def peer_route(to):
         want_host, to = to.split(":", 1)
     direct_bus = _direct_bus_ids()
     hits, seen_ids = [], {}
-    for host, st in PEER_STATE.items():
+    with _PEER_STATE_LOCK:                             # a copy under the table's lock (_PEER_STATE_LOCK)
+        peer_rows = list(PEER_STATE.items())
+    for host, st in peer_rows:
         if want_host and host != want_host:
             continue
         for a in st.get("presence") or []:
@@ -6598,9 +6675,11 @@ def _peer_exchange_once(host, port, token):
     except urllib.error.HTTPError as e:
         _end(False)                                  # answered before intake: nothing left
         if e.code == 409:
-            st = PEER_STATE.setdefault(host, {})
-            if st.get("drift") != "proto":
+            with _PEER_STATE_LOCK:                   # the note's read and its write, one step (round 6 of fork PR #897);
+                st = PEER_STATE.setdefault(host, {})   # the log line waits for the release
+                first = st.get("drift") != "proto"
                 st["drift"] = "proto"
+            if first:
                 _log("peer %s: protocol drift — update romp on one side" % host)
             return "drift"
         body = ""
@@ -6608,9 +6687,11 @@ def _peer_exchange_once(host, port, token):
             body = " ".join((e.read() or b"").decode("utf-8", "replace").split())[:200]
         except Exception:
             pass
-        st = PEER_STATE.setdefault(host, {})
-        if st.get("refused") != (e.code, body):      # each DISTINCT refusal once, not per retry —
+        with _PEER_STATE_LOCK:                       # the note's read and its write, one step (round 6 of fork PR #897)
+            st = PEER_STATE.setdefault(host, {})
+            first = st.get("refused") != (e.code, body)   # each DISTINCT refusal once, not per retry:
             st["refused"] = (e.code, body)           # a 4xx (e.g. the unsafe-host gate) otherwise
+        if first:
             _log("peer %s: exchange refused (HTTP %s) %s" % (host, e.code, body))   # retries silently forever
         return "refused"
     except urllib.error.URLError:

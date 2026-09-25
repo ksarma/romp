@@ -2821,6 +2821,157 @@ step(road, "fAnswers", us, newOnFar=S["new"], other=S["other"], f2sid=S["f2sid"]
 dial(f2, F, hub, HUB); dial(hub, HUB, us, US)      # F2's next exchange with the hub, then the hub's dial: F's kernel answering
 out["roads"][road]["hubRowAfterF2Again"] = hub_row_for_f(hub, f, f2)
 step(road, "f2Again", us, newOnFar=S["new"], other=S["other"], f2sid=S["f2sid"])
+# THE RECORDERS' RACE (round 6 of fork PR #897, the reviewer's round-5 ruling A): the two recorders run at once by design, the
+# handler for the hub's dial and the dialer for the fold of the hub's answer, and each derives the hub's held words from the
+# row it replaces. Each interleaving is DETERMINISTIC, no sleep: the main thread's recorder holds inside _via_held, after its
+# read of the row, while the other recorder runs on a second thread; the gate opens only when that thread has finished (a
+# done event set in its finally: a bus with no lock, where it runs through) or the instrumented lock reports it blocked (a
+# bus with the lock), and a bounded wait on the two that expires fails the road and never opens the gate. The lock is
+# installed by assignment, so on a bus without one the attribute is set and nothing reads it: the second thread runs
+# through, and the red is the reader's, never an AttributeError. Both threads act as OUR machine (the listing seam is an
+# environment variable, one per process), under one As(us) held across the race and the join
+import threading
+class GateLock:                                    # the bus's table lock, instrumented: the watched thread finding it held says so
+    def __init__(self, opened):
+        self.lock, self.opened, self.watch, self.blocked = threading.Lock(), opened, None, False
+    def acquire(self, blocking=True, timeout=-1):
+        if self.lock.acquire(False):
+            return True
+        if threading.current_thread() is self.watch and not self.blocked:
+            self.blocked = True                    # the second recorder waits on the lock the main one holds: the gate opens
+            self.opened.set()
+        return self.lock.acquire(blocking, timeout)
+    def release(self):
+        self.lock.release()
+    def locked(self):
+        return self.lock.locked()
+    def __enter__(self):
+        return self.acquire()
+    def __exit__(self, *exc):
+        self.release()
+def race(bus, main, gate_on, second):              # main() on this thread, gated inside _via_held where gate_on(road, prevs); second() beside it
+    opened, done = threading.Event(), threading.Event()
+    lock = GateLock(opened)
+    got = {"gate": None, "mainError": None, "secondError": None, "secondDone": False}
+    def run():
+        try:
+            second()
+        except BaseException as e:
+            got["secondError"] = "%s: %s" % (type(e).__name__, e)
+        finally:
+            done.set()
+            opened.set()
+    t = threading.Thread(target=run, daemon=True)
+    lock.watch = t
+    real, saved = bus._via_held, bus.__dict__.get("_PEER_STATE_LOCK")
+    def gated(presence, bus_id, road, *prevs):
+        if got["gate"] is None and threading.current_thread() is threading.main_thread() and gate_on(road, prevs):
+            got["gate"] = "waiting"
+            t.start()
+            if not opened.wait(30):                # bounded: expiry fails the road and never opens the gate
+                got["gate"] = "expired"
+                raise RuntimeError("the gate's wait expired: the second recorder neither finished nor blocked")
+            got["gate"] = "blocked" if lock.blocked else ("done" if done.is_set() else "opened")
+        return real(presence, bus_id, road, *prevs)
+    bus._PEER_STATE_LOCK, bus._via_held = lock, gated
+    try:
+        try:
+            main()
+        except BaseException as e:
+            got["mainError"] = "%s: %s" % (type(e).__name__, e)
+        if t.ident is not None:
+            t.join(30)
+        got["secondDone"] = done.is_set()
+    finally:
+        bus._via_held = real
+        if saved is None:
+            del bus._PEER_STATE_LOCK
+        else:
+            bus._PEER_STATE_LOCK = saved
+    return got
+def taken(src, src_name, dst, dst_name):           # src's real builder and dst's real handler NOW: the request and the answer,
+    with As(src):                                  # for src's real fold to record later
+        req = src.build_exchange_request(dst_name, wait=False)
+    req["host"] = src_name
+    with As(dst):
+        resp, status = dst.peer_exchange_handle(req)
+    return req, resp, status
+def via_of(payload):                               # [far host, sid, its bit] per gossiped row a payload carries
+    return sorted([pa.get("via"), pa.get("id"), pa.get("viaAnswered")] for pa in (payload or {}).get("presence") or [] if pa.get("via"))
+# (i) the fold holds inside _via_held after its read of the hub's row while the handler records the hub's dial: the restarted
+# hub's answer to our dial is taken before it hears F (it omits F), and its dial after F's cached exchange with it (F's word,
+# unanswered, and the new session's mail)
+road = "raceFoldHoldsHandlerRecords"
+us, f, hub, c = far_behind_hub(road, HUB)
+out["roads"][road] = {}
+hub, out["roads"][road]["restartDial"] = restart_hub(road, HUB)
+older_req, older_resp, out["roads"][road]["olderAnswerStatus"] = taken(us, US, hub, HUB)
+out["roads"][road]["olderAnswerVia"] = via_of(older_resp)
+LISTINGS["f"] = None
+out["roads"][road]["park"] = park(f, S["new"], "px-race1")
+out["roads"][road]["landingAtHub"] = mail_dial(f, F, hub, HUB)
+with As(hub):
+    newer_dial = hub.build_exchange_request(US, wait=False)
+newer_dial["host"] = HUB
+out["roads"][road]["newerDialVia"] = via_of(newer_dial)
+out["roads"][road]["newerDialRelays"] = [m.get("frm_id") for m in newer_dial.get("relays") or []]
+def handle_newer(road=road, req=newer_dial):
+    resp, status = us.peer_exchange_handle(req)
+    out["roads"][road]["handled"] = [status, resp.get("acks")]
+with As(us):
+    out["roads"][road]["race"] = race(us, lambda: us.peer_exchange_apply(HUB, older_req, older_resp),
+                                      lambda road_, prevs: road_ == "answer" and len(prevs) == 1, handle_newer)
+out["roads"][road]["heldAfter"], out["roads"][road]["rosterVia"] = held_words(us, HUB), roster_via(us, HUB)
+step(road, "raced", us, newOnFar=S["new"], nobody=S["nobody"], other=S["other"])
+# (ii) the reverse: the handler holds inside _via_held after its read of the hub's row while the fold records the hub's answer:
+# the restarted hub's dial is built before it hears F (it omits F), and its answer to our dial after F's cached exchange with it
+road = "raceHandlerHoldsFoldRecords"
+us, f, hub, c = far_behind_hub(road, HUB)
+out["roads"][road] = {}
+hub, out["roads"][road]["restartDial"] = restart_hub(road, HUB)
+with As(hub):
+    older_dial = hub.build_exchange_request(US, wait=False)
+older_dial["host"] = HUB
+out["roads"][road]["olderDialVia"] = via_of(older_dial)
+LISTINGS["f"] = None
+out["roads"][road]["park"] = park(f, S["new"], "px-race2")
+out["roads"][road]["landingAtHub"] = mail_dial(f, F, hub, HUB)
+newer_req, newer_resp, out["roads"][road]["newerAnswerStatus"] = taken(us, US, hub, HUB)
+out["roads"][road]["newerAnswerVia"] = via_of(newer_resp)
+out["roads"][road]["newerAnswerRelays"] = [m.get("frm_id") for m in newer_resp.get("relays") or []]
+def handle_older(road=road, req=older_dial):
+    resp, status = us.peer_exchange_handle(req)
+    out["roads"][road]["handled"] = [status]
+with As(us):
+    out["roads"][road]["race"] = race(us, handle_older, lambda road_, prevs: road_ == "dial" and len(prevs) == 1,
+                                      lambda: us.peer_exchange_apply(HUB, newer_req, newer_resp))
+out["roads"][road]["heldAfter"], out["roads"][road]["rosterVia"] = held_words(us, HUB), roster_via(us, HUB)
+step(road, "raced", us, newOnFar=S["new"], nobody=S["nobody"], other=S["other"])
+# (iii) the restarted hub, known here by the name it declares: F's word held on the declared row carries the old process's
+# hubBus; our dial to the alias folds that row, and _drop_peer_name_dupes holds between its read of the staying row and its
+# store while the restarted hub's next dial, canonicalized to the alias, replaces the staying row
+road = "raceDeclaredRowMovesWhileRestartedHubDials"
+us, f, hub, c = far_behind_hub(road, HUB_DECL)
+LISTINGS["f"] = None
+out["roads"][road] = {"park": park(f, S["new"], "px-race3")}
+out["roads"][road]["landingAtHub"] = mail_dial(f, F, hub, HUB)
+out["roads"][road]["landingHere"] = mail_dial(hub, HUB_DECL, us, US)
+hub, out["roads"][road]["restartDial"] = restart_hub(road, HUB_DECL)
+out["roads"][road]["heldOnDeclaredRow"] = held_stamps(us, HUB_DECL)
+step(road, "hubRestarted", us, newOnFar=S["new"], nobody=S["nobody"], other=S["other"])
+with As(hub):
+    next_dial = hub.build_exchange_request(US, wait=False)
+next_dial["host"] = HUB_DECL
+fold_req, fold_resp, out["roads"][road]["foldAnswerStatus"] = taken(us, US, hub, HUB)
+def handle_next(road=road, req=next_dial):
+    resp, status = us.peer_exchange_handle(req)
+    out["roads"][road]["handled"] = [status]
+with As(us):
+    out["roads"][road]["race"] = race(us, lambda: us.peer_exchange_apply(HUB, fold_req, fold_resp),
+                                      lambda road_, prevs: len(prevs) == 2, handle_next)
+out["roads"][road]["heardAfter"] = sorted(h for h, st in us.PEER_STATE.items() if st.get("seenAt"))
+out["roads"][road]["heldAfter"] = held_words(us, HUB)
+step(road, "raced", us, newOnFar=S["new"], nobody=S["nobody"], other=S["other"])
 print(json.dumps(out))
 """, HERE, BIN, str(others), json.dumps(ROAD_SIDS), R_US, R_B, R_C, R_HUB, R_F, R_HUB2, R_HUB_DECL, R_G, R_HUB_DECL2],
                              capture_output=True, text=True, env=full, cwd=str(home), timeout=120)
@@ -4787,6 +4938,108 @@ print(json.dumps(out))
             for pin, got_value, want, msg in pins:
                 with self.subTest(shape=shape, pin=pin):
                     self.assertEqual(got_value, want, msg)
+
+    # ── THE RECORDERS' RACE (round 6 of fork PR #897, the reviewer's round-5 ruling A): the handler records the hub's dial
+    # and the dialer folds the hub's answer at once by design, and each derives the hub's held words from the row it
+    # replaces, so a roster one stored between the other's read and its store was in neither the stored presence nor the
+    # held words. postal_service.py _PEER_STATE_LOCK makes each recording one step. Three deterministic interleavings
+    # through the real recorders (the roads child's race: the main thread's recorder held inside _via_held, the gate opened
+    # by the second recorder finishing, with no lock, or blocking on the lock, never by a sleep), each asserting the
+    # reader's answer for the session whose mail rode the word ──
+
+    def _race(self, got, name):
+        race = got["roads"][name]["race"]
+        self.assertIn(race["gate"], ("done", "blocked"), "the gate opened on one of its two events and never expired: %r" % race)
+        self.assertEqual((race["mainError"], race["secondError"], race["secondDone"]), (None, None, True), race)
+        self.assertEqual(race["gate"], "blocked", "the second recorder waited on the lock the first held inside its read: the "
+                                                  "interleaving ran (with no lock it runs through, 'done')")
+
+    def test_the_recorders_race_the_fold_holding_inside_its_read_while_the_hubs_dial_is_recorded_keeps_the_word_held(self):
+        """(i) The fold holds inside _via_held after its read of the hub's row while the handler records the hub's dial on
+        a second thread. The restarted hub's answer to our dial is taken before it hears F, so it omits F; F's kernel
+        blinks, a session starts on F and mails ours on F's cached exchange with the hub; the hub's dial, taken after,
+        carries F's unanswered word and the mail. With no lock the dial's roster is stored inside the fold's window and
+        the fold then stores its own, whose held words it took from the row before the dial: the word is in neither, the
+        via row is carried heard false, and the new session answers rule 5 while C vouches (every vote of the round
+        reproduced it through the real recorders with no injected pause, at a 1 microsecond switch interval). With the
+        lock the handler waits, then records its roster over the fold's row: the word stands, and the new session reads
+        listing-unanswered."""
+        S = ROAD_SIDS
+        via = UNANSWERED(R_VIA_F + " (listing unanswered)")
+        for shape, got in self.roads.items():
+            with self.subTest(shape=shape):
+                name = "raceFoldHoldsHandlerRecords"
+                road = got["roads"][name]
+                self.assertEqual(self._road(got, name, "raced", "newOnFar"), via,
+                                 "THE RACE: the word the hub's dial carried stays on the hub's row whatever the fold stored in "
+                                 "its window (with no lock [true, 5, no-reachable-host-names-it])")
+                self._race(got, name)
+                self.assertEqual((road["olderAnswerVia"], road["newerDialVia"], road["newerDialRelays"]),
+                                 ([], [[R_F, S["other"], False]], [S["new"]]),
+                                 "the premise: the answer taken first omits F, the dial taken after carries F's unanswered word "
+                                 "and the new session's mail")
+                self.assertEqual(road["handled"], [200, ["px-race1"]], "the mail landed here on the dial")
+                self.assertEqual((road["rosterVia"], road["heldAfter"]), ([[R_F, S["other"]]], []),
+                                 "the dial's roster, recorded after the fold's, stands")
+                self.assertEqual(self._road(got, name, "raced", "other"), RULE_4)
+
+    def test_the_recorders_race_the_handler_holding_inside_its_read_while_our_dials_answer_is_folded_keeps_the_word_held(self):
+        """(ii) The reverse: the handler holds inside _via_held after its read of the hub's row while the fold records the
+        hub's answer on a second thread. The restarted hub's dial is built before it hears F, so it omits F; F's cached
+        exchange with the hub carries the new session's mail; the hub's answer to our dial, taken after, carries F's
+        unanswered word and the mail. With no lock the answer's roster is stored inside the handler's window and the
+        handler then stores the dial's, whose held words it took from the row before the answer: the word is lost and the
+        new session answers rule 5. With the lock the fold waits, then records the answer over the dial's row: the word
+        stands (listing-unanswered)."""
+        S = ROAD_SIDS
+        via = UNANSWERED(R_VIA_F + " (listing unanswered)")
+        for shape, got in self.roads.items():
+            with self.subTest(shape=shape):
+                name = "raceHandlerHoldsFoldRecords"
+                road = got["roads"][name]
+                self.assertEqual(self._road(got, name, "raced", "newOnFar"), via,
+                                 "THE RACE: the word our dial's answer carried stays on the hub's row whatever the handler stored "
+                                 "in its window (with no lock [true, 5, no-reachable-host-names-it])")
+                self._race(got, name)
+                self.assertEqual((road["olderDialVia"], road["newerAnswerVia"], road["newerAnswerRelays"]),
+                                 ([], [[R_F, S["other"], False]], [S["new"]]),
+                                 "the premise: the dial built first omits F, the answer taken after carries F's unanswered word "
+                                 "and the new session's mail")
+                self.assertEqual(road["handled"], [200])
+                self.assertEqual((road["rosterVia"], road["heldAfter"]), ([[R_F, S["other"]]], []),
+                                 "the answer's roster, recorded after the dial's, stands")
+                self.assertEqual(self._road(got, name, "raced", "other"), RULE_4)
+
+    def test_the_recorders_race_the_fold_of_a_restarted_hubs_declared_row_holding_inside_the_move_while_its_next_dial_is_recorded_keeps_the_word_held(self):
+        """(iii) By the restarted-hub road: the hub, known here by the name it declares, relays F's cached word and the new
+        session's mail, then restarts and dials under that name, so F's word is held on the declared row stamped with the
+        old process's hubBus. Our dial to the alias folds that row, and _drop_peer_name_dupes holds between its read of the
+        staying row and its store while the restarted hub's next dial, canonicalized to the alias, replaces the staying
+        row. With no lock the moved words land on a row no longer in the table and the replacing row's held words come
+        from the row before the move: the word is lost, the declared-name via row is dropped by identity, and the new
+        session answers rule 5. With one hub process this road is not red through the reader, since the replacing dial
+        names F or releases the words by the ruled omission; the restart is what makes the lost word visible. With the
+        lock the dial waits for the fold, reads the staying row with the moved word, and keeps it held (its hubBus is not
+        the restarted process's)."""
+        S = ROAD_SIDS
+        decl = UNANSWERED(R_VIA_F_DECL + " (no link state, listing unanswered)")
+        via = UNANSWERED(R_VIA_F + " (listing unanswered)")
+        for shape, got in self.roads.items():
+            with self.subTest(shape=shape):
+                name = "raceDeclaredRowMovesWhileRestartedHubDials"
+                road = got["roads"][name]
+                self.assertEqual(self._road(got, name, "raced", "newOnFar"), via,
+                                 "THE RACE: the word moved from the declared row stays held on the alias's row whatever the "
+                                 "restarted hub's dial stored in the move's window (with no lock [true, 5, "
+                                 "no-reachable-host-names-it])")
+                self._race(got, name)
+                self.assertEqual((self._road(got, name, "hubRestarted", "newOnFar"), road["heldOnDeclaredRow"]),
+                                 (decl, [[R_F, S["other"], "dial"]]),
+                                 "the premise: held across the restart on the declared row")
+                self.assertEqual((road["handled"], road["heardAfter"], road["heldAfter"]),
+                                 ([200], [R_C, R_HUB], [[R_F, S["other"]]]),
+                                 "the fold forgot the declared row, and the alias's row holds the word")
+                self.assertEqual(self._road(got, name, "raced", "other"), RULE_4)
 
     def test_a_peer_mode_beat_vouches_for_presence_alone_and_the_legacy_scheme_keeps_its_ttl_vouch(self):
         """Round 3 of fork PR #897, the reviewer's ruling on its refuters' finding (the peer-mode beat phase of the class
