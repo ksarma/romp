@@ -160,7 +160,10 @@ is named otherwise. The rows whose label says the comparison names them hold the
 scan neither reads nor lists (a name that reaches a one-line binding the scan cannot read, the CLI's verb handed by
 xargs, parallel or the shell's positional parameters, the CLI launched in a word beside a clean CLI word, a -c child
 that starts the kernel through a process starter handed over as a value or reached through a dunder, a program held in a
-string that a test runs by exec or writes to a script file it starts) and the clean shapes above, as do the consumer
+string that a test runs by exec or writes to a script file it starts), launches beside a listed entry that holds the
+start of the match and not its end (the CLI joined by + or a str.join from a directory held in a parameter, an import, a
+loop or with target, lab.BIN or self.BIN, or a helper's return given the directory; N118 to N125: a listed entry covers
+a match it holds whole, start and end, PR #850's eleventh review round) and the clean shapes above, as do the consumer
 plants of the comparison case (N32 binds its path across two lines, which the regex misses too).
 
 Ruling point, the maintainers' to decide (2026-09-21): a child interpreter that load_sources the kernel
@@ -1780,14 +1783,15 @@ def _regex_scan_comparison(src, name, scan_all=False, scanned=None, hand=()):
     accounts for a hit at no call because such a hit has no call line to hold a site against, and the round-8 census's
     verdict was per module: a module with a site owes the trio, all that verdict required. A comment or a docstring gets
     no exemption, since that would be a proof that a hit launches nothing. The listed entries are the scan's
-    (`unresolved`, each covering a match inside its expression: at a call, an entry at the call's line; at no call, an
-    entry at any line) and `hand`, the module's entries of the hand listing (LISTED_BY_HAND), each covering every match
-    on the line whose text, its surrounding whitespace stripped, is the entry's. No proof inside a reader excuses a hit,
-    and no reader carries an exemption keyed on a spelling. Returns (dropped, missed, not_calls, flagged, by_hand):
-    `dropped` the (line, matched text, call text) of every match named (for a hit at no call, the line of the regex's
-    call parenthesis and that line's text); `missed` the lines of the sites the regex census did not flag, reported and
-    asserting nothing; `not_calls` the lines of every regex hit at no call of the module's ast (among them a comment, a
-    docstring, a string holding a program, and a def or class header named Popen), each accounted for or named as above;
+    (`unresolved`, each covering a match its expression's extent holds whole, the match's start and its end: at a call,
+    an entry at the call's line; at no call, an entry at any line) and `hand`, the module's entries of the hand listing
+    (LISTED_BY_HAND), each covering every match on the line whose text, its surrounding whitespace stripped, is the
+    entry's. No proof inside a reader excuses a hit, and no reader carries an exemption keyed on a spelling. Returns
+    (dropped, missed, not_calls, flagged, by_hand): `dropped` the (line, matched text, call text) of every match named
+    (for a hit at no call, the line of the regex's call parenthesis and that line's text); `missed` the lines of the
+    sites the regex census did not flag, reported and asserting nothing; `not_calls` the lines of every regex hit at no
+    call of the module's ast (among them a comment, a docstring, a string holding a program, and a def or class header
+    named Popen), each accounted for or named as above;
     `flagged` the number of calls of the ast the regex flags; `by_hand` the entries of `hand` that cover a match. A
     source the regex flags nowhere is not scanned unless `scan_all`, so its `missed` is empty.
     `scanned` is (tree, scan, sites, refused) from a scan of `src` its caller already ran (_roads_row, so the tree is
@@ -1823,7 +1827,9 @@ def _regex_scan_comparison(src, name, scan_all=False, scanned=None, hand=()):
             if refused or call.lineno in site_lines:
                 continue
         for offset, text in matches:
-            if any(start <= offset < end for line, node in listed if call is None or line == call.lineno
+            # an entry covers a match its extent holds whole, start and end (PR #850's eleventh review round: an entry
+            # holding the start alone, a listed BIN, covered `BIN + "/" + "romp"` beside "up", a launch; rows N118 to N125)
+            if any(start <= offset and offset + len(text) <= end for line, node in listed if call is None or line == call.lineno
                    for start, end in [extent(node)]):
                 continue
             entries = [e for e in hand if e[1] == lines[src.count("\n", 0, offset)].strip()]
@@ -2237,7 +2243,9 @@ def _method_chain(cls, name, classes):
 # (test_the_scan_covers_every_call_the_regex_census_it_replaced_flagged) runs that census over every row as well, and
 # every shape PR #850's ninth review round probed has a row here at the class that round's ruling gave it; a row whose
 # label says the regex missed it too is held to that by the comparison case, and every shape class PR #850's tenth
-# review round found a removed exclusion excusing has a row labelled named. The comparison case runs under the rule the
+# review round found a removed exclusion excusing has a row labelled named, as has each shape of listed entry PR #850's
+# eleventh review round found holding the start of a match and not its end, which covered the match while the comparison
+# read the start alone (N118 to N125, each held to that match). The comparison case runs under the rule the
 # module docstring states: for each call the regex flags, the scan gives a site at the call's line, or a listed entry at
 # that line whose expression contains the match, or refuses the module (UnreadableSpawn, red in the trio test); any
 # other match at a call is named; a regex hit at no call is accounted for when the module has a site, is refused, or has
@@ -2850,6 +2858,31 @@ PLANT_TABLE = (
      '    f.write(PROG)\nsubprocess.run([sys.executable, SCRIPT])'),
     ('N117 a program held in a string that a test runs by exec (the comparison names it)', 'no-spawn', None,
      'PROG = "import subprocess; subprocess.run([\'bin/romp-kernel\', \'--serve\'])"\nexec(PROG)'),
+    ('N118 the CLI joined by + from its directory beside up, the directory a parameter: an entry the scan lists holds the '
+     'start of the match and not its end (the comparison names it)', 'no-spawn', None,
+     'def test_a(BIN):\n    subprocess.run([BIN + "/" + "romp", "up"])'),
+    ('N119 the CLI joined by + from its directory beside up, the directory an imported name: an entry the scan lists holds '
+     'the start of the match and not its end (the comparison names it)', 'no-spawn', None,
+     'from helpers import BIN\nsubprocess.run([BIN + "/" + "romp", "up"])'),
+    ('N120 the CLI joined by + from its directory beside up, the directory a loop target: an entry the scan lists holds the '
+     'start of the match and not its end (the comparison names it)', 'no-spawn', None,
+     'for BIN in DIRS:\n    subprocess.run([BIN + "/" + "romp", "up"])'),
+    ('N121 the CLI joined by + from its directory beside up, the directory a with target: an entry the scan lists holds the '
+     'start of the match and not its end (the comparison names it)', 'no-spawn', None,
+     'with tempfile.TemporaryDirectory() as BIN:\n    subprocess.run([BIN + "/" + "romp", "up"])'),
+    ("N122 the CLI joined by + from its directory beside up, the directory a parameter's attribute (lab.BIN): an entry the "
+     "scan lists holds the start of the match and not its end (the comparison names it)", 'no-spawn', None,
+     'def test_a(lab):\n    subprocess.run([lab.BIN + "/" + "romp", "up"])'),
+    ('N123 the CLI joined by + from its directory beside up, the directory self.BIN, which no method of its class writes: an '
+     'entry the scan lists holds the start of the match and not its end (the comparison names it)', 'no-spawn', None,
+     'class T:\n    def test_a(self):\n        subprocess.run([self.BIN + "/" + "romp", "up"])'),
+    ("N124 the CLI joined by + from its directory beside up, the directory a helper's return given the directory "
+     "(where(BIN)): an entry the scan lists holds the start of the match and not its end (the comparison names it)",
+     'no-spawn', None,
+     'def where(d):\n    return d\nsubprocess.run([where(BIN) + "/" + "romp", "up"])'),
+    ('N125 the CLI joined by a str.join over a literal list from its directory beside up, the directory an imported name: an '
+     'entry the scan lists holds the start of the match and not its end (the comparison names it)', 'no-spawn', None,
+     'from helpers import BIN\nsubprocess.run(["/".join([BIN, "romp"]), "up"])'),
     ('R1 a rebinding in one function', 'refused-loud', (4, 2, 3),
      'def t():\n    k = os.path.join(BIN, "romp-kernel")\n    k = [sys.executable, "-m", "pytest", "-k", "boot"]\n    subprocess.run(k)'),
     ('R2 two module-level bindings that disagree', 'refused-loud', (3, 1, 2),
@@ -3092,8 +3125,11 @@ class HermeticKernelPostal(unittest.TestCase):
         The rows with a regex hit at no call are held the same way, among them a comment and a docstring (N11, N12) and
         a program held in a string that is exec'd or written to a script file a test runs (N116, N117), named at labels
         that say so, and B71, B74, A35 and A45 (each module has a site) and N89 (its listed program contains the hit),
-        which name nothing. A hand entry that covers no match reds the case, naming the entry. A row whose label says
-        the regex missed it too carries no call the regex flags. Reported and asserting nothing: the rows and the
+        which name nothing. A listed entry covers a match it holds whole, start and end (PR #850's eleventh review
+        round): each row whose label says an entry the scan lists holds the start of the match and not its end (N118 to
+        N125) carries such an entry at a call and is named at exactly the matches such entries hold the start of. A hand
+        entry that covers no match reds the case, naming the entry. A row whose label says the regex missed it too
+        carries no call the regex flags. Reported and asserting nothing: the rows and the
         modules whose sites the regex missed (B1 and the rest of round 8's silent half). The tree half is read from the
         roads table (_roads_table), whose one read compared each module with the scan it ran for the roads, so this case
         scans no module of the tree again. Then plants the comparison must name: consumer calls the regex flags
@@ -3131,6 +3167,25 @@ class HermeticKernelPostal(unittest.TestCase):
         self.assertEqual([row for row, matches in named.items() if not matches], [], "rows whose label says the comparison "
                          "names them, with no match named (a site, a listed entry containing each match, or a refusal took "
                          "every one)")
+        held = {}   # row -> the matches at a call that an entry the scan lists there holds the start of and not the end
+        for label, _, _, src in PLANT_TABLE:
+            if "holds the start of the match and not its end" in label:
+                tree = _parse_text(src, "planted.py")
+                scan = _SpawnScan(tree, "planted.py")
+                scan.sites()
+                hits, at = _regex_hits_at_calls(src, tree)
+                held[label.split()[0]] = [
+                    (call.lineno, text) for call, _, matches in hits if call is not None for offset, text in matches
+                    if any(at(n.lineno, n.col_offset) <= offset < at(n.end_lineno, n.end_col_offset) < offset + len(text)
+                           for line, n in scan.unresolved_nodes if line == call.lineno)]
+                scan.bindings.release()
+                del tree, scan
+        self.assertTrue(held, "no row's label says an entry the scan lists holds the start of the match and not its end")
+        self.assertEqual([row for row, matches in held.items() if not matches or named.get(row) != matches], [],
+                         "rows whose label says an entry the scan lists holds the start of the match and not its end, with "
+                         "no such entry at a call or not named at exactly the matches such an entry holds the start of (an "
+                         "entry covers a match it holds whole); row: (those matches, the named): %r"
+                         % {row: (matches, named.get(row)) for row, matches in held.items()})
         self.assertEqual(_hand_entries_covering_nothing(table.compared.values(), LISTED_BY_HAND), [], "entries of the hand "
                          "listing (LISTED_BY_HAND) that cover no match of the round-8 regex census over the tree: the "
                          "listing holds only lines that exist ((module, line, kind, reason))")
