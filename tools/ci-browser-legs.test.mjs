@@ -60,7 +60,11 @@
 //     PHRASE between the helper and the script, so a reword on either side is red here rather than a remedy dropped in
 //     silence. That pin reads text and guards the phrase alone: that inBrowser FAILS with it under the switch and skips
 //     without is executed by ui/webview/real-viewer-leg-switch.test.ts (a child node --test with PLAYWRIGHT_BROWSERS_PATH
-//     emptied), which the vscode-extension job runs under npm test and, rostered, in the step itself.
+//     emptied), which the vscode-extension job runs under npm test and, rostered, in the step itself;
+//   - each line switchLines finds (its docstring) in the files stepFiles derives from the step (its docstring) is a row
+//     of SWITCH_LINES by its text, whose docstring names the roles: inBrowser's read, inside inBrowser, is the one read
+//     that can change an outcome, and the script, run through the stub, exits the same status with the switch set to 1,
+//     set to yes and unset over each record and roster of its table.
 // Synthetic values only in the script's trees. Run: node --test tools/ci-browser-legs.test.mjs
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -1312,4 +1316,241 @@ test('the phrase the script reads a lost browser by is a literal in inBrowser\'s
   assert.ok(fs.existsSync(SWITCH_TEST), 'the executed test of the switch exists at ' + path.relative(REPO, SWITCH_TEST));
   assert.ok(read(SWITCH_TEST).includes('playwrightInstalled()'), path.relative(REPO, SWITCH_TEST) + ' consumes the helper\'s playwrightInstalled export (a presence pin: the export is not dead code in this tree)');
   assert.ok(parseRoster(read(path.join(EXT, ROSTER))).some((e) => e.bundle === 'out-tests/ui/webview/real-viewer-leg-switch.test.js'), path.relative(REPO, SWITCH_TEST) + ' is rostered in ' + ROSTER + ', so the step runs its leg with a browser on every CI run');
+});
+
+// ── the switch's lines in the files the step runs ─────────────────────────────────────────────────────────
+
+/** The files the step runs, derived from the step, each by its path from the repository root: the script its run field
+ *  calls (`bash <path>`, resolved from the job's default working directory `wd`), the roster the script's ROSTER= line
+ *  names and the reporter its REPORTER= line names (each resolved from `wd`, where the script runs; the roster, which
+ *  the script reads as data, among them), and, for each line parseRoster keeps in that roster, the bundle's source
+ *  (sourceOf's map) and every file of the tree it imports, transitively. An import is a string literal holding a
+ *  relative specifier (./ or ../) directly after from or import, or as the one argument of import( ) or require( ),
+ *  wherever it stands in the text, a comment or a string included, a loud over-read: the launcher's esbuild entry, a
+ *  string that exports from "./file-view", brings in the modules openViewer bundles at run time, which the switch test
+ *  does not call. It resolves to the first file of the tree among the specifier, the specifier with .ts, .tsx, .mts,
+ *  .js, .mjs or .cjs appended, a .js specifier with .ts in place of .js, and its /index.ts or /index.js, and a
+ *  specifier that resolves to none is red, naming it. Not followed: a specifier that is not relative (node:fs,
+ *  playwright), a computed one (a template literal, a concatenation), and a file a module reads at run time by a path
+ *  it builds (the launcher's sheets and render.ts). `read(rel)` gives a file's text by that path, or null when the tree
+ *  has no such file. Returns the paths in that order, the script, the roster and the reporter first, each once. Its
+ *  table: STEP_FILES_ROWS, run by the test after it. */
+function stepFiles(run, wd, read) {
+  const m = /^bash (\S+)$/.exec(run || '');
+  assert.ok(m, 'the step\'s run field is bash and a script\'s path: ' + JSON.stringify(run));
+  const script = path.posix.join(wd, m[1]);
+  const text = read(script);
+  assert.ok(text !== null, 'the script the step\'s run field calls is in the tree: ' + script);
+  const named = (key) => {
+    const k = new RegExp('^' + key + '=(\\S+)$', 'm').exec(text);
+    assert.ok(k, script + ' names its ' + key + ' on a line ' + key + '=<path>');
+    return path.posix.join(wd, k[1]);
+  };
+  const roster = named('ROSTER'), reporter = named('REPORTER');
+  const rosterText = read(roster);
+  assert.ok(rosterText !== null, 'the roster the script names is in the tree: ' + roster);
+  const out = [];
+  const add = (rel) => { if (out.includes(rel)) return false; out.push(rel); return true; };
+  [script, roster, reporter].forEach(add);
+  const resolve = (from, spec) => {
+    const base = path.posix.normalize(path.posix.join(path.posix.dirname(from), spec));
+    const tries = [...['', '.ts', '.tsx', '.mts', '.js', '.mjs', '.cjs'].map((e) => base + e), ...(base.endsWith('.js') ? [base.slice(0, -3) + '.ts'] : []), base + '/index.ts', base + '/index.js'];
+    return tries.find((c) => !c.startsWith('../') && read(c) !== null);
+  };
+  const visit = (rel) => {
+    if (!add(rel)) return;
+    const src = read(rel);
+    for (const s of [...src.matchAll(/\b(?:from|import)\s*(["'])(\.{1,2}\/[^"'\n]*)\1|\b(?:import|require)\s*\(\s*(["'])(\.{1,2}\/[^"'\n]*)\3\s*\)/g)].map((x) => x[2] || x[4])) {
+      const hit = resolve(rel, s);
+      assert.ok(hit, rel + ' imports ' + JSON.stringify(s) + ', which resolves to no file of the tree');
+      visit(hit);
+    }
+  };
+  for (const e of parseRoster(rosterText)) {
+    const src = path.relative(REPO, sourceOf(e.bundle)).split(path.sep).join('/');
+    assert.ok(read(src) !== null, roster + ' line ' + e.n + ' names ' + src + ', which is not in the tree (the roster test reds a stale line)');
+    visit(src);
+  }
+  return out;
+}
+/** stepFiles' table: each row a synthetic tree (paths from its root to texts), under a step whose run field is `bash
+ *  scripts/s.sh` in vscode-extension, whose script names ROSTER=r.txt and REPORTER=./scripts/rep.mjs, and the files
+ *  stepFiles derives from it after those three (null where it is red, naming the specifier), one spelling inside and one
+ *  outside each family its docstring names. */
+const SF_BASE = ['vscode-extension/scripts/s.sh', 'vscode-extension/r.txt', 'vscode-extension/scripts/rep.mjs'];
+const SF_A = 'ui/webview/a-browser.test.ts', SF_LINE = 'out-tests/ui/webview/a-browser.test.js\n';
+const STEP_FILES_ROWS = [
+  ['a rostered source and the file it imports from ./', { 'vscode-extension/r.txt': SF_LINE, [SF_A]: 'import { x } from "./helper";\n', 'ui/webview/helper.ts': '' }, [SF_A, 'ui/webview/helper.ts']],
+  ['the roster\'s comment and blank lines name no source', { 'vscode-extension/r.txt': '# a comment\n\n' + SF_LINE, [SF_A]: '' }, [SF_A]],
+  ['an import from ../, and its own import of a .js specifier that names a .ts file, followed', { 'vscode-extension/r.txt': SF_LINE, [SF_A]: 'import { b } from "../shared/b";\n', 'ui/shared/b.ts': 'export { c } from "./c.js";\n', 'ui/shared/c.ts': '' }, [SF_A, 'ui/shared/b.ts', 'ui/shared/c.ts']],
+  ['a side-effect import, an import() call, a require() call and an index file, followed', { 'vscode-extension/r.txt': SF_LINE, [SF_A]: 'import "./s1";\nconst m = import("./s2");\nconst r = require(\'./s3\');\nimport "./dir";\n', 'ui/webview/s1.ts': '', 'ui/webview/s2.mjs': '', 'ui/webview/s3.js': '', 'ui/webview/dir/index.ts': '' }, [SF_A, 'ui/webview/s1.ts', 'ui/webview/s2.mjs', 'ui/webview/s3.js', 'ui/webview/dir/index.ts']],
+  ['a node: specifier and a package, not followed (a file of the tree named as the first, so a reader that followed it would list it)', { 'vscode-extension/r.txt': SF_LINE, [SF_A]: 'import * as fs from "node:fs";\nconst pw = require("playwright");\n', 'ui/webview/node:fs.ts': '' }, [SF_A]],
+  ['a template literal and a concatenation, not followed', { 'vscode-extension/r.txt': SF_LINE, [SF_A]: 'const m = import(`./x`);\nconst n = require("./" + "y");\n', 'ui/webview/x.ts': '', 'ui/webview/y.ts': '' }, [SF_A]],
+  ['a relative specifier after from in a comment, followed (a loud over-read)', { 'vscode-extension/r.txt': SF_LINE, [SF_A]: '// the page is built from "./notes"\n', 'ui/webview/notes.ts': '' }, [SF_A, 'ui/webview/notes.ts']],
+  ['a relative specifier after from inside a string, an esbuild entry\'s, followed (a loud over-read)', { 'vscode-extension/r.txt': SF_LINE, [SF_A]: 'const entry = \'export { f } from "./page";\';\n', 'ui/webview/page.ts': '' }, [SF_A, 'ui/webview/page.ts']],
+  ['a file read at run time by a path the module builds, not followed', { 'vscode-extension/r.txt': SF_LINE, [SF_A]: 'const css = fs.readFileSync(path.join(UI, "styles.css"), "utf8");\n', 'ui/webview/styles.css': '' }, [SF_A]],
+  ['a file imported twice and by a second rostered source, listed once', { 'vscode-extension/r.txt': SF_LINE + 'out-tests/ui/webview/b-browser.test.js\n', [SF_A]: 'import "./h";\nimport { y } from "./h";\n', 'ui/webview/b-browser.test.ts': 'import "./h";\n', 'ui/webview/h.ts': '' }, [SF_A, 'ui/webview/h.ts', 'ui/webview/b-browser.test.ts']],
+  ['a specifier that resolves to no file of the tree, red', { 'vscode-extension/r.txt': SF_LINE, [SF_A]: 'import { g } from "./gone";\n' }, null],
+];
+test('stepFiles\' table: each row\'s files derived as stepFiles\' docstring states', () => {
+  const wrong = [];
+  for (const [what, tree, files] of STEP_FILES_ROWS) {
+    const all = { 'vscode-extension/scripts/s.sh': 'ROSTER=r.txt\nREPORTER=./scripts/rep.mjs\n', 'vscode-extension/scripts/rep.mjs': '', ...tree };
+    const read = (rel) => (Object.prototype.hasOwnProperty.call(all, rel) ? all[rel] : null);
+    let got;
+    try { got = stepFiles('bash scripts/s.sh', 'vscode-extension', read); } catch (e) { got = e instanceof assert.AssertionError && /resolves to no file of the tree/.test(e.message) ? null : 'threw ' + e.message; }
+    const want = files && [...SF_BASE, ...files];
+    if (!isDeepStrictEqual(got, want)) wrong.push(what + ': stepFiles derives ' + JSON.stringify(got) + ', not ' + JSON.stringify(want));
+  }
+  assert.deepEqual(wrong, [], 'each row of stepFiles\' table is derived as its docstring states; the rows read otherwise: ' + JSON.stringify(wrong));
+});
+
+/** The switch's lines in `files` ([{ rel, text }], each a path and its text): each line, as { rel, n, text } with n
+ *  from 1, that holds the switch's name, ROMP_BROWSER_LEGS_REQUIRE, as text anywhere in it (a comment, a string or a
+ *  key, a longer name holding it included); that holds a variable the same file binds to the name; or that holds a
+ *  value variable of the same file. A shell file is one whose path ends .sh; every other file is read as TypeScript. A
+ *  variable bound to the name: in the shell, X=NAME, the name quoted or not, and in TypeScript, const, let or var X = a
+ *  string literal holding the name alone; it is held as $X, ${X or ${!X in the shell and as the word X in TypeScript. A
+ *  line reads the switch's value when it holds, in the shell, $NAME, ${NAME or ${!X for X bound to the name, in
+ *  TypeScript, process.env.NAME, process.env[ a string literal holding the name ] or process.env[X] for X bound to the
+ *  name, and in either a value variable. A value variable is one assigned on such a line: in the shell, a name directly
+ *  before =, with no word character, $, ! or { before it, and in TypeScript, a name before = (spaces between them
+ *  allowed), not after a dot and not before == or =>; a variable assigned on a line that holds a value variable is one
+ *  too, transitively. It is held as a variable bound to the name is. Not found: a read spelled without the name or such
+ *  a variable, among them a key built by concatenation, a copy of the name made on a line of its own (m=$S, then
+ *  ${!m}), a variable bound by destructuring, a variable a command sets (read, printenv's output), and a whole
+ *  environment handed to a child that reads it. Its table: SWITCH_LINE_ROWS, run by the test after it. */
+function switchLines(files) {
+  const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const out = [];
+  for (const { rel, text } of files) {
+    const lines = text.split('\n'), sh = rel.endsWith('.sh');
+    const bound = new Set(), values = new Set();
+    for (const l of lines) {
+      const b = sh ? /(?<![\w$!{])([A-Za-z_]\w*)=(["']?)ROMP_BROWSER_LEGS_REQUIRE\2(?!\w)/.exec(l) : /\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(["'`])ROMP_BROWSER_LEGS_REQUIRE\2/.exec(l);
+      if (b) bound.add(b[1]);
+    }
+    const holds = (l, names, indirect) => [...names].some((x) => (sh ? new RegExp('\\$(?:\\{' + (indirect ? '!?' : '') + ')?' + esc(x) + '(?!\\w)') : new RegExp('(?<![\\w$])' + esc(x) + '(?![\\w$])')).test(l));
+    const readsValue = (l) => (sh
+      ? /\$\{?ROMP_BROWSER_LEGS_REQUIRE(?!\w)/.test(l) || [...bound].some((x) => new RegExp('\\$\\{!' + esc(x) + '(?!\\w)').test(l))
+      : /process\.env\.ROMP_BROWSER_LEGS_REQUIRE(?![\w$])|process\.env\[\s*(["'`])ROMP_BROWSER_LEGS_REQUIRE\1\s*\]/.test(l) || [...bound].some((x) => new RegExp('process\\.env\\[\\s*' + esc(x) + '\\s*\\]').test(l)))
+      || holds(l, values, true);
+    for (let grew = true; grew;) {
+      grew = false;
+      for (const l of lines.filter(readsValue)) {
+        for (const a of l.matchAll(sh ? /(?<![\w$!{])([A-Za-z_]\w*)=/g : /(?<![\w$.])([A-Za-z_$][\w$]*)\s*=(?![=>])/g)) {
+          if (!values.has(a[1])) { values.add(a[1]); grew = true; }
+        }
+      }
+    }
+    lines.forEach((l, i) => { if (l.includes('ROMP_BROWSER_LEGS_REQUIRE') || holds(l, bound, true) || holds(l, values, true)) out.push({ rel, n: i + 1, text: l }); });
+  }
+  return out;
+}
+/** switchLines' table: each row synthetic files ([path, text]) with N standing for the switch's name, and the lines
+ *  switchLines finds in them ([path, n]), one spelling inside and one outside each family its docstring names. */
+const SWITCH_LINE_ROWS = [
+  ['a TypeScript line reading process.env.N', [['a.ts', 'const x = 1;\nif (process.env.N) f();\n']], [['a.ts', 2]]],
+  ['a bracketed string key', [['a.ts', 'const x = 1;\nif (process.env["N"]) f();\n']], [['a.ts', 2]]],
+  ['a comment naming N', [['a.ts', '// N is the switch\nconst y = 2;\n']], [['a.ts', 1]]],
+  ['a longer name holding N (a loud over-read)', [['a.ts', 'const z = process.env.N_X;\n']], [['a.ts', 1]]],
+  ['a key built by concatenation, not found', [['a.ts', 'const k = "ROMP_" + "BROWSER_LEGS_REQUIRE";\nif (process.env[k]) f();\n']], []],
+  ['a TypeScript variable bound to N and the read through it', [['a.ts', 'const K = "N";\nconst x = 1;\nif (process.env[K]) f();\n']], [['a.ts', 1], ['a.ts', 3]]],
+  ['a TypeScript value variable and its use', [['a.ts', 'const on = process.env.N;\nconst x = 1;\nif (on) process.exit(0);\n']], [['a.ts', 1], ['a.ts', 3]]],
+  ['a value variable assigned from a value variable, transitively', [['a.ts', 'const on = process.env.N;\nconst x = 1;\nlet off = !on;\nconst y = 2;\nif (off) process.exit(0);\n']], [['a.ts', 1], ['a.ts', 3], ['a.ts', 5]]],
+  ['a comparison is not an assignment', [['a.ts', 'if (x === process.env.N) f();\nconst y = x;\n']], [['a.ts', 1]]],
+  ['a variable bound by destructuring, its use not found', [['a.ts', 'const { N: on } = process.env;\nif (on) process.exit(0);\n']], [['a.ts', 1]]],
+  ['a whole environment handed to a child, not found', [['a.ts', 'spawnSync(process.execPath, ["x.js"], { env: process.env });\n']], []],
+  ['a shell binding of N and the indirect read through it', [['s.sh', 'S=N\nx=1\nif [ -n "${!S:-}" ]; then echo a; fi\n']], [['s.sh', 1], ['s.sh', 3]]],
+  ['a quoted shell binding, and $S and ${S}', [['s.sh', 'S="N"\necho "$S"\necho "${S}"\necho "$SX"\n']], [['s.sh', 1], ['s.sh', 2], ['s.sh', 3]]],
+  ['a shell value variable and its use', [['s.sh', 'S=N\nv="${!S:-}"\nx=1\n[ -n "$v" ] && exit 0\n']], [['s.sh', 1], ['s.sh', 2], ['s.sh', 4]]],
+  ['a direct shell read of N and the variable it assigns', [['s.sh', 'v=$N\n[ "$v" = x ] && exit 0\n']], [['s.sh', 1], ['s.sh', 2]]],
+  ['a variable assigned beside $S, the name alone, not a value variable', [['s.sh', 'S=N\nm="$S is set"\necho "$m"\n']], [['s.sh', 1], ['s.sh', 2]]],
+  ['a copy of the name on a line of its own, the read through the copy not found', [['s.sh', 'S=N\nm=$S\n[ -n "${!m:-}" ] && exit 0\n']], [['s.sh', 1], ['s.sh', 2]]],
+  ['a variable a command sets, not followed', [['s.sh', 'S=N\nread -r v <<<"${!S:-}"\n[ -n "$v" ] && exit 0\n']], [['s.sh', 1], ['s.sh', 2]]],
+  ['a variable bound in one file, not held in another', [['s.sh', 'S=N\n'], ['t.sh', 'echo "${!S:-}"\n']], [['s.sh', 1]]],
+];
+test('switchLines\' table: each row\'s lines found as switchLines\' docstring states', () => {
+  const wrong = [];
+  for (const [what, files, found] of SWITCH_LINE_ROWS) {
+    const got = switchLines(files.map(([rel, text]) => ({ rel, text: text.replace(/(?<![A-Za-z])N(?![a-z])/g, SWITCH) }))).map((h) => [h.rel, h.n]);
+    if (!isDeepStrictEqual(got, found)) wrong.push(what + ': switchLines over ' + JSON.stringify(files) + ' finds ' + JSON.stringify(got) + ', not ' + JSON.stringify(found));
+  }
+  assert.deepEqual(wrong, [], 'each row of switchLines\' table is found as its docstring states; the rows read otherwise: ' + JSON.stringify(wrong));
+});
+/** The switch's lines at this head: each line switchLines finds (its docstring) in the files stepFiles derives from the
+ *  step (its docstring), as [what, its file, its text trimmed, its role]. The roles: inBrowser, inBrowser's read, the
+ *  one read that can change an outcome; message, a line of the script that reads the switch's value, or the state the
+ *  script derived from it, to choose or word a message, which changes no exit status (the test below runs the script
+ *  over each record and roster of its table with the switch set to 1, set to yes and unset); child, a child run's
+ *  environment the switch test builds, whose read is inBrowser's in that child; naming, a line that names the switch
+ *  and reads no value (a comment, a title, a message's text or pattern, the script's binding of the name). */
+const SWITCH_LINES = [
+  ['the header', 'vscode-extension/scripts/ci-browser-legs.sh', '# with ROMP_BROWSER_LEGS_REQUIRE=1. The one shared launcher, inBrowser in ui/webview/real-viewer-leg.ts, reads the', 'naming'],
+  ['the roster rule\'s words', 'vscode-extension/scripts/ci-browser-legs.sh', '# inBrowser\'s rejection, so the rejection fails its test; it does not change ROMP_BROWSER_LEGS_REQUIRE, and hands inBrowser', 'naming'],
+  ['the name bound to SWITCH', 'vscode-extension/scripts/ci-browser-legs.sh', 'SWITCH=ROMP_BROWSER_LEGS_REQUIRE', 'naming'],
+  ['the switch-state read', 'vscode-extension/scripts/ci-browser-legs.sh', 'if [ -n "${!SWITCH:-}" ]; then switch_state="$SWITCH=${!SWITCH}"; else switch_state="$SWITCH unset"; fi', 'message'],
+  ['the phrase awk reads a lost browser by', 'vscode-extension/scripts/ci-browser-legs.sh', 'report=$(printf \'%s\\n\' "${legs[@]}" | here="$here" awk -v msg="$SWITCH is set and this leg cannot run" -F \'\\t\' \'', 'naming'],
+  ['the skip line prints the state', 'vscode-extension/scripts/ci-browser-legs.sh', 'echo "ci-browser-legs: skipped with $switch_state: \'$a\' # SKIP $b ($leg)" >&2;;', 'message'],
+  ['the lost-browser line prints the state', 'vscode-extension/scripts/ci-browser-legs.sh', 'echo "ci-browser-legs: $leg: \'$a\' failed under $switch_state because inBrowser could not launch ($b): the runner lost its browser: check the Chromium install step" >&2', 'message'],
+  ['the skip remedy\'s choice', 'vscode-extension/scripts/ci-browser-legs.sh', 'if [ -n "${!SWITCH:-}" ]; then', 'message'],
+  ['the skip remedy with the switch set', 'vscode-extension/scripts/ci-browser-legs.sh', 'echo "ci-browser-legs: a rostered leg skipped a test with $switch_state, so the step claims coverage it did not run: the test skips for a reason of its own (under the switch, inBrowser in ui/webview/real-viewer-leg.ts fails a launch it cannot make instead of skipping); until every test of the leg runs here, take its line out of $ROSTER" >&2', 'message'],
+  ['the skip remedy with the switch unset', 'vscode-extension/scripts/ci-browser-legs.sh', 'echo "ci-browser-legs: a rostered leg skipped a test with $switch_state, so this run claims coverage it did not run: the step sets $SWITCH=1, under which inBrowser in ui/webview/real-viewer-leg.ts fails a launch it cannot make instead of skipping; run with it set, and a test that still skips there skips for a reason of its own" >&2', 'message'],
+  ['the header', 'vscode-extension/ci-browser-legs.txt', '# after the job\'s Chromium install, with ROMP_BROWSER_LEGS_REQUIRE=1: the one shared launcher, inBrowser in', 'naming'],
+  ['the roster rule\'s words', 'vscode-extension/ci-browser-legs.txt', '# inBrowser\'s rejection, so the rejection fails its test; it does not change ROMP_BROWSER_LEGS_REQUIRE, and hands', 'naming'],
+  ['the header', 'ui/webview/real-viewer-leg-switch.test.ts', '// The shared launcher\'s switch, executed: inBrowser in ./real-viewer-leg reads ROMP_BROWSER_LEGS_REQUIRE, and under the', 'naming'],
+  ['the second test\'s title', 'ui/webview/real-viewer-leg-switch.test.ts', 'test("ROMP_BROWSER_LEGS_REQUIRE, read in the shared launch helper, turns the skip of a leg that launches through it into a failure that names the switch and the reason, under \\"1\\" and under another value (any non-empty value counts), and without it the skip stands naming the reason: CI\'s browser-legs step after the Chromium install sets it", { timeout: 180000 }, (t) => {', 'naming'],
+  ['the "1" arm\'s child', 'ui/webview/real-viewer-leg-switch.test.ts', 'const req = run({ ROMP_BROWSER_LEGS_REQUIRE: "1" });', 'child'],
+  ['an assertion\'s pattern', 'ui/webview/real-viewer-leg-switch.test.ts', 'assert.match(req.stdout, new RegExp("ROMP_BROWSER_LEGS_REQUIRE[^\\\\n]*" + esc(why)), "the switch: a failure naming it and the reason (" + why + ") on one line\\n" + req.stdout.slice(-1500));', 'naming'],
+  ['the yes arm\'s child', 'ui/webview/real-viewer-leg-switch.test.ts', 'const yes = run({ ROMP_BROWSER_LEGS_REQUIRE: "yes" });', 'child'],
+  ['an assertion\'s pattern', 'ui/webview/real-viewer-leg-switch.test.ts', 'assert.match(yes.stdout, new RegExp("ROMP_BROWSER_LEGS_REQUIRE[^\\\\n]*" + esc(why)), "under \\"yes\\": a failure naming the switch and the reason (" + why + ") on one line\\n" + yes.stdout.slice(-1500));', 'naming'],
+  ['inBrowser\'s docstring', 'ui/webview/real-viewer-leg.ts', '*  ROMP_BROWSER_LEGS_REQUIRE (CI\'s browser-legs step sets it to 1 after the job installs Chromium; any non-empty value counts, so', 'naming'],
+  ['inBrowser\'s read', 'ui/webview/real-viewer-leg.ts', 'if (process.env.ROMP_BROWSER_LEGS_REQUIRE) assert.fail("ROMP_BROWSER_LEGS_REQUIRE is set and this leg cannot run: " + why);', 'inBrowser'],
+];
+test('the switch\'s lines in the files the step runs, as switchLines finds them (its docstring) over the files stepFiles derives from the step (its docstring), each the row of SWITCH_LINES its text names: inBrowser\'s read, inside inBrowser, is the one read that can change an outcome, and the script\'s reads word its messages alone, its exit status the same with the switch set to 1, set to yes and unset over each record and roster of the table below', (t) => {
+  const job = extensionJob();
+  const step = steps(job).find((s) => s.name === STEP);
+  assert.ok(step, 'the step exists (the first test holds the rest of its shape)');
+  const wd = /^    defaults:\n      run:\n        working-directory: (\S+)$/m.exec(job.lines.join('\n'));
+  assert.ok(wd, 'the job names its default working directory, from which the step\'s run field is read');
+  const readRel = (rel) => { const p = path.join(REPO, rel); return fs.existsSync(p) && fs.statSync(p).isFile() ? read(p) : null; };
+  const files = stepFiles(step.fields.run, wd[1], readRel);
+  const found = switchLines(files.map((rel) => ({ rel, text: readRel(rel) }))).map((h) => h.rel + ': ' + h.text.trim());
+  const rowed = SWITCH_LINES.map(([, file, text]) => file + ': ' + text);
+  const less = (a, b) => { const left = [...b]; return a.filter((x) => { const i = left.indexOf(x); if (i < 0) return true; left.splice(i, 1); return false; }); };
+  assert.deepEqual({ unrowed: less(found, rowed), gone: less(rowed, found) }, { unrowed: [], gone: [] }, 'each line switchLines finds in the files the step runs has its row in SWITCH_LINES, and each row its line (unrowed: a line found with no row, to be classified there, and a read of the switch that can change an outcome, other than inBrowser\'s, is not one of the roles; gone: a row whose line is no longer found). The files: ' + JSON.stringify(files));
+  const reads = SWITCH_LINES.filter(([, , , role]) => role === 'inBrowser');
+  assert.equal(reads.length, 1, 'one row is inBrowser\'s read: ' + JSON.stringify(reads));
+  const [, lf, lt] = reads[0];
+  const lines = readRel(lf).split('\n');
+  const start = lines.findIndex((l) => l.startsWith('export async function inBrowser('));
+  const end = lines.findIndex((l, i) => i > start && l === '}');
+  assert.ok(start >= 0 && end > start && lines.slice(start, end).some((l) => l.trim() === lt), 'inBrowser\'s read sits inside inBrowser in ' + lf + ', between its export line and the first line after it that is } alone: ' + JSON.stringify(lt));
+  const other = SWITCH_LINES.filter(([, file, , role]) => role === 'message' && file !== files[0]);
+  assert.deepEqual(other, [], 'every message read is the script\'s, ' + files[0]);
+  // the script's reads change no exit status: over each record and roster below, the stub's node exit beside it, the
+  // script exits the status the row states with the switch set to 1, set to yes and unset, the rows that read otherwise
+  // named together
+  const { run, rec, A } = syntheticTree(t);
+  const PASS = rec(A, 'pass', 'test', '-', 'test', 'leg a opens the page', '', '-'), SKIP = rec(A, 'pass', 'test', 'skip', 'test', 'leg a opens the page', 'why', '-');
+  const LOST = SWITCH + ' is set and this leg cannot run: no playwright browser on this box';
+  const EXIT_ROWS = [
+    ['a pass', A + '\n', { report: PASS }, 0],
+    ['a skip beside a pass', A + '\n', { report: PASS + SKIP }, 1],
+    ['a skip alone, node exiting 7', A + '\n', { report: SKIP, exit: 7 }, 7],
+    ['a leg with no pass', A + '\n', { report: rec(A, 'pass', 'test', '-', 'file-level', A, '', '-') }, 1],
+    ['a failure inside a todo beside a pass', A + '\n', { report: PASS + rec(A, 'fail', 'test', 'todo', 'test', 'a swallowed failure', 'the leg is broken', 'testCodeFailure') }, 1],
+    ['a file that failed as a whole, node exiting 1', A + '\n', { report: PASS + rec(A, 'fail', 'test', '-', 'file-level', A, 'test timed out after 240000ms', 'testTimeoutFailure'), exit: 1 }, 1],
+    ['a lost browser, node exiting 1', A + '\n', { report: rec(A, 'fail', 'test', '-', 'test', 'leg a opens the page', LOST, 'testCodeFailure'), exit: 1 }, 1],
+    ['a malformed line', 'ui/webview/a-browser.test.ts\n', {}, 1],
+    ['an empty roster', '# only a comment\n', {}, 0],
+    ['--check over a well-formed roster', A + '\n', { check: true }, 0],
+    ['a missing roster file', null, {}, 1],
+  ];
+  const wrong = [];
+  for (const [what, roster, stub, status] of EXIT_ROWS) {
+    const got = ['1', 'yes', null].map((sw) => run(roster, { ...stub, switch: sw }).status);
+    if (!got.every((s) => s === status)) wrong.push(what + ': the script exits ' + JSON.stringify(got) + ' with the switch set to 1, set to yes and unset, not ' + status + ' in each');
+  }
+  assert.deepEqual(wrong, [], 'the script\'s reads of the switch change no exit status: each row exits its status whatever the switch\'s state; the rows read otherwise: ' + JSON.stringify(wrong));
 });
