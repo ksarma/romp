@@ -257,7 +257,7 @@ class RemoteFileRelayCredentials(unittest.TestCase):
             self.assertEqual(len(_PeerFileHandler.seen), 1, "the peer was asked once%s" % extra)
             path, _hdrs = _PeerFileHandler.seen[0]
             q = parse_qs(urlsplit(path).query)
-            self.assertNotIn("token", q, "no token reaches a peer that has none of its own%s" % extra)
+            self.assertFalse("token" in q, "no token reaches a peer that has none of its own%s" % extra)   # a boolean: no value printed
             self.assertFalse(km.TOKEN in path, "this kernel's token is nowhere in the peer's request%s" % extra)
 
 
