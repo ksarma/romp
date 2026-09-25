@@ -177,29 +177,33 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   directory, with the real `tests/__init__.py`, the real conftest and every other
   entry of `tests/` in place, directories included, and the checkout's other
   files around it (the copy leaves out what each clone keeps for itself: `.git`,
-  what git ignores outside `tests/`, and `__pycache__`); only the two probe
-  modules are added. The child runs as CI's pytest step does, `python -m pytest
-  -q` from the copy's root with no path, no `--rootdir` and the cache plugin
-  loaded, with `-k` selecting the probe tests: it collects every test module
-  under `tests/`, one probe module before them and the other after them, and
-  runs the probe tests alone. A case's children run under a lock on the
-  checkout's `tests/conftest.py`, so the processes of a checkout collect the
-  suite for one case at a time. The probe tests reproduce six facts of a real
-  run that a conftest hook can key on: the
+  what git ignores outside `tests/`, and `__pycache__`); only two probe modules
+  and two dummy modules are added. The child collects those four modules and no
+  other: it runs from the copy's root with the options of CI's pytest step (read
+  from `.github/workflows/ci.yml`), no `--rootdir` and the cache plugin loaded,
+  and is handed the four as files, so it collects the first probe module first,
+  then the two dummy modules, then the second probe module fourth. The probe
+  tests reproduce six facts of a real run that a conftest hook can key on: the
   conftest and the probe modules in a directory named `tests`, which is a
   package, so the conftest imports as `tests.conftest` and each probe module as
   a module of `tests`; the conftest loaded when pytest starts; the first module
-  collected and one collected after every test module under `tests/`;
-  function tests and a `unittest.TestCase` in each; and a run with no xdist
-  worker (and none of the variables pytest-xdist sets in one) and, where
-  pytest-xdist is installed, one with `-n 2`. Code that stops the fixture from
-  running in any of those tests, named or not, is refused by the run. The run
-  does not read a hook condition outside that context (a mark, an environment
-  variable, a host name, or another collection-time signal, such as an option of
-  the command line: the child's is CI's with `-k` added): a copy of the conftest
-  whose `pytest_collectreport` takes the fixture out of each marked test is
-  granted the licence, and a real run of that copy shows a marked test reading a
-  module-level write (planted). And
+  collected and the fourth; function tests and a `unittest.TestCase` in each;
+  and a run with no xdist worker (and none of the variables pytest-xdist sets in
+  one) and, where pytest-xdist is installed, one with `-n 2`. Code that stops
+  the fixture from running in any of those tests, named or not, is refused by
+  the run. The run does not read a hook condition outside that context (a mark,
+  an environment variable, a host name, or another collection-time signal): a
+  copy of the conftest whose `pytest_collectreport` takes the fixture out of
+  each marked test is granted the licence, and a real run of that copy shows a
+  marked test reading a module-level write (planted). Two such signals differ
+  in the child by construction: which modules come before a test's module, and
+  how many (a real run collects every test module under `tests/`), and the
+  run's arguments (the child hands its four modules as files, where CI's step
+  hands no path and a developer's run may hand `tests/`). A copy of the conftest
+  that keys a hook on a module named `test_kernel_env_floor.py` coming earlier,
+  on a module collected fifth or later, or on a directory among the arguments is
+  granted, and under each road a real run of that copy reads the value a
+  module-level write or an earlier test left (planted). And
   `ROMP_MODELS_URL` (read at kernel import,
   port 9 of 127.0.0.1 and no other); a check over the table itself holds every
   licence to a per-write condition and every temporary one to a since date and a
