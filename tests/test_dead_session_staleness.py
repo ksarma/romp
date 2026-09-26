@@ -5030,7 +5030,16 @@ print(json.dumps(out))
         rosters is answered: rule 5 for a sid nothing names, rule 4 for the session its roster names. B_older_peer: B's
         payloads lacking the field, then its request carrying it holds (rule 5 at the forty-ninth commit), and our dial's
         answer releases. The same for a hub's word (X_far_cached_via_hub's releasedOurDial). A writer that kept a row's
-        hold across an answer placed after its mark reds at ourDialAnswers and releasedOurDial."""
+        hold across an answer placed after its mark reds at ourDialAnswers and releasedOurDial.
+        The writer state the holds and this release use, all in memory and gone with the process (the reviewer's round-5
+        ruling E; until round 6 this docstring called a hub's held word the population's one piece of writer state):
+        round 4's, which the reviewer's decision 5 on round 5 approves, `road` on every row a recorder files and, on a
+        hub's row, `viaHeld`, each held word stamped `heldAt`, `hubBus` and `hubRoad` (since round 6 nothing reads
+        `hubRoad`, nor `road` but to stamp it); and round 6's, the far bus ids heard answering (_ANSWERED_BUSES, its
+        ruling B) and the order state (its ruling C): the recording sequence, each row's `mark` and `namedAt`, each far
+        host's `viaMark` and each dial's capture handed to its fold. postal/postal_service.py PEER_STATE's shape comment
+        names every key a writer stores on a row (tests/test_postal_remote_sids_mirror.py
+        test_the_peer_state_shape_comment_names_every_key_each_writer_stores)."""
         b = NO_VOUCH(R_B + " (listing unanswered)")
         for shape, got in self.roads.items():
             with self.subTest(shape=shape):

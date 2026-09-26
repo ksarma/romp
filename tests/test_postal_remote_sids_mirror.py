@@ -135,6 +135,9 @@ thirty-fourth commit) the release keyed on the read that triggered the write, so
 recorder's write takes the lock keeps no comment thread's row; the mark's bus-log line stating the clearing rule of the
 scheme at the write; the JSON literal null marking the document; the mark's second pinned on every conjunct of its shape
 check; and JSON true alone counting as answered at the dialer's fold, the writer's read of a gossiped row and a held word.
+And (round 6 of fork PR #897, the reviewer's round-5 ruling E and decision 5 on round 5) PEER_STATE's shape comment
+naming every key each writer stores, derived by running every writer the lock's census finds, and the recorders' stamps
+of the writer state round 4 added: road on each row, heldAt, hubBus and hubRoad on each held word.
 tests/test_dead_session_staleness.py ReaderFollowsTheWriter
 runs this writer and the judge's reader together over one root; tests/test_postal_bus_lifetime.py
 MonitorTick pins the poll's write. SYNTHETIC fixtures only: private synthetic sids, hostname TESTHOST."""
@@ -144,10 +147,12 @@ import contextlib
 import io
 import json
 import os
+import re
 import sys
 import tempfile
 import threading
 import unittest
+import urllib.error
 from pathlib import Path
 from romp_load import load_source
 from tests.conftest import restore_env
@@ -258,6 +263,22 @@ def _answered_buses():
     fail on its absence, so a red there is the test's own assertion."""
     seen = getattr(pm, "_ANSWERED_BUSES", None)
     return seen if isinstance(seen, set) else set()
+
+
+def _peer_state_shape_comment_keys():
+    """The keys PEER_STATE's declaration comment names (round 6 of fork PR #897, the reviewer's round-5 ruling E): every
+    double-quoted identifier in the comment on the bus's `PEER_STATE = {}` line and the `#` lines that continue it, less
+    road's two values, "dial" and "answer", which the comment quotes beside that key. The declaration must stand once."""
+    lines = Path(os.path.realpath(os.path.join(BIN, "romp-postal-service"))).read_text().splitlines()
+    at = [i for i, ln in enumerate(lines) if ln.startswith("PEER_STATE = {}")]
+    if len(at) != 1:
+        raise AssertionError("PEER_STATE's declaration stands once in the bus's source: lines %r" % at)
+    text = [lines[at[0]].partition("#")[2]]
+    for ln in lines[at[0] + 1:]:
+        if not ln.startswith("#"):
+            break
+        text.append(ln[1:])
+    return set(re.findall(r'"([A-Za-z_][A-Za-z0-9_]*)"', " ".join(text))) - {"dial", "answer"}
 
 
 class Mirror(unittest.TestCase):
@@ -3004,6 +3025,153 @@ class Mirror(unittest.TestCase):
         lines = [ln for ln in err.getvalue().splitlines() if "remote-sids mirror was not written" in ln]
         self.assertEqual(len(lines), 1, "said once per distinct text, never swallowed: %r" % err.getvalue())
         self.assertIn("the judge reads the previous one", lines[0])
+
+    def _drive_every_peer_state_writer(self):
+        """Run each PEER_STATE writer through the real bus in a synthetic world (round 6 of fork PR #897, the reviewer's
+        round-5 ruling E and decision 5 on round 5), and return ({writer: calls}, the snapshots the stamps pin reads, the
+        keys found on any row after any step, the keys found on any held word after any step beyond the gossip rows'
+        own). The writers are counted as they run, each wrapped on the module, so a call through the
+        module's globals is counted too. The kernel links HUB, the alias this bus dials (peer_update, up); this bus builds
+        two dials to HUB; the hub dials us under the name it declares, gossiping far host FAR's unanswered word (the
+        handler: the row filed under HUB_DECL, since HUB has no row to fold it to); the answer to the first dial, built
+        BEFORE that dial (the fold: _drop_peer_name_dupes forgets the declared row and its state moves to HUB, FAR's word
+        still on the merged roster, since that answer is not placed after it); the restarted hub's answer to the second,
+        also built before (merged: FAR's word stays, the row now carrying the restarted hub's bus id); the restarted
+        hub's answer to a dial built after, which omits FAR (the word leaves the roster and is held: a restarted hub, and
+        FAR's bus never heard answering, stamped with the bus of the roster that named it, not the row's); the
+        restarted hub's dial under its declared name, canonicalized to HUB, gossiping FAR2's unanswered word; its answer
+        to our next dial, which omits FAR2 (held: FAR2's bus never heard answering); the kernel's down notify for HUB
+        (peer_update, linkDown); and two refused dials (_peer_exchange_once, the far side answering 409 and then 403
+        through a stubbed _peer_http, no socket). The seenAt of HUB's row is set back between steps so each held word's
+        second tells the row it left."""
+        self._forget_presence_cache()
+        self._local_listing_answered_empty()
+        called = {}
+        for name in ("peer_exchange_handle", "peer_exchange_apply", "peer_update", "_peer_exchange_once",
+                     "_drop_peer_name_dupes"):
+            real = getattr(pm, name)
+
+            def counted(*args, _real=real, _name=name, **kw):
+                called[_name] = called.get(_name, 0) + 1
+                return _real(*args, **kw)
+            setattr(pm, name, counted)
+            self.addCleanup(setattr, pm, name, real)
+        far2 = FAR + "-two"
+        far_word = {"id": B, "name": "api", "via": FAR, "viaBus": "far-bus", "viaAnswered": False}
+        far2_word = {"id": C, "name": "tests", "via": far2, "viaBus": "far-two-bus", "viaAnswered": False}
+        web = {"id": A, "name": "web"}
+        snap, keys, word_keys = {}, set(), set()
+
+        def note():                                   # a row is replaced whole at each exchange: the keys after EACH step
+            for row in list(pm.PEER_STATE.values()):
+                keys.update(row)
+                word_keys.update(k for pa in row.get("viaHeld") or [] for k in pa)
+
+        def held():
+            return sorted((pa.get("id"), pa.get("via"), pa.get("heldAt"), pa.get("hubBus"), pa.get("hubRoad"))
+                          for pa in (pm.PEER_STATE.get(HUB) or {}).get("viaHeld") or [])
+
+        def hub_dials(presence, bus_id):
+            resp, status = pm.peer_exchange_handle(dict(self._exchange_request(HUB_DECL, presence), busId=bus_id,
+                                                        tier="trusted"))
+            self.assertEqual(status, 200, resp)
+
+        self._notify(HUB, up=True)
+        note()
+        early = _cap()                                # the captures of our two dials built before the hub's dial below
+        sent_early = pm.build_exchange_request(HUB, wait=False)
+        early2 = _cap()
+        sent_early2 = pm.build_exchange_request(HUB, wait=False)
+        hub_dials([web, far_word], "hub-bus")
+        note()
+        snap["declaredRoad"] = (pm.PEER_STATE.get(HUB_DECL) or {}).get("road")
+        for sent, kw, bus_id in ((sent_early, early, "hub-bus"), (sent_early2, early2, "hub-bus-2")):
+            pm.peer_exchange_apply(HUB, sent, {"host": HUB, "epoch": 1, "proto": pm.PEER_PROTO, "busId": bus_id,
+                                               "presence": [web], "presenceAnswered": True, "holds": [], "relays": [],
+                                               "acks": [], "bounces": [], "reads": [], "readsKept": [],
+                                               "tier": "trusted"}, **kw)
+            note()
+        pm.PEER_STATE[HUB]["seenAt"] -= 100
+        snap["earlySeenAt"] = pm.PEER_STATE[HUB]["seenAt"]
+        snap["earlyAnswer"] = (pm.PEER_STATE[HUB].get("road"), pm.PEER_STATE[HUB].get("busId"), HUB_DECL in pm.PEER_STATE,
+                               sorted(pa.get("id") for pa in pm.PEER_STATE[HUB].get("presence") or []), held())
+        self._hub_answers_our_dial(HUB, [web], "hub-bus-2")
+        note()
+        snap["farHeld"] = held()
+        hub_dials([web, far2_word], "hub-bus-2")
+        note()
+        pm.PEER_STATE[HUB]["seenAt"] -= 50
+        snap["dialSeenAt"], snap["dialRoad"] = pm.PEER_STATE[HUB]["seenAt"], pm.PEER_STATE[HUB].get("road")
+        self._hub_answers_our_dial(HUB, [web], "hub-bus-2")
+        note()
+        snap["answerRoad"], snap["bothHeld"] = pm.PEER_STATE[HUB].get("road"), held()
+        self._notify(HUB, up=False)
+        note()
+
+        def refused(code):
+            def http(port, payload, token=""):
+                raise urllib.error.HTTPError("http://127.0.0.1:%d/peer-exchange" % port, code, "refused", {},
+                                             io.BytesIO(b"no"))
+            return http
+        self.addCleanup(setattr, pm, "_peer_http", pm._peer_http)
+        with contextlib.redirect_stderr(io.StringIO()):
+            pm._peer_http = refused(409)
+            snap["drift"] = pm._peer_exchange_once(FAR_ALIAS, 1, "")
+            pm._peer_http = refused(403)
+            snap["refused"] = pm._peer_exchange_once(FAR_DECL, 1, "")
+        note()
+        return called, snap, keys, word_keys - set(far_word) - set(far2_word)
+
+    def test_the_peer_state_shape_comment_names_every_key_each_writer_stores(self):
+        """PEER_STATE'S SHAPE COMMENT (round 6 of fork PR #897, the reviewer's round-5 ruling E on its refuter's
+        regression-3, and decision 5 on round 5, which approves road, viaHeld, heldAt, hubBus and hubRoad and asks that
+        each be named in the shape comment and pinned). Every writer the lock's census derives
+        (_peer_state_lock_census's writerFunctions) runs through the real bus (_drive_every_peer_state_writer), and the
+        keys found on any row after any step, with the keys _via_held stamps on a held word beyond the gossip row's own
+        (a recorder replaces its row whole, so a key one exchange carries, theirTier, is gone after the next), are exactly
+        the keys the declaration's comment names in double quotes (road's two values beside them): a key a writer stores
+        and the comment omits reds here, and so does a key the comment names that no writer stores. The census's writer
+        population must equal the writers the drive ran, so a new writer reds here until the drive runs it and its keys
+        are named. Red at the forty-ninth commit, whose comment named presence, presenceAnswered, epoch, seenAt and
+        drift alone."""
+        called, snap, stored, stamps = self._drive_every_peer_state_writer()
+        named = _peer_state_shape_comment_keys()
+        self.assertEqual(sorted(named), sorted(stored | stamps),
+                         "PEER_STATE's shape comment names, in double quotes, every key a writer stores on a row and every "
+                         "key _via_held stamps on a held word, and no other (missing: %r; named, stored by no writer: %r)"
+                         % (sorted((stored | stamps) - named), sorted(named - stored - stamps)))
+        self.assertTrue({"road", "viaHeld", "heldAt", "hubBus", "hubRoad"} <= stored | stamps,
+                        "decision 5's five, each stored by a writer: %r" % sorted(stored | stamps))
+        self.assertEqual((snap["drift"], snap["refused"]), ("drift", "refused"), "the dialer's two notes ran")
+        census = _peer_state_lock_census(Path(os.path.realpath(os.path.join(BIN, "romp-postal-service"))).read_text())
+        self.assertEqual(sorted(called), census["writerFunctions"],
+                         "the drive ran every writer the census derives, and no other: %r" % called)
+
+    def test_the_recorders_stamp_road_on_each_row_and_heldat_hubbus_and_hubroad_on_each_held_word(self):
+        """The writer state round 4 added, pinned by value (round 6 of fork PR #897, decision 5 on round 5 and the
+        reviewer's round-5 ruling E): `road` on every row a recorder files, "dial" from the handler and "answer" from the
+        fold; on a hub's row, `viaHeld`, each held word stamped `heldAt` (the seenAt of the hub's row the word left),
+        `hubBus` (the bus id of the roster that last named the word, from namedAt) and `hubRoad` (the road of the row the
+        word left). FAR's word, named by the hub's dial under its declared name, moves to HUB with the fold and stays on
+        the merged roster through the answers to two dials built before that dial (the second from the restarted hub,
+        whose bus id the row then carries), then leaves on the restarted hub's answer to a dial built after: held,
+        stamped with the merged row's second and road, "answer", though a dial named it (the shape comment's disclosure:
+        since the merge a word may leave a row a later roster filed), and with the bus of the roster that named it,
+        "hub-bus", not the row's, "hub-bus-2" (a stamp from the row's busId, the forty-ninth commit's, reds). FAR2's
+        word, named by the restarted hub's dial and omitted by its answer to our next dial, is stamped with that dial
+        row's second, bus and road. Through the real handler, fold, down notify and dialer
+        (_drive_every_peer_state_writer)."""
+        called, snap, _, _ = self._drive_every_peer_state_writer()
+        self.assertEqual(snap["declaredRoad"], "dial", "the handler files the hub's dial with road dial")
+        self.assertEqual(snap["earlyAnswer"], ("answer", "hub-bus-2", False, sorted([A, B]), []),
+                         "the fold files road answer, forgets the declared row, and FAR's word stays on the merged roster "
+                         "through both answers to dials built before it, the row now carrying the restarted hub's bus id")
+        self.assertEqual(snap["farHeld"], [(B, FAR, snap["earlySeenAt"], "hub-bus", "answer")],
+                         "FAR's held word: the second and road of the row it left, the bus of the roster that named it")
+        self.assertEqual((snap["dialRoad"], snap["answerRoad"]), ("dial", "answer"), "each recorder stamps its road")
+        self.assertEqual(snap["bothHeld"], sorted([(B, FAR, snap["earlySeenAt"], "hub-bus", "answer"),
+                                                   (C, FAR + "-two", snap["dialSeenAt"], "hub-bus-2", "dial")]),
+                         "a held word keeps its stamps across the hub's later rosters, and FAR2's carries its dial row's")
 
 
 

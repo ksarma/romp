@@ -4517,7 +4517,8 @@ def _via_held(presence, bus, road, *prevs, built=None):
     dial had carried answered rule 5). So a dial never releases, and an answer releases only when placed after the
     host's mark, whatever road named the host (round 6 of fork PR #897, the reviewer's round-5 ruling C and its decision
     1, ONE RELEASE RULE; from the thirty-third commit until then the release keyed on the road that last named the host,
-    `hubRoad`, still stamped on each word, which held a word the other road omitted, cost (h), closed since). The two
+    `hubRoad`, which held a word the other road omitted, cost (h), closed since; `hubRoad` is still stamped on each
+    word, as the road of the row the word left, and nothing reads it: PEER_STATE's shape comment). The two
     roads' recorders run at once, and each calls this under _PEER_STATE_LOCK, held from its read of the rows it replaces
     and forgets (the `prevs`) through its store, so no roster is stored between them and its words lost (the reviewer's
     round-5 ruling A).
@@ -4544,7 +4545,9 @@ def _via_held(presence, bus, road, *prevs, built=None):
     stamp (this bus stores its row whole since round 6, but a hub on an earlier build may not), and the far bus behind
     it may be current; it stays held, cost (a). A word whose bit was True is not held: an answered word the hub's
     answer, placed after it, stops naming is carried as before, heard false, vouching for nothing. Each held row carries
-    `heldAt`, the second the hub's word was last heard here, which the via row's seenAt reads. The display and routing
+    `heldAt`, the seenAt of the hub's row the word left (the second of the last roster that named it, or of a later
+    roster that kept it in the merged roster: PEER_STATE's shape comment), which the via row's seenAt reads, as it read
+    that row's seenAt while the word was on its roster. The display and routing
     consumers read `presence` alone, so a held word is never listed, addressed or gossiped onward (a word the merged
     roster still keeps is listed and addressed, as the recorders' docstrings say). What stays open: a hub from before viaBus that renames a
     far host leaves the old name's word held until the hub names the host under the old name again or the host's own row
@@ -5025,7 +5028,8 @@ def _remote_sids_document(now, previous, owned=frozenset(), lost=None):
     to a dial this bus built after the host's last unanswered word (_via_held, reading the host's mark in _order_row's
     viaMark; round 6 of fork PR #897, the reviewer's round-5 ruling C and decision 1), whatever road named the host;
     from the thirty-third commit until then it keyed on the road whose roster last named the host (`hubRoad`, still
-    stamped on each held word), which held a word the other road omitted, cost (h), closed since. The witnesses:
+    stamped on each held word, as the road of the row the word left, and read by nothing), which held a word the other
+    road omitted, cost (h), closed since. The witnesses:
     tests/test_dead_session_staleness.py ReaderFollowsTheWriter
     test_a_far_hosts_empty_answer_through_the_same_hub_process_releases_its_held_word (the hub's dial holds, our dial's
     answer releases), test_a_far_hosts_empty_answer_releases_its_held_word_through_our_dial_to_the_same_hub_process
@@ -5203,18 +5207,29 @@ def _remote_sids_document(now, previous, owned=frozenset(), lost=None):
     answering exchange with its hub and then the hub's answer to a dial of this bus built after the host's last
     unanswered word, whose word releases the held one, or, for an answer with an empty listing, omits the host, for a
     far bus heard answering in this process); this bus's restart releases nothing (the reviewer's decision 4 on round
-    5: a carried host row keeps its bit and holds the arm): no timer. The ruling asked for no new writer state; the population needs one piece (and since round 6 the far bus
-    ids heard answering, _ANSWERED_BUSES, in memory, gone with the process, which the reviewer's round-5 ruling B
-    approves), the hub's held word (`viaHeld`
-    on its PEER_STATE row, in memory, gone with the process), since without it a restarted hub's silence released
-    the hold (the thirty-first commit), each word stamped with the hub process whose roster named it (`hubBus`),
-    since the same process's silence is the far host's empty answer and a restarted one's is not (the
-    thirty-second; until then an empty answer released nothing), and with the road that roster came by (`hubRoad`),
-    since this bus's two roads can record one hub process's rosters out of the order the hub took them (the
-    thirty-third; since round 6's ruling C the release places an answer by the dialer's capture instead, and reads
-    no road); and since that ruling C, which approves it, the ORDER STATE: the recording sequence (_PEER_SEQ), each
-    row's mark and each name's recording and roster bus id (`mark`, `namedAt`), each far host's mark and release
-    (`viaMark`), and each dial's capture of the sequence handed to its fold, all in memory and gone with the process. The arm only adds a cannot-determine answer, so it creates no rule 5. The four roads
+    5: a carried host row keeps its bit and holds the arm): no timer. The ruling asked for no new writer state; the
+    population needs the writer state rounds 4 and 6 of fork PR #897 add, all in memory and gone with the process
+    (the keys the recorders store that they did not at the twenty-eighth commit, round 3's last, derived by running
+    both, and the state beside the table: the reviewer's round-5 ruling E). Round 4's: on every row a recorder
+    files, the road that filed it (`road`, "dial" or "answer"); on a hub's row, its held words (`viaHeld`), since
+    without them a restarted hub's silence released the hold (the thirty-first commit), each word stamped with the
+    seenAt of the hub's row it left (`heldAt`, which the via row's seenAt reads), with the hub process whose roster
+    last named it (`hubBus`, from `namedAt` since round 6), since the same process's silence is the far host's empty
+    answer and a restarted one's is not (the thirty-second; until then an empty answer released nothing), and with
+    the road of the row it left, copied from that row's `road` (`hubRoad`), since this bus's two roads can record
+    one hub process's rosters out of the order the hub took them (the thirty-third). Since round 6's ruling C the
+    release places an answer by the dialer's capture instead, so nothing reads `hubRoad`, nothing reads `road` but
+    to stamp it, and the row a word leaves may have been filed by a later roster of either road that kept the word
+    in the merged roster without naming it, its `heldAt` and `hubRoad` then that roster's. The reviewer's decision 5
+    on round 5 approves these five, superseding the ruling's "no new writer state" for them alone; each is named in
+    PEER_STATE's shape comment, and tests/test_postal_remote_sids_mirror.py
+    test_the_peer_state_shape_comment_names_every_key_each_writer_stores and
+    test_the_recorders_stamp_road_on_each_row_and_heldat_hubbus_and_hubroad_on_each_held_word pin both, the naming
+    by running every writer and the stamps' values. Round 6's: the far bus ids heard answering (_ANSWERED_BUSES),
+    which the reviewer's round-5 ruling B approves; and the ORDER STATE, which its ruling C approves: the recording
+    sequence (_PEER_SEQ), each row's mark and each name's recording and roster bus id (`mark`, `namedAt`), each far
+    host's mark and release (`viaMark`), and each dial's capture of the sequence handed to its fold.
+    The arm only adds a cannot-determine answer, so it creates no rule 5. The four roads
     it closes, each driven through the real builders, handler, fold, this writer and the reader under both root
     shapes, are tests/test_dead_session_staleness.py ReaderFollowsTheWriter test_a_session_started_on_a_hub_during_its_blink_is_cannot_determine_while_its_word_about_another_host_vouches,
     test_a_cached_hosts_session_is_cannot_determine_while_another_host_vouches_until_its_listing_answers,
@@ -5369,8 +5384,9 @@ def _remote_sids_document(now, previous, owned=frozenset(), lost=None):
     THE ONE RELEASE, and what nothing retires (round 3 of fork PR #897, the reviewer's ruling, the seventeenth
     commit). A heartbeat row whose sid the local kernel's ANSWERED listing owns is dropped, heard or carried
     (`owned`: the sids of the listing as this bus last read it through local_agents_checked, when that read
-    answered, _local_listing_owned; _write_remote_sids forgets the HEARTBEATS entry once the file without the row
-    is in place, so the carry has nothing to re-file): rules 1 and 2 of the judge's ladder own a sid the local
+    answered, _local_listing_owned, together with the sid the read that triggered this write owns, _write_remote_sids'
+    `released`, since the thirty-fourth commit; _write_remote_sids forgets the HEARTBEATS entry once the file
+    without the row is in place, so the carry has nothing to re-file): rules 1 and 2 of the judge's ladder own a sid the local
     kernel lists, its transcript being local, so the row said nothing the ladder needed and would otherwise have
     stood for the file's life (in peer mode every beat that reaches HEARTBEATS is such a session's, filed during
     a blink). The event is the listing's word, read by the recorder at every beat, by the presence producer at
@@ -5740,12 +5756,34 @@ PEER_SEEN = STATE / "peer-seen.jsonl"      # append-only receipt log — the ide
 _SEEN_CAP = 4000
 _seen_ids = None                           # lazy in-memory mirror of PEER_SEEN's tail
 EXCHANGE_WAIT = int(os.environ.get("ROMP_POSTAL_EXCHANGE_WAIT", "20"))
-PEER_STATE = {}                            # host -> {"presence": [...], "presenceAnswered": bool, "epoch": int, "seenAt": t, "drift": str}
-#                                            and the order state (round 6 of fork PR #897, the reviewer's round-5 ruling C, which
-#                                            approves it; _order_row): "mark", the recording of the row's last unanswered roster (0,
-#                                            this process's start); "namedAt", {name: [the recording that last carried it, that
-#                                            roster's bus id]}; "viaMark", {far host: [its mark, released]}. `presence` is then the
-#                                            union of the rosters this bus could not place, `presenceAnswered` the stored bit
+PEER_STATE = {}                            # host -> its row. THE ROW'S SHAPE: every key a writer stores, each in double quotes
+#                                            (round 6 of fork PR #897, the reviewer's round-5 ruling E and decision 5 on round 5;
+#                                            tests/test_postal_remote_sids_mirror.py
+#                                            test_the_peer_state_shape_comment_names_every_key_each_writer_stores runs every writer
+#                                            the lock's census finds and requires these keys, no more and no fewer). Each recorder
+#                                            files its row whole (peer_exchange_handle for a peer's dial, peer_exchange_apply for its
+#                                            answer to ours): "presence" [...], "presenceAnswered" bool, "epoch" int and "holds" [...] from
+#                                            the exchange (the first two as ordered below), "seenAt" t, this bus's clock at the recording,
+#                                            "busId" str and "theirTier" str when the exchange carries them, and "road", "dial" or
+#                                            "answer", the exchange that filed the row. The down notify (peer_update) adds
+#                                            "linkDown"; a refused dial (_peer_exchange_once) notes "drift" str or "refused" (code,
+#                                            body), on a row of its own when no exchange has landed. A hub's row carries "viaHeld",
+#                                            a far host's held unanswered gossip rows (_via_held), each stamped "heldAt" (the seenAt
+#                                            of the hub's row the word left, which the via row's seenAt reads), "hubBus" (the bus id
+#                                            of the roster that last named the word, from namedAt) and "hubRoad" (the road of the
+#                                            row the word left, copied from its road). And the order state (the reviewer's round-5
+#                                            ruling C, which approves it; _order_row): "mark", the recording of the row's last
+#                                            unanswered roster (0, this process's start); "namedAt", {name: [the recording that last
+#                                            carried it, that roster's bus id]}; "viaMark", {far host: [its mark, released]}.
+#                                            `presence` is then the union of the rosters this bus could not place,
+#                                            `presenceAnswered` the stored bit. road, viaHeld, heldAt, hubBus and hubRoad are round
+#                                            4's (the thirty-first to the thirty-third commits), approved by the reviewer's decision
+#                                            5 on round 5, which supersedes, for them alone, the "no new writer state" of the
+#                                            reviewer's ruling of 00:27Z. Since the merge (the fifty-eighth commit) nothing reads
+#                                            hubRoad, and nothing reads road but to stamp it; and the row a word leaves may have been
+#                                            filed by a later roster of either road that kept the word in the union without naming
+#                                            it, so its heldAt and hubRoad are that roster's. All of it in memory, gone with the
+#                                            process
 _peer_wakes = {}                           # host -> threading.Event (long-poll release + dialer poke)
 _peer_threads = {}                         # host -> Thread (one dialer loop per up peer)
 _peer_pending = {}                         # host -> {"acks": [mid], "bounces": [{mid, why}]} for the NEXT request
