@@ -60,13 +60,22 @@ jobs:
     # anyone finds out, and a required check that hangs blocks merges silently.
     # T230b follow-up (the review's catch): the job cap must EXCEED the pytest phase plus the
     # 600 s per-test timeout plus setup, or a stall that begins late in the run is killed by
-    # this cap first - the identical silence the per-test timeout exists to end. Measured pytest
-    # phases run 160-300 s, so 15 min left ~100 s of headroom; 25 min = 300 + 600 + setup, with
-    # margin for a slow runner. The macOS cells (a manual dispatch) run the same suite in 17 to 25
-    # minutes on the image's slower runners: the 3.10 cell took 24 min 43 s on one dispatch and was
-    # cancelled at 25 min 27 s on the next (2026-09-16), a one-minute margin that can kill the
-    # release's combined proof for nothing. macOS gets 40; Linux keeps 25.
-    timeout-minutes: ${{ matrix.os == 'macos-latest' && 40 || 25 }}
+    # this cap first - the identical silence the per-test timeout exists to end. On 2026-09-03 the
+    # measured pytest phases ran 160-300 s, so 15 min left ~100 s of headroom and 25 min was
+    # 300 + 600 + setup with margin for a slow runner. The macOS cells (a manual dispatch or the
+    # weekly schedule) run the same suite on the image's slower runners, and the suite grows with
+    # every merge: 17 to 26 minutes on 2026-09-16 (the 3.10 cell cancelled at 25 min 27 s under a
+    # 25-minute cap), 33 to 35 minutes on the dispatch of 2026-09-24 03:48 UTC, and on the release
+    # dispatch five hours later (run 35976250043) the 3.13 cell finished green in 38 min 52 s while
+    # the 3.10 cell was cancelled at 40 min 20 s by the 40-minute cap with no failure in its log,
+    # having reached 90 percent 36 min 40 s into its pytest step; the 3.13 cell's pytest step ended
+    # about 5.5 minutes after its own 90 percent, so the 3.10 suite sits near 42 to 43 minutes and
+    # the rule gives 53 to 54. macOS gets 60, the pin's ceiling (past an hour a hung cell eats the
+    # dispatch). Linux gets 35 by the same rule: the 3.10 Linux cell took 19 min 34 s on the
+    # dispatch of 2026-09-24 03:48 UTC (run 35952964334) and the Linux cells 14 to 17 minutes on
+    # the release dispatch, so 25 left under six minutes where about 20 plus 10 plus setup is
+    # about 31.
+    timeout-minutes: ${{ matrix.os == 'macos-latest' && 60 || 35 }}
     strategy:
       # One red cell must not hide the others: a 3.10-only break and a
       # macOS-only break look identical if the matrix stops at the first.
@@ -89,7 +98,10 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
       - name: Install pytest
-        run: python -m pip install --upgrade pip pytest pytest-timeout
+        # pytest-xdist: the Run pytest step passes -n on every cell, two workers on ubuntu-latest
+        # and -n 0, an in-process run, elsewhere, and pytest refuses -n without it (the reasons
+        # are on that step).
+        run: python -m pip install --upgrade pip pytest pytest-timeout pytest-xdist
       - name: Install cryptography
         # cryptography: the kernel's Web Push soft dependency (plans/ios-app.md). Installed here
         # so tests/test_kernel_webpush.py's crypto layers RUN in CI instead of skipping — the
@@ -108,19 +120,44 @@ jobs:
           PYTHON_GIL: ${{ endsWith(matrix.python-version, 't') && '0' || '' }}
         # T230b: a hung test used to be 15 minutes of silence (five jobs since 2026-08-27, a
         # process-global time.sleep patch consumed by a foreign thread). pytest-timeout turns the
-        # NEXT stall into a named failure with every thread's stack: thread method = guaranteed
-        # termination (the process ends; the dump's bottom frame is the blocked primitive, and the
-        # hung test is the lowest tests/ frame above the _pytest/runner frames) - the signal
-        # method cannot interrupt a C call. 600 s strictly exceeds the slowest legitimate test
-        # (~122 s, leak-scaled) and the 300 s child timeout in test_session_move_live. Its timer
-        # waits on an Event, so it can never itself consume a patched sleep. --durations names the
-        # slowest tests on every run so a creeping one is visible before it stalls.
-        run: python -m pytest -q --durations=10 --timeout=600 --timeout-method=thread
+        # NEXT stall into a failure that names the test: thread method = guaranteed termination
+        # (the process running the test ends) - the signal method cannot interrupt a C call. 600 s
+        # strictly exceeds the slowest legitimate test (~122 s, leak-scaled) and the 300 s child
+        # timeout in test_session_move_live. Its timer waits on an Event, so it can never itself
+        # consume a patched sleep. --durations names the slowest tests on every run so a creeping
+        # one is visible before it stalls.
+        # Two workers on the ubuntu-latest cells, none elsewhere (-n 2 and -n 0, 2026-09-25):
+        # serially the cells had reached the 25-minute cap they had then (this fork's main, run
+        # 35890814789: the 3.14t cell at 24 min 35 s). Measured on 2026-09-22 with Python 3.10 at
+        # this step's other flags on a four-CPU budget (a systemd CPUQuota of 400 percent; GitHub
+        # documents its Linux runner for a public repository at 4 CPUs and 16 GB), the suite took
+        # 1437 s serially at a cgroup memory peak of 6.0 GB and 739 s with two workers at 10.9 GB
+        # (decimal, page cache included), about 5 GB a worker; three workers peaked at 15.8 GB,
+        # near the 16 GB GitHub documents. The macOS cells stay serial under their 60-minute cap:
+        # GitHub documents that runner for a public repository at 3 CPUs and 7 GB (arm64), below
+        # the two-worker peak, and two workers have not been measured on it.
+        # The count keys on matrix.os, as timeout-minutes does, and names the one label whose
+        # documented runner (4 CPUs, 16 GB) the four-CPU measurement was sized to, rather than
+        # excluding macOS or matching every Linux runner (runner.os), so a runner the matrix adds
+        # later runs serially until it is measured.
+        # GitHub substitutes the expression into this line before the shell runs it. -n 0 is
+        # xdist's in-process run, and pytest refuses -n without xdist, so every cell installs it.
+        # The job cap above and its pin in tests/test_ci_bats_bound.py are romp-on/romp PR #2130
+        # as merged: their figures and run ids are romp-on/romp's Actions runs of its serial
+        # suite. With two workers the measurement above puts this fork's Linux cells at about
+        # half their serial time, well inside that cap.
+        # Under the Linux cells' workers a timeout ends the worker process running the hung test:
+        # xdist fails that test by name ("worker 'gw0' crashed while running '<test id>'") and the
+        # other tests run on. The thread dump pytest-timeout writes goes to that worker's stdout,
+        # which xdist's transport (execnet) points at /dev/null, so the log names the test but
+        # carries no stacks; run the named test alone (without -n) and the dump prints, its bottom
+        # frame the blocked primitive.
+        run: python -m pytest -q -n ${{ matrix.os == 'ubuntu-latest' && '2' || '0' }} --durations=10 --timeout=600 --timeout-method=thread
 
   shell:
     name: Shell (bats, ${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    # Generous vs the python jobs on purpose: the suite takes ~1min on Linux but
+    # Generous on purpose: the suite takes ~1min on Linux but
     # ~16min on macOS, so anything near 15 would kill a PASSING job.
     timeout-minutes: 35
     strategy:
@@ -153,7 +190,8 @@ jobs:
       - name: Install gitleaks (Linux)
         # tests/gitleaks-config.bats skips itself when gitleaks is absent, so without this step the
         # repo's scanning rules (.gitleaks.toml: the value-anchored allowlist, the merge-commit scan)
-        # would be checked nowhere and a rule regression would ship green. The same pinned,
+        # would be checked nowhere; ROMP_GITLEAKS_REQUIRE=1 on the Run bats step below turns that
+        # skip into a red job, so a broken install cannot ship as green skips. The same pinned,
         # checksummed release the secrets job installs; bump the two version/sha pairs together.
         # Linux only: the macOS cell is manual (see the header), and one arbiter is enough.
         if: runner.os == 'Linux'
@@ -177,6 +215,12 @@ jobs:
         # slowest legitimate test on macOS (the romp-serve probe tests hold 60 s by design).
         env:
           BATS_TEST_TIMEOUT: "180"
+          # ROMP_GITLEAKS_REQUIRE=1 on Linux only: the Linux cell installs the pinned gitleaks in the
+          # step above, so tests/gitleaks-config.bats skipping there would hide a broken install
+          # behind ten green skips; with the switch its setup() fails and names the reason. macOS
+          # has no install step and may keep skipping. Off-Linux the expression yields an empty
+          # value, which the file reads as the switch unset (the PYTHON_GIL idiom above).
+          ROMP_GITLEAKS_REQUIRE: ${{ runner.os == 'Linux' && '1' || '' }}
         run: bats --print-output-on-failure tests/*.bats
       # T224: the manager<->kernel handshake proof (tests/manager-*.test.js: restart coalescing, the
       # quiet-window chain, the drain-lease refusal notices) ran only by hand until now. It runs HERE,
@@ -239,8 +283,19 @@ jobs:
         # ref. --diff-merges=first-parent: `gitleaks git` runs `git log -p`, which omits
         # merge-commit diffs, so a secret introduced only in a merge (a conflict resolution) is
         # invisible to --all alone; the tree scan below catches it only while it is still at HEAD;
-        # this surfaces it in history for good. A finding exits nonzero and fails the step.
-        run: gitleaks git . --no-banner --redact -v --config .gitleaks.toml --log-opts="--all --diff-merges=first-parent"
+        # this surfaces it in history for good. --text: that same `git log -p` reads the checkout's
+        # .gitattributes, and a path marked -diff prints a `Binary files ... differ` line with no
+        # hunk, so a secret committed in such a path and removed in a later commit is text this scan
+        # never sees while the tree scan below reads HEAD, where it is gone; --text prints the diff
+        # regardless of the attribute. Latent here today: the one committed .gitattributes
+        # (ui/webview/anchor-map-fixtures/.gitattributes) marks a fixture -text, for its line
+        # endings, not -diff. Other plain-stream options (--no-color, --no-textconv, --no-ext-diff)
+        # guard against a developer's git config; no step of this workflow configures color, textconv
+        # or a diff driver (actions/checkout's config writes touch nothing about diff output), so here
+        # they would be defence in depth, not load-bearing.
+        # The committed attribute is the input this repository carries itself, and --text is its
+        # option. A finding exits nonzero and fails the step.
+        run: gitleaks git . --no-banner --redact -v --config .gitleaks.toml --log-opts="--all --diff-merges=first-parent --text"
       - name: Scan the tree as it stands
         # The history scan reads commit diffs, so a secret in a file that is present but untouched
         # by any scanned commit (a submodule tip, a file added before a rewrite) is only caught by
