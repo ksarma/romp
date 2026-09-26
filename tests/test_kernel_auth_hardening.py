@@ -9,8 +9,14 @@
        trust boundary). The old loopback bypass (and with it the whole notion of
        "locality") is gone: a token-less loopback request is denied, and the Host
        header carries no authorization weight in any direction. Accepted forms:
-       ?token= (browser bootstrap, seeds the cookie), the romp_token cookie, and
-       the X-Romp-Token header (CLI/hooks/daemons).
+       the serve token as ?token= or the X-Romp-Token header (CLI/hooks/daemons),
+       and a one-time ?c= code; a page navigation carrying ?token= or ?c= signs
+       a browser in. A signed-in browser sends this kernel's session cookie,
+       which opens the page and static classes on its own, and adds the page key
+       (X-Romp-Key, or k= on a socket dial) for every other route, or a per-file
+       cap for one file. The legacy romp_token cookie, whose value was the serve
+       token, opens the page class alone, and the page navigation it opens signs
+       the browser in with a session and clears it: a one-time migration.
 
 Synthetic only — no real session data; the gate decision touches no session state.
 Mirrors tests/test_kernel_ws_auth.py's module load order.
@@ -49,14 +55,31 @@ sb = load_source("romp_sdk_backend_authhard", os.path.join(BIN, "romp_sdk_backen
 TOK = km.TOKEN
 
 
-def _inst(peer="127.0.0.1", headers=None):
+def _inst(peer="127.0.0.1", headers=None, path=None):
     """A Handler with just enough state to call _authorize (no socket). `peer` is
     the TCP client IP (self.client_address[0]); `headers` are the request headers
-    (Host / Origin / Cookie / X-Romp-Token)."""
+    (Host / Origin / Cookie / X-Romp-Token). `path`, when given, is the request
+    path _authorize classes the route by; with none the path is empty, which
+    classes as the page class."""
     h = km.Handler.__new__(km.Handler)
     h.client_address = None if peer is None else (peer, 0)
     h.headers = dict(headers or {})
+    if path is not None:
+        h.path = path
     return h
+
+
+def _session_cookie(sess=None):
+    """A Cookie header value holding this kernel's session cookie for `sess` (a freshly minted session when
+    None): the browser's credential, which opens the page and static classes on its own."""
+    return "%s=%s" % (km._SESSION_COOKIE, sess or km._mint_session())
+
+
+def _cookies():
+    """(what, Cookie header value) for the two cookies a browser can hold for this kernel: its session
+    cookie, and the legacy romp_token cookie holding the serve token, which the one-time migration reads
+    on a page navigation. The gate reads both inside the Origin check, so a denial by origin holds for each."""
+    return (("the session cookie", _session_cookie()), ("the legacy romp_token cookie", "romp_token=" + TOK))
 
 
 def _serve_get(path, headers=None):
@@ -95,9 +118,11 @@ def _serve_get_full(path, headers=None):
     return captured.get("status"), captured.get("headers", {}), h.wfile.getvalue().decode("utf-8", "replace")
 
 
-def _auth(peer="127.0.0.1", headers=None, token=None):
-    q = {"token": [token]} if token is not None else {}
-    return _inst(peer, headers)._authorize(q)
+def _auth(peer="127.0.0.1", headers=None, token=None, path=None, q=None):
+    q = dict(q or {})
+    if token is not None:
+        q["token"] = [token]
+    return _inst(peer, headers, path)._authorize(q)
 
 
 class TokenCompare(unittest.TestCase):
@@ -152,32 +177,49 @@ class TokenRequiredEverywhere(unittest.TestCase):
         repo's dev server — is same-site with the dashboard and the browser attaches this
         cookie for it, SameSite=Strict included. Before this gate that page could open /ws
         (which streams every session and accepts sendMessage) with no credential of its own."""
-        ok, _, why = _auth(headers={"Cookie": "romp_token=" + TOK,
-                                    "Origin": "http://127.0.0.1:5173",
-                                    "Host": "127.0.0.1:%d" % km.PORT})
-        self.assertFalse(ok)
-        self.assertEqual(why, "cross-site origin")
+        for what, cookie in _cookies():
+            with self.subTest(cookie=what):
+                ok, _, why = _auth(headers={"Cookie": cookie, "Origin": "http://127.0.0.1:5173",
+                                            "Host": "127.0.0.1:%d" % km.PORT}, path="/")
+                self.assertFalse(ok)
+                self.assertEqual(why, "cross-site origin")
 
-    def test_cookie_still_authorizes_the_dashboards_own_origin(self):
-        # The shipped dashboard socket (kernel.py's connect(): location.host, no token)
-        # rides the cookie same-origin — the gate must not cost it anything.
+    def test_the_session_cookie_and_key_open_the_dashboards_own_socket(self):
+        # The shipped dashboard sockets (kernel.py's two dials: location.host, no token) send this kernel's
+        # session cookie, with the page key as k=, from the dashboard's own origin; the gate must not cost them
+        # anything. The cookie alone opens no socket: the page key is the socket class's second part.
         host = "127.0.0.1:%d" % km.PORT
-        ok, _, _ = _auth(headers={"Cookie": "romp_token=" + TOK,
-                                  "Origin": "http://" + host, "Host": host})
-        self.assertTrue(ok)
+        sess = km._mint_session()
+        headers = {"Cookie": _session_cookie(sess), "Origin": "http://" + host, "Host": host}
+        ok, cookie, why = _auth(headers=headers, path="/ws", q={"k": [km._page_key(sess)]})
+        self.assertTrue(ok, why)
+        self.assertIsNone(cookie, "a socket dial sets no cookie")
+        ok, _, why = _auth(headers=headers, path="/ws")
+        self.assertFalse(ok, "the session cookie alone opens no socket")
+        self.assertEqual(why, "session key required")
 
-    def test_cookie_still_authorizes_tailnet_self_access(self):
+    def test_the_session_cookie_authorizes_tailnet_self_access(self):
         # Reaching the dashboard from the phone over the tailnet: Origin and Host are both
-        # the tailnet name, which is same-origin and must keep working.
-        ok, _, _ = _auth(headers={"Cookie": "romp_token=" + TOK,
-                                  "Origin": "http://TESTHOST:%d" % km.PORT,
-                                  "Host": "TESTHOST:%d" % km.PORT})
-        self.assertTrue(ok)
+        # the tailnet name, which is same-origin and must keep working (a page on the session
+        # cookie alone, a data read with the page key beside it).
+        sess = km._mint_session()
+        headers = {"Cookie": _session_cookie(sess), "Origin": "http://TESTHOST:%d" % km.PORT,
+                   "Host": "TESTHOST:%d" % km.PORT}
+        ok, _, why = _auth(headers=headers, path="/")
+        self.assertTrue(ok, why)
+        ok, _, why = _auth(headers=dict(headers, **{"X-Romp-Key": km._page_key(sess)}), path="/sessions")
+        self.assertTrue(ok, why)
 
-    def test_cookie_still_authorizes_the_vscode_webview(self):
-        ok, _, _ = _auth(headers={"Cookie": "romp_token=" + TOK,
-                                  "Origin": "vscode-webview://abc123"})
-        self.assertTrue(ok)
+    def test_the_session_cookie_authorizes_the_vscode_webview(self):
+        # _origin_ok's vscode-webview branch: the session cookie from a webview's origin opens a page, and with
+        # the page key a data read. This fails when that branch is removed, whether or not the legacy cookie's
+        # migration is still there.
+        sess = km._mint_session()
+        headers = {"Cookie": _session_cookie(sess), "Origin": "vscode-webview://abc123"}
+        ok, _, why = _auth(headers=headers, path="/")
+        self.assertTrue(ok, why)
+        ok, _, why = _auth(headers=dict(headers, **{"X-Romp-Key": km._page_key(sess)}), path="/sessions")
+        self.assertTrue(ok, why)
 
     def test_explicit_token_still_bypasses_origin_for_federation(self):
         # The bypass that must SURVIVE: a foreign-origin browser presenting the token
@@ -312,57 +354,87 @@ class CookieDoesNotBypassOrigin(unittest.TestCase):
     NOT bypass the Origin gate. Cookies are host- not port-scoped (RFC 6265 §8.5), so every
     http://127.0.0.1:<port> page is same-site with the dashboard and rides this cookie — SameSite
     included. Without the Origin check, any page served by anything else on loopback (a dev server
-    in a repo an agent cloned) reached /ws, which streams every session and accepts sendMessage."""
+    in a repo an agent cloned) reached /ws, which streams every session and accepts sendMessage.
+    The cookie in the tests that authorize is this kernel's session cookie, on a page (the class it opens on
+    its own) and, with the page key, on a data read; the denials run the legacy romp_token cookie as well,
+    since the one-time migration reads it inside the same gate. The last test is that migration's own pin
+    here; LegacyCookieMigration in tests/test_session_cookie_auth.py drives it over a real server."""
 
     def test_cookie_denied_from_a_foreign_loopback_origin(self):
         # the drive-by case: a page on another loopback PORT is same-site, so the browser attaches
         # the cookie, but its Origin is not ours → the cookie must not authorize
-        ok, _, why = _auth(headers={"Cookie": "romp_token=" + TOK,
-                                    "Origin": "http://127.0.0.1:59999",
-                                    "Host": "127.0.0.1:%d" % km.PORT})
-        self.assertFalse(ok, "a cookie from another loopback port must not authorize")
-        self.assertEqual(why, "cross-site origin")
+        for what, cookie in _cookies():
+            with self.subTest(cookie=what):
+                ok, _, why = _auth(headers={"Cookie": cookie, "Origin": "http://127.0.0.1:59999",
+                                            "Host": "127.0.0.1:%d" % km.PORT}, path="/")
+                self.assertFalse(ok, "a cookie sent with another origin on this host must not authorize")
+                self.assertEqual(why, "cross-site origin")
 
     def test_cookie_denied_from_an_offsite_origin(self):
-        ok, _, why = _auth(headers={"Cookie": "romp_token=" + TOK, "Origin": "http://evil.example"})
-        self.assertFalse(ok)
-        self.assertEqual(why, "cross-site origin")
+        for what, cookie in _cookies():
+            with self.subTest(cookie=what):
+                ok, _, why = _auth(headers={"Cookie": cookie, "Origin": "http://evil.example"}, path="/")
+                self.assertFalse(ok)
+                self.assertEqual(why, "cross-site origin")
 
-    def test_cookie_still_authorizes_absent_origin(self):
+    def _page_and_keyed_read(self, headers, what):
+        """The session cookie opens a page on its own and, with the page key beside it, a data read."""
+        sess = km._mint_session()
+        headers = dict(headers, Cookie=_session_cookie(sess))
+        ok, _, why = _auth(headers=headers, path="/")
+        self.assertTrue(ok, "%s: the session cookie opens a page: %s" % (what, why))
+        ok, _, why = _auth(headers=dict(headers, **{"X-Romp-Key": km._page_key(sess)}), path="/sessions")
+        self.assertTrue(ok, "%s: the session cookie and the page key open a data read: %s" % (what, why))
+
+    def test_the_session_cookie_still_authorizes_absent_origin(self):
         # a same-origin GET omits Origin; that path (and non-browser clients) is unchanged
-        ok, _, _ = _auth(headers={"Cookie": "romp_token=" + TOK})
-        self.assertTrue(ok, "a cookie with no Origin (same-origin nav / curl) still authorizes")
+        self._page_and_keyed_read({}, "no Origin (a same-origin navigation, curl)")
 
-    def test_cookie_still_authorizes_the_dashboards_own_origin(self):
-        ok, _, _ = _auth(headers={"Cookie": "romp_token=" + TOK,
-                                  "Origin": "http://127.0.0.1:%d" % km.PORT,
-                                  "Host": "127.0.0.1:%d" % km.PORT})
-        self.assertTrue(ok)
+    def test_the_session_cookie_still_authorizes_the_dashboards_own_origin(self):
+        self._page_and_keyed_read({"Origin": "http://127.0.0.1:%d" % km.PORT, "Host": "127.0.0.1:%d" % km.PORT},
+                                  "the dashboard's own origin")
 
-    def test_cookie_still_authorizes_the_kernels_own_loopback_origin_under_another_host(self):
+    def test_the_session_cookie_still_authorizes_the_kernels_own_loopback_origin_under_another_host(self):
         # the kernel's own origin reached under its other loopback name: a page served at
         # http://127.0.0.1:<port> whose request arrives with Host localhost:<port>, or the reverse.
         # The Host string no longer matches the Origin, so same-origin-by-Host does not apply and
         # the gate's own-loopback branch is the one that accepts (the case SECURITY.md names as the
-        # kernel's own port on 127.0.0.1 or localhost); it fails when that branch is removed.
+        # kernel's own port on 127.0.0.1 or localhost); it fails when that branch is removed, whether or
+        # not the legacy cookie's migration is still there.
         for origin, host in (("http://127.0.0.1:%d" % km.PORT, "localhost:%d" % km.PORT),
                              ("http://localhost:%d" % km.PORT, "127.0.0.1:%d" % km.PORT)):
             with self.subTest(origin=origin, host=host):
-                ok, _, why = _auth(headers={"Cookie": "romp_token=" + TOK,
-                                            "Origin": origin, "Host": host})
-                self.assertTrue(ok, "the kernel's own loopback origin authorizes the cookie under "
-                                    "either of its names: " + why)
+                self._page_and_keyed_read({"Origin": origin, "Host": host},
+                                          "the kernel's own loopback origin under either of its names")
 
-    def test_cookie_still_authorizes_the_vscode_webview(self):
-        ok, _, _ = _auth(headers={"Cookie": "romp_token=" + TOK,
-                                  "Origin": "vscode-webview://0p9m1abc"})
-        self.assertTrue(ok, "the VS Code webview origin is allowed by _origin_ok")
+    def test_the_session_cookie_still_authorizes_the_vscode_webview(self):
+        # _origin_ok's vscode-webview branch; it fails when that branch is removed
+        self._page_and_keyed_read({"Origin": "vscode-webview://0p9m1abc"}, "the VS Code webview origin")
 
     def test_explicit_token_still_bypasses_origin_for_federation(self):
         # the escape hatch a cross-site page cannot use: only an EXPLICIT token bypasses origin,
         # and a drive-by page can't obtain one (it rides only the cookie)
         ok, _, _ = _auth(headers={"Origin": "http://evil.example"}, token=TOK)
         self.assertTrue(ok)
+
+    def test_the_legacy_cookie_opens_a_page_alone_and_its_navigation_migrates_it(self):
+        # The legacy romp_token cookie, whose value was the serve token: from the dashboard's own origin it
+        # opens a page, and a page navigation it opens signs the browser in with a session (never the token
+        # itself); it opens no data read, and a foreign origin gets nothing from it.
+        host = "127.0.0.1:%d" % km.PORT
+        own = {"Cookie": "romp_token=" + TOK, "Origin": "http://" + host, "Host": host}
+        ok, cookie, why = _auth(headers=own, path="/")
+        self.assertTrue(ok, why)
+        self.assertIsNone(cookie, "a load that is not a navigation opens the page without signing in")
+        ok, cookie, why = _auth(headers=dict(own, Accept="text/html", **{"Sec-Fetch-Dest": "document"}), path="/")
+        self.assertTrue(ok, why)
+        self.assertTrue(km._session_ok(cookie), "the navigation signs the browser in with a session")
+        self.assertNotEqual(cookie, TOK, "and the session is not the serve token")
+        self.assertFalse(_auth(headers=own, path="/sessions")[0], "the legacy cookie opens no data read")
+        ok, _, why = _auth(headers=dict(own, Origin="http://evil.example", Accept="text/html",
+                                        **{"Sec-Fetch-Dest": "document"}), path="/")
+        self.assertFalse(ok)
+        self.assertEqual(why, "cross-site origin")
 
 
 class ResponseHardeningHeaders(unittest.TestCase):
