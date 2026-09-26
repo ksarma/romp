@@ -8911,9 +8911,11 @@ the contract said the same; the claim was false, and the follow-on is a privacy 
 (open point 11: all three gestures kept, the outbound case made visible before it happens). The verifications: `git diff --stat $(git merge-base origin/main HEAD) HEAD -- kernel/` is empty and
 `git diff --name-only $(git merge-base origin/main HEAD) HEAD` lists files under ui, docs, plans, tools,
 upstream or tests, and SECURITY.md, alone (70 files, the ledger entry's where line; run 2026-09-26 at the head that carries the
-bench's variants from the fixes for the file review's round 18, regression-3, where the merge-base is fa3ef54b5, the fork's main
-the branch merged after the painted-contrast ask of 2026-09-23, its tip the merge of the fork's batch PR 907, and the listing is
-the branch's whole delta over it; the run at the head that carries the marquee forbid's records from that round's fixes,
+fixes for the file review's round 18 and the merge of the fork's main after them, where the merge-base is 4a50a9b71, the fork's
+main the branch merged after those fixes, its tip the merge of the fork's batch PR 917, and the listing is the branch's whole
+delta over it; the run at the head that carries the bench's variants from those fixes, regression-3, from the merge-base
+fa3ef54b5, the fork's main the branch merged after the painted-contrast ask of 2026-09-23, its tip the merge of the fork's batch
+PR 907, listed the same 70; the run at the head that carries the marquee forbid's records from that round's fixes,
 tests-1 with regression-1 and regression-2, from the merge-base fa3ef54b5, listed 64, before
 tools/viewer-resize-variants/css-table-plain.css, tools/viewer-resize-variants/stub-widthro.js,
 tools/viewer-resize-variants/stub-widthro-bodyw.js, tools/viewer-resize-variants/stub-allro.js,
