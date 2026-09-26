@@ -279,7 +279,10 @@ ROWS = [
 # were re-derived there; re-derived again at the round's SECOND merge of main, which brought fork PR #884: functions
 # 3241 to 3245, its two `skipped` lambdas, _row_owner and refused_in_replay, and no other entry moved; re-derived at round
 # 9's closing commit, which added the writer's directory row through a new helper: doors 442 to 443, calls reaching the
-# writer 358 to 359 (param 35 to 36), content rows 12 to 13, functions 3246 to 3247, and no other entry moved). Until round 8 these were FLOORS, and a floor
+# writer 358 to 359 (param 35 to 36), content rows 12 to 13, functions 3246 to 3247, and no other entry moved; re-derived
+# at the landing merge of main (2026-09-26, main at batch 917), where main's side added four functions to kernel/kernel.py,
+# fork PR #896's _tab_meta, _user_todo_open and _user_todos_shown and fork PR #861's _client_diag_value_admitted:
+# functions 3247 to 3251, and no other entry moved). Until round 8 these were FLOORS, and a floor
 # is silent slack: twice a merge of main grew the population under floors that stayed green (38 doors of slack at round
 # 6's head; three doors, a call, a door-value site, a problem_row site and a function at round 7's head), and at that
 # head a walk blinded to one param-kind door call passed every floor. The rule as enforced now: any growth or shrinkage
@@ -312,10 +315,11 @@ COUNTS = {
     "merge_reads": 3,              # _sdk_problem_rows reads the two lists and be.problems()
     "content_rows": 13,            # the ENV ROWS line's rows; content_identities() == ROWS holds them exactly, so this entry
     #                                carries no tension of its own and is here so the block is truthful
-    "functions": 3247,             # every def and lambda of the three files, nested ones included: 3245 at the second merge of main,
+    "functions": 3251,             # every def and lambda of the three files, nested ones included: 3245 at the second merge of main,
     #                                re-derived at round 9's commit as 3246 (_UnownedBackend.set_env, the one def the round added;
-    #                                no other entry moved) and at round 9's closing commit as 3247 (_flag_settings_dir_link_rows, the
-    #                                directory row's helper; the credentials.py count did not move)
+    #                                no other entry moved), at round 9's closing commit as 3247 (_flag_settings_dir_link_rows, the
+    #                                directory row's helper; the credentials.py count did not move) and at the landing merge of main
+    #                                as 3251 (the four kernel/kernel.py functions main's side added, named in the comment above)
 }
 CALLS_BY_KIND = {"self": 202, "typed": 109, "bound-self": 7, "param": 36, "alias": 5}   # the 359's derivation, an equality each
 EXISTENCE_ROWS = 20      # the existence rows (tag "pick" alone, a fixed vocabulary plus names): derived at round 8's commit and
@@ -1578,14 +1582,15 @@ class EnvRowsPopulation(unittest.TestCase):
         self.assertEqual([n for n in names if n in erc.COMMON_METHODS], [], "none of their bare names is a stdlib method name: %r" % (names,))
 
     def test_the_derivation_equals_its_committed_tables(self):
-        """The census's counts EQUAL the tables committed at the round-8 merge of main (COUNTS, CALLS_BY_KIND). Fewer is a blind
-        walk; more is growth nobody has re-derived; either reds, and the author re-derives the tables deliberately, naming
-        the head. The floors this replaces were blind by construction: at round 7's head a walk with one param-kind door
-        call removed passed every floor (the reviewer's round 7, extra8-1), and the same blinding reds this equality on
-        three entries (param, calls_reaching_writer, doors), pasted in round 8's commit message."""
+        """The census's counts EQUAL the committed tables (COUNTS, CALLS_BY_KIND; the comments on COUNTS name each head
+        they were re-derived at). Fewer is a blind walk; more is growth nobody has re-derived; either reds, and the
+        author re-derives the tables deliberately, naming the head. The floors this replaces were blind by construction:
+        at round 7's head a walk with one param-kind door call removed passed every floor (the reviewer's round 7,
+        extra8-1), and the same blinding reds this equality on three entries (param, calls_reaching_writer, doors),
+        pasted in round 8's commit message."""
         c = self.c
         self.assertEqual(_table_mismatches(c.counts, c.by_kind), [],
-                         "the census disagrees with the committed tables: (entry, found, committed at the round-8 merge of main); fewer is a blind "
+                         "the census disagrees with the committed tables: (entry, found, committed); fewer is a blind "
                          "walk, more is growth nobody re-derived: re-derive COUNTS and CALLS_BY_KIND deliberately and name the head")
         self.assertEqual(sum(c.by_kind.values()), c.counts["calls_reaching_writer"])
 
