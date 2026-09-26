@@ -18,8 +18,11 @@ this module mints). Every population is DERIVED from the source and the served b
      document the wrapper is not in, or nowhere.
   3. Every fetch the service worker makes names its route as a literal, and that route answers a request that carries no
      credential at all (probed here, not listed): a worker has no wrapper.
-  4. The only `.fetch` member reference in any served page document or the worker is the wrapper's own two (it reads
-     window.fetch and replaces it); another window's fetch (a frame made by script) is one nothing wrapped.
+  4. The only member reference to fetch in any served page document or the worker, dotted (`.fetch`) or by a string key
+     (`["fetch"]`), is the wrapper's own two (it reads window.fetch and replaces it); another window's fetch (a frame made
+     by script) is one nothing wrapped. Stated limit, on the precondition that the sources are written in good faith: a
+     key that is not written as a string (`w["fe" + "tch"]`, a key held in a variable) is not read; CensusShapes'
+     test_the_member_reader_takes_the_dotted_and_the_string_key_forms is its witness.
   5. Every other text/html document the kernel sends (derived from the _send calls whose content type is text/html) is
      listed below with a way to render it, and makes no fetch and loads no bundle, because nothing puts the wrapper in it.
      A computed content type never says html: the static trees' map is read here, and the /file route and its relay are
@@ -65,7 +68,8 @@ km = load_source("romp_kernel_fetchcensus", os.path.join(BIN, "romp-kernel"))
 CALL = re.compile(r"(?<![\w$.])fetch\s*\(")      # a call of the global fetch, written as script text
 # a %-format conversion: where a literal is formatted, the served text holds the value there, not the spec
 PCT = re.compile(r"%(?:\([^)]*\))?[-#0 +]*(?:\*|\d+)?(?:\.(?:\*|\d+))?[diouxXeEfFgGcrsa%]")
-MEMBER = re.compile(r"\.\s*fetch\b")               # a fetch reached as a member of some object
+# a fetch reached as a member of some object, dotted or by a string key (a class, not a group, so findall returns the matches)
+MEMBER = re.compile(r"\.\s*fetch\b|\[\s*['\"`]fetch['\"`]\s*\]")
 WRAPPER = "<script>" + km._PAGE_KEY_JS + "</script>"
 SID = "aaaaaaaa-1111-2222-3333-444444444444"
 
@@ -315,6 +319,12 @@ class CensusShapes(unittest.TestCase):
                          'def f():\n    "fetch(\'/docstring\')"\n')
         frags = [frag for _, frag in _fetch_calls_in_literals(tree)]
         self.assertEqual(frags, ["x;fetch('/a',{cache:1});", ";fetch('/c')"])
+
+    def test_the_member_reader_takes_the_dotted_and_the_string_key_forms(self):
+        text = "w.fetch('/a'); w . fetch; w['fetch']('/b'); w[ \"fetch\" ]; w[`fetch`]; fetch('/c'); x.fetcher; f('fetch');"
+        self.assertEqual(MEMBER.findall(text), [".fetch", ". fetch", "['fetch']", '[ "fetch" ]', "[`fetch`]"])
+        # the stated limit: a key that is not written as a string is not read
+        self.assertEqual(MEMBER.findall("w['fe'+'tch']('/a'); var k='fetch'; w[k]('/b');"), [])
 
     def test_the_argument_reader_matches_brackets_and_skips_quotes(self):
         s = "fetch('/push/ack',{method:'POST',body:JSON.stringify({p:')'})}).then(x)"

@@ -15,9 +15,14 @@
 // it is the first-party input list of esbuild's own metafile, from an in-memory build of vscode-extension/esbuild.js's
 // `webview` config (nothing is written), so a module a bundle starts to import is read from the day it is imported. Each
 // reference must be one of three shapes: a call of the global fetch by its bare name, in a file that declares no binding
-// of that name; a call through window, globalThis or self; or a `typeof fetch` feature test. Every other reference, and
-// every string literal that holds a fetch call as text, is red until it is listed below with the reason it still reaches
-// the wrapper.
+// of that name; a call through window, globalThis or self, by name or by a string key (`window["fetch"](...)`); or a
+// `typeof fetch` feature test. Every other reference, a string key of any other object (`frame.contentWindow["fetch"]`)
+// included, and every string literal that holds a fetch call as text, is red until it is listed below with the reason it
+// still reaches the wrapper.
+//
+// Stated limit, on the precondition that the sources are written in good faith: a key that is not written as a string
+// (`window["fe" + "tch"]`, a key held in a variable) is not read. The classifier test's "stated limit" case is its
+// witness: it pins that the census does not see it, so a change that widens or closes the limit shows there.
 //
 // Two neighbours finish the picture. The kernel's own inline scripts are checked over the documents the kernel serves
 // (tests/test_fetch_wrapper_census.py: each fetch call there is served inside a page document after the wrapper, and each
@@ -90,21 +95,26 @@ export function censusOf(rel: string, text: string): { sites: Site[]; declares: 
       || ts.isClassDeclaration(p) || ts.isBindingElement(p) || ts.isImportSpecifier(p) || ts.isImportClause(p)
       || ts.isNamespaceImport(p) || ts.isImportEqualsDeclaration(p) || ts.isEnumDeclaration(p)) && (p as any).name === n;
   };
+  /** A member read of fetch, `obj.fetch` or `obj["fetch"]`: a call through window, globalThis or self is the global's. */
+  const member = (n: ts.Node, access: ts.Node, obj: ts.Expression) => {
+    const called = ts.isCallExpression(access.parent) && access.parent.expression === access;
+    if (called && ts.isIdentifier(obj) && GLOBAL_OBJECTS.has(obj.text)) add(n, "global-call");
+    else add(n, "member:" + obj.getText(sf).replace(/\s+/g, " ").slice(0, 60) + (called ? ":call" : ""));
+  };
   const visit = (n: ts.Node): void => {
     if (ts.isIdentifier(n) && n.text === "fetch") {
       const p = n.parent;
       if (isDeclName(n)) { declares.push(at(n)); add(n, "declaration"); }
       else if (ts.isCallExpression(p) && p.expression === n) add(n, "call");
       else if (ts.isTypeOfExpression(p) && p.expression === n) add(n, "typeof");
-      else if (ts.isPropertyAccessExpression(p) && p.name === n) {
-        const obj = p.expression, called = ts.isCallExpression(p.parent) && p.parent.expression === p;
-        if (called && ts.isIdentifier(obj) && GLOBAL_OBJECTS.has(obj.text)) add(n, "global-call");
-        else add(n, "member:" + obj.getText(sf).replace(/\s+/g, " ").slice(0, 60) + (called ? ":call" : ""));
-      }
+      else if (ts.isPropertyAccessExpression(p) && p.name === n) member(n, p, p.expression);
       else if ((ts.isPropertyAssignment(p) || ts.isPropertyDeclaration(p) || ts.isMethodDeclaration(p) || ts.isPropertySignature(p)
                 || ts.isMethodSignature(p) || ts.isGetAccessor(p) || ts.isSetAccessor(p)) && p.name === n) add(n, "member-definition");
       else if (ts.isTypeReferenceNode(p) || ts.isTypeQueryNode(p) || ts.isQualifiedName(p)) { /* a type, which makes no request */ }
       else add(n, "value:" + ts.SyntaxKind[p.kind]);
+    } else if (ts.isElementAccessExpression(n) && (ts.isStringLiteral(n.argumentExpression) || ts.isNoSubstitutionTemplateLiteral(n.argumentExpression))
+               && n.argumentExpression.text === "fetch") {
+      member(n, n, n.expression);
     } else if ((ts.isStringLiteral(n) || ts.isNoSubstitutionTemplateLiteral(n) || ts.isTemplateHead(n) || ts.isTemplateMiddle(n)
                 || ts.isTemplateTail(n)) && (CALL_TEXT.test(n.text) || MEMBER_TEXT.test(n.text))) {
       add(n, "string");
@@ -171,9 +181,12 @@ test("the classifier admits the global call shapes and holds every other referen
   const shapes = (src: string) => censusOf("synthetic.ts", src).sites.map((s) => s.shape);
   assert.deepEqual(shapes("fetch('/sessions').then((r) => r.json());"), ["call"]);
   assert.deepEqual(shapes("window.fetch('/a'); globalThis.fetch('/b'); self.fetch('/c');"), ["global-call", "global-call", "global-call"]);
+  assert.deepEqual(shapes("window['fetch']('/a'); globalThis[\"fetch\"]('/b'); self[`fetch`]('/c');"), ["global-call", "global-call", "global-call"]);
   assert.deepEqual(shapes("if (typeof fetch !== 'undefined') {}"), ["typeof"]);
   assert.deepEqual(shapes("const f = document.createElement('iframe'); (f.contentWindow as any).fetch('/sessions');"), ["member:(f.contentWindow as any):call"]);
   assert.deepEqual(shapes("parent.fetch('/sessions');"), ["member:parent:call"]);
+  assert.deepEqual(shapes("const f = document.createElement('iframe'); (f.contentWindow as any)['fetch']('/sessions');"), ["member:(f.contentWindow as any):call"]);
+  assert.deepEqual(shapes("parent['fetch']('/sessions'); const g = window['fetch'];"), ["member:parent:call", "member:window"]);
   assert.deepEqual(shapes("const g = fetch; g('/sessions');"), ["value:VariableDeclaration"]);
   assert.deepEqual(shapes("run(fetch);"), ["value:CallExpression"]);
   assert.deepEqual(shapes("function load(fetch: (u: string) => Promise<Response>) { return fetch('/sessions'); }"), ["declaration", "call"]);
@@ -185,4 +198,10 @@ test("the classifier admits the global call shapes and holds every other referen
   const decl = censusOf("synthetic.ts", "const fetch = window.fetch; fetch('/sessions');");
   assert.equal(decl.declares.length, 1, "a declaration of the name is seen");
   assert.equal(reachesTheWrapper(decl.sites.find((s) => s.shape === "call")!, true), false, "and a bare call in its file is held");
+});
+
+test("the classifier's stated limit: a key that is not written as a string is not read", () => {
+  const shapes = (src: string) => censusOf("synthetic.ts", src).sites.map((s) => s.shape);
+  assert.deepEqual(shapes("(parent as any)['fe' + 'tch']('/sessions'); const k = 'fetch'; (parent as any)[k]('/sessions');"), [],
+    "stated limit: a key assembled at run time or held in a variable is not read");
 });
