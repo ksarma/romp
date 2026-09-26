@@ -2202,12 +2202,12 @@ class EnvRowsCensusBlindSpots(unittest.TestCase):
     # This class constructs about 180 censuses, each over a distinct sabotaged copy of the small module (SMALL_SDK_BACKEND;
     # about 7 ms each in one process since round 8's small-input commit, when the reviewer ruled that a mechanics pin's
     # input is the planted module plus what the walker resolves against). Until that commit each was a copy of
-    # kernel/sdk_backend.py at about 1.3 s; CI runs pytest serially under a 25-minute job ceiling, and at the head before
-    # the pool the Python 3.10 job was cancelled by it. The pool's ruling: build the class's censuses in worker processes
-    # and assert on the same results (no cap raise before the cost is reduced and re-measured). The pool stays as the
-    # class's construction road with the small input: its transport and its degradation roads are properties of the
-    # pool, pinned below whatever the input, and a batch of plants still builds off the test process's thread. Every
-    # plain Census this class reads comes through ONE entry point,
+    # kernel/sdk_backend.py at about 1.3 s; CI's serial Linux cells (until 2026-09-25) ran pytest under a 25-minute job
+    # ceiling, and at the head before the pool the Python 3.10 job was cancelled by it. The pool's ruling: build the
+    # class's censuses in worker processes and assert on the same results (no cap raise before the cost is reduced and
+    # re-measured). The pool stays as the class's construction road with the small input: its transport and its
+    # degradation roads are properties of the pool, pinned below whatever the input, and a batch of plants still builds
+    # off the test process's thread. Every plain Census this class reads comes through ONE entry point,
     # `_censuses(specs)`, a spec being (files, sources). It submits the batch to the class's ProcessPoolExecutor (the
     # spawn start method; min(os.cpu_count(), 4) workers; started once in setUpClass with a start probe bounded by
     # POOL_START_TIMEOUT; each worker imports tests.env_ring_census, the module's registered name, and runs its
@@ -3509,14 +3509,14 @@ class EnvRowsCensusBlindSpots(unittest.TestCase):
         """Fork PR #781, before round 7: the census walk's cost on CI. The taint pass re-visited every function of a module
         whenever a module-level name's stored taint grew (three such events over 715 functions: 2101 visits of 743
         functions, 85 of them changing anything), and with this class constructing 175 censuses the module ran 337 s
-        serial against 1.55 s at the PR's base, past CI's 25-minute job ceiling. The pass now re-visits the name's
-        READERS by an index Census._index builds from the same test the reads make (a bare Name read that no scope of
-        the function binds, then Census._global_read). The pin traces _global_read during _taint over the module-list
-        plant, where a taint visit does read a grown name (over the real pair none does: one grown name is read in an
-        `if` test alone, which no taint visit evaluates, the other only under a `global` declaration that binds it):
-        every function whose visit read a name is indexed as its reader, the index is the predicate run over every
-        function's reads, no reader is indexed without a Name read of the name under its def, and the index is
-        narrower than the module."""
+        serial against 1.55 s at the PR's base, past the 25-minute job ceiling of CI's serial Linux cells (until
+        2026-09-25). The pass now re-visits the name's READERS by an index Census._index builds from the same test the
+        reads make (a bare Name read that no scope of the function binds, then Census._global_read). The pin traces
+        _global_read during _taint over the module-list plant, where a taint visit does read a grown name (over the real
+        pair none does: one grown name is read in an `if` test alone, which no taint visit evaluates, the other only
+        under a `global` declaration that binds it): every function whose visit read a name is indexed as its reader,
+        the index is the predicate run over every function's reads, no reader is indexed without a Name read of the name
+        under its def, and the index is narrower than the module."""
         class Tracing(Census):
             def _taint(self):
                 self.traced, self._tracing = collections.defaultdict(set), True

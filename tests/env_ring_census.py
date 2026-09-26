@@ -2422,11 +2422,11 @@ class Census:
                 # that no scope of the function binds), the way a grown attribute re-visits attr_readers. Until fork
                 # PR #781 this enqueued every function of the module: three such events over 715 functions made 2101
                 # visits of 743 functions, 85 of which changed anything, and with the blind-spot class constructing 175
-                # censuses that put tests/test_session_env.py at 337 s serial against 1.55 s at the PR's base, past CI's
-                # 25-minute job ceiling. A function with no read of the grown name re-derives the same sets from the
-                # same inputs, so its visit was a no-op; every result is unchanged (the differential over the real pair
-                # and the class's copies, and the fixpoint pin in tests/test_session_env.py, which restores the sweep
-                # through _global_growth_readers and compares).
+                # censuses that put tests/test_session_env.py at 337 s serial against 1.55 s at the PR's base, past the
+                # 25-minute job ceiling of CI's serial Linux cells (until 2026-09-25). A function with no read of the
+                # grown name re-derives the same sets from the same inputs, so its visit was a no-op; every result is
+                # unchanged (the differential over the real pair and the class's copies, and the fixpoint pin in
+                # tests/test_session_env.py, which restores the sweep through _global_growth_readers and compares).
                 for key in self._grown_globals:
                     for reader in self._global_growth_readers(key):
                         enqueue(reader)
