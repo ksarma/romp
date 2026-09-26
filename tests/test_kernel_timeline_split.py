@@ -64,7 +64,7 @@ class BuildGating(unittest.TestCase):
         self.assertIn('window.addEventListener("message",function(e){if(!heardSender(e))return;frameListener(e);});', boot)
         self.assertEqual(boot.count('addEventListener("message"'), 1, "one listener, the sender check in front of the wrapped one")
 
-    def test_the_host_shim_registers_the_same_listener_with_federation_for_direct_delivery(self):
+    def test_the_host_shim_registers_the_wrapped_listener_with_federation_for_direct_delivery(self):
         # federation.js hands its merged data/bars frames to the handlers registered through window.__rompFed.onFrame
         # by direct call, and dispatches them on window only when nothing registered (ui/webview/federation.ts
         # emit): a "message" listener in another JavaScript world that reads event.data forces a structured clone of
@@ -76,7 +76,7 @@ class BuildGating(unittest.TestCase):
         self.assertLess(boot.index('window.addEventListener("message",function(e){if(!heardSender(e))return;frameListener(e);});'),
                         boot.index("window.__rompFed.onFrame(frameListener)"), "window first, the registry after it")
 
-    def test_the_host_shim_run_one_wrapped_listener_registered_with_federation_reaches_the_panel(self):
+    def test_the_host_shim_run_the_window_check_and_the_registry_reach_the_panel_and_the_collector(self):
         # The boot RUN (review find, 2026-09-08; moved here from the TypeScript lane, which must not break on a
         # kernel edit): the self-contained IIFE under node's vm with the three window slots it reads stood in.
         # One window listener, the sender check in front of the perf-wrapped one; the registry gets the perf-wrapped
