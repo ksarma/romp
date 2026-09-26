@@ -24,9 +24,10 @@
 // every arm, which the census below pins at source for every listener in ui/.
 //
 // The census reads the population instead of a list: every addEventListener("message", …) call in a ui/ source file
-// (tests excluded) must open with the check, preceded by nothing but reads of the message, and must be one of the gated
-// sites below, each with an executed leg here. A new window listener anywhere in ui/ fails it until it is gated and given
-// a leg. A second census reads what the name windowSender is bound to: in every ui/ file that calls the check, it is
+// (tests excluded), the method named or a computed member, and every onmessage handler assigned to the window (by window,
+// self, globalThis or the bare global), must open with the check, preceded by nothing but reads of the message, and must
+// be one of the gated sites below, each with an executed leg here. A new window listener anywhere in ui/ fails it until it
+// is gated and given a leg. A second census reads what the name windowSender is bound to: in every ui/ file that calls the check, it is
 // the helper's own import (gear.js: its require), bound once and never written, so a local helper of the same name that
 // lets one more sender through cannot stand in for it. Synthetic world only: the notes-api demo, placeholder ids.
 import { test } from "node:test";
@@ -177,29 +178,58 @@ for (const leg of INSTALLED) {
 
 // ── the listeners lifted out of their files ──
 
-type Site = { file: string; line: number; receiver: string; fn: any; text: string };
+type Site = { file: string; line: number; receiver: string; fn: any; text: string; kind: "addEventListener" | "onmessage" };
 const parsed = new Map<string, Site[]>();
-/** Every addEventListener("message", fn) call in a ui/ file, read by the TypeScript parser (so a spelling in a comment
- *  or a string is no call): where it is, what it is called on, and the listener's node and text. One parse per file. */
-function messageSites(file: string): Site[] {
-  const had = parsed.get(file);
-  if (had) return had;
-  const src = fs.readFileSync(path.join(UI, file), "utf8");
+/** The names a script reaches its own window by, for an onmessage assignment: window.onmessage, self.onmessage,
+ *  globalThis.onmessage (or any of them by a computed member), or a bare `onmessage =`. Any other receiver (a WebSocket, a
+ *  MessagePort, a worker) is not a window, and no other page can post to it. */
+const WINDOW_NAMES = new Set(["window", "self", "globalThis"]);
+/** Every window message listener in `src`, read by the TypeScript parser (so a spelling in a comment or a string is no
+ *  listener): each addEventListener("message", fn) call, whether the method is named (x.addEventListener, a bare
+ *  addEventListener) or a computed member (x["addEventListener"]), and each assignment of an onmessage handler to the
+ *  window by any of WINDOW_NAMES. Where it is, what it is on, and the listener's node and text. */
+function sitesIn(file: string, src: string): Site[] {
   const sf = ts.createSourceFile(file, src, ts.ScriptTarget.Latest, true, file.endsWith(".ts") ? ts.ScriptKind.TS : ts.ScriptKind.JS);
   const out: Site[] = [];
+  const line = (n: any) => sf.getLineAndCharacterOfPosition(n.getStart(sf)).line + 1;
+  /** the expression under any parentheses, type assertion or non-null mark: `(window as any)` is window */
+  const bare = (n: any): any => {
+    while (ts.isParenthesizedExpression(n) || ts.isAsExpression(n) || ts.isTypeAssertionExpression(n) || ts.isNonNullExpression(n)
+           || (ts.isSatisfiesExpression && ts.isSatisfiesExpression(n))) n = n.expression;
+    return n;
+  };
+  /** the member name of `x.name` or `x["name"]`, with its receiver's text; or a bare identifier's name, no receiver */
+  const member = (n: any): { name: string; receiver: string } | null => {
+    n = bare(n);
+    if (ts.isPropertyAccessExpression(n)) return { name: n.name.text, receiver: bare(n.expression).getText(sf) };
+    if (ts.isElementAccessExpression(n) && n.argumentExpression && ts.isStringLiteralLike(n.argumentExpression))
+      return { name: n.argumentExpression.text, receiver: bare(n.expression).getText(sf) };
+    if (ts.isIdentifier(n)) return { name: n.text, receiver: "" };
+    return null;
+  };
   const visit = (n: any): void => {
     if (ts.isCallExpression(n) && n.arguments.length >= 2 && ts.isStringLiteralLike(n.arguments[0]) && n.arguments[0].text === "message") {
-      const callee = n.expression;
-      const name = ts.isPropertyAccessExpression(callee) ? callee.name.text : ts.isIdentifier(callee) ? callee.text : "";
-      if (name === "addEventListener") {
-        out.push({ file, line: sf.getLineAndCharacterOfPosition(n.getStart(sf)).line + 1,
-                   receiver: ts.isPropertyAccessExpression(callee) ? callee.expression.getText(sf) : "",
-                   fn: n.arguments[1], text: n.arguments[1].getText(sf) });
+      const m = member(n.expression);
+      if (m && m.name === "addEventListener") {
+        out.push({ file, line: line(n), receiver: m.receiver, fn: n.arguments[1], text: n.arguments[1].getText(sf), kind: "addEventListener" });
+      }
+    }
+    if (ts.isBinaryExpression(n) && n.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
+      const m = member(n.left);
+      if (m && m.name === "onmessage" && (m.receiver === "" || WINDOW_NAMES.has(m.receiver))) {
+        out.push({ file, line: line(n), receiver: m.receiver, fn: n.right, text: n.right.getText(sf), kind: "onmessage" });
       }
     }
     ts.forEachChild(n, visit);
   };
   visit(sf);
+  return out;
+}
+/** Every window message listener in a ui/ file (sitesIn). One parse per file. */
+function messageSites(file: string): Site[] {
+  const had = parsed.get(file);
+  if (had) return had;
+  const out = sitesIn(file, fs.readFileSync(path.join(UI, file), "utf8"));
   parsed.set(file, out);
   return out;
 }
@@ -361,7 +391,25 @@ test("census: every window message listener in ui/ opens with the foreign-sender
   const bad = sites.filter((s) => !exempt.has(s.file + ":" + s.line)).map((s) => [s, headCheck(s)] as const).filter(([, why]) => why !== null)
     .map(([s, why]) => s.file + ":" + s.line + " (" + s.receiver + "): " + why);
   assert.deepEqual(bad, [], "a window message listener acts before it rules out a foreign sender:\n" + bad.join("\n"));
-  assert.ok(sites.every((s) => s.receiver === "window"), "every census site is a window listener");
+  assert.ok(sites.every((s) => s.receiver === "window" && s.kind === "addEventListener"),
+    "every census site is window.addEventListener(\"message\", ...), the one spelling the gated sites use");
+});
+
+test("the census reads every spelling of a window message listener: addEventListener named or computed, an onmessage handler on window, self, globalThis or the bare global; a socket's onmessage is none", () => {
+  const found = (src: string) => sitesIn("webview/probe.ts", src).map((s) => s.kind + " on " + (s.receiver || "(bare)"));
+  const listener = "function (e) { go(e.data); }";
+  assert.deepEqual(found("window.addEventListener(\"message\", " + listener + ");"), ["addEventListener on window"]);
+  assert.deepEqual(found("window[\"addEventListener\"](\"message\", " + listener + ");"), ["addEventListener on window"]);
+  assert.deepEqual(found("self['addEventListener'](`message`, " + listener + ");"), ["addEventListener on self"]);
+  assert.deepEqual(found("addEventListener(\"message\", " + listener + ");"), ["addEventListener on (bare)"]);
+  assert.deepEqual(found("window.onmessage = " + listener + ";"), ["onmessage on window"]);
+  assert.deepEqual(found("(window as any).onmessage = " + listener + ";"), ["onmessage on window"], "a cast is still the window");
+  assert.deepEqual(found("(<any>window)[\"addEventListener\"](\"message\", " + listener + ");"), ["addEventListener on window"]);
+  assert.deepEqual(found("self.onmessage = " + listener + ";"), ["onmessage on self"]);
+  assert.deepEqual(found("globalThis[\"onmessage\"] = " + listener + ";"), ["onmessage on globalThis"]);
+  assert.deepEqual(found("onmessage = " + listener + ";"), ["onmessage on (bare)"]);
+  assert.deepEqual(found("ws.onmessage = " + listener + "; port.onmessage = " + listener + ";"), [], "a socket's and a port's handler are not window listeners");
+  assert.deepEqual(found("window.addEventListener(\"resize\", " + listener + "); const s = \"window.onmessage = f\";"), [], "another event, or a string");
 });
 
 // ── the census: the name every check calls is the helper ──

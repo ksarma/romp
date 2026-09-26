@@ -133,14 +133,21 @@ test("a top-level page (its parent is itself) has no embedder: a same-window pos
 });
 
 // render.ts calls windowSender(e) with no window argument, and every other test here passes one, so this test is the
-// only one that reads the default. It sets the global window to a framed pane and restores it after.
+// only one that reads the default. It sets the global window to a framed pane and restores it after. The pane carries
+// the edges a real framed window has, each a different window: top is the shell (its parent, the top-level page), and
+// self is the pane itself. So a default that read another window than this one (window.top, the shell's page) would judge
+// the shell's post as this window's own and this window's own post as some other window's; and in a VS Code webview,
+// whose top is on another origin, reading its location would throw on every message.
 test("with no window argument, windowSender reads the global window", () => {
   const g = globalThis as { window?: unknown };
   const had = "window" in g, prev = g.window;
-  g.window = framed;
+  const pane: { parent: unknown; top: unknown; self?: unknown; location: { origin: string } } = { parent, top: parent, location: { origin: ORIGIN } };
+  pane.self = pane;
+  assert.ok(pane.top !== pane && pane.self === pane && pane.top !== pane.self, "top and self are different windows");
+  g.window = pane;
   try {
-    assert.equal(windowSender({ source: framed, origin: ORIGIN }), "self", "a same-window post");
-    assert.equal(windowSender({ source: parent, origin: "https://example.invalid" }), "embedder", "the parent");
+    assert.equal(windowSender({ source: pane, origin: ORIGIN }), "self", "a same-window post");
+    assert.equal(windowSender({ source: parent, origin: "https://example.invalid" }), "embedder", "the parent, the top window");
     assert.equal(windowSender({ source: other, origin: ORIGIN }), "peer", "a second chat column");
     assert.equal(windowSender({ source: other, origin: "null" }), "foreign", "a sandboxed frame");
     assert.equal(windowSender({ source: null, origin: "" }), "dispatch", "the kernel's frames");
