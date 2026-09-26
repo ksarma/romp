@@ -5473,11 +5473,13 @@ why, and the test that holds it:
    an opaque token segment in the path prints nowhere either (the follow-on's L3 records the finding). Before any of
    that, a source that appears to carry a sign-in (`figureSourceCredentialed`, the one rule the picture's title, the
    web control's words and this label all read: an at sign, ASCII or a lookalike, after its percent-escapes are
-   decoded until the text stops changing, anywhere after a scheme other than `data:` or after a leading run of two or
+   decoded, at most eight passes, a text still changing after them read as a sign-in (the follow-on's L3), anywhere after a
+   scheme other than `data:` or after a leading run of two or
    more slashes or backslashes, in a `data:` source's printed head, or after a colon in a source with neither) shows
    `FIGURE_ADDRESS_WITHHELD` in its place, which replaced the disclosed residual of two credential spellings the
    parser reads with no sign-in part (L3 again). Its cost is stated: every address with an at sign after its scheme
-   is withheld, a harmless `https://cdn/img/a@2x.png` among them. The scheme is read
+   is withheld, a harmless `https://cdn/img/a@2x.png` among them, and so is a source whose escapes nest past the eight
+   passes, wherever its address shows. The scheme is read
    as the parser reads it, URL parsing normalises the spelling, and a workspace path still prints as written.
    Chromium never requests a source with a sign-in part, so its label was where such a credential showed.
    One label per img, found by the mark and never by the class (the figure gate's rule: an author can type the class):

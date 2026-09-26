@@ -1106,7 +1106,8 @@ test("a picture from the web whose address the stand-in cannot resolve, a protoc
 // coordinator's decision): the rule that replaced the disclosed residual of two credential spellings, whose witness stood here. The
 // URL parser reads many spellings of a sign-in with no userinfo, as a host and a port, a path of the page's own origin or an opaque
 // path, so the viewer's words read the source's text instead: an at sign (ASCII, U+FF20 or U+FE6B, after the percent-escapes are
-// decoded until the text stops changing) anywhere after a scheme other than data: or a leading run of two or more slashes or
+// decoded until the text stops changing, in at most eight passes, a text still changing after them counting as a sign-in, the
+// bounded decode's case below) anywhere after a scheme other than data: or a leading run of two or more slashes or
 // backslashes, in the head a data: source's label prints, or after a colon in a source with neither, withholds the whole address on
 // every surface: the picture's title line, the web control's title property and aria-label, and the failed label. One table, each
 // row painted over the stand-in (real marked, the sanitizer's stand-in, the real rewrite, gate and decision) on the base it names,
