@@ -943,9 +943,11 @@
 # line per rule and file naming the rule, the commit, the file and the
 # config read, with the remedies in order (a regex or stopword allowlist on
 # the value; disabledRules to switch a rule off; ROMP_NO_GITLEAKS=1 for one
-# push); and a count of per-file lines (scanning path, one per file) other
-# than the pieces written, so a run at which the trace level did not take
-# effect refuses rather than leave that check disarmed. --redact does not
+# push); and a count of per-file lines (scanning path, logged once per file
+# gitleaks reads; a piece its global path allowlist skips logs none) other
+# than the pieces written, so the push is refused when the trace level did
+# not take effect, rather than leave that check disarmed, and when gitleaks
+# skipped a piece whole, which the byte figure refuses too. --redact does not
 # reach a trace line, which prints a skipped finding's value whole, so the
 # log goes to a private file in the scratch directory (mode 600 from its
 # creation), read there and deleted, and the log shown keeps only its INF,
@@ -1435,8 +1437,8 @@ is_chosen() {   # <address> <chosen addresses, one per line>
 # the same for all (unscanned_n counts the refusals, so a caller can tell one of
 # its own: list_commits). The credential scan's feed is judged the same way, and
 # gitleaks' read of it by the byte figure gitleaks logs (scan_credentials).
-unscanned() {   # <what could not be read, as a clause>
-    echo "romp pre-push: $1; the scan is incomplete, so the push is refused" >&2
+unscanned() {   # <what could not be read, as a clause> [<a note the line prints after its tail, in parentheses>]
+    echo "romp pre-push: $1; the scan is incomplete, so the push is refused${2:+ ($2)}" >&2
     failed_scan=1; unscanned_n=$((unscanned_n + 1))
 }
 # The function below builds the CLAUSE judged_read is given for a type read
@@ -4429,7 +4431,7 @@ scanner_run() {   # <gitleaks> <the scan's name, for its lines> <directory> <byt
                     unscanned "the PATH SKIPS in the trace log of $what were read short (the closing line reads \"$send\", the per-file lines then the skip lines, where the shell read $snamed skip lines and $sd lines of no kind)"
                     failed_creds=1
                 elif [ -n "$want" ] && [ "${send%% *}" != "${rpieces:-}" ]; then
-                    unscanned "$what's trace log holds ${send%% *} scanning path lines, one per file read, where the hook wrote ${rpieces:-no count of} pieces for it, so whether a path allowlist skipped a rule on a piece is unknown (a run at which the trace level did not take effect logs none)"
+                    unscanned "$what's trace log holds ${send%% *} scanning path lines, one per file read, where the hook wrote ${rpieces:-no count of} pieces for it, so whether a path allowlist skipped a rule on a piece is unknown (a run at which the trace level did not take effect logs none)" "gitleaks also logs none for a piece it skipped whole, as under a global path allowlist, which the byte figure refuses too"
                     failed_creds=1
                 fi
             else

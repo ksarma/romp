@@ -629,7 +629,11 @@ setup_gitleaks_stub() {   # <exit-code>: records its args and the bytes it is ha
     # the hook handed over), and reports their count in gitleaks' line shape,
     # `<time> INF scanned ~<n> bytes (<size>) in <duration>` (8.30.1 prints
     # `12:27PM INF scanned ~3737418 bytes (3.74 MB) in 13.2ms`; the hook reads
-    # the fields, so the time carries no space). On a finding it also logs
+    # the fields, so the time carries no space). Before each file's bytes it
+    # writes the per-file line gitleaks logs at its trace level,
+    # `<time> TRC scanning path path=<file>`: since round 12b the hook counts
+    # those lines in the scan of record's log against the pieces it wrote and
+    # refuses a run whose count differs. On a finding it also logs
     # gitleaks' count line and writes one record naming piece 1 to the report
     # path after -r, in the shape of the hook's report template (the piece, a
     # tab, the rule, a tab, a closing dot), so the hook's line naming the
@@ -653,6 +657,7 @@ echo "stub scanner ran" >&2
 # every file under the directory it runs in, fed and counted (why: setup_gitleaks_stub)
 n=0
 while IFS= read -r f; do
+    echo "12:00AM TRC scanning path path=\${f#./}" >&2
     cat "\$f" >> "$GL_FEED"
     n=\$(( n + \$(wc -c < "\$f") ))
 done < <(find . -type f | LC_ALL=C sort)
