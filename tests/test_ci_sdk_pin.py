@@ -69,13 +69,13 @@ This module holds five things, and it never skips: a pin that skips reports gree
    line, and a last line with no newline after it. A form the scan does not accept is refused by name; reword the step
    in an accepted form. Until the
    allowlist the scan refused named forms one at a time, and each of three verify passes found forms the line reading
-   half-modelled; the parser and the censuses read the accepted forms and nothing else. Every line of ci.yml that
-   spells pytest (the word in any case ending at a word boundary, py.test, or a `$PYTEST` expansion), other than the
-   lines the census excuses (pytest_line_census's docstring is the census's rule), is read as an invocation or is red
-   (round 4's ruling, 2026-09-23): the line census in PytestPopulation holds each such line to the span of lines the
-   parser read for a row, so a pytest line outside every run (an action's input) or in a layout the parser does not read is red at its
-   line (a line joined to the next by a backslash counts when the joined text spells pytest, joined as the shell joins
-   it); a mention the parser reads but not as a command (among them a wrapper such as `uvx pytest`, a `$PYTEST`
+   half-modelled; the parser and the censuses read the accepted forms and nothing else. Every line of ci.yml that spells
+   pytest (the word in any case ending at a word boundary, py.test, or a `$PYTEST` expansion), other than the lines the
+   census excuses (pytest_line_census's docstring is the census's rule), is read as an invocation or is red (round 4's
+   ruling, 2026-09-23): the line census in PytestPopulation holds each such line to the span of lines the parser read
+   for a row, so a pytest line outside every run (an action's input) or in a layout the parser does not read is red at
+   its line (a line joined to the next by a backslash counts when the joined text spells pytest, joined as the shell
+   joins it); a mention the parser reads but not as a command (among them a wrapper such as `uvx pytest`, a `$PYTEST`
    variable, an option cluster such as `python -Impytest`) is red as `unparsed` until the parser reads it; and a line
    where a job key goes that the parser does not read as one (a key carrying its value) is red, so no step is read under
    the job above it. Outside the check, among others (pytest_invocations' docstring states the read in full): a run line
@@ -88,8 +88,8 @@ This module holds five things, and it never skips: a pin that skips reports gree
    value '#' there, cuts the flag off as a comment). A run text whose every expression is the one shape batch 917's
    evaluator reads (command_on in tests/test_ci_pytest_workers.py, reused: matrix.os compared with one label, choosing
    between two quoted values, the Run pytest step's worker count since #916) is read once for each label the expressions
-   name and once for every other label, each text substituted as that cell's shell reads it (matrix_os_texts; its rows
-   name their cell), and a step whose run text holds any other expression and spells pytest anywhere in it, in a comment
+   name and once for every other label, each text substituted as that cell's shell reads it (matrix_os_texts; each row
+   names its cell), and a step whose run text holds any other expression and spells pytest anywhere in it, in a comment
    line or a trailing comment too, is `unparsed`, red until the value moves to an env: key and the run text reads it as
    a shell variable (the allowlist's second verify pass, 2026-09-24: such a step read ok, or listed, while pytest ran
    without the flag; round 5's ruling A, 2026-09-24: a step whose only pytest spelling sat in a comment gave no row, and
@@ -209,12 +209,12 @@ This module holds five things, and it never skips: a pin that skips reports gree
    pyproject.toml, setup.cfg or tox.ini. Of the rest of that read, tests/test_thread_stop_census.py's
    test_the_population_is_what_pytest_collects_under_tests holds pytest.ini, setup.cfg, tox.ini and pyproject.toml
    absent at the repository root and in tests/ itself; nothing pins the conftest read, .pytest.ini, pytest.toml or
-   .pytest.toml, or any of the seven in a directory below those two. The belt's subject is checked against the tree
-   as well (2026-09-21): NeverSkips asserts this file's own basename is in _NEVER_SKIP_FILES as written in tests/conftest.py
-   (never_skip_files_as_written there: ast.literal_eval over the text, so a tuple spelled any other way is reported
-   as such rather than raising), and tests/test_served_tests_require.py, outside this module, asserts every entry names
-   a file under tests/, so a rename of this file reds in both and a deletion reds there; before those two checks a
-   copy renamed test_ci_sdk_pin_v2.py ran green with the belt inert, a skip in it a plain skip.
+   .pytest.toml, or any of the seven in a directory below those two. The belt's subject is checked against the tree as
+   well (2026-09-21): NeverSkips asserts this file's own basename is in _NEVER_SKIP_FILES as written in
+   tests/conftest.py (never_skip_files_as_written there: ast.literal_eval over the text, so a tuple spelled any other
+   way is reported as such rather than raising), and tests/test_served_tests_require.py, outside this module, asserts
+   every entry names a file under tests/, so a rename of this file reds in both and a deletion reds there; before those
+   two checks a copy renamed test_ci_sdk_pin_v2.py ran green with the belt inert, a skip in it a plain skip.
 5. The launcher census (ChildPytestLaunchers; round 3's ruling, 2026-09-20). The workflow's flag blocks the plugin in
    the step's own process; a pytest child a test spawns is a new pytest process in the same interpreter, where the SDK
    step installed anyio, and without the flag it auto-loads the plugin (on 2026-09-20, before the launchers gained the
@@ -304,8 +304,8 @@ This module holds five things, and it never skips: a pin that skips reports gree
    box's default run loads, load in every cell too since batch 917 (#916) installed it there, and xdist hands each worker
    the command's arguments, so the flag reaches the Linux cells' two workers and the workers of a child run with -n
    (2026-09-26, in a venv holding anyio: with -n 2 and the flag no worker loaded it; without the flag both did); the
-   tests gated on pytest-xdist alone, among them tests/test_tempdir_hygiene.py's two -n 2 children, run in every cell
-   since then. Verified by execution
+   tests gated on pytest-xdist alone, among them tests/test_tempdir_hygiene.py's two that start a pytest child under -n
+   2, run in every cell since then. Verified by execution
    before this landed: a synthetic broken anyio/pytest_plugin.py in a CI-shaped venv (the SDK pinned, the parent under
    the flag) red tests in each of the six modules that spawned unflagged children, none of which imports the SDK, and
    the same six were green with the flag on every launcher (2026-09-20).
@@ -977,7 +977,8 @@ class RequireSwitch(unittest.TestCase):
 # census (pytest_line_census, run in PytestPopulation) reds it: every line of the file that spells pytest, other than
 # the lines the census excuses (its docstring is the rule), lies in the span of lines the parser read for a row, or the
 # census names it. A line at the jobs' indent that is not a job the parser reads is red too (unread_job_keys), so no
-# step is read under the job above it. Until 2026-09-23 the parser's limits were claimed red and a step in YAML's compact list style gave no row at all.
+# step is read under the job above it. Until 2026-09-23 the parser's limits were claimed red and a step in YAML's
+# compact list style gave no row at all.
 # The YAML the parser and the censuses read is held to an allowlist (yaml_line_forms, the owner's allowlist design,
 # 2026-09-24): every line of ci.yml is in a form the real file uses, or it is refused by name at its line, valid YAML
 # included (a form the scan does not accept is refused by name; reword the step in an accepted form). The readers below
@@ -1274,7 +1275,7 @@ def matrix_os_texts(lines):
     tests/test_ci_pytest_workers.py (reused, never copied), once for each label the expressions name, in order and
     without a repeat under case folding as command_on compares them, and last for OTHER_OS, which stands for every label
     they do not name, so every cell's text is read whatever the matrix holds. The offsets are kept: a value is a quoted
-    scalar within its line, so no line is added or removed. Raises LookupError naming the expression when a line holds
+    string on its line, so no line is added or removed. Raises LookupError naming the expression when a line holds
     one command_on does not read (anything but matrix.os == '<label>' && '<a>' || '<b>') or a `${{` that no `}}` closes
     on its line."""
     if not any("${{" in t for _o, t, _e in lines):
@@ -1380,9 +1381,8 @@ def pytest_invocations(src, read=None, switch_read=None):
     spellings in a step's own run text are counted in each cell's text, and in the job's other steps as the most their
     written text or any of their cells' texts holds, since a value can join the name across an expression's edge.
     `read`, when a list is given, receives {first, last, text} for every command line the parser read in a step's run,
-    row or not, as
-    written (pytest_line_census judges the pip exclusion on that text; the switch census counts those lines as run text
-    read). `switch_read`, when a list is given, receives {line, job, step, scope}
+    row or not, as written (pytest_line_census judges the pip exclusion on that text; the switch census counts those
+    lines as run text read). `switch_read`, when a list is given, receives {line, job, step, scope}
     for every ROMP_SDK_REQUIRE key line _env_block read in a scope the merge reads (the workflow's env, a job's env, a
     step's env; job and step None where the scope is wider).
     A text parse over the file's own indentation (top-level keys at column 0, jobs at 2, job keys at 4, steps at 6,
@@ -1517,8 +1517,8 @@ def pytest_invocations(src, read=None, switch_read=None):
             # ends the comment and runs pytest with neither the flag nor the switch, where the parser skipped the comment
             # line and the shell split cut the trailing comment. The row sits at the step's first line that spells pytest
             # (keyed on the spelling, on the joined command line or on a raw line of the run text). A step the evaluator
-            # reads is read as each cell's shell reads it, and a comment there stays a comment: a value is a quoted scalar
-            # within its line, so it cannot end one
+            # reads is read as each cell's shell reads it, and a comment there stays a comment: a value is a quoted string
+            # on its line, so it cannot end one
             if refused_expr is not None and not step_rows:
                 if spelled is None:
                     spelled = next(((_line_of(src, sbase + o), _line_of(src, sbase + o), t) for o, t, _e in lines
@@ -2292,8 +2292,8 @@ RUN_PYTEST_OPTIONS = {
     "-q": "quieter output: it changes what pytest prints, not what it runs or its exit status",
     # batch 917's worker count, read per cell from its matrix.os expression (matrix_os_texts): 2 on ubuntu-latest, 0 on
     # every other label; each count is its own entry, keyed on both words, since another count is another run shape
-    "-n 2": ("two pytest-xdist workers (the ubuntu-latest cells, batch 917): every collected test runs on one worker or the "
-             "other, a worker that dies fails its test by name, and the exit status is the whole run's"),
+    "-n 2": ("two pytest-xdist workers (the ubuntu-latest cells, batch 917): the collected tests are split between them, a "
+             "worker that dies fails its test by name, and the exit status is the whole run's"),
     "-n 0": ("xdist's in-process run (every other cell, batch 917): no workers, the suite runs in pytest's own process as a "
              "serial run does, and the exit status is the run's"),
     "-p no:anyio": ("the flag (FLAG_SPELLING), which blocks anyio's plugin; keyed on both words, since -p with another value "
@@ -2397,7 +2397,7 @@ def run_pytest_status(src):
        ubuntu-latest and -n 0 on every other label, each an entry of RUN_PYTEST_OPTIONS); a refusal every cell makes is
        reported once, and one only some cells make names each of them (os_phrase). A run text holding any other
        expression is refused at its line, since the text as written is not the text the shell runs (the landing merge
-       after batch 917, 2026-09-26: the worker count's `||` read as a second command until the expression was evaluated).
+       after batch 917, 2026-09-26: the worker count's `&&` and `||` read as operators until the expression was evaluated).
     4. Every key of the step's merged env (the workflow's env, the job's, the step's, and a VAR=value prefix on the
        command) is an entry of RUN_PYTEST_ENV, each entry with its reason, so PYTEST_ADDOPTS (options pytest reads from
        the environment), BASH_ENV (a file bash sources before the run text: one holding `trap 'exit 0' EXIT` makes a
@@ -4165,11 +4165,12 @@ class PopulationCheckReds(unittest.TestCase):
                 self.assertEqual(pytest_line_census(src)[1], [], label)
 
     def test_the_line_census_excuses_what_its_rule_names_and_counts_the_rest(self):
-        # pytest_line_census's table of spellings (round 6's ruling D, 2026-09-25: its docstring is the census's rule, and
-        # the other texts point there): a line on each side of each exclusion it names, each in a step whose run key is
-        # spaced, a layout the parser does not read, so the census alone judges it. The lines outside an exclusion
-        # include other keys' lines (an id:, an if:, an action's input), so an exclusion widened past the name key's own
-        # line reds here. (label, step text, the step-relative lines the census names; empty when it excuses them all)
+        # pytest_line_census's table of spellings (round 6's ruling D, 2026-09-25: its docstring is the census's rule,
+        # and the other texts point there): a line on each side of each exclusion it names, each in a step the parser
+        # reads no command from (a spaced run key, an action's input, a flow mapping), so the census alone judges it.
+        # The lines outside an exclusion include other keys' lines (an id:, an if:, an action's input), so an exclusion
+        # widened past the name key's own line reds here. (label, step text, the step-relative lines the census names;
+        # empty when it excuses them all)
         for label, step, named in (
                 ("a comment line", "      - name: Commented\n        # pytest runs later\n        run : make test\n", ()),
                 ("a trailing comment", "      - name: Commented\n        run : make test  # pytest later\n", ()),
