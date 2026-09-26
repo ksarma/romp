@@ -9020,7 +9020,8 @@ author's marquee, each followed by a positioned author element or by an svg whos
 picture's own body under the positioned element, a stated cost; both cell modules count a gesture's opens by the gate's own
 window.open calls, recorded in the page as each is made, each call's popup and document request awaited with a bound that
 fails loudly, so a late popup lands in its own cell, and each scene's end holds the popups and requests seen equal to the calls,
-so a stray open is charged to its scene, the file review's round 18, extra6-2). The review's round 1 added two modules outside those two stems:
+so a stray open made or delivered before that end reads the record is charged to its scene, while a call a timer makes after it
+goes unseen, since the page closes, the file review's round 18, extra6-2). The review's round 1 added two modules outside those two stems:
 ui/webview/file-view-figure-shapes.test.ts (the source pins for L3's round-1 rules: figureTarget's web test before
 the model's join, the one decision's order in figureWantsControl (the state, the floor, the target, any link above),
 the measure's reads, the bare

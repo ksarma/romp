@@ -132,8 +132,9 @@ const OPENS_BOUND = 20000;
  *  in its own cell; a read whose gesture made no call waits for nothing more, and reads what has arrived, its [0,0] exact; it returns
  *  [popups, document requests] since the last read, and closes the popups. `end`, after the scene's last cell, waits the same way for
  *  every call the scene recorded and holds the popups and document requests seen equal to the calls, every call one a cell read
- *  inside an event's dispatch, so a stray open, a call outside a dispatch or after the last cell or a popup no call made, is charged to
- *  its scene and never lost. */
+ *  inside an event's dispatch, so a stray open made or delivered before `end` reads the record, a call outside a dispatch or after the
+ *  last cell's read or a popup no call made, is charged to its scene; a call a timer makes after that read goes unseen, since the
+ *  scene's page closes after `end`. */
 export function opensCounter(page: any, popups: any[], docReqs: string[], scene: string): { opens: () => Promise<[number, number]>; end: () => Promise<void>; wake: () => void } {
   const waiters: Array<() => void> = [];
   const wake = (): void => { for (const f of waiters.splice(0)) f(); };
