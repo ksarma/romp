@@ -3967,6 +3967,87 @@ dial(us, US, f, F)                                 # F's answer to our dial rele
 out["roads"][road]["viaRowsAfterFarAnswers"] = carried_via(us)
 out["roads"][road]["heard"] = sorted(h for h, st in us.PEER_STATE.items() if st.get("seenAt"))
 step(road, "farAnswersOurDial", us, newOnFar=S["new"], nobody=S["nobody"], other=S["other"])
+# ...AND WHEN F'S BUS RESTARTED SINCE ITS CACHED WORD (round 6 of fork PR #897, the reviewer's verifier at the sixtieth
+# commit, its road rvA1FarRestartedOwnAnswer): the same, then F's bus restarts too (the self-update path: a new bus id). F
+# links us, dials and answers our dial, twice, and our bus restarts again: F's row here carries the new id and does not
+# speak for the carried word (_direct_row_speaks), which holds. Then F answers the hub, and the hub, having heard F's new
+# process, dials us (its word names F's new bus and folds into F's row) and answers our dial
+def via_bus_of(bus, key):                          # the viaBus our mirror's row `key` carries, or None
+    try:
+        return json.loads((bus.STATE / "remote-sids").read_text())["hosts"][key].get("viaBus")
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        return None
+road = "ourRestartFarBusRestartedSinceItsWordEndsNothingByItsOwnAnswer"
+us, f, hub, c = far_behind_hub(road, HUB)          # F answered through the hub, released here
+out["roads"][road] = {}
+LISTINGS["f"] = None                               # F's kernel blinks; the new session starts on F and mails ours
+out["roads"][road]["park"] = park(f, S["new"], "px-farrestarted")
+out["roads"][road]["landingAtHub"] = mail_dial(f, F, hub, HUB)   # F's dial over its cache carries the mail to the hub
+out["roads"][road]["landingHere"] = mail_dial(hub, HUB, us, US)  # the hub's dial: F's cached word and the mail, landed here
+old_bus = str(f.BUS_ID)
+us = load_bus("us2")                               # OUR bus restarts over the same root (the self-update path)
+notify(us, HUB, True); notify(us, C, True); notify(us, F, True)
+dial(c, C, us, US); dial(us, US, c, C)             # C heard in the new process, released by our dial's answer
+step(road, "afterOurRestart", us, newOnFar=S["new"], nobody=S["nobody"])
+f = load_bus("f", Path(others_root) / road / "f")   # F's bus restarts too, over its own root: a new bus id
+with As(f):
+    f.peer_update({"host": US, "port": 50001, "up": True})   # F links us; the hub is not heard
+LISTINGS["f"] = [S["other"], S["new"]]             # F's kernel answers, naming the new session
+out["roads"][road]["farDial"] = dial(f, F, us, US)
+dial(us, US, f, F)                                 # F's answer to our dial releases F's row, under F's new bus id
+out["roads"][road]["busIds"] = [old_bus != str(f.BUS_ID), via_bus_of(us, "via:%s/%s" % (HUB, F)) == old_bus,
+                                str((us.PEER_STATE.get(F) or {}).get("busId") or "") == str(f.BUS_ID)]
+out["roads"][road]["viaRowsAfterFarAnswers"] = carried_via(us)
+step(road, "farAnswersOurDial", us, newOnFar=S["new"], nobody=S["nobody"], other=S["other"])
+dial(f, F, us, US); dial(us, US, f, F)             # a second exchange both ways
+step(road, "farAgain", us, newOnFar=S["new"], nobody=S["nobody"])
+us = load_bus("us3")                               # OUR bus restarts again, the hub still unheard
+notify(us, HUB, True); notify(us, C, True); notify(us, F, True)
+dial(c, C, us, US); dial(us, US, c, C); dial(f, F, us, US); dial(us, US, f, F)
+out["roads"][road]["viaRowsAfterSecondRestart"] = carried_via(us)
+step(road, "afterOurSecondRestart", us, newOnFar=S["new"], nobody=S["nobody"])
+with As(f):
+    f.peer_update({"host": HUB, "port": 50002, "up": True})
+hear(f, F, hub, HUB)                               # F answers the hub: the hub hears F's new process
+out["roads"][road]["hubDial"] = dial(hub, HUB, us, US)   # the hub's word names F's new bus: it folds into F's row
+out["roads"][road]["viaRowsAfterHubDial"] = carried_via(us)
+step(road, "hubDialsAfterFarAnswersIt", us, newOnFar=S["new"], nobody=S["nobody"])
+dial(us, US, hub, HUB)                             # the hub's answer to our dial releases the hub's row
+step(road, "hubAnswersOurDial", us, newOnFar=S["new"], nobody=S["nobody"])
+# RESIDUAL (3b) WHEN F'S BUS RESTARTED SINCE ITS CACHED WORD (round 6 of fork PR #897, the reviewer's verifier at the
+# sixtieth commit, its road rvA4FarRestartedInProcess), in one process of ours: F's cached exchange with the hub carries a
+# new session's mail here, and F stops exchanging with the hub, which keeps gossiping F's last word; F links us, dials and
+# answers our dial. With F's bus restarted since that word, F's row here carries a new id and does not speak for it: the
+# word holds across the hub's next dial and answer, until F answers the hub again. The control: F's bus not restarted
+for road, restarted in (("residual3bFarBusRestartedSinceItsWordHoldsThroughItsOwnAnswer", True),
+                        ("residual3bFarBusNotRestartedEndsItsWordByItsOwnAnswer", False)):
+    us, f, hub, c = far_behind_hub(road, HUB)
+    out["roads"][road] = {}
+    LISTINGS["f"] = None
+    out["roads"][road]["park"] = park(f, S["new"], "px-3b" + ("re" if restarted else "ctl"))
+    out["roads"][road]["landingAtHub"] = mail_dial(f, F, hub, HUB)
+    out["roads"][road]["landingHere"] = mail_dial(hub, HUB, us, US)
+    dial(us, US, hub, HUB)                         # our dial's answer gossips F's cached word too: held
+    step(road, "cachedHere", us, newOnFar=S["new"], nobody=S["nobody"])
+    old_bus = str(f.BUS_ID)
+    notify(us, F, True)
+    if restarted:
+        f = load_bus("f", Path(others_root) / road / "f")   # F's bus restarts over its own root: a new bus id
+    with As(f):
+        f.peer_update({"host": US, "port": 50001, "up": True})   # F links us; it no longer exchanges with the hub
+    LISTINGS["f"] = [S["other"], S["new"]]
+    out["roads"][road]["farDial"] = dial(f, F, us, US)
+    dial(us, US, f, F)                             # F's answer to our dial releases F's row
+    out["roads"][road]["busIds"] = [old_bus != str(f.BUS_ID), via_bus_of(us, "via:%s/%s" % (HUB, F)) == old_bus,
+                                    str((us.PEER_STATE.get(F) or {}).get("busId") or "") == str(f.BUS_ID)]
+    step(road, "farAnswersOurDial", us, newOnFar=S["new"], nobody=S["nobody"], other=S["other"])
+    dial(hub, HUB, us, US); dial(us, US, hub, HUB)   # the hub gossips F's last word again, by both roads
+    step(road, "hubAgain", us, newOnFar=S["new"], nobody=S["nobody"])
+    with As(f):
+        f.peer_update({"host": HUB, "port": 50002, "up": True})
+    hear(f, F, hub, HUB)                           # F answers the hub again
+    dial(hub, HUB, us, US)                         # the hub's word names F's current bus: it folds into F's row
+    step(road, "hubDialsAfterFarAnswersIt", us, newOnFar=S["new"], nobody=S["nobody"])
 # X3'S NAME AT ITS LATEST RECORDING (round 6 of fork PR #897, the reviewer's verifier at the fifty-ninth commit, its road rv5
 # and mutant MV14): a session BOTH rows of the fold name, the staying row's naming before this bus's dial was built and the
 # forgotten row's after it. The alias's row names a session of the hub's old process; the hub's bus restarts and dials us
@@ -5039,9 +5120,16 @@ print(json.dumps(out))
         gossiping F's last word with viaAnswered False. Our via row stays reachable (the hub's link) and unanswered, and
         the arm holds every sid nothing names at cannot-determine, across the hub's exchanges, until F answers the hub
         again and the hub's next exchange reaches here, or this bus holds F directly and F's own answering exchange lands
-        here (while F's row speaks); the hub's restart is no release since the thirty-first commit (the hub-restart
-        witnesses below), and this bus's restart none since round 6 (the reviewer's decision 4 on round 5: F's via row is
-        carried unanswered and holds the arm). No false settle. Until the twenty-ninth commit, rule 5 here."""
+        here while F's bus is the one the hub's word names (while F's row speaks); the hub's restart is no release since
+        the thirty-first commit (the hub-restart witnesses below), and this bus's restart none since round 6 (the
+        reviewer's decision 4 on round 5: F's via row is carried unanswered and holds the arm). No false settle. Until the
+        twenty-ninth commit, rule 5 here.
+        THE CONDITION (the reviewer's verifier at the sixtieth commit, its road rvA4FarRestartedInProcess): when F's bus has
+        restarted since its cached exchange with the hub, F's row here carries the new bus id and a known different bus id
+        beats the name (_direct_row_speaks), so F's row does not speak for the hub's word: through F's answer to our dial
+        and the hub's next dial and answer, a sid nothing names stays cannot-determine by the via row, until F answers the
+        hub again and the hub's word, naming F's new bus, folds into F's row. The control, F's bus not restarted: F's
+        answer to our dial ends it."""
         via = UNANSWERED(R_VIA_F + " (listing unanswered)")
         for shape, got in self.roads.items():
             with self.subTest(shape=shape):
@@ -5051,6 +5139,31 @@ print(json.dumps(out))
                                  "row each time (until the twenty-ninth commit [true, 5, no-reachable-host-names-it])")
                 self.assertEqual(self._road(got, "farCachedThenGone", "farGoneAtHub2", "other"), RULE_4,
                                  "the sid F's cached word names stays rule 4's")
+        restarted = "residual3bFarBusRestartedSinceItsWordHoldsThroughItsOwnAnswer"
+        control = "residual3bFarBusNotRestartedEndsItsWordByItsOwnAnswer"
+        for shape, got in self.roads.items():
+            with self.subTest(shape=shape, far_bus_restarted=True):
+                road = got["roads"][restarted]
+                self.assertEqual((road["landingHere"]["acks"], self._road(got, restarted, "cachedHere", "nobody")),
+                                 (["px-3bre"], via), "F's cached word and the session's mail relayed here: held")
+                self.assertEqual((road["busIds"], self._road(got, restarted, "farAnswersOurDial", "newOnFar"),
+                                  self._road(got, restarted, "farAnswersOurDial", "nobody"),
+                                  self._road(got, restarted, "hubAgain", "nobody")),
+                                 ([True, True, True], RULE_4, via, via),
+                                 "THE CONDITION: F's bus restarted since its word, F's row here, released by F's answer to our "
+                                 "dial, carries the new bus id and the hub's word the old one, so F's row does not speak for "
+                                 "the word, which holds a sid nothing names through F's answer and the hub's next exchanges "
+                                 "(under a name match that beats a known different bus id, [true, 5, "
+                                 "no-reachable-host-names-it] at F's answer)")
+                self.assertEqual(self._road(got, restarted, "hubDialsAfterFarAnswersIt", "nobody"), RULE_5,
+                                 "F answers the hub again: the hub's word names F's new bus and folds into F's row")
+            with self.subTest(shape=shape, far_bus_restarted=False):
+                road = got["roads"][control]
+                self.assertEqual((road["landingHere"]["acks"], self._road(got, control, "cachedHere", "nobody"),
+                                  road["busIds"], self._road(got, control, "farAnswersOurDial", "nobody")),
+                                 (["px-3bctl"], via, [False, False, True], RULE_5),
+                                 "the control: F's bus not restarted, F's answer to our dial releases F's row, which speaks "
+                                 "for the hub's word, and the via row folds into it")
 
     def test_cost_a_a_peer_lacking_the_field_holds_every_sid_beside_a_vouching_host(self):
         """COST (a), on the restricted side (the ruling): a peer lacking the field (an older bus, the project's own
@@ -5514,7 +5627,8 @@ print(json.dumps(out))
         held (in the hub's merged roster across the restarted hub's dials, then in its held words once the restarted
         process's answer to our dial omits it, stamped with the old process's bus id) and the arm holds every sid on this
         machine until the hub names F again or F's own row speaks for it here (F's answer to our dial, _direct_row_speaks,
-        while that row speaks). This bus's restart releases nothing (round 6 of fork PR #897, the reviewer's
+        while that row speaks and F's bus is the one the word names: a bus restarted since carries a new id and does not
+        speak for it). This bus's restart releases nothing (round 6 of fork PR #897, the reviewer's
         decision 4 on round 5: the via row is carried with F's cached bit and holds the arm; until then the restart
         released it, rule 5). The follow-up is the carrier fix, each heard far host's answered bit carried independent of
         session rows."""
@@ -6375,7 +6489,15 @@ print(json.dumps(out))
         row. Then F answers our dial: F's row is released and speaks for F here (_direct_row_speaks), the carry drops the
         via row, and a sid nothing names answers rule 5, with no roster from the hub naming F in this process. At the
         forty-ninth commit the carried row held nothing, and the session answered [true, 5, no-reachable-host-names-it]
-        from our restart on, while C vouched."""
+        from our restart on, while C vouched.
+        THE CONDITION (the reviewer's verifier at the sixtieth commit, its road rvA1FarRestartedOwnAnswer): F's own answer
+        ends the carried word only while F's bus is the one the word names. When F's bus has restarted since (the
+        self-update path), F's row here carries the new bus id, and a known different bus id beats the name
+        (_direct_row_speaks), so F's row does not speak for the carried word: through F's answers to our dial, and across
+        our second restart, a sid nothing names stays cannot-determine by the carried row, the hub never heard naming F,
+        for the file's life. It ends when the hub names F again in this process: here the hub, having heard F's new
+        process, dials us, its word names F's new bus and folds into F's row, and the hub's answer to our dial then
+        releases its own first roster, rule 5 for a sid nothing names."""
         S = ROAD_SIDS
         name = "ourRestartFarHostsOwnAnswerEndsTheCarriedWord"
         carried = UNANSWERED(R_VIA_F + " (not heard, listing unanswered)")
@@ -6405,6 +6527,34 @@ print(json.dumps(out))
                                  "THE END BY F'S OWN ANSWER: F's answer to our dial releases F's row, which speaks for F, and the "
                                  "carry drops the via row, the hub unheard in this process (under a carry that keeps a via row "
                                  "whose far host's own row speaks, listing-unanswered for the sid nothing names)")
+        restarted = "ourRestartFarBusRestartedSinceItsWordEndsNothingByItsOwnAnswer"
+        for shape, got in self.roads.items():
+            with self.subTest(shape=shape, far_bus_restarted=True):
+                road = got["roads"][restarted]
+                self.assertEqual((road["landingHere"]["acks"], self._road(got, restarted, "afterOurRestart", "nobody")),
+                                 (["px-farrestarted"], carried),
+                                 "the session's mail landed through the hub, and our restart carries F's word, its bit False "
+                                 "(at the forty-ninth commit [true, 5, no-reachable-host-names-it])")
+                self.assertEqual((road["busIds"], road["viaRowsAfterFarAnswers"],
+                                  self._road(got, restarted, "farAnswersOurDial", "newOnFar"),
+                                  self._road(got, restarted, "farAnswersOurDial", "nobody"),
+                                  self._road(got, restarted, "farAgain", "nobody")),
+                                 ([True, True, True], [R_VIA_F], RULE_4, carried, carried),
+                                 "THE CONDITION: F's bus restarted since its word, so F's row here, released by F's answer to our "
+                                 "dial, carries the new bus id and the carried row the old one; F's row does not speak for the "
+                                 "carried word (_direct_row_speaks), which holds a sid nothing names through F's answers (under a "
+                                 "name match that beats a known different bus id, [true, 5, no-reachable-host-names-it])")
+                self.assertEqual((road["viaRowsAfterSecondRestart"],
+                                  self._road(got, restarted, "afterOurSecondRestart", "nobody")), ([R_VIA_F], carried),
+                                 "and across our second restart and F's exchanges after it: the hub never heard naming F, the "
+                                 "carried word holds for the file's life")
+                self.assertEqual((road["hubDial"][0], road["viaRowsAfterHubDial"],
+                                  self._road(got, restarted, "hubDialsAfterFarAnswersIt", "nobody"),
+                                  self._road(got, restarted, "hubAnswersOurDial", "nobody")),
+                                 (200, [], UNANSWERED(R_HUB + " (listing unanswered)"), RULE_5),
+                                 "THE END: F answers the hub, and the hub's word names F's new bus and folds into F's row; the "
+                                 "hub's first roster here is held until its answer to our dial, then rule 5 for a sid nothing "
+                                 "names")
 
     def test_x4_a_hubs_own_face_3_one_hop_out_holds_through_two_buses_on_this_build(self):
         """X4 (round 6 of fork PR #897, the reviewer's round-5 ruling C): the held state is what a row STORES, so a hub on
