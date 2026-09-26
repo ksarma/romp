@@ -24,7 +24,11 @@
 // name; a string literal holding markup for a form, an object or an embed, or naming a primitive, which is how script for
 // some other document to run (a frame's srcdoc) is written; and a form, an object or an embed made by createElement, by
 // createElementNS, or by a helper whose parameter reaches either (the pages' el(tag, cls) helpers, found to a fixed point
-// and matched by name, so el("form") reads like createElement("form")). A type annotation is not a site.
+// and matched by name, so el("form") reads like createElement("form")). Wherever such a call names its tag, the tag is
+// read from a string literal, from each branch of a conditional or side of `||` or `??`, and from a const bound to one of
+// those in the same file (`as const` included), so el(editing ? "form" : "div") and createElement(TAG) are read too. A
+// helper's parameter reaches createElement the same ways, and its default is read where the helper makes the element.
+// A type annotation is not a site.
 //
 // The kernel's inline pages are read as text, pattern by pattern, over kernel.py, where a quote inside a page's script
 // may be written escaped in its Python literal. The names a pattern cannot follow (an alias of WebSocket or Worker,
@@ -38,10 +42,14 @@
 //
 // Stated limits, on the precondition that the sources are written in good faith: a primitive reached through a name
 // assembled at run time (`window["Web" + "Socket"]`) or through a value that never names it (a socket's own
-// `constructor`); an element whose tag is computed at run time, or reaches createElement other than as a helper's own
-// parameter (a property of an options object); and createElement reached through an alias of itself
-// (`document.createElement.bind(document)`). None of these is read. Each is a witness in the shapes tests below (the
-// "stated limit" cases), which pin that the census does not see it, so a change that widens or closes one shows there.
+// `constructor`), and createElement reached through an alias of itself (`document.createElement.bind(document)`).
+// Stated without that precondition, since honest code can write it: an element whose tag the census cannot read from the
+// source. Under ui/ that is a tag built by concatenation, returned by a call, held in a let, a property, an array element
+// or an import, or reaching createElement other than as a helper's own parameter (a property of an options object). In
+// the kernel's pages it is a computed tag passed to the createEl helper (one passed to createElement itself is counted
+// below). A form, an object or an embed made that way is left to review. None of these is read. Each is a witness in the
+// shapes tests below (the "stated limit" cases), which pin that the census does not see it, so a change that widens or
+// closes one shows there.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -147,9 +155,59 @@ const makerName = (f: ts.Node): string | null => {
   return null;
 };
 
+/** The declaration a name reads where it is used: the nearest parameter, variable, function or class of that name, scope
+ *  by scope outward from the use. Undefined when the file declares none (an import, a global). */
+function declOf(id: ts.Identifier): ts.Node | undefined {
+  const binds = (b: ts.BindingName): boolean =>
+    ts.isIdentifier(b) ? b.text === id.text : b.elements.some((e) => !ts.isOmittedExpression(e) && binds(e.name));
+  const inList = (l: ts.VariableDeclarationList) => l.declarations.find((d) => binds(d.name));
+  for (let x: ts.Node | undefined = id.parent; x; x = x.parent) {
+    if (ts.isFunctionLike(x)) { const p = x.parameters.find((q) => binds(q.name)); if (p) return p; }
+    if ((ts.isForStatement(x) || ts.isForOfStatement(x) || ts.isForInStatement(x)) && x.initializer && ts.isVariableDeclarationList(x.initializer)) {
+      const d = inList(x.initializer);
+      if (d) return d;
+    }
+    if (ts.isCatchClause(x) && x.variableDeclaration && binds(x.variableDeclaration.name)) return x.variableDeclaration;
+    const stmts = ts.isBlock(x) || ts.isSourceFile(x) || ts.isModuleBlock(x) || ts.isCaseClause(x) || ts.isDefaultClause(x) ? x.statements : null;
+    if (stmts) for (const st of stmts) {
+      if (ts.isVariableStatement(st)) { const d = inList(st.declarationList); if (d) return d; }
+      else if ((ts.isFunctionDeclaration(st) || ts.isClassDeclaration(st) || ts.isEnumDeclaration(st)) && st.name && st.name.text === id.text) return st;
+    }
+  }
+  return undefined;
+}
+/** The initializer of the const a name reads, when the nearest declaration of that name is `const NAME = ...`. */
+function constValue(id: ts.Identifier): ts.Expression | undefined {
+  const d = declOf(id);
+  if (!d || !ts.isVariableDeclaration(d) || !ts.isIdentifier(d.name) || !d.initializer) return undefined;
+  return ts.isVariableDeclarationList(d.parent) && (d.parent.flags & ts.NodeFlags.Const) !== 0 ? d.initializer : undefined;
+}
+/** The expressions an argument can pass on unchanged: itself, each branch of a conditional, each side of `||` or `??`,
+ *  what a const it names is bound to, and beside a parameter it names that parameter's default, recursively (each
+ *  declaration followed once, so a cycle ends). */
+function leaves(e: ts.Expression | undefined, seen: Set<ts.Node> = new Set()): ts.Expression[] {
+  if (!e) return [];
+  const b = bare(e);
+  if (ts.isConditionalExpression(b)) return [...leaves(b.whenTrue, seen), ...leaves(b.whenFalse, seen)];
+  if (ts.isBinaryExpression(b) && (b.operatorToken.kind === ts.SyntaxKind.BarBarToken || b.operatorToken.kind === ts.SyntaxKind.QuestionQuestionToken))
+    return [...leaves(b.left, seen), ...leaves(b.right, seen)];
+  if (ts.isIdentifier(b)) {
+    const d = declOf(b);
+    if (d && ts.isParameter(d) && d.initializer && !seen.has(d)) { seen.add(d); return [b, ...leaves(d.initializer, seen)]; }
+    const v = constValue(b);
+    if (v && !seen.has(v)) { seen.add(v); return leaves(v, seen); }
+  }
+  return [b];
+}
+/** Every tag an argument in a tag position can hold, as the source writes it: the string literals among its leaves. A
+ *  parameter, a let, a property, a call, a concatenation or an import holds none the census can read. */
+const tagsOf = (e: ts.Expression | undefined): Set<string> =>
+  new Set(leaves(e).map((l) => keyText(l)).filter((t): t is string => t !== null).map((t) => t.toLowerCase()));
+
 /** Where a call names the element it makes, by the callee's name and the argument's place: createElement's first,
  *  createElementNS's second, and each helper's parameter that reaches one of those, to a fixed point (a helper of a
- *  helper is one too). */
+ *  helper is one too). A parameter reaches a tag position as the argument itself or as one of its leaves (a branch of a
+ *  conditional, a side of `||` or `??`, a const bound to it). */
 function elementMakers(sfs: ts.SourceFile[]): Map<string, Set<number>> {
   const makers = new Map<string, Set<number>>([["createElement", new Set([0])], ["createElementNS", new Set([1])]]);
   for (let grew = true; grew;) {
@@ -158,15 +216,12 @@ function elementMakers(sfs: ts.SourceFile[]): Map<string, Set<number>> {
       const at = ts.isCallExpression(n) ? makers.get(calleeName(n.expression) || "") : undefined;
       if (at && ts.isCallExpression(n)) {
         for (const i of at) {
-          const a = n.arguments[i] ? bare(n.arguments[i]) : null;
-          if (!a || !ts.isIdentifier(a)) continue;
-          for (let f: ts.Node | undefined = n.parent; f; f = f.parent) {
-            if (!ts.isFunctionLike(f)) continue;
-            const idx = f.parameters.findIndex((p) => ts.isIdentifier(p.name) && p.name.text === a.text);
-            if (idx < 0) continue;                                  // a closure over an outer function's parameter
-            const nm = makerName(f);
+          for (const a of leaves(n.arguments[i])) {
+            if (!ts.isIdentifier(a)) continue;
+            const p = declOf(a);
+            if (!p || !ts.isParameter(p) || !ts.isIdentifier(p.name) || !ts.isFunctionLike(p.parent)) continue;   // not a parameter here
+            const f = p.parent, idx = f.parameters.indexOf(p), nm = makerName(f);
             if (nm) { const s = makers.get(nm) || new Set<number>(); if (!s.has(idx)) { s.add(idx); makers.set(nm, s); grew = true; } }
-            break;
           }
         }
       }
@@ -224,10 +279,7 @@ function censusOf(files: [string, string][]): Census {
         else if (s) add(n, (s[1] || s[2]) + ":string");
       } else if (ts.isCallExpression(n)) {
         const at = makers.get(calleeName(n.expression) || "");
-        if (at) for (const i of at) {
-          const tag = keyText(n.arguments[i]);
-          if (tag && ELEMENTS.has(tag.toLowerCase())) add(n, tag.toLowerCase() + ":createElement");
-        }
+        if (at) for (const i of at) for (const tag of tagsOf(n.arguments[i])) if (ELEMENTS.has(tag)) add(n, tag + ":createElement");
       }
       ts.forEachChild(n, visit);
     };
@@ -373,12 +425,41 @@ test("the ui/ reader takes every form of a primitive at its count, and each stat
     one("g", "form:createElement"));
   assert.deepEqual(sitesOf("const P: any = {};\nP.createEl = function (tag: string) { return document.createElement(tag); };\nfunction g(n: any) { n.createEl('object'); }"),
     one("g", "object:createElement"));
+  // a tag held in a const (`as const` included) or chosen between literal tags, at every maker position: createElement's
+  // argument, createElementNS's second, and a helper's forwarding parameter
+  assert.deepEqual(sitesOf("const TAG = 'form';\nfunction f() { return document.createElement(TAG); }"), one("f", "form:createElement"));
+  assert.deepEqual(sitesOf("const TAG = 'object' as const;\nfunction f() { return document.createElementNS('http://www.w3.org/1999/xhtml', TAG); }"),
+    one("f", "object:createElement"));
+  assert.deepEqual(sitesOf("function f(editing: boolean) { return document.createElement(editing ? 'form' : 'div'); }"), one("f", "form:createElement"));
+  assert.deepEqual(sitesOf("function f(editing: boolean) { const tag = editing ? 'form' : 'div'; return document.createElement(tag); }"),
+    one("f", "form:createElement"));
+  assert.deepEqual(sitesOf("function f(t?: string) { return document.createElement(t ?? 'embed'); }"), one("f", "embed:createElement"));
+  assert.deepEqual(sitesOf("function f(t: string) { return document.createElement(t || 'form'); }"), one("f", "form:createElement"));
+  const EL = "function el(tag: string, cls: string) { const e = document.createElement(tag); e.className = cls; return e; }\n";
+  assert.deepEqual(sitesOf(EL + "const T = 'form';\nfunction g() { el(T, 'x'); }"), one("g", "form:createElement"));
+  assert.deepEqual(sitesOf(EL + "function g(f: boolean) { el(f ? 'form' : 'div', 'x'); }"), one("g", "form:createElement"));
+  // a helper whose parameter reaches createElement through a conditional or a const is a helper too
+  assert.deepEqual(sitesOf("function mk(tag: string, big: boolean) { const t = big ? tag : 'div'; return document.createElement(t); }\nfunction g() { mk('object', true); }"),
+    one("g", "object:createElement"));
+  // a helper parameter's default is a tag the helper makes when a call leaves it out
+  assert.deepEqual(sitesOf("function chip(w: string, tag: string = 'form') { const c = document.createElement(tag); c.textContent = w; return c; }\nfunction g() { chip('x'); chip('y', 'span'); }"),
+    one("chip", "form:createElement"));
+  // one site per element a call can make: two branches naming one tag count once, two tags count one each
+  assert.deepEqual(sitesOf("function f(a: boolean) { document.createElement(a ? 'form' : 'FORM'); }"), one("f", "form:createElement"));
+  assert.deepEqual(sitesOf("function f(a: boolean) { document.createElement(a ? 'form' : 'embed'); }"),
+    { ...one("f", "form:createElement"), ...one("f", "embed:createElement") });
+  // the declaration read is the nearest one: a parameter or a let that shadows a const of the same name is not the const
+  assert.deepEqual(sitesOf("const T = 'form';\nfunction f(T: string) { return document.createElement(T); }"), {});
+  assert.deepEqual(sitesOf("const T = 'form';\nfunction f() { let T = 'div'; return document.createElement(T); }"), {});
   // what is not a site: a feature test, a constant read, a type, a local named like a method, a string that names nothing
   assert.deepEqual(sitesOf("function f(s: WebSocket) { if (typeof WebSocket !== 'undefined' && s.readyState === WebSocket.OPEN) {} const submit = () => 1; submit(); addEventListener('submit', submit); }"), {});
-  // stated limits: a name assembled at run time, a value that never names the primitive, a tag computed at run time
+  // stated limits: a name assembled at run time, a value that never names the primitive, a tag the source does not hold
   assert.deepEqual(sitesOf("function f(u: string) { return new (window as any)['Web' + 'Socket'](u); }"), {}, "stated limit: a name assembled at run time is not read");
   assert.deepEqual(sitesOf("function f(ws: any, u: string) { return new ws.constructor(u); }"), {}, "stated limit: a value that never names the primitive is not read");
-  assert.deepEqual(sitesOf("function f(kind: string) { return document.createElement(kind + 'm'); }"), {}, "stated limit: a tag computed at run time is not read");
+  assert.deepEqual(sitesOf("function f(kind: string) { return document.createElement(kind + 'm'); }"), {}, "stated limit: a tag built by concatenation is not read");
+  assert.deepEqual(sitesOf("function f() { let tag = 'form'; return document.createElement(tag); }"), {}, "stated limit: a tag held in a let is not read");
+  assert.deepEqual(sitesOf("function f() { const tags = ['form']; return document.createElement(tags[0]); }"), {}, "stated limit: a tag held in an array element is not read");
+  assert.deepEqual(sitesOf("import { TAG } from './tags';\nfunction f() { return document.createElement(TAG); }"), {}, "stated limit: a tag imported from another module is not read");
   assert.deepEqual(sitesOf("function h(o: { tag: string }) { return document.createElement(o.tag); }\nfunction g() { h({ tag: 'form' }); }"), {},
     "stated limit: a tag that reaches createElement as a property of an options object is not read");
   assert.deepEqual(sitesOf("function g() { const mk = document.createElement.bind(document); return mk('form'); }"), {},
