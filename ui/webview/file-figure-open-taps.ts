@@ -23,15 +23,21 @@
 // - the stale records, on the hybrid page: a right press of the mouse on the picture with the control shown, or a mouse drag of the
 //   picture, then the flyout opened over the control by a script's click on its button, with no press of the mouse, then a tap on
 //   the picture: it opens nothing, since its own primary press ended the mouse's record, and the next tap opens once;
+// - the mouse's own next press after its drag of the picture, on the hybrid page and on a plain page (a mouse and no touchscreen):
+//   with the control shown, a drag, then the flyout or the Outline popover opened over the control by a script's click, then a click
+//   of the mouse on the picture opens nothing, and the next click opens once; and a drag of one picture, then a click of the mouse
+//   on another whose control is shown and uncovered, opens once. Chromium and Firefox end the drag's press with a pointercancel and
+//   send the next press's pointerdown; WebKit sends neither, and the next press arrives as a mousedown with no pointerdown before it,
+//   which the gate reads as a primary press, its verdict taken there, each cell asserting its engine's shape as its precondition;
 // - the clicks by no pointer: Enter on the control in view opens once, and so does Enter after a refused tap; a press with no click
 //   after it begun with the control out of view, the control then scrolled into view with no pointer or key event, then Enter on it
 //   opens once; the same press begun with the control shown, the flyout then shown over the control with no event, then a script's
 //   click on the picture opens nothing. In Chromium that press is a real two-finger touch; in Firefox and WebKit no input
 //   Playwright drives leaves a pointerup with no click on a picture, so there a script's pointerdown and pointerup stand in, which
 //   the recorder hears as it hears a press, and the cell's name says so.
-// Red at 0ab74924c in WebKit: the taps (every cell but the key cells opening nothing), the double tap there, and the stale records,
-// whose reads there are a private witness kept out of the tree; the cells of Chromium and Firefox read the same at that head as at
-// the fix, by design. The key cells are green at both heads by design, red under a gate that reads a key's click as
+// Red at 0ab74924c in WebKit: the taps (every cell but the key cells opening nothing), the double tap there, the stale records and
+// the clicks after a drag, whose reads there are a private witness kept out of the tree; the cells of Chromium and Firefox read the
+// same at that head as at the fix, by design. The key cells are green at both heads by design, red under a gate that reads a key's click as
 // a pointer's (the Enter cells) and under one that lets a key's or a script's click read the slot with the keydown's clear dropped
 // (the press cells). file-view-outline.test.ts drives the same orders over the stand-in in CI, where these legs launch no browser.
 import * as assert from "node:assert/strict";
@@ -49,6 +55,8 @@ const sized = (w: number, h: number, fill: string): string => '<svg xmlns="http:
 const paras = (from: number, n: number): string => Array.from({ length: n }, (_, i) => PARA(from + i)).join("\n\n");
 /** A remote picture taller than the body, then a remote badge under the floor, which wears the mark and no control. */
 const TALL_TEXT = "# Report\n\n" + PARA(1) + "\n\n![tall](" + WEB + "/tall.svg)\n\n" + paras(2, 8) + "\n\nA badge ![tiny](" + WEB + "/tiny.svg) in words.\n\n" + paras(10, 16) + "\n";
+/** Two remote pictures above the floor, one after the other, each wearing its control in view at once. */
+const TWO_TEXT = "# Report\n\n" + PARA(1) + "\n\n![first](" + WEB + "/first.svg)\n\n" + PARA(2) + "\n\n![second](" + WEB + "/second.svg)\n\n" + paras(3, 12) + "\n";
 /** A remote picture 490 wide under three headings, so the Outline popover lists them and it and the text-size flyout can stand over its control. */
 const COVER_TEXT = "# Report\n\n## Alpha\n\n" + PARA(1) + "\n\n![w490](" + WEB + "/w490.svg)\n\n## Beta\n\n" + paras(3, 12) + "\n\n## Gamma\n\n" + PARA(20) + "\n";
 
@@ -80,7 +88,8 @@ export function phonePages(browser: any): any {
 const hybridPages = (browser: any): any => ({ newPage: (o: any) => browser.newPage({ ...o, hasTouch: true }) });
 
 /** In the viewer's document: the picture of an alt, its control, its sign (the control, else the picture wearing the mark), a window
- *  capture record of every pointerdown, pointerup and click (pointerId, pointerType, detail, trusted), `__tread` (whether the sign is in
+ *  capture record of every pointerdown, mousedown, pointerup, pointercancel, dragstart and click (pointerId, pointerType, detail,
+ *  trusted), `__tread` (whether the sign is in
  *  view in the body's padding box and the window or wholly outside the body, two points on the picture's visible part with what each
  *  hit-tests to, the control's centre and whether the picture wears the mark or a control) and `__tplace`, which puts the sign's top
  *  `dy` px below the body's padding top by the body's scrollTop, no pointer or key event. */
@@ -90,7 +99,7 @@ const INSTALL = (): void => {
   w.__tctl = (alt: string) => { const n = w.__timg(alt).nextElementSibling; return n && n.hasAttribute("data-fv-figopen") ? n as HTMLElement : null; };
   w.__tsign = (alt: string) => w.__tctl(alt) || (w.__timg(alt).hasAttribute("data-fv-figweb") ? w.__timg(alt) : null);
   w.__tev = [];
-  for (const type of ["pointerdown", "pointerup", "click"]) window.addEventListener(type, (e: any) => { w.__tev.push({ type: e.type, pid: e.pointerId, ptype: e.pointerType, detail: e.detail, trusted: e.isTrusted }); }, true);
+  for (const type of ["pointerdown", "mousedown", "pointerup", "pointercancel", "dragstart", "click"]) window.addEventListener(type, (e: any) => { w.__tev.push({ type: e.type, pid: e.pointerId, ptype: e.pointerType, detail: e.detail, trusted: e.isTrusted }); }, true);
   w.__tread = (alt: string) => {
     const s = w.__tsign(alt) as HTMLElement, img = w.__timg(alt) as HTMLElement, b = document.querySelector(".fileview-body") as HTMLElement;
     const sr = s.getBoundingClientRect(), ir = img.getBoundingClientRect(), br = b.getBoundingClientRect();
@@ -122,7 +131,7 @@ type Scene = {
 };
 /** `text` open on the surface in a page of the device's, the remote pictures routed and loaded through the gate, the helpers
  *  installed, and `body` run with the scene; the page errors asserted empty after it. */
-async function tapScene(browser: any, engine: TapEngine, device: TapDevice, surface: TapSurface, text: string, body: (s: Scene) => Promise<void>): Promise<void> {
+async function tapScene(browser: any, engine: TapEngine, device: TapDevice, surface: TapSurface, text: string, body: (s: Scene) => Promise<void>, mouseOnly = false): Promise<void> {
   const docReqs: string[] = [], popups: any[] = [];
   const before = async (pg: any): Promise<void> => {
     await pg.context().route((u: URL) => u.href.startsWith(WEB + "/"), async (route: any) => {
@@ -132,7 +141,7 @@ async function tapScene(browser: any, engine: TapEngine, device: TapDevice, surf
       return route.fulfill({ status: 200, contentType: "image/svg+xml", body: sized(sz[0], sz[1], "#6a3d9a") });
     });
   };
-  const host = device === "phone" ? phonePages(browser) : hybridPages(browser);
+  const host = mouseOnly ? browser : device === "phone" ? phonePages(browser) : hybridPages(browser);   // mouseOnly: a plain page, a mouse and no touchscreen
   const { page, errors } = await openViewer(host, surface, 900, 700, { docs: { [REPORT]: text }, before });
   try {
     for (let i = 0; i < 20 && await page.evaluate(() => !!document.querySelector('.fileview-md [data-act="fv-load"]')); i++) { await page.evaluate(() => { (document.querySelector('.fileview-md [data-act="fv-load"]') as HTMLElement).click(); }); await frames(page, 3); }
@@ -180,7 +189,7 @@ async function tapScene(browser: any, engine: TapEngine, device: TapDevice, surf
   } finally {
     await page.close();
   }
-  assert.deepEqual(errors, [], engine + ", " + device + ", " + surface + ": no page errors");
+  assert.deepEqual(errors, [], engine + ", " + (mouseOnly ? "a plain page" : device) + ", " + surface + ": no page errors");
 }
 
 /** Every cell for an engine on a device and a surface, run in `browser`, each reading returned beside its wanted value; `note`
@@ -188,7 +197,7 @@ async function tapScene(browser: any, engine: TapEngine, device: TapDevice, surf
 export async function tapCells(browser: any, engine: TapEngine, device: TapDevice, surface: TapSurface, note: (m: string) => void): Promise<TapCell[]> {
   const cells: TapCell[] = [];
   const cell = (what: string, want: unknown, got: unknown): void => { cells.push([what, want, got]); };
-  const at = engine + ", " + device + ", " + surface + ": ";
+  const at = (engine === "webkit" ? "WebKit (Playwright's, on Linux under touch emulation)" : engine) + ", " + (device === "phone" ? "a phone's pages" : "a hybrid page") + ", " + surface + ": ";
   const own = engine !== "webkit";   // Chromium's and Firefox's tap click carries its press's pointerId; WebKit's carries the mouse's
   /** The tap's shape, asserted as the cell's precondition: one pointerdown and one click, trusted, the click's pointerId its press's in
    *  Chromium and Firefox and another in WebKit (1, of type mouse, where the press carried the touch's). */
@@ -322,5 +331,72 @@ export async function tapCells(browser: any, engine: TapEngine, device: TapDevic
     }
     note("record " + JSON.stringify({ engine, device, surface, scene: "cover", ...rec }));
   });
+  if (device === "hybrid") for (const mouseOnly of [false, true]) await dragThenClick(browser, engine, surface, mouseOnly, at.replace("a hybrid page", mouseOnly ? "a plain page" : "a hybrid page"), cell, note);
   return cells;
+}
+
+/** A mouse drag of a picture, then a click of the mouse: on the hybrid page, and on a plain page (a mouse and no touchscreen). The drag
+ *  ends in a dragstart and no click; in Chromium and Firefox it ends the press with a pointercancel and the next press sends its
+ *  pointerdown, while WebKit sends neither, and sends the mouse's next press as a mousedown with no pointerdown before it, which the
+ *  gate reads as a primary press (file-view.ts, the recorder above webGestureShown), a precondition each cell asserts by engine. */
+async function dragThenClick(browser: any, engine: TapEngine, surface: TapSurface, mouseOnly: boolean, at: string, cell: (what: string, want: unknown, got: unknown) => void, note: (m: string) => void): Promise<void> {
+  const on = mouseOnly ? " (a plain page)" : " (the hybrid page)";
+  const drag = async (s: Scene, p: { x: number; y: number }): Promise<PtrEv[]> => {
+    await s.events();
+    await s.page.mouse.move(p.x, p.y); await s.page.mouse.down(); await s.page.mouse.move(p.x + 40, p.y - 40, { steps: 5 }); await s.page.mouse.move(850, 650, { steps: 10 }); await s.page.mouse.up();
+    await frames(s.page, 3);
+    const evs = await s.events();
+    assert.ok(evs.some((e) => e.type === "dragstart") && !evs.some((e) => e.type === "click"), at + "the drag starts a drag and clicks nothing (a precondition): " + JSON.stringify(evs));
+    if (engine === "webkit") assert.ok(!evs.some((e) => e.type === "pointerup" || e.type === "pointercancel"), at + "WebKit's drag of the picture ends with no pointerup and no pointercancel (a precondition): " + JSON.stringify(evs));
+    else assert.ok(evs.some((e) => e.type === "pointercancel"), at + engine + "'s drag of the picture ends its press with a pointercancel (a precondition): " + JSON.stringify(evs));
+    return evs;
+  };
+  const click = async (s: Scene, p: { x: number; y: number }, what: string): Promise<PtrEv[]> => {
+    await s.events();
+    await s.page.mouse.click(p.x, p.y);
+    await frames(s.page, 2);
+    const evs = await s.events();
+    const downs = evs.filter((e) => e.type === "pointerdown").length, mdowns = evs.filter((e) => e.type === "mousedown").length;
+    assert.ok(evs.some((e) => e.type === "click") && mdowns === 1 && downs === (engine === "webkit" ? 0 : 1), at + what + ": the click's press sends " + (engine === "webkit" ? "a mousedown and no pointerdown in WebKit after its drag" : "its pointerdown and its mousedown") + " (a precondition): " + JSON.stringify(evs));
+    return evs;
+  };
+  await tapScene(browser, engine, "hybrid", surface, COVER_TEXT, async (s) => {
+    const rec: Record<string, unknown> = {};
+    const covers: Array<[string, () => Promise<void>, number, () => Promise<{ open: boolean; overCentre: boolean }>]> = [
+      ["the text-size flyout", async () => { await s.page.evaluate(() => { (document.querySelector(".fileview-zoom-btn") as HTMLElement).click(); }); await frames(s.page, 3); }, 3, s.flyout],
+      ["the Outline popover", async () => { await s.page.evaluate(() => { (document.querySelector(".fileview-outline-btn") as HTMLElement).click(); }); await frames(s.page, 3); }, 42,
+        () => s.page.evaluate(() => { const w = window as any; const c = w.__tctl("w490").getBoundingClientRect(); const e = document.elementFromPoint((c.left + c.right) / 2, (c.top + c.bottom) / 2); return { open: !!document.querySelector(".fileview-outline"), overCentre: !!e && !!e.closest(".fileview-outline") }; })],
+    ];
+    for (const [what, open, dy, pre] of covers) {
+      const r0 = await s.place("w490", dy);
+      assert.ok(r0.inView && r0.hit === "the picture" && !(await pre()).open, at + "the control shown before the drag" + on + " (a precondition): " + JSON.stringify(r0));
+      const dragEvs = await drag(s, r0.pt);
+      const dragOpens = await s.opens();
+      await s.place("w490", dy);
+      await open();
+      const p = await pre(), r = await s.read("w490");
+      rec[what] = { dragEvs, flyout: p, read: r };
+      assert.ok(p.open && p.overCentre && r.inView && r.hit === "the picture", at + "after the drag" + on + ", " + what + " opened by a script's click over the control's centre, the click's point on the picture (a precondition): " + JSON.stringify(rec[what]));
+      await click(s, r.pt, "the click under " + what);
+      cell("a mouse drag of the picture with the control shown" + on + ", then " + what + " over the control, then a click of the mouse on the picture: [the drag's opens, the click's]", [[0, 0], [0, 0]], [dragOpens, await s.opens()]);
+      const r2 = await s.read("w490");
+      rec[what + " after"] = { cover: await pre(), read: r2 };
+      assert.ok(!(await pre()).overCentre && r2.inView && r2.hit2 === "the picture", at + "after the refused click" + on + ", nothing over the control, in view, the next click's point on the picture (a precondition): " + JSON.stringify(rec[what + " after"]));
+      await s.events();
+      await s.page.mouse.click(r2.pt2.x, r2.pt2.y);
+      cell("a mouse drag" + on + ", then " + what + ", then the refused click: the next click's opens", [1, 1], await s.opens());
+    }
+    note("record " + JSON.stringify({ engine, surface, page: mouseOnly ? "plain" : "hybrid", scene: "drag-cover", ...rec }));
+  }, mouseOnly);
+  await tapScene(browser, engine, "hybrid", surface, TWO_TEXT, async (s) => {
+    const a = await s.place("first", 60);
+    const b = await s.read("second");
+    assert.ok(a.inView && a.hit === "the picture" && b.inView && b.hit === "the picture", at + "both pictures' controls in view, each point on its picture" + on + " (a precondition): " + JSON.stringify([a, b]));
+    const dragEvs = await drag(s, a.pt);
+    const dragOpens = await s.opens();
+    const b2 = await s.read("second");
+    const clickEvs = await click(s, b2.pt, "the click on the second picture");
+    cell("a mouse drag of one picture" + on + ", then a click of the mouse on another whose control is shown and uncovered: [the drag's opens, the click's]", [[0, 0], [1, 1]], [dragOpens, await s.opens()]);
+    note("record " + JSON.stringify({ engine, surface, page: mouseOnly ? "plain" : "hybrid", scene: "drag-other", dragEvs, clickEvs }));
+  }, mouseOnly);
 }

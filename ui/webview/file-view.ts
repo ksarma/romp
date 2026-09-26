@@ -2779,14 +2779,17 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // screen, with nothing shown, on every device. A pointer's or a finger's press is read here, in the window's capture phase,
   // before any listener of the page runs: the Outline popover closes itself in its own capture listener on the document, so a
   // read on the body came after that close and saw the sign uncovered, and a click on the picture under the popover opened the
-  // tab; the text-size flyout closes later, at the document's mousedown. How a click finds its press, keyed on five events of
+  // tab; the text-size flyout closes later, at the document's mousedown. How a click finds its press, keyed on six events of
   // the window's capture phase and never on time (the file review's round 17, tests-1 with regression-1):
   // - a pointerdown records the press's verdict under its pointerId, a primary one first ending every earlier record whatever its
   //   pointer type, since a new primary contact means every earlier one has ended; a pointercancel (a swipe that scrolls, and in
   //   Chromium and Firefox the picture's own drag) ends its pointer's record, and in WebKit, whose drag of the picture sends no
-  //   pointercancel and no pointerup, the next primary press ends it. The cost of the clear, on a device with a mouse and a
-  //   touchscreen: a mouse held on a picture while a finger's primary press lands elsewhere loses its record, so its click opens
-  //   nothing and reveals;
+  //   pointercancel and no pointerup, the next primary press ends it, the mouse's own next press among them: WebKit sends that
+  //   press's mousedown with no pointerdown before it, so a mousedown that no pointerdown announced is read as a primary press, which
+  //   ends every record, and its verdict, taken there, fills the slot at the pointerup after it, which takes it. The cost of the
+  //   clear, on a device with a mouse and a touchscreen: a contact held on a picture while a primary press of the other pointer type
+  //   lands elsewhere loses its record, a mouse held while a finger presses or a finger held while the mouse presses, so its click
+  //   opens nothing and reveals;
   // - a pointerup fills the one-click slot with the record under its own pointerId, or with nothing when that pointer recorded
   //   none; any pointerdown, pointercancel or keydown empties the slot, and the first click after it takes it, whatever the click
   //   lands on, so one slot serves one click; the boundary and capture events a browser sends between a pointerup and its click
@@ -2803,32 +2806,43 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // there, read and not run on a device. A browser whose click carries no pointerId finds its press in the slot too. The slot's
   // four clears (a pointerdown's, a pointercancel's, a keydown's and the taking click's) are defensive: the slot is refilled at
   // every pointerup, a tap's click follows its own pointerup, and a key's or a script's click never reads the slot, so dropping any
-  // one clear alone changes no gesture a test drives; the key and script cells are red under a gate that lets a key's or a
-  // script's click read the slot with the keydown's clear dropped. One physical gesture's later events are closed by their own
-  // fields and never by time: a click whose detail is above 1, following a refused click of its run (the second click of a double
-  // click, and in Chromium the second tap of a double tap, whose click carries detail 2), opens nothing, since the first click's
-  // reveal put the sign on the screen between the two; in Firefox and WebKit each tap's click carries detail 1, so a second tap is
-  // read at its own start and opens once the first tap's reveal has shown the sign; a held key's repeats and Space's release are
-  // the key gate's.
+  // one clear alone changes no gesture a test drives; the press cells (a press with no click, then a key's click or a script's) are
+  // red under a gate that lets a key's or a script's click read the slot with the keydown's clear dropped. One physical gesture's
+  // later events are closed by their own fields and never by time: a click whose detail is above 1, following a refused click of
+  // its run (the second click of a double click, and in Chromium the second tap of a double tap, whose click carries detail 2),
+  // opens nothing, since the first click's reveal put the sign on the screen between the two; in Firefox and WebKit each tap's click
+  // carries detail 1, so a second tap is read at its own start and opens once the first tap's reveal has shown the sign; a held
+  // key's repeats and Space's release are the key gate's.
   type FigurePress = { img: Element; ok: boolean };
   const presses = new Map<number, FigurePress>();        // the press records, by pointerId
   let slot: FigurePress | null = null;                   // the one-click slot: the record of the last pointerup, until a pointerdown, a pointercancel, a keydown or the click that takes it
   let slotted: FigurePress | null = null;                // what the current click took from the slot at the window, read by webGestureShown
+  let unannounced: FigurePress | null = null;            // the verdict of a mousedown no pointerdown announced, until the pointerup after it takes it
+  let announced = false;                                  // a pointerdown came that no mousedown has followed yet
   let refusedRun = false;                                 // the last click on a web figure in the current run of clicks was refused
-  const onFigurePress = (ev: PointerEvent): void => {
-    slot = null;
-    if (ev.isPrimary) presses.clear();                    // a primary press: every earlier contact has ended, whatever its pointer type
-    const t = ev.target as Element | null;
+  /** The press's verdict on the web figure under `t`, its control's or its own, or null off one. */
+  const pressAt = (t: Element | null): FigurePress | null => {
     const control = figureControlOf(t, body);
     const img = control ? figureOfControl(control) : bareFigureOf(t, body);
     const sign = img ? figureSign(img) : null;
-    if (img && sign) presses.set(ev.pointerId, { img, ok: signShown(sign) });
+    return img && sign ? { img, ok: signShown(sign) } : null;
   };
-  const onFigureUp = (ev: PointerEvent): void => { slot = presses.get(ev.pointerId) ?? null; };
+  const onFigurePress = (ev: PointerEvent): void => {
+    slot = null; announced = true;
+    if (ev.isPrimary) presses.clear();                    // a primary press: every earlier contact has ended, whatever its pointer type
+    const press = pressAt(ev.target as Element | null);
+    if (press) presses.set(ev.pointerId, press);
+  };
+  const onFigureMouseDown = (ev: MouseEvent): void => {
+    if (announced) { announced = false; return; }         // the mousedown that follows a pointerdown, a mouse's own or a tap's compatibility event
+    presses.clear();                                      // a mouse press no pointerdown announced: a primary press all the same
+    unannounced = pressAt(ev.target as Element | null);
+  };
+  const onFigureUp = (ev: PointerEvent): void => { slot = presses.get(ev.pointerId) ?? unannounced; unannounced = null; };
   const onFigureCancel = (ev: PointerEvent): void => { presses.delete(ev.pointerId); slot = null; };
   const onFigureKey = (): void => { slot = null; };
   const onClickRun = (ev: MouseEvent): void => { slotted = slot; slot = null; if (ev.detail === 1) refusedRun = false; };   // the click takes the slot, and a click of detail 1 begins a new run
-  const gateListeners: Array<[string, (ev: any) => void]> = [["pointerdown", onFigurePress], ["pointerup", onFigureUp], ["pointercancel", onFigureCancel], ["keydown", onFigureKey], ["click", onClickRun]];
+  const gateListeners: Array<[string, (ev: any) => void]> = [["pointerdown", onFigurePress], ["mousedown", onFigureMouseDown], ["pointerup", onFigureUp], ["pointercancel", onFigureCancel], ["keydown", onFigureKey], ["click", onClickRun]];
   for (const [type, cb] of gateListeners) window.addEventListener(type, cb, true);
   closeHooks.push(() => { for (const [type, cb] of gateListeners) window.removeEventListener(type, cb, true); });   // every window listener of the gate goes with the viewer, the capture flag its add carried
   /** The gate's verdict at a click that would open a web picture's tab, the refusal's reveal made here: a click by a pointer takes
