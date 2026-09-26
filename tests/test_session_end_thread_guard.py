@@ -43,7 +43,9 @@ guard's exclusion of that plugin's own timer, alive through every test's teardow
 
 - A thread listed while its start() is still running, which Thread.join refuses with a RuntimeError, is read again on
   the guard's next pass rather than raised (JoinRace, in this process under the conftest: a thread never started, which
-  join refuses the same way, stands in for it).
+  join refuses the same way, stands in for it). The pin patches the guard's own binding of threading.enumerate, so no
+  other thread's call can take its fake reads; and a test's leaked patch of the process-wide threading.enumerate does
+  not hide a live thread from the guard.
 - pytest-timeout's timer is matched by a `pytest_timeout` prefix of its name or of its function's module, as
   thread_census matches it, so a plugin release that moves the function into a submodule still leaves it unwaited
   (TimeoutTimerMatch, in this process; CI installs the plugin unpinned). Other timers and threads are still waited for.
@@ -337,9 +339,24 @@ class JoinRace(unittest.TestCase):
         cf = sys.modules["tests.conftest"]
         mid_start = threading.Thread(target=int, name="plant-mid-start")
         reads = [[threading.main_thread(), mid_start], [threading.main_thread()]]
-        with mock.patch.object(cf.threading, "enumerate", side_effect=lambda: reads.pop(0) if len(reads) > 1 else reads[0]):
+        # the guard's own binding, not threading.enumerate: under xdist other tests' threads are still running, and one of
+        # them calling the process-wide function mid-patch would take the fake first read and leave this pin vacuous
+        with mock.patch.object(cf, "_enumerate", side_effect=lambda: reads.pop(0) if len(reads) > 1 else reads[0]):
             self.assertEqual(cf.threads_left_at_session_end(5.0), [])
         self.assertEqual(reads, [[threading.main_thread()]], "the guard read the list a second time")
+
+    def test_a_leaked_patch_of_threading_enumerate_does_not_hide_a_thread_from_the_guard(self):
+        """The guard binds threading.enumerate at import, as it binds time.monotonic, so a test that patched the
+        process-wide function and left the patch in place cannot empty the guard's list."""
+        cf = sys.modules["tests.conftest"]
+        stop = threading.Event()
+        t = threading.Thread(target=stop.wait, args=(60,), name="plant-hidden")
+        t.start()
+        self.addCleanup(t.join)
+        self.addCleanup(stop.set)
+        with mock.patch.object(threading, "enumerate", return_value=[threading.main_thread()]):
+            left = cf.threads_left_at_session_end(0.2)
+        self.assertIn(t, left, "the guard still read the live thread list")
 
 
 if __name__ == "__main__":

@@ -863,6 +863,8 @@ def wait_for_census(before, timeout=5.0):
 # it is the stricter reading. None is left on main.
 THREAD_GUARD_CAP_S = 10.0
 _monotonic = time.monotonic   # bound at import: a test's leaked patch of time.monotonic cannot move the guard's deadline
+_enumerate = threading.enumerate    # bound at import too: a test's leaked patch of threading.enumerate cannot empty the
+                                    # guard's list, and a test that patches this name reaches the guard alone
 
 
 def _pytest_timeout_timer(t):
@@ -888,7 +890,7 @@ def threads_left_at_session_end(cap_s):
     returns when its thread ends. Returns [] when none is left."""
     deadline = _monotonic() + cap_s
     while True:
-        left = [t for t in threading.enumerate() if _guarded_thread(t)]
+        left = [t for t in _enumerate() if _guarded_thread(t)]
         if not left or _monotonic() >= deadline:
             return left
         for t in left:
