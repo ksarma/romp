@@ -78587,11 +78587,13 @@ class Handler(BaseHTTPRequestHandler):
             except OSError:
                 pass
         if not all(_peer_header_value_ok(v) for v in (clen, lastmod, r_ns, r_u8, crange) if v):
-            # Each of these five can be written into this response's headers as the remote gave it (Content-Length on
-            # the HEAD arm, Content-Range on the 206 arm, the other three on every success), so one that carries a
-            # line break or another control character refuses the reply rather than writing the remote's bytes as a
-            # header of this kernel's own. The 404's cause needs no check: it is mirrored only when it equals one of
-            # this kernel's own words (_FILE_404_REASONS).
+            # Each of these five is written into this response's headers as the remote gave it on one arm or more: the
+            # HEAD arm writes Content-Length, Last-Modified and X-Romp-Mtime-Ns, a GET's 206 arm writes Content-Range,
+            # and a GET's 200 arm writes Last-Modified, X-Romp-Mtime-Ns and X-Romp-Text-Utf8. The check runs ahead of
+            # every arm, so a value that carries a line break or another control character refuses the reply, on an
+            # arm that would not have written it too, rather than writing the remote's bytes as a header of this
+            # kernel's own. The 404's cause needs no check: it is mirrored only when it equals one of this kernel's
+            # own words (_FILE_404_REASONS).
             return self._send(502, b"" if head else ("%s answered with a header value this kernel does not relay" % host),
                               "text/plain")
         if len(body) > _MEDIA_MAX_BYTES:       # backstop only — the remote's own cap 413s long before this
