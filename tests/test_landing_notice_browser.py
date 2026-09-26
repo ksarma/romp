@@ -554,7 +554,9 @@ await painted();
 const at16 = { order: order16, top: await page.evaluate(() => document.getElementById("content").scrollTop), row: await rowAtTop(), point: await pointNow(),
   writes: await page.evaluate((n) => window.__sent.slice(n).filter((m) => m.type === "clientDiag" && m.what === "scrollwrite" && m.data).map((m) => [m.data.writer, m.data.before, m.data.after]), sentAt16) };
 await page.evaluate(() => { window.__hold.delete("loadAround"); window.__hold.delete("loadTurns"); window.__heldRaw = []; });
-// ROAD 17 (a fresh page): the dead ends of a deep link from a reader scrolled up in history. The reader lands at turn 125, not following the
+// ROAD 17 (a fresh page): the dead ends of a deep link from a reader scrolled up in history, on the view already on screen (the lab runs one
+// session, so the pre-jump's origin is the reader's own place; on a tab switch the origin is the leaving tab's place and the dead end moves
+// the reader, at the base as here). The reader lands at turn 125, not following the
 // tail, then follows a deep link with a time to turn 190, in the gap that landing left, with its ask held; the kernel's answer is injected:
 // a fault, then, after the reader lands at turn 125 again, a missing reply. The pre-jump writes the reader into the gap and the land misses
 // with the fetch armed; the fallback puts the row the reader stood on back in the same task (PR 861's restore), so the dead end's write of
