@@ -457,6 +457,7 @@ test("the ui/ reader takes every form of a primitive at its count, and each stat
   assert.deepEqual(sitesOf("function f(u: string) { return new (window as any)['Web' + 'Socket'](u); }"), {}, "stated limit: a name assembled at run time is not read");
   assert.deepEqual(sitesOf("function f(ws: any, u: string) { return new ws.constructor(u); }"), {}, "stated limit: a value that never names the primitive is not read");
   assert.deepEqual(sitesOf("function f(kind: string) { return document.createElement(kind + 'm'); }"), {}, "stated limit: a tag built by concatenation is not read");
+  assert.deepEqual(sitesOf("function t() { return 'form'; }\nfunction f() { return document.createElement(t()); }"), {}, "stated limit: a tag returned by a call is not read");
   assert.deepEqual(sitesOf("function f() { let tag = 'form'; return document.createElement(tag); }"), {}, "stated limit: a tag held in a let is not read");
   assert.deepEqual(sitesOf("function f() { const tags = ['form']; return document.createElement(tags[0]); }"), {}, "stated limit: a tag held in an array element is not read");
   assert.deepEqual(sitesOf("import { TAG } from './tags';\nfunction f() { return document.createElement(TAG); }"), {}, "stated limit: a tag imported from another module is not read");
