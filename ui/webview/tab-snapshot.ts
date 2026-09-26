@@ -13,7 +13,7 @@
 // changed nothing yields the SAME object (snapshotModel returns `prev`) and the renderer rebuilds nothing.
 // render.ts paints it; the shapes below are the minimal "Like" views of render.ts's types (the tab-state.ts
 // idiom), so the rule runs in node tests without a DOM.
-import { tabStateClass, sectionPip, sectionPipMembers, type TabStateLike, type SectionPip, type RingId } from "./tab-state";
+import { tabStateClass, sectionPip, sectionPipMembers, openUserTodo, type TabStateLike, type SectionPip, type RingId } from "./tab-state";
 import { chipWords, type ChipStatusLike, type ChipWords } from "./status-chip";
 import { stripInline } from "./docreview";
 
@@ -37,8 +37,10 @@ export interface SnapLedgerLike {
 /** `hides`: the members hidden inside the section (tab-groups.ts StripHead.hides, the user 2026-09-08); the
  *  pane lists them under its Hidden fold, with a Show button each. Absent or empty: nothing hidden. */
 export interface SnapSectionLike { name: string | null; color: string; ids: readonly string[]; hides?: readonly string[] }
-/** The strip's meta for a tab whose session frame has not landed (render.ts tabMeta): its name and color alone. */
-export interface SnapMetaLike { name?: string; color?: SnapColor | null }
+/** The strip's meta for a tab whose session frame has not landed (render.ts tabMeta): its name and color, and since
+ *  2026-09-22 the roster's count of its open user todos (the tabOrder row's userTodos, tab-meta.ts), so a skeleton or
+ *  placeholder member's row wears the flag and its count before its payload is served. */
+export interface SnapMetaLike { name?: string; color?: SnapColor | null; userTodos?: number }
 
 /** The pip a row wears: the tab's own colors by the tab's own rule (tab-state.ts), plus the two states the
  *  strip paints on the chip rather than the tab: `waiting` (idle, but background work it dispatched is
@@ -218,19 +220,27 @@ export function standInPip(members: ReadonlyArray<StandInLike>, on: (id: RingId)
 }
 
 /** One row. `s` is the session frame (null for a placeholder tab, whose frame has not landed); `meta` the
- *  strip's meta for it (name and color), read only when the frame is absent, so a loading row still wears
- *  the tab's name and color; `hidden`, the row is hidden inside its section (the user 2026-09-08). */
+ *  strip's meta for it: its name and color, read only when the frame is absent, so a loading row still wears
+ *  the tab's name and color, and the roster's count of open user todos, read FIRST (below); `hidden`, the row
+ *  is hidden inside its section (the user 2026-09-08). */
 export function snapshotRow(id: string, s: SnapSessionLike | null | undefined, lg: SnapLedgerLike | null | undefined,
                             hidden = false, meta?: SnapMetaLike | null): SnapRow {
   const st = rowState(s?.status);
-  const src: SnapMetaLike | null | undefined = s ?? meta;
-  const todos = Array.isArray(s?.userTodos) ? s!.userTodos!.length : 0;
+  const src: { name?: string; color?: SnapColor | null } | null | undefined = s ?? meta;   // the two fields both shapes share (the frame's todos are rows, the meta's a count)
+  // THE TODO COUNT reads the roster FIRST (meta.userTodos, the tabOrder row's count of open todos, 2026-09-22) and the
+  // session's rows second (an older kernel's roster carries no count). Roster first on purpose, not rows first: render.ts
+  // hands this row sessions.get(id) for every member, and on a redial that is the stale pre-outage entry for a skeleton
+  // member, the very thing liveSession exists to dodge, so rows-first would show that entry's old rows over the kernel's
+  // current count. (That seam, the snapshot reading sessions.get rather than liveSession, predates this line and is not
+  // fixed here; a later reader must not "simplify" this to rows-first.)
+  const todos = typeof meta?.userTodos === "number" ? meta.userTodos : Array.isArray(s?.userTodos) ? s!.userTodos!.length : 0;
   // NEEDS YOU is the feed's call: the tab's rule (tab-state.ts) knows only the live states the chip carries
   // (a permission or picker prompt, an on-you API error), so a judge-filed block on a session that went idle
   // after asking would show a plain idle row here while the feed shows a red card. lg.needsInput is that
   // column, per session, from the kernel's last feed build (build_session); the tab's own cases stay as a
   // floor because the feed build trails the chip by one push. The one judgment is onYou (the header's
-  // stand-in pip reads the same); the row adds an open user todo, the tab's ⚑.
+  // stand-in pip reads the same); the row adds an open user todo, the tab's ⚑, by the ONE open predicate over the
+  // count (tab-state.ts openUserTodo, the header's and the builders' spelling; correctness-1, review round 1).
   const feedBlock = lg?.needsInput === true;
   // the chip: on you → "API error" when the tab's own rule sees an API error only you can clear (tab-blocked: the
   // flags ride beside the state; a flagless API error is the kernel's transient, auto-retried one, and with a feed-filed
@@ -245,7 +255,7 @@ export function snapshotRow(id: string, s: SnapSessionLike | null | undefined, l
     color: src?.color && src.color.bg && src.color.fg ? { bg: src.color.bg, fg: src.color.fg } : null,
     pip: s ? st.pip : "unknown",
     state: st.state,   // the tab's own phrase; a feed-filed block on a quiet session has none, its chip ("Blocked") is the word (T322b)
-    needsYou: feedBlock || st.needsYou || todos > 0,
+    needsYou: feedBlock || st.needsYou || openUserTodo(todos),
     waiting: st.waiting,
     todos,
     chip,

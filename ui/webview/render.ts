@@ -38,6 +38,8 @@ import { composeStatusWidgets, folderIconNode, folderLink, type StatusRecord } f
 import { REVEAL_LABEL, revealFraction, revealShownFraction, residentSpan, revealCountWords, revealPercentWords, messageCount } from "./reveal-progress";
 import { compactDisplay, isFoldableNoticeShape, itemAnchor, type DisplayItem } from "./compact";
 import { insertRun, regionsFromRuns, gapHeight, pagesToAsk, gapAt, gapFraction, landingNotice, runsOf, turnsBeforeTail, type Region, type Run, type Gap } from "./chat-regions";
+import { compactTailPlan } from "./chat-compact-tail";
+import { rowsFor, meanRowHeight, perTurnEstimate } from "./turn-estimate";
 import { senderKind, SenderKind } from "./sender-identity";
 import { loadSettings, saveSettings, onExternalSettingsChange, installSettingsSync, type RompSettings } from "./settings";
 import { backendLabel, effectiveDefaultBackend } from "./backend-names";
@@ -58,7 +60,7 @@ import { planStrip, readTabGroups, writeTabGroups, setSectionCollapsed, sectionR
          followAdoption, reorderTagOrder, homeSectionOf, neighborOfFolded, revealedTabs, TABGROUPS_KEY, TABGROUPS_EVENT, type TabSection, type StripItem, type StripHead, type TabGroupsState, type SectionRef } from "./tab-groups";
 import { snapshotModel, snapshotHeading, rowWords, hiddenNeeds, hiddenFoldWords, actWords, standInPip, type SnapModel, type SnapRow } from "./tab-snapshot";
 import { rowStillOpen, installSnapshotEscape, reconcileRows, repeatedClick, menuAnchor } from "./tab-snapshot-view";
-import { tabStateClass, sectionPipTitle, sectionTodoFlag, sectionTodoTitle, sectionTodoPhrase, sectionDoorTitle, doorClick } from "./tab-state";
+import { tabStateClass, sectionPipTitle, sectionTodoFlag, sectionTodoTitle, sectionTodoPhrase, sectionDoorTitle, doorClick, openUserTodo } from "./tab-state";
 import { composeTabWidgets, composeTabRing, ringSwitch, tabHotkey, miniChord } from "./tab-widgets";   // the tab-title widgets (T379): the dot, the context bar and the hot-key keycap compose onto every tab from the registry, and the rings too, one class at a time; miniChord is the chord the strip signature reads
 import { titleWithKey, keyHint, chordOf, effectiveChord, loadOverrides, saveOverride, KEYS_EVENT } from "./keybindings";
 import { hotkeyCommandId, loadTabKeys, rememberTabKey, forgetTabKey, goneTabKeys, renamedTabKeys } from "./tab-keys";   // per-tab hot keys (2026-09-10): the set and its bookkeeping; the keycap on the tab is the T379 widget, read from the same store
@@ -102,7 +104,7 @@ import { focusAfterDismiss, emptyStateParts } from "./pane-focus";   // where fo
 import { MENTION_MAX_ROWS, mentionQuery, rankMentions, mentionMoreNote, mentionToken, insertMention, mentionKeyAction, mentionSegments } from "./composer-mention";   // the @-mention card's rules, pure; the DOM is setupComposer's mention block and markMentions
 import type { MentionCandidate, MentionQuery } from "./composer-mention";
 import { defaultCommentName, defaultBreakoutName, defaultForkName, nameToSend } from "./comment-name";
-import { followReader, keepPlaceAcrossShow, followTail, atBottomDist, followBoxBelow, followTailShrink, reshowStick } from "./scroll-keep";
+import { followReader, keepPlaceAcrossShow, followTail, atBottomDist, followBoxBelow, followTailShrink, followRebuiltTail, reshowStick } from "./scroll-keep";
 import { phParts } from "./composer-placeholder";   // the resting placeholder names the session (2026-09-09)
 import { retainLiveOmitted } from "./tab-order";
 import { localStrip, stripHost, readCloseAckMs } from "./tab-order";
@@ -743,7 +745,7 @@ function reconcileRewind(s: Session, bound?: number): void {
 }
 // Tab name+color from the kernel's tabOrder push (the user 2026-06-26): lets renderTabs paint the WHOLE
 // strip as placeholders BEFORE each session's build_session arrives, so tabs don't pop in one-by-one.
-const tabMeta = new Map<string, { name: string; color: Color | null; emoji?: string }>();
+const tabMeta = new Map<string, { name: string; color: Color | null; emoji?: string; userTodos?: number }>();
 // Tabs the user has just ✕'d, suppressed until the kernel's own tab set agrees. Declared up here beside
 // tabMeta because renderTabs reads it, and renderTabs can run before the module finishes evaluating.
 // The close was ALREADY optimistic (dismissSession runs on click) but nothing recorded that locally — so the
@@ -1413,7 +1415,7 @@ let landTrail: string[] = [];
 // count is NOT len − winStart + spacer: a unit may own more than one node (the day
 // divider that opens a new day precedes its turn), so anything mapping DOM back to
 // units reads data-unit off the node rather than counting children.
-interface View { el: HTMLElement; rendered: number; scrollTop: number; stick: boolean; shown: boolean; stale: boolean; winStart: number; winEnd?: number; avgTurnH?: number; pxPerTurn?: number; spacerCount?: number; spacerCountBot?: number; unitTotal?: number; gapUnits?: Map<number, number>; edgeTop?: number; edgeUp?: boolean; gestureScroll?: boolean; working?: boolean; uo?: ResizeObserver; uh?: WeakMap<Element, number>; ro?: ResizeObserver; mo?: MutationObserver; }   // working: the session's state at the last sync, the "worked …" footer's one non-event input (syncViewInner)
+interface View { el: HTMLElement; rendered: number; scrollTop: number; stick: boolean; shown: boolean; stale: boolean; winStart: number; winEnd?: number; avgTurnH?: number; pxPerTurn?: number; spacerCount?: number; spacerCountBot?: number; unitTotal?: number; gapUnits?: Map<number, number>; edgeTop?: number; edgeUp?: boolean; gestureScroll?: boolean; working?: boolean; units?: DisplayItem[]; measureDue?: boolean; measured?: { avg?: number; per?: number }; followRebuilt?: boolean; uo?: ResizeObserver; uh?: WeakMap<Element, number>; ro?: ResizeObserver; mo?: MutationObserver; }   // working: the session's state at the last sync, the "worked …" footer's one non-event input (syncViewInner); units: the display items the DOM was last built from (compact mode's tail plan reads them, chat-compact-tail.ts); measureDue: a window build or a reflow asks the unit observer for fresh figures (measureUnits); measured: the figures it read, waiting for the next paint to take them (applyMeasure)
 const views = new Map<string, View>();
 
 // Pending pickers (AskUserQuestion / tool-permission) keyed by session id. These
@@ -3215,8 +3217,15 @@ function drawRailBand(host: HTMLElement, hostR: DOMRect, xRef: HTMLElement, top:
     put(lx - 2, a, 4, b - a);
   }
 }
-function clearRailRings(): void {
-  document.querySelectorAll(".dot.rail-ring").forEach((n) => n.classList.remove("rail-ring"));
+/** The band module's own remover of the rings drawRailBand grew (.dot.rail-ring): document-wide for the band's repaint and clears
+ *  (instantLocalBand, paintRailBand, clearLocalBand), and host-scoped for the two tail paints (compact mode's seam, normal mode's exact
+ *  tail), which drop the band as a foreign child and take its rings off with it, on the view's own host and with no layout read. One
+ *  remover per class: the glow on the turns (.ext-glow) is applyGlow's cross-surface hover state, mirrored by the overview ruler, and no
+ *  tail paint touches it (the maintainer's round 3 ruling D: a second remover of a class outside the function that owns it left the
+ *  transcript dark while the ruler still banded the turns it had unlit; the kept rows keep their glow, and a re-rendered row's, a fresh
+ *  node's, is re-applied by the next glowTurns tick, as after any rebuild). */
+function clearRailRings(host: ParentNode = document): void {
+  host.querySelectorAll(".dot.rail-ring").forEach((n) => n.classList.remove("rail-ring"));
 }
 
 // ONE continuous rail band per hovered segment: from the segment's own prompt dot down to the NEXT dot
@@ -6035,7 +6044,8 @@ function applyTabOrder(o: any, tabs?: any, report?: OrderReport, live?: any) {
       if (t && typeof t.id === "string") {
         tabMeta.set(t.id, { name: typeof t.name === "string" ? t.name : "",
                             color: (t.color && typeof t.color.bg === "string") ? t.color : null,
-                            emoji: typeof t.emoji === "string" ? t.emoji : undefined });   // absent = an older kernel
+                            emoji: typeof t.emoji === "string" ? t.emoji : undefined,   // absent = an older kernel
+                            userTodos: Number.isInteger(t.userTodos) && t.userTodos >= 0 ? t.userTodos : undefined });   // the roster's count of open user todos (2026-09-22): a skeleton or placeholder tab paints its flag from it, the session payload being what the diet withholds; absent = an older kernel, and a count outside the kernel's contract (a non-negative integer, tests/test_user_todos_roster.py) reads as absent too, as text did from the start, so every reader downstream holds a real count or nothing (correctness-1, review round 1). Parsed inline on purpose: chat-split-exec.test.ts lifts this function by source into a stub world where a new import would be undefined
       }
     }
     // …and apply the same blob to EXISTING sessions (the user 2026-08-24): the label/color used to
@@ -6641,7 +6651,11 @@ function makeGroupHead(sec: TabSection, collapsed: boolean, holdsActive: boolean
     // (the session's userTodos, refreshed by every chat delta → renderTabs), so the frame that
     // resolves the todo clears both. The header carries it whenever it stands in for a member with no
     // tab on the strip: folded, over the unpinned members; open, over the members hidden inside the
-    // section (a member whose own tab is on screen wears its own glyph, and is never in `hidden`). A
+    // section (a member whose own tab is on screen wears its own glyph, and is never in `hidden`). For a
+    // member whose payload this page has not been served (a skeleton after a redial, a placeholder still
+    // opening) the tabOrder row's count stands in for the rows (2026-09-22; tab-meta.ts), read through
+    // liveSession so a skeleton's stale pre-outage entry never speaks for it: a fold hides no flag the
+    // skeleton tab itself would wear. A
     // real <button>, focusable, with its OWN data-act for the stable #tabs delegate (the nearest data-act
     // wins, so a click never reads as the header's fold; the header's key handler stands down for it,
     // so Enter and Space are the button's own click too): open-group on a folded header (Enter opens
@@ -6650,7 +6664,7 @@ function makeGroupHead(sec: TabSection, collapsed: boolean, holdsActive: boolean
     // that was already open, and nothing moved). Its own
     // dragstart guard, so a press that wanders never starts the header's group drag (tab-state.ts owns
     // the count and the title).
-    const flag = sectionTodoFlag(hidden.map((id) => sessions.get(id)));
+    const flag = sectionTodoFlag(hidden.map((id) => liveSession(id) ?? tabMeta.get(id)));
     if (flag) {
       const b = document.createElement("button");
       b.type = "button";
@@ -6887,6 +6901,17 @@ function makeSkeletonTab(id: string): HTMLElement {
   const label = el("span", "tab-label");
   label.replaceChildren(...hostNameNodes(name, id));
   tab.appendChild(label);
+  // USER-TODO flag (2026-09-22): from the roster row's COUNT (tabMeta, the tabOrder push), never the stale entry's rows.
+  // The session payload that carries the rows is exactly what the diet withholds for this tab, and the entry underneath
+  // is pre-outage. The loaded tab's mark and class (its block in renderTabs says the rest); no count on the strip. Open by
+  // the ONE predicate (tab-state.ts openUserTodo), the folded header's and the signature rows' spelling, so the tab and the
+  // header it folds into agree on every value (correctness-1, review round 1).
+  if (openUserTodo(meta?.userTodos)) {
+    const ut = el("span", "tab-usertodo");
+    ut.textContent = "⚑";
+    ut.title = "waiting on you: this session flagged something it needs from you (the note by its message box shows once the tab loads)";
+    tab.appendChild(ut);
+  }
   if (status) appendTabAfterWidgets(tab, { id, status });
   tab.title = "Not loaded yet — click to load";
   const closeBtn = el("span", "tab-close");
@@ -6953,6 +6978,15 @@ function makePlaceholderTab(id: string): HTMLElement {
   if (meta?.name) label.replaceChildren(...hostNameNodes(meta.name, id));
   else label.textContent = "…";
   tab.appendChild(label);
+  // USER-TODO flag (2026-09-22): the roster row's count is here before the session payload is (the strip lands first,
+  // tabs-first), so a tab still opening wears the flag its loaded self will. Same mark, same class, the same open predicate
+  // (tab-state.ts openUserTodo; correctness-1, review round 1); no count on the strip.
+  if (openUserTodo(meta?.userTodos)) {
+    const ut = el("span", "tab-usertodo");
+    ut.textContent = "⚑";
+    ut.title = "waiting on you: this session flagged something it needs from you (the note by its message box shows once the tab loads)";
+    tab.appendChild(ut);
+  }
   return tab;
 }
 
@@ -7289,9 +7323,9 @@ function renderTabs() {
       if (renderKind(skeletonTabs, id, !!s) === "skeleton") {                                              // makeSkeletonTab's reads:
         const m = tabMeta.get(id), kst = skeletonTabs.status.get(id) as Status | undefined;               // the kernel's list + its
         return ["k", m?.name || s?.name, (m?.color || s?.color)?.bg, (m?.color || s?.color)?.fg, id === peekId,   // status frames, never the
-                kst?.state, kst && tabStateClass(kst), kst?.needsYou === true, !!kst?.faded, kst?.ctx, kst?.ctxColor, kst?.ctxTone, down, note, tabHotkey(id)];   // stale session's status; + the hot-key keycap's chord (T379); + the feed's needs-you verdict, the yellow ring's input (2026-09-13)
+                kst?.state, kst && tabStateClass(kst), kst?.needsYou === true, !!kst?.faded, kst?.ctx, kst?.ctxColor, kst?.ctxTone, openUserTodo(m?.userTodos), down, note, tabHotkey(id)];   // stale session's status; + the hot-key keycap's chord (T379); + the feed's needs-you verdict, the yellow ring's input (2026-09-13); + the roster's user-todo count through the one open predicate (tab-state.ts openUserTodo), the flag's input (2026-09-22): open or not, as the builder reads it
       }
-      if (!s) { const m = tabMeta.get(id); return ["p", m?.name, m?.color?.bg, m?.color?.fg, m?.emoji, down, note]; }   // makePlaceholderTab's reads
+      if (!s) { const m = tabMeta.get(id); return ["p", m?.name, m?.color?.bg, m?.color?.fg, m?.emoji, openUserTodo(m?.userTodos), down, note]; }   // makePlaceholderTab's reads (the user-todo flag's input among them, through the one open predicate, 2026-09-22)
       const st = s.status;
       return [s.name, s.color?.bg, s.color?.fg, s.emoji ?? tabMeta.get(id)?.emoji, st.state, tabStateClass(st), st.needsYou === true, !!st.faded,
               st.ctx, st.ctxColor, st.ctxTone, !!s.sub, !!(s.userTodos && s.userTodos.length), down, note,
@@ -7407,7 +7441,9 @@ function renderTabs() {
     // field (delta-stable since slice 1, and build_session already blanks it for ended sessions),
     // so the glyph appears/disappears with the store and needs no client-side gate. Its OWN
     // element, never a .tab-dot: pips encode turn state, and the kernel's mobile scrape keys on
-    // the pip classes (test_tab_strip_pips pins that vocabulary).
+    // the pip classes (test_tab_strip_pips pins that vocabulary). A skeleton or placeholder tab,
+    // whose payload this page has not been served, paints the same mark from the roster row's
+    // count (makeSkeletonTab, makePlaceholderTab; tab-usertodo-skeleton.test.ts, 2026-09-22).
     if (s.userTodos && s.userTodos.length) {
       const ut = el("span", "tab-usertodo");
       ut.textContent = "⚑";
@@ -12796,7 +12832,7 @@ function tailMutations(records: MutationRecord[]): { removedTail: string[]; adde
 // the cap is the default unless the page's localStorage says otherwise (a laptop capturing raises it; T262j)
 const scrollDiagCap = readScrollDiagCap((k) => { try { return localStorage.getItem(k); } catch { return null; } });
 const scrollDiag = new ScrollDiagBudget(scrollDiagCap);
-function scrollDiagRow(kind: "scrollwrite" | "scrollgesture" | "tailchange" | "spacer" | "tailmut" | "unitchange" | "regionask" | "landmiss", data: any): void {
+function scrollDiagRow(kind: "scrollwrite" | "scrollgesture" | "tailchange" | "spacer" | "spacer-dropped" | "tailmut" | "unitchange" | "regionask" | "landmiss", data: any): void {
   const v = scrollDiag.take(activeId || "", kind, Date.now());
   if (v === "drop") return;
   vscodeApi?.postMessage(v === "cap"
@@ -12868,6 +12904,12 @@ function scrollToAnchor(uuid: string): boolean {
   // Deep-link into history the window doesn't currently cover (the head/tail folded into a spacer): find the
   // event, render a fresh window AROUND its unit, then re-query — the "load it when you jump there" behaviour.
   // (No match anywhere → genuinely off the active path; stash for the next render pass.)
+  // The build below takes the parked figures (anchored: landOn puts the target under the reader); when its re-query then misses (the row
+  // not rendered, or the wrong kind for the link's intent) nothing places the reader, so the take is given back (untakeMeasure) and the
+  // figures wait for a paint that anchors: the reader is where the rebuild left them, in the layout it was built in. For landActive's and
+  // keepPlaceAcrossWindow's calls, which took before this attempt, the build finds nothing parked and there is nothing to give back (the
+  // maintainer's round 3 ruling B; scroll-to-anchor-roads.test.ts executes the roads)
+  let figures: FiguresBefore | null = null;
   if (!target && v && activeId) {
     const s = liveSession(activeId);
     // resultUuid too: an ANSWERED AskUserQuestion turn is anchored by its answer line's uuid
@@ -12892,7 +12934,8 @@ function scrollToAnchor(uuid: string): boolean {
       if (hit && hit.kind === "noticegroup" && hit.indices.includes(idx))
         openFolds.add(noticeGroupKey(s.events[hit.indices[0]]));
       const working = s.status.state === "working" || s.status.state === "compacting";
-      renderWindowItems(v, s, items, Math.max(0, u - WINDOW_RADIUS), Math.min(items.length, u + WINDOW_RADIUS), working);
+      figures = figuresBefore(v);
+      renderWindowItems(v, s, items, Math.max(0, u - WINDOW_RADIUS), Math.min(items.length, u + WINDOW_RADIUS), working, true);   // anchored: landOn puts the target under the reader
       // Re-query with the SAME three selectors the first lookup used. data-mids was missing here, so an
       // unhydrated postal turn (whose message ids live only in data-mids) could be found in the events,
       // have its window rendered — and then still honest-fail "pointer-not-rendered" on the re-query.
@@ -12944,6 +12987,7 @@ function scrollToAnchor(uuid: string): boolean {
     // parked across it runs no attempt before the frame and lands once it arrives, at both heads)
     const sm = activeId ? liveSession(activeId) : null;   // the active tab's live session (the display paths read through liveSession)
     scrollDiagRow("landmiss", { sid: activeId, anchor: uuid.slice(-12), proto: sm ? (sm.proto ?? null) : null, events: sm ? sm.events.length : -1, regions: !!(sm && sm.regions), headKnown: sm ? (sm.headKnown ?? null) : null, headFrom: sm ? (sm.headFrom ?? 0) : null, older: !!(sm && olderOnServer(sm)), noframe: !sm || sm.proto == null, trail: landTrail.slice(-4) });
+    if (figures && v) untakeMeasure(v, figures);   // the build's take, given back: nothing placed the reader
     pendingAnchor = uuid; landTrail.push("pointer-not-rendered"); return false;
   }
   // KIND GUARD — the robust half of "title clicks always land on the originating
@@ -12961,6 +13005,7 @@ function scrollToAnchor(uuid: string): boolean {
   if (pendingAnchorIntent === "user"
       && !target.classList.contains("turn-user") && !target.classList.contains("turn-postal-service")
       && !target.classList.contains("turn-notice")) {
+    if (figures && v) untakeMeasure(v, figures);   // the build's take, given back: nothing placed the reader
     pendingAnchor = null; pendingAnchorIntent = null; landTrail.push("pointer-wrong-kind"); return false;
   }
   pendingAnchor = null; pendingAnchorIntent = null;
@@ -13033,10 +13078,11 @@ function landNearestMoment(t: number): boolean {
   let u = items.findIndex((it) => it.kind === "toolgroup" || it.kind === "noticegroup" ? it.indices.includes(best) : it.kind === "event" && it.index === best);
   if (u < 0) u = Math.max(0, items.findIndex((it) => itemFirstEvent(it) >= best));
   const working = s.status.state === "working" || s.status.state === "compacting";
-  renderWindowItems(v, s, items, Math.max(0, u - WINDOW_RADIUS), Math.min(items.length, u + WINDOW_RADIUS), working);
+  const figures = figuresBefore(v);   // what the build takes, given back on a miss (its one caller, landActive, took before it, so nothing is parked here in practice)
+  renderWindowItems(v, s, items, Math.max(0, u - WINDOW_RADIUS), Math.min(items.length, u + WINDOW_RADIUS), working, true);   // anchored: the moment's row is landed below
   const target = (uuid ? v.el.querySelector(`.turn[data-uuid="${cssEscape(uuid)}"]`) : null)
     || (v.el.querySelector(`[data-unit="${u}"]`) as HTMLElement | null);
-  if (!target) { landTrail.push("time-nearest-miss"); return false; }
+  if (!target) { untakeMeasure(v, figures); landTrail.push("time-nearest-miss"); return false; }
   landTrail.push("time-nearest");
   landOn(target as HTMLElement, uuid || undefined);
   const beforeHead = headEp != null && t < headEp && olderOnServer(s);
@@ -13404,11 +13450,18 @@ function ensureView(id: string): View {
         // the tail's height change, named (T262f): which element grew or shrank under the reader — Chrome moves a
         // bottom reader for both without a pane write, so the scroll rows alone cannot say which element flapped
         if (content && lastH >= 0 && activeId === id && view.shown && h !== lastH)
-          scrollDiagRow("tailchange", tailChangeRow(id, h - lastH, tailLabel(view.el.children), view.stick, content.scrollHeight, content.clientHeight));
+          scrollDiagRow("tailchange", tailChangeRow(id, h - lastH, tailLabel(view.el.children, (c) => unitOfNode(c) >= 0), view.stick, content.scrollHeight, content.clientHeight));   // the tail by the one unit predicate: a hover's band is not it (the maintainer's round 2 ruling)
         if (content && lastH >= 0 && activeId === id && view.shown && content.clientHeight > 0 && followTailShrink(view.stick, h - lastH)) {
           writeScroll(content, content.scrollHeight, "tail-shrink", true);
           view.scrollTop = content.scrollTop;
+        } else if (content && lastH >= 0 && activeId === id && view.shown && content.clientHeight > 0 && followRebuiltTail(view.stick, view.followRebuilt === true, h - lastH)) {
+          // the re-window's own follow (PR E, scroll-keep.ts followRebuiltTail): the rebuilt tail's rows settled after its synchronous write
+          writeScroll(content, content.scrollHeight, "rewindow", true);
+          view.scrollTop = content.scrollTop;
         }
+        // the re-window's mark is NOT cleared here: a delivery may never come (a rebuild that changed no height), and a latch cleared by
+        // something that may never happen outlives its condition. The events that end the re-window clear it: the reader's own scroll
+        // (the scroll listener, a gesture) and the view's next paint (syncViewInner) (the maintainer's round 1 addendum)
         lastH = h;
       });
       v.ro.observe(elv);
@@ -13435,12 +13488,23 @@ function ensureView(id: string): View {
         // re-show, neither a change in the unit (the review's find: one switch back would have filed a row per unit
         // and burnt the minute's cap). The hide forgets the reported baselines and files nothing; the re-show
         // observation records fresh ones, like a first show. Covers the tab switch and stripAftermath's blank.
-        if (view3.el.style.display === "none") { for (const e of entries) unitHeights.delete(e.target); return; }
-        // …and a width change reflows every unit at once (a resize, a scrollbar appearing): the new heights become
-        // the baselines and nothing is filed — a hundred honest rows would say nothing about any one unit.
+        // …and an ANCESTOR's hide (the shell's display:none pane iframe, the editor's section toggle) is the same case
+        // read off the view's width: the view's own display is still "" and Chromium delivers every unit at 0 with the
+        // view at width 0 (WebKit runs no observer in a hidden frame). Read as a reflow, those zeros became the
+        // baselines and the window's figures: a median of 0 per turn, taken at once by a bottom reader, drew every gap
+        // at 0 px and the 200-turn head in none (the author's pass 0, high). No zero enters the heights map.
         const w = view3.el.clientWidth;
-        if (w !== unitW) { unitW = w; for (const e of entries) unitHeights.set(e.target, e.contentRect?.height ?? 0); return; }
-        const changes = unitChanges(entries.map((e) => ({ target: e.target, height: e.contentRect?.height ?? 0 })), view3.el.children, unitHeights, unitOf);
+        if (view3.el.style.display === "none" || w === 0) { for (const e of entries) unitHeights.delete(e.target); return; }
+        // …and a width change reflows every unit at once (a resize, a scrollbar appearing): the new heights become
+        // the baselines and nothing is filed (a hundred honest rows would say nothing about any one unit). The per-turn
+        // figure is re-read (every row's height moved); the rows' average is measured once per view and stands, so a
+        // resize or a rotation leaves the spacers and the scroll-to-unit map on the pre-resize average, a residual the
+        // PR body names (clearing it here would leave a spacer-only sync reading the default before a re-measurement lands).
+        // The heights recorded are BORDER-BOX (entryBoxHeight), and the window's figures are measured HERE, where the
+        // heights arrive at frame end after layout, never in the render task (measureUnits; PR E).
+        if (w !== unitW) { unitW = w; for (const e of entries) unitHeights.set(e.target, entryBoxHeight(e)); view3.measureDue = true; measureUnits(view3); takeMeasureAtBottom(view3); return; }
+        const changes = unitChanges(entries.map((e) => ({ target: e.target, height: entryBoxHeight(e) })), view3.el.children, unitHeights, unitOf);
+        measureUnits(view3); takeMeasureAtBottom(view3);
         const content = document.getElementById("content");
         if (!content || activeId !== id || !view3.shown) return;   // baselines are recorded above regardless; an inactive view files nothing
         for (const c of changes)
@@ -13472,13 +13536,18 @@ function ensureView(id: string): View {
 // The wrapper re-anchors comment highlights after EVERY sync (the user 2026-08-13): marks live in
 // the rebuilt DOM, and hanging the re-apply only on inbound messages missed the renders that run
 // off them (a tab switch, a prebuild) — idempotent and ~free for sessions with no threads.
-function syncView(id: string, atBottom?: boolean): View {
-  const v = syncViewInner(id, atBottom);
+function syncView(id: string, atBottom?: boolean, anchored: boolean = atBottom !== undefined): View {
+  const v = syncViewInner(id, atBottom, anchored);
   applyCommentMarks(id);
   return v;
 }
 
-function syncViewInner(id: string, atBottom?: boolean): View {
+function syncViewInner(id: string, atBottom?: boolean, anchored: boolean = atBottom !== undefined): View {
+  // anchored: this paint lands the reader over its result (appendActive's follow or anchor restore, the toggle's keep), so it may
+  // take the figures the unit observer parked (applyMeasure, below and in renderWindowItems). appendActive passes its follow or the
+  // anchor its restore holds (stick || !!anchor); the tool-run toggle passes whether it captured a row (!!anchor); a switch's, a
+  // landing's or a hidden prebuild's sync passes nothing and takes nothing, leaving the figures for the land that anchors (landActive,
+  // keepPlaceAcrossWindow) or the next tail paint. A paint whose only restore is a raw scrollTop anchors nothing and takes nothing.
   // atBottom (passed by appendActive): false ⇒ the user is scrolled UP reading. A compact append must then
   // NOT evict the window top — evicting shifts the content above the viewport, and since the compact path
   // FULL-REBUILDS (clears the DOM, resetting scrollTop), the caller can only restore the position if the
@@ -13491,6 +13560,10 @@ function syncViewInner(id: string, atBottom?: boolean): View {
   const v = ensureView(id);
   const s = sessions.get(id);
   if (!s) return v;
+  // a paint of the view ends a re-window's follow of its rebuilt rows (followRebuiltTail): the re-window arms AFTER its own build, so it is
+  // not cleared by itself, and appendActive's next paint has a follow of its own (append-stick). The other ending event is the reader's own
+  // scroll (the scroll listener); an observer delivery never clears it, since a rebuild that changed no height makes none (the maintainer's round 1 addendum)
+  v.followRebuilt = false;
   // An empty transcript has nothing to build → a "No messages yet." placeholder, NEVER the deferred
   // "Loading transcript…" hint. The kernel re-sends the FULL events payload on every push, so a zero-event
   // session is genuinely empty — nothing is streaming in to wait for, so a perpetual "Loading…" was a lie
@@ -13532,21 +13605,83 @@ function syncViewInner(id: string, atBottom?: boolean): View {
   // scroll-back. When post-compaction work already exceeds the tail window, the tail wins (compaction is above).
   if (firstBuild || rewind) {
     const start = Math.max(0, total - WINDOW_TAIL, lastCompactUnit(s, items));
-    renderWindowItems(v, s, items, start, total, working); v.stale = false; return v;
+    renderWindowItems(v, s, items, start, total, working, anchored); v.stale = false; return v;
   }
+  // The figures the unit observer measured since the last paint reach the spacers and the gap units HERE, inside a paint
+  // that anchors the reader (PR E): appendActive's, which reads the scroller after this sync and follows the tail or restores
+  // the reader's anchor over whatever moved, and the tool-run toggle's when its keep holds a row (the maintainer's round 1 ruling). The one rule
+  // over every taker: a figure is taken ONLY by a paint that anchors the reader, and EVERY anchoring paint takes one. (A
+  // follow-mode reader at the bottom has appendActive's paint asked for at frame end, so the figures reach them within a frame:
+  // takeMeasureAtBottom.) A spacer written anywhere else moves the reader: a switch's or a landing's sync passes no flag, so
+  // those leave the figures parked for the land that anchors them (landActive, keepPlaceAcrossWindow) or the next tail paint.
+  // Every later branch, the fast path included, sees the write.
+  if (anchored && applyMeasure(v)) { redrawGapUnits(v); sizeSpacers(v); }
   // No-op fast path — a tab SWITCH / repaint with no event change: reveal the cached DOM, re-render nothing.
   // WITHOUT this, every showActive() re-built the trailing window (markdown + highlight.js) — the big-session
   // switch lag (the user 2026-06-25). A REAL change lowers v.rendered (delta-send sets it to the change index;
   // an append grows len past it) or sets v.stale, so this never skips an actual update.
   // …except the "worked …" footer on a status-only tail: nothing re-rendered, and the footer follows the flip.
-  // (The patch marks the view stale when the reply's unit is not addressable — a folded run — so the fast
-  // path stands down and the window path below re-renders it.)
+  // (The patch addresses a reply folded into a run by its row's position and skips a member with no row, a
+  // collapsed run's; an event with no unit at all, a thinking block compact mode never shows, is skipped the same
+  // way. Nothing marks the view stale from here: until PR E the folded case did, and every second paint became a
+  // rebuild whenever a tool run preceded the streaming reply.)
   if (workFlip && v.rendered === len && !v.stale && v.el.childNodes.length > 0) {
-    patchWorkedFooters(v, s, len, working, settings.compact ? items : null);
+    patchWorkedFooters(v, s, len, working, items);
   }
   if (v.rendered === len && !v.stale && v.el.childNodes.length > 0) return v;
   const wasAtTail = (v.winEnd ?? total) >= (v.unitTotal ?? total);   // window was covering the OLD end
-  // An in-place change (tool-group toggle, off-screen update) OR compact mode → re-render the CURRENT window
+  // Compact mode: the tail path by UNIT (PR E, 2026-09-19). Every paint that changed or appended an event used to take the
+  // rebuild below, and renderWindowItems removes every child and re-renders every unit of the current window (at least 80)
+  // once per animation frame while a turn streams: markdown, highlighting and the rail chrome for units that did not change
+  // (the phone, 2026-09-19: rAF gaps over 50 ms through every streamed turn). The plan (chat-compact-tail.ts, pure) names
+  // the first unit to re-render from the units the DOM was built from (v.units) against the units now and the first changed
+  // event: a growing reply is its own unit; a tool joining a run is that run's unit, whose head and rows all carry the unit,
+  // so the trim takes them and appendItem re-renders the run whole. The rebuild stays for what a trim cannot do (a stale
+  // view, a change among the hidden units above the window, a gap at or past the start, a bottom spacer); a browsed window
+  // grows its bottom spacer when the change lies below it, as normal mode does, and rebuilds when it lies inside.
+  if (settings.compact) {
+    const plan = compactTailPlan({ prev: v.units, items, from: v.rendered, winStart: v.winStart ?? 0, winEnd: v.winEnd ?? total, unitTotal: v.unitTotal,
+                                   stale: v.stale, bottomSpacer: !!v.el.querySelector(":scope > .tx-spacer-bot") });
+    if (plan.kind === "spacer") {
+      // The one render inside the window that reads LATER events is the "worked …" footer on a turn's last reply (turnWorkedSecs reads the
+      // events after it), so it is patched here from the first changed event (v.rendered, still the pre-append value), as the append branch
+      // and normal mode's tail do; the rebuild this branch replaced re-rendered the browsed window's footers whenever events landed below it
+      // (the maintainer's round 1 addendum). The population is one item, derived from what appendItem and renderEvent read: the rail markers and the day
+      // dividers read EARLIER events (prevEpoch, the walk); a run's head reads its members, and a member joining below the window moves
+      // firstDifferingUnit inside the window, which the plan rebuilds (inside-browsed); data-turn is the kernel's turn number and does not
+      // move; the gap units are minted by the regions (chatHead's and fillInPlace's rebuilds), never by a tail frame (regionsAbsorbTail only
+      // extends the tail run), so v.gapUnits needs no refresh here; the measure's take ran above the fast path.
+      patchWorkedFooters(v, s, v.rendered, working, items);
+      v.spacerCountBot = total - (v.winEnd ?? total); v.unitTotal = total; v.rendered = len; v.units = items; sizeSpacers(v); return v;
+    }
+    if (plan.kind === "append") {
+      // the window's span before the append, kept afterwards by evicting the top (as the rebuild's re-slice kept it) unless
+      // the reader is scrolled up (keepTop below: the content above the viewport stays where it is)
+      const span = Math.max(WINDOW_TAIL, (v.winEnd ?? total) - (v.winStart ?? 0));
+      const u0 = plan.u0;
+      // the band's rings come off with the band the trim drops, through the band module's own remover on the view's host, layout-free
+      // (clearRailRings; the maintainer's round 2 ruling: the rings stayed on the kept units' dots until the pointer moved). The glow on the
+      // turns stays: it is applyGlow's cross-surface hover state, mirrored by the overview ruler, and a tail paint that took it off left the
+      // transcript dark while the ruler still banded those turns (the maintainer's round 3 ruling D: one owner per visual state)
+      clearRailRings(v.el);
+      trimUnitsFrom(v.el, u0);
+      // the rail chain a window build reaches at u0 (railChainBefore), so the first re-rendered unit's stamp is what a rebuild of the
+      // same rows draws; the day walk's mark likewise (dayWalkBefore, T339)
+      let prevEpoch = railChainBefore(s, items, v.winStart ?? 0, u0);
+      const walk = dayWalkBefore(s, items, u0);
+      const turns = s.regions ? turnOfEvents(s) : null;
+      for (let u = u0; u < total; u++) prevEpoch = appendItem(v, s, items, u, prevEpoch, walk, working, turns);
+      // the footer patch names the last reply BEFORE the first changed event, as normal mode's does (patchWorkedFooters(v, s, from, …)):
+      // the first changed event itself (v.rendered, still the pre-append value here) when no unit reaches it (u0 = total: the change is
+      // a hidden thinking block), else the first re-rendered unit's first event, whichever is earlier (the author's pass 0, low)
+      patchWorkedFooters(v, s, Math.min(v.rendered, u0 < total ? itemFirstEvent(items[u0]) : len), working, items);
+      v.winEnd = total; v.spacerCount = v.winStart ?? 0; v.spacerCountBot = 0; v.unitTotal = total; v.rendered = len; v.units = items; v.measureDue = true;
+      // …and the unit the eviction promotes to the window's first is re-seeded as a build would seed it (reseedWindowHead)
+      if (!(wasAtTail && atBottom === false) && evictCompactTop(v, Math.max(0, total - span))) reseedWindowHead(v, s, items);
+      return v;
+    }
+  }
+  // An in-place change (tool-group toggle, off-screen update) OR compact mode's rebuild cases → re-render the CURRENT window
   // (so the change shows wherever the user is), extending to the new tail if it was at the tail.
   if (settings.compact || v.stale) {
     const span = Math.max(WINDOW_TAIL, (v.winEnd ?? total) - (v.winStart ?? 0));
@@ -13556,15 +13691,23 @@ function syncViewInner(id: string, atBottom?: boolean): View {
     const ws = keepTop ? (v.winStart ?? 0)
                        : wasAtTail ? Math.max(0, total - span) : Math.min(v.winStart ?? 0, Math.max(0, total - 1));
     const we = (wasAtTail || keepTop) ? total : Math.min(v.winEnd ?? total, total);
-    renderWindowItems(v, s, items, ws, we, working); v.stale = false; return v;
+    renderWindowItems(v, s, items, ws, we, working, anchored); v.stale = false; return v;
   }
   // Normal mode, pure append. While BROWSING history (window not at the tail), the new events land below the
   // rendered window → just grow the bottom spacer (no DOM churn); the user sees them on scroll-down.
+  // …after the one render inside the window that reads LATER events, the "worked …" footer on a turn's last reply, is patched from
+  // the first changed event (v.rendered, still the pre-append value), as compact mode's spacer branch and this mode's tail do: a
+  // prompt completing the turn below the window put no footer on the window's last reply, and a later reply joining the turn took none
+  // off, until the maintainer's round 3 ruling B (the compact branch was fixed for this in the author's pass 1b, applying
+  // the maintainer's round 1 addendum, and this branch was not: the same defect on the other side of the compact switch). The patch is
+  // handed the unit list here as at every site (the maintainer's round 5 ruling, regression-1): this mode's list carries the regions'
+  // gaps too (displayItems runs withGapItems in both modes), so an event's unit is its index in the list, not its event index.
   if (!wasAtTail) {
+    patchWorkedFooters(v, s, v.rendered, working, items);
     v.spacerCountBot = total - (v.winEnd ?? total); v.unitTotal = total; v.rendered = len; sizeSpacers(v); return v;
   }
-  // Normal mode, append AT the tail (unit === event, top spacer only): the cheap incremental hot path —
-  // re-render EXACTLY from the first changed event, tagging data-unit so the scroll↔unit map stays valid.
+  // Normal mode, append AT the tail (a unit is one event, or a gap the regions hold; top spacer only): the cheap incremental hot
+  // path: re-render EXACTLY from the first changed event's unit, tagging data-unit so the scroll↔unit map stays valid.
   // v.rendered is exact: the kernel's chatTail names the first changed index (its _chat_diff compares by
   // identity first, then equality, and the fold never writes an event in place), and every client pass that
   // touches a prefix event marks the view stale instead — reconcileRewind (the editable set, the rewind dim),
@@ -13572,31 +13715,49 @@ function syncViewInner(id: string, atBottom?: boolean): View {
   // A trailing window of 25 events re-rendered on every tail used to stand in for those signals, and was
   // most of a tail's render. The one render that depends on LATER events, the "worked …" footer of a turn's
   // last reply, is patched by unit after the loop (patchWorkedFooters).
-  const from = Math.max(v.rendered, v.winStart ?? 0);
+  // The units are the LIST's (the maintainer's round 5 ruling, regression-1): under a head gap the list's unit 0 is the gap and every
+  // event's unit is its index plus one, and this block tagged its rows by EVENT index and trimmed from one, so the window's rows (built
+  // by appendItem, tagged by unit) and the tail's disagreed, the trim dropped one row too many, and the footer patch, told no list, put
+  // the footer on the row above the reply or on none. Now the first changed event's unit is looked up in the list, the trim and the tags
+  // are by that unit, a gap item at or past it is re-drawn as appendItem draws it, and the patch is told the list.
+  const winStart = v.winStart ?? 0;
+  let u0 = total;   // the first changed event's unit: the first event item at or past v.rendered (the list's end when none is)
+  for (let u = 0; u < total; u++) { const it = items[u]; if (it.kind !== "gap" && itemFirstEvent(it) >= v.rendered) { u0 = u; break; } }
+  const from = Math.max(u0, winStart);
   // Drop every node from unit `from` onward, then re-render that span. Trim by DATA-UNIT, never by
   // child COUNT: a unit can put more than one node in the thread (a day divider precedes the turn
   // that opens a new day), so `keep = spacer + (from - winStart)` counted one node per unit and the
   // extra dividers made it delete that many live turns off the tail, which then never came back.
   // Reading the unit off the node is exact however many nodes a unit owns; the top spacer carries no
-  // data-unit, so it stops the walk on its own.
-  const unitOf = (n: ChildNode): number =>
-    n instanceof HTMLElement && n.dataset.unit != null ? Number(n.dataset.unit) : -1;
-  while (v.el.lastChild && unitOf(v.el.lastChild) >= from) v.el.removeChild(v.el.lastChild);
-  const walk = dayWalkBeforeEvent(s.events, from);   // the day walk's high-water mark up to here (T339)
-  for (let i = from; i < len; i++) {
+  // data-unit, so it ends the walk, and a foreign child met on the way (a hover's rail band) is dropped:
+  // trimUnitsFrom, the one walk both tail paths share (the maintainer's round 2 ruling; this mode's own copy stopped at
+  // the band and re-appended the tail on top of a stale copy of itself, one stranded duplicate per hover). The
+  // band's rings come off with it through the band module's own remover, host-scoped (clearRailRings); the glow on
+  // the turns is applyGlow's and stays, as in the seam (the maintainer's round 3 ruling D).
+  clearRailRings(v.el);
+  trimUnitsFrom(v.el, from);
+  const walk = dayWalkBefore(s, items, from);   // the day walk's high-water mark up to here (T339): a gap leaves it where it was
+  for (let u = from; u < total; u++) {
+    const it = items[u];
+    if (it.kind === "gap") { const g = gapElement(s, it, v); g.dataset.unit = String(u); v.el.appendChild(g); continue; }   // empty space: no divider, no epoch, as appendItem draws it
+    const i = itemFirstEvent(it);   // this mode's other units are single events (displayItems)
     const prev = prevTimedEpoch(s.events, i);   // the rail's raw previous epoch (the same-minute rule)
     const ep = eventEpoch(s.events[i]);
     if (ep != null) {   // a day boundary opens with its divider here too, or the tail append would drop it
       const dv = dayDividerFor(ep, walk);
-      if (dv) { dv.dataset.unit = String(i); v.el.appendChild(dv); }
+      if (dv) { dv.dataset.unit = String(u); v.el.appendChild(dv); }
     }
     const node = renderEvent(s.events[i], prev, turnWorkedSecs(s.events, i, working));
-    node.dataset.unit = String(i);   // unit === event in normal mode
+    node.dataset.unit = String(u);   // the event's UNIT, its index in the list (a head gap shifts it by one)
     v.el.appendChild(node);
     walk.pass(ep);
     stampWalkDay(node, walk);
   }
-  patchWorkedFooters(v, s, from, working);
+  // the footer patch names the last reply BEFORE the first changed event (v.rendered, still the pre-append value here), with the list.
+  // Compact mode's append takes the earlier of that and its first re-rendered unit's first event, because a folded run's first event can
+  // lie below v.rendered; this mode's units are single events and the list is monotone, so that earlier value is always v.rendered here
+  // and the patch is handed it directly (the maintainer's round 6 ruling, extra6-3)
+  patchWorkedFooters(v, s, v.rendered, working, items);
   v.winEnd = total; v.spacerCount = v.winStart ?? 0; v.spacerCountBot = 0; v.unitTotal = total; v.rendered = len;
   return v;
 }
@@ -13609,17 +13770,34 @@ function syncViewInner(id: string, atBottom?: boolean): View {
 // postal push) changes it with no event at all, which syncViewInner's fast path hands here with from = len.
 // worked-footer.ts names the reply and the seconds; the footer goes on or comes off by unit. applyForkSpots
 // homes a turn's fork spot inside its elapsed row when the turn has one, so the spot moves with the footer
-// either way. `items` is compact mode's unit list: there a unit is a display item (a folded run, or one event),
-// so the window's start maps to its first event and the reply's event index back to the unit whose node carries
-// it; a reply folded into a run has no node of its own, and the view goes stale for the window path instead.
-function patchWorkedFooters(v: View, s: Session, from: number, working: boolean, items: DisplayItem[] | null = null): void {
+// either way. `items` is the mode's unit list (displayItems: every event its own item in normal mode, the folded stream in compact
+// mode, and the regions' gaps in both), handed at EVERY site, so the window's start maps to its first event and the reply's event
+// index back to the node that carries it by its UNIT, its index in the list, never by its event index (the maintainer's round 5
+// ruling, regression-1: normal mode's sites handed no list and the patch's no-list arm mapped the event index onto data-unit, which
+// a head gap shifts by one, so the footer landed on the row above the reply or on none): a
+// lone event's own; a run's row by POSITION, the run's head and, when expanded, its rows in member order all carrying
+// the run's unit (appendItem), so member k's row is the (k+1)th node of that unit, and a collapsed run shows no row
+// for it. Marking the view stale for a folded reply, the rule until PR E, made the paint after every incremental
+// tail a full rebuild whenever the event before the streaming reply was a tool inside a run (the everyday agentic
+// shape); a hidden event (a thinking block compact mode never shows) has no node either. Nothing on screen, nothing
+// to patch.
+function patchWorkedFooters(v: View, s: Session, from: number, working: boolean, items: DisplayItem[]): void {
   const winStart = v.winStart ?? 0;
-  const winEv = items ? (items[winStart] ? itemFirstEvent(items[winStart]) : s.events.length) : winStart;
-  const unitOfEvent = (i: number): number => items ? items.findIndex((it) => it.kind === "event" && it.index === i) : i;
+  const winEv = items[winStart] ? itemFirstEvent(items[winStart]) : s.events.length;
+  const nodeOfEvent = (i: number): HTMLElement | null => {
+    for (let u = 0; u < items.length; u++) {
+      const it = items[u];
+      if (it.kind === "gap") continue;
+      if (it.kind === "event") { if (it.index === i) return v.el.querySelector(`:scope > [data-unit="${u}"]:not(.day-divider)`) as HTMLElement | null; continue; }
+      const k = it.indices.indexOf(i);
+      if (k < 0) continue;
+      const rows = v.el.querySelectorAll(`:scope > [data-unit="${u}"]:not(.day-divider)`);
+      return rows.length > k + 1 ? rows[k + 1] as HTMLElement : null;   // the head, then a row per member when expanded; collapsed: none
+    }
+    return null;
+  };
   for (const { unit: ev, secs } of workedFooterPlan(s.events, from, winEv, working, eventEpoch)) {
-    const unit = unitOfEvent(ev);
-    if (unit < 0) { v.stale = true; continue; }
-    const node = v.el.querySelector(`:scope > [data-unit="${unit}"]:not(.day-divider)`) as HTMLElement | null;
+    const node = nodeOfEvent(ev);
     if (!node) continue;
     const have = node.querySelector(":scope > .turn-elapsed") as HTMLElement | null;
     if (secs != null && !have) {
@@ -13659,6 +13837,42 @@ function unitExit(s: Session, it: DisplayItem): number | null {
   for (const i of it.indices) { const ep = eventEpoch(s.events[i]); if (ep != null && (mx == null || ep > mx)) mx = ep; }
   return mx;
 }
+// The rail's raw previous-epoch chain, the same-minute rule's reference (timeMarker, data-prev): appendItem advances it over every row
+// it renders (`adv`: a row's epoch when it has one, else unchanged), and a window build chains it unit by unit from the seed below. The
+// compact tail's seam re-renders from a unit in the MIDDLE of the window (syncViewInner, PR E) and must seed that unit with the chain a
+// build reaches there: the seed at the window's start advanced over the units before it by appendItem's own rule (railExit), never a
+// scan of s.events (prevTimedEpoch) from the unit's first event. The scan sees rows the window never shows, a hidden thinking block (the
+// kernel stamps them), and the LAST member of a collapsed run where the chain stands on its FIRST (children advance it only when the
+// fold is open), so a reply streaming after a collapsed run that spanned a minute boundary had its stamp suppressed against a time
+// the reader cannot see, and the next rebuild of the same rows showed it with no new information (the author's pass 0, medium).
+/** The seed a window opening at unit `unitStart` chains from: the most recent timed event before the unit's first (the back-scan walks
+ *  the whole s.events, so the first turn below the spacer is stamped against the real prior event); null at the transcript's start. */
+function railSeed(s: Session, items: DisplayItem[], unitStart: number): number | null {
+  return unitStart > 0 && unitStart < items.length ? prevTimedEpoch(s.events, itemFirstEvent(items[unitStart])) : null;
+}
+/** The chain after appendItem has rendered unit `it` from `prevEpoch`: appendItem's `adv` rule per kind. An event: its epoch when it has
+ *  one. A gap: unchanged. A tool run: its first member's, then each member's in order when the fold is open. A notice run: its anchor's,
+ *  then the members' in order when open, then the anchor's again (the walk leaves the run on its latest member). */
+function railExit(s: Session, it: DisplayItem, prevEpoch: number | null): number | null {
+  const adv = (i: number) => { const ep = eventEpoch(s.events[i]); if (ep != null) prevEpoch = ep; };
+  if (it.kind === "gap") return prevEpoch;
+  if (it.kind === "event") { adv(it.index); return prevEpoch; }
+  if (it.kind === "toolgroup") {
+    adv(it.indices[0]);
+    if (openFolds.has(toolGroupKey(s.events[it.indices[0]]))) for (const i of it.indices) adv(i);
+    return prevEpoch;
+  }
+  const anchor = itemAnchor(it, (i) => eventEpoch(s.events[i]));
+  adv(anchor);
+  if (openFolds.has(noticeGroupKey(s.events[it.indices[0]]))) { for (const i of it.indices) adv(i); adv(anchor); }
+  return prevEpoch;
+}
+/** The chain a window build over [winStart, …) reaches at unit `u0`: the seed at winStart advanced over the units before u0. */
+function railChainBefore(s: Session, items: DisplayItem[], winStart: number, u0: number): number | null {
+  let prev = railSeed(s, items, winStart);
+  for (let u = winStart; u < u0 && u < items.length; u++) prev = railExit(s, items[u], prev);
+  return prev;
+}
 // The day the WALK is in at a row (T342, the manager's review of T339): the top-of-view day-context label
 // (paintRailSticky) read the top row's own epoch, so a stale echo at the top line said "2 days ago" between rows the
 // divider walk keeps under one "Yesterday". Every turn a walk appends carries the walk's mark after its unit as
@@ -13668,16 +13882,11 @@ function stampWalkDay(node: HTMLElement, walk: DayWalk): void {
   const m = node.firstChild as HTMLElement | null;
   if (walk.mark != null && m && m.nodeType === 1 && m.classList && m.classList.contains("time-marker")) m.dataset.day = String(walk.mark);
 }
-// the day walk's high-water mark a walk from the top would hold before unit `unitStart` (compact units) …
+// the day walk's high-water mark a walk from the top would hold before unit `unitStart` (both modes' units: an event, a folded item, a
+// gap; normal mode's exact tail walks the list too since the maintainer's round 5 ruling, regression-1, where it walked the events)
 function dayWalkBefore(s: Session, items: DisplayItem[], unitStart: number): DayWalk {
   const w = new DayWalk();
   for (let u = 0; u < unitStart && u < items.length; u++) w.pass(unitExit(s, items[u]));
-  return w;
-}
-// … and before event `i` in normal mode, where every unit is one event
-function dayWalkBeforeEvent(events: ChatEvent[], i: number): DayWalk {
-  const w = new DayWalk();
-  for (let j = 0; j < i && j < events.length; j++) w.pass(eventEpoch(events[j]));
   return w;
 }
 
@@ -13825,13 +14034,18 @@ function appendItem(v: View, s: Session, items: DisplayItem[], u: number, prevEp
 
 // Full (re)build of the window [unitStart, unitEnd) with head/tail spacers. Does NOT touch scroll (callers
 // anchor). prevEpoch for the first rendered unit chains off the real prior event so its time-marker is right.
-function renderWindowItems(v: View, s: Session, items: DisplayItem[], unitStart: number, unitEnd: number, working: boolean): void {
+function renderWindowItems(v: View, s: Session, items: DisplayItem[], unitStart: number, unitEnd: number, working: boolean, anchored = false): void {
+  // a build takes the figures the observer measured since the last paint (PR E) only when its caller lands the reader over the result
+  // (a deep link's or a moment's land, the re-window around the viewport, a gap fill with a row or a point to put back, appendActive's
+  // and the toggle's kept place); a hidden prebuild's build and a fill that can only restore its raw top take nothing, so the figure waits
+  // for a paint that anchors (the maintainer's round 1 addendum: the same rule as syncViewInner's take). The spacers and gap units below read what was taken.
+  if (anchored) applyMeasure(v);
   const total = items.length;
   unitStart = Math.max(0, Math.min(unitStart, total));
   unitEnd = Math.max(unitStart, Math.min(unitEnd, total));
   while (v.el.firstChild) v.el.removeChild(v.el.firstChild);
   if (unitStart > 0) v.el.appendChild(el("div", "tx-spacer tx-spacer-top"));
-  let prevEpoch = unitStart > 0 && unitStart < total ? prevTimedEpoch(s.events, itemFirstEvent(items[unitStart])) : null;
+  let prevEpoch = railSeed(s, items, unitStart);   // the rail chain's seed (railSeed; the compact tail's seam chains from the same one)
   const walk = dayWalkBefore(s, items, unitStart);   // the mark a walk from the top would hold here (T339)
   const turns = s.regions ? turnOfEvents(s) : null;   // once per paint: every row it appends names its turn (round six)
   for (let u = unitStart; u < unitEnd; u++) prevEpoch = appendItem(v, s, items, u, prevEpoch, walk, working, turns);
@@ -13839,11 +14053,88 @@ function renderWindowItems(v: View, s: Session, items: DisplayItem[], unitStart:
   v.winStart = unitStart; v.winEnd = unitEnd;
   v.spacerCount = unitStart; v.spacerCountBot = total - unitEnd; v.unitTotal = total;
   v.rendered = s.events.length;
+  v.units = items;        // the units this DOM holds: compact mode's tail plan compares the next paint's against them (PR E)
+  v.measureDue = true;    // a fresh window: the unit observer measures it when the rows' heights arrive (measureUnits)
   // a gap unit's height is its own estimate, not the average row (T386 stage 2): the spacers and the scroll→unit map read it
-  const gu = new Map<number, number>();
-  for (let u = 0; u < total; u++) { const it = items[u]; if (it.kind === "gap") gu.set(u, gapHeight(it, v.pxPerTurn)); }   // per TURN, not per display unit (medium 2)
-  v.gapUnits = gu.size ? gu : undefined;
+  v.gapUnits = gapUnitsOf(items, v.pxPerTurn);
   sizeSpacers(v);
+}
+/** The spacer map's gap entries: unit → the gap's estimated height, per TURN, not per display unit (T386 stage 2, medium 2); undefined
+ *  when the list holds no gap. */
+function gapUnitsOf(items: readonly DisplayItem[], perTurn: number | undefined): Map<number, number> | undefined {
+  const gu = new Map<number, number>();
+  for (let u = 0; u < items.length; u++) { const it = items[u]; if (it.kind === "gap") gu.set(u, gapHeight(it, perTurn)); }
+  return gu.size ? gu : undefined;
+}
+/** THE predicate for what a view's child is (PR E, the maintainer's round 1 ruling, high): a child WITH data-unit is a unit's node (a turn, a run's head or
+ *  row, a day divider, a gap element: appendItem tags every node it appends), and this is its unit; -1 for a child that carries none. The
+ *  trim, the eviction and the measure all key on it. Of the children with no unit, a spacer (tx-spacer, isSpacerNode) bounds the units
+ *  and ends a walk over them; any other is FOREIGN to the transcript (a hover's rail band, drawn as the thread's last child on every rail,
+ *  dot or feed hover: instantLocalBand, drawRailBand; showActive's loading hint) and is neither a unit nor an end: the trim drops it and
+ *  the measure skips it. */
+function unitOfNode(n: ChildNode): number { return n instanceof HTMLElement && n.dataset.unit != null ? Number(n.dataset.unit) : -1; }
+/** A virtualization spacer: no unit of its own, and the end of a walk over the units. */
+function isSpacerNode(n: ChildNode): boolean { return n instanceof HTMLElement && n.classList.contains("tx-spacer"); }
+/** Drop every node from unit `u0` onward off the END of a view (a unit's nodes are contiguous and units are in order, so the walk up
+ *  from the last child meets them all; a unit below u0, or a spacer, ends it). A foreign child met on the way (unitOfNode: a hover's rail
+ *  band) is dropped, not counted, and the walk goes on to the units behind it. Until the author's pass 1 (the maintainer's round 1 ruling) the walk stopped at any child with
+ *  no unit, so after any hover the tail paint trimmed nothing and re-appended the tail units on top of stale copies of themselves,
+ *  which the footer patch and the gap redraw then resolved to the stale copy (querySelector's first match). Dropped rather than skipped
+ *  over so the invariant the eviction's walk and the footer patch's positional read rely on holds after every paint (the units
+ *  contiguous, nothing foreign among them); the rebuild this path replaced removed the band on every frame too, and a hover redraws it
+ *  on the next mouseenter. Returns the count of unit nodes removed. Both tail paths walk through here, compact mode's seam (PR E) and
+ *  normal mode's exact tail (the maintainer's round 2 ruling: normal mode kept its own copy of the walk, which stopped at a foreign child, until then). */
+function trimUnitsFrom(host: HTMLElement, u0: number): number {
+  let n = 0;
+  for (let c: ChildNode | null = host.lastChild; c; ) {
+    const prev: ChildNode | null = c.previousSibling;
+    const u = unitOfNode(c);
+    if (u >= u0) { host.removeChild(c); n++; }
+    else if (u >= 0 || isSpacerNode(c)) break;
+    else host.removeChild(c);
+    c = prev;
+  }
+  return n;
+}
+/** Compact mode keeps its window's span while the reader follows the tail (PR E): after an append at the bottom the leading units past
+ *  the span leave the DOM and the top spacer stands for them, as the rebuild's re-slice did, so a watched session's DOM does not grow
+ *  without bound (normal mode grows until a switch re-collapses it). Only at the bottom: appendActive writes the bottom after the sync,
+ *  so a change above the reader is never seen; a scrolled-up reader's window is left whole (syncViewInner's keepTop). */
+function evictCompactTop(v: View, newWinStart: number): boolean {
+  const winStart = v.winStart ?? 0;
+  if (newWinStart <= winStart) return false;
+  let top = v.el.querySelector(":scope > .tx-spacer-top") as HTMLElement | null;
+  if (!top) { top = el("div", "tx-spacer tx-spacer-top"); v.el.insertBefore(top, v.el.firstChild); }
+  let n: ChildNode | null = top.nextSibling;
+  while (n) { const next = n.nextSibling; const u = unitOfNode(n); if (u < 0 || u >= newWinStart) break; v.el.removeChild(n); n = next; }
+  v.winStart = newWinStart; v.spacerCount = newWinStart;
+  sizeSpacers(v);
+  return true;   // the caller re-seeds the unit this promoted to the window's first (reseedWindowHead)
+}
+/** The unit an eviction promotes to the window's first was drawn mid-window, chained from the unit before it (appendItem's adv), where a
+ *  build of the same window seeds it with railSeed, and the two references part (a collapsed run leaves the chain on its FIRST member
+ *  where the seed's back-scan finds its LAST; a hidden thinking row is seen by the scan alone), so the row's stamp depended on which path
+ *  last painted it: present incrementally, blank after any later rebuild, with no new information (the maintainer's round 1 ruling: the fifth full-rebuild
+ *  case, which compactTailPlan cannot list because the plan is computed before the eviction). The rule is CONSISTENCY WITH THE REBUILD,
+ *  in either direction (a notice run's anchor can make the chain suppress a stamp the seed shows): the window's FIRST marker is repainted
+ *  against the reference a build hands its unit, data-prev with it (the minute tick's reference, refreshRelativeMarkers). That reference
+ *  is the seed at the new start carried to the marker's unit by the chain's own rule (railChainBefore): the seed itself when the head
+ *  unit carries the marker, and the seed passed through a marker-less head otherwise (a gap, whose railExit is the identity; an untimed
+ *  row likewise; a timed row with no marker advances the chain on both paths alike). Re-seeding the head unit's own marker alone found
+ *  none on a gap and left the first marker after it on the chain's reference, where a rebuild of the same window seeded it through the
+ *  gap from the event below it (the author's second pass over round 1). The marker is the one node the seed reaches: the rows of an expanded run chain
+ *  from the run's own members, the same on both paths, and appendItem appends at the end only, so a re-render of the unit in place is
+ *  not available. A window with no marker at all has nothing to re-seed. */
+function reseedWindowHead(v: View, s: Session, items: DisplayItem[]): void {
+  const ws = v.winStart ?? 0;
+  const m = v.el.querySelector(":scope > [data-unit] > .time-marker") as HTMLElement | null;   // the window's first marker-bearing node (a divider, a gap, an untimed row carry none)
+  if (!m) return;
+  const um = Number((m.parentElement as HTMLElement).dataset.unit);
+  const seed = railChainBefore(s, items, ws, um);   // railSeed(s, items, ws) when um is ws
+  const prev = seed == null ? "" : String(seed);
+  if (m.dataset.prev === prev) return;
+  m.dataset.prev = prev;
+  paintMarker(m, Number(m.dataset.epoch), seed, Date.now());
 }
 /** The estimated height of the units [from, to): a gap its own, every other unit the measured average. */
 function hiddenHeight(v: View, from: number, to: number, avg: number): number {
@@ -13852,31 +14143,15 @@ function hiddenHeight(v: View, from: number, to: number, avg: number): number {
   return Math.max(0, Math.round(h));
 }
 
-// Size the head/tail spacers to (hidden-unit count × avg rendered row height) so the scrollbar spans the
-// whole transcript. avgTurnH is measured once off the rendered rows (only when VISIBLE — a display:none
-// pre-built view reports offsetHeight 0, so don't cache a 0) and reused; the spacers sit off-viewport, so a
-// per-row estimate is invisible.
+// Size the head/tail spacers to the hidden units' estimated heights (a gap its own, every other unit the average row) so
+// the scrollbar spans the whole transcript. Nothing is measured here (PR E, 2026-09-19): the figures come from measureUnits,
+// off the unit observer's heights at frame end, so this write forces no layout inside the render task (it used to read
+// offsetHeight for every child right after the rebuild, and the scroller's scrollHeight for the diag row); the spacers sit
+// off-viewport, so a per-row estimate is invisible.
 function sizeSpacers(v: View): void {
   const top = v.el.querySelector(".tx-spacer-top") as HTMLElement | null;
   const bot = v.el.querySelector(".tx-spacer-bot") as HTMLElement | null;
   if (!top && !bot) return;
-  if (v.avgTurnH == null) {
-    let h = 0, n = 0;
-    for (const c of Array.from(v.el.children) as HTMLElement[]) {
-      if (c.classList.contains("tx-spacer") || c.classList.contains("tx-gap")) continue;   // the gap's own estimate must not feed the average that sizes it (T386 stage 2, medium 3)
-      h += c.offsetHeight; n++;
-    }
-    if (h > 0 && n > 0) v.avgTurnH = h / n;
-  }
-  if (v.pxPerTurn == null) {   // px per TURN (a gap counts turns, not display units): total rendered height over the rendered turns (a user row starts each)
-    let h = 0, turns = 0;
-    for (const c of Array.from(v.el.children) as HTMLElement[]) {
-      if (c.classList.contains("tx-spacer") || c.classList.contains("tx-gap") || !c.classList.contains("turn")) continue;   // only turn rows: cards and dividers are not turn content (round five)
-      h += c.offsetHeight;   // the whole row, action strip included: a gap stands for rows as they will render, and every user row carries the strip (the regions lab's sizing road: without it the gap ran 16 percent short)
-      if (c.classList.contains("turn-user")) turns++;
-    }
-    if (h > 0 && turns > 0) v.pxPerTurn = h / turns;
-  }
   const avg = v.avgTurnH ?? 60;
   const topBefore = top ? (parseFloat(top.style.height) || 0) : 0, botBefore = bot ? (parseFloat(bot.style.height) || 0) : 0;
   const total = v.unitTotal ?? ((v.spacerCount ?? 0) + (v.spacerCountBot ?? 0));
@@ -13884,11 +14159,166 @@ function sizeSpacers(v: View): void {
   if (top) top.style.height = topAfter + "px";
   if (bot) bot.style.height = botAfter + "px";
   // a spacer re-size is a layout change above or below the reader that no pane write accompanies; the browser's
-  // anchoring answers it on its own, so the journal names it (T262j) — for the ACTIVE view only
-  if ((topAfter !== topBefore || botAfter !== botBefore) && activeId && views.get(activeId) === v) {
+  // anchoring answers it on its own, so the journal names it (T262j), for the ACTIVE view only. The row's scroll and
+  // client heights are read a frame later (queueSpacerRow): reading them here forced a layout inside the render task.
+  if ((topAfter !== topBefore || botAfter !== botBefore) && activeId && views.get(activeId) === v) queueSpacerRow(activeId, topBefore, topAfter, botBefore, botAfter);
+}
+// The spacer rows of one task, filed on the next animation frame with the scroller's heights read once there (PR E).
+let spacerRowsPending: Array<[string, number, number, number, number]> = [];
+let spacerRowsRaf: number | null = null;
+function queueSpacerRow(sid: string, topBefore: number, topAfter: number, botBefore: number, botAfter: number): void {
+  spacerRowsPending.push([sid, topBefore, topAfter, botBefore, botAfter]);
+  if (spacerRowsRaf != null) return;
+  spacerRowsRaf = requestAnimationFrame(() => {
+    spacerRowsRaf = null;
+    const rows = spacerRowsPending; spacerRowsPending = [];
+    // the scroller's heights belong to the view active IN THIS FRAME: #content is the one scroller and a view switched away since its row
+    // was queued has no geometry, so its row is filed with none (sh and ch null) and says so (view: "inactive") rather than with the other
+    // view's figures, which corrupted the journal this change's own defect was diagnosed from (the maintainer's round 1 addendum). The marker
+    // is a `view` key holding one fixed word, "inactive", and no host name, admitted to the kernel's chat allowlist on the owner's approval
+    // (the owner 2026-09-21, who approved the field: a new field a page posts to the kernel is his to approve, field by field). One read, and
+    // only when a queued row is the active view's; a row of the active view under a scroller with no box carries the 0 the scroller reads,
+    // an honest figure. The live view is what #content measures only while its element is SHOWN: in the section-at-a-glance view
+    // (showActive's snapView branch) every view's element is display none and the section list, a child of #content, is what the scroller
+    // holds, so the live view's row there would carry the LIST's heights; the same with no live view, or a live id whose element is gone.
+    // Such a row is filed as a switched-away view's, nulls and the marker, the case the marker exists for (the maintainer's round 5 ruling,
+    // extra10-1: the stand-down keyed on activeId alone, and a section-view frame filed the list's figures with no marker). The predicate is
+    // the element's display, the property; snapView is one cause of it.
     const content = document.getElementById("content");
-    scrollDiagRow("spacer", spacerRow(activeId, topBefore, topAfter, botBefore, botAfter, content ? content.scrollHeight : 0, content ? content.clientHeight : 0));
+    const liveView = activeId ? views.get(activeId) : undefined;
+    const live = liveView && liveView.el.style.display !== "none" ? activeId : null;
+    let sh: number | null = null, ch: number | null = null;
+    if (live && content && rows.some(([rsid]) => rsid === live)) { sh = content.scrollHeight; ch = content.clientHeight; }
+    for (const [rsid, a, b, c, d] of rows) scrollDiagRow("spacer", rsid === live ? spacerRow(rsid, a, b, c, d, sh, ch) : spacerRow(rsid, a, b, c, d, null, null, "inactive"));
+  });
+}
+/** The page's visibility changing ends the frame the queued spacer rows were waiting for (the maintainer's round 5 ruling, kernel-1): an
+ *  animation frame does not run while the document is hidden, so rows queued just before the page hid, and rows queued by the paints that
+ *  run while it is hidden, would be filed by the frame that comes once it shows again, with THAT frame's scroller heights (every paint in
+ *  between in them) and the kernel's arrival time: another frame's figures on a row about an earlier write. On either edge of
+ *  visibilitychange (the listener stands beside the prebuild's, outside the span the spacer harness lifts, and hands the edge here) the
+ *  rows whose frame has not run are DROPPED, their frame cancelled, and ONE row says what was dropped, the count and the kind, and on which
+ *  edge (`why`: hidden, for rows queued before the page hid; shown, for rows queued while it was hidden), never a row filed with another
+ *  frame's figures: the repository's authoritative-source rule applied to a beacon. A cap alone would file the rows it kept with the
+ *  wrong frame's figures, so the bound is the event. The drop row's keys are the chat allowlist's (sid, n, kind, why), no new key and no
+ *  `view`, posted through scrollDiagRow like every diag row, so the budget caps it too. The count `n` is over EVERY pending row, whichever
+ *  view queued it (a switched-away view's rows wait in the same list and their own sids go with them), and `sid` is the live view's id at
+ *  the edge, empty when there is none: one row per edge, not one per view, since the row says what was dropped and no more (the author's
+ *  fixer pass over the pass after the maintainer's round 5, its verifier (b), which found this undisclosed; a row per view is not owed). */
+function dropSpacerRowsOnVisibility(): void {
+  const rows = spacerRowsPending;
+  if (rows.length === 0) return;
+  spacerRowsPending = [];
+  if (spacerRowsRaf != null) { cancelAnimationFrame(spacerRowsRaf); spacerRowsRaf = null; }
+  scrollDiagRow("spacer-dropped", { sid: activeId || "", n: rows.length, kind: "spacer", why: document.hidden ? "hidden" : "shown" });
+}
+
+/** A follow-mode reader at the bottom gets the measured figures on the NEXT PAINT (PR E; the author's pass 0, medium): the unit observer
+ *  parked them (measureUnits) and this asks for appendActive's paint, whose sync takes them (applyMeasure in syncViewInner) and whose
+ *  follow writes the bottom after the spacers (followTail, "append-stick": a reader at the bottom before the sync is written back to it).
+ *  Nothing is written HERE. This runs inside the unit observer's callback, and a spacer re-size there changes the view element's height,
+ *  which v.ro (created before v.uo in ensureView, so delivered before it) has already reported this frame: the browser then raises
+ *  "ResizeObserver loop completed with undelivered notifications" as a window error event (the tab-row sentinel's precedent,
+ *  ensureTabRowObserver) and delivers v.ro's report a frame late, where the spacer's move filed as the tail's change. Every other
+ *  reader's figures wait for the next tail paint or window build, where the anchor restore covers the change; a scroller with no box
+ *  (the pane hidden) reads as the bottom and is asked for nothing. */
+function takeMeasureAtBottom(v: View): void {
+  if (!v.measured || !v.stick || !v.shown || !activeId || views.get(activeId) !== v) return;
+  const content = document.getElementById("content");
+  if (!content || content.clientHeight <= 0 || !atBottom(content)) return;
+  scheduleAppendActive();
+}
+
+// The window's two figures, measured where the heights arrive (PR E, 2026-09-19): the unit ResizeObserver's callback
+// (ensureView), at frame end after layout, off the border-box heights it recorded (v.uh), never a layout property, so the
+// render task forces no layout for them. Due after every window build (renderWindowItems, the compact tail append and its
+// eviction) and after a reflow; a hidden view's observer records nothing, so a view built while hidden measures on its re-show.
+// The figures WAIT in v.measured for the next paint (applyMeasure: appendActive's sync in syncViewInner, or a window build in
+// renderWindowItems; a landing's sync takes none), which writes the spacers and gap units where appendActive's scroll maths
+// accounts for them; nothing here touches the DOM, and a bottom reader's paint is asked for at once (takeMeasureAtBottom).
+// - avgTurnH, the rows' mean over every non-spacer, non-gap child, once per view as before (the resets that clear it, forgetAverage,
+//   drop a parked one with it and so re-arm the measure);
+// - pxPerTurn, the head gap's per-TURN figure: the MEDIAN over the turns the window holds WHOLE (turn-estimate.ts: a visible
+//   user row to the next; the partial leading turn and the streaming trailing turn are not counted), at least two of them,
+//   else the figure stands as it was (the default until a window has two). The old figure was the window's whole height
+//   over its user-row count, measured once for the view's life: a tail window of one user row and 79 dense rows measured
+//   about 7,150 px per turn, and the 200-turn head gap above it went from 24k px to 1.43M px on the paint after the first
+//   (the phone, 2026-09-19).
+function measureUnits(v: View): void {
+  if (!v.measureDue || !v.uh) return;
+  v.measureDue = false;
+  const uh = v.uh;
+  // the population is the children that carry a unit (unitOfNode, the one predicate): a hover's rail band is a child of the thread with a
+  // height in the map (the observer observes every added element) and counted as a row until the author's pass 1 (the maintainer's round 1 ruling); the spacers carry no unit
+  // either, and a gap element does but is not row content (isSpacerRow)
+  const rows = rowsFor((Array.from(v.el.children) as HTMLElement[]).filter((c) => unitOfNode(c) >= 0), (c) => c.className, (c) => c.style.display === "none", (c) => uh.get(c));
+  if (v.avgTurnH == null && v.measured?.avg == null) { const h = meanRowHeight(rows); if (h != null) v.measured = { ...v.measured, avg: h }; }
+  const per = perTurnEstimate(rows);
+  if (per != null && per !== (v.measured?.per ?? v.pxPerTurn)) v.measured = { ...v.measured, per };
+}
+/** A reset that wants a fresh average (the compact toggle's rerender, a re-collapse to the tail, the older-history re-anchor) clears
+ *  the figure AND the figures parked since the last paint: the build that follows takes parked figures first (applyMeasure in
+ *  renderWindowItems), so an average parked over the old rows and never taken (a reader off the bottom, an idle session) would have
+ *  become the new rows' average for the view's life, and measureUnits, seeing one held, would never have measured the new rows (the
+ *  author's pass 0, low). One helper for every such reset, so none forgets the parked half. */
+function forgetAverage(v: View): void {
+  v.avgTurnH = undefined; v.measured = undefined;
+}
+/** The measured figures become the view's, inside a paint: true when either changed, so the caller re-sizes the spacers and
+ *  re-draws the gap units (renderWindowItems does both as part of its build). The average is taken once per view. */
+function applyMeasure(v: View): boolean {
+  const m = v.measured;
+  if (!m) return false;
+  v.measured = undefined;
+  let changed = false;
+  if (m.avg != null && v.avgTurnH == null) { v.avgTurnH = m.avg; changed = true; }
+  if (m.per != null && m.per !== v.pxPerTurn) { v.pxPerTurn = m.per; changed = true; }
+  return changed;
+}
+/** The view's figures as a paint finds them, read BEFORE its take (applyMeasure): what is parked, and what the spacers and gap units stand
+ *  at. A paint that ends anchoring the reader keeps its take; one whose restore turns out to have no row to put back gives the figures
+ *  back (untakeMeasure) before its raw write. */
+type FiguresBefore = { avg: number | undefined; per: number | undefined; measured: View["measured"] };
+function figuresBefore(v: View): FiguresBefore { return { avg: v.avgTurnH, per: v.pxPerTurn, measured: v.measured }; }
+/** The take undone. A paint took the parked figures (applyMeasure, re-sizing the head spacer and the gap units above the reader) and then
+ *  found no row to put the reader back over, so its only write is a raw scrollTop measured in the layout BEFORE the take: the figures the
+ *  paint found parked are parked again, the view's figures are what they were, and the spacers and gap units are re-drawn from them (no
+ *  layout read), so the raw write lands in the layout it was measured in and the figures wait for the next paint that anchors, as they would
+ *  have had this paint taken nothing. One rule over every reader of the take state, keyed on the OUTCOME (the maintainer's round 3 ruling B;
+ *  the intent-keyed rule, a figure is taken only by a paint that anchors and every anchoring paint takes one, stands, and this is its
+ *  outcome half: a paint whose anchor was gone by the time it wrote has, net, taken nothing). The readers and their roads:
+ *  appendActive's append-raw (the captured row gone after the sync), the tool-run toggle's raw write (the row inside the run that
+ *  collapsed), the fill's two raw roads (no row or point to put back; a point that maps to no y, on the fill and on its re-window),
+ *  landActive's land-saved after a take (no row at the saved place; the row gone with the attempt's window build), keepPlaceAcrossWindow's
+ *  double miss with the row under the viewport top gone too, scrollToAnchor's re-query missing after its build (not rendered; the wrong
+ *  kind) for its direct callers, landNearestMoment's miss, and virtualizeToViewport's focus unit gone from the rebuilt window. True when
+ *  a take was undone; false when the paint took nothing (nothing was parked, or what was parked is still parked), so a paint with no take of
+ *  its own gives nothing back whatever an earlier paint did. The reload restore's raw `rs.top` is NOT one of these roads: that scrollTop
+ *  was measured on the page before the reload, whose figures the take re-derives, so the take is what makes the persisted figure land
+ *  right (both refuters' probes on the round-3 filing; land-active-keep.test.ts executes the record with no anchor and asserts the take
+ *  standing). */
+function untakeMeasure(v: View, before: FiguresBefore): boolean {
+  if (!before.measured || v.measured) return false;
+  v.avgTurnH = before.avg; v.pxPerTurn = before.per; v.measured = before.measured;
+  redrawGapUnits(v); sizeSpacers(v);
+  return true;
+}
+/** The gap units at the current per-turn figure: the spacer map (hiddenHeight, the turn walks) and every rendered gap element. */
+function redrawGapUnits(v: View): void {
+  if (!v.units) return;
+  v.gapUnits = gapUnitsOf(v.units, v.pxPerTurn);
+  for (const g of Array.from(v.el.querySelectorAll(":scope > .tx-gap")) as HTMLElement[]) {
+    const lo = Number(g.dataset.lo), hi = Number(g.dataset.hi);
+    if (Number.isFinite(lo) && Number.isFinite(hi)) g.style.height = gapHeight({ lo, hi }, v.pxPerTurn) + "px";
   }
+}
+/** A unit observer entry's BORDER-BOX height (padding included: the height offsetHeight reports and the browser leg recomputes);
+ *  contentRect, the content box, is the fallback where an engine reports no box sizes. */
+function entryBoxHeight(e: ResizeObserverEntry): number {
+  const b = (e as { borderBoxSize?: readonly ResizeObserverSize[] | ResizeObserverSize }).borderBoxSize;
+  const s = Array.isArray(b) ? (b as readonly ResizeObserverSize[])[0] : (b as ResizeObserverSize | undefined);
+  if (s && typeof s.blockSize === "number") return s.blockSize;
+  return e.contentRect?.height ?? 0;
 }
 
 // Estimate the UNIT index at the viewport top: a spacer maps by avg height; a rendered row by its data-unit.
@@ -14013,18 +14443,37 @@ function renderNoticeGroup(evs: ChatEvent[], anchor: ChatEvent, prevEpoch: numbe
   return turn;
 }
 
-// Toggle a collapsed tool run open/closed and repaint the active view in place (scroll preserved).
+// Toggle a collapsed tool run open/closed and repaint the active view in place, keeping the reader's place the way appendActive keeps
+// it (PR E, the maintainer's round 1 ruling, high). The repaint is a window build (syncView over a stale view: renderWindowItems), and a build takes the
+// figures the unit observer parked since the last paint (applyMeasure), so the head spacer above the viewport can change height under
+// the reader by the re-measured per-turn figure times the head gap's turns; the raw restore of the pre-toggle scrollTop that stood here
+// moved a scrolled-up reader by that delta on every toggle. A reader at the bottom keeps the raw write: a collapse makes the transcript
+// shorter, the browser clamps them at the forced layout before the write runs, and the write claims that move with `top` as its origin
+// (a write that read the clamped value would move nothing, file no row and set no marker, leaving the clamp's own scroll event to file
+// as a gesture: see writeScroll); an expand leaves the run's head where it was, its rows opening under it, rather than following to the
+// bottom. Anyone else has the first visible row's offset captured before the build and restored after it (captureScrollAnchor /
+// restoreScrollAnchor, the anchor keep appendActive uses); when no row is capturable, or the anchor row was inside the run that
+// collapsed and is gone, the raw write stands as the fallback, `top` its origin. The build's sync is flagged by whether a row was
+// captured (the maintainer's round 1 addendum): a bottom reader's and a row-less reader's build takes no parked figure, because their raw write would
+// move them by it, and a figure parked while the reader was off the bottom has no paint asked for (takeMeasureAtBottom asks only at
+// the bottom, a scroll to the bottom paints nothing), so on an idle session the first paint at the bottom can be this toggle; the
+// figure waits for the next tail paint or re-window, both of which anchor. The one take followed by a raw write is the anchor row
+// gone in the collapse, a residual the PR discloses.
 function toggleToolGroup(key: string): void {
   if (openFolds.has(key)) openFolds.delete(key); else openFolds.add(key);
   const content = document.getElementById("content");
   const top = content ? content.scrollTop : 0;
+  const v = activeId ? views.get(activeId) : undefined;
+  const stick = !!content && content.scrollHeight > content.clientHeight + 2 && atBottom(content);
+  const anchor = content && v && !stick ? captureScrollAnchor(content, v) : null;
+  const figures = v ? figuresBefore(v) : null;   // what the build may take, given back below if the captured row collapsed away
   // the expand/collapse changes the DOM without changing the event set, so mark the view stale to force
   // the compact rebuild past the cache guard (a plain tab switch leaves stale false → reuses the cache).
-  if (activeId) { const v = views.get(activeId); if (v) v.stale = true; syncView(activeId); }
-  // `top` is also the write's origin: a collapse makes the transcript shorter, the browser clamps a bottom reader at the forced
-  // layout before this write runs, and a write that read the clamped value would move nothing, file no row and set no marker,
-  // leaving the clamp's own scroll event to file as a gesture (see writeScroll)
-  if (content) writeScroll(content, top, "toolgroup-toggle", false, top);
+  if (activeId) { if (v) v.stale = true; syncView(activeId, undefined, !!anchor); }   // anchored when a row was captured: the keep below puts it back over the re-sized spacer; a bottom reader or one with no row takes nothing
+  // the raw write: a bottom reader's clamp claimed, a row-less reader's top kept (neither took), or the captured row gone inside the run that
+  // collapsed, where the build took and the raw pre-toggle top is exact only in the layout it was read in, so the take is undone first
+  // (untakeMeasure; the maintainer's round 3 ruling B: until then the one take followed by a raw write, disclosed; toolgroup-toggle-keep.test.ts)
+  if (content && !(anchor && v && restoreScrollAnchor(content, v, anchor, top))) { if (v && figures) untakeMeasure(v, figures); writeScroll(content, top, "toolgroup-toggle", false, top); }
   refillOpenCommentPop();   // the popover renders the same units — its copy of this run must flip too
   scheduleRailSticky();
 }
@@ -14048,7 +14497,7 @@ function rerenderAll(): void {
   // the bottom over the anchor restored below. One read of the DOM drives both the flag and the keep.
   if (live) av!.stick = reshowStick(av!.stick, bottom);
   const keep = live && !bottom ? captureScrollAnchor(content!, av!) : null;   // follow mode: only a true tail-sitter lands at the bottom
-  for (const v of views.values()) { while (v.el.firstChild) v.el.removeChild(v.el.firstChild); v.rendered = 0; v.stale = false; v.winStart = 0; v.winEnd = 0; v.avgTurnH = undefined; v.spacerCount = undefined; v.spacerCountBot = undefined; v.unitTotal = undefined; }
+  for (const v of views.values()) { while (v.el.firstChild) v.el.removeChild(v.el.firstChild); v.rendered = 0; v.stale = false; v.winStart = 0; v.winEnd = 0; forgetAverage(v); v.spacerCount = undefined; v.spacerCountBot = undefined; v.unitTotal = undefined; }
   showActive(keep);
   schedulePrebuild(); // rebuild every off-screen view in idle under the new setting, so switches stay instant
 }
@@ -14194,6 +14643,10 @@ document.addEventListener("visibilitychange", () => { if (!document.hidden) sche
 // window shown again after minutes hidden catches its today labels up at once rather than at the next boundary
 setTimeout(railMinuteTick, 60000 - (Date.now() % 60000) + 50);
 document.addEventListener("visibilitychange", () => { if (!document.hidden && activeId) refreshRelativeMarkers(views.get(activeId)?.el); });
+// the spacer rows' frame does not run while the page is hidden: on either edge the pending rows are dropped and one row says so
+// (dropSpacerRowsOnVisibility, in the spacer span above; the listener lives here because a module-level statement inside that span
+// would run at lift time in the harnesses that slice it, spacer-measure.test.ts)
+document.addEventListener("visibilitychange", dropSpacerRowsOnVisibility);
 
 function runPrebuild(deadline: IdleDeadline): void {
   prebuildHandle = null;
@@ -14241,7 +14694,7 @@ function runPrebuild(deadline: IdleDeadline): void {
       // 2026-09-07). Same collapse showActive does, moved off the critical path.
       if (v && !pendingAnchor && pendingAnchorT == null
           && v.el.querySelectorAll(".turn").length > WINDOW_CAP) {
-        v.rendered = 0; v.winStart = 0; v.avgTurnH = undefined; v.stick = true;
+        v.rendered = 0; v.winStart = 0; forgetAverage(v); v.stick = true;
       }
       syncView(id); // build the hidden view now, off the critical path
       built++;
@@ -14907,7 +15360,7 @@ function showActive(keep?: { uuid: string; y: number } | null) {
   // …and a SWITCH rule only: a re-show of the view on screen never snaps it to the tail (T249)
   if (!reshow && !pendingAnchor && pendingAnchorT == null
       && v.el.querySelectorAll(".turn").length > WINDOW_CAP) {
-    v.rendered = 0; v.winStart = 0; v.avgTurnH = undefined; v.stick = true;   // → firstBuild rebuilds the tail, lands at bottom
+    v.rendered = 0; v.winStart = 0; forgetAverage(v); v.stick = true;   // → firstBuild rebuilds the tail, lands at bottom
   }
   for (const [vid, vv] of views) vv.el.style.display = vid === activeId ? "" : "none";
   if (!reshow) refreshRelativeMarkers(v.el);   // a tab shown after minutes hidden: its today labels catch up before the eye lands (T406; the minute tick skips hidden tabs)
@@ -14962,12 +15415,28 @@ function showActive(keep?: { uuid: string; y: number } | null) {
 // their place)
 let relandAsk = false;
 function keepPlaceAcrossWindow(content: HTMLElement, v: View, keep: { uuid: string; y: number }): boolean {
+  // the reader's own row is put back over whatever moved, so this land takes the figures parked since the last paint (the spacers and
+  // gap units re-sized before the restore, which covers them); a same-task re-show has nothing parked yet and takes nothing (PR E, the
+  // maintainer's round 1 addendum: every anchoring paint takes, and the switch's land before this one left the figures for it when its own road was land-saved).
+  // The take stays above the restores: restoreScrollAnchor needs the row's y in the re-sized layout. So the road where BOTH restores miss
+  // (the reader's row gone from the rebuilt window, and the landing attempt landing nothing: a fetch armed, an anchor nowhere in the
+  // transcript) took and wrote nothing, and the content under the viewport moved by the spacers' delta. The row under the viewport top is
+  // captured here, before the take, and put back at its offset on that road (measured on its own rect, not by symmetry with the other two
+  // roads); when the attempt rebuilt the window around the anchor's unit and its re-query missed, that row is gone too and nothing is
+  // written: the reader is where the rebuild left them, a residual the body names (the maintainer's round 2 ruling)
+  const under = captureScrollAnchor(content, v);
+  const figures = figuresBefore(v);   // what the take below takes, given back when neither restore has a row to put back
+  if (applyMeasure(v)) { redrawGapUnits(v); sizeSpacers(v); }
   if (restoreScrollAnchor(content, v, keep)) return true;
   pendingAnchor = keep.uuid; pendingAnchorKeepY = keep.y;
   relandAsk = true;
   let landed = false;
   try { landed = scrollToAnchor(keep.uuid); } finally { relandAsk = false; }
   if (!anchorPendingOlder) { pendingAnchor = null; pendingAnchorKeepY = null; }   // an older-history fetch keeps them armed for chatHead's re-land
+  // the double miss: the row that was under the viewport top, back at its offset over the take; with that row gone too (the attempt's window
+  // build replaced the rows) nothing can be put back and nothing is written, so the take is undone and the figures wait (untakeMeasure; the
+  // maintainer's round 3 ruling B: until then the take stood under a reader nothing had placed)
+  if (!landed && !(under && restoreScrollAnchor(content, v, under))) untakeMeasure(v, figures);
   return landed;
 }
 
@@ -15007,8 +15476,27 @@ function landActive(content: HTMLElement | null, v: View): void {
     whenChatVisible(() => { const c = document.getElementById("content"); const vv = activeId ? views.get(activeId) : null; if (c && vv) landActive(c, vv); });
     return;
   }
-  sizeSpacers(v);  // the view is now VISIBLE (display set in showActive), so the spacers get a real height
-                   // measurement — a tab pre-built while display:none could only fall back until now
+  // the view is now VISIBLE (display set in showActive): the spacers take the figures the view holds, and the land takes the figures the
+  // observer parked since the last paint on every road but the nothing-armed re-show (`saved`), BEFORE its landing attempt: an anchor's or
+  // a moment's land reads the target's live rect (scrollToAnchor, landOn) and a resident target rebuilds nothing, so a take after the
+  // attempt would re-size the spacer under a row just placed; a seek, the reload restore and the bottom land put the reader over the
+  // result too. The take is decided on what is ARMED, not on the outcome: a land whose anchor misses (nowhere in the transcript, the wrong
+  // kind, a fetch armed) falls through to the saved-place restore below with the spacers re-sized, so the row the SAVED place held is
+  // captured here, at that place (the scroller does not hold it yet on a switch: the leaving tab's position is still under the viewport),
+  // and the fallback puts it back at its offset (anchor-restore). The raw land-saved write stands whenever that restore finds no row to
+  // put back, three roads: nothing was armed (no take: the saved scrollTop is exact, and the figures wait for keepPlaceAcrossWindow,
+  // which showActive runs after this land with the reader's own row, or for the next tail paint); no row was at the saved place (inside
+  // a spacer); or the captured row is gone, because the attempt's window build around the anchor's unit (scrollToAnchor's
+  // pointer-not-rendered and pointer-wrong-kind roads) replaced the rows before its re-query missed, which leaves the reader in that
+  // window at the pre-resize scrollTop, the residual the body names beside keepPlaceAcrossWindow's double miss after a rebuild.
+  // land-active-keep.test.ts executes the roads (PR E, the maintainer's round 1 addendum: a figure is taken only by a paint that anchors, and every
+  // anchoring paint takes one; the maintainer's round 2 ruling: the missed land took and wrote raw, moving the reader by the spacer's delta, while this
+  // comment said the road could not happen; the author's own verifiers after pass 3: the comment then named two raw roads where there are three)
+  const saved = !pendingAnchor && pendingAnchorT == null && !(seek && seek.sid === activeId) && v.shown && !v.stick && takeReloadScroll(pendingReloadScroll, activeId) == null;
+  const held = !saved && v.shown && !v.stick ? captureScrollAnchor(content, v, v.scrollTop) : null;   // the row at the saved place, for a land that misses
+  const figures = figuresBefore(v);   // what the take below takes, given back by the fallback when it has no row to put back
+  if (!saved && applyMeasure(v)) redrawGapUnits(v);
+  sizeSpacers(v);
   // The durable seek re-arms the per-pass attempt: every render pass retries until it lands, the
   // user cancels, or the backstop fires — never hijacking a scroll-back keep-offset restore.
   if (!pendingAnchor && pendingAnchorT == null && pendingAnchorKeepY == null && seek && seek.sid === activeId) {
@@ -15095,7 +15583,13 @@ function landActive(content: HTMLElement | null, v: View): void {
       }
     }
     else if (!v.shown || v.stick) writeScroll(content, content.scrollHeight, "land-bottom", true);
-    else writeScroll(content, v.scrollTop, "land-saved");
+    // an armed land that missed: the row the saved place held goes back at its offset over the spacers the take re-sized; the raw write
+    // whenever the restore has no row to put back: nothing armed (nothing taken: the saved scrollTop is exact), no row at the saved
+    // place, or the captured row gone with the attempt's window build (the maintainer's round 2 ruling; the third road named by the
+    // author's own verifiers after pass 3, executed in land-active-keep.test.ts). On the two roads after a take the take is undone first
+    // (untakeMeasure), so the saved scrollTop lands in the layout it was saved in and the figures wait, as on the nothing-armed road (the
+    // maintainer's round 3 ruling B)
+    else if (!(held && restoreScrollAnchor(content, v, held))) { untakeMeasure(v, figures); writeScroll(content, v.scrollTop, "land-saved"); }
   }
   v.shown = true;
   scheduleRailSticky();
@@ -15157,8 +15651,10 @@ function persistForReload(): void { persistScrollForReload(); persistNoticesForR
 (window as any).__rompPersistForReload = persistForReload;
 window.addEventListener("pagehide", persistScrollForReload);
 
-function captureScrollAnchor(content: HTMLElement, v: View): { uuid: string; y: number } | null {
-  const cTop = content.getBoundingClientRect().top;
+function captureScrollAnchor(content: HTMLElement, v: View, at: number = content.scrollTop): { uuid: string; y: number } | null {
+  // `at`: the scrollTop the capture is read AT, the scroller's own unless the caller names another (landActive names the view's saved
+  // place, which the scroller does not hold yet on a switch); the viewport top in the rects' frame moves by the difference
+  const cTop = content.getBoundingClientRect().top + (at - content.scrollTop);
   const turns = v.el.querySelectorAll("[data-uuid]");
   for (let i = 0; i < turns.length; i++) {
     const t = turns[i] as HTMLElement;
@@ -15250,7 +15746,11 @@ function appendActive() {
   const heightBefore = content.scrollHeight;
   const distBefore = heightBefore - before - content.clientHeight;
   const anchor = !stick && v ? captureScrollAnchor(content, v) : null;
-  syncView(activeId, stick);
+  const figures = v ? figuresBefore(v) : null;   // what the sync may take, given back below if the restore finds the captured row gone
+  // anchored by the follow (stick) or by the anchor restore below; a scrolled-up reader with no capturable row (the viewport inside a
+  // spacer) gets the raw restore, which anchors nothing, so their paint takes no parked figure (the maintainer's round 1 addendum, applied
+  // in the author's pass 1b)
+  syncView(activeId, stick, stick || !!anchor);
   syncHostOfflineFoot();                 // before the scroll maths: it changes scrollHeight
   updateStatusline();
   // Follow-mode pins the bottom only when there is something new to follow (T262, the user 2026-09-08): a
@@ -15260,7 +15760,10 @@ function appendActive() {
   // layout, and the write must claim that move as its own (see writeScroll), else the clamp's pending scroll event files as a gesture
   if (stick && followTail(distBefore, heightBefore, content.scrollHeight)) writeScroll(content, content.scrollHeight, "append-stick", true, before);
   else if (stick) { /* near the bottom, nothing new: the reader stays where they are */ }
-  else if (!(v && restoreScrollAnchor(content, v, anchor, before))) writeScroll(content, before, "append-raw", false, before);   // the same origin as the stick write: a shorter tail is claimed, not a gesture
+  // the captured row gone after the sync (folded into a run that formed, retired by a shrink): the raw pre-append top is exact only in the
+  // layout it was read in, so the sync's take is undone first and the figures wait for a paint that anchors (untakeMeasure; the maintainer's
+  // round 3 ruling B: this road took and wrote raw, moving the reader by the spacers' delta; append-active-keep.test.ts executes it)
+  else if (!(v && restoreScrollAnchor(content, v, anchor, before))) { if (v && figures) untakeMeasure(v, figures); writeScroll(content, before, "append-raw", false, before); }   // the same origin as the stick write: a shorter tail is claimed, not a gesture
   scheduleRailSticky();
   updateJumpBtn();   // appends can cross the overflow boundary either way — re-read the chip's truth
 }
@@ -15473,6 +15976,7 @@ function updateReplyChips(): void {
     // the settle it is a sample, or the landing that was and stayed exact filed settled false
     lastScrollWriteAfter = null;   // one-shot: the first event after a write consumes its marker, echo or not (a gesture that lands within a pixel of an older write's target is a gesture)
     if (cls !== "write-echo") scrollDiagRow("scrollgesture", { sid: activeId || "", top: c.scrollTop, gesture: true, sh: c.scrollHeight, ch: c.clientHeight });
+    if (gv && cls === "gesture") gv.followRebuilt = false;   // the reader's own scroll ends a re-window's follow of the rebuilt rows (followRebuiltTail); a write's echo, the re-window's own bottom write included, does not (the maintainer's round 1 addendum)
     lastKnownSh = c.scrollHeight;   // sh/ch: a clamp reads top == sh - ch after sh dropped (T262e)
   }, { passive: true });
 }
@@ -15725,12 +16229,19 @@ function virtualizeToViewport(): void {
       // (a jump) → land it at the viewport top.
       const before = v.el.querySelector(`[data-unit="${c}"]`) as HTMLElement | null;
       const beforeY = before ? before.getBoundingClientRect().top - content.getBoundingClientRect().top : 0;
-      renderWindowItems(v, s, items, Math.max(0, c - WINDOW_RADIUS), Math.min(items.length, c + WINDOW_RADIUS), working);
+      const figures = figuresBefore(v);   // what the build takes, given back if neither write below places the reader
+      renderWindowItems(v, s, items, Math.max(0, c - WINDOW_RADIUS), Math.min(items.length, c + WINDOW_RADIUS), working, true);   // anchored: the focus unit's offset or the bottom is written below
       const anchor = v.el.querySelector(`[data-unit="${c}"]`) as HTMLElement | null;
-      if (anchor) {
+      // A follow-mode reader whose re-window reaches the tail (a jump to the live bottom: focus-live) lands at the BOTTOM (PR E).
+      // Placing the focus unit's top under the viewport left them above the bottom by the spacer estimate's error, and only a
+      // view that came out SHORTER (the tail-shrink follow) brought them back: with an estimate that came out longer they
+      // stayed 55 px above the live tail (the landing lab's takeover road, under the median estimate).
+      if (v.stick && (v.winEnd ?? 0) >= items.length) { writeScroll(content, content.scrollHeight, "rewindow", true); v.followRebuilt = true; }   // …and the view observer follows the rows' settling (followRebuiltTail) until the reader's own scroll or the view's next paint ends the re-window
+      else if (anchor) {
         const yNow = anchor.getBoundingClientRect().top - content.getBoundingClientRect().top + content.scrollTop;
         writeScroll(content, yNow - beforeY, "rewindow");
       }
+      else untakeMeasure(v, figures);   // the focus unit gone from the rebuilt window: nothing to put back, so the take is given back (the maintainer's round 3 ruling B)
       if (activeId) applyCommentMarks(activeId);   // the re-window rebuilt turns — re-anchor highlights
       scheduleRailSticky();
     } finally {
@@ -19586,8 +20097,19 @@ function fillInPlace(sid: string, v: View | undefined): void {
     if (u < 0) u = unitAtScroll(v, content);
   }
   v.stick = false;   // a fill never follows the tail: the reader is where they are
-  if (u >= 0) renderWindowItems(v, s, items, Math.max(0, u - WINDOW_RADIUS), Math.min(items.length, u + WINDOW_RADIUS), s.status.state === "working" || s.status.state === "compacting");
-  else syncView(sid);
+  // the build takes a parked figure only when the land below has a row or a point to put back (anchored); a fill that can only restore
+  // its raw pre-fill top (no row on screen and no turn under the viewport top) takes nothing, so the figure waits for a paint that anchors.
+  // The no-unit fallback (a row or a point in hand that names no unit) is the same paint one road over and passes the same predicate,
+  // written out rather than relied on through unitAtScroll's guarantee that u < 0 implies a row in hand (the maintainer's round 2 ruling: a flagless
+  // sync there restored a row over spacers it had not re-sized, and the census could not see it).
+  // Two roads take and then find only the raw top to write, decided only after the build: the anchor row gone from the rebuilt window with
+  // no point to name, and a point whose turn maps to no y (yOfTurn null, here and in the re-window below). On both the take is undone
+  // before the raw write (untakeMeasure), so the pre-fill top lands in the layout it was read in and the figures wait for a paint that
+  // anchors (the maintainer's round 3 ruling B; until then the two roads were disclosed as a take followed by a raw write;
+  // fill-in-place.test.ts executes the roads)
+  const figures = figuresBefore(v);
+  if (u >= 0) renderWindowItems(v, s, items, Math.max(0, u - WINDOW_RADIUS), Math.min(items.length, u + WINDOW_RADIUS), s.status.state === "working" || s.status.state === "compacting", keepVisible || pointBefore != null);
+  else syncView(sid, undefined, keepVisible || pointBefore != null);
   // a visible row that survived the rebuild goes back to its exact offset; otherwise (no row on screen, or the anchor row gone: a turn
   // anchored on a resultUuid or a word key no event carries, round five medium A) the point under the viewport top is put back by its
   // turn; with no way to name the point, the reader keeps their scrollTop (the head stays at zero)
@@ -19596,7 +20118,8 @@ function fillInPlace(sid: string, v: View | undefined): void {
   if (row && keep) y = row.getBoundingClientRect().top - content.getBoundingClientRect().top + content.scrollTop - keep.y;
   else {
     const mapped = pointBefore != null ? yOfTurn(v, s, items, turnsNow, content, pointBefore) : null;
-    y = mapped != null ? mapped : topBefore;
+    if (mapped != null) y = mapped;
+    else { untakeMeasure(v, figures); y = topBefore; }   // nothing to put back: the raw top, in the layout it was read in
   }
   writeScroll(content, y, "gap-fill", false, topBefore);
   // a fill that leaves NO row on screen (the window rendered elsewhere than the point: the unit search missed, the mapped y fell
@@ -19604,8 +20127,9 @@ function fillInPlace(sid: string, v: View | undefined): void {
   if (pointBefore != null && !rowOnScreen(v, content)) {
     const u2 = unitOfTurn(items, turnsNow, Math.floor(pointBefore));
     if (u2 >= 0) {
-      renderWindowItems(v, s, items, Math.max(0, u2 - WINDOW_RADIUS), Math.min(items.length, u2 + WINDOW_RADIUS), s.status.state === "working" || s.status.state === "compacting");
+      renderWindowItems(v, s, items, Math.max(0, u2 - WINDOW_RADIUS), Math.min(items.length, u2 + WINDOW_RADIUS), s.status.state === "working" || s.status.state === "compacting", true);   // anchored: the point is put back by its turn
       const y2 = yOfTurn(v, s, items, turnsNow, content, pointBefore);
+      if (y2 == null) untakeMeasure(v, figures);   // the point maps to no y after the re-window either: the raw top, the take undone
       writeScroll(content, y2 != null ? y2 : topBefore, "gap-fill", false, topBefore);
     }
   }
@@ -19676,7 +20200,7 @@ function chatHead(msg: any) {
   if (msg.id !== activeId) { forget(msg.id); if (v) v.stale = true; return; }
   // re-anchor: reset the active view so it re-windows around the saved row (now further down s.events), and
   // put that row back where it was — the prepended older content sits above, off-screen, ready to scroll into.
-  if (v) { v.rendered = 0; v.winStart = 0; v.winEnd = 0; v.avgTurnH = undefined; v.spacerCount = undefined; v.spacerCountBot = undefined; v.unitTotal = undefined; }
+  if (v) { v.rendered = 0; v.winStart = 0; v.winEnd = 0; forgetAverage(v); v.spacerCount = undefined; v.spacerCountBot = undefined; v.unitTotal = undefined; }
   const anchorUuid = pendingOlderAnchor.get(msg.id);
   const keepY = pendingOlderKeepY.get(msg.id);
   forget(msg.id);

@@ -175,7 +175,7 @@ CENSUS = {
     "_live_map": ("sig", "row", "the liveness map when the caller passed none"),
     "_tree_of": ("sig", "cwd"),
     "_user_images": ("pure", "over a turn's blocks and text"),
-    "_user_todo_session_ended": ("sig", "reg", "the reg's alive bit; else the death marker (gone) against the last states row (states)"),
+    "_user_todos_shown": ("sig", "reg", "the ended gate for open user todos (the ONE every surface asks, tests/test_user_todos_roster.py): _user_todo_session_ended negated, the reg's alive bit; else the death marker (gone) against the last states row (states)"),
     "iso": ("pure", "over a timestamp"),
 }
 
