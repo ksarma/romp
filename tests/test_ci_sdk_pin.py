@@ -83,16 +83,21 @@ This module holds five things, and it never skips: a pin that skips reports gree
    and every other workflow file under .github/workflows/. The flag half keys on the words `-p` and `no:anyio`,
    consecutive in the command's arguments as the shell splits them (so the spelling inside a quoted argument is not the
    flag), the switch half on the merged value reading exactly 1 (a quoted value read verbatim, so `"1 "` is not 1, and a
-   plain value to YAML's comment, so `1#x` is not 1), and their messages say so. Both read the run text as written, and
-   GitHub substitutes a `${{ }}` expression into that text before the shell reads it (`${{ '#' }}` before the flag, or a
-   matrix value '#' there, cuts the flag off as a comment), so a step whose run text holds `${{` and spells pytest
-   anywhere in it, in a comment line or a trailing comment too, is `unparsed`, red until the value moves to an env: key
-   and the run text reads it as a shell variable (the
-   allowlist's second verify pass, 2026-09-24: such a step read ok, or listed, while pytest ran without the flag; round
-   5's ruling A, 2026-09-24: a step whose only pytest spelling sat in a comment gave no row, and the substituted text
-   can end the comment with a newline and run pytest, so such a step now gives an unparsed row at its first line that
-   spells pytest). Outside the flag half's read: anything that rewrites a pytest command's arguments after the run
-   text is read, among them a shell function or alias the run text defines, a python earlier on PATH, and a step's
+   plain value to YAML's comment, so `1#x` is not 1), and their messages say so. Both read the run text, and GitHub
+   substitutes a `${{ }}` expression into that text before the shell reads it (`${{ '#' }}` before the flag, or a matrix
+   value '#' there, cuts the flag off as a comment). A run text whose every expression is the one shape batch 917's
+   evaluator reads (command_on in tests/test_ci_pytest_workers.py, reused: matrix.os compared with one label, choosing
+   between two quoted values, the Run pytest step's worker count since #916) is read once for each label the expressions
+   name and once for every other label, each text substituted as that cell's shell reads it (matrix_os_texts; its rows
+   name their cell), and a step whose run text holds any other expression and spells pytest anywhere in it, in a comment
+   line or a trailing comment too, is `unparsed`, red until the value moves to an env: key and the run text reads it as
+   a shell variable (the allowlist's second verify pass, 2026-09-24: such a step read ok, or listed, while pytest ran
+   without the flag; round 5's ruling A, 2026-09-24: a step whose only pytest spelling sat in a comment gave no row, and
+   the substituted text can end the comment with a newline and run pytest, so such a step now gives an unparsed row at
+   its first line that spells pytest; the landing merge after batch 917, 2026-09-26: the worker count's expression read
+   the Run pytest step as unparsed until it was evaluated). Outside the flag half's read: anything that rewrites a
+   pytest command's arguments after the run text is read, among them a shell function or alias the run text defines, a
+   python earlier on PATH, and a step's
    shell: or a job's defaults; on the Run pytest step the check below refuses those it can see, among them a function or
    alias, which is a second command there, its shell: and a defaults: on its job or the workflow, the BASH_ENV key in
    its merged env or spelled in a run text of its job, and a $GITHUB_PATH write spelled in a run text of its job
@@ -295,8 +300,12 @@ This module holds five things, and it never skips: a pin that skips reports gree
    PYTEST_PLUGINS in the environment, plugins= handed to pytest.main; both checks key on the flag's spelling; only
    run_pytest_status, on the Run pytest step, refuses the ones spelled on its line or in its merged env, as words
    outside RUN_PYTEST_OPTIONS or keys outside RUN_PYTEST_ENV, and nothing here reads them elsewhere): anyio's plugin is
-   absent from that process's plugin set as it is from the box's default run's. The sets are not equal, and nothing here
-   says they are: the box's default run loads pytest-xdist's two plugins, which no cell installs. Verified by execution
+   absent from that process's plugin set as it is from the box's default run's. pytest-xdist's two plugins, which the
+   box's default run loads, load in every cell too since batch 917 (#916) installed it there, and xdist hands each worker
+   the command's arguments, so the flag reaches the Linux cells' two workers and the workers of a child run with -n
+   (2026-09-26, in a venv holding anyio: with -n 2 and the flag no worker loaded it; without the flag both did); the
+   tests gated on pytest-xdist alone, among them tests/test_tempdir_hygiene.py's two -n 2 children, run in every cell
+   since then. Verified by execution
    before this landed: a synthetic broken anyio/pytest_plugin.py in a CI-shaped venv (the SDK pinned, the parent under
    the flag) red tests in each of the six modules that spawned unflagged children, none of which imports the SDK, and
    the same six were green with the flag on every launcher (2026-09-20).
@@ -321,6 +330,7 @@ import warnings
 from unittest import mock
 from romp_load import load_source
 from tests.conftest import ENV_VALUE_MIN_LEN, env_sparing_texts, never_skip_files_as_written, redact_env_values
+from tests.test_ci_pytest_workers import OS_CHOICE, command_on   # batch 917's expression evaluator, reused, never copied
 import sdk_blocker   # noqa: E402  the shared test helper, registered by name in tests/__init__.py like romp_load
 
 HERE = os.path.dirname(os.path.realpath(__file__))
@@ -1247,8 +1257,53 @@ def _step_run(stext):
 
 
 EXPRESSION_UNPARSED = ("the step's run text holds a ${{ }} expression, which GitHub substitutes before the shell reads the "
-                       "text, so the text read here is not the text the shell runs: move the value to an env: key and read it "
-                       "in the run text as a shell variable")
+                       "text, in a shape batch 917's evaluator does not read (command_on in tests/test_ci_pytest_workers.py "
+                       "reads matrix.os == '<label>' && '<a>' || '<b>' and no other), so the text read here is not the text the "
+                       "shell runs: move the value to an env: key and read it in the run text as a shell variable, or write it "
+                       "in the evaluator's shape")
+# the matrix.os a cell has when it is none of the labels a run text's expressions name: command_on compares labels read from
+# between quotes, which never hold a quote, so this text, which holds one, equals none of them
+OTHER_OS = "(any other label ')"
+EXPRESSION_RE = re.compile(r"\$\{\{(.*?)\}\}")     # command_on's own spelling of an expression on one line
+
+
+def matrix_os_texts(lines):
+    """A run text as each cell runs it, where GitHub substitutes a `${{ }}` expression before the shell reads the text
+    (batch 917's Run pytest line carries one): None when no line of `lines` (_step_run's [(offset, text, end)]) holds
+    `${{`; else [(label, lines)], the lines with every expression replaced by its value by command_on, the evaluator in
+    tests/test_ci_pytest_workers.py (reused, never copied), once for each label the expressions name, in order and
+    without a repeat under case folding as command_on compares them, and last for OTHER_OS, which stands for every label
+    they do not name, so every cell's text is read whatever the matrix holds. The offsets are kept: a value is a quoted
+    scalar within its line, so no line is added or removed. Raises LookupError naming the expression when a line holds
+    one command_on does not read (anything but matrix.os == '<label>' && '<a>' || '<b>') or a `${{` that no `}}` closes
+    on its line."""
+    if not any("${{" in t for _o, t, _e in lines):
+        return None
+    labels = []
+    for _o, text, _e in lines:
+        for m in EXPRESSION_RE.finditer(text):
+            c = OS_CHOICE.match(m.group(1))
+            if c is None:
+                raise LookupError("the expression %s, a shape batch 917's evaluator does not read" % m.group(0))
+            if c.group(1).lower() not in [l.lower() for l in labels]:
+                labels.append(c.group(1))
+    cells = []
+    for label in labels + [OTHER_OS]:
+        texts = [(o, command_on(t, label), e) for o, t, e in lines]
+        left = next((t for _o, t, _e in texts if "${{" in t), None)
+        if left is not None:
+            raise LookupError("a ${{ that no }} closes on its line, which batch 917's evaluator does not read: %r" % left.strip())
+        cells.append((label, texts))
+    return cells
+
+
+def os_phrase(label):
+    """How a report names the cell a row or a refusal was read for: empty for a run text with no expression."""
+    if label is None:
+        return ""
+    if label == OTHER_OS:
+        return ", as a cell whose matrix.os the step's expressions do not name runs it"
+    return ", as a cell whose matrix.os is %s runs it" % label
 EXPRESSION_NO_ROW = (" (the step gave no pytest command the parser reads: its pytest spelling sits where the parser reads no "
                      "command, a shell comment among them, and the substituted text can end a comment with a newline and make "
                      "what follows a command)")
@@ -1309,16 +1364,25 @@ def pytest_invocations(src, read=None, switch_read=None):
     step whose run text spells ROMP_SDK_REQUIRE other than as a VAR=value prefix on its pytest command, or whose job's
     other run texts spell it (keyed on the spelling, comments included; the env merge reads the declared scopes, and
     an unset, export or assignment in the shell, or a write to $GITHUB_ENV in an earlier step, changes what pytest
-    starts with), and for a pytest command in a step whose run text holds a `${{ }}` expression (keyed on the
-    spelling, comments included: GitHub substitutes the expression before the shell reads the text, so the text read
-    here is not the text the shell runs), a dict with `unparsed` set to the reason and args None; and a step whose run
-    text holds `${{` and spells pytest anywhere in it (PYTEST_WORD_RE), a comment line or a trailing shell comment
-    included, that gave none of these gets one such dict at its first line that spells pytest (round 5's ruling A,
-    2026-09-24: the substituted text can end a comment with a newline and make what follows a command; the population
-    is the run text as read, so an expression in a YAML comment after a plain one-line run, which YAML drops before
-    GitHub substitutes anything, is outside it). `read`, when a list is given, receives {first, last, text} for every command line the
-    parser read in a step's run, row or not (pytest_line_census judges the pip exclusion on that text; the switch
-    census counts those lines as run text read). `switch_read`, when a list is given, receives {line, job, step, scope}
+    starts with), and for a pytest command in a step whose run text holds a `${{ }}` expression that batch 917's
+    evaluator does not read (keyed on the spelling, comments included: GitHub substitutes the expression before the
+    shell reads the text, so the text read here is not the text the shell runs), a dict with `unparsed` set to the
+    reason and args None; and a step whose run text holds such an expression and spells pytest anywhere in it
+    (PYTEST_WORD_RE), a comment line or a trailing shell comment included, that gave none of these gets one such dict at
+    its first line that spells pytest (round 5's ruling A, 2026-09-24: the substituted text can end a comment with a
+    newline and make what follows a command; the population is the run text as read, so an expression in a YAML
+    comment after a plain one-line run, which YAML drops before GitHub substitutes anything, is outside it). A step
+    whose run text holds expressions the evaluator reads, each matrix.os compared with one label choosing between two
+    quoted values (matrix_os_texts, over command_on in tests/test_ci_pytest_workers.py), is read once for each label the
+    expressions name and once for every other label (OTHER_OS), each text substituted as that cell's shell reads it:
+    each row carries its cell in `os` (os_phrase names it in a report), and rows equal in every field but the cell, as
+    many in every cell, are one row with `os` None; a step with no expression gives rows with `os` None. The switch's
+    spellings in a step's own run text are counted in each cell's text, and in the job's other steps as the most their
+    written text or any of their cells' texts holds, since a value can join the name across an expression's edge.
+    `read`, when a list is given, receives {first, last, text} for every command line the parser read in a step's run,
+    row or not, as
+    written (pytest_line_census judges the pip exclusion on that text; the switch census counts those lines as run text
+    read). `switch_read`, when a list is given, receives {line, job, step, scope}
     for every ROMP_SDK_REQUIRE key line _env_block read in a scope the merge reads (the workflow's env, a job's env, a
     step's env; job and step None where the scope is wider).
     A text parse over the file's own indentation (top-level keys at column 0, jobs at 2, job keys at 4, steps at 6,
@@ -1360,7 +1424,7 @@ def pytest_invocations(src, read=None, switch_read=None):
         job_wd = dm.group(1).strip() if dm else None
         parsed = []
         job_runs = []
-        run_spellings, prefix_spellings, step_names = {}, {}, {}
+        run_spellings, step_names = {}, {}
         for st in jb["steps"]:
             k, stext, sbase, step = st["index"], st["text"], st["base"], st["name"]
             wm = re.search(r"^        working-directory: (.*)$", stext, re.M)
@@ -1372,8 +1436,18 @@ def pytest_invocations(src, read=None, switch_read=None):
                 continue
             run_text = "".join(t + "\n" for _o, t, _e in lines)
             job_runs.append(run_text)
-            run_spellings[k], prefix_spellings[k], step_names[k] = run_text.count(SWITCH), 0, step
-            spelled = None          # the first command line that spells pytest, a comment line included
+            step_names[k] = step
+            # an expression batch 917's evaluator reads (matrix_os_texts): the run text read once per cell, as that cell's
+            # shell reads it; any other expression: the text as written, and every row from it unparsed (below)
+            try:
+                cells, refused_expr = matrix_os_texts(lines), None
+            except LookupError as e:
+                cells, refused_expr = None, str(e)
+            # the switch's spellings in the step's run text, the most any one cell's text holds: a value can join the name
+            # across an expression's edge, so the written text alone may spell it fewer times than a cell's
+            run_spellings[k] = max([run_text.count(SWITCH)] + ["".join(t + "\n" for _o, t, _e in cl).count(SWITCH)
+                                                              for _l, cl in cells or []])
+            spelled = None          # the first command line that spells pytest, a comment line included (the text as written)
             j = 0
             while j < len(lines):
                 off, cmd, last = lines[j]
@@ -1388,38 +1462,72 @@ def pytest_invocations(src, read=None, switch_read=None):
                     read.append({"first": at, "last": last_at, "text": cmd})
                 if spelled is None and PYTEST_WORD_RE.search(cmd):
                     spelled = (at, last_at, cmd)
-                if cmd.lstrip().startswith("#"):
-                    continue
-                if not PYTEST_WORD_RE.search(cmd):
-                    continue
-                base = {"job": job, "step": step, "line": at, "last_line": last_at, "run": run_text, "cwd": cwd, "cmd": cmd,
-                        "step_index": k}
-                for command in _shell_commands(cmd):
-                    if not PYTEST_WORD_RE.search(command):
+            step_rows = []
+            for os_label, cell_lines in cells or [(None, lines)]:
+                cell_run = "".join(t + "\n" for _o, t, _e in cell_lines)
+                cell_rows, prefixes_here = [], 0
+                j = 0
+                while j < len(cell_lines):
+                    off, cmd, last = cell_lines[j]
+                    while _continues(cmd) and j + 1 < len(cell_lines):
+                        j += 1
+                        cmd = _join_continuation(cmd, cell_lines[j][1])
+                        last = cell_lines[j][2]
+                    j += 1
+                    if cmd.lstrip().startswith("#") or not PYTEST_WORD_RE.search(cmd):
                         continue
-                    hit = PYTEST_CMD_RE.match(command)
-                    if hit:
-                        inv_env = dict(env)
-                        prefixes = INLINE_ENV_RE.findall(hit.group("env"))
-                        inv_env.update(prefixes)
-                        prefix_spellings[k] += sum(1 for name, _value in prefixes if name == SWITCH)
-                        parsed.append(dict(base, env=inv_env, args=hit.group("args"), unparsed=None))
-                    elif not PIP_INSTALL_RE.match(command):
-                        parsed.append(dict(base, env=dict(env), args=None, unparsed="a form the parser does not read as a command"))
-            # a step whose run text holds an expression and spells pytest anywhere, in a comment line or a trailing
-            # comment too, and that gave no row above (round 5's ruling A, 2026-09-24): GitHub substitutes the
-            # expression before the shell reads the text, so `# ${{ fromJSON('"\n"') }}python -m pytest` ends the
-            # comment and runs pytest with neither the flag nor the switch, where the parser skipped the comment line
-            # and the shell split cut the trailing comment. The row sits at the step's first line that spells pytest
-            # (keyed on the spelling, on the joined command line or on a raw line of the run text)
-            if "${{" in run_text and not any(p["step_index"] == k for p in parsed):
+                    base = {"job": job, "step": step, "line": _line_of(src, sbase + off), "last_line": _line_of(src, sbase + last),
+                            "run": cell_run, "cwd": cwd, "cmd": cmd, "step_index": k, "os": os_label,
+                            "expression_refused": refused_expr}
+                    for command in _shell_commands(cmd):
+                        if not PYTEST_WORD_RE.search(command):
+                            continue
+                        hit = PYTEST_CMD_RE.match(command)
+                        if hit:
+                            inv_env = dict(env)
+                            prefixes = INLINE_ENV_RE.findall(hit.group("env"))
+                            inv_env.update(prefixes)
+                            prefixes_here += sum(1 for name, _value in prefixes if name == SWITCH)
+                            cell_rows.append(dict(base, env=inv_env, args=hit.group("args"), unparsed=None))
+                        elif not PIP_INSTALL_RE.match(command):
+                            cell_rows.append(dict(base, env=dict(env), args=None, unparsed="a form the parser does not read as a command"))
+                # the switch spelled in this cell's run text other than as a prefix on its pytest commands (below)
+                for row in cell_rows:
+                    row["own_spellings"] = (cell_run.count(SWITCH), prefixes_here)
+                step_rows.extend(cell_rows)
+            # rows equal in every field but the cell they were read for, as many in every cell, are read for every cell
+            # (os None) and kept once; the rest keep their cell. In file order, the cells in turn within a line
+            if cells is not None:
+                labels_all = [label for label, _cl in cells]
+                groups = {}
+                for row in step_rows:
+                    groups.setdefault(repr(sorted((x, v) for x, v in row.items() if x not in ("os", "run"))), []).append(row)
+                merged = []
+                for rows in groups.values():
+                    counts = {sum(1 for r in rows if r["os"] == label) for label in labels_all}
+                    if len(counts) == 1:
+                        merged.extend(dict(r, os=None) for r in rows if r["os"] == labels_all[0])
+                    else:
+                        merged.extend(rows)
+                step_rows = sorted(merged, key=lambda r: (r["line"], labels_all.index(r["os"]) if r["os"] in labels_all else -1))
+            parsed.extend(step_rows)
+            # a step whose run text holds an expression the evaluator does not read and spells pytest anywhere, in a
+            # comment line or a trailing comment too, and that gave no row above (round 5's ruling A, 2026-09-24): GitHub
+            # substitutes the expression before the shell reads the text, so `# ${{ fromJSON('"\n"') }}python -m pytest`
+            # ends the comment and runs pytest with neither the flag nor the switch, where the parser skipped the comment
+            # line and the shell split cut the trailing comment. The row sits at the step's first line that spells pytest
+            # (keyed on the spelling, on the joined command line or on a raw line of the run text). A step the evaluator
+            # reads is read as each cell's shell reads it, and a comment there stays a comment: a value is a quoted scalar
+            # within its line, so it cannot end one
+            if refused_expr is not None and not step_rows:
                 if spelled is None:
                     spelled = next(((_line_of(src, sbase + o), _line_of(src, sbase + o), t) for o, t, _e in lines
                                     if PYTEST_WORD_RE.search(t)), None)
                 if spelled is not None:
                     parsed.append({"job": job, "step": step, "line": spelled[0], "last_line": spelled[1], "run": run_text,
-                                   "cwd": cwd, "cmd": spelled[2], "step_index": k, "env": dict(env), "args": None,
-                                   "unparsed": EXPRESSION_UNPARSED + EXPRESSION_NO_ROW})
+                                   "cwd": cwd, "cmd": spelled[2], "step_index": k, "env": dict(env), "args": None, "os": None,
+                                   "expression_refused": refused_expr, "own_spellings": (0, 0),
+                                   "unparsed": EXPRESSION_UNPARSED + " (" + refused_expr + ")" + EXPRESSION_NO_ROW})
         for inv in parsed:
             # what the run block does to the switch (review round 4, 2026-09-23): the env merge above reads the declared
             # scopes alone, so a step whose run text spells the switch anywhere but as a VAR=value prefix on its pytest
@@ -1427,16 +1535,18 @@ def pytest_invocations(src, read=None, switch_read=None):
             # own line), or whose job's other run texts spell it (a write to $GITHUB_ENV reaches the steps after it), is
             # unparsed: the parser does not run the shell, so it cannot say what value pytest starts with
             k = inv["step_index"]
-            # an expression in the run text (the allowlist's second verify pass, 2026-09-24): GitHub substitutes it
-            # into the text before the shell reads it, so the text read here is not the text the shell runs, and
-            # `${{ '#' }}` before the flag, or a matrix value '#' there, cut the flag off as a comment while the step
-            # read ok; keyed on the spelling, comments included, wherever in the step's run text it sits
-            if inv["unparsed"] is None and "${{" in inv["run"]:
-                inv["unparsed"] = EXPRESSION_UNPARSED
+            # an expression in the run text that batch 917's evaluator does not read (the allowlist's second verify pass,
+            # 2026-09-24): GitHub substitutes it into the text before the shell reads it, so the text read here is not the
+            # text the shell runs, and `${{ '#' }}` before the flag, or a matrix value '#' there, cut the flag off as a
+            # comment while the step read ok; keyed on the spelling, comments included, wherever in the step's run text it
+            # sits. An expression the evaluator reads was substituted above, cell by cell
+            if inv["unparsed"] is None and inv["expression_refused"] is not None:
+                inv["unparsed"] = EXPRESSION_UNPARSED + " (" + inv["expression_refused"] + ")"
                 inv["args"] = None
             if inv["unparsed"] is None:
                 others = [step_names[j] for j in sorted(run_spellings) if j != k and run_spellings[j]]
-                if run_spellings[k] > prefix_spellings[k]:
+                spelled_here, as_prefix = inv["own_spellings"]
+                if spelled_here > as_prefix:
                     inv["unparsed"] = ("the step's run text spells %s other than as a VAR=value prefix on its pytest command "
                                        "(keyed on the spelling, comments included): an unset, export, declare, env -u or "
                                        "assignment there sets what pytest runs with, whatever the env: scopes say" % SWITCH)
@@ -1447,8 +1557,8 @@ def pytest_invocations(src, read=None, switch_read=None):
                                        "whatever the env: scopes say" % (SWITCH, ", ".join(repr(o) for o in others)))
                     inv["args"] = None
             inv["job_run"] = "".join(job_runs)
-            inv["namesakes"] = sorted(o["line"] for o in parsed if o["step"] == inv["step"] and o["step_index"] != inv["step_index"]
-                                      and inv["step"] != UNNAMED)
+            inv["namesakes"] = sorted({o["line"] for o in parsed if o["step"] == inv["step"] and o["step_index"] != inv["step_index"]
+                                       and inv["step"] != UNNAMED})
         found.extend(parsed)
     return found
 
@@ -2023,7 +2133,8 @@ def verdict(inv):
     """'ok': the args carry -p no:anyio and the env sets ROMP_SDK_REQUIRE to 1; 'listed': the flag, no switch, and
     (job, step) in SWITCH_LISTED; 'unparsed': a pytest mention the parser did not read as a command, or a command whose
     step spells the switch in its run text other than as a prefix on it, or whose job's other steps spell it in theirs,
-    or whose step's run text holds a `${{ }}` expression (pytest_invocations); 'ambiguous': a
+    or whose step's run text holds a `${{ }}` expression batch 917's evaluator does not read (pytest_invocations; a
+    row read for one cell is judged on that cell's text); 'ambiguous': a
     named step whose name another pytest-running step of the job shares, so the (job, step name) key names two steps
     (red whatever the invocations carry: a listing under that key would excuse the other step too); 'unlisted':
     anything else, the failure this check exists for (the flag missing has no listing that excuses it)."""
@@ -2062,20 +2173,21 @@ def _describe(inv):
     """The offender, named: job, step, file line, and what it lacks. The flag half keys on the words `-p` and
     `no:anyio` in the command's own arguments as the shell splits them (passes_flag); the switch half on the merged env
     reading exactly 1."""
+    where = "ci.yml line %d%s" % (inv["line"], os_phrase(inv.get("os")))
     if inv["unparsed"]:
-        return "%s / %r (ci.yml line %d): mentions pytest in a run line the parser does not read as a command (%s): %r" % (
-            inv["job"], inv["step"], inv["line"], inv["unparsed"], inv["cmd"].strip())
+        return "%s / %r (%s): mentions pytest in a run line the parser does not read as a command (%s): %r" % (
+            inv["job"], inv["step"], where, inv["unparsed"], inv["cmd"].strip())
     if inv["namesakes"]:
-        return ("%s / %r (ci.yml line %d): another step named %r in this job runs pytest too (ci.yml line%s %s); the listing "
+        return ("%s / %r (%s): another step named %r in this job runs pytest too (ci.yml line%s %s); the listing "
                 "and this report key on (job, step name), so the name is ambiguous: rename one" % (
-                    inv["job"], inv["step"], inv["line"], inv["step"], "s" if len(inv["namesakes"]) > 1 else "",
+                    inv["job"], inv["step"], where, inv["step"], "s" if len(inv["namesakes"]) > 1 else "",
                     ", ".join(str(l) for l in inv["namesakes"])))
     lacks = [w for w, ok in (("%s (keyed on the words -p and no:anyio in the command's arguments as the shell splits "
                               "them)" % FLAG_SPELLING, passes_flag(inv["args"])),
                              ("%s=1 (keyed on the merged workflow, job, step and inline env reading 1)" % SWITCH,
                               inv["env"].get(SWITCH) == "1")) if not ok]
-    return "%s / %r (ci.yml line %d): env %s=%r, args %r; lacks %s" % (
-        inv["job"], inv["step"], inv["line"], SWITCH, inv["env"].get(SWITCH), inv["args"].strip(), " and ".join(lacks) or "nothing")
+    return "%s / %r (%s): env %s=%r, args %r; lacks %s" % (
+        inv["job"], inv["step"], where, SWITCH, inv["env"].get(SWITCH), inv["args"].strip(), " and ".join(lacks) or "nothing")
 
 
 def switch_spellers(directory):
@@ -2178,6 +2290,12 @@ SERVED_STEP = ("vscode-extension", "Browser-backed served-page tests (pytest)")
 # every key of its job an entry of the third (RUN_PYTEST_JOB_KEYS, below); every exception lives in one of the three
 RUN_PYTEST_OPTIONS = {
     "-q": "quieter output: it changes what pytest prints, not what it runs or its exit status",
+    # batch 917's worker count, read per cell from its matrix.os expression (matrix_os_texts): 2 on ubuntu-latest, 0 on
+    # every other label; each count is its own entry, keyed on both words, since another count is another run shape
+    "-n 2": ("two pytest-xdist workers (the ubuntu-latest cells, batch 917): every collected test runs on one worker or the "
+             "other, a worker that dies fails its test by name, and the exit status is the whole run's"),
+    "-n 0": ("xdist's in-process run (every other cell, batch 917): no workers, the suite runs in pytest's own process as a "
+             "serial run does, and the exit status is the run's"),
     "-p no:anyio": ("the flag (FLAG_SPELLING), which blocks anyio's plugin; keyed on both words, since -p with another value "
                     "loads or blocks another plugin, which can change what runs and what the run returns"),
     "--durations=10": "prints the ten slowest tests after the run: every test still runs, and the exit status is the run's",
@@ -2274,16 +2392,23 @@ def run_pytest_status(src):
     3. Every argument word of that command, as the shell splits it, is an entry of RUN_PYTEST_OPTIONS, keyed on its full
        spelling, each entry with its reason; any other word is refused: among them flags that run no tests (--collect-only,
        --co, --setup-plan), a path, a -k, -m or --deselect that narrows what runs, and a redirection.
+       Parts 2 and 3 read the run text as each cell's shell reads it when its expressions are the shape batch 917's
+       evaluator reads (matrix_os_texts, over command_on in tests/test_ci_pytest_workers.py: the worker count, -n 2 on
+       ubuntu-latest and -n 0 on every other label, each an entry of RUN_PYTEST_OPTIONS); a refusal every cell makes is
+       reported once, and one only some cells make names each of them (os_phrase). A run text holding any other
+       expression is refused at its line, since the text as written is not the text the shell runs (the landing merge
+       after batch 917, 2026-09-26: the worker count's `||` read as a second command until the expression was evaluated).
     4. Every key of the step's merged env (the workflow's env, the job's, the step's, and a VAR=value prefix on the
        command) is an entry of RUN_PYTEST_ENV, each entry with its reason, so PYTEST_ADDOPTS (options pytest reads from
        the environment), BASH_ENV (a file bash sources before the run text: one holding `trap 'exit 0' EXIT` makes a
        failing run exit 0) and every other key are refused at their line, and so is an env: line of those scopes with
        a value on its own line, whose keys cannot be read.
     5. A run text of the python job that spells GITHUB_ENV, GITHUB_PATH or BASH_ENV is refused at its line, keyed on the
-       spelling with comments included, since a `${{ }}` expression can end a comment with a newline and make what
-       follows it a command (pytest_invocations' expression rule): a write to $GITHUB_ENV sets a variable for the steps
-       after, PYTEST_ADDOPTS or BASH_ENV among them, and a write to $GITHUB_PATH puts another python first on PATH for
-       them.
+       spelling with comments included, as written and in each cell's text where matrix_os_texts reads its expressions
+       (a value can join a name across an expression's edge), since a `${{ }}` expression can end a comment with a
+       newline and make what follows it a command (pytest_invocations' expression rule): a write to $GITHUB_ENV sets a
+       variable for the steps after, PYTEST_ADDOPTS or BASH_ENV among them, and a write to $GITHUB_PATH puts another
+       python first on PATH for them.
     Among the residual: a write to those files that does not spell their names, such as one by a script or action a
     step calls (actions/setup-python writes both) or one through `${{ github.env }}`; a command that names its
     interpreter or pytest by a path, which may be a script; and an earlier step whose run text changes the runner
@@ -2326,8 +2451,13 @@ def run_pytest_status(src):
                                          "runs the steps in an image whose env: and options: set the step's environment)"
                        % km.group(1))
         for st in jb["steps"]:
-            for o, text, _e in _step_run(st["text"]) or []:
-                names = [n for n in RUN_PYTEST_WRITE_NAMES if n in text]
+            written = _step_run(st["text"]) or []
+            try:
+                texts = [written] + [cl for _l, cl in matrix_os_texts(written) or []]
+            except LookupError:
+                texts = [written]
+            for k, (o, text, _e) in enumerate(written):
+                names = [n for n in RUN_PYTEST_WRITE_NAMES if any(n in t[k][1] for t in texts)]
                 if names:
                     refuse(st["base"] + o, "a run text of the Run pytest step's job spells %s (keyed on the spelling, comments "
                                            "included): a write to $GITHUB_ENV sets a variable for the steps after, and one to "
@@ -2353,55 +2483,89 @@ def run_pytest_status(src):
             if run is None:
                 refuse(sbase, "the Run pytest step has no run: key")
                 continue
-            commands, j = [], 0
-            while j < len(run):
-                off, cmd, _last = run[j]
-                while _continues(cmd) and j + 1 < len(run):
-                    j += 1
-                    cmd = _join_continuation(cmd, run[j][1])
-                j += 1
-                if cmd.strip() and not cmd.lstrip().startswith("#"):
-                    commands.append((off, cmd))
-            if not commands:
-                refuse(sbase, "the Run pytest step's run text holds no command")
-                continue
-            target = next(((o, c) for o, c in commands if PYTEST_CMD_RE.match(_comment_cut(c).strip())), None)
-            if target is not None:
-                read.append(_line_of(src, sbase + target[0]))
-            target = target or commands[0]
-            for o, _c in commands:
-                if o != target[0]:
-                    refuse(sbase + o, "a second command line in the Run pytest step's run text: the step runs one command, "
-                                      "since another (an earlier trap 'exit 0' EXIT among them) can set its exit status")
-            off, cmd = target
-            parts = _shell_commands(cmd)
-            if len(parts) != 1 or parts[0] != _comment_cut(cmd).strip():
-                refuse(sbase + off, "the Run pytest command line holds more than its one shell command (an operator: ||, a "
-                                    "pipe, a trailing &, a ;): the step's exit status must be pytest's")
-                continue
-            hit = PYTEST_CMD_RE.match(parts[0])
-            if not hit:
-                refuse(sbase + off, "the Run pytest command line is not a command PYTEST_CMD_RE reads as pytest")
-                continue
-            for name, _value in INLINE_ENV_RE.findall(hit.group("env")):
-                if name not in RUN_PYTEST_ENV:
-                    refuse(sbase + off, "the env key %s, a prefix on the Run pytest command, not an entry of RUN_PYTEST_ENV" % name)
+            # an expression batch 917's evaluator reads (matrix_os_texts): parts 2 and 3 read the run text once per cell, as
+            # that cell's shell reads it; any other expression is refused at its line, since the text as written is not
+            # the text the shell runs
             try:
-                words = shlex.split(hit.group("args"), posix=True)
-            except ValueError:
-                refuse(sbase + off, "the Run pytest command's arguments do not split as the shell splits them")
+                cells = matrix_os_texts(run)
+            except LookupError as e:
+                at = next((o for o, t, _e in run if "${{" in t), run[0][0])
+                refuse(sbase + at, "the Run pytest step's run text holds %s: GitHub substitutes it before the shell reads the "
+                                   "text, so the text the shell runs cannot be read here (move the value to an env: key the "
+                                   "run text reads as a shell variable, or write it in the evaluator's shape, matrix.os == "
+                                   "'<label>' && '<a>' || '<b>')" % e)
                 continue
-            entries = sorted((tuple(k.split(" ")) for k in RUN_PYTEST_OPTIONS), key=len, reverse=True)
-            i = 0
-            while i < len(words):
-                entry = next((e for e in entries if tuple(words[i:i + len(e)]) == e), None)
-                if entry is None:
-                    refuse(sbase + off, "the argument %r on the Run pytest command, not an entry of RUN_PYTEST_OPTIONS (an "
-                                        "entry needs its reason: --collect-only, --co and --setup-plan run no tests, and a "
-                                        "path or a -k narrows what runs)" % words[i])
-                    i += 1
+            found_here, reads_here = [], []
+
+            def refuse_cell(offset, reason, label):
+                found_here.append((offset, reason, label))
+
+            for label, cell_run in cells or [(None, run)]:
+                commands, j = [], 0
+                while j < len(cell_run):
+                    off, cmd, _last = cell_run[j]
+                    while _continues(cmd) and j + 1 < len(cell_run):
+                        j += 1
+                        cmd = _join_continuation(cmd, cell_run[j][1])
+                    j += 1
+                    if cmd.strip() and not cmd.lstrip().startswith("#"):
+                        commands.append((off, cmd))
+                if not commands:
+                    refuse_cell(0, "the Run pytest step's run text holds no command", label)
+                    continue
+                target = next(((o, c) for o, c in commands if PYTEST_CMD_RE.match(_comment_cut(c).strip())), None)
+                if target is not None and target[0] not in reads_here:
+                    reads_here.append(target[0])
+                target = target or commands[0]
+                for o, _c in commands:
+                    if o != target[0]:
+                        refuse_cell(o, "a second command line in the Run pytest step's run text: the step runs one command, "
+                                       "since another (an earlier trap 'exit 0' EXIT among them) can set its exit status", label)
+                off, cmd = target
+                parts = _shell_commands(cmd)
+                if len(parts) != 1 or parts[0] != _comment_cut(cmd).strip():
+                    refuse_cell(off, "the Run pytest command line holds more than its one shell command (an operator: ||, a "
+                                     "pipe, a trailing &, a ;): the step's exit status must be pytest's", label)
+                    continue
+                hit = PYTEST_CMD_RE.match(parts[0])
+                if not hit:
+                    refuse_cell(off, "the Run pytest command line is not a command PYTEST_CMD_RE reads as pytest", label)
+                    continue
+                for name, _value in INLINE_ENV_RE.findall(hit.group("env")):
+                    if name not in RUN_PYTEST_ENV:
+                        refuse_cell(off, "the env key %s, a prefix on the Run pytest command, not an entry of RUN_PYTEST_ENV"
+                                    % name, label)
+                try:
+                    words = shlex.split(hit.group("args"), posix=True)
+                except ValueError:
+                    refuse_cell(off, "the Run pytest command's arguments do not split as the shell splits them", label)
+                    continue
+                entries = sorted((tuple(k.split(" ")) for k in RUN_PYTEST_OPTIONS), key=len, reverse=True)
+                i = 0
+                while i < len(words):
+                    entry = next((e for e in entries if tuple(words[i:i + len(e)]) == e), None)
+                    if entry is None:
+                        refuse_cell(off, "the argument %r on the Run pytest command, not an entry of RUN_PYTEST_OPTIONS (an "
+                                         "entry needs its reason: --collect-only, --co and --setup-plan run no tests, and a "
+                                         "path or a -k narrows what runs)" % words[i], label)
+                        i += 1
+                    else:
+                        i += len(entry)
+            read.extend(_line_of(src, sbase + o) for o in reads_here)
+            # a refusal every cell makes is reported once, as it reads; one some cells make, once for each of them, naming it
+            labels_all = [label for label, _cl in cells or [(None, run)]]
+            seen = []
+            for offset, reason, _label in found_here:
+                if (offset, reason) in seen:
+                    continue
+                seen.append((offset, reason))
+                where = [lab for o, r, lab in found_here if (o, r) == (offset, reason)]
+                if all(lab in where for lab in labels_all):
+                    refuse(sbase + offset, reason)
                 else:
-                    i += len(entry)
+                    for lab in labels_all:
+                        if lab in where:
+                            refuse(sbase + offset, reason + os_phrase(lab))
     return read, refused
 
 
@@ -2523,9 +2687,12 @@ class PytestPopulation(unittest.TestCase):
     def test_the_python_matrix_step_is_compliant_not_listed(self):
         # the cells' whole-suite process: the switch is what makes a cell whose interpreter lost the SDK red, and the flag
         # what keeps anyio's plugin out of its pytest; neither may move to the list
+        # one row per cell since batch 917's worker count, an expression on matrix.os, joined the command (matrix_os_texts):
+        # ubuntu-latest's and that of every label the expression does not name, each as that cell's shell reads it
         inv = [i for i in self.found if (i["job"], i["step"]) == MATRIX_STEP]
-        self.assertEqual(len(inv), 1, inv)
-        self.assertEqual(verdict(inv[0]), "ok", _describe(inv[0]))
+        self.assertEqual([i["os"] for i in inv], ["ubuntu-latest", OTHER_OS], [_describe(i) for i in inv])
+        for i in inv:
+            self.assertEqual(verdict(i), "ok", _describe(i))
         self.assertNotIn(MATRIX_STEP, SWITCH_LISTED, "the matrix step is listed: a cell without the SDK would read green")
 
     def test_nothing_on_the_run_pytest_step_its_job_or_the_workflow_can_discard_pytests_failure(self):
@@ -2540,7 +2707,7 @@ class PytestPopulation(unittest.TestCase):
                          "RUN_PYTEST_OPTIONS, RUN_PYTEST_ENV and RUN_PYTEST_JOB_KEYS are its three allowlists, each entry with its "
                          "reason):\n  "
                          + "\n  ".join("line %d: %s (%s)" % r for r in refused))
-        matrix = [i["line"] for i in self.found if (i["job"], i["step"]) == MATRIX_STEP]
+        matrix = sorted({i["line"] for i in self.found if (i["job"], i["step"]) == MATRIX_STEP})
         self.assertEqual(read, matrix, "the check read no Run pytest command, or another line than the population's: an empty "
                          "or partial read is red, not green")
 
@@ -3178,10 +3345,10 @@ class PopulationCheckReds(unittest.TestCase):
         # printed its argv). A pytest command in a step whose run text holds `${{`, wherever it sits, is unparsed now;
         # neither of the file's pytest steps holds one, and each case is in the forms the scan accepts
         expr = "${{ '#' }}"
-        run_line = [l for l in self.src.splitlines() if l.startswith("        run: python -m pytest -q -p no:anyio ")]
+        run_line = [l for l in self.src.splitlines() if l.startswith("        run: python -m pytest -q -n ${{ ")]
         served_line = [l for l in self.src.splitlines() if l.startswith("          python -m pytest tests/test_*_browser.py")]
         self.assertEqual((len(run_line), len(served_line)), (1, 1), "the two pytest lines moved: re-anchor this case")
-        s08 = self.src.replace(run_line[0], run_line[0].replace(" -q -p no:anyio ", " -q %s -p no:anyio " % expr), 1)
+        s08 = self.src.replace(run_line[0], run_line[0].replace(" -p no:anyio ", " %s -p no:anyio " % expr, 1), 1)
         s09 = self.src.replace(served_line[0], served_line[0].replace(" -p no:anyio ", " %s -p no:anyio " % expr), 1)
         s10 = self._with_job_before_shell(
             "  mx:\n    runs-on: ubuntu-latest\n    strategy:\n      matrix:\n        x: ['#']\n"
@@ -3263,6 +3430,98 @@ class PopulationCheckReds(unittest.TestCase):
                                                     "          # python -m pytest tests/test_a.py -q\n")
         self.assertEqual((self._new(quiet), pytest_line_census(quiet)[1]), ([], []))
 
+    def test_an_expression_batch_917s_evaluator_reads_is_read_once_per_cell(self):
+        # batch 917 (#916) put the worker count on the Run pytest line as an expression on matrix.os, which the
+        # expression rule above read as unparsed and run_pytest_status split at its && and || (the landing merge: three
+        # PytestPopulation tests red on the live file). The run text is now read once per cell with batch 917's
+        # evaluator, command_on in tests/test_ci_pytest_workers.py (matrix_os_texts): once for each label the
+        # expressions name and once for every other label, each cell's text as its shell reads it
+        runs = [l for l in self.src.splitlines() if l.startswith("        run: python -m pytest -q -n ${{ ")]
+        self.assertEqual(len(runs), 1, "the Run pytest line moved: re-anchor this case: %r" % runs)
+        live_expr = "${{ matrix.os == 'ubuntu-latest' && '2' || '0' }}"
+        self.assertIn(live_expr, runs[0], "the worker count's expression moved: re-anchor this case")
+        rows = [i for i in self.found_live() if (i["job"], i["step"]) == MATRIX_STEP]
+        self.assertEqual([(i["os"], shlex.split(i["args"])[:3]) for i in rows],
+                         [("ubuntu-latest", ["-q", "-n", "2"]), (OTHER_OS, ["-q", "-n", "0"])])
+        self.assertEqual(run_pytest_status(self.src)[1], [])
+
+        def with_expr(expr):
+            out = self.src.replace(runs[0], runs[0].replace(live_expr, expr, 1), 1)
+            self.assertNotEqual(out, self.src, "%r: the splice changed nothing" % expr)
+            return out, self.src.splitlines().index(runs[0]) + 1
+
+        def cells(src):
+            return [(i["os"], verdict(i)) for i in pytest_invocations(src) if (i["job"], i["step"]) == MATRIX_STEP]
+
+        # a value that starts a shell comment on one cell, cutting the flag off there (a `#` after a quote starts no YAML
+        # comment, so the plain scalar keeps it): that cell's row lacks the flag; the other cell's is ok
+        for label, expr, want in (
+                ("ubuntu-latest's value starts a comment", "${{ matrix.os == 'ubuntu-latest' && '#' || '0' }}",
+                 [("ubuntu-latest", "unlisted"), (OTHER_OS, "ok")]),
+                ("every other label's value starts a comment", "${{ matrix.os == 'ubuntu-latest' && '2' || '#' }}",
+                 [("ubuntu-latest", "ok"), (OTHER_OS, "unlisted")]),
+                # the label compared is read whatever it is: macos-latest named, every other label the other value
+                ("another label compared", "${{ matrix.os == 'macos-latest' && '0' || '2' }}",
+                 [("macos-latest", "ok"), (OTHER_OS, "ok")])):
+            with self.subTest(form=label):
+                src, line = with_expr(expr)
+                self.assertEqual(cells(src), want, [_describe(i) for i in pytest_invocations(src) if (i["job"], i["step"]) == MATRIX_STEP])
+                self.assertEqual(yaml_line_forms(src)[1], [], "%s: in the forms the scan accepts" % label)
+        src, line = with_expr("${{ matrix.os == 'macos-latest' && '0' || '2' }}")
+        self.assertEqual(run_pytest_status(src)[1], [], "each count read is an entry of RUN_PYTEST_OPTIONS")
+        # run_pytest_status reads each cell's command: a count with no entry, or an operator in a value, is refused on the
+        # cell whose text holds it, naming that cell
+        for label, expr, whys in (
+                ("a count with no entry on ubuntu-latest", "${{ matrix.os == 'ubuntu-latest' && '3' || '0' }}",
+                 ["the argument '-n' on the Run pytest command", "the argument '3' on the Run pytest command"]),
+                ("an operator in ubuntu-latest's value", "${{ matrix.os == 'ubuntu-latest' && '2 || true' || '0' }}",
+                 ["more than its one shell command"])):
+            with self.subTest(form=label):
+                src, line = with_expr(expr)
+                refused = run_pytest_status(src)[1]
+                self.assertEqual([r[0] for r in refused], [line] * len(whys), "%s: %r" % (label, refused))
+                for why, r in zip(whys, refused):
+                    self.assertIn(why, r[2], label)
+                    self.assertIn("as a cell whose matrix.os is ubuntu-latest runs it", r[2], label)
+        # an expression the evaluator does not read is refused by both checks, named at its line
+        src, line = with_expr("${{ matrix.workers }}")
+        self.assertEqual([v for _o, v in cells(src)], ["unparsed"])
+        self.assertIn("a shape batch 917's evaluator does not read", _describe([i for i in pytest_invocations(src) if (i["job"], i["step"]) == MATRIX_STEP][0]))
+        refused = run_pytest_status(src)[1]
+        self.assertEqual([r[0] for r in refused], [line], refused)
+        self.assertIn("the expression ${{ matrix.workers }}, a shape batch 917's evaluator does not read", refused[0][2])
+        # part 5 reads each cell's text too: an earlier step of the job whose value joins GITHUB_ENV across the
+        # expression's edge, where the text as written spells no name, is refused at its line
+        name = "      - name: Run pytest\n"
+        self.assertEqual(self.src.count(name), 1, "the Run pytest step moved: re-anchor this case")
+        joined_env = ('      - name: Set options\n        run: echo PYTEST_ADDOPTS=--co >> '
+                      '"$GITHUB_${{ matrix.os == \'ubuntu-latest\' && \'ENV\' || \'OUTPUT\' }}"\n')
+        src = self.src.replace(name, joined_env + name, 1)
+        line = self.src[:self.src.index(name)].count("\n") + 2
+        self.assertNotIn("GITHUB_ENV", joined_env)
+        refused = run_pytest_status(src)[1]
+        self.assertEqual([(r[0], "spells GITHUB_ENV" in r[2]) for r in refused], [(line, True)], refused)
+        # the switch's spelling read per cell: a value can join the name across the expression's edge, where the text as
+        # written does not spell it, so the switch census cannot see it (an export in the step itself, and a write to
+        # $GITHUB_ENV in an earlier step of the job)
+        joined = "ROMP_SDK_${{ matrix.os == 'ubuntu-latest' && 'REQUIRE' || 'OTHER' }}"
+        own_step = ("      - name: Export joined (pytest)\n        run: |\n          export %s=0\n"
+                    "          python -m pytest tests/test_a.py -q -p no:anyio\n" % joined)
+        earlier_steps = ("      - name: Write joined\n        run: echo %s=0 >> \"$GITHUB_ENV\"\n"
+                         "      - name: After the write (pytest)\n        run: python -m pytest tests/test_a.py -q -p no:anyio\n" % joined)
+        own = self._with_shell_job_env(self._with_step_in_shell_job(own_step)[0])
+        earlier = self._with_shell_job_env(self._with_step_in_shell_job(earlier_steps)[0])
+        for label, src, planted, key, want in (
+                ("an export in the step", own, own_step, ("shell", "Export joined (pytest)"),
+                 [("ubuntu-latest", "unparsed"), (OTHER_OS, "ok")]),
+                ("a write to $GITHUB_ENV in an earlier step", earlier, earlier_steps, ("shell", "After the write (pytest)"),
+                 [(None, "unparsed")])):
+            with self.subTest(form=label):
+                self.assertNotIn(SWITCH, planted, label)
+                inv = [i for i in pytest_invocations(src) if (i["job"], i["step"]) == key]
+                self.assertEqual([(i["os"], verdict(i)) for i in inv], want, [_describe(i) for i in inv])
+                self.assertEqual(switch_line_census(src)[1], [], "%s: the census reads the text as written" % label)
+
     def test_what_can_discard_pytests_failure_on_the_run_pytest_step_is_refused_at_its_line(self):
         # round 5's ruling C (2026-09-24): each plant below (the refuter's mutants and the ruling's two more,
         # BASH_ENV on the step and an earlier step's write of PYTEST_ADDOPTS to $GITHUB_ENV, under which a
@@ -3271,7 +3530,10 @@ class PopulationCheckReds(unittest.TestCase):
         # and the PYTEST_ADDOPTS prefix on the command, under which only other cases' anchors failed; each is
         # refused at its line by run_pytest_status. The population check reads each as before: it holds the flag
         # and the switch, not the exit status, so the refusal is this check's alone
-        run = "        run: python -m pytest -q -p no:anyio --durations=10 --timeout=600 --timeout-method=thread\n"
+        # the live Run pytest command line, whatever its options (batch 917 added its worker count)
+        runs = [l for l in self.src.splitlines(keepends=True) if l.startswith("        run: python -m pytest ")]
+        self.assertEqual(len(runs), 1, "the Run pytest command line moved: re-anchor this case: %r" % runs)
+        run = runs[0]
         name, switch = "      - name: Run pytest\n", '          %s: "1"\n' % SWITCH
         job = "  python:\n    name: Python ${{ matrix.python-version }} (${{ matrix.os }})\n"
 
@@ -3347,10 +3609,10 @@ class PopulationCheckReds(unittest.TestCase):
             with self.subTest(plant=label):
                 read, refused = run_pytest_status(src)
                 self.assertEqual([r[0] for r in refused], [line], "%s: %r" % (label, refused))
-                self.assertEqual(read, [i["line"] for i in pytest_invocations(src) if (i["job"], i["step"]) == MATRIX_STEP], label)
+                self.assertEqual(read, sorted({i["line"] for i in pytest_invocations(src) if (i["job"], i["step"]) == MATRIX_STEP}), label)
                 self.assertIn(why, refused[0][2], label)
                 self.assertEqual(refused[0][1], src.splitlines()[line - 1].strip(), label)
-                self.assertEqual([verdict(i) for i in pytest_invocations(src) if (i["job"], i["step"]) == MATRIX_STEP], ["ok"], label)
+                self.assertEqual([verdict(i) for i in pytest_invocations(src) if (i["job"], i["step"]) == MATRIX_STEP], ["ok", "ok"], label)
                 self.assertEqual(yaml_line_forms(src)[1], [], "%s: in the forms the scan accepts" % label)
         # a line at the job's key indent that the check does not read as a key is refused at its line; the scan refuses
         # each form too (yaml_line_forms), so these two are held on run_pytest_status's own read
@@ -3463,9 +3725,10 @@ class PopulationCheckReds(unittest.TestCase):
         src = self.src.replace('          ROMP_SDK_REQUIRE: "1"\n', "", 1)
         self.assertNotEqual(src, self.src, "the matrix step's switch line moved: re-anchor this case")
         matrix = [i for i in pytest_invocations(src) if (i["job"], i["step"]) == MATRIX_STEP]
-        self.assertEqual(len(matrix), 1, matrix)
-        self.assertEqual(verdict(matrix[0]), "unlisted", _describe(matrix[0]))
-        self.assertIn("lacks ROMP_SDK_REQUIRE=1", _describe(matrix[0]))
+        self.assertEqual([i["os"] for i in matrix], ["ubuntu-latest", OTHER_OS], "one row per cell (matrix_os_texts): %r" % matrix)
+        for i in matrix:
+            self.assertEqual(verdict(i), "unlisted", _describe(i))
+            self.assertIn("lacks ROMP_SDK_REQUIRE=1", _describe(i))
 
     def test_the_served_step_with_its_entry_removed_is_unlisted(self):
         # what the list buys: an entry gone, the step is named; what it costs: the premises above
@@ -3720,7 +3983,8 @@ class PopulationCheckReds(unittest.TestCase):
                  + lines[i_env + 1:i_gil + 1] + lines[i_run + 1:])
         src = "\n".join(moved)
         rows = [(i["line"], i["env"].get(SWITCH), verdict(i)) for i in pytest_invocations(src) if (i["job"], i["step"]) == MATRIX_STEP]
-        self.assertEqual(rows, [(i_env + i_run - i_gil, None, "unlisted")], "the Run pytest step's env moved under services:")
+        self.assertEqual(rows, [(i_env + i_run - i_gil, None, "unlisted")] * 2, "the Run pytest step's env moved under services: "
+                         "one row per cell (matrix_os_texts)")
         self.assertEqual([t for _n, t in switch_line_census(src)[1]], ['%s: "1"' % SWITCH])
         self.assertEqual(yaml_line_forms(src)[1], [])
         # a key name: under strategy.matrix after the steps is not the unnamed last step's name (X09)
@@ -4280,7 +4544,8 @@ def _launchers_in(src, filename):
     in functools.partial, map, an executor's submit or asyncio.to_thread, through `.__call__`, as a parameter default,
     in a tuple, a walrus or a conditional expression, among others, is called by code the census does not read, and a
     pytest session it starts in this process loads the plugins the outer run excluded. A module that does not parse is
-    one unparsed row. A list or tuple on the right of an `in` test is a set of names, not an argv, and is not read. Not
+    one unparsed row. A list or tuple on the right of an `in` or `not in` test, or on either side of an `==` or `!=`
+    test, is a value compared, not an argv, and is not read (the landing merge after batch 917 added the second). Not
     read, stated as the residual (test_each_form_outside_the_read_gives_no_row, and for the modules the prefilter skips
     test_the_walk_parses_a_module_holding_a_star_import_and_what_it_skips_gives_no_row, hold cases of it, each with no
     row): an argv assembled one element at a time (append calls); an option element _argv_command does not take apart
@@ -4312,7 +4577,7 @@ def _launchers_in(src, filename):
         return [{"file": base, "line": e.lineno or 1, "func": "<module>", "kind": "module", "argv": [], "flag": False,
                  "unparsed": "the module does not parse under this interpreter (%s), so nothing in it was read" % e.msg}]
     parents = {}
-    membership = set()          # the right operands of `x in (...)` / `x not in [...]`: sets of names, never an argv
+    compared = set()            # the literals a comparison compares (below): values compared, never an argv
     # gathered in this walk, not walks of their own (walking every module is most of the census's cost): the imports,
     # the assignments from a name, the global and nonlocal statements, and the header expressions: each expression
     # Python evaluates where a def, lambda or class stands rather than in its body (a decorator, a default, an
@@ -4322,7 +4587,16 @@ def _launchers_in(src, filename):
         for child in ast.iter_child_nodes(parent):
             parents[child] = parent
         if isinstance(parent, ast.Compare):
-            membership.update(id(c) for c, op in zip(parent.comparators, parent.ops) if isinstance(op, (ast.In, ast.NotIn)))
+            # the right operand of an in or not in test, a set of names, and either operand of an == or != test, a value
+            # the other is compared with: the comparison yields a bool and hands the literal to nothing that runs it
+            # (batch 917's tests/test_ci_pytest_workers.py compares a command's first three words with
+            # ["python", "-m", "pytest"], which read as an unflagged launcher until the landing merge)
+            operands = [parent.left] + parent.comparators
+            for k, op in enumerate(parent.ops):
+                if isinstance(op, (ast.In, ast.NotIn)):
+                    compared.add(id(operands[k + 1]))
+                elif isinstance(op, (ast.Eq, ast.NotEq)):
+                    compared.update((id(operands[k]), id(operands[k + 1])))
         elif isinstance(parent, (ast.Import, ast.ImportFrom)):
             imports.append(parent)
         elif isinstance(parent, (ast.Assign, ast.AnnAssign)) and isinstance(parent.value, (ast.Name, ast.Attribute)):
@@ -4733,7 +5007,7 @@ def _launchers_in(src, filename):
 
     for node in ast.walk(tree):
         if isinstance(node, (ast.List, ast.Tuple)):
-            kind, unparsed = _argv_command(node.elts) if id(node) not in membership else (None, None)
+            kind, unparsed = _argv_command(node.elts) if id(node) not in compared else (None, None)
             if kind:
                 row(node, kind, node.elts)
             elif unparsed:
@@ -4946,6 +5220,15 @@ class ChildPytestLaunchers(unittest.TestCase):
         self.assertIn("a constant element named 'pytest' after argv[0]", rows[0]["unparsed"])
         self.assertEqual(_launchers_in('import os\nname = "x"\nok = os.path.basename(name) in ("pytest", "py.test")\nbad = name not in ["pytest", "-q"]\n', "t.py"), [],
                          "the right operand of an in test is a set of names, not an argv")
+        # either side of an == or != test is a value compared (batch 917's tests/test_ci_pytest_workers.py, at the landing
+        # merge); the same literal handed to a call beside it is still read
+        self.assertEqual(_launchers_in('import shlex\nok = shlex.split(cmd)[:3] == ["python", "-m", "pytest"]\n'
+                                       'bad = ("python", "-m", "pytest") != tuple(argv)\nsame = a == b == ["pytest", "-q"]\n', "t.py"), [],
+                         "an operand of an == or != test is a value compared, not an argv")
+        rows = _launchers_in('import subprocess\nok = argv == ["python", "-m", "pytest"] and subprocess.run(["python", "-m", "pytest"])\n', "t.py")
+        self.assertEqual([(r["kind"], r["flag"]) for r in rows], [("<interpreter> -m pytest", False)], [_describe_launcher(r) for r in rows])
+        rows = _launchers_in('ok = ["python", "-m", "pytest"] < argv\n', "t.py")
+        self.assertEqual([r["kind"] for r in rows], ["<interpreter> -m pytest"], "an ordering test is not one the census excuses")
         self.assertEqual(_launchers_in("def f():\n    return 1\n", "t.py"), [])
         # a name a function binds itself is that function's, as Python looks it up: a local assignment or import of the
         # same name hides the module's launcher there, so the call runs something else and gives no row (the scope

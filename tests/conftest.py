@@ -103,8 +103,9 @@ def pytest_configure(config):
     controller whose interpreter has no SDK, which on a box is every controller; and the CI steps that install
     no SDK, today the vscode-extension job's served-page pytest step, which loads this conftest (the Python matrix
     cells' interpreter, the five Linux cells and the two macOS cells on a weekly or dispatch run, imports the class
-    since the SDK install step, and CI runs no xdist, so it has no controller). A module-level
-    warnings.filterwarnings in the emitting module does not
+    since the SDK install step, in the controller and, on the Linux cells' two workers since batch 917, in each
+    worker, since the package is installed in that interpreter rather than added to the path at import). A
+    module-level warnings.filterwarnings in the emitting module does not
     hold either: pytest wraps collection and each test in catch_warnings, which restores the filter list on
     exit. addinivalue_line appends to the ini list, so an ini file added later merges with this line. Both
     of the SDK's message forms ("...: permission_mode ..." and "... for: <tools>") start with the prefix."""

@@ -173,9 +173,11 @@ jobs:
         # class or instance attribute, getattr, importlib or runpy, a builtin or a module name such a star import
         # rebinds, a function's binding from such a name made any other way, a class body's call before the class binds
         # that name, among others), and every module whose text spells neither pytest nor py.test and holds no star
-        # import, which the census does not parse). The two plugin sets are not equal, and this
-        # comment does not say they are: the box's
-        # default run loads pytest-xdist's two plugins, which no cell installs. Nothing under tests/ is marked
+        # import, which the census does not parse). pytest-xdist's two plugins, which the box's default run
+        # loads, load in every cell too since batch 917 (#916) installed it there, and xdist hands each worker
+        # the command's arguments, so the flag blocks anyio's plugin in the Linux cells' two workers as well
+        # (2026-09-26, in a venv holding anyio: with -n 2 and the flag no worker loaded it; without the flag
+        # both did). Nothing under tests/ is marked
         # anyio or imports the one thing the plugin serves, the SDK's own pytest-marked conformance suite
         # claude_agent_sdk.testing, so the plugin does no work here; and blocked in every pytest process the
         # two checks read where nothing loads it again by its entry-point or module name, a bad anyio pytest
@@ -256,11 +258,15 @@ jobs:
           # env allowlist (BASH_ENV among them), and a run block of this job that spells GITHUB_ENV,
           # GITHUB_PATH or BASH_ENV (run_pytest_status's docstring in tests/test_ci_sdk_pin.py states the rule
           # and its residual); among what stays outside, a write by a script or action a step calls, or one to
-          # $GITHUB_ENV or $GITHUB_PATH that does not spell the name. It reads a run block as written,
-          # and GitHub substitutes a ${{ }} expression into the block before the shell reads it, so a
-          # step whose run block holds one and spells pytest anywhere in it, in a comment line or a
-          # trailing comment too, is red until the value moves to an env: key the block reads as a shell
-          # variable (the substituted text can end a comment with a newline and run what follows it);
+          # $GITHUB_ENV or $GITHUB_PATH that does not spell the name. GitHub substitutes a ${{ }} expression
+          # into a run block before the shell reads it, so a block whose every expression is the one shape
+          # batch 917's evaluator reads (command_on in tests/test_ci_pytest_workers.py: matrix.os compared with
+          # one label, choosing between two quoted values, as this step's worker count is) is read once for
+          # each label its expressions name and once for every other label, each text substituted as that
+          # cell's shell reads it (matrix_os_texts in tests/test_ci_sdk_pin.py), and
+          # a step whose run block holds any other expression and spells pytest anywhere in it, in a comment
+          # line or a trailing comment too, is red until the value moves to an env: key the block reads as a
+          # shell variable (the substituted text can end a comment with a newline and run what follows it);
           # anything that rewrites a pytest command's arguments after that (among them a shell function or
           # alias, a python earlier on PATH, a step's shell:; pytest_invocations' docstring in
           # tests/test_ci_sdk_pin.py states the read) is outside the check, except on this step, where it
@@ -338,7 +344,8 @@ jobs:
         # carries no stacks; run the named test alone (without -n) and the dump prints, its bottom
         # frame the blocked primitive.
         # -p no:anyio: the SDK step's closure carries anyio, whose pytest plugin would otherwise
-        # auto-load in this process and in every pytest child the suite spawns in this interpreter
+        # auto-load in this process, in the Linux cells' two workers (xdist hands each the command's
+        # arguments, the flag among them) and in every pytest child the suite spawns in this interpreter
         # (the launchers under tests/ pass the same flag); the SDK step's comment states the decision
         # and its measurement, and tests/test_ci_sdk_pin.py holds the flag on every pytest invocation
         # in this file (its population check) and on the launchers under tests/ its launcher census reads.

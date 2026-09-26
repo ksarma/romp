@@ -88,9 +88,10 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   unpacking, a conditional expression or a parameter default, or a call through
   `getattr`, `importlib` or `runpy`; `pytest.main` held as a value rather than
   called where it is written, as a parameter default or a thread's target among
-  others, is refused, not left unread). The two
-  plugin sets are not equal: the box's default run loads pytest-xdist's two
-  plugins, which no cell installs. To execute the gated
+  others, is refused, not left unread). pytest-xdist's two plugins, which the
+  box's default run loads, load in every cell too since batch 917 (#916)
+  installed it there, and xdist hands each worker the command's arguments, the
+  flag among them. To execute the gated
   tests from a plain venv, put romp's SDK venv on the path:
   `PYTHONPATH=~/.local/state/romp/sdkvenv/lib/python3.12/site-packages python3 -m
   pytest tests/test_sdk_backend.py -q -p no:anyio` (the venv `bin/romp-sdk-setup`
@@ -124,8 +125,10 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   the CI steps that install no SDK, today the vscode-extension job's served-page
   pytest step, which loads this conftest; the Python matrix cells' interpreter (the
   five Linux cells, and the two macOS cells on a weekly or dispatch run) imports the
-  class since the SDK install step, and CI runs no xdist, so it has no
-  controller); a module-level `warnings.filterwarnings` does not
+  class since the SDK install step, in the controller and, on the Linux cells'
+  two workers since batch 917, in each worker, since the package is installed in
+  that interpreter rather than added to the path at import); a module-level
+  `warnings.filterwarnings` does not
   survive pytest's per-test `catch_warnings`. So `-p no:warnings` is no longer part of an
   `-n` run. One more import-time leak reached the postal suite the same way until
   2026-09-18: `tests/test_kernel_tunnels.py` set `ROMP_POSTAL_PEERS=0` at module
