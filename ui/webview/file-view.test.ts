@@ -453,7 +453,7 @@ test("Raw ⇄ Rendered exists for markdown ONLY, and nothing reaches innerHTML u
   const mdFn = VIEW.split("function mdBlock(")[1].split("export function rewriteFigureSrcs")[0];
   assert.match(mdFn, /if \(doc && doc\.kind === "file"\) \{/, "the file kind has its own arm");
   assert.match(mdFn, /\n {4}linkMarkdownAnchors\(box, doc\.path\);/, "a file's links: the module's walk, on every render (no `rendered` gate since Slice 7 of plans/markdown-viewer.md, item 1: mdBlock has no fallback to skip)");
-  assert.match(mdFn, /a\.setAttribute\("target", "_blank"\);\s*\n\s*a\.setAttribute\("rel", "noopener"\);/, "a URL document's links: stamped here, as attributes");
+  assert.match(mdFn, /anchor\.setAttribute\("target", "_blank"\);\s*\n\s*anchor\.setAttribute\("rel", "noopener"\);/, "a URL document's links: stamped here, as attributes (the local is `anchor` since the round-8 fixes of the print PR: the census keys an entry on a name declared once per function)");
   assert.doesNotMatch(mdFn, /\ba\.(target|rel)\s*=/, "no property write on either");
   const linkFn = web("file-view-links.ts").split("export function linkMarkdownAnchors(")[1];
   assert.match(linkFn, /a\.setAttribute\("target", "_blank"\);\s*\n\s*a\.setAttribute\("rel", "noopener"\);/, "…and the module stamps a web link the same way");
@@ -1049,7 +1049,7 @@ test("the title bar carries a session chip resolved from the sid — never inven
   assert.match(VIEW, /export function setFileViewIdentity\(fn: typeof identityOf\): void \{ identityOf = fn; \}/);
   const openFn = VIEW.split("export function openFileView")[1].split("function offersDownload")[0];
   assert.match(openFn, /const owner = sid \? identityOf\(sid\) : null;/, "no sid → the resolver is not even asked");
-  assert.match(openFn, /if \(owner\) \{\n\s*sess = el\("span", "fileview-sess"\);/, "no identity → no chip element at all");
+  assert.match(openFn, /const sess: HTMLElement \| null = owner \? el\("span", "fileview-sess"\) : null;\n(?:\s*\/\/[^\n]*\n)*\s*if \(owner && sess\) \{/, "no identity → no chip element at all (a const, so the print census reads one binding that holds one element: the round-6 review's correctness-5)");
   assert.match(openFn, /sess\.replaceChildren\(\.\.\.hostNameNodes\(owner\.name, sid\)\);/, "host: quiet for a remote session");
   assert.match(openFn, /if \(owner\.color\) \{ sess\.style\.background = owner\.color\.bg; sess\.style\.color = owner\.color\.fg; \}/,
     "the session's identity colour, inline — an uncolored stub keeps the sheet's neutral pill");

@@ -287,7 +287,7 @@ test("mdBlock takes the document's location and resolves relative figure referen
   assert.doesNotMatch(MD_FN, /querySelectorAll\("img\[src\]"\)/, "no img-only arm is left in mdBlock");
   const RF = VIEW.split("function resolveFigureRefs(root: ParentNode, base: string): void {")[1].split("\n}")[0];
   assert.match(RF, /for \(const ref of figureRefs\(root\)\) \{/, "the gate's own walk names the attributes");
-  assert.match(RF, /const abs = resolveDocRelative\(c\.url, base\); if \(abs !== c\.url\) \{ c\.url = abs; changed = true; \}/, "each srcset candidate resolved");
+  assert.match(RF, /const cabs = resolveDocRelative\(c\.url, base\); if \(cabs !== c\.url\) \{ c\.url = cabs; changed = true; \}/, "each srcset candidate resolved (its own name, not `abs`: file-print.test.ts's census holds a written URL value to one declaration per function)");
   assert.match(RF, /if \(changed\) el\.setAttribute\("srcset", serializeSrcset\(cands\)\);/, "written back with its descriptors");
   assert.match(RF, /const abs = resolveDocRelative\(ref\.value, base\);/, "every other attribute resolved through the one helper");
   assert.match(RF, /el\.removeAttributeNS\(XLINK_NS, "href"\);\n\s*if \(!el\.hasAttribute\("href"\)\) el\.setAttribute\("href", abs\);/, "xlink:href folded into href, href winning when both stand");
@@ -295,10 +295,10 @@ test("mdBlock takes the document's location and resolves relative figure referen
   assert.equal((RF.match(/resolveDocRelative\(/g) || []).length, 2, "the resolution is the pure helper's, in its two shapes (a srcset candidate, an attribute)");
   // the ATTRIBUTE, never the property: .src/.href/.poster are already resolved against the page (the wrong base); no stamp for the panel here
   assert.doesNotMatch(RF, /\.src\b|\.poster\b|\.href\b|innerHTML|data-fv-src/, "no property reads or writes, no string rewrite, no data-fv-src in a URL document");
-  assert.match(MD_FN, /const href = linkHref\(a\);/);   // linkHref reads the href attribute (or xlink:href), never the property
+  assert.match(MD_FN, /const href = linkHref\(link\);/);   // linkHref reads the href attribute (or xlink:href), never the property; the local is `link` since the print PR's round-8 fixes (the census keys an entry on a name declared once per function)
   assert.doesNotMatch(MD_FN, /img\.src\b|a\.href\b/, "no property reads");
   // URL mode: the links resolve against the document URL through the executed helper
-  assert.match(MD_FN, /a\.setAttribute\("href", resolveDocRelative\(href, doc\.href\)\);/);
+  assert.match(MD_FN, /link\.setAttribute\("href", resolveDocRelative\(href, doc\.href\)\);/);
   // in-document and already-absolute anchors are left alone by the resolver
   assert.match(MD_FN, /if \(!href \|\| href\.startsWith\("#"\) \|\| \/\^\[a-z\]\[a-z0-9\+\.-\]\*:\/i\.test\(href\)\) return;/);
   // the helpers arrive from the pure module
@@ -377,9 +377,9 @@ test("every heading gets id=md-<slug> after sanitisation and BEFORE the math fil
 test("a `#fragment` anchor is stamped fv-anchor and gets NO _blank in a URL document (or one with no location); every other anchor there still does; a file's anchors are the module's", () => {
   // setAttribute, not the properties: an SVG <a> is a link too, and its `target` property is read-only (md-sanitize-viewer-links.test.ts);
   // LINK_SEL and linkHref, so the SVG anchor is reached and read like the HTML one
-  assert.match(MD_FN, /\} else \{\n(?:\s*\/\/[^\n]*\n)*\s*box\.querySelectorAll\(LINK_SEL\)\.forEach\(\(node\) => \{\n\s*const a = node as HTMLElement \| SVGElement;\n\s*if \(linkHref\(a\)\.startsWith\("#"\)\) \{ a\.dataset\.act = "fv-anchor"; return; \}\n\s*a\.setAttribute\("target", "_blank"\);\n\s*a\.setAttribute\("rel", "noopener"\);/);
+  assert.match(MD_FN, /\} else \{\n(?:\s*\/\/[^\n]*\n)*\s*box\.querySelectorAll\(LINK_SEL\)\.forEach\(\(node\) => \{\n\s*const anchor = node as HTMLElement \| SVGElement;\n\s*if \(linkHref\(anchor\)\.startsWith\("#"\)\) \{ anchor\.dataset\.act = "fv-anchor"; return; \}\n\s*anchor\.setAttribute\("target", "_blank"\);\n\s*anchor\.setAttribute\("rel", "noopener"\);/);
   const finalLoop = MD_FN.slice(MD_FN.lastIndexOf('box.querySelectorAll(LINK_SEL)'));   // every link element, not only <a href>
-  assert.ok(finalLoop.includes('a.dataset.act = "fv-anchor"'), "stamped in the arm every non-file document takes: a URL, or no location at all");
+  assert.ok(finalLoop.includes('anchor.dataset.act = "fv-anchor"'), "stamped in the arm every non-file document takes: a URL, or no location at all (the local is `anchor` since the print PR's round-8 fixes)");
   assert.ok(!finalLoop.includes("linkMarkdownAnchors"), "…and never over a local file's anchors, which the module sorted in the other arm");
 });
 
@@ -466,7 +466,7 @@ test("rendered markdown never carries data-* attributes into the page, in the vi
   assert.doesNotMatch(VIEW + RENDER, /ALLOW_DATA_ATTR|DOMPurify\.sanitize\(/, "neither caller spells a profile of its own");
   // the viewer's own marks are set AFTER the sanitize, so they are unaffected
   assert.ok(MD_FN.indexOf("sanitizeMd(") < MD_FN.indexOf("linkMarkdownAnchors(box, doc.path)"));
-  assert.ok(MD_FN.indexOf("sanitizeMd(") < MD_FN.indexOf('a.dataset.act = "fv-anchor"'));
+  assert.ok(MD_FN.indexOf("sanitizeMd(") < MD_FN.indexOf('anchor.dataset.act = "fv-anchor"'));
 });
 
 test("local file mode: a sibling link's #fragment lands after the first RENDERED paint, once", () => {

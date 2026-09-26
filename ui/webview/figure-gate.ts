@@ -49,6 +49,15 @@
 // sanitizer keeps `class`), so nothing here FINDS anything by class: the placeholder is found by its `data-act` and its
 // label by `data-fv-label`, marks the sanitizer never lets through (ALLOW_DATA_ATTR: false); the classes are for the
 // sheets alone.
+//
+// The gate judges each URL AS WRITTEN and reads nothing of the response. A host that answers a figure's request with a
+// redirect to a second host is reached by the browser, which follows the redirect on the click's restore (loadGatedHost)
+// and on the print's (loadGatedFigure, file-print.ts) alike, and that second host is named nowhere, not in the
+// placeholder's label and not in the print's with-button title, and joins no loaded set: a later figure on it is gated
+// (a probe of 2026-09-19, `https://redirecting.test/r.svg` answered 302 to `https://elsewhere.test/e.svg`, and
+// file-print-egress-browser.test.ts case (13), the same host answered 302 to `https://elsewhere.test/from/r.svg`: both
+// hosts requested on either road, the label and the title naming redirecting.test alone). Whether such a redirect should be refused, followed or reported is a ruling not taken (plans/markdown-viewer.md,
+// the print follow-on's open point 7); this records what the gate does.
 import { XLINK_NS } from "./md-links";
 import { loadSettings, onExternalSettingsChange } from "./settings";
 
@@ -435,11 +444,36 @@ export function regateFigures(doc: ParentNode): void {
     else if (hosts[0] !== wrap.getAttribute("data-fv-host")) labelGate(wrap as HTMLElement, hosts);
   });
 }
-/** The click: the host joins the document's loaded set and every placeholder waiting on it (alone) is restored. */
+/** The click: the host joins the document's loaded set and every placeholder waiting on it (alone) is restored. A click on a
+ *  placeholder keeps this host-wide, page-life meaning (the ruling: for the session); the print's one-time restore is
+ *  loadGatedFigure below, whose doc states in full where the restored figures' requests go, a redirect among them; this
+ *  restore's requests go the same way (the header). */
 export function loadGatedHost(host: string, doc: ParentNode = document): void {
   if (!host) return;
   loadedHosts.add(host.toLowerCase());
   regateFigures(doc);
+}
+/** Restore ONE placeholder for a one-time act, the print's "Print with them" (file-print.ts): its figure's moved attributes
+ *  back under their names and the media element back in the placeholder's place, as a click's restore does for each
+ *  placeholder of a host (restore), WITHOUT adding any host to the document's loaded set. The grant is this placeholder's
+ *  alone: every other placeholder naming the host, one inside a closed fold among them, stands as it is, and the next paint
+ *  of the page (a reload, a Rendered or Raw pick) gates the host's figures again, since every paint reads the loaded set.
+ *  A click on a placeholder keeps its host-wide, page-life meaning (loadGatedHost). True when `wrap` was a placeholder
+ *  (found by the delegated action, as gateOf and regateFigures find one, never by the class) and was restored; false, and
+ *  nothing touched, for any other element. Before the round-2 review (2026-09-19) the print restored by host through
+ *  loadGatedHost, so a host one printable and one folded placeholder shared had both restored and the folded picture
+ *  fetched for a print that never shows it. The figure's requests go where its URLs point, a redirect followed to a host the
+ *  print's title never names and this never grants (the header). The restore is the FIGURE's, not a painting element's:
+ *  every moved attribute of the root and of every descendant comes back whether or not the element that carries it paints,
+ *  so a remote URL inside a non-painting element of a figure that paints (an svg <image> under <defs> beside one that
+ *  paints; a hidden <img> inside a <video> that paints its poster) is fetched for something that is never on the paper. The
+ *  print counts, names and restores a placeholder only when its figure paints (file-print.ts figurePrintable), and this
+ *  sentence is what that grant covers (the round-4 review's HIGH 2, 2026-09-20, a consent-text correction; restoring only
+ *  the refs whose element shows is the better shape and needs an owner, plans/markdown-viewer.md open point 8). */
+export function loadGatedFigure(wrap: Element): boolean {
+  if (wrap.getAttribute("data-act") !== GATE_ACT) return false;
+  restore(wrap);
+  return true;
 }
 /** The placeholder a click or a key landed in, if any: for the viewer's body listeners. */
 export function gateOf(target: EventTarget | null, within: Element): HTMLElement | null {

@@ -54,6 +54,7 @@ const RULES = [
   ".fileview-err {",   // the failure dress itself, since it carries overflow-wrap: anywhere (Slice 7 of plans/markdown-viewer.md, item 1, the review's round 4: a render failure's message with a long unbroken token widened the body at phone width)
   ".fileview > .fileview-err {",   // the notice bar above the body row (Slice 2 of plans/markdown-viewer.md)
   ".fileview-err-act {",   // the changed-on-disk bar's Reload on the words' line (Slice 6, item 5; the review's round 5)
+  ".fileview-print-line .fileview-load {",   // the print wait's loader inline on its line (the print follow-on, P2; the loader's own rule is pane-specific and stays unpinned)
   // the width caps on a note's pictures and on the media it draws itself (svg, canvas, video): under the md box's
   // contain: layout an uncapped one is clipped and unreachable, so the cap has to hold on both pages
   ".fileview-md img {", ":where(.fileview-md) svg, :where(.fileview-md) canvas, :where(.fileview-md) video {",

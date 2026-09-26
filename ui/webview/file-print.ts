@@ -1,0 +1,1328 @@
+// Print a file from the viewer, with its pictures (the print follow-on to plans/markdown-viewer.md's Slice 3, item 12; the
+// contract of 2026-09-19, parts P1, P2 and P6). The @media print block in the sheets prints the open file alone, black on
+// white, but nothing awaited the pictures: the browser's own print (its menu; Ctrl/Cmd+P on a page without the dashboard's
+// command palette, whose dispatcher holds that chord there) printed a gated figure as its placeholder and a picture still
+// loading as the browser had it at that instant. This module is the flow in front of window.print():
+//   1. A press (the bar's Print glyph button, Download's shape, or Ctrl/Cmd+P while a file is open and no text field holds the keyboard)
+//      counts the gated placeholders in the body (figure-gate.ts, found by their data-act as the gate finds them: an
+//      author can type the class, never the data attribute) that REACH THE PAPER (`figurePrintable`: the placeholder
+//      is not inside a closed <details>, a typed one or a folded callout, outside its summary, and not under a `hidden`
+//      attribute, the two hidings the walk knows; where the browser can be asked it renders the placeholder too, by its
+//      own checkVisibility and a client rect, so a hiding the walk does not know, a `popover` not shown, a ruby's <rp>, a
+//      <canvas>'s fallback content, an author's class a sheet rule hides, falls to NOT printable; and a painting element of
+//      the figure the placeholder wraps would show once restored (figurePrintable over the root and every painting
+//      element inside it, the img of a <picture> and an svg's graphics elements among them, each read with its ancestors
+//      up to the root: `hidden` and `popover` on an HTML element, the author's own display none, and the opacity and
+//      visibility the browser COMPUTES, which the gate's sheet leaves alone where it sets display none on the gated root,
+//      so display alone is read from the author's declaration; the round-3 review, 2026-09-20: before this the opacity
+//      was matched against one spelling of zero, so `-0`, `+0` and `0e0` counted printable and were fetched while `0.0.0`,
+//      which the browser paints, read as off the paper, and the first element child alone was read, so
+//      `<picture><img hidden>` was counted and fetched; the third review, 2026-09-19: before this every
+//      placeholder was counted and every host it named was loaded, so "with them" fetched from hosts for pictures the
+//      print never showed; the round-2 review: the walk alone counted a placeholder the browser never renders). With any,
+//      the bar ARMS instead of printing: one line under
+//      the title bar names the count and offers "Print with them" and "Print without them"; Escape or a second press
+//      disarms (the update banner's two-click shape: the gate is a privacy choice, so a print never fetches from an
+//      unlisted host unless the person chose it; where a chosen figure's requests then go, a redirect its host answers
+//      among them, is stated in full in loadGatedFigure's doc, figure-gate.ts). "With them" restores exactly the
+//      placeholders it counted, each through the gate's restore of ONE placeholder (figure-gate.ts loadGatedFigure: the
+//      moved attributes back, the figure back in its place), so the requests are the ones those figures make and no
+//      other, going where those figures' URLs point (loadGatedFigure's doc, figure-gate.ts, stated in full there; the
+//      round-5 review's tests-3: these two sentences stood without it). The restore is the WHOLE figure's: the
+//      browser may fetch any URL the figure names, a remote URL inside a non-painting element of a figure that paints among
+//      them (an svg <image> under <defs> beside one that paints; a hidden <img> inside a <video> that paints its poster),
+//      for something never on the paper; which of them it fetches is the browser's own (a <picture> fetches the <source>
+//      it picks and not its <img>'s src), measured per shape in file-print-figure-browser.test.ts; the title names every
+//      such URL's host, since data-fv-hosts is read over every ref of the figure (the round-4 review's HIGH 2, 2026-09-20,
+//      a consent-text correction: the sentence read before the grant promised the pictures that reach the paper alone;
+//      restoring only the refs whose element shows is recorded as the better shape needing an owner,
+//      plans/markdown-viewer.md open point 8; the round-5 fix: "every URL is fetched" over-promised the egress, since the
+//      figure leg measures a <picture> fetching one of its two). A placeholder inside a closed fold or
+//      under hidden that names the same host stands as it is (the round-2 review, 2026-09-19: before this "with them"
+//      loaded by HOST through loadGatedHost, the click's road, so a host one printable and one folded placeholder shared
+//      had both restored and the folded picture fetched for a print that never shows it). A print is a one-time act: the
+//      host is not added to the document's loaded set, so the next paint of the page gates its figures again; a click on
+//      a placeholder keeps its host-wide, page-life meaning (loadGatedHost, decision 8). Its title names the hosts those
+//      placeholders name (the line counts pictures, by contract, and a placeholder naming two hosts says "and 1 more host"
+//      in its own label, so the title is where the hosts a press grants are read together). The placeholders are read at
+//      the arm and kept: "with them" restores that list and no other, so the title and the restores are one list by
+//      construction. A
+//      fold the person opens or closes under the armed line (the details' toggle event, heard on the card) is counted
+//      again like a repaint. A body repainted under the armed line (the host's `body` report: the changed-on-disk bar's Reload
+//      landing, a Rendered or Raw pick) is counted again (the driver's `recount`): over placeholders the line stands with
+//      the new count and the title with the new hosts, in place; over none the line goes, since the question it asked is
+//      moot, and the next press prints. Before this the line and the title stood as the press left them while "with
+//      them" read the hosts at the click, so a Reload that brought a placeholder on a new host had the click fetch from a
+//      host the title never named (the second review, 2026-09-19). A placeholder the person activates by hand under the
+//      armed line (its click, or Enter or Space on it: the viewer's own gate handlers on the body, file-view.ts loadGate)
+//      is counted again the same way, heard on the card after the body's handler ran, so the count and the title follow
+//      the one just loaded and the last one gone disarms (the review's consolidation, 2026-09-19: before this the count
+//      stood as the press left it until a repaint).
+//   2. Then the wait: every <img> in the body THAT REACHES THE PAPER (`printable`, the rule the placeholders are counted
+//      by; the shared-host probe, 2026-09-19: before this every picture in the body was awaited, so a host two placeholders
+//      shared, one open and one folded, had "with them" restore both and the wait count two, ask at the deadline about the
+//      folded one, which the print never shows, and print nothing until the person answered) reaches complete (its load or
+//      its error), and a <video poster> or an svg <image> under the same rule is awaited through a probe Image at the
+//      same URL (neither element reports completeness; the probe asks the browser for the URL the element itself
+//      fetched, so no other host is reached). The probes are ONE PER URL FOR THE
+//      LIFE OF ONE PRESS'S WAIT (a Map keyed by the resolved URL, cleared when a press or a choice begins its wait, handed to
+//      the collection as its probe factory): the settle's re-aim finds the probe it already made, so a URL whose picture
+//      failed settles for good with that one probe complete. Before this every re-aim minted a fresh Image per URL, a failed URL is never
+//      complete on a fresh Image, and the driver looped, probe, request, error, settle, re-aim, until the deadline: one press
+//      asked the host hundreds of times for one URL (the third review, 2026-09-19, measured 337 requests in 8 s), a request
+//      storm from one keystroke. A REPAINT's re-aim (reaim under the wait, recountAsk under the ask) first drops the probes
+//      already complete (dropDone): the landing's element fetches its URL again and the finished probe's verdict is the old
+//      document's, so that URL is probed once more against the new body, a request the browser folds into the landing
+//      element's own while that is in flight, while a probe still in flight is kept (the
+//      round-2 review's extra7-1, landed 2026-09-20: before this a Reload landing mid-wait that named a poster or svg image
+//      URL whose probe had already failed answered from that probe and window.print ran with the landing's own fetch still
+//      in flight). An <img loading="lazy"> the browser has not started fetching (far below the fold) fires
+//      neither event, so the collection sets it eager first, which starts the deferred fetch at once (the same URL, so no
+//      other host is reached; a gated img has no src and fetches nothing); the attribute stays eager after the print. The
+//      wait is bounded by PRINT_SETTLE_MS, 8 s. Its VERDICT reaches the machine as one event, `ready`, carrying why it ended
+//      (`settled`, or `deadline`) and the count still loading, so the machine, and any reader of its events, can tell a
+//      settle from a deadline: a settle prints, a deadline with a picture still loading ASKS instead of printing (the
+//      `stalled` phase), and a deadline that finds nothing loading is a settle in effect and prints (the third review: the
+//      first build fed one bare `ready` for both ends, and the deadline's print said nothing). The ask (the third review,
+//      2026-09-19): the line reads "N pictures have not loaded. Print anyway leaves out any picture still loading." with two word buttons
+//      in the armed line's shape, "Print anyway", which prints at once WITHOUT the pictures still loading (a markdown
+//      picture with no declared size prints as a 0 by 0 box, nothing where it was, no gap and no label; one with width
+//      and height as an empty box of that size; measured in Chromium under print media, file-print-driver-browser.test.ts
+//      case (15a); the round-4 review, 2026-09-20: before this the prose here said an empty box for every shape), and
+//      "Keep waiting", which waits on the load and error events alone, with no timer, until every picture settles, then
+//      prints. That open-ended wait's line reads "Waiting for N pictures… Print anyway leaves out any picture still loading." beside the
+//      loader with ONE word button, "Print anyway" (the ask's words and title), which prints at once with what has loaded;
+//      a re-aim under it rewrites the count in place and keeps the button (romp-manager's ruling, 2026-09-20, on the
+//      round-2 review's fresh-2 and the round-3 review's tests-4, ui-2 and extra5-3: the person chose to wait and the
+//      button completes that gesture with what has loaded, the pictures still loading left off the paper; NOT an exit
+//      control, since Escape already left the wait, and NO timer, since a timer would print a chosen picture missing
+//      with nothing said, the defect the ask closed; before this the line read "Preparing N pictures…" with no button,
+//      so the wait had no way through but the load). The second sentence of both lines (anywayWords) is the button's
+//      own: it stands beside "Print anyway" from the moment the line appears, so the person reads what the press does and
+//      presses once, rather than a confirmation step after the press (the round-4 review's ruling, 2026-09-20: the press
+//      must tell the person, at the moment they press, that the pictures still loading will not appear on the paper; a
+//      sentence in place before the press says it at that moment with no second click). Escape or a second press under the ask disarms as under the armed line, and Escape during that
+//      open-ended wait cancels it, the bar at rest and nothing printed (established by execution in Chromium on the code
+//      before the button, 2026-09-20: the card stayed up, the line went, the parked request stayed parked and its release
+//      printed nothing; file-print-driver-browser.test.ts case (15) executes both the button and that Escape; the timed
+//      wait's Escape stays the viewer's, which closes the card: that wait ends by itself). Nothing
+//      listens under the ask; Keep waiting reads the body as it stands then, so a picture that landed meanwhile is not
+//      waited on again and with none left loading the print runs at once. Before this the print ran at the deadline and a
+//      picture still loading printed as nothing where it stood (a markdown picture with no declared size; one with width
+//      and height as an empty box of that size) with nothing said: a route that never answers raises no error event, so no
+//      label stood in for it either (a failed picture, its error event, settles and prints as its label, then as now).
+//      The line reads "Preparing N pictures…" meanwhile, beside the viewer's loader (the swirl, the wordmark and the
+//      three dots, .fileview-load inline in the row: ui/CLAUDE.md's loading-state rule, which puts the romp loader on every
+//      wait; the first build showed the words alone). N is the count at the AIM (the press, a choice, or a re-aim after a
+//      repaint or a settle), not a count that falls as each picture settles: the wait's promise resolves once when every
+//      picture it listened on has settled, so a line over three pictures reads three until all three have landed, and the
+//      open-ended wait's line has the same property (the round-4 review's extra7-2, 2026-09-20, which preferred the property
+//      stated to a per-picture callback; file-print-driver-browser.test.ts case (15a) reads the count after one of two
+//      pictures landed). With no gated placeholder and every picture complete the press
+//      prints at once, in the click's own task. The wait is AIMED at the body as it stands, and re-aimed when the
+//      body is repainted under it (the host's `body` report: a reload's landing, a format pick; the pictures listened on
+//      were the old body's, detached by the swap; entering the editor seats the viewer's loader, which takes the body out
+//      and disarms first, so the editor's exit lands under no wait) and again at the settle (a picture that entered or
+//      was re-aimed since the collection, a heal's retry of a failed figure among them, is awaited too; a URL the retry
+//      changed is a new key and is probed once), always under the deadline the press set, never past it (each re-aim's
+//      bound executed by its own case of file-print-driver-browser.test.ts: case 3c lands a parked picture by a Reload
+//      mid-wait, the repaint's re-aim, and case 12 inserts one inside the rendered root, unseen by the body's observer, and
+//      releases the first, the settle's re-aim; each reads the ask at the press's deadline, under 1600 ms after the landing
+//      or the release, where a re-aim that restarted the deadline would read about 2000): the print fires with every
+//      picture in the body complete, or the deadline asks. A repaint under the ask (a Reload landing, a Rendered or Raw
+//      pick; the editor's exit lands under no ask, since entering the editor took the body out and disarmed) NEVER
+//      prints: it is no answer to the ask. The new body's pictures still loading are counted
+//      the same way; over any the line's count follows in place, and over none the question is moot and the flow returns
+//      to rest, the line gone, so the person may press again. Before this the count of none was read as the print act and
+//      window.print ran with neither button pressed, over the Raw view in one case (the round-2 review, 2026-09-19).
+//   3. window.print(). On afterprint, or at once when print returns, the bar rests.
+// The machine is `step`, a pure function over PrintState and PrintEvent returning the next state and the act the driver
+// performs; settlePictures takes any objects with `complete` and the two event methods, and timers a test injects
+// (file-print.test.ts runs both under node with fake pictures and a fake clock). installFilePrint is the DOM driver both
+// viewers call (file-view.ts openFileView and openUrlView): the button, the line, the wait, the print. It registers ONE
+// document keydown listener per open, in the capture phase, so an Escape while armed is stopped before the viewer's own
+// Escape (a bubble listener on the document, which closes the card) and the chord is prevented before the browser's raw
+// print runs; the host's close hook removes it with the viewer. Nothing else is registered on the document (the card carries
+// the placeholder listener, onGateAct, which goes with the card). Three keys are left alone by
+// that listener: an Escape that is some control's own (a key a listener ahead of this one already stopped, read through
+// the event's stop flag: the viewer's text-size flyout is dismissed by a document listener wired before this per-open one,
+// which closes the flyout and stops the key; ownsEscape: the keyboard inside a menu, a listbox or a dialog, the WAI-ARIA
+// patterns whose Escape closes the widget, the viewer's Outline popover among them, or a popup standing open in the card
+// by its trigger's aria-haspopup with aria-expanded true, one whose own handler runs after this listener; or a text field,
+// whose own Escape is the field's, the Comments composer's cancel among them), which acts on that control and leaves the
+// bar armed for the next Escape; a chord a listener before this one already prevented (the dashboard shell's
+// command palette dispatcher, palette-main.ts, which claims Mod+P on every pane document from the frame's load, so in the
+// shell the chord is the palette's and the button prints); and a text field's chord. A held chord's repeats are prevented
+// too, since the browser's default for each is its own print, but only the first keydown is a press (one per repeat would
+// arm and disarm on alternate repeats). The line is a row of the card in the notice bar's dress (.fileview-err, with
+// .fileview-btn.fileview-err-act word buttons: the changed-on-disk bar's shape, file-view.ts raiseDiskBar), so it needs no
+// rule of its own and the print block, which hides every `.fileview > .fileview-err`, leaves it off the paper; a word
+// button of the line that holds the keyboard when the line goes hands it back to the Print button (the zoom flyout's and
+// the Outline's Escape do the same for their trigger), or, at a disarm the body going out causes, to the viewer's body
+// through the host's takeKeyboard (the changed-on-disk bar's hand-over, file-view.ts dropDiskBar), since the Print button
+// is not enabled then; never to the document's body. No kernel route, no server-side render (P6).
+// The file's KIND switches the flow at the press (P3 and P4; the host's `kind` reads it then, since the kernel's Content-Type
+// decides it when the bytes land, after the bar is built). A rendered note, code, text and a picture opened directly are
+// the page: the wait and window.print() above, and the print block in the sheets fits `img.fileview-img` to the page (the
+// screen rule's 82vh cap, radius and shadow undone). A PDF is a frame at a blob URL (file-view.ts pdfBlock), and a printed
+// frame shows one viewport at most, so the flow prints the document itself: the frame's own window, contentWindow.print(),
+// when the frame holds the PDF (pdfFrameWindow: the window reachable, its document the PDF's, print a function; in
+// Chromium the blob frame's document is the PDF viewer's, content type application/pdf, and the parent may call its print;
+// a browser without a PDF viewer, headless Chromium's shell and headless Firefox among them, downloads the bytes instead
+// and leaves the frame's window at about:blank, whose print is a function too and would print a blank page). When the
+// frame cannot print, the kernel's /file URL opens in a new tab through the host's opener, the modified click's
+// (preview.ts openFileTab), and the line reads "Print from the tab that opened." until the next press or the close; a tab
+// the browser did not open is said the same way. The Comments panel's PDF pages (the pdf.js canvases, up while the panel is
+// open, with no frame in the body) are not printed: Print prints the PDF, through the tab then.
+// The button is DISABLED until the body is in (P7): the flow starts in the `disabled` phase, the button wearing aria-disabled
+// and the sheets' disabled dress, and never the `disabled` property (the bar's own rule, file-view.ts textSizeControl: a
+// button that disables under keyboard focus drops it on the document's body and leaves the tab order; the third review,
+// 2026-09-19). Whether the body is in is READ OFF THE BODY (bodyReady, over the body's element children, each classed by
+// its root, `<tag>.<class>`, against three CLOSED lists: READY_ROOTS, NOT_READY_ROOTS and LINE_ROOTS): a MutationObserver
+// on them, where the document has one (a DOM stand-in under node has none, and the press's own read below serves alone),
+// feeds the machine's `body` event after every paint, and a press reads them again first, so a swap in the press's own task
+// is seen before the observer runs. In while a content root stands (a rendered note, code or text, a picture's box, a PDF
+// frame's column, under the pages attempt's loader inside it too, the pages' host once drawn, the CodeMirror mount, which
+// prints the whole file) and no wait root does; not in while a wait root stands (the viewer's loader: the open's, the
+// editor's chunk wait, the Comments panel's PDF pages before page 1 is drawn; the plain fallback editor's textarea, of which
+// a print shows one clipped page) or a line root is all it holds (a failure pane: the fetch's, a picture that would not
+// decode, the URL viewer's); and NOT in over a child none of the lists names, whatever stands beside it (the round-2
+// review, 2026-09-19: the first derivation classed every child it had not seen as content, so an unwired pane would have
+// had a live button and a silent print of whatever stood; the safe side is the dead button, and file-print.test.ts's census
+// over file-view.ts's seating sites makes a root the viewer gains fail a test until it is listed here). The PDF kind is the
+// one exception, for the loader: a body whose kind is known to be a PDF (the host's `kind`, set when the bytes landed) is
+// in over the pages attempt's loader too (the Comments panel's pages before page 1 is drawn with no frame kept), since the
+// PDF road reads nothing from the body: the press prints through the frame or opens the /file tab, as it did before the
+// derivation (the round-2 review: the gate had closed that road, disabling Print and swallowing the chord); a failure pane
+// alone stays not in for a PDF too (a reload of it that failed). Before this each viewer paint reported the body in or out
+// by hand, and the roads nobody wired were wrong: the plain fallback reported in and printed one clipped page. A press over
+// a body not in changes nothing, and the chord is still prevented, so the browser's raw print does not run over the loader
+// either; the body going out while the bar is armed or the wait runs disarms (the line goes, the wait is cancelled) and
+// disables.
+import { GATE_ACT, loadGatedFigure } from "./figure-gate";
+import { ICON_PRINT } from "./icons";
+
+/** The wait's deadline: after this, with a picture still loading, the bar asks (the stalled phase) instead of printing. */
+export const PRINT_SETTLE_MS = 8000;
+let settleMs = PRINT_SETTLE_MS;
+/** The test seam: a browser leg that stalls a picture sets a shorter deadline; null restores the constant. Nothing in the
+ *  product calls it, and the constant is what the driver reads until it does. */
+export function setPrintSettleMs(ms: number | null): void { settleMs = ms === null ? PRINT_SETTLE_MS : ms; }
+export function printSettleMs(): number { return settleMs; }
+
+// ── the machine ─────────────────────────────────────────────────────────────────────────────────────
+export type PrintPhase = "disabled" | "resting" | "armed" | "preparing" | "stalled" | "printing";
+/** `gated`: the placeholders counted at the press that armed; `pending`: the pictures still loading when the wait began, or
+ *  when the deadline fell (the ask); `untimed`, on a preparing state alone: Keep waiting's wait, which has no deadline,
+ *  which Escape cancels and whose line offers Print anyway (`anyway` prints there; the press's and the armed line's waits
+ *  carry the deadline and no mark, and their line no button: the deadline asks). */
+export type PrintState = { phase: PrintPhase; gated: number; pending: number; untimed?: true };
+export const RESTING: PrintState = { phase: "resting", gated: 0, pending: 0 };
+/** The body is not in (the loader, or a failure pane, holds it): the button is disabled and a press changes nothing. The
+ *  driver starts here and leaves on the host's `body` event (P7). */
+export const DISABLED: PrintState = { phase: "disabled", gated: 0, pending: 0 };
+/** The file's kind at a press: `document` prints the page (a note, code, text, a picture opened directly); `pdf` prints the
+ *  document itself through its frame, or the /file tab. */
+export type PrintKind = "document" | "pdf";
+export type PrintEvent =
+  | { kind: "press"; gated: number; pending: number; file?: PrintKind }   // Print, or the chord: the counts as the body stands; the kind, a document when absent
+  | { kind: "escape" }
+  | { kind: "choose"; withGated: boolean }               // one of the armed line's two buttons
+  | { kind: "prepare"; pending: number }                 // the driver, after the choice: the pictures still loading
+  | { kind: "ready"; why: "settled" | "deadline"; pending: number }   // the wait's verdict: every picture settled (why settled, pending 0), or the deadline fell with `pending` still loading (a deadline with pending 0 is a settle in effect)
+  | { kind: "stalled"; pending: number }                 // the driver, after a repaint under the ask: the new body's pictures still loading (none: the ask is moot and the flow rests; never a print)
+  | { kind: "anyway" }                                   // "Print anyway": the ask's, or the open-ended wait's line's
+  | { kind: "keep" }                                     // the ask's "Keep waiting"
+  | { kind: "printed" }                                  // afterprint, or print returned
+  | { kind: "body"; in: boolean }                        // the host: the body holds the file's content (true), or the loader or a failure pane took it (false)
+  | { kind: "recount"; gated: number };                  // the driver, after a repaint under the armed line: the placeholders the body holds now
+/** What the driver does for a step: `arm` shows the line with its two buttons, `disarm` (a second press, Escape, or the body
+ *  going out, when the driver cancels a running wait too) and `rest` remove the line and restore the button, `activate` loads
+ *  every gated host and then prepares, `skip` prepares over the placeholders as they stand, `wait` shows the wait's line
+ *  (under `untimed`, the waiting words with Print anyway),
+ *  `stall` shows the ask (the line with "Print anyway" and "Keep waiting", written into the standing line: the wait's at the deadline, the ask's own under a repaint), `resume` aims
+ *  an open-ended wait at the body and then prepares, `print` calls window.print, `printPdf` prints the PDF itself (the frame's
+ *  window, or the /file tab). The button's disabled dress follows the phase, not an act: the driver syncs it after every step. */
+export type PrintAct = "none" | "arm" | "disarm" | "activate" | "skip" | "wait" | "stall" | "resume" | "print" | "printPdf" | "rest";
+
+/** The wait begins over `pending` pictures (`wait`), or the print runs at once over none. `untimed` marks Keep waiting's wait. */
+const begin = (pending: number, untimed = false): { state: PrintState; act: PrintAct } =>
+  pending > 0 ? { state: untimed ? { phase: "preparing", gated: 0, pending, untimed: true } : { phase: "preparing", gated: 0, pending }, act: "wait" } : { state: { phase: "printing", gated: 0, pending: 0 }, act: "print" };
+/** The ask over `pending` pictures still loading (`stall`): at the deadline, or rewritten in place after a repaint under it. */
+const ask = (pending: number): { state: PrintState; act: PrintAct } => ({ state: { phase: "stalled", gated: 0, pending }, act: "stall" });
+
+/** The next state and the act for it. The host's `body` event comes first: the body going out disables from every phase
+ *  and disarms (the line goes, and the driver cancels a wait), and its arrival rests a disabled flow and changes nothing
+ *  elsewhere by itself (the driver then reads the repainted body: during the wait it re-aims the wait at it, the phase
+ *  holding; under the armed line it feeds `recount` with the placeholders the body holds now). Then, by phase:
+ *  while disabled every other event changes nothing. A press while resting over a PDF prints the PDF itself (`printPdf`),
+ *  whatever the counts (a frame holds no placeholder and no picture); over a document it arms over any gated placeholder
+ *  and otherwise begins the wait (or prints at once with nothing pending); while armed a press or Escape disarms, a
+ *  choice activates or skips, the driver's `prepare` then beginning the wait, and a `recount` arms again over the new count
+ *  (`arm`: the driver rewrites the line and the title in place) or disarms over none (the placeholders the line asked about
+ *  are gone, so the question is moot; the next press prints); while preparing the wait's verdict `ready` prints when it
+ *  settled, asks when the deadline fell with a count still loading, and prints when the deadline found none loading (a
+ *  settle in effect), and under Keep waiting's open-ended wait (`untimed`) alone Escape cancels it and `anyway`, its
+ *  line's one button, prints with what has loaded; while
+ *  stalled a press or Escape disarms, `anyway` prints, `keep` resumes (the driver aims the open-ended wait and its `prepare`
+ *  begins it, or prints with nothing left loading), and a `stalled` from a repaint asks again over the new count or, over
+ *  none, DISARMS (the question is moot, and a repaint is no answer to it: the round-2 review, 2026-09-19, before which the
+ *  count of none was read as the print act and window.print ran with neither button pressed); `printed` rests. Every other pairing changes nothing: a press during the wait or the print, an Escape or an `anyway` during
+ *  the timed wait (whose line has no button) or the print, an Escape at rest, a late `ready` after a rest, a `printed` after the body went out (the
+ *  button stays disabled), a `recount` in any phase but armed, a `stalled` in any phase but the ask (no timer feeds it: the
+ *  deadline is the verdict's), a `ready` or a choice under the ask. */
+export function step(s: PrintState, ev: PrintEvent): { state: PrintState; act: PrintAct } {
+  if (ev.kind === "body") {
+    if (!ev.in) return s.phase === "disabled" ? { state: s, act: "none" } : { state: DISABLED, act: "disarm" };
+    return s.phase === "disabled" ? { state: RESTING, act: "none" } : { state: s, act: "none" };
+  }
+  switch (s.phase) {
+    case "disabled": break;
+    case "resting":
+      if (ev.kind !== "press") break;
+      if (ev.file === "pdf") return { state: { phase: "printing", gated: 0, pending: 0 }, act: "printPdf" };
+      if (ev.gated > 0) return { state: { phase: "armed", gated: ev.gated, pending: 0 }, act: "arm" };
+      return begin(ev.pending);
+    case "armed":
+      if (ev.kind === "press" || ev.kind === "escape") return { state: RESTING, act: "disarm" };
+      if (ev.kind === "choose") return { state: s, act: ev.withGated ? "activate" : "skip" };
+      if (ev.kind === "prepare") return begin(ev.pending);
+      if (ev.kind === "recount") return ev.gated > 0 ? { state: { phase: "armed", gated: ev.gated, pending: 0 }, act: "arm" } : { state: RESTING, act: "disarm" };
+      break;
+    case "preparing":
+      if (ev.kind === "ready") return ev.why === "deadline" && ev.pending > 0 ? ask(ev.pending) : { state: { phase: "printing", gated: 0, pending: 0 }, act: "print" };
+      if (ev.kind === "escape" && s.untimed === true) return { state: RESTING, act: "disarm" };
+      if (ev.kind === "anyway" && s.untimed === true) return { state: { phase: "printing", gated: 0, pending: 0 }, act: "print" };   // the open-ended wait's one button: the print with what has loaded (the timed wait's line has none)
+      break;
+    case "stalled":
+      if (ev.kind === "press" || ev.kind === "escape") return { state: RESTING, act: "disarm" };
+      if (ev.kind === "anyway") return { state: { phase: "printing", gated: 0, pending: 0 }, act: "print" };
+      if (ev.kind === "keep") return { state: s, act: "resume" };
+      if (ev.kind === "prepare") return begin(ev.pending, true);
+      if (ev.kind === "stalled") return ev.pending > 0 ? ask(ev.pending) : { state: RESTING, act: "disarm" };   // a repaint under the ask never prints: the line follows the count, or goes with the last picture
+      break;
+    case "printing":
+      if (ev.kind === "printed") return { state: RESTING, act: "rest" };
+      break;
+  }
+  return { state: s, act: "none" };
+}
+
+/** The armed line's words for `n` placeholders. */
+export function armedWords(n: number): string {
+  return n === 1 ? "1 picture from another host is not loaded." : n + " pictures from other hosts are not loaded.";
+}
+/** The wait's words for `n` pictures still loading: the count at the aim, which does not fall as pictures settle (the
+ *  header). */
+export function preparingWords(n: number): string {
+  return n === 1 ? "Preparing 1 picture…" : "Preparing " + n + " pictures…";
+}
+/** The sentence that stands beside "Print anyway" wherever that button stands (the ask's line and Keep waiting's), the last
+ *  words of the line's text, so the person reads what the press does before pressing: the pictures still loading at the
+ *  press are left off the paper (a markdown picture with no declared size prints as a 0 by 0 box, one with width and height
+ *  as an empty box of that size: measured in Chromium under print media, file-print-driver-browser.test.ts case (15a)). The
+ *  round-4 review's ruling (2026-09-20): a press that silently drops the pictures the person chose to wait for is an
+ *  omission; a sentence in place before the press makes it an informed choice, with no second click and no paint at print
+ *  time. The sentence names no count and no picture: the line's count is the aim's and does not fall as pictures land (the
+ *  header), and a picture that lands while the line stands prints, so a sentence about the counted pictures is false from
+ *  that landing on (the round-5 review's ui-1, 2026-09-20: "Print anyway prints without them." was worded against the
+ *  count; file-print-driver-browser.test.ts case (15b) releases pictures under both lines and reads what prints). */
+export function anywayWords(): string {
+  return "Print anyway leaves out any picture still loading.";
+}
+/** The open-ended wait's words for `n` pictures still loading: Keep waiting's line, which carries Print anyway beside the
+ *  loader (the timed wait's line reads preparingWords and carries no button: its deadline asks), so anywayWords follows the
+ *  count. The count is the aim's, as preparingWords' is. */
+export function waitingWords(n: number): string {
+  return (n === 1 ? "Waiting for 1 picture…" : "Waiting for " + n + " pictures…") + " " + anywayWords();
+}
+/** The ask's words at the deadline: `n` pictures still loading, then what Print anyway does (anywayWords). */
+export function stalledWords(n: number): string {
+  return (n === 1 ? "1 picture has not loaded." : n + " pictures have not loaded.") + " " + anywayWords();
+}
+export const WITH_WORDS = "Print with them";
+export const WITHOUT_WORDS = "Print without them";
+/** The ask's two word buttons and their titles. */
+export const ANYWAY_WORDS = "Print anyway";
+export const KEEP_WORDS = "Keep waiting";
+export const ANYWAY_TITLE = "Print now; a picture still loading is left out";
+export const KEEP_TITLE = "Wait for every picture to load, then print";
+/** "Print with them"'s title: the hosts the placeholders name, in the order they appear, so the hosts one press asks can be
+ *  read together before the press (for this print alone: loadGatedFigure grants a host nothing for the page, which a click
+ *  does, decision 8). The title names the hosts of the URLs as the figures name them: a host one of them answers with a
+ *  redirect to is reached too, as the placeholder's own click reaches it (the browser follows the redirect on both roads),
+ *  and named nowhere, not here and not in the placeholder's label (figure-gate.ts's header; file-print-egress-browser.test.ts
+ *  case (13) counts both hosts' requests). The line itself counts pictures, by contract. With none known (a stand-in body)
+ *  the words name them generically. */
+export function withTitle(hosts: string[]): string {
+  const list = hosts.length === 0 ? "those hosts" : hosts.length === 1 ? hosts[0] : hosts.slice(0, -1).join(", ") + " and " + hosts[hosts.length - 1];
+  return "Load the pictures from " + list + ", then print";
+}
+/** "Print without them"'s title. */
+export const WITHOUT_TITLE = "Print with their placeholders as they are";
+/** The PDF flow's line when the frame could not print and the /file URL opened in a new tab. */
+export const TAB_WORDS = "Print from the tab that opened.";
+/** ...and when the browser did not open that tab (a blocked pop-up, or a host that cannot open one). */
+export const NO_TAB_WORDS = "The browser did not open a tab for this PDF.";
+
+type KeyLike = { key?: string; ctrlKey?: boolean; metaKey?: boolean; altKey?: boolean; shiftKey?: boolean; repeat?: boolean };
+/** The print chord's keys: Ctrl+P or Cmd+P, unshifted, without Alt, a key repeat or not. The key is read case-insensitively:
+ *  Caps Lock reports "P" with no Shift. The driver prevents every keydown this names while a file is open, since the
+ *  browser's default for each, a held chord's repeats included, is its own print, the one the flow replaces. */
+export function isPrintKeys(e: KeyLike): boolean {
+  return (e.ctrlKey === true || e.metaKey === true) && e.altKey !== true && e.shiftKey !== true && typeof e.key === "string" && e.key.toLowerCase() === "p";
+}
+/** The chord as a PRESS: the keys, and not a key repeat (a held chord would arm and disarm on alternate repeats; its
+ *  repeats are prevented and nothing more). */
+export function isPrintChord(e: KeyLike): boolean {
+  return isPrintKeys(e) && e.repeat !== true;
+}
+/** The controls that own their Escape: the WAI-ARIA patterns whose Escape closes the widget and returns the keyboard itself
+ *  (a menu, the viewer's Outline popover among them; a listbox; a dialog). While the bar is armed an Escape from inside one
+ *  is left to it, and the next Escape disarms. */
+export const OWN_ESCAPE_SEL = '[role="menu"], [role="menubar"], [role="listbox"], [role="dialog"], [role="alertdialog"]';
+/** An open popup's trigger: aria-haspopup with aria-expanded true, the menu-button and disclosure patterns (the viewer's
+ *  text-size flyout, a role=group under a trigger, and its Outline button). Such a popup's Escape closes it from wherever
+ *  the keyboard is, so while one stands open in the card the Escape is its, whatever the target. The rule reads the state
+ *  as the flow's listener finds it: a popup whose own Escape handler runs after that listener (a listener on the popup, or
+ *  one wired after the viewer's bar) is still open then; the flyout's dismiss runs ahead of it and has closed the flyout by
+ *  then, so that one is read through the stopped event instead (the driver's onKey). The Print button's own aria-expanded
+ *  while armed has no aria-haspopup and is not matched. */
+export const OPEN_POPUP_SEL = '[aria-haspopup][aria-expanded="true"]';
+/** `target` is inside a control that owns its Escape (OWN_ESCAPE_SEL), or `scope` (the card) holds an open popup
+ *  (OPEN_POPUP_SEL): the Escape is that control's, and the armed bar leaves it alone. A text field's Escape is the field's
+ *  too, but that is the host's `typing` predicate, read beside this. */
+export function ownsEscape(target: EventTarget | null, scope?: ParentNode | null): boolean {
+  const t = target as Element | null;
+  if (!!t && typeof t.closest === "function" && t.closest(OWN_ESCAPE_SEL) !== null) return true;
+  return !!scope && typeof scope.querySelector === "function" && scope.querySelector(OPEN_POPUP_SEL) !== null;
+}
+
+// ── the placeholders that reach the paper ───────────────────────────────────────────────────────────
+/** What the printable test reads of a node: its name, its attributes and its parent (an Element, or a stand-in in a test),
+ *  and, where the browser can be asked, its own rendering (checkVisibility and getClientRects; absent on a stand-in). */
+export type PrintableNode = { localName: string; parentElement: PrintableNode | null; hasAttribute(name: string): boolean;
+  checkVisibility?(options?: { visibilityProperty?: boolean; opacityProperty?: boolean }): boolean; getClientRects?(): ArrayLike<unknown> };
+/** The browser's own answer whether `el` is rendered: checkVisibility, with visibility and opacity read (an svg's
+ *  `visibility="hidden"` or `opacity="0"`, kept attributes, leave nothing on the paper; content-visibility auto is left
+ *  alone: the sheets use none, and a picture far below the fold is on the paper), AND at least one client rect (a closed
+ *  fold's content and a `hidden="until-found"` ancestor's keep their rects and are skipped, which the rects alone read as
+ *  rendered). The rect is the engine's own reading, and the engines differ on an svg <image> inside <defs>, a <symbol>, a
+ *  <clipPath>, a <mask>, a <pattern> or a <marker>, which no engine lays out as itself (a pattern, a mask or a marker that a
+ *  printable element references paints THROUGH that element, svgReachesPaper): Chromium gives it a layout object and no rect,
+ *  so this answer is false there; Firefox reports one empty rect and WebKit one full rect for it, with checkVisibility true
+ *  in all three, so this answer is TRUE in those two (file-print-figure-browser.test.ts, the three engines, 2026-09-20).
+ *  An svg <image> is therefore never decided by this answer alone: the container walk decides it (SVG_RENDERS through
+ *  `shows` for a figure's paint, and through `svgReachesPaper` for the wait's pictures, collectPictures, which reads this
+ *  answer on the image under rendering containers and on the referencing element for an image inside a referenced
+ *  pattern, mask or marker), and before the
+ *  round-7 fixes (2026-09-20) collectPictures read this answer alone for it, so in Firefox and WebKit the wait counted,
+ *  awaited and probed the images inside such containers where Chromium skipped them. Null where the browser cannot be
+ *  asked (a stand-in under node, an engine without checkVisibility): the walk alone decides then. Measured in Chromium,
+ *  2026-09-19: a picture still loading, one with no src (a gated one) and one far below the fold each have a rect and are
+ *  visible; one inside a ruby's <rp>, a <canvas>'s or a <video>'s fallback content or a `popover` not shown has none. */
+export function rendered(el: PrintableNode): boolean | null {
+  if (typeof el.checkVisibility !== "function" || typeof el.getClientRects !== "function") return null;
+  return el.checkVisibility({ visibilityProperty: true, opacityProperty: true }) && el.getClientRects().length > 0;
+}
+/** Whether `el` reaches the paper. First the walk: nothing from it up to the root is a closed <details> holding it outside
+ *  that details' own <summary> (the fold's content is not rendered; its summary is), and nothing carries the `hidden`
+ *  attribute, whatever its value (`until-found` included: the browser skips such content until a find or a fragment reveals
+ *  it). The same ancestor walk md-sanitize.ts revealFragmentTarget runs, read rather than applied. Both shapes come from the
+ *  author: a typed <details>, a folded callout (`> [!type]-`, md-config.ts) and `hidden` all pass the sanitizer, where an
+ *  inline `display: none` does not (colorOnlyStyle keeps colour declarations alone), so a picture under that style prints
+ *  and is printable here. Then the browser's own answer (rendered), where it can be asked: the walk knows two hidings, and
+ *  the sanitizer keeps others the walk does not (a `popover` attribute, whose element is shown by a call alone; a ruby's
+ *  <rp>; a <canvas>'s fallback content; an svg's <defs>; an author's class a sheet rule hides), so the UNKNOWN side falls
+ *  to NOT printable: printable is true only when both agree (the round-2 review, 2026-09-19: before this the walk alone
+ *  answered, and every hiding it did not know read as printable, the permissive side for a fetch). A placeholder the flow
+ *  counts, names in the with-button's title or restores must pass this and figurePrintable below (gates, in the driver): a
+ *  host is a privacy choice, and a print restores a placeholder only for a figure that puts paint on the paper. The restore
+ *  is the whole figure's (figure-gate.ts loadGatedFigure), so the browser may fetch any URL the figure names, a remote URL
+ *  inside a non-painting element of a painting figure among them; which it fetches is its own (the round-4 review,
+ *  2026-09-20; the header). */
+export function printable(el: PrintableNode): boolean {
+  for (let n: PrintableNode | null = el; n; n = n.parentElement) {
+    if (n.hasAttribute("hidden")) return false;
+    const p = n.parentElement;
+    if (p && p.localName === "details" && n.localName !== "summary" && !p.hasAttribute("open")) return false;
+  }
+  return rendered(el) !== false;
+}
+/** The SVG namespace: the figure test tells an SVG element from an HTML one by it (a presentation attribute is CSS on an
+ *  SVG element; `hidden` and `popover` are HTML's attributes and are not read on one). */
+export const SVG_NS = "http://www.w3.org/2000/svg";
+const HTML_NS = "http://www.w3.org/1999/xhtml";
+/** What the figure test reads of an element inside a placeholder: its name and its namespace (absent on a stand-in: HTML),
+ *  its attributes, its parent for the walk up to the figure's root, its `style` declaration (the style attribute as the
+ *  browser parsed it), its document (whose window computes its style, and whose scratch element parses a declaration) and
+ *  its descendants (querySelectorAll; a stand-in without it has none). An Element is all of these. */
+export type FigureNode = {
+  localName: string; namespaceURI?: string | null; parentElement?: FigureNode | null;
+  hasAttribute(name: string): boolean; getAttribute(name: string): string | null;
+  style?: { display: string };
+  ownerDocument?: { defaultView?: { getComputedStyle?(el: unknown): { visibility: string; opacity: string; display: string } } | null; createElement?(tag: string): { style: { display: string } } } | null;
+  querySelectorAll?(selectors: string): { forEach(cb: (el: FigureNode) => void): void };
+};
+/** `el` is an HTML element, by its namespace (a stand-in without one is HTML). `hidden` and `popover` are HTML's attributes
+ *  and the browser reads them on HTML elements alone: an `<svg hidden>` and an svg `<image hidden>` each paint (measured in
+ *  Chromium, Firefox and WebKit, 2026-09-20; file-print-figure-browser.test.ts executes both). */
+const isHtml = (el: FigureNode): boolean => el.namespaceURI === undefined || el.namespaceURI === null || el.namespaceURI === HTML_NS;
+/** The style the browser computes for `el`, or null where nothing computes it: a stand-in under node, or an element outside
+ *  a document (a disconnected element computes empty strings). visibility and opacity compute on a gated figure as they do
+ *  on the restored one: the gate's sheet sets display none on the placeholder's child (feed.css and styles.css,
+ *  `.fv-gate[data-act="fv-load"] > :not([data-fv-label])`) and neither of these; display too, on every element BELOW that
+ *  child (display does not inherit, so the sheet's none on the root leaves each descendant's computed display its own). */
+function computedOf(el: FigureNode): { visibility: string; opacity: string; display: string } | null {
+  const view = el.ownerDocument ? el.ownerDocument.defaultView : null;
+  if (!view || typeof view.getComputedStyle !== "function") return null;
+  const cs = view.getComputedStyle(el);
+  return cs.opacity === "" ? null : cs;
+}
+/** The author's own `display` for `el`, as the browser parses a declaration, or null where no document can parse one (a
+ *  stand-in). The style attribute's declaration first (`el.style.display`, the browser's CSSStyleDeclaration; the sanitizer
+ *  keeps colour declarations alone, md-sanitize.ts colorOnlyStyle, so in the product it is empty), then, on an SVG element,
+ *  the `display` presentation attribute, whose value is CSS, parsed by a scratch declaration of the same document: `NONE`,
+ *  ` none `, `none` with a CSS comment beside it and the escaped `n\6fne` each read `none` and `bogus` reads empty, as the
+ *  computed value would (measured in the three engines). This is the FIGURE ROOT's road alone: the gate's sheet sets the
+ *  root's computed display to none while it is gated, so its computed value cannot be read, and a presentation attribute
+ *  never reaches `el.style`. Every element below the root reads its computed display instead (offPaper), the browser's own
+ *  answer, which a sheet rule on an author's class reaches and this parse does not (the round-4 review's extra8-3,
+ *  2026-09-20). */
+function authorDisplay(el: FigureNode): string | null {
+  const doc = el.ownerDocument;
+  if (!doc || typeof doc.createElement !== "function") return null;
+  const styled = el.style ? el.style.display : "";
+  if (styled) return styled;
+  if (el.namespaceURI !== SVG_NS) return "";
+  const scratch = doc.createElement("span").style;
+  scratch.display = el.getAttribute("display") || "";
+  return scratch.display;
+}
+/** The SVG containers whose content renders: the svg itself, a group, a link, a switch. A graphics element under any other
+ *  SVG ancestor (defs, symbol, clipPath, mask, pattern, marker, a gradient, a filter, title, desc) is never rendered directly:
+ *  a pattern, a mask or a marker paints through the element that references it by url(#id), and a symbol through <use>,
+ *  which the sanitizer drops. The wait's walk reads the reference (svgReachesPaper); the figure walk `shows` does not, and
+ *  reads the referencing element as the figure's paint (a rect filled by a pattern is a painting element of its own) and the
+ *  container's own content as adding none. An SVG ancestor this list does not name reads the same way, the safe side, so
+ *  nothing is counted for it. */
+const SVG_RENDERS: readonly string[] = ["svg", "g", "a", "switch"];
+/** Whether the ancestor `a` lets the content below it render: an element in the svg namespace that SVG_RENDERS does not name
+ *  takes the paint off; an HTML ancestor, or an SVG container the list names, does not. The one test both walks over an
+ *  svg's containers run (`shows`, for a figure's painting element; `inRenderingSvg`, for the wait's svg <image>). */
+const svgContainerRenders = (a: { namespaceURI?: string | null; localName: string }): boolean => a.namespaceURI !== SVG_NS || SVG_RENDERS.includes(a.localName);
+/** Whether the author's `display: contents` on the SVG element `el` lets its content render, read on the AUTHORED road
+ *  alone (offPaper: the figure's root, and a stand-in under node where nothing computes): on a group, and on an svg nested
+ *  inside SVG content, it does; on an outermost svg, a switch and an image, `contents` computes to none, so it hides as
+ *  `none` does; and on a link the engines differ: Chromium and WebKit compute it to none, Firefox keeps it and paints the
+ *  image inside (file-print-figure-browser.test.ts in the three engines, 2026-09-20: `svg>a[display=contents]>image` paints
+ *  in Firefox alone, `svg>g[display=contents]>image` and the nested svg in all three, the switch and the image in none).
+ *  A link is not named here, the safe side for the places this table decides for one: a link that is a figure's root in a
+ *  browser (the gate's media roots are an img, a video, an audio, a picture or an svg, figure-gate.ts, so none reaches this
+ *  road in the product), and any link under a stand-in where nothing computes, where no engine paints (the round-6
+ *  review's engines-2, 2026-09-20: the sentence named the root alone). Below the root the display the
+ *  browser COMPUTES is read and a computed `contents` is trusted as rendering, since an engine that kept `contents` on an
+ *  element it did not render would leave a picture counted for a print that shows nothing of it, and none of the three
+ *  does that; before the round-5 review (2026-09-20) this table decided below the root as well, so the link Firefox
+ *  paints read off the paper there, its placeholder not counted and its host not named while the print showed it. */
+const contentsRenders = (el: FigureNode): boolean => el.localName === "g" || (el.localName === "svg" && !!el.parentElement && el.parentElement.namespaceURI === SVG_NS);
+/** Whether `el`, an element of a placeholder's figure, takes itself off the paper once the placeholder is restored (`self`)
+ *  or takes everything inside it off (`self` false: an ancestor of the element that paints). On an HTML element the
+ *  `hidden` attribute, whatever its value (`until-found` included), and `popover` (shown by a call alone, which a note cannot
+ *  make); on any element display none, read as the browser computes it for any element below the figure's `root` (the
+ *  sheet's none stops at the root: a sheet rule on an author's class is read this way, where the author's declaration alone
+ *  missed it; the round-4 review's extra8-3, 2026-09-20) and from the author's own declaration for the root and where nothing
+ *  computes (authorDisplay; on that authored road alone, `contents` as well on an SVG element whose content it does not let
+ *  render, contentsRenders; a computed `contents` below the root is the browser's own and is trusted as rendering, the
+ *  round-5 review's correctness-2, 2026-09-20)
+ *  and, where the browser computes it, opacity zero (the computed value: `-0`, `+0`, `0e0`, `0%`, `.0`,
+ *  ` 0 `, `calc(0)`, a negative value and one the engine rounds to nothing, `1e-100`, each compute to 0, while `0.0.0` and
+ *  `0.`, which the browser refuses and paints at 1, do not, and `1e-9` is the engine's own: Chromium and Firefox keep it,
+ *  WebKit computes it to 0, so it is off the paper there alone, file-print-figure-browser.test.ts per engine); and, for the painting element
+ *  alone, the visibility the browser computes, hidden or collapse: visibility inherits unless the element sets its own, so
+ *  it is read where the paint is, and a visible child inside a hidden group paints (measured in the three engines), where an
+ *  ancestor's opacity zero takes its children with it. Without a browser (a stand-in under node) the attributes alone are
+ *  read, as printable's walk stands alone without rendered; nothing fetches there. */
+function offPaper(el: FigureNode, self: boolean, root: FigureNode = el): boolean {
+  if (isHtml(el) && (el.hasAttribute("hidden") || el.hasAttribute("popover"))) return true;
+  const cs = computedOf(el);
+  const authored = el === root || cs === null;
+  const display = authored ? authorDisplay(el) : cs.display;
+  if (display === "none" || (authored && display === "contents" && el.namespaceURI === SVG_NS && !contentsRenders(el))) return true;
+  if (cs === null) return false;
+  if (Number(cs.opacity) === 0) return true;
+  return self && (cs.visibility === "hidden" || cs.visibility === "collapse");
+}
+/** Whether the figure element `el` is itself off the paper once its placeholder is restored (offPaper, as the element that
+ *  paints). The placeholder's own walk and rendering are read apart (printable), and the elements around a painting one in
+ *  figurePrintable. Before the round-3 review (2026-09-20) the opacity was matched against one spelling of zero by a
+ *  pattern, so `-0`, `+0` and `0e0` read as on the paper and `0.0.0` as off it; the computed value is the browser's own. */
+export function figureHidden(el: FigureNode): boolean { return offPaper(el, true); }
+/** The elements inside a placeholder's figure that put paint on the paper themselves: HTML's img, video (its poster or a
+ *  frame; with neither it is read as painting all the same, the permissive side, while a video with no poster and no
+ *  source inks nothing in any engine: the figure leg's `video>img (fallback)` row records the flow's reading beside the
+ *  ink, 2026-09-20) and audio with `controls` (the controls: the browser's own sheet hides an audio without
+ *  them, so one paints nothing), and SVG's graphics elements as the sanitizer keeps them (circle, ellipse, image, line,
+ *  path, polygon, polyline, rect, text; use and foreignObject are dropped today and listed for a wider profile). A
+ *  <picture>, a <source> and a <track> paint nothing of their own (the picture's <img> does); an svg root paints through
+ *  its graphics elements alone, so an svg holding a picture inside <defs> and nothing else paints nothing; and the content
+ *  of an audio or a video is fallback for a browser without the element, never rendered by one that has it, so nothing
+ *  inside either paints (an <img> there still fetches when the element is restored, riding on the video's own box). */
+export const PAINTS_SEL = "img, video, audio, circle, ellipse, image, line, path, polygon, polyline, rect, text, use, foreignObject";
+const PAINTING_ROOTS: readonly string[] = ["img", "video", "audio"];
+/** Whether `el`, an element PAINTS_SEL names, paints of itself: every one does but an audio without `controls`. */
+const paintsItself = (el: FigureNode): boolean => el.localName !== "audio" || !isHtml(el) || el.hasAttribute("controls");
+/** Whether `el` stands inside an audio or a video below `root`: fallback content, never rendered. */
+const fallbackContent = (el: FigureNode, root: FigureNode): boolean => {
+  for (let a = el.parentElement; a && a !== root.parentElement; a = a === root ? null : a.parentElement) if (isHtml(a) && (a.localName === "audio" || a.localName === "video")) return true;
+  return false;
+};
+/** The painting elements of the figure `root`: the root itself when it is an HTML img, video or audio that paints, and every
+ *  descendant PAINTS_SEL names that paints of itself and is no fallback content (through querySelectorAll; a stand-in without
+ *  it has no descendants). */
+function paintsOf(root: FigureNode): FigureNode[] {
+  const out: FigureNode[] = [];
+  if (isHtml(root) && PAINTING_ROOTS.includes(root.localName) && paintsItself(root)) out.push(root);
+  if (typeof root.querySelectorAll === "function") root.querySelectorAll(PAINTS_SEL).forEach((el) => { if (paintsItself(el) && !fallbackContent(el, root)) out.push(el); });
+  return out;
+}
+/** Whether `paint`, a painting element of the figure `root` (the root itself included), would show once the placeholder is
+ *  restored: it is not off the paper itself (offPaper, self), no ancestor up to the root takes what is inside it off
+ *  (offPaper: an ancestor's hidden, popover, display none or opacity zero; its visibility is read on `paint`, which
+ *  inherits it unless it sets its own), and every SVG ancestor below the root renders its content (SVG_RENDERS). */
+function shows(paint: FigureNode, root: FigureNode): boolean {
+  if (offPaper(paint, true, root)) return false;
+  for (let a = paint === root ? null : paint.parentElement; a; a = a === root ? null : a.parentElement) {
+    if (offPaper(a, false, root)) return false;
+    if (!svgContainerRenders(a)) return false;
+  }
+  return true;
+}
+/** Whether a placeholder reaches the paper AND the figure it wraps would put paint there once restored: printable on the
+ *  placeholder (the walk, and the browser's own answer), and a painting element of the figure (its first element child; the
+ *  label follows it) that shows. A placeholder with no figure inside answers for itself. Before the round-3 review
+ *  (2026-09-20) the first element child alone was read, so `<picture><img hidden src="https://host/p.svg">` had its
+ *  placeholder counted, its host named and, on "Print with them", its picture fetched for a print that never shows it, the
+ *  shape the round-2 census had closed for a bare `<img hidden>`; an svg `<image>` under `<defs>`, or one with display none
+ *  or opacity zero of its own, the same. */
+export function figurePrintable(g: PrintableNode & { firstElementChild?: FigureNode | null }): boolean {
+  if (!printable(g)) return false;
+  const root = g.firstElementChild;
+  if (!root) return true;
+  return paintsOf(root).some((p) => shows(p, root));
+}
+
+// ── the pictures and the wait ────────────────────────────────────────────────────────────────────────
+/** What the wait needs of a picture: an <img>, or a probe Image standing in for a poster or an svg <image>. */
+export type Picture = {
+  complete: boolean;
+  addEventListener(type: string, cb: () => void): void;
+  removeEventListener(type: string, cb: () => void): void;
+};
+export type Timers = { setTimeout: (fn: () => void, ms: number) => unknown; clearTimeout: (handle: unknown) => void };
+const REAL_TIMERS: Timers = { setTimeout: (fn, ms) => setTimeout(fn, ms), clearTimeout: (h) => clearTimeout(h as ReturnType<typeof setTimeout>) };
+
+/** A URL `value` names against `base`, or null for an empty or unparseable value. */
+function resolved(value: string | null, base: string): string | null {
+  if (!value) return null;
+  try { return new URL(value, base).href; } catch { return null; }
+}
+/** Every picture under `body` the print waits on: each <img> as itself, and a probe (`probe(url)`: the driver's, one Image
+ *  per URL for the life of one press's wait) for each <video poster> and each svg <image href>, whose elements report no
+ *  completeness. Each of the three collections is filtered by `printable`, the rule the placeholders are counted by (the
+ *  <img> itself; the <video> for its poster; the svg <image> element): the wait, its count on the line, the eager flip and
+ *  the deadline's ask cover the pictures that reach the paper alone. A picture inside a closed fold or under `hidden` can
+ *  still be loading during the wait: the browser fetches an <img> the fold hides when its host is allowed, at the render;
+ *  before this the wait read it too, so the line counted a picture the print never shows and, with that picture's route
+ *  slow, the deadline asked about it and nothing printed until the person answered (the shared-host probe, 2026-09-19;
+ *  "Print with them" then restored by host, so a folded placeholder sharing a host with a printable one was restored and
+ *  fetched too, which the per-placeholder restore since the round-2 review no longer does). The browser's own answer is
+ *  read through printable as well (rendered): a picture inside a ruby's <rp>, a <canvas>'s fallback content or a `popover`
+ *  not shown is not awaited, not set eager and not probed, so no request the render did not make is made for a picture
+ *  the print never shows. An svg <image> is decided by svgReachesPaper: the container walk (inRenderingSvg: every SVG
+ *  ancestor up to the first HTML one renders its content, the test `shows` runs below a figure's root) and, where the walk
+ *  meets a <pattern>, a <mask> or a <marker>, the reference to it. The wait collects a picture when it can paint on the
+ *  paper, and the test of that is measured INK, never a rect the engine reports: the browser's own answer is the engine's
+ *  for an image inside <defs>, a <symbol>, a <clipPath>, a <mask>, a <pattern> or a <marker>, referenced or not (Chromium
+ *  reports no rect for it and Firefox and WebKit report one, rendered's docstring), so it is never read on such an image.
+ *  One inside <defs>, a <symbol>, a <clipPath> or <metadata> is not a picture the print shows in any engine
+ *  (inRenderingSvg's docstring); one inside a <pattern>, a <mask> or a <marker> PAINTS in every engine when a printable svg
+ *  element that reaches the paper names the container by url(#id) in fill, stroke, mask or a marker property (or names a
+ *  pattern that inherits the container's content through href, paintingIds), and is collected when such a referrer exists,
+ *  the browser's answer read on the referrer (the round-7 review's cluster E, 2026-09-21; the inheriting pattern the
+ *  author's closing pass over round 8). Before the round-7 fixes (2026-09-20) the rect alone decided, so on a body of eight svg images, one in each
+ *  of the six containers, one in <metadata> and one in <g>, plus an <img>, Chromium collected two pictures and Firefox and
+ *  WebKit eight, awaiting and probing seven images the print never shows; with the walk every engine collects the <img>
+ *  and the image in <g> alone (file-print-figure-browser.test.ts, the collectPictures case per engine; their hrefs were
+ *  already requested by the render in every engine, so the difference was the count on the line and the deadline's ask,
+ *  never a host). From the round-7 fixes to the round-8 fixes the walk alone decided, so the image inside a referenced
+ *  pattern, mask or marker, which paints in every engine, was collected in none, where the rect had collected it in Firefox
+ *  and WebKit (the same leg's reference case per engine: collected in all three now, its dead-reference twin in none, and
+ *  the render requests every image URL either way). An <img loading="lazy"> is set eager first: the browser has deliberately not started
+ *  fetching one far below the fold, so it would fire neither load nor error and the wait would run to its deadline over
+ *  it; eager starts the deferred fetch at once, for the same URL (no other host is reached; a gated img has no src and
+ *  fetches nothing), and the attribute stays eager after the print; a hidden or folded lazy picture is left as it is, so
+ *  no fetch is started for a picture that is not on the paper. A gated element has its poster or href moved aside
+ *  (figure-gate.ts) and is not probed; a gated img has no src, and an img with no src is complete by HTML's definition, so
+ *  "Print without them" waits on nothing for a placeholder. */
+export function collectPictures(body: ParentNode, base: string, probe: (url: string) => Picture): Picture[] {
+  const out: Picture[] = [];
+  body.querySelectorAll("img").forEach((el) => { if (!printable(el)) return; const img = el as HTMLImageElement; if (img.loading === "lazy") img.loading = "eager"; out.push(img); });
+  body.querySelectorAll("video[poster]").forEach((v) => { if (!printable(v)) return; const u = resolved(v.getAttribute("poster"), base); if (u) out.push(probe(u)); });
+  body.querySelectorAll("image").forEach((im) => { if (!svgReachesPaper(im, body)) return; const u = resolved(im.getAttribute("href"), base); if (u) out.push(probe(u)); });
+  return out;
+}
+/** Whether every SVG ancestor of the svg element `el`, up to the first ancestor outside the svg namespace, renders its content
+ *  (svgContainerRenders, the test `shows` runs below a figure's root). An svg <image> inside <defs>, a <symbol>, a <clipPath>
+ *  or <metadata> is not a picture the print shows in any engine, whatever rect the engine reports for it (rendered's
+ *  docstring): a <symbol> renders through <use> alone and the sanitizer drops <use>; clipPath content that is an image clips
+ *  nothing. One inside a <pattern>, a <mask> or a <marker> PAINTS in every engine when a graphics element that reaches the
+ *  paper references the container's id with a resolvable url(#id) in fill, stroke, mask or a marker property, inside <defs>
+ *  or not (measured 2026-09-21, 256 of 256 pixels in Chromium, Firefox and WebKit, screen and print), which svgReachesPaper
+ *  reads below this walk. The sanitizer prefixes every author id with `user-content-` and leaves url() values as written
+ *  (md-sanitize.ts), so an author's ordinary `id="p"` with `fill="url(#p)"` is dead in every printed note in every engine (a
+ *  dead mask or clip-path reference leaves the element unmasked, still no picture); the one shape that paints is a note
+ *  spelling the prefix, `fill="url(#user-content-p)"`, which the wait collects. Chromium reports no rect for an image inside
+ *  any of these containers, referenced or not, so the browser's own answer is read on the referencing element, never on the
+ *  image. A stand-in whose parents carry no namespace passes: the walk reads SVG containers alone, and the browser's own
+ *  answer and the walk in printable stand before it. */
+function inRenderingSvg(el: SvgWalkNode): boolean {
+  for (let a = el.parentElement; a && a.namespaceURI === SVG_NS; a = a.parentElement) if (!svgContainerRenders(a)) return false;
+  return true;
+}
+/** What the container walk reads of an svg <image> and its ancestors: the name, the namespace (absent on a stand-in), the
+ *  parent and, for a container the reference walk asks an id of, its attributes (absent on a stand-in: unreferenced). An
+ *  Element is one. */
+type SvgWalkNode = { parentElement: SvgWalkNode | null; namespaceURI?: string | null; localName: string; getAttribute?(name: string): string | null };
+/** The SVG containers whose content paints through a reference: an element's fill or stroke names a <pattern>, its mask
+ *  property a <mask>, a marker property a <marker>, each by url(#id). A <symbol> paints through <use>, which the sanitizer
+ *  drops, and <clipPath> content that is an image clips nothing, so neither is listed (inRenderingSvg's docstring). */
+const REFERENCED_CONTAINERS: readonly string[] = ["pattern", "mask", "marker"];
+/** The properties, as attributes, through which an svg element references one of those containers: the marker properties by
+ *  their three longhand names (`marker`, the shorthand, is a property and not a presentation attribute, so no engine reads it
+ *  off an element and the sanitizer drops it: the author's closing pass over round 8, 2026-09-21; it stood here until then, a
+ *  dead entry that would have collected a picture no engine paints had it reached the page). An inline `style` is not read:
+ *  the sanitizer keeps colour declarations alone in it (md-sanitize.ts), so no url() reaches the page that way. */
+const REFERENCE_ATTRS: readonly string[] = ["fill", "stroke", "mask", "marker-start", "marker-mid", "marker-end"];
+const REFERENCE_SEL = REFERENCE_ATTRS.map((a) => "[" + a + "]").join(",");
+/** How many references deep the reach is followed (a rect filled by a pattern whose image stands inside a mask another
+ *  rect references, and so on): a cycle of references paints nothing and would otherwise recurse without end. */
+export const REFERENCE_DEPTH = 4;
+/** The id `value` references as a same-document url(#id), quotes and spaces tolerated, or null for any other value. A
+ *  fallback after the url() (`fill="url(#p) red"`, which paints the pattern when the id resolves) is not read, so a picture
+ *  referenced that way is not collected: not awaited and not probed, the side that costs no fetch; no note is known to spell
+ *  it (the author's closing pass over round 8, 2026-09-21). */
+function referencedId(value: string | null): string | null {
+  const m = value ? /^\s*url\(\s*(["']?)#([^"')\s]+)\1\s*\)\s*$/.exec(value) : null;
+  return m ? m[2] : null;
+}
+/** The ids under which the content of `container` (id `id`) paints: its own and, for a <pattern>, the id of every <pattern> in
+ *  `body` that inherits its content through `href` (or `xlink:href`) naming one of them, REFERENCE_DEPTH inheritances deep at
+ *  most (a pattern with no children of its own paints the content of the pattern its href names, so a rect filled by the
+ *  inheriting pattern paints this container's image: measured in Chromium, Firefox and WebKit by the author's closing pass
+ *  over round 8, 2026-09-21, which found the wait collecting it in none). A <mask> and a <marker> have no href, so the walk is
+ *  the pattern's alone; a body without querySelectorAll gives the container's own id. */
+function paintingIds(container: SvgWalkNode, id: string, body: ParentNode): Set<string> {
+  const ids = new Set([id]);
+  if (container.localName !== "pattern" || typeof body.querySelectorAll !== "function") return ids;
+  const patterns = Array.from(body.querySelectorAll("pattern") || []);
+  for (let round = 0; round < REFERENCE_DEPTH; round++) {
+    let grew = false;
+    for (const p of patterns) {
+      if (p.namespaceURI !== SVG_NS || p.localName !== "pattern") continue;   // the selector answers patterns; a stand-in body may not
+      const pid = p.getAttribute("id"), href = (p.getAttribute("href") ?? p.getAttribute("xlink:href") ?? "").trim();
+      if (pid && href.charAt(0) === "#" && ids.has(href.slice(1)) && !ids.has(pid)) { ids.add(pid); grew = true; }
+    }
+    if (!grew) break;
+  }
+  return ids;
+}
+/** Whether the svg element `el` reaches the paper. With every SVG ancestor rendering its content (inRenderingSvg): printable,
+ *  the browser's own answer read on `el` itself. With the walk meeting a <pattern>, a <mask> or a <marker> that carries an
+ *  id: when some svg element in `body` references that id, or the id of a pattern inheriting the container's content through
+ *  href (paintingIds), through one of REFERENCE_ATTRS and itself reaches the paper by this rule, REFERENCE_DEPTH references
+ *  deep at most, the browser's own answer read on that referrer, never on `el` (Chromium reports no rect for an element
+ *  inside such a container whether the container paints or not). The referrer's own reach is this rule again, so a reference
+ *  from inside another pattern's or mask's content is followed and the image collected whether or not the engine paints
+ *  the nested shape: the figure leg's reference case measures the direct reference alone (a referrer in rendering content,
+ *  the container inside <defs>); of the nested shapes, probed outside the leg by the author's closing pass over round 8
+ *  (2026-09-21) in Chromium, Firefox and WebKit, a pattern inside a pattern and a pattern inside a mask paint in all three, a
+ *  mask inside a pattern paints in none, and a mask inside a mask paints in Firefox and WebKit and not in Chromium, so a nested
+ *  reference can await a picture the paper does not carry, the side that costs a wait and never a fetch the render did not
+ *  make (the render requests every svg image's href, referenced or not); a chain of more than REFERENCE_DEPTH references is not
+ *  collected, and a cycle of references ends at the cap and collects nothing (file-print.test.ts holds the direct, the
+ *  inherited, the nested, the capped and the cyclic shapes over stand-ins). A duplicate id is read on the collecting side: the
+ *  container's own id is matched, whichever element the document resolves the id to (Chromium and Firefox paint the first in
+ *  tree order and WebKit the last, the same closing pass), so under two containers of one id the image in the other one may be
+ *  awaited; malformed markup, left as read. With the walk meeting any other container (defs above no such container, a symbol,
+ *  a clipPath, metadata, a gradient, a filter, one SVG_RENDERS does not name), or a container without an id: off the paper. A
+ *  container stand-in without getAttribute, or a body without querySelectorAll, reads as unreferenced. The round-7 review's
+ *  cluster E (2026-09-21): from the round-7 fixes to the round-8 fixes the walk alone decided, and the image inside a
+ *  referenced pattern, which paints in every engine, was collected in none. */
+function svgReachesPaper(el: PrintableNode & SvgWalkNode, body: ParentNode, depth = 0): boolean {
+  if (inRenderingSvg(el)) return printable(el);
+  let container: SvgWalkNode | null = null;
+  for (let a = el.parentElement; a && a.namespaceURI === SVG_NS; a = a.parentElement) if (!svgContainerRenders(a)) { container = a; break; }
+  if (!container || !REFERENCED_CONTAINERS.includes(container.localName) || typeof container.getAttribute !== "function" || depth >= REFERENCE_DEPTH) return false;
+  const id = container.getAttribute("id");
+  if (!id || typeof body.querySelectorAll !== "function") return false;
+  const ids = paintingIds(container, id, body);
+  const found = body.querySelectorAll(REFERENCE_SEL);
+  return !!found && Array.from(found).some((r) => r.namespaceURI === SVG_NS && REFERENCE_ATTRS.some((k) => { const ref = referencedId(r.getAttribute(k)); return ref !== null && ids.has(ref); }) && svgReachesPaper(r, body, depth + 1));
+}
+
+export type SettleWhy = "settled" | "deadline" | "cancelled";
+export type Settle = {
+  /** resolves once every pending picture fired load or error (`settled`), at the deadline (`deadline`), or on cancel */
+  done: Promise<SettleWhy>;
+  /** the pictures not yet complete */
+  pending(): number;
+  /** stop listening and clear the timer: the viewer closed, or nothing was pending */
+  cancel(): void;
+};
+/** Wait for every picture in `pics` that is not complete to fire load or error, or for `deadlineMs` to pass, whichever
+ *  first; with `deadlineMs` null (Keep waiting) no timer is set and the events alone end the wait. The listeners come off at
+ *  the end whichever way it ends, and the timer is cleared. With nothing pending the promise resolves `settled` and no timer
+ *  is set. */
+export function settlePictures(pics: Picture[], deadlineMs: number | null, timers: Timers = REAL_TIMERS): Settle {
+  const waiting = new Set<Picture>(pics.filter((p) => !p.complete));
+  const listeners = new Map<Picture, () => void>();
+  let finish: (why: SettleWhy) => void = () => {};
+  const done = new Promise<SettleWhy>((resolve) => { finish = resolve; });
+  let over = false;
+  let timer: unknown = null;
+  const end = (why: SettleWhy): void => {
+    if (over) return;
+    over = true;
+    if (timer !== null) { timers.clearTimeout(timer); timer = null; }
+    for (const [p, cb] of listeners) { p.removeEventListener("load", cb); p.removeEventListener("error", cb); }
+    listeners.clear();
+    finish(why);
+  };
+  for (const p of waiting) {
+    const cb = (): void => {
+      waiting.delete(p);
+      listeners.delete(p);
+      p.removeEventListener("load", cb); p.removeEventListener("error", cb);
+      if (waiting.size === 0) end("settled");
+    };
+    listeners.set(p, cb);
+    p.addEventListener("load", cb);
+    p.addEventListener("error", cb);
+  }
+  if (waiting.size === 0) end("settled");
+  else if (deadlineMs !== null) timer = timers.setTimeout(() => end("deadline"), deadlineMs);
+  return { done, pending: () => waiting.size, cancel: () => end("cancelled") };
+}
+
+// ── the PDF's frame ─────────────────────────────────────────────────────────────────────────────────
+/** What the PDF flow needs of the frame's window: its print. */
+export type FrameWindow = { print: () => void };
+/** The window of the PDF frame in `body` when it holds the PDF and can print it: `iframe.fileview-frame` (file-view.ts
+ *  pdfBlock), its contentWindow reachable, its document the PDF (content type application/pdf, as Chromium's viewer
+ *  document reports, or the window's location the frame's own src with any fragment aside: the blob URL the frame was
+ *  aimed at, `#page=N` included), and print a function. Null otherwise: no frame (the Comments panel's pages are up), a
+ *  window the browser withholds, or a frame that did not load the PDF (a browser without a PDF viewer downloads the bytes
+ *  and leaves the window at about:blank, whose print would print a blank page). */
+export function pdfFrameWindow(body: ParentNode): FrameWindow | null {
+  const frame = body.querySelector("iframe.fileview-frame") as HTMLIFrameElement | null;
+  if (!frame) return null;
+  try {
+    const w = frame.contentWindow;
+    if (!w || typeof w.print !== "function") return null;
+    const bare = (u: string): string => u.replace(/#.*$/, "");
+    const href = bare(w.location.href);
+    const holds = (w.document !== null && w.document.contentType === "application/pdf") || (href !== "about:blank" && href === bare(frame.src));
+    return holds ? w : null;
+  } catch { return null; }                     // a cross-origin window withholds its document and its location
+}
+
+// ── the body's readiness (P7) ────────────────────────────────────────────────────────────────────────
+/** What the readiness test reads of one child of the body: its name and its class list (an Element, or a stand-in). */
+export type BodyChild = { localName: string; classList: { contains(name: string): boolean } };
+/** What the readiness test reads of the body: its element children, through `children` where the body has it (a DOM
+ *  element always does), else through `childNodes` filtered to element nodes (the DOM stand-ins of the node suites, which
+ *  drive the real viewer over bodies with childNodes alone; the round-2 review, 2026-09-19: a read of `children` alone threw
+ *  at every open over fourteen of them). */
+export type BodyLike = { children?: ArrayLike<BodyChild>; childNodes?: ArrayLike<{ nodeType: number }> };
+/** The body's element children, as BodyLike says; none for a body that reports neither list (no DOM body does). */
+function elementChildren(body: BodyLike): BodyChild[] {
+  if (body.children) return Array.from(body.children);
+  if (body.childNodes) return Array.from(body.childNodes).filter((n) => n.nodeType === 1) as unknown as BodyChild[];
+  return [];
+}
+/** The roots file-view.ts seats in the body, as `<tag>.<class>`, by how bodyReady reads each: content (READY_ROOTS: the
+ *  body is in with one standing and no wait root beside it), a wait (NOT_READY_ROOTS: not in while one stands, whatever
+ *  else does, the PDF kind's loader aside) or a line (LINE_ROOTS: alone not in, over content a notice above it). The lists
+ *  are CLOSED: a child matching none is unknown, and the body is not in over it (rootKind, bodyReady). The sites are every
+ *  seat in the viewer's source, read by file-print.test.ts's census with its default refusing (the rule, not a roster of
+ *  method names; the round-5 review, 2026-09-20): a seat whose receiver is the `body` token has each seated argument read
+ *  down to the `el("<tag>", "<class>")` that builds it; a seat on ANY OTHER receiver (a seating call, an innerHTML or
+ *  outerHTML assignment) passes only as the ONE seat an entry the census lists by hand reads (its function, receiver,
+ *  form, what it seats and the receiver's binding, with what the receiver is; a second seat at a listed site is a second
+ *  entry, one entry being one seat spelling and a seat spelled byte for byte alike in two branches of one function
+ *  declaring `times` and read at each, and a reassignable receiver is refused unless the entry pins what it holds: the
+ *  round-6 review's cluster A, 2026-09-20), every other method call passes only by a name the census lists, as read by its site (call, apply, bind,
+ *  mount, render, a reflection global's method: a listed site too) or as seating nothing, every other member write passes
+ *  as a seat, by a name the census lists or through `style` or `dataset`, `Object`, `Reflect` and `Function` pass as a
+ *  listed call's receiver alone, a node of the tree handed to any callee, an element the census can see by its shape handed
+ *  to a callee the file does not declare, a URL written from a non-literal (by an assignment, setAttribute, a method of
+ *  location or window.open) and an attribute set under a name the census cannot read pass only as sites it lists (the
+ *  round-6 review's clusters B and C and item 7; the author's closing pass over the round-7 build), and every other seat, every other method name, every other write (a computed name wherever it stands),
+ *  a seating method read without being called, a member stored under a computed name and a string road fail the census
+ *  with its line, whatever produced the receiver (a query result's parent, a stored query result, `md.parentElement`, a
+ *  variable, `closest`, `getRootNode`, an alias, a range's `insertNode`, `Reflect.apply`, a second binding of a listed
+ *  name, a second seat wearing a listed entry's function, receiver and form; the branch's verification pass and the
+ *  round-6 review, 2026-09-20); on the `body` token
+ *  a call, an assignment, a further access or a bare read the census lists as seating nothing passes, a bare `body` passes
+ *  as a declaration, a parameter, a property key, a comparison operand, the action-context accessor at its one declared
+ *  site (`body: () => body` inside `const ctx: FileViewActionCtx = {`) or an argument to a callee the census lists as read
+ *  by hand, and every other `body` token fails the census with its line (a computed name, a call or an assignment it does
+ *  not list, a seating method handed out or reached through call, bind or apply, a member it has not seen, an alias, a
+ *  parenthesised or cast receiver, a callee it does not list). The census derives the seated set from file-view.ts, holds
+ *  it equal to these three lists, and executes bodyReady over each root as its list says, so a root the viewer gains fails
+ *  that test until it is listed here, and a seat the census has not read fails it until it is read and listed, rather than
+ *  either being answered by a guess (the round-2 review, 2026-09-19: the first derivation answered content for every child
+ *  it had not seen, the permissive side for a print button; the round-4 review, 2026-09-20: this comment named three method
+ *  names as the sites, a roster the census itself had outgrown; the round-5 fix: the census read member accesses on the
+ *  token alone, so a parenthesised receiver or an alias seated unseen; the round-5 review: the census refused a closed list
+ *  of dangerous forms and passed every other seat unread, so a seat through a query result's parent seated unseen; the
+ *  branch's verification pass: the second read knew a closed list of seating names, so a seat by any other name or through call, bind
+ *  or apply on another receiver passed unread). */
+export const READY_ROOTS: readonly string[] = ["div.fileview-md", "div.fileview-code", "div.fileview-imgbox", "div.fileview-pdffall", "div.fileview-pdfhost", "div.fileview-cm"];
+export const NOT_READY_ROOTS: readonly string[] = ["div.fileview-load", "textarea.fileview-editor"];
+export const LINE_ROOTS: readonly string[] = ["div.fileview-err"];
+/** The one wait root the PDF kind reads as content: the pages attempt's loader (file-view.ts showPdfPages, with no frame
+ *  kept), since the PDF road reads nothing from the body. */
+export const PDF_LOADER_ROOT = "div.fileview-load";
+export type RootKind = "content" | "wait" | "line" | "unknown";
+/** Whether `c` is one of `roots`: its localName the tag and its class list holding the class (the element may carry more). */
+const isRoot = (c: BodyChild, roots: readonly string[]): boolean => roots.some((r) => { const [tag, cls] = r.split("."); return c.localName === tag && c.classList.contains(cls); });
+/** How bodyReady reads one child of the body: by which list its `<tag>.<class>` is on, else unknown. A stand-in without a
+ *  localName is unknown, so a stand-in body is never in by accident. */
+export function rootKind(c: BodyChild): RootKind {
+  if (isRoot(c, READY_ROOTS)) return "content";
+  if (isRoot(c, NOT_READY_ROOTS)) return "wait";
+  if (isRoot(c, LINE_ROOTS)) return "line";
+  return "unknown";
+}
+/** The body holds the file's content, read off its element children (P7; the driver reads it through a MutationObserver on
+ *  them, where the document has one, and again at each press), each classed by rootKind. Not while a wait root stands
+ *  (`div.fileview-load`, the viewer's loader as the body's content: the open's, the editor's chunk wait, the Comments
+ *  panel's PDF pages before page 1 is drawn; the pages attempt over a KEPT frame puts its loader inside the frame's column,
+ *  so the frame stays the content and the button stays live; `textarea.fileview-editor`, the plain fallback editor, a
+ *  scrollable control of which the browser prints one clipped page), not while a line root is all the body holds
+ *  (`div.fileview-err` and nothing else: the fetch's pane, a picture that would not decode, the URL viewer's failure), and
+ *  NOT while a child none of the lists names stands, whatever else does: the flow cannot say what a press would print, so
+ *  the button stays disabled (the safe side; the census in file-print.test.ts is what makes a new root a red test rather
+ *  than a dead button: since the round-7 fixes it refuses a seat it has not read on the call, assignment, receiver, argument
+ *  and URL axes, by name: a method call's name, a member assignment's name, a seat's receiver and each seated name by their
+ *  bindings, a node handed to any callee and an element the census can see by shape handed to a callee the file does not
+ *  declare, and a URL written from anything but a literal by an assignment, setAttribute, a CSS property through style or
+ *  style.setProperty, a method of location or window.open, or an attribute set under a name it cannot read as a literal, so a
+ *  root the viewer seats by any of the five reds until read,
+ *  and on no other axis). In when a content root stands and nothing above
+ *  holds: the rendered root, the code block (a
+ *  `div.fileview-err` line above either, an empty file's or a render that fell, is a line over content, not a pane), a
+ *  picture's box, a PDF frame's column (the pages attempt's notice inside it included), the pages' host once the loader has
+ *  gone, the CodeMirror mount (`div.fileview-cm`, which prints the whole file). An empty body is not in. `kind` is the file's
+ *  (the host's `kind` at the read): for a PDF the loader (PDF_LOADER_ROOT) reads as content, since the PDF road reads nothing
+ *  from the body and a press prints through the frame or opens the /file tab (the round-2 review, 2026-09-19: the derivation
+ *  had disabled Print and swallowed the chord over the Comments panel's pages loader, where the build before it opened the
+ *  tab); the editor's textarea, a line root alone and an unknown child stay not in for a PDF too. */
+export function bodyReady(body: BodyLike, kind: PrintKind = "document"): boolean {
+  let content = false;
+  for (const c of elementChildren(body)) {
+    const k = rootKind(c);
+    if (k === "unknown") return false;
+    if (k === "wait") {
+      if (kind === "pdf" && isRoot(c, [PDF_LOADER_ROOT])) { content = true; continue; }
+      return false;
+    }
+    if (k === "content") content = true;
+  }
+  return content;
+}
+
+// ── the DOM driver ──────────────────────────────────────────────────────────────────────────────────
+export type PrintHost = {
+  /** the card (`.fileview`): the line is a row of it */
+  card: HTMLElement;
+  /** the title bar: the line goes right after it, above any notice the viewer raises */
+  bar: HTMLElement;
+  /** the body: its placeholders are counted and its pictures awaited */
+  body: HTMLElement;
+  /** a text field holds the keyboard now: the chord is left to the browser */
+  typing: () => boolean;
+  /** runs `cb` when this open ends (the viewer's close hooks): the listener and the wait leave with the card */
+  onClose: (cb: () => void) => void;
+  /** the file's kind as it stands at the press: `pdf` once a PDF's bytes landed (the frame prints itself, or the /file tab
+   *  opens), else `document`; absent, every press is a document's (the URL viewer shows documents alone) */
+  kind?: () => PrintKind;
+  /** for a PDF whose frame cannot print: open the kernel's /file URL in a new tab, the modified click's opener (preview.ts
+   *  openFileTab); true when a tab opened. Absent: no tab, and the line says the browser did not open one */
+  openTab?: () => boolean;
+  /** the viewer's own hand-over of the keyboard to its body (file-view.ts openFileView's takeKeyboard, which yields to a
+   *  holder outside the bar): at a disarm the body going out causes, a word button of the line that held the keyboard hands
+   *  it there, as the changed-on-disk bar's Reload does when its bar goes (dropDiskBar), since the Print button is not
+   *  enabled then. Absent (the URL viewer), the button takes it */
+  takeKeyboard?: () => void;
+};
+export const PRINT_LINE_ID = "fileview-print-line";
+export const PRINT_LINE_CLASS = "fileview-print-line";
+
+/** Build the Print button for a viewer and wire the flow to it and to the document's keydown; the caller puts the button
+ *  in its bar and paints its body as it does: whether the body is in (P7) is read off the body's children here (bodyReady,
+ *  through a MutationObserver on them and again at each press), so the caller reports nothing. The button starts disabled
+ *  over an empty body or the caller's loader. `data-print` on the button carries the phase while it is not resting
+ *  (`disabled` included), for the sheets and the tests. */
+export function installFilePrint(host: PrintHost): { button: HTMLButtonElement } {
+  const doc = document;                        // the hosting document (the shims the node suites install give a fake element no ownerDocument)
+  const btn = doc.createElement("button") as HTMLButtonElement;
+  btn.type = "button";
+  // a glyph in Download's shape (file-view.ts: the tray glyph, .fileview-icon, the words in the title and aria-label, the bar's
+  // data-icon mark): the word button the first build placed here widened the bar's wrapped action row past the chat modal's
+  // card at 380px (file-view-text-size.test.ts's browser leg)
+  btn.innerHTML = ICON_PRINT;
+  btn.className = "fileview-btn fileview-icon fileview-print";
+  btn.dataset.icon = "1";
+  btn.title = "Print"; btn.setAttribute("aria-label", "Print");
+  let state: PrintState = DISABLED;            // the machine's start; onBody below reads the body as it stands at the install (the loader, or nothing yet) and at every paint after
+  let line: HTMLElement | null = null;
+  let withBtn: HTMLButtonElement | null = null;   // the armed line's "Print with them", while the line stands: a re-arm rewrites its title in place
+  let asked = false;                           // the line standing is the deadline's ask: a repaint under it rewrites the count in place
+  let armedGates: HTMLElement[] = [];          // the placeholders the armed line counted: read at the arm and at each re-arm, and the list "with them" restores (one list, so the title names what the click fetches)
+  let armedHosts: string[] = [];               // the hosts those placeholders name, in the with-button's title
+  let notice = false;                          // the line is the PDF flow's notice (the tab), standing at rest until the next press or the close
+  let settle: Settle | null = null;
+  let waitEnds = 0;                            // when the running wait's deadline falls (Date.now()): a re-aim keeps it and never extends it
+  let closed = false;
+
+  /** The body's placeholders that reach the paper (figurePrintable): the ones the press counts, the title names and "with
+   *  them" restores. One inside a closed fold or under hidden, one the browser does not render, or one whose figure carries
+   *  an attribute that hides it is left out, since the print never shows it. */
+  const gates = (): HTMLElement[] => (Array.from(host.body.querySelectorAll('[data-act="' + GATE_ACT + '"]')) as HTMLElement[]).filter(figurePrintable);
+  /** Every host the placeholders `list` name, once each, in the order the placeholders name them. */
+  const hostsOf = (list: HTMLElement[]): string[] => {
+    const hosts = new Set<string>();
+    for (const g of list) for (const h of (g.getAttribute("data-fv-hosts") || "").split(" ")) if (h) hosts.add(h);
+    return Array.from(hosts);
+  };
+  /** This press's probes by resolved URL, one Image each for the life of one press's wait: a re-aim at a settle finds the
+   *  probe it already made instead of minting one, so a URL whose picture failed is asked for once and settles for good (a
+   *  failed Image is complete; a fresh one never was). Cleared when a press or a choice begins its wait (beginWait), never
+   *  per re-aim, so the next press probes the body afresh and a URL a heal retry changed is a new key; a repaint's re-aim
+   *  drops the complete ones first (dropDone). */
+  const probes = new Map<string, Picture>();
+  const probe = (url: string): Picture => {
+    let p = probes.get(url);
+    if (!p) { const im = new Image(); im.src = url; p = im; probes.set(url, p); }
+    return p;
+  };
+  /** Drop this press's probes that are complete, before a repaint's re-aim (reaim under the wait, recountAsk under the ask):
+   *  the landing's element fetches its URL again, and a finished probe's verdict is the old document's, so the URL is probed
+   *  once more against the new body, for the URL the element itself fetches (a request the browser folds into the element's
+   *  own while that is in flight: file-print-driver-browser.test.ts case (3d) counts none beyond the landing's); a probe
+   *  still in flight is kept, so the repaint costs no second request for it. Never called from the settle's own re-aim (aimWait's recursion): a
+   *  failed URL would be probed again at every settle, the request storm of the third review. The round-2 review's extra7-1,
+   *  landed 2026-09-20: before this a Reload landing mid-wait that named a poster or svg image URL whose probe had failed
+   *  answered from that probe, and window.print ran with the landing's own fetch still in flight
+   *  (file-print-driver-browser.test.ts case (3d)); under the ask the same landing read as nothing loading and the question
+   *  was called moot (case (13c)). */
+  const dropDone = (): void => { for (const [u, p] of probes) if (p.complete) probes.delete(u); };
+  /** Remove the line. A word button of it holding the keyboard hands it back to the Print button, the trigger (the zoom
+   *  flyout's and the Outline's Escape do the same for theirs), or, when the disarm is the body going out (`bodyOut`), to
+   *  the viewer's body through the host's takeKeyboard (the changed-on-disk bar's hand-over, dropDiskBar: the button is not
+   *  enabled then), read before the removal and handed after it, as that bar does; the browser's fixup would drop it on the
+   *  document's body otherwise, where the next key scrolls nothing. Not at the close, where the card goes with the line. */
+  const dropLine = (bodyOut = false): void => {
+    if (line) {
+      const held = !closed && line.contains(doc.activeElement);
+      line.remove(); line = null; withBtn = null; asked = false;
+      if (held) { if (bodyOut && host.takeKeyboard) host.takeKeyboard(); else btn.focus({ preventScroll: true }); }
+    }
+    notice = false;
+  };
+  /** The line, a row of the card right under the bar: `words` as its first node (the armed line's buttons and the wait's
+   *  loader follow it, so a recount can rewrite the words in place). `loading` adds the viewer's loader after the words
+   *  (the swirl, the wordmark and the three pulsing dots, file-view.ts's markup, `.fileview-load` under the sheets'
+   *  `.fileview-print-line .fileview-load` rule so it sits inline in the row; hidden from the status's announcement, which
+   *  reads the words alone). */
+  const showLine = (words: string, loading = false): HTMLElement => {
+    dropLine();
+    const row = doc.createElement("div");
+    row.className = "fileview-err " + PRINT_LINE_CLASS;
+    row.id = PRINT_LINE_ID;
+    row.setAttribute("role", "status");
+    row.textContent = words;
+    if (loading) {
+      const load = doc.createElement("div");
+      load.className = "fileview-load fileview-print-load";
+      load.setAttribute("aria-hidden", "true");
+      load.innerHTML = '<img src="/media/romp-swirl-glyph.svg" alt=""><span>romp</span>'
+        + '<i class="fileview-dot"></i><i class="fileview-dot"></i><i class="fileview-dot"></i>';
+      row.appendChild(load);
+    }
+    host.card.insertBefore(row, host.bar.nextSibling);
+    line = row;
+    return row;
+  };
+  const syncButton = (): void => {
+    const off = state.phase === "disabled";
+    const asks = state.phase === "armed" || state.phase === "stalled";   // the line is a question with word buttons, opened by the button
+    const busy = state.phase === "preparing" || state.phase === "printing";
+    // aria-disabled, not `disabled` (the bar's own rule, file-view.ts textSizeControl, copied whole): a button that disables
+    // under keyboard focus drops it (the ring would vanish on the press that reached the end; here, the body going out while
+    // a word button of the line held the keyboard handed it to this button and the property then dropped it on the
+    // document's body in the same tick), while an aria-disabled one keeps the focus, wears the sheet's disabled dress
+    // (.fileview-btn[aria-disabled="true"], the same rule as :disabled in both sheets), and its press is the no-op the
+    // disabled phase already makes of it (the machine ignores a press there, and the chord is prevented before it)
+    if (off) btn.setAttribute("aria-disabled", "true"); else btn.removeAttribute("aria-disabled");
+    btn.classList.toggle("on", asks);
+    btn.classList.toggle("fileview-busy", busy);
+    if (asks) btn.setAttribute("aria-expanded", "true"); else btn.removeAttribute("aria-expanded");
+    if (busy) btn.setAttribute("aria-busy", "true"); else btn.removeAttribute("aria-busy");
+    if (state.phase === "resting") delete btn.dataset.print; else btn.dataset.print = state.phase;
+  };
+  const dropSettle = (): void => { if (settle) { settle.cancel(); settle = null; } };
+  /** The running wait's deadline: the time left to the press's, or null for Keep waiting's open-ended wait, which has none. */
+  const timeLeft = (): number | null => (state.phase === "preparing" && state.untimed === true ? null : Math.max(0, waitEnds - Date.now()));
+  /** The wait's words for `n` pictures: the open-ended wait's (Keep waiting's, the state marked `untimed`), else the timed
+   *  wait's. */
+  const waitWords = (n: number): string => (state.phase === "preparing" && state.untimed === true ? waitingWords(n) : preparingWords(n));
+  /** The wait's line afresh: the words, the loader, and under the open-ended wait one word button, "Print anyway" (the ask's
+   *  words and title), which prints at once with what has loaded (the header: romp-manager's ruling, 2026-09-20). The timed
+   *  wait's line carries no button: its deadline asks. */
+  const waitLine = (n: number): void => {
+    const row = showLine(waitWords(n), true);
+    if (state.phase !== "preparing" || state.untimed !== true) return;
+    const b = doc.createElement("button") as HTMLButtonElement;
+    b.type = "button"; b.textContent = ANYWAY_WORDS;
+    b.className = "fileview-btn fileview-err-act";
+    b.title = ANYWAY_TITLE;
+    b.addEventListener("click", () => { feed({ kind: "anyway" }); });
+    row.appendChild(b);
+  };
+  /** The wait's line reads `n` pictures: rewritten in place when the wait's line stands (its loader marks it), so a re-aim
+   *  moves nothing, restarts no animation and keeps the open-ended line's button; shown afresh otherwise (after the armed
+   *  line, or the ask's). */
+  const preparingLine = (n: number): void => {
+    if (line && line.querySelector(".fileview-print-load")) { line.firstChild!.textContent = waitWords(n); return; }
+    waitLine(n);
+  };
+  /** Aim the wait at the body as it stands, under `deadlineMs` (null: no deadline): collect, listen, and at the settle read
+   *  the body again (a picture that entered or was re-aimed since the collection is awaited too, under the time left) or feed
+   *  the verdict: `ready` settled with nothing loading, or `ready` deadline with the count still loading, on which the bar
+   *  asks (or prints, when the deadline found none). The count still loading; 0 with nothing to wait on (no listener, no
+   *  timer). */
+  const aimWait = (deadlineMs: number | null): number => {
+    dropSettle();
+    const s = settlePictures(collectPictures(host.body, doc.baseURI, probe), deadlineMs);
+    const n = s.pending();
+    if (n === 0) { s.cancel(); return 0; }
+    settle = s;
+    void s.done.then((why) => {
+      if (settle !== s) return;                 // cancelled, or replaced by a later wait
+      settle = null;
+      if (why === "cancelled" || closed || !host.card.isConnected) return;
+      if (why === "deadline") { feed({ kind: "ready", why, pending: s.pending() }); return; }   // the deadline's verdict, with the count still loading: the bar asks over any (nothing listens under the ask), and prints over none
+      const left = timeLeft();
+      if (left === null || left > 0) {
+        const more = aimWait(left);             // the body as it stands now: something entered or was re-aimed since the collection (the probes are this press's, so a URL already asked for is not asked for again)
+        if (more > 0) { preparingLine(more); return; }
+      }
+      feed({ kind: "ready", why: "settled", pending: 0 });
+    });
+    return n;
+  };
+  /** Begin the wait, at a press or a choice: the full deadline from now, and this press's probes afresh. */
+  const beginWait = (): number => { probes.clear(); waitEnds = Date.now() + settleMs; return aimWait(settleMs); };
+  /** The body repainted during the wait (the observer: a reload's landing, a format pick; the editor's exit lands under no
+   *  wait, since entering the editor seats the loader, which takes the body out and disarms): the pictures listened on
+   *  were the old body's, detached by the swap, so the wait is aimed at the new body under the time left (none
+   *  for Keep waiting's wait); with nothing loading there the print runs at once, a settle in effect, and the line's count
+   *  follows. The machine holds the phase (its `body` in during the wait is `none`): the re-aim is the driver's, as the
+   *  collection is. */
+  const reaim = (): void => {
+    dropDone();
+    const n = aimWait(timeLeft());
+    if (n === 0) { feed({ kind: "ready", why: "settled", pending: 0 }); return; }
+    preparingLine(n);
+  };
+  /** The body repainted under the ask: the new body's pictures still loading are counted through the wait's own collection
+   *  and the listeners come off again, since nothing is awaited under the ask; the machine's `stalled` then rewrites the
+   *  count in place, or over none loading disarms (the question is moot; a repaint is no answer to it, so nothing prints and
+   *  the person may press again). */
+  const recountAsk = (): void => { dropDone(); const n = aimWait(null); dropSettle(); feed({ kind: "stalled", pending: n }); };
+  const doPrint = (): void => {
+    const done = (): void => { window.removeEventListener("afterprint", done); feed({ kind: "printed" }); };
+    window.addEventListener("afterprint", done);
+    try { window.print(); } finally { done(); }   // afterprint, or at once when print returns: the second call finds the state at rest and changes nothing
+  };
+  /** The PDF itself: the frame's own print when the frame holds the document, else the /file URL in a new tab and the line
+   *  saying so (or that the browser opened none), shown after the rest so it stands until the next press or the close. */
+  const doPrintPdf = (): void => {
+    const w = pdfFrameWindow(host.body);
+    if (w) { try { w.print(); } finally { feed({ kind: "printed" }); } return; }
+    const opened = host.openTab ? host.openTab() : false;
+    feed({ kind: "printed" });
+    showLine(opened ? TAB_WORDS : NO_TAB_WORDS);
+    notice = true;
+  };
+  const feed = (ev: PrintEvent): void => {
+    if (closed) return;
+    const r = step(state, ev);
+    state = r.state;
+    switch (r.act) {
+      case "arm": {
+        armedGates = gates(); armedHosts = hostsOf(armedGates);   // the placeholders the press would restore and the hosts they name, read together (the header) and kept for the click
+        const words = armedWords(state.gated), withWords = withTitle(armedHosts);
+        if (line && withBtn) { line.firstChild!.textContent = words; withBtn.title = withWords; break; }   // a recount under a standing line: the words and the title follow the repainted body in place (the keyboard stays where it is, and the line moves no more than its words)
+        const row = showLine(words);
+        for (const [btnWords, withGated] of [[WITH_WORDS, true], [WITHOUT_WORDS, false]] as Array<[string, boolean]>) {
+          const b = doc.createElement("button") as HTMLButtonElement;
+          b.type = "button"; b.textContent = btnWords;
+          b.className = "fileview-btn fileview-err-act";
+          b.title = withGated ? withWords : WITHOUT_TITLE;
+          b.addEventListener("click", () => { feed({ kind: "choose", withGated }); });
+          row.appendChild(b);
+          if (withGated) withBtn = b;
+        }
+        break;
+      }
+      case "disarm": dropSettle(); dropLine(ev.kind === "body"); break;   // the body going out during the wait: no wait survives a disarm; a word button of the line that held the keyboard hands it to the viewer's body then
+      case "rest": dropLine(); break;
+      case "activate": {
+        // exactly the placeholders the armed line counted, each restored alone through the gate's one-placeholder restore
+        // (loadGatedFigure): the figure's own fetch and no other, a placeholder naming two hosts fetching from both as its
+        // title said, and no page-life grant for any host (a click's meaning, kept for the click: loadGatedHost);
+        // a host one of them answers with a redirect to is reached too, as the placeholder's own click reaches it (open point 7;
+        // withTitle's doc, figure-gate.ts's header and the egress leg's header say the same; the round-4 review's extra6-1
+        // named this comment as the one statement of that fetch left without the clause). The list is
+        // the arm's (re-read at each recount), never the body's at the click: the title and the restores are one list. A
+        // placeholder inside a closed fold or under hidden that names the same host is not in the list and stands. One a
+        // repaint detached meanwhile is skipped (a detached img fetches too once its src is back); the recount that repaint
+        // ran has re-read the list, so none is expected
+        for (const g of armedGates) if (host.body.contains(g)) loadGatedFigure(g);
+        feed({ kind: "prepare", pending: beginWait() });
+        return;
+      }
+      case "skip": feed({ kind: "prepare", pending: beginWait() }); return;
+      case "wait": waitLine(state.pending); break;   // the timed wait's words and loader; under `untimed`, the waiting words and Print anyway too
+      case "stall": {
+        // the deadline's ask, in the armed line's shape (the words, then two word buttons with titles), written INTO THE
+        // WAIT'S LINE when it stands: the same row, so the live region that announced the wait announces the ask (the words
+        // change, what followed them goes, the loader, and the buttons come; the round-2 review's ui-2, landed 2026-09-20:
+        // before this showLine removed the row and built another, so the accessibility tree lost one node and gained
+        // another at the transition, where a recount keeps the armed line's node and a repaint under the ask keeps this
+        // one; the order of role and words on a fresh row was measured to change nothing there); a repaint under a
+        // standing ask rewrites the words in place, as a recount does the armed line's
+        const words = stalledWords(state.pending);
+        if (line && asked) { line.firstChild!.textContent = words; break; }
+        const row = line || showLine(words);
+        row.firstChild!.textContent = words;
+        while (row.firstChild!.nextSibling) row.firstChild!.nextSibling!.remove();
+        for (const [btnWords, title, answer] of [[ANYWAY_WORDS, ANYWAY_TITLE, { kind: "anyway" }], [KEEP_WORDS, KEEP_TITLE, { kind: "keep" }]] as Array<[string, string, PrintEvent]>) {
+          const b = doc.createElement("button") as HTMLButtonElement;
+          b.type = "button"; b.textContent = btnWords;
+          b.className = "fileview-btn fileview-err-act";
+          b.title = title;
+          b.addEventListener("click", () => { feed(answer); });
+          row.appendChild(b);
+        }
+        asked = true;
+        break;
+      }
+      case "resume": feed({ kind: "prepare", pending: aimWait(null) }); return;   // Keep waiting: the body as it stands now, under no deadline; with nothing left loading the print runs at once
+      case "print": dropLine(); syncButton(); doPrint(); return;   // doPrint feeds `printed` itself, which syncs
+      case "printPdf": dropLine(); syncButton(); doPrintPdf(); return;   // doPrintPdf feeds `printed` too
+      case "none": break;
+    }
+    syncButton();
+  };
+  const press = (): void => {
+    if (notice) dropLine();                    // the last press's notice (a PDF's tab) goes with this press
+    if (ready() !== (state.phase !== "disabled")) onBody();   // the body changed in this same task and the observer has not run yet: read it first, so the press acts on the body as it stands (P7)
+    if (state.phase !== "resting") { feed({ kind: "press", gated: 0, pending: 0 }); return; }   // disabled: nothing (the body is not in); armed, or the ask: the second press disarms; busy: nothing
+    const file = kindNow();
+    if (file === "pdf") { feed({ kind: "press", gated: 0, pending: 0, file }); return; }   // the PDF prints itself: no placeholder, no picture to wait on
+    const n = gates().length;
+    feed({ kind: "press", gated: n, pending: n > 0 ? 0 : beginWait() });
+  };
+  btn.addEventListener("click", press);
+  /** A placeholder the person activates by hand while the bar is armed (its click, or Enter or Space on it: the viewer's own
+   *  gate handlers on the body, file-view.ts loadGate and gateKeys) loads its host at once, so the body's placeholders are
+   *  counted again and the line's count and the hosts its title grants follow, as a repaint's do; the last one gone
+   *  disarms. Heard on the card in the bubble phase: the body is the card's descendant, so its handlers run first whatever
+   *  the registration order, and the restore has run when this reads the body. The placeholder is found by its mark on the
+   *  event's target, which the restore detached from the body but left whole. A click on the line's own buttons names no
+   *  placeholder and changes nothing here; the two viewers' gate handlers stand on the body, never on the card. */
+  const onGateAct = (e: Event): void => {
+    if (state.phase !== "armed") return;
+    if (e.type === "keydown") { const k = (e as KeyboardEvent).key; if (k !== "Enter" && k !== " ") return; }
+    const t = e.target as Element | null;
+    if (!t || typeof t.closest !== "function" || t.closest('[data-act="' + GATE_ACT + '"]') === null) return;
+    feed({ kind: "recount", gated: gates().length });
+  };
+  host.card.addEventListener("click", onGateAct);
+  host.card.addEventListener("keydown", onGateAct);
+  /** A fold opened or closed while the bar is armed (a typed <details>, a folded callout): the placeholders that reach the
+   *  paper changed, so they are counted again, as after a repaint. The details' toggle event does not bubble, so the card
+   *  hears it in the capture phase. */
+  const onToggle = (): void => { if (state.phase === "armed") feed({ kind: "recount", gated: gates().length }); };
+  host.card.addEventListener("toggle", onToggle, true);
+  /** The phases whose Escape is the bar's: the armed line and the deadline's ask (each a question with word buttons, which a
+   *  second press disarms too), and Keep waiting's open-ended wait, which no deadline ends. The timed wait's Escape stays the
+   *  viewer's, which closes the card (that wait ends within PRINT_SETTLE_MS by itself). */
+  const escapable = (): boolean => state.phase === "armed" || state.phase === "stalled" || (state.phase === "preparing" && state.untimed === true);
+  const onKey = (e: KeyboardEvent): void => {
+    if (e.key === "Escape") {
+      if (e.cancelBubble) return;                // a listener ahead of this one on the document stopped the key: it is that control's (the text-size flyout's dismiss, file-view.ts wireZoomDismiss, a capture listener wired before this per-open one, which closes the flyout and stops the event; stopPropagation stops no listener on the same node, and the flag, the DOM standard's alias for the stop propagation flag, is how a later one reads the claim). The bar stays armed for the next Escape
+      if (!escapable() || ownsEscape(e.target, host.card) || host.typing()) return;   // at rest, during the timed wait and during the print the viewer's own Escape closes the card; from inside a menu or a dialog, with a popup open in the card (its own handler running after this listener) or from a text field (the Comments composer, whose Escape cancels the draft) the Escape is that control's, and the next one disarms
+      e.preventDefault(); e.stopPropagation();   // disarm alone: the viewer's own Escape, a bubble listener on the document, would close the card
+      feed({ kind: "escape" });
+      return;
+    }
+    if (!doc.body.classList.contains("fileview-open") || !host.card.isConnected || host.typing()) return;   // no file open, the card gone, or a text field holding the keyboard: every key below is the browser's or the field's
+    if (e.defaultPrevented) return;              // a listener before this one claimed the key: the dashboard shell's command palette dispatcher (palette-main.ts, a capture-phase listener on every pane document from the frame's load, ahead of this per-open one) prevents Mod+P and opens the palette, so in the shell the chord is the palette's and the button prints
+    if (isPrintKeys(e) && e.repeat === true) { e.preventDefault(); return; }   // a held chord's later keydowns: prevented, since the browser's default for each is its own print over the body as it stands, but no press (one per repeat would arm and disarm on alternate repeats)
+    if (!isPrintChord(e)) return;
+    e.preventDefault();                          // the browser's raw print, which would print placeholders and half-loaded pictures, and over the loader the loader page: prevented before the press, which the disabled phase ignores, so the chord over the loader prints nothing at all
+    press();
+  };
+  doc.addEventListener("keydown", onKey, true);
+  /** The file's kind as the host reads it now: a PDF once its bytes landed, else a document (the URL viewer names none). */
+  const kindNow = (): PrintKind => (host.kind ? host.kind() : "document");
+  /** The body holds the file's content, as its children stand now (bodyReady, P7), under the file's kind. */
+  const ready = (): boolean => bodyReady(host.body, kindNow());
+  /** The body's children changed (the observer, after every paint of the host's; a press reads it first too): the machine
+   *  rests or disables from what the body holds now, and a flow under way is disarmed when it went out. A paint under the
+   *  armed line has the placeholders counted again (the line's words and the hosts its title grants follow the repainted
+   *  body, or the line goes with the last placeholder); a paint under the wait re-aims it; a paint under the ask counts the
+   *  new body's pictures still loading again. A change that leaves the body in and the phase at rest changes nothing. */
+  const onBody = (): void => {
+    if (closed) return;
+    const present = ready();
+    feed({ kind: "body", in: present });
+    if (!present) return;
+    if (state.phase === "armed") feed({ kind: "recount", gated: gates().length });
+    else if (state.phase === "preparing") reaim();
+    else if (state.phase === "stalled") recountAsk();
+  };
+  // the body's element children: every paint swaps them (replaceChildren, the loader's removal at page 1); the callback runs
+  // after the task that painted, before any key or click. Guarded as watchBodyWidth guards ResizeObserver (file-view.ts): a
+  // document without the API (the DOM stand-ins of the node suites, which drive the real viewer and construct this on every
+  // open; the round-2 review, 2026-09-19, when the bare construction threw at openFileView in 24 of them) gets no observer,
+  // and the press's own read of the body (press) is what the button's dress follows then
+  const observer = typeof MutationObserver === "function" ? new MutationObserver(onBody) : null;
+  if (observer) observer.observe(host.body, { childList: true });
+  host.onClose(() => {
+    closed = true;
+    if (observer) observer.disconnect();
+    doc.removeEventListener("keydown", onKey, true);
+    dropSettle();
+    dropLine();
+  });
+  onBody();                                    // the body as it stands at the install: the loader, or nothing yet (the disabled dress from the build)
+  return { button: btn };
+}

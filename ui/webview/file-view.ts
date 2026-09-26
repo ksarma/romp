@@ -21,6 +21,7 @@ import { sanitizeMd, revealFragmentTarget } from "./md-sanitize";
 import { applyMdConfig } from "./md-config";   // the one markdown configuration (md-config.ts)
 import { literalizeUnclosedTags } from "./md-literal-tags";   // an inline start tag with no end tag in its block renders as literal text, on this parse's tokens (plans/file-review.md, decision 52)
 import { gateRemoteFigures, gateOf, loadGatedHost, figureRefs, parseSrcset, serializeSrcset, GATE_ACT } from "./figure-gate";   // decision 8: a figure on an unlisted host loads on a click (figure-gate.ts)
+import { installFilePrint } from "./file-print";   // Print, with the pictures loaded: the bar's button and Ctrl/Cmd+P (file-print.ts; the print follow-on to plans/markdown-viewer.md Slice 3, item 12)
 import { hostOf, bareId, hostNameNodes } from "./host-prefix";
 import { fileUrl } from "./preview";
 import { ICON_DOWNLOAD, ICON_COPY, ICON_EDIT, ICON_ZOOM, ICON_CHECK, ICON_CROSS } from "./icons";   // the bar's glyphs (T367)
@@ -590,6 +591,11 @@ function isTypingTarget(a: Element): boolean {
   if (a.localName === "textarea" || a.localName === "select") return true;   // type-ahead in a dropdown is typing too (render.ts's isTypingTarget reads the same; the review's round 3)
   if (a.localName === "input") return !NON_TEXT_INPUTS.has((a.getAttribute("type") || "text").toLowerCase());
   return (a as HTMLElement).isContentEditable === true;
+}
+/** A text field in THIS document holds the keyboard: the print chord is the browser's then (file-print.ts reads it at every Ctrl/Cmd+P). */
+function typingHere(): boolean {
+  const a = document.activeElement;
+  return a !== null && a !== document.body && isTypingTarget(a);
 }
 function typingInPeerFrame(): boolean {
   try {
@@ -1164,9 +1170,11 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // through the hosting document's registered lookup — no sid, or a sid it cannot name, and there is
   // no chip.
   const owner = sid ? identityOf(sid) : null;
-  let sess: HTMLElement | null = null;
-  if (owner) {
-    sess = el("span", "fileview-sess");
+  // a const, built by el() in the one branch that shows it: file-print.test.ts's census reads a seat's receiver by its
+  // binding, and a `let` assigned inside the branch said nothing about what it held at the seat (the round-6 review's
+  // correctness-5, 2026-09-20)
+  const sess: HTMLElement | null = owner ? el("span", "fileview-sess") : null;
+  if (owner && sess) {
     sess.replaceChildren(...hostNameNodes(owner.name, sid));
     if (owner.color) { sess.style.background = owner.color.bg; sess.style.color = owner.color.fg; }
     sess.title = "Opened from the " + owner.name + " session";
@@ -1473,8 +1481,8 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     };
     pop.addEventListener("click", (ev) => {
       const t = ev.target as Element | null;
-      const r = t && typeof t.closest === "function" ? t.closest(".fileview-outline-row") as HTMLElement | null : null;
-      if (r) pick(rows.indexOf(r));
+      const row = t && typeof t.closest === "function" ? t.closest(".fileview-outline-row") as HTMLElement | null : null;   // not `r`: the rows' builder above binds that name, and the census holds a seated name to one declaration per function (file-print.test.ts)
+      if (row) pick(rows.indexOf(row));
     });
     pop.addEventListener("keydown", (e: KeyboardEvent) => {
       const take = (): void => { e.preventDefault(); e.stopPropagation(); };
@@ -1572,7 +1580,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   srcBtn.addEventListener("click", () => {
     if (svgText === null) {
       if (!mediaBlob) return;
-      void mediaBlob.text().then((t) => { svgText = t; svgSource = true; renderBody(); takeKeyboard(); });
+      void mediaBlob.text().then((txt) => { svgText = txt; svgSource = true; renderBody(); takeKeyboard(); });
       return;
     }
     svgSource = !svgSource;
@@ -2249,6 +2257,45 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   dl.title = "Download"; dl.setAttribute("aria-label", "Download");
   dl.addEventListener("click", () => startDownload(dlUrl, dl));
   fileGroup.appendChild(dl);
+  // ── print (the print follow-on to plans/markdown-viewer.md Slice 3, item 12; file-print.ts) ── a glyph button beside
+  // Download, in its shape (the printer glyph, icons.ts; the words in the title and aria-label; the word button the first
+  // build placed here widened the bar's wrapped action row past the chat modal's card at 380px), with a direct listener like
+  // its neighbours (the bar is built once per open). The flow: over a gated placeholder (figure-gate.ts) the press arms a
+  // line right under this bar, in the notice bar's dress, with "Print with them" and "Print without them" (Escape or a
+  // second press disarms); then the pictures are awaited, 8 s at most; then window.print(). Ctrl/Cmd+P with a file open runs
+  // the same flow through the one document keydown listener the driver installs, which leaves with the viewer through the
+  // close hooks both exits drain (runCloseHooks). A text field holding the keyboard leaves the chord to the browser
+  // (typingHere). The kind is read at each press (`kind`: the kernel's Content-Type sets isPdf when the bytes land, after
+  // this bar is built): a PDF prints itself through its frame's own window (pdfBlock's iframe.fileview-frame, when it holds
+  // the document), else the kernel's /file URL opens in a new tab through openFileTab, the opener a modified click on a PDF
+  // uses, and the line says to print from there; a picture opened directly (imgBlock) is a document whose one picture is
+  // awaited, and the print block fits it to the page. The button is disabled until the body is in (P7), and the flow reads
+  // that off the body itself (file-print.ts bodyReady: a MutationObserver over this body's children, read again at each
+  // press, each child classed against the flow's closed lists of the roots seated here), so no paint here reports anything:
+  // the loader as the body's content (the open's, put up above; enterEdit's chunk wait), the plain fallback editor
+  // (enterFallback's textarea, of which a print shows one clipped page), a failure pane alone (the fetch chain's,
+  // imgFailed's) and a root the flow's lists do not name disable it, and every other paint, the CodeMirror mount included,
+  // leaves it live. The PDF is the exception for the loader: with `kind` reading pdf, showPdfPages's pages loader before
+  // page 1 is drawn (no frame kept) leaves the button live, and a press takes the PDF road, the /file tab, since that road
+  // reads nothing from the body (the round-2 review, 2026-09-19: the derived readiness had disabled it there, where the
+  // earlier build opened the tab). Before the third review (2026-09-19) each paint here reported the body in or out by
+  // hand, and the roads nobody wired were wrong: the plain fallback reported in and printed one clipped page. A root added
+  // to this file's body paints must join the flow's lists (file-print.ts READY_ROOTS, NOT_READY_ROOTS, LINE_ROOTS), or
+  // file-print.test.ts's census over this file's seats fails. Its default refuses: it reads every `body` token in this file,
+  // resolves a seating call's roots and refuses every token it cannot class (a computed name, a bare read of a seating method, a
+  // call, bind or apply on one, a member it has not seen, an alias, a parenthesised or cast receiver, a helper handed the
+  // body that its BODY_HANDED_TO list does not name), and it reads every member call in this file on any other receiver: a
+  // seat (a seating call, an innerHTML or outerHTML assignment) or a call it reads by its site (call, apply, bind, mount,
+  // render, a reflection global's method) is refused unless its site (function, receiver, form, the receiver's binding) is
+  // in its SEATS_READ_BY_HAND table, whatever produced the receiver, and a method by a name it has not listed, a seating
+  // method read without being called and a member stored under a computed name are refused too. Seat the body here by its
+  // name; a helper that takes the body, a seat on another receiver and a method by a new name are read by hand and listed
+  // there before the census passes them. The flow hands the keyboard through takeKeyboard when
+  // the body goes out while a word button of its line holds it (dropDiskBar's hand-over), since its button is not enabled
+  // then.
+  const print = installFilePrint({ card: box, bar, body, typing: typingHere, onClose: (cb) => { closeHooks.push(cb); },
+    kind: () => (isPdf ? "pdf" : "document"), openTab: () => openFileTab(path, sid), takeKeyboard: () => takeKeyboard() });
+  fileGroup.appendChild(print.button);
 
   // ── copy path (a glyph since T367) ── the acknowledgement is a glyph swap with the words in the tooltip and
   // aria-label: the press dims the button in the same tick (click-safe: every press acknowledges), then a check
@@ -2880,7 +2927,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     ta.addEventListener("keydown", (e) => {     // the editor's own save chord; Esc falls through to onKey
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") { e.preventDefault(); doSave(); }
     });
-    body.replaceChildren(ta);
+    body.replaceChildren(ta);                   // Print reads this textarea as the body not in (file-print.ts bodyReady): a print of it would be one clipped page of a scrollable control
     ta.focus();
   };
   let editSeq = 0;                              // stale chunk resolutions (edit left before load) no-op
@@ -2925,7 +2972,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     editorChunk().then((ed) => {
       if (!editing || my !== editSeq) return;   // edit mode left (or re-entered) while the chunk loaded
       const host = el("div", "fileview-cm");
-      body.replaceChildren(host);
+      body.replaceChildren(host);               // Print reads the mount's host as the body in (file-print.ts bodyReady): the CodeMirror editor prints the whole file
       cm = ed.mount(host, {
         text: norm(text!), ext: path.slice(path.lastIndexOf(".") + 1),
         onChange: () => { dirty = cm!.value() !== norm(text!); if (!dirty) dirty = decided(); },
@@ -3696,6 +3743,14 @@ export function openUrlView(href: string): void {
   const body = el("div", "fileview-body");
   const stampBodyWidth = watchBodyWidth(body);        // the body's content width, for a top-level table's cap (the sheets read --fv-body-w)
   textSize.bindWheel(body);                            // Ctrl/Cmd + wheel over the text steps the size
+  // Print, before Copy URL (the local viewer's button stands beside Download): the same flow over this viewer's body, the
+  // line under this bar, the chord through the driver's one keydown listener, dropped by the close hooks (file-print.ts);
+  // disabled until renderBody seats the document and again over fail's pane, read off this body's children by the flow itself
+  // (file-print.ts bodyReady, P7: the loader below and a `.fileview-err` pane alone are not in; the document's root is; a
+  // root the flow's lists do not name is not in either, and its census reads every seat in this file, refusing what it has
+  // not read by hand; the local viewer's install comment says how)
+  const print = installFilePrint({ card: box, bar, body, typing: typingHere, onClose: (cb) => { closeHooks.push(cb); } });
+  acts.insertBefore(print.button, copy);
   // In-document links land on their heading (mdBlock's fv-anchor stamp): one delegated listener, the
   // local viewer's pattern. No fv-open here — a URL document's sibling links are made absolute and
   // the chat's own anchor delegate routes them.
@@ -4349,12 +4404,12 @@ function mdBlock(text: string, doc?: MdDocLoc): HTMLElement {
   if (doc && doc.kind === "url") {
     // A URL document's links resolve against the document too (its figures did above, before the adoption).
     box.querySelectorAll(LINK_SEL).forEach((node) => {
-      const a = node as HTMLElement | SVGElement;
-      const href = linkHref(a);
+      const link = node as HTMLElement | SVGElement;
+      const href = linkHref(link);
       if (!href || href.startsWith("#") || /^[a-z][a-z0-9+.-]*:/i.test(href)) return;   // in-document, or already absolute
       // Absolute now, so the chat's document-level anchor delegate sees a scheme: a same-origin
       // .md target opens in this viewer (isMarkdownUrl), everything else in a new tab.
-      a.setAttribute("href", resolveDocRelative(href, doc.href));
+      link.setAttribute("href", resolveDocRelative(href, doc.href));
     });
   }
   if (doc && doc.kind === "file") {
@@ -4377,10 +4432,10 @@ function mdBlock(text: string, doc?: MdDocLoc): HTMLElement {
     // not strict there) and an SVG link kept navigating the pane; the attribute is what the browser reads on every
     // one of these elements.
     box.querySelectorAll(LINK_SEL).forEach((node) => {
-      const a = node as HTMLElement | SVGElement;
-      if (linkHref(a).startsWith("#")) { a.dataset.act = "fv-anchor"; return; }
-      a.setAttribute("target", "_blank");
-      a.setAttribute("rel", "noopener");
+      const anchor = node as HTMLElement | SVGElement;
+      if (linkHref(anchor).startsWith("#")) { anchor.dataset.act = "fv-anchor"; return; }
+      anchor.setAttribute("target", "_blank");
+      anchor.setAttribute("rel", "noopener");
     });
   }
   // URLs and paths written in the prose and the code blocks, after the highlight rewrote the blocks' markup
@@ -4468,7 +4523,7 @@ export function rewriteFigureSrcs(root: ParentNode, dir: string, sid: string | n
     if (ref.attr === "srcset") {
       const cands = parseSrcset(ref.value);
       let changed = false;
-      for (const c of cands) { const p = path(c.url); if (p !== null) { c.url = p; changed = true; } }
+      for (const c of cands) { const cp = path(c.url); if (cp !== null) { c.url = cp; changed = true; } }   // its own name: `p` below is the reference's, and the census holds a written value to one declaration per function (file-print.test.ts)
       if (changed) { el.setAttribute(FV_SRCSET, ref.value); el.setAttribute("srcset", serializeSrcset(cands)); }   // the authored candidates beside the rewritten ones, in the same order (parseSrcset reads both back candidate for candidate)
       else el.removeAttribute(FV_SRCSET);                // the attribute means this viewer rewrote this srcset, as data-fv-src does for a src
       continue;
@@ -4662,7 +4717,7 @@ function resolveFigureRefs(root: ParentNode, base: string): void {
     if (ref.attr === "srcset") {
       const cands = parseSrcset(ref.value);
       let changed = false;
-      for (const c of cands) { const abs = resolveDocRelative(c.url, base); if (abs !== c.url) { c.url = abs; changed = true; } }
+      for (const c of cands) { const cabs = resolveDocRelative(c.url, base); if (cabs !== c.url) { c.url = cabs; changed = true; } }   // its own name, as in rewriteFigureSrcs: `abs` below is the reference's
       if (changed) el.setAttribute("srcset", serializeSrcset(cands));
       continue;
     }
@@ -4850,8 +4905,8 @@ export function initFileView(poster: (m: Record<string, unknown>) => void,
       if (onRelay) { onRelay(m); return; }   // this document's own contract (the Files pane) takes the message whole
       openFileView(m.path, typeof m.sid === "string" ? m.sid : null, { at: readAt(m.at) });
     } else if (m.type === "fileGitLink" && gitHooks && m.reqId === gitHooks.reqId) {
-      const h = gitHooks; gitHooks = null;
-      h.apply(String(m.url || ""), String(m.reason || ""));
+      const gh = gitHooks; gitHooks = null;   // its own name: `h` is the edit hooks' in the branches below, and the census holds a seat's receiver to one declaration per function (file-print.test.ts)
+      gh.apply(String(m.url || ""), String(m.reason || ""));
     } else if (m.type === "fileSaved" && editHooks && m.reqId === editHooks.reqId) {
       const h = editHooks; editHooks = null;
       // `logged`: the comments log took the edit (Slice 1; absent on an older kernel = false). `logWarning`:

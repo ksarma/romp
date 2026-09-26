@@ -68,12 +68,12 @@ test("mdBlock's two link passes select LINK_SEL and read linkHref; no `a[href]` 
   assert.equal((MD_FN.match(/querySelectorAll\(LINK_SEL\)/g) || []).length, 2, "the doc-relative pass and the final target pass");
   assert.doesNotMatch(MD_FN, /querySelectorAll\("a\[href\]"\)/, "the selector that missed <area> and xlink:href is gone");
   assert.doesNotMatch(MD_FN, /as HTMLAnchorElement/, "a link is typed as the element it may be: HTML or SVG");
-  assert.match(MD_FN, /const href = linkHref\(a\);/, "the doc-relative pass reads the href through linkHref");
-  assert.match(MD_FN, /if \(linkHref\(a\)\.startsWith\("#"\)\) \{ a\.dataset\.act = "fv-anchor"; return; \}/, "…and so does the fragment test");
+  assert.match(MD_FN, /const href = linkHref\(link\);/, "the doc-relative pass reads the href through linkHref (its local is `link` since the print PR's round-8 fixes: the census keys an entry on a name declared once per function)");
+  assert.match(MD_FN, /if \(linkHref\(anchor\)\.startsWith\("#"\)\) \{ anchor\.dataset\.act = "fv-anchor"; return; \}/, "…and so does the fragment test (its local is `anchor`, for the same reason)");
 });
 
 test("target and rel are written with setAttribute: the `target` property is read-only on an SVGAElement and the write was a silent no-op", () => {
-  assert.match(MD_FN, /a\.setAttribute\("target", "_blank"\);\s*\n\s*a\.setAttribute\("rel", "noopener"\);/);
+  assert.match(MD_FN, /anchor\.setAttribute\("target", "_blank"\);\s*\n\s*anchor\.setAttribute\("rel", "noopener"\);/);
   assert.doesNotMatch(MD_FN, /\ba\.target\s*=/, "no property write on target");
   assert.doesNotMatch(MD_FN, /\ba\.rel\s*=/, "no property write on rel");
   assert.doesNotMatch(MD_FN, /\ba\.title\s*=/, "no property write on title either (an SVG <a> has none)");
@@ -88,7 +88,7 @@ test("an SVG anchor's xlink:href is moved to a plain href before either pass (co
   const adopt = MD_CODE.indexOf("box.replaceChildren(...Array.from(clean.childNodes));");   // the adoption; where the figure chain sits relative to it is file-view-seam.test.ts's pin, not this one's
   const urlLinks = MD_CODE.indexOf("resolveDocRelative(href, doc.href)");    // the URL kind's link pass
   const fileLinks = MD_CODE.indexOf("linkMarkdownAnchors(box, doc.path)");   // the file kind's
-  const stamp = MD_CODE.indexOf('a.dataset.act = "fv-anchor"');              // the arm every other document takes
+  const stamp = MD_CODE.indexOf('anchor.dataset.act = "fv-anchor"');         // the arm every other document takes
   assert.ok(norm > -1, "the normalisation pass exists");
   assert.ok(sanitize < adopt && adopt < norm, "after the sanitize (the attribute must survive DOMPurify first) and after the adoption");
   assert.ok(urlLinks > norm && fileLinks > norm && stamp > norm, "before every link pass (all three see it)");

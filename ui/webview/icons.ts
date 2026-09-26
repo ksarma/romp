@@ -9,6 +9,9 @@ const svg = (paths: string): string =>
 /** the tray: an arrow down onto a bar (the image lightbox's download control since 2026-08-19) */
 export const ICON_DOWNLOAD = svg('<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>'
   + '<polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>');
+/** a printer: the sheet's top behind the body, the tray in front (the file viewer's Print since 2026-09-19; file-print.ts) */
+export const ICON_PRINT = svg('<polyline points="6 9 6 2 18 2 18 9"/>'
+  + '<path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/>');
 /** two offset sheets (the lightbox's copy-image control since 2026-08-31) */
 export const ICON_COPY = svg('<rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>'
   + '<path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>');
