@@ -4921,9 +4921,12 @@ def _remote_sids_document(now, previous, owned=frozenset(), lost=None):
     host, which is what the hub had heard from it when it built that roster: nothing, a restarted hub's roster built
     before it heard the host (the reviewer's verifier at the thirty-third commit); an EMPTY CACHE, one hub process's
     roster built after the host's bus restarted during its kernel's blink with no twin (the reviewer's re-verifier at
-    the forty-sixth), which since round 6 releases only where the restarted process has been heard answering here
-    before the newer roster (over an empty cache from a restarted far process never heard answering here the word is
-    held, the reviewer's round-5 ruling B: tests/test_dead_session_staleness.py ReaderFollowsTheWriter
+    the forty-sixth), which since round 6 releases only where the restarted process has been heard answering in this
+    process by the time the older roster lands (the witness relays its answered word before the newer roster, and
+    another hub's gossip of that word landing between the two rosters releases the word too, the reviewer's verifier
+    at the fifty-fifth commit, by execution; over an empty cache from a restarted far process not heard answering here
+    by then the word is held, the reviewer's round-5 ruling B: tests/test_dead_session_staleness.py
+    ReaderFollowsTheWriter
     test_residual_3d_face_1_over_an_empty_cache_from_a_far_process_never_heard_answering_here_holds_the_word); or the
     host's ANSWERED EMPTY listing, one hub process's roster built after the host's sessions
     all ended (the reviewer's verifier at the forty-fifth), the host in the last two naming a session and blinking
