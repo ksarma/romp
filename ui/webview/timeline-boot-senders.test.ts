@@ -39,6 +39,8 @@ function timelineBoot(): string {
 
 const ORIGIN = "http://127.0.0.1:1";
 const VSCODE_ORIGIN = "vscode-webview://11111111-2222-3333-4444-555555555555";
+// another webview's origin: VS Code gives each webview its own, and only this webview's is the host's
+const OTHER_VSCODE_ORIGIN = "vscode-webview://aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
 const OTHER_ORIGIN = "https://example.invalid";
 const ABSENT = Symbol("absent");   // the event carries no such key at all
 
@@ -76,7 +78,7 @@ function sources(w: Win): Array<[string, unknown]> {
   ];
 }
 const ORIGINS: unknown[] = [ORIGIN, ORIGIN + "0", "http://127.0.0.1", "https://127.0.0.1:1", "http://127.0.0.1:2", VSCODE_ORIGIN,
-  OTHER_ORIGIN, "null", "", undefined, null, ABSENT];
+  OTHER_VSCODE_ORIGIN, OTHER_ORIGIN, "null", "", undefined, null, ABSENT];
 
 /** A real performance collector (perf-telemetry.ts) on a still clock that posts its rows here: the object federation.js
  *  publishes on window.__rompPerf on the kernel's pages, whose wrapFrameHandler the boot wraps its frame listener in.
@@ -192,6 +194,34 @@ test("with the page's performance collector on window.__rompPerf, the boot draws
   assert.deepEqual(bad, [], "with a collector, the inline boot draws or counts a frame windowSender does not hear (or misses one it does):\n" + bad.join("\n"));
   assert.ok(heard >= 50 && refused >= 300, heard + " heard, " + refused + " foreign");
   assert.equal(counted, heard, "the collector counted every heard frame once, and nothing else");
+});
+
+// The grid above holds the boot to windowSender, whatever windowSender says; this leg holds both to the answer for one
+// case outright: in a VS Code webview frame, a post from another webview's origin is drawn from no sender but the frame
+// itself (heard as itself, whatever the origin), while the same senders on this webview's origin are drawn.
+test("in a VS Code webview frame, a post from another webview's origin draws nothing from any sender but the frame itself", () => {
+  const vscode = receivers().filter((w) => w.location && w.location.origin === VSCODE_ORIGIN);
+  assert.equal(vscode.length, 2, "both VS Code frames: window.parent replaced by the frame, and deleted");
+  for (const w of vscode) {
+    const run = bootOver(w, timelineBoot());
+    assert.equal(run.error, null, w.name + ": the boot ran");
+    const listener = run.listeners[0];
+    const drawnFrom = (origin: string): string[] => {
+      const before = run.drawn.length;
+      for (const [who, src] of sources(w)) {
+        if (src === w) continue;   // this window: self, heard by what it is
+        const e: Record<string, unknown> = { origin, data: { type: "data", data: { from: who } } };
+        if (src !== ABSENT) e.source = src;
+        assert.equal(windowSender(e, w), "foreign", w.name + " / " + who + " on another webview's origin: windowSender");
+        listener(e);
+      }
+      return run.drawn.slice(before).map((d) => (d as { from: string }).from);
+    };
+    assert.deepEqual(drawnFrom(OTHER_VSCODE_ORIGIN), [], w.name + ": nothing drawn from another webview's origin");
+    const stray = win("a window on this webview's origin");
+    listener({ source: stray, origin: VSCODE_ORIGIN, data: { type: "data", data: { from: "this webview's origin" } } });
+    assert.deepEqual(run.drawn.map((d) => (d as { from: string }).from), ["this webview's origin"], w.name + ": this webview's origin is drawn");
+  }
 });
 
 test("a foreign window's posts add no frame type to the timeline page's telemetry, and the page's own frames keep their type", () => {

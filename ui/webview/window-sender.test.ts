@@ -88,6 +88,29 @@ test("the VS Code webview host is a peer: window.parent in VS Code's frame never
   }
 });
 
+// VS Code gives each webview an origin of its own. The host is a peer because it posts on THIS webview's origin; a window
+// on another webview's origin (another extension's, another panel's) is another origin like any other, so a rule that
+// took every vscode-webview:// origin for a peer would fail here.
+test("in a VS Code webview, a window on another webview's origin is foreign, with a source or without one", () => {
+  const VSCODE = "vscode-webview://11111111-2222-3333-4444-555555555555";
+  const OTHER_WEBVIEW = "vscode-webview://aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
+  const host = { name: "the VS Code webview host" };
+  const replaced: { parent?: unknown; location: { origin: string } } = { location: { origin: VSCODE } };
+  replaced.parent = replaced;
+  const deleted = { location: { origin: VSCODE } };
+  for (const [what, frame] of [["parent replaced by the frame", replaced], ["parent deleted", deleted]] as const) {
+    assert.equal(windowSender({ source: host, origin: VSCODE }, frame), "peer", "the host, on this webview's origin, " + what);
+    assert.equal(windowSender({ source: { name: "another webview" }, origin: OTHER_WEBVIEW }, frame), "foreign",
+      "a window on another webview's origin, " + what);
+    assert.equal(windowSender({ source: host, origin: OTHER_WEBVIEW }, frame), "foreign",
+      "the same window object, posting from another webview's origin, " + what);
+    assert.equal(windowSender({ source: null, origin: OTHER_WEBVIEW }, frame), "foreign",
+      "a sourceless post from another webview's origin, " + what);
+    assert.equal(windowSender({ source: { name: "a frame" }, origin: VSCODE + "0" }, frame), "foreign",
+      "an origin whose text begins with this webview's, " + what);
+  }
+});
+
 test("another window on this document's origin is a peer; any other origin is foreign", () => {
   assert.equal(windowSender({ source: other, origin: ORIGIN }, framed), "peer", "a second chat column");
   assert.equal(windowSender({ source: other, origin: "null" }, framed), "foreign", "a sandboxed iframe's opaque origin");

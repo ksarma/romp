@@ -50,6 +50,8 @@ const ts = requireCjs("typescript");
 const SID = "11111111-2222-3333-4444-555555555555";
 const ORIGIN = "http://127.0.0.1:1";
 const VSCODE_ORIGIN = "vscode-webview://11111111-2222-3333-4444-555555555555";
+// another webview's origin: VS Code gives each webview its own, and only this webview's is the host's
+const OTHER_VSCODE_ORIGIN = "vscode-webview://aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
 const OTHER_ORIGIN = "https://example.invalid";
 
 type Listener = (e: unknown) => void;
@@ -85,6 +87,7 @@ const SECOND_COLUMN = hideEdges({ name: "a second chat column" });
 const CHILD_PANE = hideEdges({ name: "a pane of the shell" });
 const VSCODE_HOST = hideEdges({ name: "the VS Code webview host" });
 const OTHER_PAGE = hideEdges({ name: "a page on another origin" });
+const OTHER_WEBVIEW = hideEdges({ name: "a window on another VS Code webview's origin" });
 const sandboxed = (parent: unknown) => hideEdges({ name: "a sandboxed frame", parent });
 
 type Row = { who: string; ctx: Ctx; source: (w: Receiver) => unknown; origin: string };
@@ -107,12 +110,15 @@ const FOREIGN: Row[] = [
   { who: "a sandboxed frame inside the VS Code webview", ctx: "vscode", source: (w) => sandboxed(w), origin: "null" },
   { who: "a sandboxed frame that is gone (no source, opaque origin)", ctx: "pane", source: () => null, origin: "null" },
   { who: "a page on another origin that is gone (no source)", ctx: "shell", source: () => null, origin: OTHER_ORIGIN },
+  { who: "a window on another VS Code webview's origin (the frame's window.parent replaced)", ctx: "vscode", source: () => OTHER_WEBVIEW, origin: OTHER_VSCODE_ORIGIN },
+  { who: "a window on another VS Code webview's origin (the frame's window.parent deleted)", ctx: "vscode, older", source: () => OTHER_WEBVIEW, origin: OTHER_VSCODE_ORIGIN },
+  { who: "a sourceless post from another VS Code webview's origin", ctx: "vscode", source: () => null, origin: OTHER_VSCODE_ORIGIN },
 ];
 
 // ── the stand-ins stay small in a dump ──
 
 test("the stand-ins inspect as their primitives: every enumerable key of a receiving window and of each sending window holds a primitive", () => {
-  const all: object[] = [SHELL, SECOND_COLUMN, CHILD_PANE, VSCODE_HOST, OTHER_PAGE, sandboxed(SHELL),
+  const all: object[] = [SHELL, SECOND_COLUMN, CHILD_PANE, VSCODE_HOST, OTHER_PAGE, OTHER_WEBVIEW, sandboxed(SHELL),
     receiver("pane"), receiver("shell"), receiver("vscode"), receiver("vscode, older")];
   for (const o of all) {
     for (const k of Object.keys(o)) assert.ok(staysEnumerable((o as any)[k]), k + " is enumerable and holds a " + typeof (o as any)[k]);

@@ -62,6 +62,8 @@ const VSCODE_HOST = { name: "the VS Code webview host" };
 const W_VSCODE: Win = standIn({ location: standIn({ origin: VSCODE_ORIGIN }) });
 W_VSCODE.parent = W_VSCODE;
 const W_VSCODE_OLDER: Win = standIn({ parent: undefined, location: standIn({ origin: VSCODE_ORIGIN }) });
+// another webview's origin: VS Code gives each webview its own, and only this webview's is the host's
+const OTHER_VSCODE_ORIGIN = "vscode-webview://aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
 type Sent = { source: unknown; origin: string; to?: Win };   // to: the receiving window, W when absent
 const HEARD: Record<string, Sent> = {
   self: { source: W, origin: ORIGIN },
@@ -81,6 +83,9 @@ const FOREIGN: Record<string, Sent> = {
   "a sandboxed frame that is gone (no source, opaque origin)": { source: null, origin: "null" },
   "a page on another origin that is gone (no source)": { source: null, origin: "https://example.invalid" },
   "a sandboxed frame inside the VS Code webview that is gone (no source)": { source: null, origin: "null", to: W_VSCODE },
+  "a window on another VS Code webview's origin (the frame's window.parent replaced)": { source: { name: "another webview's window" }, origin: OTHER_VSCODE_ORIGIN, to: W_VSCODE },
+  "a window on another VS Code webview's origin (the frame's window.parent deleted)": { source: { name: "another webview's window" }, origin: OTHER_VSCODE_ORIGIN, to: W_VSCODE_OLDER },
+  "a sourceless post from another VS Code webview's origin": { source: null, origin: OTHER_VSCODE_ORIGIN, to: W_VSCODE },
 };
 
 type Counts = Record<string, number>;
