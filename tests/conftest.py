@@ -11,6 +11,9 @@ import re
 import shutil
 import sys
 import tempfile
+import threading
+import time
+import traceback
 
 import pytest
 from _pytest._code.code import ReprExceptionInfo, ReprFileLocation, ReprTracebackNative
@@ -824,6 +827,98 @@ def wait_for_census(before, timeout=5.0):
         if not extra or time.monotonic() >= deadline:                              # kind already present is a leftover
             return extra
         time.sleep(0.02)
+
+
+# ── session-end thread guard (2026-09-26) ─────────────────────────────────────────────────────────────────────────────
+# A test that leaves a NON-DAEMON thread running keeps its process from exiting, because the interpreter joins every
+# non-daemon thread at shutdown. Run serially, that hung the run until CI's job cap cancelled the cell: a red cell. Under
+# pytest-xdist it passes: the controller gives a worker 10 s to exit after its session and then kills it, and the run's
+# status comes from the test reports alone, so the fork's Linux cells lost the signal when they moved to two workers
+# (2026-09-25). This guard restores it in every process that runs tests, the one serial process or each worker. When the
+# process's LAST test tears down (nextitem is None), after the runner has torn down every fixture of every scope, session
+# ones included (this implementation is trylast, so it runs after the runner's own pytest_runtest_teardown), each
+# non-daemon thread still alive is given until one shared deadline to end, and the threads still alive at the deadline
+# fail that teardown, each named with its target and its stack. Not waited for: daemon threads (the interpreter does not
+# join them), the main thread, the thread running this check, and pytest-timeout's timer for the running test, a
+# non-daemon threading.Timer that the plugin cancels and joins only after the test's protocol returns, so under CI's
+# --timeout-method=thread it is always alive here (matched by the function it runs, not by its name).
+# HOW THE REPORT REACHES THE CONTROLLER. The failure is the teardown phase's test report. A worker sends every test report
+# to the controller over xdist's channel, this one included; the controller prints it as `ERROR at teardown of <that
+# test>` and counts it in the run's exit status. Nothing else a worker does after its session would be seen: its stdout
+# goes to /dev/null and its exit status is not read, which is why this is a test report and not a print or an exit code.
+# Run serially, the same error prints and the process then still hangs at exit on the thread, so a serial cell names the
+# thread in its log before the cap cancels it. The test the error names is the process's last, where the check runs, not
+# necessarily the one that started the thread; the thread's target and stack say where it came from.
+# THE CAP, 10 s, from the census of 2026-09-26 on the fork's main (the full suite on 3.12 at -n 2, twice, and at -n 4;
+# every third module serially on 3.12 and on 3.14t with the GIL off). No non-daemon thread but pytest-timeout's timer was
+# alive at any session end, so no exit latency could be measured there; the tests' own joins of threads they had stopped
+# measured it instead: at most 2.98 s for a non-daemon thread and 5.03 s for any thread (the product's 5 s wait for a
+# session host's hello). The cap is twice that, and twice tests/test_thread_stop_census.py's BOUND_S (5 s, the longest
+# wait that census reads as bounded). A run that leaves no thread pays nothing, since a join returns the moment its
+# thread ends; a run that leaks one pays the cap once per process, then fails.
+# An idle ThreadPoolExecutor worker, from a pool left without shutdown, fails the guard too: it is a non-daemon thread
+# that no join ends. The interpreter wakes such workers at exit, so serially it would not have hung the run; failing on
+# it is the stricter reading. None is left on main.
+THREAD_GUARD_CAP_S = 10.0
+_monotonic = time.monotonic   # bound at import: a test's leaked patch of time.monotonic cannot move the guard's deadline
+
+
+def _pytest_timeout_timer(t):
+    """Whether `t` is pytest-timeout's watchdog for the running test: a threading.Timer running that plugin's function."""
+    return isinstance(t, threading.Timer) and getattr(getattr(t, "function", None), "__module__", None) == "pytest_timeout"
+
+
+def _guarded_thread(t):
+    """Whether the session-end guard waits for `t`: a non-daemon thread other than the main thread, the thread running the
+    check and pytest-timeout's timer."""
+    return not (t.daemon or t is threading.main_thread() or t is threading.current_thread() or _pytest_timeout_timer(t))
+
+
+def threads_left_at_session_end(cap_s):
+    """The guarded threads (_guarded_thread) still alive once each has had until one deadline, cap_s from the call, to end.
+    Each is joined in turn for the time remaining, and the thread list is read again after every pass, so a thread that
+    starts another as it exits is waited for too. Starts no thread and sleeps on no clock: every wait is a join, which
+    returns when its thread ends. Returns [] when none is left."""
+    deadline = _monotonic() + cap_s
+    while True:
+        left = [t for t in threading.enumerate() if _guarded_thread(t)]
+        if not left or _monotonic() >= deadline:
+            return left
+        for t in left:
+            t.join(max(0.0, deadline - _monotonic()))
+
+
+def _thread_report(t, frames):
+    """One thread for the guard's failure: its name, ident, what it runs and its stack from `frames`
+    (sys._current_frames())."""
+    target = getattr(t, "_target", None) or getattr(t, "function", None)    # a Timer keeps its callable as `function`
+    if target is not None:
+        runs = "%s.%s" % (getattr(target, "__module__", None) or "?", getattr(target, "__qualname__", None) or repr(target))
+    else:
+        runs = "%s.%s.run" % (type(t).__module__, type(t).__qualname__)     # a Thread subclass's own run()
+    if runs.startswith("concurrent.futures.thread."):
+        runs += " (a ThreadPoolExecutor worker: a pool left without shutdown)"
+    frame = frames.get(t.ident)
+    stack = "".join(traceback.format_stack(frame)) if frame is not None else "  (no stack: the thread ended as it was read)\n"
+    return "thread %r (ident %s) runs %s\n%s" % (t.name, t.ident, runs, stack)
+
+
+@pytest.hookimpl(trylast=True)
+def pytest_runtest_teardown(item, nextitem):
+    """The session-end thread guard (above): at the process's last test only, after the runner has torn down every
+    fixture, the guarded threads still alive at THREAD_GUARD_CAP_S fail this teardown, each named with its stack."""
+    if nextitem is not None:
+        return
+    left = threads_left_at_session_end(THREAD_GUARD_CAP_S)
+    if not left:
+        return
+    frames = sys._current_frames()
+    pytest.fail("non-daemon threads still running at the end of this process's session, after up to %g s for each to end "
+                "(tests/conftest.py, the session-end thread guard). A thread a test starts must end before the test does: "
+                "run serially, the process cannot exit while one runs; under pytest-xdist the worker is killed at exit and "
+                "the run would pass without this report. %s is this process's last test, where the check runs, and not "
+                "necessarily the one that started a thread; each thread's target and stack say where it came from.\n\n%s"
+                % (THREAD_GUARD_CAP_S, item.nodeid, "\n".join(_thread_report(t, frames) for t in left)), pytrace=False)
 
 
 # Browser-backed served-page tests fail loudly where they must run (T308, 2026-09-10). tests/test_*_browser.py and
