@@ -4099,27 +4099,54 @@ _PAGE_KEY_JS = ("(function(){if(window.__rompPageKey)return;var KN=" + json.dump
     "document.body.textContent='romp keeps its sign-in in this site\\'s storage, which this browser refuses: allow site data for this address, then reload.';});}})();")
 
 
-# The WebSocket handshake headers a peer's 101 may pass back to the browser. The relay rebuilds the
-# peer's response head from THIS allowlist rather than trusting it to send nothing extra: the browser
-# talks to this kernel's origin through the relay, so a Set-Cookie the peer writes would land here, and
-# a Clear-Site-Data or a cache directive would act on this origin too.
-_WS_MIRROR_HEADERS = (b"upgrade", b"connection", b"sec-websocket-accept",
-                      b"sec-websocket-protocol", b"sec-websocket-extensions")
+# The WebSocket handshake headers a peer's 101 may pass back to the browser, each with the spelling
+# this kernel writes it in. The relay rebuilds the peer's response head from THIS allowlist rather than
+# trusting it to send nothing extra: the browser talks to this kernel's origin through the relay, so a
+# Set-Cookie the peer writes would land here, and a Clear-Site-Data or a cache directive would act on
+# this origin too.
+_WS_MIRROR_HEADERS = {b"upgrade": b"Upgrade", b"connection": b"Connection",
+                      b"sec-websocket-accept": b"Sec-WebSocket-Accept",
+                      b"sec-websocket-protocol": b"Sec-WebSocket-Protocol",
+                      b"sec-websocket-extensions": b"Sec-WebSocket-Extensions"}
+# The bounds on reading a peer's 101 head: its status line, its headers and the blank line after them
+# arrive within _WS_HEAD_MAX bytes and within _WS_HEAD_TIMEOUT_S seconds of the relay's first read (one
+# deadline for the whole read, not one per read), or the relay answers 502 and the browser gets none of it.
+# Module constants so a test can lower the time bound.
+_WS_HEAD_MAX = 65536
+_WS_HEAD_TIMEOUT_S = 15.0
+# A control byte: C0 (NUL to US, which takes in CR, LF and HTAB) and DEL. A genuine peer writes none in
+# a header block beyond the CRLF that ends each line, so a head holding one is refused, not cleaned:
+# browsers differ in which of these bytes they read as the end of a line.
+_CONTROL_BYTE = re.compile(rb"[\x00-\x1f\x7f]")
+_WS_STATUS_101 = re.compile(rb"HTTP/1\.1 101(?: .*)?\Z")
 
 
-def _ws_head_allowlist(head):
-    """Rebuild a peer's raw 101 response head from _WS_MIRROR_HEADERS: keep the status line and only the
-    handshake headers, drop every other header line (a Set-Cookie, a Clear-Site-Data, a cache
-    directive), and keep any bytes past the blank line (the peer's first frames) unchanged. A head with
-    no blank line yet is returned as it is (nothing to parse)."""
+def _ws_head_allowlist(head, extra=()):
+    """Rebuild a peer's raw 101 response head for the browser, or None to refuse it. The head is read
+    the way a browser reads one and only what this kernel writes itself goes out: its own status line,
+    each allowlisted handshake header (_WS_MIRROR_HEADERS) as `Name: value` in this kernel's spelling,
+    then the `extra` lines (this kernel's own, such as the legacy cookie's clear), the blank line, and
+    the bytes that came past the peer's blank line (its first frames) unchanged. Every other header line
+    (a Set-Cookie, a Clear-Site-Data, a cache directive) is dropped, and so is a line that starts with
+    whitespace (a folded continuation) or has anything but the bare name before its colon.
+    None, and none of it reaches the browser, when: no blank line (CRLF CRLF) ends the head within
+    _WS_HEAD_MAX bytes; the status line or any header line holds a bare LF, a bare CR or another
+    control byte (_CONTROL_BYTE); or the status is not HTTP/1.1 101. A genuine peer (a romp kernel,
+    whose BaseHTTPRequestHandler writes strict CRLF) is refused by none of these."""
     sep = head.find(b"\r\n\r\n")
-    if sep < 0:
-        return head
-    block, rest = head[:sep], head[sep:]
-    lines = block.split(b"\r\n")
-    status, hdr = lines[0], lines[1:]
-    kept = [ln for ln in hdr if ln.split(b":", 1)[0].strip().lower() in _WS_MIRROR_HEADERS]
-    return b"\r\n".join([status] + kept) + rest
+    if sep < 0 or sep + 4 > _WS_HEAD_MAX:
+        return None
+    lines = head[:sep].split(b"\r\n")
+    if any(_CONTROL_BYTE.search(ln) for ln in lines) or not _WS_STATUS_101.match(lines[0]):
+        return None
+    kept = []
+    for ln in lines[1:]:
+        name, colon, value = ln.partition(b":")
+        spelled = _WS_MIRROR_HEADERS.get(name.lower()) if colon else None
+        if spelled:
+            kept.append(spelled + b": " + value.strip(b" "))
+    return (b"\r\n".join([b"HTTP/1.1 101 Switching Protocols"] + kept + list(extra))
+            + b"\r\n\r\n" + head[sep + 4:])
 
 
 # Unauthorized browser GET of "/" gets this instead of a bare 403, Jupyter's login-page flow: paste
@@ -73409,7 +73436,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def end_headers(self):
         # the one place every response's headers end, so the legacy cookie's clear reaches each response
-        # _clears_legacy_cookie names (the socket relay writes its peer's head raw and adds it there)
+        # _clears_legacy_cookie names (the socket relay writes the 101 head it rebuilds without this, and
+        # adds the clear to that head's lines itself)
         if self._clears_legacy_cookie():
             self.send_header("Set-Cookie", _LEGACY_COOKIE_CLEAR)
         super().end_headers()
@@ -78156,8 +78184,9 @@ class Handler(BaseHTTPRequestHandler):
         viewed from anywhere else (the phone, through `tailscale serve`) reached its own loopback
         and every remote host's sessions silently vanished (the user 2026-07-30). Relaying under
         the kernel's own origin gives any client that can reach this kernel the whole fleet, with
-        no per-host setup. The kernel stays a dumb pipe: after do_GET's local auth gate the two
-        sockets are spliced byte-for-byte (no frame parsing), and the REMOTE kernel still enforces
+        no per-host setup. The kernel stays a dumb pipe past the handshake: after do_GET's local
+        auth gate, and after the remote's 101 head is read and rebuilt here (_ws_head_allowlist),
+        the two sockets are spliced byte for byte (no frame parsing), and the REMOTE kernel still enforces
         its own token — rewritten into the forwarded query here, so the browser only ever needs
         its local credential — keeping the per-host trust boundary unchanged."""
         with _remotes_lock:
@@ -78196,15 +78225,23 @@ class Handler(BaseHTTPRequestHandler):
         self.close_connection = True             # hijacked socket — no keep-alive after the splice
         down = self.connection
         # The remote's answer decides whether this hub side is an accepted socket at all: its head (the status line and the
-        # headers, up to the blank line) is read here, forwarded byte for byte, and only a 101 files the hub's own wsopen row,
-        # kind hub, naming the host, so the auditor sees the browser's pane here AND its relay dial on the remote; a refusal
-        # (401, 404, a dead tunnel) files nothing, the splice going on as before (2026-09-15). Bytes past the blank line are
-        # the remote's first frames and ride along in the same send. The read is bounded; a remote that answers nothing in
-        # time gets the pumps below as before, and no row.
+        # headers, up to the blank line) is read here, within _WS_HEAD_MAX bytes and _WS_HEAD_TIMEOUT_S seconds. Only a 101
+        # head that _ws_head_allowlist can rebuild reaches the browser, and as that rebuild, never as the remote's bytes: the
+        # browser talks to THIS kernel's origin through the relay, so any header the peer sets beyond the WebSocket handshake
+        # (a Set-Cookie, a Clear-Site-Data, a cache directive) would act on this origin and is dropped. Bytes past the blank
+        # line are the remote's first frames and ride along in the same send. A 101 files the hub's own wsopen row, kind hub,
+        # naming the host, so the auditor sees the browser's pane here AND its relay dial on the remote (2026-09-15).
+        # Anything else (a refusal such as a 401 or a 404, a head with no blank line within the bounds, a remote that closes
+        # or stays silent, a head the rebuild refuses) is this kernel's own 502, with this kernel's headers: the remote's
+        # bytes never reach the browser, no row is filed and the pumps below never start.
         head = b""
+        deadline = time.monotonic() + _WS_HEAD_TIMEOUT_S
         try:
-            up.settimeout(15)
-            while b"\r\n\r\n" not in head and len(head) < 65536:
+            while b"\r\n\r\n" not in head and len(head) < _WS_HEAD_MAX:
+                left = deadline - time.monotonic()
+                if left <= 0:
+                    break
+                up.settimeout(left)
                 b = up.recv(65536)
                 if not b:
                     break
@@ -78213,25 +78250,31 @@ class Handler(BaseHTTPRequestHandler):
             pass
         finally:
             up.settimeout(None)
-        if head:
-            # The peer's head is rebuilt from the handshake allowlist (_ws_head_allowlist), not mirrored
-            # byte for byte: the browser talks to THIS kernel's origin through the relay, so any header
-            # the peer sets beyond the WebSocket handshake (a Set-Cookie, a Clear-Site-Data, a cache
-            # directive) would act on this origin and is dropped. The peer's first frames, which ride
-            # past the blank line, are unchanged.
-            head = _ws_head_allowlist(head)
-            sep = head.find(b"\r\n\r\n")
-            if sep >= 0 and self._clears_legacy_cookie():
-                # this kernel's own clear of the legacy cookie, which end_headers adds to every other
-                # response (_clears_legacy_cookie); this head is written raw, so it is added here
-                head = head[:sep] + b"\r\nSet-Cookie: " + _LEGACY_COOKIE_CLEAR.encode("ascii") + head[sep:]
+        # this kernel's own clear of the legacy cookie, which end_headers adds to every other response
+        # (_clears_legacy_cookie): the rebuilt head is written here, not through end_headers, so the clear
+        # goes in as one of the lines this kernel writes
+        extra = ([b"Set-Cookie: " + _LEGACY_COOKIE_CLEAR.encode("ascii")] if self._clears_legacy_cookie() else [])
+        rebuilt = _ws_head_allowlist(head, extra)
+        if rebuilt is None:
             try:
-                down.sendall(head)
+                up.close()
             except OSError:
                 pass
-        if head.split(b"\r\n", 1)[0].startswith(b"HTTP/1.1 101"):
-            _note_ws_open({"app": (q.get("app") or ["chat"])[0], "wid": (q.get("wid") or [""])[0], "iid": (q.get("iid") or [""])[0],
-                           "cid": uuid.uuid4().hex[:12], "kind": "hub", "host": host}, reconnect=(q.get("reconnect") or [""])[0] == "1")
+            code, sep = re.match(rb"HTTP/1\.[01] (\d{3})(?: |\r\n)", head), head.find(b"\r\n\r\n")
+            if sep < 0 or sep + 4 > _WS_HEAD_MAX:
+                why = "%s sent no complete socket handshake within %d bytes and %g s" % (
+                    host, _WS_HEAD_MAX, _WS_HEAD_TIMEOUT_S)
+            elif code and code.group(1) != b"101":
+                why = "%s refused the socket (HTTP %s)" % (host, code.group(1).decode("ascii"))
+            else:
+                why = "%s answered the socket with a handshake this kernel does not relay" % host
+            return self._send(502, why, "text/plain")
+        try:
+            down.sendall(rebuilt)
+        except OSError:
+            pass
+        _note_ws_open({"app": (q.get("app") or ["chat"])[0], "wid": (q.get("wid") or [""])[0], "iid": (q.get("iid") or [""])[0],
+                       "cid": uuid.uuid4().hex[:12], "kind": "hub", "host": host}, reconnect=(q.get("reconnect") or [""])[0] == "1")
 
         def _quiet_shutdown(s):
             # shutdown only, never close: `down` still belongs to the base handler (its finish()

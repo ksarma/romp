@@ -751,7 +751,7 @@ class LegacyCookieClearedBesideASession(_Server):
     the browser in, a request with no valid session keeps the old cookie (a dashboard that has not migrated still
     signs in with it), and a romp_token holding any other value is never cleared. The kinds below reach the browser by
     every road a response takes: _send, the file route's own headers (GET and HEAD), the preflight's, the
-    socket upgrade's, and the socket relay's raw head. Counts, kinds and statuses only; no value is printed."""
+    socket upgrade's, and the 101 head the socket relay rebuilds. Counts, kinds and statuses only; no value is printed."""
 
     FORGED = SESS.partition(".")[0] + ".not-this-kernels-tag"     # this kernel's cookie name, a tag that does not match
     # each kind's status with a valid session: the road it names was taken (a refusal answers through _send, and

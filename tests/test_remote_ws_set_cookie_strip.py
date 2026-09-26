@@ -10,19 +10,29 @@ the upgrade with a Set-Cookie and a Clear-Site-Data, and asserts the browser rec
 handshake headers and the peer's first frames still pass.
 
 The other direction too: what the hub sends the peer carries none of the browser's credentials. Both
-relays (this socket splice, and /remote/<host>/file) present the peer's own token and forward no page
+relays (this socket splice, and /remote/<host>/file) present the peer's own token and pass on no page
 key (k), cap or one-time code (c) from the browser's query, and no Cookie or X-Romp-Key header.
 
-Self-contained (it names no session-cookie helper) so it runs against a kernel before OR after the
-change. Synthetic only: host TESTHOST, invented cookie and credential strings, no session state touched.
+The head is READ the way a browser reads one, and refused whole when it cannot be rebuilt
+(RemoteWsHeadRefused, and the helper's own cases in AllowlistHelper): a header or status line split by
+a bare LF or a bare CR, a NUL or another control byte, a status other than HTTP/1.1 101, and a head with
+no blank line within the relay's byte or time bound (padded past 64 KiB, stalled, sent a byte at a time,
+silent, or closed early) each get this kernel's own 502, and none of the peer's bytes, its later frames
+included, reach the browser. A clean handshake still relays as its handshake headers and its frames.
+
+RemoteWsSetCookieStrip and RemoteFileRelayCredentials name no session-cookie helper, so they run against
+a kernel before or after the login cookie split; RemoteWsHeadRefused's case beside a session signs in with
+one. Synthetic only: host TESTHOST, invented cookie and credential strings, no session state touched.
 """
 import http.client
 import io
 import os
 import socket
 import threading
+import time
 import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from unittest import mock
 from urllib.parse import parse_qs, urlsplit
 from romp_load import load_source
 import tempfile
@@ -284,6 +294,251 @@ class AllowlistHelper(unittest.TestCase):
         self.assertNotIn(b"x-peer-junk", out2)
         self.assertIn(b"Connection: Upgrade", out2)
         self.assertIn(b"BODY", out2)
+
+    def test_the_helper_refuses_a_head_it_cannot_rebuild(self):
+        # None, so the relay forwards none of it: a line split by a bare LF or a bare CR (the status line too), a
+        # control byte, no blank line (or none within the byte bound), a status other than HTTP/1.1 101
+        tail = b"\r\nConnection: Upgrade\r\n\r\nBODY"
+        cases = {
+            "a bare LF inside a header line": b"HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\n" + PEER_COOKIE + tail,
+            "a bare CR inside a header line": b"HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r" + PEER_COOKIE + tail,
+            "a bare LF inside the status line": b"HTTP/1.1 101 Switching Protocols\n" + PEER_COOKIE + tail,
+            "a bare CR inside the status line": b"HTTP/1.1 101 Switching Protocols\r" + PEER_COOKIE + tail,
+            "a NUL inside a header line": b"HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\x00" + PEER_COOKIE + tail,
+            "a DEL inside the status line": b"HTTP/1.1 101 Switching\x7fProtocols" + tail,
+            "a head with no blank line": b"HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\n",
+            "an empty head": b"",
+            "a status of 401": b"HTTP/1.1 401 Unauthorized" + tail,
+            "a status of 1010": b"HTTP/1.1 1010 Switching Protocols" + tail,
+            "an HTTP/1.0 status line": b"HTTP/1.0 101 Switching Protocols" + tail,
+        }
+        for what, head in cases.items():
+            with self.subTest(what):
+                self.assertIsNone(km._ws_head_allowlist(head), "refused: %s" % what)
+
+    def test_the_blank_line_must_end_within_the_byte_bound(self):
+        # the head through its blank line fits in 64 KiB (65536 bytes) or is refused, one byte past included
+        start, end = b"HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nX-Pad: ", b"\r\n\r\nBODY"
+        at = start + b"a" * (65536 - len(start) - len(end) + len(b"BODY")) + end
+        self.assertEqual(len(at) - len(b"BODY"), 65536)
+        self.assertEqual(km._ws_head_allowlist(at),
+                         b"HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\n\r\nBODY", "a head of 65536 bytes is rebuilt")
+        self.assertIsNone(km._ws_head_allowlist(start + b"a" + at[len(start):]), "a head of 65537 bytes is refused")
+
+    def test_the_helper_writes_each_kept_header_in_its_own_spelling(self):
+        # the rebuilt head is this kernel's writing, not the peer's bytes: its own status line, `Name: value` in its
+        # own spelling, and a line that starts with whitespace (a folded continuation) or puts a space before its
+        # colon is dropped, whatever name it looks like
+        out = km._ws_head_allowlist(b"HTTP/1.1 101 whatever the peer says\r\nupgrade:websocket\r\nCONNECTION:   Upgrade  \r\n"
+                                    b" upgrade: folded\r\nSec-WebSocket-Accept : spaced\r\n\r\nBODY")
+        self.assertEqual(out, b"HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\nBODY")
+
+    def test_the_lines_this_kernel_adds_go_inside_the_head(self):
+        # the legacy cookie's clear rides as a line this kernel writes, before the blank line and the peer's frames
+        out = km._ws_head_allowlist(CLEAN_HEAD + b"BODY", [b"Set-Cookie: ours=1"])
+        self.assertEqual(out, CLEAN_HEAD[:-2] + b"Set-Cookie: ours=1\r\n\r\nBODY")
+
+
+# A 101 head carrying only the handshake headers, in the spelling this kernel writes (RFC 6455's published example
+# Sec-WebSocket-Accept value, allowlisted in .gitleaks.toml), and the two headers a peer could try to add.
+CLEAN_HEAD = (b"HTTP/1.1 101 Switching Protocols\r\n"
+              b"Upgrade: websocket\r\n"
+              b"Connection: Upgrade\r\n"
+              b"Sec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=\r\n"
+              b"\r\n")
+PEER_COOKIE = b"Set-Cookie: romp_token=peer-set-value; Path=/"
+PEER_CLEAR = b'Clear-Site-Data: "cookies"'
+
+
+class _ScriptedPeer(threading.Thread):
+    """A one-shot peer kernel: accept one connection, read the upgrade the hub sends on, then play its script (byte strings
+    to send, and numbers of seconds to wait between them) and close. A send after the hub has closed its end fails
+    and ends the script."""
+    daemon = True
+
+    def __init__(self, script):
+        super().__init__()
+        self.script = list(script)
+        self.sock = socket.socket()
+        self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self.sock.bind(("127.0.0.1", 0))
+        self.sock.listen(1)
+        self.port = self.sock.getsockname()[1]
+
+    def run(self):
+        try:
+            self.sock.settimeout(10)
+            conn, _ = self.sock.accept()
+            try:
+                conn.settimeout(5)
+                conn.recv(65536)              # the upgrade the hub sends on
+                for step in self.script:
+                    if isinstance(step, bytes):
+                        conn.sendall(step)
+                    else:
+                        time.sleep(step)
+            finally:
+                conn.close()
+        except OSError:
+            pass
+
+
+class RemoteWsHeadRefused(unittest.TestCase):
+    """The browser's side of the socket relay, end to end: a hub (the real Handler, its auth gate included) relays an
+    upgrade to a scripted peer, and the test reads every byte the hub sends the browser until it closes. A head the
+    relay cannot rebuild is this kernel's own 502, and none of the peer's bytes (its header lines, its body, its
+    later frames) reach the browser."""
+
+    def setUp(self):
+        self.hub = ThreadingHTTPServer(("127.0.0.1", 0), km.Handler)
+        threading.Thread(target=self.hub.serve_forever, daemon=True).start()
+        self.port = self.hub.server_address[1]
+        self._saved = dict(km._remotes)
+
+    def tearDown(self):
+        with km._remotes_lock:
+            km._remotes.clear()
+            km._remotes.update(self._saved)
+        self.hub.shutdown()
+        self.hub.server_close()
+
+    def _bound(self):
+        """The relay's time bound on the head, lowered to half a second for this test. On a kernel without the
+        constant, a stall outlasts its fixed 15 s bound instead."""
+        if not hasattr(km, "_WS_HEAD_TIMEOUT_S"):
+            return 15.0
+        p = mock.patch.object(km, "_WS_HEAD_TIMEOUT_S", 0.5)
+        p.start()
+        self.addCleanup(p.stop)
+        return 0.5
+
+    def _relay(self, script, cookies=None, query="app=chat", wait=10.0):
+        """Every byte the hub sent the browser for one upgrade relayed to a peer that plays `script`. Authorized by
+        the serve token, or by `cookies` (a session) with the page key in `query`."""
+        peer = _ScriptedPeer(script)
+        peer.start()
+        self.addCleanup(peer.join, 30)
+        self.addCleanup(peer.sock.close)
+        with km._remotes_lock:
+            km._remotes["TESTHOST"] = {"host": "TESTHOST", "kernel_port": 29855, "local_port": peer.port,
+                                       "token": "", "status": "up"}
+        lines = ["GET /remote/TESTHOST/ws?%s HTTP/1.1" % query, "Host: 127.0.0.1:%d" % self.port,
+                 "Upgrade: websocket", "Connection: Upgrade", "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==",
+                 "Sec-WebSocket-Version: 13", ("Cookie: " + cookies) if cookies else ("X-Romp-Token: " + km.TOKEN)]
+        got = b""
+        s = socket.create_connection(("127.0.0.1", self.port), timeout=wait)
+        try:
+            s.sendall(("\r\n".join(lines) + "\r\n\r\n").encode("latin-1"))
+            while True:
+                b = s.recv(65536)
+                if not b:
+                    break
+                got += b
+        except OSError:
+            pass
+        finally:
+            s.close()
+        return got
+
+    def _assert_refused(self, got, what):
+        self.assertTrue(got.startswith(b"HTTP/1.1 502 "), "%s: this kernel answers 502: %r" % (what, got[:60]))
+        head = got.split(b"\r\n\r\n", 1)[0]
+        self.assertIn(b"\r\nX-Content-Type-Options: nosniff\r\n", head, "%s: with this kernel's own headers" % what)
+        low = got.lower()
+        for word in (b"set-cookie", b"clear-site-data", b"peer-set-value", b"peerframebytes", b"x-pad"):
+            self.assertNotIn(word, low, "%s: none of the peer's bytes reach the browser (%s)" % (what, word.decode()))
+
+    def test_a_clean_handshake_is_relayed_as_its_handshake_headers_and_its_frames(self):
+        got = self._relay([CLEAN_HEAD + b"PEERFRAMEBYTES", 0.05, b"LATERFRAME"])
+        self.assertEqual(got, CLEAN_HEAD + b"PEERFRAMEBYTES" + b"LATERFRAME",
+                         "the handshake headers, the first frames in the head's read and a later frame, nothing else")
+
+    def test_a_header_line_split_by_a_bare_lf_is_refused(self):
+        for what, line in (("a Set-Cookie", PEER_COOKIE), ("a Clear-Site-Data", PEER_CLEAR)):
+            with self.subTest(what):
+                got = self._relay([b"HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\n" + line
+                                   + b"\r\nConnection: Upgrade\r\n\r\nPEERFRAMEBYTES"])
+                self._assert_refused(got, "%s after a bare LF inside the Upgrade line" % what)
+
+    def test_a_header_line_split_by_a_bare_cr_is_refused(self):
+        got = self._relay([b"HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r" + PEER_COOKIE
+                           + b"\r\nConnection: Upgrade\r\n\r\nPEERFRAMEBYTES"])
+        self._assert_refused(got, "a Set-Cookie after a bare CR inside the Upgrade line")
+
+    def test_a_status_line_split_by_a_bare_lf_or_a_bare_cr_is_refused(self):
+        for what, brk in (("a bare LF", b"\n"), ("a bare CR", b"\r")):
+            with self.subTest(what):
+                got = self._relay([b"HTTP/1.1 101 Switching Protocols" + brk + PEER_COOKIE
+                                   + b"\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\nPEERFRAMEBYTES"])
+                self._assert_refused(got, "a Set-Cookie after %s in the status line" % what)
+
+    def test_a_head_holding_a_nul_or_another_control_byte_is_refused(self):
+        for byte in (b"\x00", b"\x0b", b"\x0c", b"\x1b", b"\x7f", b"\t"):
+            with self.subTest(byte=byte):
+                got = self._relay([b"HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket" + byte + PEER_COOKIE
+                                   + b"\r\nConnection: Upgrade\r\n\r\nPEERFRAMEBYTES"])
+                self._assert_refused(got, "a Set-Cookie after the byte %r inside the Upgrade line" % byte)
+        got = self._relay([b"HTTP/1.1 101 Switching\x00Protocols\r\nUpgrade: websocket\r\n" + PEER_COOKIE
+                           + b"\r\nConnection: Upgrade\r\n\r\nPEERFRAMEBYTES"])
+        self._assert_refused(got, "a NUL inside the status line")
+
+    def test_a_head_with_no_blank_line_within_the_byte_bound_is_refused(self):
+        got = self._relay([b"HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nX-Pad: " + b"a" * 70000
+                           + b"\r\n" + PEER_COOKIE + b"\r\nConnection: Upgrade\r\n\r\nPEERFRAMEBYTES"])
+        self._assert_refused(got, "a well-formed head of more than 64 KiB")
+
+    def test_a_peer_that_closes_before_its_blank_line_is_refused(self):
+        for what, script in (("a partial head, then the peer closes",
+                              [b"HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\n" + PEER_COOKIE + b"\r\n"]),
+                             ("no answer at all, then the peer closes", [])):
+            with self.subTest(what):
+                self._assert_refused(self._relay(script), what)
+
+    def test_a_head_stalled_past_the_time_bound_is_refused(self):
+        bound = self._bound()
+        got = self._relay([b"HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\n", bound + 1.5,
+                           PEER_COOKIE + b"\r\nConnection: Upgrade\r\n\r\nPEERFRAMEBYTES"], wait=bound + 10)
+        self._assert_refused(got, "a head stalled past the bound, then finished")
+
+    def test_a_peer_silent_past_the_time_bound_then_a_full_head_is_refused(self):
+        bound = self._bound()
+        got = self._relay([bound + 1.5, b"HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\n" + PEER_COOKIE
+                           + b"\r\nConnection: Upgrade\r\n\r\nPEERFRAMEBYTES"], wait=bound + 10)
+        self._assert_refused(got, "a full head after a silence past the bound")
+
+    def test_a_head_dribbled_past_the_time_bound_is_refused(self):
+        # one deadline for the whole read, not one per read: a byte at a time, each well inside the bound, still gets
+        # a 502 once the bound has passed since the relay began to read
+        bound = self._bound()
+        full = (b"HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\n" + PEER_COOKIE
+                + b"\r\nConnection: Upgrade\r\n\r\nPEERFRAMEBYTES")
+        step, script = (bound + 3.0) / len(full), []
+        for i in range(len(full)):
+            script += [full[i:i + 1], step]
+        got = self._relay(script, wait=bound + 10)
+        self._assert_refused(got, "a head sent a byte at a time past the bound")
+
+    def test_a_status_other_than_101_is_this_kernels_own_502(self):
+        for status in (b"HTTP/1.1 401 Unauthorized", b"HTTP/1.1 200 OK", b"HTTP/1.0 101 Switching Protocols"):
+            with self.subTest(status=status):
+                got = self._relay([status + b"\r\nContent-Type: text/plain\r\n" + PEER_COOKIE
+                                   + b"\r\nContent-Length: 14\r\n\r\nPEERFRAMEBYTES"])
+                self._assert_refused(got, "a peer head whose status line is %r" % status)
+
+    def test_a_refused_socket_beside_a_session_carries_this_kernels_legacy_cookie_clear(self):
+        # the 502 is written through this kernel's own headers, so the clear of the legacy cookie that every other
+        # response to a signed-in request carries (end_headers) is on it, and it is the only Set-Cookie
+        sess = km._mint_session()
+        got = self._relay([b"HTTP/1.1 401 Unauthorized\r\n" + PEER_COOKIE + b"\r\nContent-Length: 14\r\n\r\nPEERFRAMEBYTES"],
+                          cookies="%s=%s; romp_token=%s" % (km._SESSION_COOKIE, sess, km.TOKEN),
+                          query="app=chat&k=" + km._page_key(sess))
+        self.assertTrue(got.startswith(b"HTTP/1.1 502 "), "this kernel answers 502: %r" % got[:60])
+        head = got.split(b"\r\n\r\n", 1)[0]
+        sets = [ln for ln in head.split(b"\r\n")[1:] if ln.lower().startswith(b"set-cookie:")]
+        self.assertEqual(sets, [b"Set-Cookie: " + km._LEGACY_COOKIE_CLEAR.encode("ascii")],
+                         "the one Set-Cookie is this kernel's clear of the legacy cookie")
+        self.assertNotIn(b"peer-set-value", got, "the peer's cookie never reaches the browser")
+        self.assertNotIn(b"PEERFRAMEBYTES", got, "nor its body")
 
 
 if __name__ == "__main__":
