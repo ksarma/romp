@@ -9096,7 +9096,7 @@ four it holds every leg to a roster line outside the exclusions, the leg that la
 line and no roster line (the module's own model of the convention, which PR 887's section on who owes what at the landing
 revises), and the roster's own tree test to exist, and a tree with
 some of the four it refuses, naming them (the file review's round 8, extra8-2: the legs were the feature's evidence and none of them ran where
-landing is gated, the gating run's log showing every browser scenario of theirs as SKIP). Twenty-three standing suites were re-aimed, not undone:
+landing is gated, the gating run's log showing every browser scenario of theirs as SKIP). Twenty-six standing suites were re-aimed, not undone:
 ui/webview/file-view-text-size.test.ts (its real-module bar leg at 380, 420, 480 and 600 px in the chat and feed modals
 reads the group hidden on a fresh open and, once a link is followed, measures the two glyphs among the actions, case 8), ui/webview/file-view.test.ts and ui/webview/file-view-links.test.ts
 (the delegate's open through openFromViewer; the model import), ui/webview/file-view-figure-error.test.ts and
@@ -9167,7 +9167,12 @@ the leg launches through real-viewer-leg.ts's inBrowser, as this follow-on's leg
 author's marquee, ui/webview/md-sanitize.test.ts (the profile's list of forbidden tags holds the marquee, whose own rendering
 makes a stacking context around what it holds with no class or style of the author's in Chromium and Firefox, while in WebKit it
 makes none and its own scroll and clip carried the control outside the page; the guide's pin reads the marquee's sentence, the
-file review's round 18, regression-2). The guide's Links in a file paragraph gained two sentences, the trail's and
+file review's round 18, regression-2), and since the marquee forbid's records, for the file review's round 18,
+ui/webview/anchor-map-wrappers.test.ts and ui/webview/anchor-map-pairing-r6.test.ts (their stand-in sanitizer unwraps a marquee
+as the sanitizer and the anchor map's mirror do, and the unwrapped-kid test gains a marquee holding a badge picture and one
+holding a b before the depth-1 wrapper, red with the mirror dropped, tests-1 with regression-1) and
+ui/webview/md-config-block-boxes.test.ts (the marquee joins the forbid list's inline-block group in its docstring, and its probe
+of the tags a note keeps inline drops it, regression-2). The guide's Links in a file paragraph gained two sentences, the trail's and
 the figure control's, its paragraph on a file's own HTML one on the marquee's removal (the file review's round 18,
 regression-2), and the browser plan's navigation-stack section (plans/file-browser.md) a pointer sentence.
 tools/markdown-viewer-plan-linknav.test.mjs holds this section to the tree: the section is present once after "## Out of
