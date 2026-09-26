@@ -5306,144 +5306,9 @@ census_unread_shapes() {   # <bash file>: prints "<line>:<text>" once for each l
         run census_unread_shapes "$TEST_DIR/plant-g.sh"
         [ "$output" = "2:$plant" ]
     done
-    # round 9b (the round 8 rulings' F): the shapes the census and its pins read nothing of until then (the round 8
-    # refuters' probes: undeclared=0 and no pin line for each at cad898dd2), each planted alone and flagged ONCE, by
-    # the census or by the pin and never both. The census reads a redirection operator standing alone ahead of the
-    # command word, a quoted command word (read back from the raw text), a command after a lone & and after |&, and a
-    # wrapper outside the prefixes (the fail-closed rule; coproc is a keyword)
-    local -a census_plants=(
-        '< /dev/null git rev-parse HEAD'
-        '2> /dev/null git rev-parse HEAD'
-        '"git" rev-parse HEAD'
-        "'git' rev-parse HEAD"
-        ': & git rev-parse HEAD'
-        ': |& git rev-parse HEAD'
-        'coproc git rev-parse HEAD'
-        'timeout 5 git rev-parse HEAD'
-        'nohup git rev-parse HEAD'
-        'stdbuf -o0 git rev-parse HEAD'
-        'ionice -c3 git rev-parse HEAD'
-        'setsid git rev-parse HEAD'
-        # round 9bc (F.1 (2), the round 9b audit): a command word whose quoting or escaping splits the tool's name, alone
-        # and under a wrapper, read since census_records tests each word with its quote and backslash characters
-        # removed; each passed the census and its pins at ce33ff8f4 and at cad898dd2, where the raw word was tested
-        'gi\t rev-parse HEAD'
-        "g''it rev-parse HEAD"
-        '"g"it rev-parse HEAD'
-        'timeout 5 gi\t rev-parse HEAD'
-    )
-    k=0
-    for plant in "${census_plants[@]}"; do
-        k=$((k + 1))
-        { sed -n '1p' "$HOOK"; printf '%s\n' "$plant"; sed -n '2,$p' "$HOOK"; } > "$TEST_DIR/plant-r9b-c$k.sh"
-        run undeclared_reads "$TEST_DIR/plant-r9b-c$k.sh"
-        [ "$(grep -c '^undeclared: ' <<< "$output")" -eq 1 ]
-        [[ "$output" == *"undeclared: 2:$plant"* ]]
-        run census_unread_shapes "$TEST_DIR/plant-r9b-c$k.sh"
-        [ -z "$output" ]
-    done
-    # round 10c (the round 9 rulings' J, the derivation in the bound): two expansions the census reads, a tilde prefix
-    # (the word by its basename) and a $"" quote (quote removal), planted together: each line is flagged by the census
-    # once and by the pins not at all
-    { sed -n '1p' "$HOOK"; printf '%s\n' '~/bin/git rev-parse HEAD' '$"git" rev-parse HEAD'; sed -n '2,$p' "$HOOK"; } > "$TEST_DIR/plant-r10c-c.sh"
-    run undeclared_reads "$TEST_DIR/plant-r10c-c.sh"
-    [ "$(grep '^undeclared: ' <<< "$output")" = $'undeclared: 2:~/bin/git rev-parse HEAD\nundeclared: 3:$"git" rev-parse HEAD' ]
-    run census_unread_shapes "$TEST_DIR/plant-r10c-c.sh"
-    [ -z "$output" ]
-    # ... and pins absent a command word held in a variable by a lookup or a path-qualified default, a lookup's answer
-    # standing as the command word, a trap action running a reading tool, source or . of a substitution, and bash -c
-    local -a pin_plants=(
-        'x=$(command -v git)'
-        'x=$(type -P git)'
-        '$(which git) rev-parse HEAD'
-        '"$(command -v git)" rev-parse HEAD'
-        # F.2 names ${GIT:-/usr/bin/git} as a command word. Bare, that spelling was flagged already at cad898dd2 (the
-        # census's brace split leaves ${GIT:-/usr/bin/git, whose basename is git) and is flagged by both instruments
-        # now, so it owes no red; quoted, it passed both at cad898dd2 and is flagged once, by the pin, so the quoted
-        # spelling is the plant (round 9bc, the round 9b audit)
-        '"${GIT:-/usr/bin/git}" rev-parse HEAD'
-        "trap 'git rev-parse HEAD' EXIT"
-        "source <(printf '%s\n' 'git rev-parse HEAD')"
-        ". <(printf '%s\n' 'git rev-parse HEAD')"
-        "bash -c 'git rev-parse HEAD'"
-    )
-    k=0
-    for plant in "${pin_plants[@]}"; do
-        k=$((k + 1))
-        { sed -n '1p' "$HOOK"; printf '%s\n' "$plant"; sed -n '2,$p' "$HOOK"; } > "$TEST_DIR/plant-r9b-p$k.sh"
-        run census_unread_shapes "$TEST_DIR/plant-r9b-p$k.sh"
-        [ "$output" = "2:$plant" ]
-        run undeclared_reads "$TEST_DIR/plant-r9b-p$k.sh"
-        [ "$(grep -c '^undeclared: ' <<< "$output")" -eq 0 ]
-    done
-    # round 10c (the round 9 rulings' J): an alias defined, by the builtin and through its array, and the word-shaped
-    # pins read again with the quote and backslash characters removed; planted together, each line pinned once and
-    # read by the census nowhere (each passed both instruments at 3a454668b)
-    local -a pin10=(
-        "alias g='command git'"
-        'BASH_ALIASES[g]="command git"'
-        "ev''al \"git rev-parse HEAD\""
-        'e\val "git rev-parse HEAD"'
-        "\"bash\" -c 'git rev-parse HEAD'"
-        "tr''ap 'git rev-parse HEAD' EXIT"
-        "sour''ce <(printf '%s\n' 'git rev-parse HEAD')"
-    )
-    { sed -n '1p' "$HOOK"; printf '%s\n' "${pin10[@]}"; sed -n '2,$p' "$HOOK"; } > "$TEST_DIR/plant-r10c-p.sh"
-    run census_unread_shapes "$TEST_DIR/plant-r10c-p.sh"
-    [ "$output" = "$(for k in "${!pin10[@]}"; do printf '%s\n' "$((k + 2)):${pin10[k]}"; done)" ]
-    run undeclared_reads "$TEST_DIR/plant-r10c-p.sh"
-    [ "$(grep -c '^undeclared: ' <<< "$output")" -eq 0 ]
-    # a variable given a reading tool's path and then run as the command word: each line pinned once (the property: a
-    # command word that begins with a parameter expansion is one of the three the bound names)
-    { sed -n '1p' "$HOOK"; printf '%s\n' 'g=/usr/bin/git' '"$g" rev-parse HEAD'; sed -n '2,$p' "$HOOK"; } > "$TEST_DIR/plant-r9b-g.sh"
-    run census_unread_shapes "$TEST_DIR/plant-r9b-g.sh"
-    [ "$output" = $'2:g=/usr/bin/git\n3:"$g" rev-parse HEAD' ]
-    run undeclared_reads "$TEST_DIR/plant-r9b-g.sh"
-    [ "$(grep -c '^undeclared: ' <<< "$output")" -eq 0 ]
-    # a here-doc: its operator pinned, whatever its body holds
-    { sed -n '1p' "$HOOK"; printf '%s\n' ": <<'EOF'" 'no read here' 'EOF'; sed -n '2,$p' "$HOOK"; } > "$TEST_DIR/plant-r9b-h.sh"
-    run census_unread_shapes "$TEST_DIR/plant-r9b-h.sh"
-    [ "$output" = "2:: <<'EOF'" ]
-    run undeclared_reads "$TEST_DIR/plant-r9b-h.sh"
-    [ "$(grep -c '^undeclared: ' <<< "$output")" -eq 0 ]
-    # the scanner's lookup is excepted by its EXACT text, the line the hook holds (so the exception is live), and the
-    # same lookup under another name is pinned
-    [ "$(grep -cxF '    gl="${ROMP_GITLEAKS:-$(command -v gitleaks || true)}"' "$HOOK")" -eq 1 ]
-    { sed -n '1p' "$HOOK"; printf '%s\n' 'gx="${ROMP_GITLEAKS:-$(command -v gitleaks || true)}"'; sed -n '2,$p' "$HOOK"; } > "$TEST_DIR/plant-r9b-l.sh"
-    run census_unread_shapes "$TEST_DIR/plant-r9b-l.sh"
-    [ "$output" = '2:gx="${ROMP_GITLEAKS:-$(command -v gitleaks || true)}"' ]
-    # round 10c (the round 9 rulings' J, extra7-2): the three variable command words are excepted only inside the
-    # function each is keyed on, so a runner function of the hook called with git (multi-line, one-line, and running
-    # its arguments behind command), "$detail" and "$gl" outside their owners (planted together), and "$gl" version in
-    # scanner_version outside its judged_read call are each pinned once and read by the census nowhere (each passed both
-    # instruments at 3a454668b, where the exceptions held by their spelling anywhere); the hook's own "$gl" version is
-    # the tagged command of a judged_read call inside scanner_version, which the pin does not read
-    [ -n "$(awk '/^scanner_version\(\) \{/ { p = 1 } p && /judged_read gate="the VERSION of the scanner" .* -- "\$gl" version;/ { f = 1 } p && /^}$/ { exit } END { if (f) print "found" }' "$HOOK")" ]
-    { sed -n '1p' "$HOOK"; printf '%s\n' 'probe_run() {' '    "$@" 2>/dev/null' '}' 'probe_run git rev-parse HEAD' \
-        'probe_one() { "$@" 2>/dev/null; }' 'probe_one git rev-parse HEAD' 'probe_cmd() { command "$@"; }' 'probe_cmd git rev-parse HEAD' \
-        '"$detail"' '"$gl" detect --source .'; sed -n '2,$p' "$HOOK"; } > "$TEST_DIR/plant-r10c-s.sh"
-    run census_unread_shapes "$TEST_DIR/plant-r10c-s.sh"
-    [ "$status" -eq 0 ]
-    [ "$output" = $'3:    "$@" 2>/dev/null\n6:probe_one() { "$@" 2>/dev/null; }\n8:probe_cmd() { command "$@"; }\n10:"$detail"\n11:"$gl" detect --source .' ]
-    run undeclared_reads "$TEST_DIR/plant-r10c-s.sh"
-    [ "$(grep -c '^undeclared: ' <<< "$output")" -eq 0 ]
-    n=$(grep -n '^scanner_version() {' "$HOOK" | cut -d: -f1)
-    [ -n "$n" ]
-    sed "${n}a\\
-    v=\$(\"\$gl\" version)" "$HOOK" > "$TEST_DIR/plant-r10c-sv.sh"
-    [ "$(sed -n "$((n + 1))p" "$TEST_DIR/plant-r10c-sv.sh")" = '    v=$("$gl" version)' ]
-    run census_unread_shapes "$TEST_DIR/plant-r10c-sv.sh"
-    [ "$output" = "$((n + 1)):    v=\$(\"\$gl\" version)" ]
-    # an owner renamed is named by the pin, and its words are then pinned (fail closed)
-    sed 's/^judged_read() {/judged_read_renamed() {/' "$HOOK" > "$TEST_DIR/plant-r10c-jr.sh"
-    run census_unread_shapes "$TEST_DIR/plant-r10c-jr.sh"
-    [ "${lines[0]}" = "0:the extent of judged_read, which an exception of the bound is keyed on, is missing" ]
-    [[ "$output" == *$'\n'*':            quiet) "$@" >&9 2>/dev/null || read_rc=$? ;;'* ]]
-    [[ "$output" == *$'\n'*':    [ -z "$detail" ] || clause=${clause//\{detail\}/"$("$detail" || :)"}'* ]]
-    sed 's/^scanner_run() {/scanner_run_renamed() {/' "$HOOK" > "$TEST_DIR/plant-r10c-sr.sh"
-    run census_unread_shapes "$TEST_DIR/plant-r10c-sr.sh"
-    [ "${lines[0]}" = "0:the extent of scanner_run, which an exception of the bound is keyed on, is missing" ]
-    [[ "$output" == *$'\n'*':    log=$( { cd "$dir" && "$gl" "${GL_ARGS[@]}" < /dev/null 2>&1 1>&3; } 3>&2 ) || rc=$?'* ]]
+    # round 12b (ITEM 2, the owner's call on case 203's margin): the census's sensitivity to the shapes it reads and
+    # its pins over the shapes it cannot read moved, plants and assertions unchanged, to the two cases at the end of
+    # this file titled "every read of the hook is DECLARED, round 12b split (1 of 2)" and "(2 of 2)"
     # round 9bc (F.1 (7), the round 9b audit), derived in round 10c (the round 9 rulings' J): the eight shapes the
     # bound DISCLOSES, neither read by the census nor pinned absent, ten witnesses each planted alone and passing both
     # unflagged, the census's counts over the copy equal to its counts over the hook, so the disclosure is shown true by
@@ -12217,4 +12082,421 @@ r12a_check_short_line() {   # <closing line> <probe lines read> <findings read> 
     [[ "$output" == *"$(r12a_check_short_line "1 0 0" 1 0 1)"* ]]
     [[ "$output" != *"ADDS a credential"* ]]
     at_base
+}
+
+# ── round 12b: a rule a path allowlist skips on a piece, read from gitleaks' own trace line (the round 11 rulings' C, revised by the coordinator's decision 2) ──
+# The scan of record reads each piece under its number, and gitleaks checks a rule's per-rule or targeted path
+# allowlist against that name before the rule's regex, so an allowlist whose path matches a number drops the rule on
+# every piece holding one of its keywords: honest extensionless and root-level allowlists on generic-api-key published a
+# credential that main's hook refused (the round 11 checkers). The coordinator ruled the exact detection (decision 2):
+# the scan of record runs at gitleaks' trace level, its log a private file in the scratch directory, deleted once read
+# and never shown but for its INF, WRN, ERR, FTL and PNC lines, and each trace line for a rule allowlist that skipped
+# a rule by its path (allowed-path=true) refuses as unscanned, naming the rule, the commit, the file and the config
+# read; the log's per-file lines are counted against the pieces written, so a run at which the trace level did not take
+# effect refuses. Each case pushes for real with the identifier scan off and the real scanner armed; the token is
+# r11a_witness S3's, a value only generic-api-key catches, assembled at run time.
+
+r12b_crafted="'''^[0-9]+\$'''"
+r12b_config() {   # <tables|legacy|dotted|inline|targeted|and|regex|custom> [<path value, the crafted number path by default>]: generic-api-key's allowlist in that form under useDefault (custom: a rule of its own carrying it)
+    local p=${2:-$r12b_crafted}
+    printf '[extend]\nuseDefault = true\n\n'
+    case "$1" in
+        tables) printf '[[rules]]\nid = "generic-api-key"\n[[rules.allowlists]]\npaths = [%s]\n' "$p" ;;
+        legacy) printf '[[rules]]\nid = "generic-api-key"\n[rules.allowlist]\npaths = [%s]\n' "$p" ;;
+        dotted) printf '[[rules]]\nid = "generic-api-key"\nallowlist.paths = [%s]\n' "$p" ;;
+        inline) printf '[[rules]]\nid = "generic-api-key"\nallowlists = [ { paths = [%s] } ]\n' "$p" ;;
+        targeted) printf '[[allowlists]]\ntargetRules = ["generic-api-key"]\npaths = [%s]\n' "$p" ;;
+        and) printf '[[rules]]\nid = "generic-api-key"\n[[rules.allowlists]]\ncondition = "AND"\npaths = [%s]\nregexes = [%s]\n' "$p" "'''Zq8X'''" ;;
+        regex) printf '[[rules]]\nid = "generic-api-key"\n[[rules.allowlists]]\nregexes = [%s]\n' "'''Zq8X'''" ;;
+        custom) printf '[[rules]]\nid = "r12b-custom-rule"\nregex = %s\n[[rules.allowlists]]\npaths = [%s]\n' "'''zzcus_[0-9a-f]{16}'''" "$p" ;;
+        *) echo "r12b_config: no form $1" >&2; return 1 ;;
+    esac
+}
+R12B_WT_CFG="the work tree's .gitleaks.toml"                   # cfg_name for the work tree's config, as the skip line names it
+r12b_token() { printf '%s%s' Zq8Xk2Lm9P w4Rt7Vy3Nb6Hc1; }      # r11a_witness S3's value
+r12b_clean_keyword() {   # <path>: a clean file there holding one of generic-api-key's keywords (key), committed; sets sha
+    mkdir -p "$(dirname "$REPO/$1")"
+    printf 'the key of the front door\n' > "$REPO/$1"
+    git -C "$REPO" add -- "$1"
+    r11b_commit "a clean file holding a keyword"
+}
+r12b_skip_line() {   # <rule> <file> [<config as the line names it>]: the refusal of a rule a path allowlist skipped on the lines commit sha adds to the file
+    printf '%s' "romp pre-push: the config the scan read (${3:-$R12B_WT_CFG}) skipped rule $1 on the lines commit ${sha:0:10} adds to $2: a path allowlist on that rule matched the number the scan uses as those lines' name, so the scan cannot check $2 under $1, and the hook cannot tell whether $2 itself gets the same verdict; excuse a false alarm by its value with a regex or stopword allowlist instead of a path, switch a rule off with disabledRules, or set ROMP_NO_GITLEAKS=1 for one push; the scan is incomplete, so the push is refused"
+}
+r12b_no_trace_shown() {   # the push just made showed the scan of record's log without a TRC or DBG line, its byte figure kept
+    [[ "$output" == *"INF scanned ~"* ]]
+    if grep -qE '^[^ ]+ (TRC|DBG) ' <<< "$output"; then echo "a TRC or DBG line was shown" >&2; return 1; fi
+}
+r12b_refused_by_skip() {   # <rule> <file> [<config as the line names it>]: the push just made was refused by the skip line alone, no credential named, the log shown without a trace line, the remote at its base
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"$(r12b_skip_line "$@")"* ]]
+    [ "$(grep -c ' skipped rule ' <<< "$output")" -eq 1 ]
+    [[ "$output" != *"ADDS a credential"* ]]
+    [[ "$output" != *"$(r12b_token)"* ]]
+    r12b_no_trace_shown
+    at_base
+}
+r12b_form_case() {   # <form>: that allowlist form with the crafted number path, and the token at app/settings.py: refused by the skip line naming generic-api-key and the file
+    r11a_base
+    r11a_config "$(r12b_config "$1")"
+    r11a_witness S3
+    sha="$(git -C "$REPO" rev-parse HEAD)"
+    push_main_through_hook_with_shim
+    r12b_refused_by_skip generic-api-key app/settings.py
+}
+
+@test "round 12b (C, decision 2, the key witness, [[rules.allowlists]]): generic-api-key under useDefault with one [[rules.allowlists]] whose path matches only a number (^[0-9]+ anchored at both ends), and a token only that rule catches at app/settings.py: refused by the skip line naming generic-api-key, the commit and app/settings.py, no credential named, no trace line shown, the remote at its base (PUBLISHED at 0b6c76916, both scanners; main's hook refuses it naming the rule)" {
+    r12b_form_case tables
+}
+
+@test "round 12b (C, decision 2, the key witness, the legacy [rules.allowlist]): the same crafted number path in a legacy single [rules.allowlist] table, and the token at app/settings.py: refused by the skip line naming generic-api-key and app/settings.py, the remote at its base (PUBLISHED at 0b6c76916, both scanners)" {
+    r12b_form_case legacy
+}
+
+@test "round 12b (C, decision 2, the key witness, the dotted allowlist.paths): the crafted number path as a dotted allowlist.paths key inside the rule table, and the token at app/settings.py: refused by the skip line naming generic-api-key and app/settings.py, the remote at its base (PUBLISHED at 0b6c76916, both scanners)" {
+    r12b_form_case dotted
+}
+
+@test "round 12b (C, decision 2, the key witness, the inline allowlists array): the crafted number path in allowlists = [ { paths = [...] } ] inside the rule table, and the token at app/settings.py: refused by the skip line naming generic-api-key and app/settings.py, the remote at its base (PUBLISHED at 0b6c76916, both scanners)" {
+    r12b_form_case inline
+}
+
+@test "round 12b (C, decision 2, the key witness, a targeted [[allowlists]]): a global allowlist naming generic-api-key in targetRules with the crafted number path, and the token at app/settings.py: under gitleaks 8.30.1 refused by the skip line naming generic-api-key and app/settings.py (PUBLISHED at 0b6c76916); gitleaks 8.28.0 applies no targeted allowlist, and refuses the token as a credential at every head, which this case asserts under that release; the remote at its base" {
+    r11a_base
+    r11a_config "$(r12b_config targeted)"
+    r11a_witness S3
+    sha="$(git -C "$REPO" rev-parse HEAD)"
+    push_main_through_hook_with_shim
+    case "$("$GL" version)" in
+        8.28.0)
+            [ "$status" -ne 0 ]
+            [[ "$output" == *"romp pre-push: commit ${sha:0:10} ADDS a credential (generic-api-key) in: app/settings.py"* ]]
+            [[ "$output" != *" skipped rule "* ]]
+            r12b_no_trace_shown
+            at_base ;;
+        *) r12b_refused_by_skip generic-api-key app/settings.py ;;
+    esac
+}
+
+@test "round 12b (C, decision 2, the key witness, an AND allowlist): the crafted number path under condition AND with a value regex matching the token, and the token at app/settings.py: refused by the skip line (gitleaks' skipping finding line) naming generic-api-key and app/settings.py, the token printed nowhere, the remote at its base (PUBLISHED at 0b6c76916, both scanners)" {
+    r12b_form_case and
+}
+
+@test "round 12b (C, decision 2, an honest extensionless allowlist): generic-api-key under useDefault with the allowlist (^|/)[^./]+ anchored at its end, written for Makefile or Dockerfile false alarms, and the token at app/settings.py: refused by the skip line naming generic-api-key and app/settings.py, the remote at its base (PUBLISHED at 0b6c76916, both scanners: the allowlist matches the piece's number; main's hook refuses it naming the rule)" {
+    r11a_base
+    r11a_config "$(r12b_config tables "'''(^|/)[^./]+\$'''")"
+    r11a_witness S3
+    sha="$(git -C "$REPO" rev-parse HEAD)"
+    push_main_through_hook_with_shim
+    r12b_refused_by_skip generic-api-key app/settings.py
+}
+
+@test "round 12b (C, decision 2, an honest root-level allowlist): generic-api-key under useDefault with the allowlist ^[^/]+ anchored at its end, for files at the repository's root, and the token at app/settings.py: refused by the skip line naming generic-api-key and app/settings.py, the remote at its base (PUBLISHED at 0b6c76916, both scanners)" {
+    r11a_base
+    r11a_config "$(r12b_config tables "'''^[^/]+\$'''")"
+    r11a_witness S3
+    sha="$(git -C "$REPO" rev-parse HEAD)"
+    push_main_through_hook_with_shim
+    r12b_refused_by_skip generic-api-key app/settings.py
+}
+
+@test "round 12b (C, decision 2, a custom rule): a rule of the repository's own, r12b-custom-rule, carrying a [[rules.allowlists]] with the crafted number path, and its credential at app/settings.py: refused by the skip line naming r12b-custom-rule and app/settings.py, the remote at its base (PUBLISHED at 0b6c76916, both scanners)" {
+    r11a_base
+    r11a_config "$(r12b_config custom)"
+    mkdir -p "$REPO/app"
+    printf 'build = "zzcus_%s%s"\n' 0123456789 abcdef > "$REPO/app/settings.py"
+    git -C "$REPO" add app/settings.py
+    r11b_commit "the custom rule's credential"
+    push_main_through_hook_with_shim
+    r12b_refused_by_skip r12b-custom-rule app/settings.py
+}
+
+@test "round 12b (C, decision 2, the control, an honest test-directory allowlist): generic-api-key under useDefault with the allowlist (^|/)tests/, which matches no number, and the token at tests/fixture.py: refused as a credential naming generic-api-key and tests/fixture.py, with no skip line, as at 0b6c76916 (both scanners; main's hook passes it, the allowlist matching the real path: a false refusal, the safe side), the remote at its base" {
+    r11a_base
+    r11a_config "$(r12b_config tables "'''(^|/)tests/'''")"
+    mkdir -p "$REPO/tests"
+    printf 'api_key = "%s"\n' "$(r12b_token)" > "$REPO/tests/fixture.py"
+    git -C "$REPO" add tests/fixture.py
+    r11b_commit "the token in a test fixture"
+    push_main_through_hook_with_shim
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: commit ${sha:0:10} ADDS a credential (generic-api-key) in: tests/fixture.py"* ]]
+    [[ "$output" != *" skipped rule "* ]]
+    r12b_no_trace_shown
+    at_base
+}
+
+@test "round 12b (C, decision 2, the controls, a value allowlist and clean pushes): a regex-only allowlist matching the token (its skip line holds allowed-regex and no allowed-path) passes the token at app/settings.py as at 0b6c76916, with no romp line; a clean app/settings.py holding the word key passes under no config and under this repository's .gitleaks.toml, each with its log shown and no trace line (both scanners)" {
+    r11a_base
+    r11a_config "$(r12b_config regex)"
+    r11a_witness S3
+    push_main_through_hook_with_shim
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"romp pre-push"* ]]
+    [[ "$output" != *"$(r12b_token)"* ]]
+    r12b_no_trace_shown
+    git -C "$REPO" rm -q .gitleaks.toml
+    r11b_commit "no config"
+    r12b_clean_keyword lib/door.py
+    push_main_through_hook_with_shim
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"romp pre-push"* ]]
+    r12b_no_trace_shown
+    cp "$ROMP_DIR/.gitleaks.toml" "$REPO/.gitleaks.toml"
+    git -C "$REPO" add .gitleaks.toml
+    r11b_commit "this repository's config"
+    r12b_clean_keyword lib/window.py
+    push_main_through_hook_with_shim
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"romp pre-push"* ]]
+    r12b_no_trace_shown
+}
+
+@test "round 12b (C, the cost witness, a clean piece): a clean app/settings.py holding generic-api-key's keyword key, under the honest extensionless allowlist, is refused by the skip line naming generic-api-key and app/settings.py, the remote at its base (decision 2 (d), disclosed: passes at 0b6c76916 and at main's hook, both scanners; gitleaks checks the path allowlist of a rule whose keyword the piece holds)" {
+    r11a_base
+    r11a_config "$(r12b_config tables "'''(^|/)[^./]+\$'''")"
+    r12b_clean_keyword app/settings.py
+    push_main_through_hook_with_shim
+    r12b_refused_by_skip generic-api-key app/settings.py
+}
+
+@test "round 12b (C, the cost witness, paths '.*'): a paths '.*' allowlist on generic-api-key, written to switch the rule off, and a clean app/settings.py holding the keyword key: refused by the skip line, whose remedies name disabledRules to switch a rule off, the remote at its base (decision 2 (d), disclosed: passes at 0b6c76916 and at main's hook, both scanners)" {
+    r11a_base
+    r11a_config "$(r12b_config tables "'''.*'''")"
+    r12b_clean_keyword app/settings.py
+    push_main_through_hook_with_shim
+    r12b_refused_by_skip generic-api-key app/settings.py
+    [[ "$output" == *"switch a rule off with disabledRules"* ]]
+}
+
+r12b_log_watcher() {   # a gitleaks on ROMP_GITLEAKS that, for the scan of record's run alone (its arguments carry --log-level trace), records the mode and the path of the file its stderr is (the hook's log), runs the real scanner with its log to a file of its own, records whether the token is in that log (never the token itself), and hands the log on to its stderr unchanged; the real scanner for every other run
+    mkdir -p "$TEST_DIR/scanner"
+    {
+        printf '#!/usr/bin/env bash\n'
+        printf 'case " $* " in *" --log-level trace "*) ;; *) exec %q "$@" ;; esac\n' "$GL"
+        printf 'stat -L -c %%a /proc/self/fd/2 >> %q; readlink /proc/self/fd/2 >> %q\n' "$TEST_DIR/calls.logmode" "$TEST_DIR/calls.logpath"
+        printf 'e=$(mktemp %q); %q "$@" 2> "$e"; s=$?\n' "$TEST_DIR/wlog.XXXXXX" "$GL"
+        printf 'if grep -qF -- %q "$e"; then echo in-log >> %q; else echo absent >> %q; fi\n' "$(r12b_token)" "$TEST_DIR/calls.premise" "$TEST_DIR/calls.premise"
+        printf 'cat "$e" >&2; rm -f "$e"; exit "$s"\n'
+    } > "$TEST_DIR/scanner/gitleaks"
+    chmod 755 "$TEST_DIR/scanner/gitleaks"
+    export ROMP_GITLEAKS="$TEST_DIR/scanner/gitleaks"
+}
+r12b_secret_checks() {   # after a push under r12b_log_watcher: the token reached the trace log, which was mode 600 and is gone, the token printed nowhere and the hook's TMPDIR empty
+    [ "$(tail -n 1 "$TEST_DIR/calls.premise")" = in-log ]
+    [ "$(tail -n 1 "$TEST_DIR/calls.logmode")" = 600 ]
+    [[ "$(tail -n 1 "$TEST_DIR/calls.logpath")" == "$TMPDIR/romp-pre-push."*"/creds.log" ]]
+    [ ! -e "$(tail -n 1 "$TEST_DIR/calls.logpath")" ]
+    [[ "$output" != *"$(r12b_token)"* ]]
+    [ -z "$(ls -A "$TMPDIR")" ]
+}
+
+@test "round 12b (C, decision 2 (a), the secret pin): the trace log prints a skipped finding's value whole, --redact notwithstanding, so it stays private: under a regex-only allowlist (passed, the value excused) and under the AND allowlist (refused by the skip line), a scanner wrapper sees the token in the scan of record's log, a file of mode 600 in the hook's scratch directory, and the push prints the token nowhere, shows no trace line, and leaves no log file and an empty TMPDIR once the hook exits (red under the mutant that shows the whole log, and under the one that drops the umask)" {
+    r11a_base
+    export TMPDIR="$TEST_DIR/r12b-tmp"; mkdir -p "$TMPDIR"
+    r12b_log_watcher
+    r11a_config "$(r12b_config regex)"
+    r11a_witness S3
+    push_main_through_hook_with_shim
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"romp pre-push"* ]]
+    r12b_no_trace_shown
+    r12b_secret_checks
+    r11a_config "$(r12b_config and)"
+    mkdir -p "$REPO/lib"
+    printf 'api_key = "%s"\n' "$(r12b_token)" > "$REPO/lib/other.py"
+    git -C "$REPO" add lib/other.py
+    r11b_commit "the token again, under the AND allowlist"
+    push_main_through_hook_with_shim
+    r12b_refused_by_skip generic-api-key lib/other.py
+    r12b_secret_checks
+    [ "$(wc -l < "$TEST_DIR/calls.premise")" -eq 2 ]
+}
+
+@test "round 12b (C, decision 2, the count arm): a scanner wrapper that drops --log-level trace from the scan of record's arguments, so the trace level does not take effect, under the crafted number path on generic-api-key and the token at app/settings.py: refused by the count line (0 scanning path lines where the hook wrote 1 piece), no skip line, no credential named, the remote at its base (red under the mutant deleting the count comparison, where the token publishes)" {
+    r11a_base
+    r11a_config "$(r12b_config tables)"
+    r11a_witness S3
+    scanner_wrapper "$(printf 'a=(); d=0; for x in "$@"; do if [ "$d" = 1 ]; then d=0; continue; fi; if [ "$x" = --log-level ]; then d=1; echo dropped >> %q; continue; fi; a+=("$x"); done; set -- "${a[@]}"' "$TEST_DIR/calls.dropped")"
+    push_main_through_hook_with_shim
+    [ "$(wc -l < "$TEST_DIR/calls.dropped")" -eq 1 ]
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: the CREDENTIAL scan's trace log holds 0 scanning path lines, one per file read, where the hook wrote 1 pieces for it, so whether a path allowlist skipped a rule on a piece is unknown (a run at which the trace level did not take effect logs none); the scan is incomplete, so the push is refused"* ]]
+    [[ "$output" != *" skipped rule "* ]]
+    [[ "$output" != *"ADDS a credential"* ]]
+    at_base
+}
+
+@test "round 12b table case: the PATH SKIPS in the trace log of the scan of record: an awk silent on the path skips' program alone, through a real push of the token at app/settings.py under the crafted number path on generic-api-key, is refused naming the missing closing line, no skip line and no credential named, and the remote stays at its base (red under the mutant deleting the no-closing-line arm, where the read-short line refuses in its place, and under the one deleting both closing-line arms, where the count line does)" {
+    r11a_base
+    r11a_config "$(r12b_config tables)"
+    r11a_witness S3
+    calls_silent_on_text awk path-skips 'allowed-path=true'
+    push_main_through_hook_with_shim
+    fired path-skips "allowed-path=true"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: the PATH SKIPS in the trace log of the CREDENTIAL scan answered no closing line of counts (awk exited 0), so which rules a path allowlist skipped is unknown; the scan is incomplete, so the push is refused"* ]]
+    [[ "$output" != *" skipped rule "* ]]
+    [[ "$output" != *"ADDS a credential"* ]]
+    at_base
+}
+
+@test "round 12b short case: the PATH SKIPS in the trace log of the scan of record: an awk whose path skips answer is cut to three bytes of its skip line (exit 0), through a real push of the token at app/settings.py under the crafted number path on generic-api-key, is refused naming the missing closing line, no skip line named, and the remote stays at its base (red under the mutant deleting the no-closing-line arm, where the read-short line refuses in its place, and under the one deleting both closing-line arms, where the count line does)" {
+    r11a_base
+    r11a_config "$(r12b_config tables)"
+    r11a_witness S3
+    calls_short_on_text awk path-skips 'allowed-path=true' bytes:3
+    push_main_through_hook_with_shim
+    fired_short path-skips "allowed-path=true"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: the PATH SKIPS in the trace log of the CREDENTIAL scan answered no closing line of counts (awk exited 0), so which rules a path allowlist skipped is unknown; the scan is incomplete, so the push is refused"* ]]
+    [[ "$output" != *" skipped rule "* ]]
+    [[ "$output" != *"ADDS a credential"* ]]
+    at_base
+}
+
+@test "every read of the hook is DECLARED, round 12b split (1 of 2): the census's sensitivity to the shapes it READS, moved from case 203 in round 12b (ITEM 2) so each case stays well under CI's per-test bound, the plants and assertions unchanged: a redirection operator standing alone ahead of the command word, a quoted command word, a command after a lone & and after |&, a wrapper outside the prefixes, and a command word whose quoting or escaping splits the tool's name, alone and under a wrapper, each planted alone and flagged once by the census and not by the pins; a tilde prefix and a dollar-double-quote planted together, each flagged once by the census and not by the pins" {
+    local plant k=0
+    # round 9b (the round 8 rulings' F): the shapes the census and its pins read nothing of until then (the round 8
+    # refuters' probes: undeclared=0 and no pin line for each at cad898dd2), each planted alone and flagged ONCE, by
+    # the census or by the pin and never both. The census reads a redirection operator standing alone ahead of the
+    # command word, a quoted command word (read back from the raw text), a command after a lone & and after |&, and a
+    # wrapper outside the prefixes (the fail-closed rule; coproc is a keyword)
+    local -a census_plants=(
+        '< /dev/null git rev-parse HEAD'
+        '2> /dev/null git rev-parse HEAD'
+        '"git" rev-parse HEAD'
+        "'git' rev-parse HEAD"
+        ': & git rev-parse HEAD'
+        ': |& git rev-parse HEAD'
+        'coproc git rev-parse HEAD'
+        'timeout 5 git rev-parse HEAD'
+        'nohup git rev-parse HEAD'
+        'stdbuf -o0 git rev-parse HEAD'
+        'ionice -c3 git rev-parse HEAD'
+        'setsid git rev-parse HEAD'
+        # round 9bc (F.1 (2), the round 9b audit): a command word whose quoting or escaping splits the tool's name, alone
+        # and under a wrapper, read since census_records tests each word with its quote and backslash characters
+        # removed; each passed the census and its pins at ce33ff8f4 and at cad898dd2, where the raw word was tested
+        'gi\t rev-parse HEAD'
+        "g''it rev-parse HEAD"
+        '"g"it rev-parse HEAD'
+        'timeout 5 gi\t rev-parse HEAD'
+    )
+    k=0
+    for plant in "${census_plants[@]}"; do
+        k=$((k + 1))
+        { sed -n '1p' "$HOOK"; printf '%s\n' "$plant"; sed -n '2,$p' "$HOOK"; } > "$TEST_DIR/plant-r9b-c$k.sh"
+        run undeclared_reads "$TEST_DIR/plant-r9b-c$k.sh"
+        [ "$(grep -c '^undeclared: ' <<< "$output")" -eq 1 ]
+        [[ "$output" == *"undeclared: 2:$plant"* ]]
+        run census_unread_shapes "$TEST_DIR/plant-r9b-c$k.sh"
+        [ -z "$output" ]
+    done
+    # round 10c (the round 9 rulings' J, the derivation in the bound): two expansions the census reads, a tilde prefix
+    # (the word by its basename) and a $"" quote (quote removal), planted together: each line is flagged by the census
+    # once and by the pins not at all
+    { sed -n '1p' "$HOOK"; printf '%s\n' '~/bin/git rev-parse HEAD' '$"git" rev-parse HEAD'; sed -n '2,$p' "$HOOK"; } > "$TEST_DIR/plant-r10c-c.sh"
+    run undeclared_reads "$TEST_DIR/plant-r10c-c.sh"
+    [ "$(grep '^undeclared: ' <<< "$output")" = $'undeclared: 2:~/bin/git rev-parse HEAD\nundeclared: 3:$"git" rev-parse HEAD' ]
+    run census_unread_shapes "$TEST_DIR/plant-r10c-c.sh"
+    [ -z "$output" ]
+}
+
+@test "every read of the hook is DECLARED, round 12b split (2 of 2): the pins over the shapes the census CANNOT read, moved from case 203 in round 12b (ITEM 2) so each case stays well under CI's per-test bound, the plants and assertions unchanged: a command word held in a variable by a lookup or a path-qualified default, a lookup's answer as the command word, a trap action running a reading tool, source or . of a substitution and bash -c, each pinned once and read by the census nowhere; an alias defined and the word-shaped pins read unquoted; a variable given a reading tool's path then run; a here-doc; the scanner's lookup excepted by its exact text; the three variable command words excepted only inside their owners; an owner renamed named by the pin, its words then pinned" {
+    local plant k=0
+    # ... and pins absent a command word held in a variable by a lookup or a path-qualified default, a lookup's answer
+    # standing as the command word, a trap action running a reading tool, source or . of a substitution, and bash -c
+    local -a pin_plants=(
+        'x=$(command -v git)'
+        'x=$(type -P git)'
+        '$(which git) rev-parse HEAD'
+        '"$(command -v git)" rev-parse HEAD'
+        # F.2 names ${GIT:-/usr/bin/git} as a command word. Bare, that spelling was flagged already at cad898dd2 (the
+        # census's brace split leaves ${GIT:-/usr/bin/git, whose basename is git) and is flagged by both instruments
+        # now, so it owes no red; quoted, it passed both at cad898dd2 and is flagged once, by the pin, so the quoted
+        # spelling is the plant (round 9bc, the round 9b audit)
+        '"${GIT:-/usr/bin/git}" rev-parse HEAD'
+        "trap 'git rev-parse HEAD' EXIT"
+        "source <(printf '%s\n' 'git rev-parse HEAD')"
+        ". <(printf '%s\n' 'git rev-parse HEAD')"
+        "bash -c 'git rev-parse HEAD'"
+    )
+    k=0
+    for plant in "${pin_plants[@]}"; do
+        k=$((k + 1))
+        { sed -n '1p' "$HOOK"; printf '%s\n' "$plant"; sed -n '2,$p' "$HOOK"; } > "$TEST_DIR/plant-r9b-p$k.sh"
+        run census_unread_shapes "$TEST_DIR/plant-r9b-p$k.sh"
+        [ "$output" = "2:$plant" ]
+        run undeclared_reads "$TEST_DIR/plant-r9b-p$k.sh"
+        [ "$(grep -c '^undeclared: ' <<< "$output")" -eq 0 ]
+    done
+    # round 10c (the round 9 rulings' J): an alias defined, by the builtin and through its array, and the word-shaped
+    # pins read again with the quote and backslash characters removed; planted together, each line pinned once and
+    # read by the census nowhere (each passed both instruments at 3a454668b)
+    local -a pin10=(
+        "alias g='command git'"
+        'BASH_ALIASES[g]="command git"'
+        "ev''al \"git rev-parse HEAD\""
+        'e\val "git rev-parse HEAD"'
+        "\"bash\" -c 'git rev-parse HEAD'"
+        "tr''ap 'git rev-parse HEAD' EXIT"
+        "sour''ce <(printf '%s\n' 'git rev-parse HEAD')"
+    )
+    { sed -n '1p' "$HOOK"; printf '%s\n' "${pin10[@]}"; sed -n '2,$p' "$HOOK"; } > "$TEST_DIR/plant-r10c-p.sh"
+    run census_unread_shapes "$TEST_DIR/plant-r10c-p.sh"
+    [ "$output" = "$(for k in "${!pin10[@]}"; do printf '%s\n' "$((k + 2)):${pin10[k]}"; done)" ]
+    run undeclared_reads "$TEST_DIR/plant-r10c-p.sh"
+    [ "$(grep -c '^undeclared: ' <<< "$output")" -eq 0 ]
+    # a variable given a reading tool's path and then run as the command word: each line pinned once (the property: a
+    # command word that begins with a parameter expansion is one of the three the bound names)
+    { sed -n '1p' "$HOOK"; printf '%s\n' 'g=/usr/bin/git' '"$g" rev-parse HEAD'; sed -n '2,$p' "$HOOK"; } > "$TEST_DIR/plant-r9b-g.sh"
+    run census_unread_shapes "$TEST_DIR/plant-r9b-g.sh"
+    [ "$output" = $'2:g=/usr/bin/git\n3:"$g" rev-parse HEAD' ]
+    run undeclared_reads "$TEST_DIR/plant-r9b-g.sh"
+    [ "$(grep -c '^undeclared: ' <<< "$output")" -eq 0 ]
+    # a here-doc: its operator pinned, whatever its body holds
+    { sed -n '1p' "$HOOK"; printf '%s\n' ": <<'EOF'" 'no read here' 'EOF'; sed -n '2,$p' "$HOOK"; } > "$TEST_DIR/plant-r9b-h.sh"
+    run census_unread_shapes "$TEST_DIR/plant-r9b-h.sh"
+    [ "$output" = "2:: <<'EOF'" ]
+    run undeclared_reads "$TEST_DIR/plant-r9b-h.sh"
+    [ "$(grep -c '^undeclared: ' <<< "$output")" -eq 0 ]
+    # the scanner's lookup is excepted by its EXACT text, the line the hook holds (so the exception is live), and the
+    # same lookup under another name is pinned
+    [ "$(grep -cxF '    gl="${ROMP_GITLEAKS:-$(command -v gitleaks || true)}"' "$HOOK")" -eq 1 ]
+    { sed -n '1p' "$HOOK"; printf '%s\n' 'gx="${ROMP_GITLEAKS:-$(command -v gitleaks || true)}"'; sed -n '2,$p' "$HOOK"; } > "$TEST_DIR/plant-r9b-l.sh"
+    run census_unread_shapes "$TEST_DIR/plant-r9b-l.sh"
+    [ "$output" = '2:gx="${ROMP_GITLEAKS:-$(command -v gitleaks || true)}"' ]
+    # round 10c (the round 9 rulings' J, extra7-2): the three variable command words are excepted only inside the
+    # function each is keyed on, so a runner function of the hook called with git (multi-line, one-line, and running
+    # its arguments behind command), "$detail" and "$gl" outside their owners (planted together), and "$gl" version in
+    # scanner_version outside its judged_read call are each pinned once and read by the census nowhere (each passed both
+    # instruments at 3a454668b, where the exceptions held by their spelling anywhere); the hook's own "$gl" version is
+    # the tagged command of a judged_read call inside scanner_version, which the pin does not read
+    [ -n "$(awk '/^scanner_version\(\) \{/ { p = 1 } p && /judged_read gate="the VERSION of the scanner" .* -- "\$gl" version;/ { f = 1 } p && /^}$/ { exit } END { if (f) print "found" }' "$HOOK")" ]
+    { sed -n '1p' "$HOOK"; printf '%s\n' 'probe_run() {' '    "$@" 2>/dev/null' '}' 'probe_run git rev-parse HEAD' \
+        'probe_one() { "$@" 2>/dev/null; }' 'probe_one git rev-parse HEAD' 'probe_cmd() { command "$@"; }' 'probe_cmd git rev-parse HEAD' \
+        '"$detail"' '"$gl" detect --source .'; sed -n '2,$p' "$HOOK"; } > "$TEST_DIR/plant-r10c-s.sh"
+    run census_unread_shapes "$TEST_DIR/plant-r10c-s.sh"
+    [ "$status" -eq 0 ]
+    [ "$output" = $'3:    "$@" 2>/dev/null\n6:probe_one() { "$@" 2>/dev/null; }\n8:probe_cmd() { command "$@"; }\n10:"$detail"\n11:"$gl" detect --source .' ]
+    run undeclared_reads "$TEST_DIR/plant-r10c-s.sh"
+    [ "$(grep -c '^undeclared: ' <<< "$output")" -eq 0 ]
+    n=$(grep -n '^scanner_version() {' "$HOOK" | cut -d: -f1)
+    [ -n "$n" ]
+    sed "${n}a\\
+    v=\$(\"\$gl\" version)" "$HOOK" > "$TEST_DIR/plant-r10c-sv.sh"
+    [ "$(sed -n "$((n + 1))p" "$TEST_DIR/plant-r10c-sv.sh")" = '    v=$("$gl" version)' ]
+    run census_unread_shapes "$TEST_DIR/plant-r10c-sv.sh"
+    [ "$output" = "$((n + 1)):    v=\$(\"\$gl\" version)" ]
+    # an owner renamed is named by the pin, and its words are then pinned (fail closed)
+    sed 's/^judged_read() {/judged_read_renamed() {/' "$HOOK" > "$TEST_DIR/plant-r10c-jr.sh"
+    run census_unread_shapes "$TEST_DIR/plant-r10c-jr.sh"
+    [ "${lines[0]}" = "0:the extent of judged_read, which an exception of the bound is keyed on, is missing" ]
+    [[ "$output" == *$'\n'*':            quiet) "$@" >&9 2>/dev/null || read_rc=$? ;;'* ]]
+    [[ "$output" == *$'\n'*':    [ -z "$detail" ] || clause=${clause//\{detail\}/"$("$detail" || :)"}'* ]]
+    sed 's/^scanner_run() {/scanner_run_renamed() {/' "$HOOK" > "$TEST_DIR/plant-r10c-sr.sh"
+    run census_unread_shapes "$TEST_DIR/plant-r10c-sr.sh"
+    [ "${lines[0]}" = "0:the extent of scanner_run, which an exception of the bound is keyed on, is missing" ]
+    [[ "$output" == *$'\n'*':    ( cd "$dir" && umask 077 && { [ "$mode" != record ] || export NO_COLOR=1; } && "$gl" "${GL_ARGS[@]}" < /dev/null 1>&2 2> "$logf" ) || rc=$?'* ]]
 }
