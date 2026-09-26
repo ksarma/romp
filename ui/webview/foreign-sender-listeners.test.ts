@@ -25,11 +25,15 @@
 //
 // The census reads the population instead of a list: every addEventListener("message", …) call in a ui/ source file
 // (tests excluded), the method named or a computed member, and every onmessage handler assigned to the window (by window,
-// self, globalThis or the bare global), must open with the check, preceded by nothing but reads of the message, and must
-// be one of the gated sites below, each with an executed leg here. A new window listener anywhere in ui/ fails it until it
-// is gated and given a leg. A second census reads what the name windowSender is bound to: in every ui/ file that calls the check, it is
-// the helper's own import (gear.js: its require), bound once and never written, so a local helper of the same name that
-// lets one more sender through cannot stand in for it. Synthetic world only: the notes-api demo, placeholder ids.
+// self, globalThis or the bare global), must take the event as its one parameter, with no default, open with the check,
+// preceded by nothing but reads of the message, and be one of the gated sites below, each with an executed leg here. A new
+// window listener anywhere in ui/ fails it until it is gated and given a leg. A second census reads what the name
+// windowSender is bound to: in every ui/ file that calls the check, it is the helper's own import (gear.js: its require),
+// bound once and never written, so a local helper of the same name that lets one more sender through cannot stand in for
+// it. The first census reads the listeners the source spells, so two more hold the source to spellings it can read: a
+// third holds that every addEventListener in ui/ is a call the first can read, and a fourth refuses the roads that spell
+// neither (a window member reached by a computed name, an onmessage handler set other than by assignment, code run from a
+// string). What those cannot see is listed at the fourth. Synthetic world only: the notes-api demo, placeholder ids.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -346,12 +350,17 @@ function uiSources(): string[] {
   return out.sort();
 }
 /** Where the listener's `if (windowSender(<its event>) === "foreign") return;` is among its body's statements, or why it
- *  does not count: every statement before it must be a read of the message (a declaration initialised to <event>.data)
- *  or an early return on a condition that calls, constructs and assigns nothing, so no arm runs before the check. */
+ *  does not count: the listener takes one parameter, the event, a plain name with no default (a parameter's default runs
+ *  before the body, so a default on it or on a second parameter would run ahead of the check), and every statement before
+ *  the check must be a read of the message (a declaration initialised to <event>.data) or an early return on a condition
+ *  that calls, constructs and assigns nothing, so no arm runs before the check. */
 function headCheck(site: Site): string | null {
   const fn = site.fn;
   if (!(ts.isArrowFunction(fn) || ts.isFunctionExpression(fn)) || !fn.body || !ts.isBlock(fn.body)) return "the listener is not a function with a body";
   if (!fn.parameters.length || !ts.isIdentifier(fn.parameters[0].name)) return "the listener names no event parameter";
+  if (fn.parameters.length !== 1 || fn.parameters[0].initializer || fn.parameters[0].dotDotDotToken) {
+    return "the listener takes more than its one event parameter, or gives it a default, and a parameter's default runs before the check: " + fn.parameters.map((q: any) => q.getText()).join(", ").slice(0, 80);
+  }
   const ev = fn.parameters[0].name.text;
   const isReturn = (s: any) => ts.isReturnStatement(s) && !s.expression;
   const isGate = (s: any) => ts.isIfStatement(s) && !s.elseStatement && isReturn(s.thenStatement)
@@ -574,15 +583,43 @@ function onlyTested(n: any): boolean {
 /** Whether the binding name `b` (an identifier or a destructuring pattern) binds `name`. */
 const bindsName = (b: any, name: string): boolean => !!b && (ts.isIdentifier(b) ? b.text === name
   : (ts.isObjectBindingPattern(b) || ts.isArrayBindingPattern(b)) && b.elements.some((e: any) => !ts.isOmittedExpression(e) && bindsName(e.name, name)));
+/** Whether `n` is a scope a `var` is hoisted to: a function, a class static block, a namespace body or the file. */
+const isVarScope = (n: any): boolean => ts.isFunctionLike(n) || ts.isClassStaticBlockDeclaration(n) || ts.isModuleDeclaration(n) || ts.isSourceFile(n);
+/** A declaration of `name` that is hoisted to the var scope `scope` from anywhere inside it, not inside a nested var scope:
+ *  a `var` in any block or loop head (it binds the name for the whole function, whatever block it sits in), or a function
+ *  declared inside a block (a script hoists it to the function too, as a var). Null when there is none. */
+function hoistedDecl(scope: any, name: string): any {
+  let hit: any = null;
+  const visit = (n: any): void => {
+    if (hit) return;
+    if (ts.isFunctionDeclaration(n) && n.name && n.name.text === name && !(n.parent === scope || n.parent === scope.body)) { hit = n; return; }
+    if (n !== scope && isVarScope(n)) return;   // a nested function's vars are its own
+    if (ts.isVariableDeclarationList(n) && (n.flags & ts.NodeFlags.BlockScoped) === 0) {
+      const d = n.declarations.find((x: any) => bindsName(x.name, name));
+      if (d) { hit = d; return; }
+    }
+    ts.forEachChild(n, visit);
+  };
+  ts.forEachChild(scope, visit);
+  return hit;
+}
 /** The declaration the identifier `id` refers to, found by walking out through the scopes around it, or null. A
- *  destructured declaration is found too, and resolves to no string below. */
+ *  destructured declaration is found too, and resolves to no string below. A `var` binds its whole function, so on the way
+ *  out through a function (or the file) a `var` of the name anywhere in it is the binding, ahead of the function's
+ *  parameters, which such a var redeclares. A `with` statement between the identifier and its declaration can answer the
+ *  name from its object instead, so an identifier inside one resolves to nothing. */
 function declOf(id: any): any {
   const name = id.text;
   const binds = (d: any) => !!d && bindsName(d.name, name);
-  for (let s = id.parent; s; s = s.parent) {
+  for (let s = id.parent, from = id; s; from = s, s = s.parent) {
+    if (ts.isWithStatement(s) && s.statement === from) return null;
     if ((ts.isForOfStatement(s) || ts.isForInStatement(s) || ts.isForStatement(s)) && s.initializer && ts.isVariableDeclarationList(s.initializer)) {
       const d = s.initializer.declarations.find(binds);
       if (d) return d;
+    }
+    if (isVarScope(s)) {
+      const h = hoistedDecl(s, name);
+      if (h) return h;
     }
     if (ts.isFunctionLike(s)) {
       const p = (s.parameters || []).find(binds);
@@ -607,7 +644,15 @@ function declOf(id: any): any {
 }
 const isConstDecl = (d: any): boolean => ts.isVariableDeclaration(d) && ts.isVariableDeclarationList(d.parent) && (d.parent.flags & ts.NodeFlags.Const) !== 0;
 const isExported = (st: any): boolean => !!st && !!st.modifiers && st.modifiers.some((m: any) => m.kind === ts.SyntaxKind.ExportKeyword);
-/** Whether anything inside `scope` writes the name `name`: an assignment whose target mentions it, or a ++ or --. */
+/** Whether the identifier `name` appears anywhere inside `n`. */
+function mentionsName(n: any, name: string): boolean {
+  let hit = false;
+  const visit = (c: any): void => { if (hit) return; if (ts.isIdentifier(c) && c.text === name) hit = true; else ts.forEachChild(c, visit); };
+  visit(n);
+  return hit;
+}
+/** Whether anything inside `scope` writes the name `name`: an assignment whose target mentions it, a ++ or --, or a
+ *  for...in or for...of that assigns it on each pass. */
 function writesName(scope: any, name: string): boolean {
   const mentions = (n: any): boolean => { let hit = ts.isIdentifier(n) && n.text === name; if (!hit) ts.forEachChild(n, (c: any) => { if (!hit && mentions(c)) hit = true; }); return hit; };
   let hit = false;
@@ -615,6 +660,7 @@ function writesName(scope: any, name: string): boolean {
     if (hit) return;
     if (ts.isBinaryExpression(n) && n.operatorToken.kind >= ts.SyntaxKind.FirstAssignment && n.operatorToken.kind <= ts.SyntaxKind.LastAssignment && mentions(n.left)) hit = true;
     if ((ts.isPrefixUnaryExpression(n) || ts.isPostfixUnaryExpression(n)) && (n.operator === ts.SyntaxKind.PlusPlusToken || n.operator === ts.SyntaxKind.MinusMinusToken) && mentions(n.operand)) hit = true;
+    if ((ts.isForInStatement(n) || ts.isForOfStatement(n)) && !ts.isVariableDeclarationList(n.initializer) && mentions(n.initializer)) hit = true;
     ts.forEachChild(n, visit);
   };
   visit(scope);
@@ -672,6 +718,9 @@ function eventTypes(e: any, sf: any, file: string, depth = 0): string[] | null {
   if (ts.isParameter(d) && ts.isIdentifier(d.name)) {
     const fn = d.parent, call = outer(fn).parent;
     if (fn.parameters[0] !== d || writesName(fn, d.name.text)) return null;
+    // a function's arguments object aliases its parameters in a sloppy-mode script (arguments[0] = ... rewrites the first),
+    // so a callback that mentions it anywhere is not read; an arrow function has no arguments object of its own
+    if (!ts.isArrowFunction(fn) && mentionsName(fn, "arguments")) return null;
     if (!call || !ts.isCallExpression(call) || call.arguments[0] !== outer(fn)) return null;
     const callee = unwrap(call.expression);
     return ts.isPropertyAccessExpression(callee) && callee.name.text === "forEach" ? listOf(callee.expression, sf) : null;
@@ -765,8 +814,24 @@ test("the addEventListener census reads what it claims: every way around the lit
     "[\"click\"].forEach(function (k) { k = \"message\"; window.addEventListener(k, f); });",
     "[\"click\"].forEach(function (a, k) { window.addEventListener(k, f); });",
     "import { NOT_EXPORTED_HERE } from \"./keybindings\"; window.addEventListener(NOT_EXPORTED_HERE, f);",
+    // a var anywhere in the enclosing function binds the name for the whole function, over an outer const
+    "const EV7 = \"click\"; function g7(x: boolean) { if (x) { var EV7 = \"message\"; } window.addEventListener(EV7, f); } g7(true);",
+    "const T = \"click\"; function g() { for (var T of [\"message\"]) { /* */ } window.addEventListener(T, f); }",
+    "const T = \"click\"; function g() { if (f) { function T() { /* */ } } window.addEventListener(T, f); }",
+    // a forEach callback's parameter rewritten through its arguments object, a for...in, or a redeclaring var
+    "[\"click\"].forEach(function (k) { arguments[0] = \"message\"; window.addEventListener(k, f); });",
+    "[\"click\"].forEach(function (k) { var a = arguments; a[0] = \"message\"; window.addEventListener(k, f); });",
+    "[\"click\"].forEach(function (k) { for (k in { message: 1 }) window.addEventListener(k, f); });",
+    "[\"click\"].forEach(function (k) { if (f) { var k = \"message\"; } window.addEventListener(k, f); });",
   ];
   for (const src of refused) assert.ok(loose(src).length >= 1, "refused: " + src);
+  // a with statement answers a name from its object (a script's, so read as one)
+  const looseJs = (src: string) => looseAddTokens("webview/probe.js", src).loose.map((l) => l.why);
+  for (const src of ["const T = 'click'; with ({ T: 'message' }) window.addEventListener(T, f);",
+                     "['click'].forEach(function (k) { with ({ k: 'message' }) { window.addEventListener(k, f); } });"]) {
+    assert.ok(looseJs(src).length >= 1, "refused: " + src);
+  }
+  assert.deepEqual(looseJs("const T = 'click'; with (o) { g(); } window.addEventListener(T, f);"), [], "a with statement elsewhere changes nothing");
   const accepted = [
     "window.addEventListener(\"message\", f); el.addEventListener('click', f); window[\"addEventListener\"](`resize`, f);",
     "x.addEventListener?.(\"load\", f);",
@@ -780,8 +845,217 @@ test("the addEventListener census reads what it claims: every way around the lit
     "const ok = !!(x && x.addEventListener); const has = \"addEventListener\" in x;",
     "const o = { addEventListener(t: string, g: unknown) { return [t, g]; } }; type T = { addEventListener(type: string): void };",
     "const s = \"call addEventListener here\"; // addEventListener in a comment",
+    // a var in a nested function is that function's own; an arrow callback has no arguments object of its own
+    "const T = \"click\"; function g() { function h() { var T = \"message\"; return T; } window.addEventListener(T, f); return h; }",
+    "function g() { [\"click\"].forEach((k) => { use(arguments); window.addEventListener(k, f); }); }",
+    "const T = \"click\"; function g() { { const T = \"keydown\"; window.addEventListener(T, f); } }",
   ];
   for (const src of accepted) assert.deepEqual(loose(src), [], "accepted: " + src);
+});
+
+// ── the census: no other road to a window listener ──
+//
+// The censuses above read what the source spells: an addEventListener call, an onmessage assignment, the names they
+// reach. Three more roads reach a window listener without spelling either, and this census refuses each in a ui/ source
+// file (tests excluded), read by the TypeScript parser:
+//   - a member of the window reached by a name computed at run time (window["add" + "EventListener"](...), a template, a
+//     variable key), whether called, assigned or read, on window, self or globalThis, a local bound to one of them, or
+//     `this` where it is the global object (a plain function's or the file's own `this`, outside any class or method);
+//     and a reflective write onto the window whose key or keys are computed (Reflect.set, Reflect.defineProperty,
+//     Object.defineProperty or __defineSetter__ with a key that is not a string literal; Object.assign or
+//     Object.defineProperties from an object literal with a computed key or a spread; a new prototype for the window);
+//   - an onmessage handler set any way but a plain assignment the census above reads: the name onmessage may be an
+//     assignment's target (x.onmessage = f; on the window that is a census site), a member of a type, or a read that is
+//     only tested, and nothing else (Object.assign(window, { onmessage: f }), Reflect.set(window, "onmessage", f),
+//     window.onmessage ??= f are refused);
+//   - code run from a string: eval, the Function constructor (by name, or reached through a function's .constructor),
+//     and setTimeout or setInterval handed a string.
+// ui/ has none of these today, so the rules cost nothing. What they cannot see, disclosed: an object built elsewhere with
+// a computed key and copied onto the window (Object.assign(window, make()) is read as its call only); a key computed in
+// another module and passed to a reflective write through a helper; and code handed to the DOM as markup or a URL (a
+// script element, an inline handler attribute, a javascript: URL), which is no JavaScript the parser reads.
+
+const WINDOW_GLOBALS = new Set(["window", "self", "globalThis"]);
+/** Whether `n` is the window: window, self or globalThis unshadowed, one of them reached through another
+ *  (window.self), a local initialised to one of them, or `this` where it is the global object. */
+function windowRef(n: any, depth = 0): boolean {
+  n = unwrap(n);
+  if (depth > 4) return false;
+  if (n.kind === ts.SyntaxKind.ThisKeyword) {
+    for (let s = n.parent; s; s = s.parent) {
+      if (ts.isArrowFunction(s)) continue;
+      if (ts.isClassLike(s) || ts.isMethodDeclaration(s) || ts.isConstructorDeclaration(s) || ts.isGetAccessor(s) || ts.isSetAccessor(s)
+          || ts.isClassStaticBlockDeclaration(s) || ts.isPropertyDeclaration(s)) return false;
+      if (ts.isFunctionDeclaration(s) || ts.isFunctionExpression(s)) return !(ts.isPropertyAssignment(outer(s).parent) || ts.isObjectLiteralExpression(outer(s).parent));
+      if (ts.isSourceFile(s)) return true;
+    }
+    return false;
+  }
+  if (ts.isPropertyAccessExpression(n)) return WINDOW_GLOBALS.has(n.name.text) && windowRef(n.expression, depth + 1);
+  if (!ts.isIdentifier(n)) return false;
+  const d = declOf(n);
+  if (!d) return WINDOW_GLOBALS.has(n.text);
+  return ts.isVariableDeclaration(d) && ts.isIdentifier(d.name) && !!d.initializer && windowRef(d.initializer, depth + 1);
+}
+const isLiteralKey = (k: any): boolean => !!k && (ts.isStringLiteralLike(unwrap(k)) || ts.isNumericLiteral(unwrap(k)));
+const REFLECT_KEYED = new Set(["Reflect.set", "Reflect.defineProperty", "Object.defineProperty"]);
+const REFLECT_SPREAD = new Set(["Object.assign", "Object.defineProperties"]);
+const REFLECT_PROTO = new Set(["Object.setPrototypeOf", "Reflect.setPrototypeOf"]);
+/** The dotted name of a callee (Reflect.set, setTimeout, window.setTimeout), or "". */
+const calleeName = (c: any): string => {
+  c = unwrap(c);
+  if (ts.isIdentifier(c)) return c.text;
+  if (ts.isPropertyAccessExpression(c)) { const r = calleeName(c.expression); return r ? r + "." + c.name.text : ""; }
+  return "";
+};
+/** Every road in `src` the comment above lists, with where it is and why, and how many onmessage names it read. */
+function looseRoads(file: string, src: string): { onmessage: number; loose: LooseAdd[] } {
+  const sf = ts.createSourceFile(file, src, ts.ScriptTarget.Latest, true, file.endsWith(".ts") ? ts.ScriptKind.TS : ts.ScriptKind.JS);
+  const loose: LooseAdd[] = [];
+  let onmessage = 0;
+  const refuse = (n: any, why: string): void => {
+    loose.push({ file, line: sf.getLineAndCharacterOfPosition(n.getStart(sf)).line + 1, why,
+                 text: src.slice(Math.max(0, n.getStart(sf) - 30), Math.min(src.length, n.getEnd() + 40)).replace(/\s+/g, " ") });
+  };
+  const inType = (n: any): boolean => { for (let s = n.parent; s; s = s.parent) { if (ts.isTypeNode(s) || ts.isHeritageClause(s) && ts.isInterfaceDeclaration(s.parent)) return true; if (ts.isStatement(s) || ts.isExpression(s) && !ts.isIdentifier(s)) return false; } return false; };
+  const onmessageToken = (tok: any): void => {
+    const p = tok.parent;
+    if ((ts.isPropertySignature(p) || ts.isMethodSignature(p)) && p.name === tok) return;   // a member of a type
+    if (ts.isStringLiteralLike(tok) && ts.isBinaryExpression(p) && p.operatorToken.kind === ts.SyntaxKind.InKeyword && p.left === tok) return;
+    let acc: any = null;
+    if (ts.isPropertyAccessExpression(p) && p.name === tok) acc = p;
+    else if (ts.isElementAccessExpression(p) && p.argumentExpression === tok) acc = p;
+    else if (ts.isIdentifier(tok) && !ts.isPropertyAccessExpression(p)) acc = tok;   // the bare global
+    if (acc) {
+      const m = outer(acc), q = m.parent;
+      if (ts.isBinaryExpression(q) && q.operatorToken.kind === ts.SyntaxKind.EqualsToken && q.left === m) return;   // x.onmessage = f
+      if (onlyTested(acc)) return;
+    }
+    refuse(tok, "an onmessage handler set some way other than an assignment the census reads");
+  };
+  const visit = (n: any): void => {
+    if ((ts.isIdentifier(n) || ts.isStringLiteralLike(n)) && n.text === "onmessage") { onmessage++; onmessageToken(n); }
+    if (ts.isElementAccessExpression(n) && !isLiteralKey(n.argumentExpression) && windowRef(n.expression)) {
+      refuse(n, "a member of the window reached by a computed name, which the censuses cannot read");
+    }
+    if (ts.isIdentifier(n) && n.text === "eval" && !inType(n)) refuse(n, "eval, which runs code from a string");
+    if (ts.isStringLiteralLike(n) && (n.text === "eval" || n.text === "Function") && ts.isElementAccessExpression(n.parent) && n.parent.argumentExpression === n) {
+      refuse(n, "eval or the Function constructor by a computed member, which runs code from a string");
+    }
+    if (ts.isIdentifier(n) && n.text === "Function" && !inType(n)) refuse(n, "the Function constructor, which runs code from a string");
+    if ((ts.isIdentifier(n) || ts.isStringLiteralLike(n)) && n.text === "constructor") {
+      const acc = ts.isPropertyAccessExpression(n.parent) && n.parent.name === n ? n.parent
+        : ts.isElementAccessExpression(n.parent) && n.parent.argumentExpression === n ? n.parent : null;
+      if (acc) {
+        const m = outer(acc), q = m.parent;
+        const readsName = ts.isPropertyAccessExpression(q) && q.expression === m && q.name.text === "name";
+        if (!readsName && !onlyTested(acc)) refuse(n, "a function's constructor reached, which is the Function constructor and runs code from a string");
+      }
+    }
+    if (ts.isCallExpression(n) || ts.isNewExpression(n)) {
+      const name = calleeName(n.expression), args = n.arguments || [];
+      const base = name.replace(/^(window|self|globalThis)\./, "");
+      if ((base === "setTimeout" || base === "setInterval") && args[0]) {
+        const a = unwrap(args[0]);
+        const stringy = (x: any): boolean => ts.isStringLiteralLike(x) || ts.isTemplateExpression(x) || ts.isBinaryExpression(x) && x.operatorToken.kind === ts.SyntaxKind.PlusToken;
+        const strings = stringy(a) || ts.isIdentifier(a) && (() => { const d = declOf(a); return !!d && ts.isVariableDeclaration(d) && !!d.initializer && stringy(unwrap(d.initializer)); })();
+        if (strings) refuse(n, base + " handed a string, which it runs as code");
+      }
+      if (args[0] && windowRef(args[0])) {
+        if (REFLECT_KEYED.has(name) && !isLiteralKey(args[1])) refuse(n, name + " onto the window with a computed key, which the censuses cannot read");
+        if (REFLECT_SPREAD.has(name)) {
+          for (const a of args.slice(1)) {
+            const o = unwrap(a);
+            if (ts.isObjectLiteralExpression(o) && o.properties.some((pr: any) => ts.isSpreadAssignment(pr) || pr.name && ts.isComputedPropertyName(pr.name) && !isLiteralKey(pr.name.expression))) {
+              refuse(n, name + " onto the window from an object with a computed key or a spread, which the censuses cannot read");
+            }
+          }
+        }
+        if (REFLECT_PROTO.has(name)) refuse(n, name + " on the window, which replaces what its methods are");
+      }
+      const c = unwrap(n.expression);
+      if (ts.isPropertyAccessExpression(c) && (c.name.text === "__defineSetter__" || c.name.text === "__defineGetter__") && windowRef(c.expression) && !isLiteralKey(args[0])) {
+        refuse(n, c.name.text + " on the window with a computed key, which the censuses cannot read");
+      }
+    }
+    if (ts.isBinaryExpression(n) && n.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
+      const l = unwrap(n.left);
+      if (ts.isPropertyAccessExpression(l) && l.name.text === "__proto__" && windowRef(l.expression)) refuse(n, "a new prototype for the window, which replaces what its methods are");
+    }
+    ts.forEachChild(n, visit);
+  };
+  visit(sf);
+  return { onmessage, loose };
+}
+
+test("census: no ui/ source reaches a window listener by a computed name, sets an onmessage handler other than by an assignment the census reads, or runs code from a string", () => {
+  const bad: string[] = [];
+  const readIn = new Map<string, number>();
+  for (const f of uiSources()) {
+    const { onmessage, loose } = looseRoads(f, fs.readFileSync(path.join(UI, f), "utf8"));
+    readIn.set(f, onmessage);
+    for (const l of loose) bad.push(l.file + ":" + l.line + ": " + l.why + ": " + l.text);
+  }
+  assert.ok((readIn.get("webview/federation.ts") || 0) >= 2, "the census read federation.ts, whose sockets' onmessage handlers are assignments it accepts");
+  assert.deepEqual(bad, [], "a road to a window listener the censuses cannot read: spell the registration so they can\n" + bad.join("\n"));
+});
+
+test("the road census reads what it claims: every road around the spelled registration is refused, and a socket's handler, a literal member and code that is no road are accepted", () => {
+  const roads = (src: string, file = "webview/probe.ts") => looseRoads(file, src).loose.map((l) => l.why);
+  const refused: Array<[string, string?]> = [
+    ["window[\"add\" + \"EventListener\"](\"message\", f);"],
+    ["window[`add${\"Event\"}Listener`](\"message\", f);"],
+    ["const k = pick(); (window as any)[k](\"message\", f);"],
+    ["self[name](\"message\", f);"],
+    ["const w = window as any; w[\"on\" + \"message\"] = f;"],
+    ["globalThis.window[k] = f;"],
+    ["(function () { this[k](\"message\", f); })();", "webview/probe.js"],
+    ["this[\"on\" + \"message\"] = f;", "webview/probe.js"],
+    ["Object.assign(window, { onmessage: f });"],
+    ["Reflect.set(window, \"onmessage\", f);"],
+    ["Object.defineProperty(window, \"onmessage\", { value: f });"],
+    ["window.onmessage ??= f;"],
+    ["window.onmessage ||= f;"],
+    ["[window.onmessage] = [f];"],
+    ["const h = { onmessage: f }; Object.assign(window, h);"],
+    ["Reflect.set(window, key, f);"],
+    ["Reflect.defineProperty(self, \"on\" + \"message\", { value: f });"],
+    ["Object.defineProperty(window, k, { value: f });"],
+    ["Object.assign(window, { [k]: f });"],
+    ["Object.defineProperties(window, { ...defs });"],
+    ["Object.setPrototypeOf(window, proto);"],
+    ["(window as any).__proto__ = proto;"],
+    ["(window as any).__defineSetter__(k, f);"],
+    ["eval(\"window.onmessage = f\");"],
+    ["(0, eval)(code);"],
+    ["window.eval(code);"],
+    ["const run = eval; run(code);"],
+    ["new Function(\"e\", code);"],
+    ["Function(code)();"],
+    ["window[\"Function\"](code)();"],
+    ["(function () { /* */ }).constructor(code)();"],
+    ["const F = (async () => 0).constructor; new F(code);"],
+    ["setTimeout(\"window.onmessage = f\", 0);"],
+    ["window.setInterval(`go(${x})`, 10);"],
+    ["setTimeout(\"go(\" + x + \")\", 0);"],
+    ["const code = \"go()\"; setTimeout(code, 0);"],
+  ];
+  for (const [src, file] of refused) assert.ok(roads(src, file).length >= 1, "refused: " + src);
+  const accepted: Array<[string, string?]> = [
+    ["ws.onmessage = (ev: MessageEvent) => { go(ev.data); }; dead.onopen = dead.onmessage = dead.onclose = null;"],
+    ["window.onmessage = f; self[\"onmessage\"] = g; onmessage = h;"],
+    ["if (port.onmessage) go(); const has = \"onmessage\" in window; type T = { onmessage: ((e: unknown) => void) | null };"],
+    ["window[\"addEventListener\"](\"resize\", f); const x = frames[i]; const y = list[k]; w[k] = 1;"],
+    ["function f(frames: any[], k: number) { return frames[k]; } const window2 = { a: 1 }; window2[k] = 1;"],
+    ["class C { m() { return this[k]; } } const o = { m() { return this[k]; }, n: function () { return this[k]; } };"],
+    ["Object.assign(window, bridgeFunctions(post)); Object.assign(window, { a: 1, \"b\": 2 });"],
+    ["Object.defineProperty(window, \"__rompX\", { value: 1 }); Reflect.set(obj, k, v); Object.assign(target, { [k]: v });"],
+    ["const tag = (o.constructor && o.constructor.name) || \"object\";"],
+    ["setTimeout(() => go(), 0); setTimeout(tick, 10); window.setInterval(function () { go(); }, 5); const t = make(); setTimeout(t, 0);"],
+    ["function g(f: Function) { return f; } interface I extends Function { x: 1 } // eval in a comment, and \"eval\" in a string"],
+    ["const s = \"new Function\"; const evaluate = 1; const r = evaluate + 1;"],
+  ];
+  for (const [src, file] of accepted) assert.deepEqual(roads(src, file), [], "accepted: " + src);
 });
 
 test("census: every gated site has an executed leg in this file (installed, or lifted by its marker)", () => {
@@ -808,4 +1082,11 @@ test("the census rule reads what it claims: a listener that acts before the chec
   assert.match(String(probe('(e) => { if (windowSender(e) !== "foreign") go(e.data); }')), /runs before|no `if/);
   assert.match(String(probe('(e) => { if (windowSender(other) === "foreign") return; go(e.data); }')), /runs before|no `if/, "the check reads this listener's event");
   assert.match(String(probe("(e) => go(e.data)")), /not a function with a body/);
+  // a parameter's default runs before the body, the check included
+  assert.match(String(probe('(e, early = go(e.data)) => { if (windowSender(e) === "foreign") return; }')), /more than its one event parameter/);
+  assert.match(String(probe('(e: MessageEvent, _x = (e.data && e.data.on ? (seen = e.data.on) : 0)) => { if (windowSender(e) === "foreign") return; }')), /more than its one event parameter/);
+  assert.match(String(probe('(e = go()) => { if (windowSender(e) === "foreign") return; }')), /gives it a default/);
+  assert.match(String(probe('function (e, f) { if (windowSender(e) === "foreign") return; go(f); }')), /more than its one event parameter/);
+  assert.match(String(probe('(...e) => { if (windowSender(e[0]) === "foreign") return; }')), /names no event parameter|more than/);
+  assert.equal(probe('(e: MessageEvent) => { if (windowSender(e) === "foreign") return; go(e.data); }'), null, "a type on the one parameter is no default");
 });
