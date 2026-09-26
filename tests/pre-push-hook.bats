@@ -1085,7 +1085,7 @@ two_files_credential_second() {   # sha is the commit
     commit_file file.txt "nothing to see" "clean"
     run_hook
     [ "$status" -eq 0 ]
-    [[ "$output" == *"scanned ~17 bytes"* ]]        # gitleaks' own log line, shown: the ~ line and the one added line
+    [[ "$output" == *"scanned ~15 bytes"* ]]        # gitleaks' own log line, shown: the one added line (round 12d: no ~ line, the piece's bytes no type gitleaks skips)
     [[ "$output" != *"romp pre-push"* ]]
 }
 
@@ -1107,7 +1107,7 @@ two_files_credential_second() {   # sha is the commit
     [ "$(git -C "$REPO" rev-list --count HEAD)" -eq 7 ]
     run_hook
     [ "$status" -eq 0 ]
-    [[ "$output" == *"scanned ~23 bytes"* ]]                     # two pieces: base.txt's line and blob.bin's, each behind its ~ line; the rename adds none
+    [[ "$output" == *"scanned ~19 bytes"* ]]                     # two pieces: base.txt's line and blob.bin's (round 12d: no ~ line ahead of either); the rename adds none
     [[ "$output" != *"romp pre-push"* ]]
 }
 
@@ -1142,7 +1142,7 @@ two_files_credential_second() {   # sha is the commit
     [[ "$output" == *"missing"* ]]
     run_hook
     [ "$status" -eq 0 ]
-    [[ "$output" == *"scanned ~73 bytes"* ]]                     # base.txt's piece and the gitlink's Subproject line, each behind its ~ line
+    [[ "$output" == *"scanned ~69 bytes"* ]]                     # base.txt's piece and the gitlink's Subproject line (round 12d: no ~ line ahead of either)
     [[ "$output" != *"romp pre-push"* ]]
 }
 
@@ -1166,7 +1166,7 @@ two_files_credential_second() {   # sha is the commit
     scanner_wrapper 'for f in *; do head -c 5 "$f" > "../cut.$f"; mv "../cut.$f" "$f"; done'
     run_hook
     [ "$status" -eq 1 ]
-    [[ "$output" == *"romp pre-push: the CREDENTIAL scan read 10 of the 57 bytes of added lines it was fed; the scan is incomplete, so the push is refused"* ]]
+    [[ "$output" == *"romp pre-push: the CREDENTIAL scan read 10 of the 53 bytes of added lines it was fed; the scan is incomplete, so the push is refused"* ]]
     [[ "$output" == *"gitleaks could not scan"* ]]
     [[ "$output" != *"gitleaks found a credential"* ]]
 }
@@ -1178,7 +1178,7 @@ two_files_credential_second() {   # sha is the commit
     run_hook
     [ "$status" -eq 0 ]
     [[ "$output" == *"WRN a warning of its own"* ]]
-    [[ "$output" == *"scanned ~17 bytes"* ]]
+    [[ "$output" == *"scanned ~15 bytes"* ]]
     [[ "$output" != *"romp pre-push"* ]]
 }
 
@@ -1209,7 +1209,7 @@ two_files_credential_second() {   # sha is the commit
     git -C "$REPO" config color.diff always
     run_hook
     [ "$status" -eq 0 ]
-    [[ "$output" == *"scanned ~17 bytes"* ]]
+    [[ "$output" == *"scanned ~15 bytes"* ]]
     [[ "$output" != *"romp pre-push"* ]]
 }
 
@@ -1323,7 +1323,7 @@ hiding_textconv() {   # a diff driver whose textconv prints nothing: git's patch
     commit_file notes.txt "nothing to see" "clean"
     run_hook
     [ "$status" -eq 0 ]
-    [[ "$output" == *"scanned ~35 bytes"* ]]                       # .gitattributes' piece and notes.txt's, each behind its ~ line
+    [[ "$output" == *"scanned ~31 bytes"* ]]                       # .gitattributes' piece and notes.txt's (round 12d: no ~ line ahead of either)
     [[ "$output" != *"romp pre-push"* ]]
 }
 
@@ -1345,7 +1345,7 @@ hiding_textconv() {   # a diff driver whose textconv prints nothing: git's patch
     git -C "$REPO" config format.pretty oneline
     run_hook
     [ "$status" -eq 0 ]
-    [[ "$output" == *"scanned ~17 bytes"* ]]
+    [[ "$output" == *"scanned ~15 bytes"* ]]
     [[ "$output" != *"romp pre-push"* ]]
 }
 
@@ -1367,7 +1367,7 @@ hiding_textconv() {   # a diff driver whose textconv prints nothing: git's patch
     git -C "$REPO" config log.date relative
     run_hook
     [ "$status" -eq 0 ]
-    [[ "$output" == *"scanned ~17 bytes"* ]]
+    [[ "$output" == *"scanned ~15 bytes"* ]]
     [[ "$output" != *"romp pre-push"* ]]
 }
 
@@ -1409,7 +1409,7 @@ signed_commit() {   # <message>: the index as a commit over HEAD, with an unveri
     git -C "$REPO" config log.showSignature true
     run_hook
     [ "$status" -eq 0 ]
-    [[ "$output" == *"scanned ~29 bytes"* ]]
+    [[ "$output" == *"scanned ~25 bytes"* ]]
     [[ "$output" != *"romp pre-push"* ]]
 }
 
@@ -1493,7 +1493,7 @@ substitute_for() {   # <commit>: a clean commit over the same parent, with a cle
     git -C "$REPO" config log.showRoot false
     run_hook
     [ "$status" -eq 0 ]
-    [[ "$output" == *"scanned ~29 bytes"* ]]            # two pieces: the root's line (12 bytes with its ~ line) and the tip's (17); a feed without --root writes the tip's alone
+    [[ "$output" == *"scanned ~25 bytes"* ]]            # two pieces: the root's line (10 bytes; round 12d: no ~ line) and the tip's (15); a feed without --root writes the tip's alone
     [[ "$output" != *"romp pre-push"* ]]
 }
 
@@ -1551,11 +1551,11 @@ git_recording_feed_pairs_and_scanner_calls() {   # <pairs file> <calls file>
     real_gitleaks
     commit_file k.py "k = \"$(probe_token)\"" "a credential"
     sha="$(git -C "$REPO" rev-parse HEAD)"
-    printf '1:github-pat:2\n:github-pat:2\n' > "$REPO/.gitleaksignore"     # the fingerprints -v prints for piece 1, line 2 (untracked: not in the push)
+    printf '1:github-pat:1\n:github-pat:1\n' > "$REPO/.gitleaksignore"     # the fingerprints -v prints for piece 1, line 1 (round 12d: no ~ line ahead of it; untracked: not in the push)
     run_hook
     [ "$status" -eq 1 ]
     [[ "$output" == *"romp pre-push: commit ${sha:0:10} ADDS a credential (github-pat) in: k.py"* ]]
-    [[ "$output" == *"Fingerprint: 1:github-pat:2"* ]]                   # the entry names the finding exactly
+    [[ "$output" == *"Fingerprint: 1:github-pat:1"* ]]                   # the entry names the finding exactly
     [[ "$output" == *"gitleaks found a credential"* ]]
 }
 
@@ -1569,7 +1569,7 @@ git_recording_feed_pairs_and_scanner_calls() {   # <pairs file> <calls file>
     scanner_wrapper 'last=$(ls | sort -n | tail -1); chmod 000 "$last"'
     run_hook
     [ "$status" -eq 1 ]
-    [[ "$output" == *"romp pre-push: the CREDENTIAL scan read 8 of the 57 bytes of added lines it was fed; the scan is incomplete, so the push is refused"* ]]
+    [[ "$output" == *"romp pre-push: the CREDENTIAL scan read 6 of the 53 bytes of added lines it was fed; the scan is incomplete, so the push is refused"* ]]
     [[ "$output" != *"gitleaks found a credential"* ]]
 }
 
@@ -1588,7 +1588,7 @@ git_recording_feed_pairs_and_scanner_calls() {   # <pairs file> <calls file>
     scanner_wrapper 'rm -f -- "$(ls | sort -n | tail -1)"'
     run_hook
     [ "$status" -eq 1 ]
-    [[ "$output" == *"romp pre-push: the CREDENTIAL scan read 8 of the 57 bytes of added lines it was fed; the scan is incomplete, so the push is refused"* ]]
+    [[ "$output" == *"romp pre-push: the CREDENTIAL scan read 6 of the 53 bytes of added lines it was fed; the scan is incomplete, so the push is refused"* ]]
     [[ "$output" != *"log.showRoot"* ]]
     [[ "$output" != *"gitleaks found a credential"* ]]
 }
@@ -4319,7 +4319,7 @@ silent_content_grep() { git_refusing '[ "${1:-}" = grep ] && [ "${3:-}" = -i ]' 
 # successor, the feed's awk recording nothing (an awk silent on the program that
 # names the record file in its environment).
 
-@test "the feed's awk answering NOTHING (exit 0, no record written) is refused as unscanned naming the feed and the empty record: an empty record is not five counts (four until round 10a, which counts the binary notices the awk routes; round 9d: this slot held the hook's own commit count answering nothing, a read retired in round 9)" {
+@test "the feed's awk answering NOTHING (exit 0, no record written) is refused as unscanned naming the feed and the empty record: an empty record is not six counts (five until round 12d, which counts the notes of the merges' own last lines; four until round 10a, which counts the binary notices the awk routes; round 9d: this slot held the hook's own commit count answering nothing, a read retired in round 9)" {
     r9d_base
     commit_file k.py "k = \"$(probe_token)\"" "a credential"
     awk_silent_on_program 'ENVIRON["ROMP_RECORD_FILE"]'
@@ -4327,7 +4327,7 @@ silent_content_grep() { git_refusing '[ "${1:-}" = grep ] && [ "${3:-}" = -i ]' 
     [ "$output" = "status 0" ]                          # the shim as the feed meets it: nothing printed, exit 0
     push_main_through_hook_with_shim
     [ "$status" -ne 0 ]
-    [[ "$output" == *"romp pre-push: the CREDENTIAL FEED of the push could not be read (its awk exited 0 and recorded \"\", not five counts); the scan is incomplete, so the push is refused"* ]]
+    [[ "$output" == *"romp pre-push: the CREDENTIAL FEED of the push could not be read (its awk exited 0 and recorded \"\", not six counts); the scan is incomplete, so the push is refused"* ]]
     [[ "$output" == *"gitleaks could not scan"* ]]
     at_base
 }
@@ -8493,7 +8493,7 @@ r8b3_scanner_log_short() {   # <cut bytes>: a gitleaks on ROMP_GITLEAKS that run
     push_main_through_hook_with_shim
     fired_short byte-line '$3 == "scanned"'
     [ "$status" -ne 0 ]
-    [[ "$output" == *"romp pre-push: the CREDENTIAL scan read 4 of the 40 bytes of added lines it was fed; the scan is incomplete, so the push is refused"* ]]
+    [[ "$output" == *"romp pre-push: the CREDENTIAL scan read 3 of the 38 bytes of added lines it was fed; the scan is incomplete, so the push is refused"* ]]
     at_base
 }
 
@@ -9282,7 +9282,7 @@ r9d_witness_case() {   # <rule>: the witness committed and pushed for real: refu
     push_refs_through_hook_with_shim main v1
     [ "$status" -ne 0 ]
     [ "$(grep -c "romp pre-push: commit ${sha:0:10} ADDS a credential (github-pat) in: k.py" <<< "$output")" -eq 1 ]
-    [[ "$output" == *"scanned ~49 bytes"* ]]                          # one ref's piece: written once though fed twice
+    [[ "$output" == *"scanned ~47 bytes"* ]]                          # one ref's piece: written once though fed twice
     at_base
     run remote_holds_ref refs/tags/v1
     [ "$status" -ne 0 ]
@@ -9386,7 +9386,7 @@ r9d_witness_case() {   # <rule>: the witness committed and pushed for real: refu
     [ "$status" -eq 0 ]
     [[ "$output" != *"romp pre-push"* ]]
     [ "$(grep -c 'INF scanned ~' <<< "$output")" -eq 2 ]
-    [[ "$output" == *"scanned ~14 bytes"* ]]                          # the second run: ok.yaml's copy, its ~ line and its one line
+    [[ "$output" == *"scanned ~12 bytes"* ]]                          # the second run: ok.yaml's copy, its one line (round 12d: no ~ line)
     [ "$(git -C "$TEST_DIR/remote.git" rev-parse refs/heads/main)" = "$(git -C "$REPO" rev-parse HEAD)" ]
     # Round 9e (the round 9d audit's finding 9): pnpm-loc, U+212A (the Kelvin sign, which gitleaks' allowlist
     # case-folds to k) and .yaml, a name the hook's C-locale test does not fold, so the path-scoped run selects it.
@@ -9404,7 +9404,7 @@ r9d_witness_case() {   # <rule>: the witness committed and pushed for real: refu
     [ "$status" -eq 0 ]
     [[ "$output" != *"romp pre-push"* ]]
     under_true="$(grep -o 'INF scanned ~[0-9]* bytes' <<< "$output")"
-    [ "$under_true" = "$(printf 'INF scanned ~14 bytes\nINF scanned ~14 bytes')" ]   # the piece, then its copy
+    [ "$under_true" = "$(printf 'INF scanned ~12 bytes\nINF scanned ~12 bytes')" ]   # the piece, then its copy
     printf 'name: probe\n' > "$REPO/qf/$kelvin"
     git -C "$REPO" add -- "qf/$kelvin"
     git -C "$REPO" commit -qm "the same name, pushed under core.quotePath=false"
@@ -9437,7 +9437,7 @@ r9d_witness_case() {   # <rule>: the witness committed and pushed for real: refu
     sha="$(git -C "$REPO" rev-parse HEAD)"
     push_main_through_hook_with_shim
     [ "$status" -ne 0 ]
-    [[ "$output" == *"romp pre-push: the CREDENTIAL scan under the path-scoped rules read 3 of the 222 bytes of added lines it was fed; the scan is incomplete, so the push is refused"* ]]
+    [[ "$output" == *"romp pre-push: the CREDENTIAL scan under the path-scoped rules read 3 of the 220 bytes of added lines it was fed; the scan is incomplete, so the push is refused"* ]]
     # Since round 11b the probe run reads a second copy of the piece in a directory of its own, which the wrapper
     # leaves whole, so the password is named once, from that copy, beside the additive run's refusal (until then this
     # asserted that no credential was named: the cut copies were the only path-scoped read)
@@ -9762,7 +9762,7 @@ r10a_octopus_scans() {   # <parents>: r10a_octopus, pushed twice for real, once 
     size="$(git -C "$REPO" cat-file -s "$merge:lock.dat")"
     push_main_through_hook_with_shim
     r10a_passes
-    [[ "$output" == *"scanned ~$((9 + 9 + 2 + size)) bytes"* ]]              # each side's piece (~ and its line), and the whole result behind its ~ line
+    [[ "$output" == *"scanned ~$((7 + 7 + size)) bytes"* ]]              # each side's piece (its line) and the whole result (round 12d: no ~ line ahead of any)
 }
 
 @test "round 10a (A.2, must pass): clean merges of a zip path and of a pdf path, each resolved to a new version that opens with its signature and holds a NUL, pass: the whole read's pieces open with the ~ line, so gitleaks reads them and the byte figure agrees, and the remote holds each merge (read as one unpieced file, gitleaks skipped it and the byte figure refused the clean push: the round 9 rulings)" {
@@ -9807,7 +9807,7 @@ r10a_octopus_scans() {   # <parents>: r10a_octopus, pushed twice for real, once 
     [ "$(git -C "$REPO" diff-tree -p -c --text "$merge" | grep -c '^Binary files differ$')" -eq 2 ]
     push_main_through_hook_with_shim
     r10a_passes
-    [[ "$output" == *"scanned ~26 bytes"* ]]                                  # the two sides' pieces alone: each a ~ line and bin, 0x01, y and its side's word
+    [[ "$output" == *"scanned ~22 bytes"* ]]                                  # the two sides' pieces alone: each bin, 0x01, y and its side's word (round 12d: no ~ line)
 }
 
 @test "round 10a (A.3): a one-parent commit adding a file binary by a NUL is read as text (--text), and its credential refused naming the commit and the file (refused at eee3938a8 too: --text holds on a one-parent commit)" {
@@ -10246,9 +10246,9 @@ r10b_block_lines() {   # <bytes>: key block lines of exactly that many bytes, ne
     if [ "$n" -gt 65 ]; then a=$((n / 2)); head -c "$((a - 1))" /dev/zero | tr '\0' A; printf '\n'; n=$((n - a)); fi
     [ "$n" -eq 0 ] || { head -c "$((n - 1))" /dev/zero | tr '\0' A; printf '\n'; }
 }
-r10b_replay_push() {   # <bytes of the block before the piece boundary>: code lines and the key block's first lines filling a first piece to exactly CAP bytes with its ~ line (CAP and V from r10b_constants, the caller's), the rest of the block after it, so the block's next line starts the second piece, which replays the last V bytes; committed as keys.pem and pushed for real; sha is the commit
+r10b_replay_push() {   # <bytes of the block before the piece boundary>: code lines and the key block's first lines filling a first piece to exactly CAP bytes, no ~ line ahead of them since round 12d (CAP and V from r10b_constants, the caller's), the rest of the block after it, so the block's next line starts the second piece, which replays the last V bytes; committed as keys.pem and pushed for real; sha is the commit
     local before=$1 p i
-    p=$((CAP - 2 - before))                                          # the code lines' bytes: one line of 100 to 199, then lines of 100
+    p=$((CAP - before))                                              # the code lines' bytes: one line of 100 to 199, then lines of 100 (CAP - 2 - before until round 12d, for the ~ line)
     {
         head -c "$((100 + p % 100 - 1))" /dev/zero | tr '\0' x; printf '\n'
         for ((i = 1; i < p / 100; i++)); do printf 'x_%06d = compute(%06d) # %070d\n' "$i" "$i" 0; done
@@ -10256,7 +10256,7 @@ r10b_replay_push() {   # <bytes of the block before the piece boundary>: code li
         for i in 1 2 3; do printf '%064d\n' 0 | tr 0 A; done
         printf -- '-----END %s-----\n' "PRIVATE"" KEY"
     } > "$REPO/keys.pem"
-    [ "$(LC_ALL=C grep -abo -- '-----BEGIN' "$REPO/keys.pem" | cut -d: -f1)" -eq "$p" ]            # the block starts p bytes in: the ~ line, p bytes and before bytes of the block make CAP
+    [ "$(LC_ALL=C grep -abo -- '-----BEGIN' "$REPO/keys.pem" | cut -d: -f1)" -eq "$p" ]            # the block starts p bytes in: p bytes and before bytes of the block make CAP
     [ "$(head -c "$((p + before))" "$REPO/keys.pem" | tail -c 1 | od -An -c | tr -d ' ')" = '\n' ]   # the boundary falls between lines
     git -C "$REPO" add keys.pem
     git -C "$REPO" commit -qm "a key block across the cap"
@@ -10366,7 +10366,7 @@ r10b_long_witness() {   # <rule> <suffix>: the rule's witness under a long name 
     [ "$(git -C "$TEST_DIR/remote.git" rev-parse refs/heads/main)" = "$sha" ]
 }
 
-@test "round 10b (C, the CAP witness at gitleaks' 125,000-byte cut): a 125,101-byte file with no blank line, a token across its byte 125,000, is pieced at CAP (read from the hook) with the token whole in the second piece and refused naming it, the figure the file, two ~ lines and V replayed bytes, the remote at its base (red by publication for any CAP of 125,103 or more, where the file and its ~ line make one piece gitleaks cuts at byte 125,000: the CAP=130000 mutant)" {
+@test "round 10b (C, the CAP witness at gitleaks' 125,000-byte cut): a 125,101-byte file with no blank line, a token across its byte 125,000, is pieced at CAP (read from the hook) with the token whole in the second piece and refused naming it, the figure the file and V replayed bytes (two ~ lines too until round 12d, which writes one only where gitleaks would skip a piece by type), the remote at its base (red by publication for any CAP of 125,101 or more, where the file makes one piece gitleaks cuts at byte 125,000: the CAP=130000 mutant; 125,103 until round 12d)" {
     r9d_base
     r10b_constants
     {
@@ -10381,29 +10381,29 @@ r10b_long_witness() {   # <rule> <suffix>: the rule's witness under a long name 
     push_main_through_hook_with_shim
     [ "$status" -ne 0 ]
     [[ "$output" == *"romp pre-push: commit ${sha:0:10} ADDS a credential (github-pat) in: long.txt"* ]]
-    [[ "$output" == *"scanned ~$((125101 + 4 + V)) bytes"* ]]                    # two pieces, the second replaying V bytes
+    [[ "$output" == *"scanned ~$((125101 + V)) bytes"* ]]                    # two pieces, the second replaying V bytes
     [[ "$output" != *"the scan is incomplete"* ]]
     at_base
 }
 
-@test "round 10b (C, the blank-line witness for the band from 100,000 to 125,000): a PGP private key block whose blank line falls at byte 100,000 of a one-piece reading (a 100,035-byte file) is pieced at CAP (read from the hook) with the block whole in the second piece and refused naming it, the figure the file, two ~ lines and V replayed bytes, the remote at its base (red by publication for any CAP of 100,037 or more, where the file and its ~ line make one piece that gitleaks cuts at that blank line inside its 25,000-byte peek: the CAP=110000 and CAP=130000 mutants; the 36 values above 100,000 below that are the value pin's)" {
+@test "round 10b (C, the blank-line witness for the band from 100,000 to 125,000): a PGP private key block whose blank line falls at byte 100,000 of a one-piece reading (a 100,037-byte file; 100,035 bytes behind the ~ line until round 12d, which writes that line only where gitleaks would skip a piece by type) is pieced at CAP (read from the hook) with the block whole in the second piece and refused naming it, the figure the file and V replayed bytes, the remote at its base (red by publication for any CAP of 100,037 or more, where the file makes one piece that gitleaks cuts at that blank line inside its 25,000-byte peek: the CAP=110000 and CAP=130000 mutants; the 36 values above 100,000 below that are the value pin's)" {
     r9d_base
     r10b_constants
     k="PGP ""PRIVATE"" KEY BLOCK"
     {
         awk 'BEGIN { for (i = 0; i < 998; i++) printf "x_%06d = compute(%06d) # %070d\n", i, i, 0 }'
-        printf -- '-----BEGIN %s-----\nVersion: probe\nComment: ' "$k"; head -c 135 /dev/zero | tr '\0' c; printf '\n\n'
+        printf -- '-----BEGIN %s-----\nVersion: probe\nComment: ' "$k"; head -c 137 /dev/zero | tr '\0' c; printf '\n\n'
         printf -- '-----END %s-----\n' "$k"
     } > "$REPO/keys.asc"
-    [ "$(wc -c < "$REPO/keys.asc")" -eq 100035 ]
-    [ "$(LC_ALL=C grep -ab -x '' "$REPO/keys.asc" | head -n 1 | cut -d: -f1)" -eq 99998 ]   # the blank line: byte 100,000 behind the ~ line
+    [ "$(wc -c < "$REPO/keys.asc")" -eq 100037 ]
+    [ "$(LC_ALL=C grep -ab -x '' "$REPO/keys.asc" | head -n 1 | cut -d: -f1)" -eq 100000 ]   # the blank line: byte 100,000 of the file, a one-piece reading since round 12d (no ~ line ahead of it)
     git -C "$REPO" add keys.asc
     git -C "$REPO" commit -qm "a key block whose blank line falls past byte 100,000"
     sha="$(git -C "$REPO" rev-parse HEAD)"
     push_main_through_hook_with_shim
     [ "$status" -ne 0 ]
     [[ "$output" == *"romp pre-push: commit ${sha:0:10} ADDS a credential (private-key) in: keys.asc"* ]]
-    [[ "$output" == *"scanned ~$((100035 + 4 + V)) bytes"* ]]
+    [[ "$output" == *"scanned ~$((100037 + V)) bytes"* ]]
     [[ "$output" != *"the scan is incomplete"* ]]
     at_base
 }
@@ -10516,7 +10516,7 @@ r10b_long_witness() {   # <rule> <suffix>: the rule's witness under a long name 
     git -C "$REPO" commit -qm "a long name past ASCII"
     push_main_through_hook_with_shim
     r10a_passes
-    [ "$(grep -o 'INF scanned ~[0-9]* bytes' <<< "$output")" = "$(printf 'INF scanned ~14 bytes\nINF scanned ~14 bytes')" ]
+    [ "$(grep -o 'INF scanned ~[0-9]* bytes' <<< "$output")" = "$(printf 'INF scanned ~12 bytes\nINF scanned ~12 bytes')" ]
     [[ "$output" != *"File name too long"* ]]
 }
 
@@ -10529,7 +10529,7 @@ r10b_long_witness() {   # <rule> <suffix>: the rule's witness under a long name 
     git -C "$REPO" commit -qm "a long name with quotes"
     push_main_through_hook_with_shim
     r10a_passes
-    [ "$(grep -o 'INF scanned ~[0-9]* bytes' <<< "$output")" = "$(printf 'INF scanned ~14 bytes\nINF scanned ~14 bytes')" ]
+    [ "$(grep -o 'INF scanned ~[0-9]* bytes' <<< "$output")" = "$(printf 'INF scanned ~12 bytes\nINF scanned ~12 bytes')" ]
     [[ "$output" != *"File name too long"* ]]
 }
 
@@ -10584,7 +10584,7 @@ r10b_long_witness() {   # <rule> <suffix>: the rule's witness under a long name 
     [ "$status" -eq 0 ]
     [[ "$output" != *"romp pre-push"* ]]
     [[ "$output" != *"Argument list too long"* ]]
-    [ "$(grep -o 'INF scanned ~[0-9]* bytes' <<< "$output")" = "$(printf 'INF scanned ~56000 bytes\nINF scanned ~56000 bytes')" ]   # 4,000 pieces of 14 bytes, then their copies
+    [ "$(grep -o 'INF scanned ~[0-9]* bytes' <<< "$output")" = "$(printf 'INF scanned ~48000 bytes\nINF scanned ~48000 bytes')" ]   # 4,000 pieces of 12 bytes (round 12d: no ~ line), then their copies
     [ "$(git -C "$TEST_DIR/remote.git" rev-parse refs/heads/main)" = "$(git -C "$REPO" rev-parse HEAD)" ]
     # Round 10b2 (the r10b audit's probe): the batch was sized by the scratch path's length in BYTES. In a UTF-8
     # locale bash's ${#scratch} counts characters, so round 10b's count made a batch under a TMPDIR named past ASCII
@@ -10616,7 +10616,7 @@ r10b_long_witness() {   # <rule> <suffix>: the rule's witness under a long name 
     [ "$status" -eq 0 ]
     [[ "$output" != *"romp pre-push"* ]]
     [[ "$output" != *"Argument list too long"* ]]
-    [ "$(grep -o 'INF scanned ~[0-9]* bytes' <<< "$output")" = "$(printf 'INF scanned ~56000 bytes\nINF scanned ~56000 bytes')" ]   # the second commit's 4,000 pieces, then their copies
+    [ "$(grep -o 'INF scanned ~[0-9]* bytes' <<< "$output")" = "$(printf 'INF scanned ~48000 bytes\nINF scanned ~48000 bytes')" ]   # the second commit's 4,000 pieces of 12 bytes (round 12d: no ~ line), then their copies
     [ "$(git -C "$TEST_DIR/remote.git" rev-parse refs/heads/main)" = "$(git -C "$REPO" rev-parse HEAD)" ]
 }
 
@@ -11377,7 +11377,7 @@ r11b_suffix_push() {   # <repo|none>: one clean file per selected suffix but .p1
     push_main_through_hook_with_shim
     [ "$status" -ne 0 ]
     [[ "$output" =~ "romp pre-push: the PROBE run of the path-scoped copies read "([0-9]+)" of the "([0-9]+)" bytes written for it (its probes and the second copies of the added lines); the scan is incomplete, so the push is refused" ]]
-    [ $((BASH_REMATCH[2] - BASH_REMATCH[1])) -eq $((size + 2 - 3)) ]             # the piece is its ~ line and the file; its copy kept three bytes
+    [ $((BASH_REMATCH[2] - BASH_REMATCH[1])) -eq $((size - 3)) ]             # the piece is the file (round 12d: no ~ line); its copy kept three bytes
     [[ "$output" != *"ADDS a credential"* ]]
     [ "$(grep -c 'INF scanned ~' <<< "$output")" -eq 3 ]                            # the two runs' logs, then the probe run's, shown because it failed
     at_base
@@ -11802,7 +11802,7 @@ r11c_yaml_files() {   # <directory> <count>: that many one-line .yaml files unde
     [ "$status" -eq 0 ]
     [[ "$output" != *"romp pre-push"* ]]
     [[ "$output" != *"Argument list too long"* ]]
-    [ "$(grep -o 'INF scanned ~[0-9]* bytes' <<< "$output")" = "$(printf 'INF scanned ~56000 bytes\nINF scanned ~56000 bytes')" ]   # 4,000 pieces of 14 bytes, then their copies
+    [ "$(grep -o 'INF scanned ~[0-9]* bytes' <<< "$output")" = "$(printf 'INF scanned ~48000 bytes\nINF scanned ~48000 bytes')" ]   # 4,000 pieces of 12 bytes (round 12d: no ~ line), then their copies
     [ "$(git -C "$TEST_DIR/remote.git" rev-parse refs/heads/main)" = "$(git -C "$REPO" rev-parse HEAD)" ]
 }
 
@@ -12860,4 +12860,708 @@ r12b3_canary_answer_edit() {   # <awk program over the answer>: an awk that, for
     [ "$(grep -cxF -- "romp pre-push: the PATH SKIPS in the trace log of the skip CANARY run of gitleaks $("$GL" version) answered no closing line of counts (awk exited 0), so whether it logs the skip line the scan of record reads is unknown; the scan is incomplete, so the push is refused" <<< "$output")" -eq 1 ]
     [[ "$output" != *"logged no skip line the hook reads"* ]]
     at_base
+}
+
+# ── round 12d: one hunk to a piece, the ~ line by a piece's leading bytes, and the newline mirror (romp-manager's ruling on decision 5, 2026-09-26 18:58Z, and the coordinator's decision 1) ──
+# Decision 5's measurement (agents/d5-measure-results.md in the fold's notes) showed a piece that joined a file's hunks
+# and began with the ~ line hiding a rule anchored at the start or the end of the text from the line gitleaks' git mode,
+# main's hook, matches it on: the round 11 rulings' M1, M2 and M3 (nuget-config-password redefined), B's ^ and \A
+# redefinitions, and a repository rule ^zzkey_ on a hunk's first line published at 0b6c76916 where main refused them.
+# The ruling adopts one hunk to a piece, the ~ line written only where gitleaks would skip the piece by its type
+# without it, decided on the piece's LEADING BYTES by a table from h2non/filetype v1.1.3's matchers (the checker found
+# the prototype's first-line test missing Mach-O's BE BA FE CA and Dex, whose signatures reach past the first line),
+# and probe refusal lines printed once per path and rule. Decision 1 adds the newline mirror: a piece ends as its
+# hunk's added text ends, so the default sidekiq-sensitive-url, which ends in $ with no \s, matches a URL on the last
+# line of a file with no final newline; and item 3 of the ruling extends it to a merge's own last line, after which a
+# combined diff prints no notice, through one batch read of the merges' result blobs per push (the RESULT BLOBS read,
+# its table and short cases below). Each pin pushes for real with the identifier scan off and the real scanner armed;
+# every value is assembled at run time. The type table's deriving case drives the hook's own awk text and the
+# running gitleaks; its witnesses push for real.
+
+r12d_pw() { printf '%s%s%s' Hk4Tn8 Qw2Zx7 Lp3Vb9Mc; }                                  # a nuget password value
+r12d_zz() { printf 'zz%s_%s%s' key 9f3a1c7e 5b2d8e4f; }                                 # the repository rules' key
+r12d_sk() { printf 'https://%s:%s@gems.%s.com' 3fa91c7e 0b2d8e4f contribsys; }          # a URL the default sidekiq-sensitive-url catches
+r12d_cred() { printf '<add key="Clear%sPassword" value="%s" />' Text "$(r12d_pw)"; }     # a nuget credential line
+r12d_nuget_config() {   # <m1|m2|m3|caret|A>: nuget-config-password redefined under useDefault with that regex, secretGroup 1, no path (the round 11 rulings' B and its Found in drafting, item 5)
+    local key re
+    key=$(printf '<add key="Clear%sPassword" value="([^"]+)"' Text)
+    case "$1" in
+        m1) re="^[^<]*$key" ;;
+        m2) re="$key\\s*/>\\s*\$" ;;
+        m3) re="\\A\\W*$key" ;;
+        caret) re="^$key" ;;
+        A) re="\\A$key" ;;
+        *) echo "r12d_nuget_config: no regex $1" >&2; return 1 ;;
+    esac
+    printf '[extend]\nuseDefault = true\n\n[[rules]]\nid = "nuget-config-password"\nregex = %s\nsecretGroup = 1\n' "'''$re'''"
+}
+r12d_zz_config() {   # <caret|dollar>: a repository rule of its own under useDefault, its regex anchored at the start of the text or at its end
+    case "$1" in
+        caret) printf '[extend]\nuseDefault = true\n\n[[rules]]\nid = "zz-key"\nregex = %s\nkeywords = ["zzkey_"]\n' "'''^zzkey_[0-9a-f]{16}'''" ;;
+        dollar) printf '[extend]\nuseDefault = true\n\n[[rules]]\nid = "zz-key-end"\nregex = %s\nkeywords = ["zzkey_"]\n' "'''zzkey_[0-9a-f]{16}\$'''" ;;
+        *) echo "r12d_zz_config: no rule $1" >&2; return 1 ;;
+    esac
+}
+r12d_nuget_base() {   # deploy/prod.nuget.config, twelve lines and no credential, committed and pushed without the hook (BASE moves)
+    mkdir -p "$REPO/deploy"
+    printf '%s\n' '<?xml version="1.0" encoding="utf-8"?>' '<configuration>' '  <packageSources>' '    <add key="nuget.org" value="https://api.nuget.org/v3/index.json" />' '  </packageSources>' '  <packageSourceCredentials>' '    <feed>' '      <add key="Username" value="builder" />' '    </feed>' '  </packageSourceCredentials>' '  <!-- end -->' '</configuration>' > "$REPO/deploy/prod.nuget.config"
+    git -C "$REPO" add deploy/prod.nuget.config
+    git -C "$REPO" commit -qm "the nuget config, no credential"
+    git -C "$REPO" push -q origin main
+    BASE="$(git -C "$REPO" rev-parse HEAD)"
+}
+r12d_base_file() {   # <path> <printf format> [<argument>...]: the file written with that format, committed and pushed without the hook (BASE moves)
+    local path=$1 fmt=$2
+    shift 2
+    mkdir -p "$(dirname "$REPO/$path")"
+    # shellcheck disable=SC2059   # the format is the caller's
+    printf "$fmt" "$@" > "$REPO/$path"
+    git -C "$REPO" add -- "$path"
+    git -C "$REPO" commit -qm "$path at its base"
+    git -C "$REPO" push -q origin main
+    BASE="$(git -C "$REPO" rev-parse HEAD)"
+}
+r12d_commit_file() {   # <path> <printf format> [<argument>...]: the file written with that format and committed; sets sha
+    local path=$1 fmt=$2
+    shift 2
+    mkdir -p "$(dirname "$REPO/$path")"
+    # shellcheck disable=SC2059   # the format is the caller's
+    printf "$fmt" "$@" > "$REPO/$path"
+    git -C "$REPO" add -- "$path"
+    r11b_commit "the pushed change to $path"
+}
+r12d_refused_as() {   # <rule> <path>: the push just made was refused naming the rule, the commit and the path as a credential, no scan refused as incomplete, the value in no line, the remote at its base
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: commit ${sha:0:10} ADDS a credential ($1) in: $2"* ]]
+    [[ "$output" != *"the scan is incomplete"* ]]
+    [[ "$output" != *"$(r12d_pw)"* ]]
+    [[ "$output" != *"$(r12d_zz)"* ]]
+    [[ "$output" != *"$(r12d_sk)"* ]]
+    at_base
+}
+r12d_m_edit() {   # <m2|m13>: the credential written into the base's nuget config, making two hunks: m2, a comment then the credential after line 8 (the credential ending hunk 1) and line 11 edited (hunk 2); m13, line 4 edited (hunk 1) and the credential then a comment after line 8 (the credential opening hunk 2)
+    local c
+    c="      $(r12d_cred)"
+    if [ "$1" = m2 ]; then
+        awk -v c="$c" '{ print } NR == 8 { print "      <!-- rotated -->"; print c }' "$REPO/deploy/prod.nuget.config" | sed 's/<!-- end -->/<!-- end v2 -->/' > "$REPO/x"
+    else
+        awk -v c="$c" '{ print } NR == 8 { print c; print "      <!-- rotated -->" }' "$REPO/deploy/prod.nuget.config" | sed 's|v3/index.json|v3/index2.json|' > "$REPO/x"
+    fi
+    mv "$REPO/x" "$REPO/deploy/prod.nuget.config"
+    git -C "$REPO" add deploy/prod.nuget.config
+    r11b_commit "a credential in the nuget config, two hunks"
+    [ "$(git -C "$REPO" diff-tree -p -U0 "$sha" | grep -c '^@@')" -eq 2 ]
+}
+r12d_sk_merge() {   # the evil merge of item 3: config/deploy.sh at its base (seven lines), a side and a main edit, and the merge adding the sidekiq URL as the file's last line with no final newline; sha and merge are the merge
+    r12d_base_file config/deploy.sh 'a\nb\nc\nd\ne\nf\ng\n'
+    git -C "$REPO" checkout -q -b side
+    sed -i 's/^a$/a-side/' "$REPO/config/deploy.sh"
+    git -C "$REPO" commit -qam "side: line a"
+    git -C "$REPO" checkout -q main
+    sed -i 's/^d$/d-main/' "$REPO/config/deploy.sh"
+    git -C "$REPO" commit -qam "main: line d"
+    git -C "$REPO" merge -q --no-ff --no-commit side > /dev/null 2>&1 || :
+    printf 'a-side\nb\nc\nd-main\ne\nf\ng\n%s' "$(r12d_sk)" > "$REPO/config/deploy.sh"
+    git -C "$REPO" add config/deploy.sh
+    r11b_commit "the merge, with its own last line"
+    merge=$sha
+    is_merge "$merge"
+    [ "$(git -C "$REPO" diff-tree -c -p "$merge" | grep -c 'No newline at end of file')" -eq 0 ]   # the combined diff prints no notice
+}
+
+@test "round 12d (decision 5, M1): nuget-config-password redefined with regex ^[^<]*<add key=... (an anchor the one-line ~ frame satisfies), the credential the first line of hunk 2 of a nuget config: refused naming the rule, the commit and the file (PUBLISHED at 0b6c76916, both scanners: its piece joined the file's two hunks, and the anchor's prefix could not reach the credential across hunk 1's line)" {
+    r11a_base
+    r11a_config "$(r12d_nuget_config m1)"
+    r12d_nuget_base
+    r12d_m_edit m13
+    push_main_through_hook_with_shim
+    r12d_refused_as nuget-config-password deploy/prod.nuget.config
+}
+
+@test "round 12d (decision 5, M2): nuget-config-password redefined with regex <add key=...\\s*/>\\s*\$ (an end anchor that admits the newline), the credential the last line of hunk 1 of 2: refused naming the rule, the commit and the file (PUBLISHED at 0b6c76916, both scanners: in the joined piece hunk 2's line followed it)" {
+    r11a_base
+    r11a_config "$(r12d_nuget_config m2)"
+    r12d_nuget_base
+    r12d_m_edit m2
+    push_main_through_hook_with_shim
+    r12d_refused_as nuget-config-password deploy/prod.nuget.config
+}
+
+@test "round 12d (decision 5, M3): nuget-config-password redefined with regex \\A\\W*<add key=..., the credential the first line of hunk 2: refused naming the rule, the commit and the file (PUBLISHED at 0b6c76916, both scanners)" {
+    r11a_base
+    r11a_config "$(r12d_nuget_config m3)"
+    r12d_nuget_base
+    r12d_m_edit m13
+    push_main_through_hook_with_shim
+    r12d_refused_as nuget-config-password deploy/prod.nuget.config
+}
+
+@test "round 12d (decision 5): a repository rule ^zzkey_[0-9a-f]{16}, its key on line 1 of a new file, config/app.env: refused naming the rule, the commit and the file (PUBLISHED at 0b6c76916, both scanners: the piece began with the ~ line)" {
+    r11a_base
+    r11a_config "$(r12d_zz_config caret)"
+    r12d_commit_file config/app.env '%s\nMODE=prod\n' "$(r12d_zz)"
+    push_main_through_hook_with_shim
+    r12d_refused_as zz-key config/app.env
+}
+
+@test "round 12d (decision 5): the same rule, its key the first added line of hunk 2 of config/app.env: refused naming the rule, the commit and the file (PUBLISHED at 0b6c76916, both scanners: its piece joined hunk 1's line ahead of the key)" {
+    r11a_base
+    r11a_config "$(r12d_zz_config caret)"
+    r12d_base_file config/app.env 'A=1\nB=2\nC=3\nD=4\n'
+    r12d_commit_file config/app.env 'A=10\nB=2\n%s\nC=3\nD=4\n' "$(r12d_zz)"
+    [ "$(git -C "$REPO" diff-tree -p -U0 "$sha" | grep -c '^@@')" -eq 2 ]
+    push_main_through_hook_with_shim
+    r12d_refused_as zz-key config/app.env
+}
+
+@test "round 12d (decision 5, the control): the same rule, its key on line 2 of a hunk, config/app.env, passes at the fix as at 0b6c76916 and at main (git mode misses it there too: no regression and no false refusal)" {
+    r11a_base
+    r11a_config "$(r12d_zz_config caret)"
+    r12d_commit_file config/app.env 'MODE=prod\n%s\n' "$(r12d_zz)"
+    push_main_through_hook_with_shim
+    r10a_passes
+}
+
+@test "round 12d (decision 5, the round 11 rulings' B): nuget-config-password redefined with regex ^<add key=..., no path, the password on line 1 of prod.nuget.config: refused AS A CREDENTIAL, naming the rule, the commit and the file, and not by the probe line, since the copy now begins where the hunk begins (PUBLISHED at 0b6c76916, both scanners; B's framed probe is not built: it would put a content line ahead of the probe)" {
+    r11a_base
+    r11a_config "$(r12d_nuget_config caret)"
+    r12d_commit_file deploy/prod.nuget.config '%s\n<!-- prod -->\n' "$(r12d_cred)"
+    push_main_through_hook_with_shim
+    r12d_refused_as nuget-config-password deploy/prod.nuget.config
+    [[ "$output" != *"probe at"* ]]
+}
+
+@test "round 12d (decision 5, the round 11 rulings' B): the same with regex \\A<add key=...: refused as a credential naming the rule, the commit and the file, and not by the probe line (PUBLISHED at 0b6c76916, both scanners)" {
+    r11a_base
+    r11a_config "$(r12d_nuget_config A)"
+    r12d_commit_file deploy/prod.nuget.config '%s\n<!-- prod -->\n' "$(r12d_cred)"
+    push_main_through_hook_with_shim
+    r12d_refused_as nuget-config-password deploy/prod.nuget.config
+    [[ "$output" != *"probe at"* ]]
+}
+
+@test "round 12d (decision 5, B's clean-push cost, which does not arise): under the ^ redefinition a clean prod.nuget.config passes at the fix, as at 0b6c76916 and at main (the probe is named: its copy and the probe both begin at their first byte)" {
+    r11a_base
+    r11a_config "$(r12d_nuget_config caret)"
+    r12d_commit_file deploy/prod.nuget.config '<configuration>\n  <add key="Username" value="builder" />\n</configuration>\n'
+    push_main_through_hook_with_shim
+    r10a_passes
+}
+
+@test "round 12d (decision 1, the newline mirror): a URL the default sidekiq-sensitive-url catches, the last line of config/deploy.sh with no final newline, no config: refused naming the rule, the commit and the file (PUBLISHED at 0b6c76916, both scanners: the piece ended the line with a newline git's added text does not have, and the rule ends in \$ with no \\s)" {
+    r11a_base
+    r12d_commit_file config/deploy.sh '#!/bin/sh\nset -e\nbundle config gems.contribsys.com\n%s' "$(r12d_sk)"
+    push_main_through_hook_with_shim
+    r12d_refused_as sidekiq-sensitive-url config/deploy.sh
+}
+
+@test "round 12d (decision 1, the newline mirror): the same URL on the same last line under this repository's .gitleaks.toml: refused naming the rule, the commit and the file (PUBLISHED at 0b6c76916, both scanners)" {
+    r11a_base
+    r11a_config "$(cat "$ROMP_DIR/.gitleaks.toml")"
+    r12d_commit_file config/deploy.sh '#!/bin/sh\nset -e\nbundle config gems.contribsys.com\n%s' "$(r12d_sk)"
+    push_main_through_hook_with_shim
+    r12d_refused_as sidekiq-sensitive-url config/deploy.sh
+}
+
+@test "round 12d (decision 1, the newline mirror): a repository rule zzkey_[0-9a-f]{16}\$, its key the last line of config/app.env with no final newline: refused naming the rule, the commit and the file (PUBLISHED at 0b6c76916, both scanners)" {
+    r11a_base
+    r11a_config "$(r12d_zz_config dollar)"
+    r12d_commit_file config/app.env 'MODE=prod\n%s' "$(r12d_zz)"
+    push_main_through_hook_with_shim
+    r12d_refused_as zz-key-end config/app.env
+}
+
+@test "round 12d (decision 1, the newline mirror): both sides lacking a final newline, the last line replaced by the sidekiq URL: refused naming the rule, the commit and the file (PUBLISHED at 0b6c76916, both scanners: git prints the notice after the removed line and after the added one, and only the second drops a newline in the piece)" {
+    r11a_base
+    r12d_base_file config/deploy.sh 'a\nb\nold'
+    r12d_commit_file config/deploy.sh 'a\nb\n%s' "$(r12d_sk)"
+    [ "$(git -C "$REPO" diff-tree -p "$sha" | grep -c 'No newline at end of file')" -eq 2 ]
+    push_main_through_hook_with_shim
+    r12d_refused_as sidekiq-sensitive-url config/deploy.sh
+}
+
+@test "round 12d (decision 1, the control): the sidekiq URL on the last line WITH a final newline passes at the fix, as at 0b6c76916 and at main (git mode misses it there too)" {
+    r11a_base
+    r12d_commit_file config/deploy.sh '#!/bin/sh\nset -e\n%s\n' "$(r12d_sk)"
+    push_main_through_hook_with_shim
+    r10a_passes
+}
+
+@test "round 12d (decision 1, the control): the sidekiq URL with a trailing slash on the last line, no final newline, is refused naming the rule at the fix, as at 0b6c76916 and at main" {
+    r11a_base
+    r12d_commit_file config/deploy.sh '#!/bin/sh\nset -e\n%s/' "$(r12d_sk)"
+    push_main_through_hook_with_shim
+    r12d_refused_as sidekiq-sensitive-url config/deploy.sh
+}
+
+@test "round 12d (decision 1, the control): an old side without a final newline and a new side with one, the last line replaced by the sidekiq URL, passes at the fix, as at 0b6c76916 and at main (the notice follows the removed line alone, so no newline is dropped)" {
+    r11a_base
+    r12d_base_file config/deploy.sh 'a\nb\nold'
+    r12d_commit_file config/deploy.sh 'a\nb\n%s\n' "$(r12d_sk)"
+    [ "$(git -C "$REPO" diff-tree -p "$sha" | grep -c 'No newline at end of file')" -eq 1 ]
+    push_main_through_hook_with_shim
+    r10a_passes
+}
+
+@test "round 12d (item 3 of the 18:58Z ruling): an evil merge whose own last line is the sidekiq URL, the file's last line with no final newline, its combined diff printing no notice: refused naming the rule, the merge and the file (PUBLISHED at 0b6c76916 and at the round 12b3 head, both scanners; red under the mutant that skips the RESULT BLOBS read)" {
+    r11a_base
+    r12d_sk_merge
+    push_main_through_hook_with_shim
+    r12d_refused_as sidekiq-sensitive-url config/deploy.sh
+}
+
+@test "round 12d (item 3, the control): the same evil merge with a final newline after the URL passes (the blob ends in a newline, so no piece is written again), and so does a merge whose own line is not the file's last, the file ending with a parent's line and no final newline" {
+    r11a_base
+    r12d_base_file config/deploy.sh 'a\nb\nc\nd\ne\nf\ng'
+    git -C "$REPO" checkout -q -b side
+    sed -i 's/^a$/a-side/' "$REPO/config/deploy.sh"
+    git -C "$REPO" commit -qam "side: line a"
+    git -C "$REPO" checkout -q main
+    sed -i 's/^d$/d-main/' "$REPO/config/deploy.sh"
+    git -C "$REPO" commit -qam "main: line d"
+    git -C "$REPO" merge -q --no-ff --no-commit side > /dev/null 2>&1 || :
+    printf 'a-side\nb\nc\nmerge-own\nd-main\ne\nf\ng' > "$REPO/config/deploy.sh"
+    git -C "$REPO" add config/deploy.sh
+    r11b_commit "a merge whose own line is not the last"
+    is_merge "$sha"
+    push_main_through_hook_with_shim
+    r10a_passes
+    git -C "$REPO" checkout -q -b side2 HEAD~1
+    printf 'x\n' > "$REPO/s2.txt"; git -C "$REPO" add s2.txt; git -C "$REPO" commit -qm "side 2"
+    git -C "$REPO" checkout -q main
+    git -C "$REPO" merge -q --no-ff --no-commit side2 > /dev/null 2>&1 || :
+    printf 'a-side\nb\nc\nmerge-own\nd-main\ne\nf\ng\nlast-own\n' > "$REPO/config/deploy.sh"
+    git -C "$REPO" add config/deploy.sh
+    r11b_commit "a merge whose own last line ends with a newline"
+    is_merge "$sha"
+    push_main_through_hook_with_shim
+    r10a_passes
+}
+
+@test "round 12d (c, the probe lines): a clean deploy/app.yaml edited in 40 places, 40 hunks and so 40 pieces, under a per-rule path allowlist (?i)\\.yaml\$ on kubernetes-secret-yaml, is refused by exactly ONE probe line, naming the rule and the file (0b6c76916 prints one, its file one piece; red under the mutant printing a line per missing probe, which prints 40)" {
+    r11a_base
+    r11a_config "$(printf '[extend]\nuseDefault = true\n\n[[rules]]\nid = "kubernetes-secret-yaml"\n[[rules.allowlists]]\ndescription = "synthetic per-rule path allowlist"\npaths = [%s]\n' "'''(?i)\\.yaml\$'''")"
+    mkdir -p "$REPO/deploy"
+    seq 1 200 | sed 's/^/key_/; s/$/: v/' > "$REPO/deploy/app.yaml"
+    git -C "$REPO" add deploy/app.yaml
+    git -C "$REPO" commit -qm "a clean yaml"
+    git -C "$REPO" push -q origin main
+    BASE="$(git -C "$REPO" rev-parse HEAD)"
+    awk 'NR % 5 == 3 { print $0 " # edited"; next } { print }' "$REPO/deploy/app.yaml" > "$REPO/x" && mv "$REPO/x" "$REPO/deploy/app.yaml"
+    git -C "$REPO" add deploy/app.yaml
+    r11b_commit "the yaml edited in 40 places"
+    [ "$(git -C "$REPO" diff-tree -p -U0 "$sha" | grep -c '^@@')" -eq 40 ]
+    push_main_through_hook_with_shim
+    [ "$status" -ne 0 ]
+    [ "$(grep -c "dropped kubernetes-secret-yaml's probe at " <<< "$output")" -eq 1 ]
+    [[ "$output" == *"romp pre-push: the config the scan read (the work tree's .gitleaks.toml) dropped kubernetes-secret-yaml's probe at "*"/"*".yaml, the name the scan gives the copy of deploy/app.yaml, so the scan cannot check deploy/app.yaml under kubernetes-secret-yaml;"* ]]
+    [[ "$output" != *"ADDS a credential"* ]]
+    at_base
+}
+
+@test "round 12d (b, a witness): a clean hunk whose first added line begins with Mach-O's BE BA FE CA, and a new file whose first line does, pass (both refused at the prototype on the byte figure: its first-line list lacked that signature and gitleaks skipped the unframed piece)" {
+    r11a_base
+    r12d_base_file src/raw.txt 'a\nb\nc\nd\n'
+    r12d_commit_file src/raw.txt 'a\n\276\272\376\312 magic-looking text line\nb\nc\nd2\n'
+    r12d_commit_file src/raw2.txt '\276\272\376\312 magic-looking text line\nsecond line\n'
+    push_main_through_hook_with_shim
+    r10a_passes
+}
+
+@test "round 12d (b, a witness): a clean new file whose first line is dex and whose byte 36 is p (Dex's signature, which spans the first line's newline), and a hunk 2 that opens so, pass (both refused at the prototype on the byte figure)" {
+    r11a_base
+    r12d_base_file docs/other.txt 'a\nb\nc\nd\n'
+    r12d_commit_file docs/index.txt 'dex\n0123456789abcdef0123456789abcdefp is byte 36\nthird line\n'
+    r12d_commit_file docs/other.txt 'a2\nb\ndex\n0123456789abcdef0123456789abcdefp is byte 36\nc\nd\n'
+    [ "$(git -C "$REPO" diff-tree -p -U0 "$sha" | grep -c '^@@')" -eq 2 ]
+    push_main_through_hook_with_shim
+    r10a_passes
+}
+
+@test "round 12d (b, a witness): a clean new file whose first line is dey, whose bytes 40 to 43 are dex and a newline, and whose byte 76 is p, over 100 bytes (Dey's signature, a Dex header at byte 40), passes (refused at the prototype on the byte figure)" {
+    r11a_base
+    r12d_commit_file docs/odex.txt 'dey\n%sdex\n%sp is byte 76\n%s\n' 0123456789abcdef0123456789abcdef0123 0123456789abcdef0123456789abcdef "$(printf 'filler %.0s' 1 2 3 4 5 6)"
+    [ "$(head -c 4 "$REPO/docs/odex.txt")" = dey ]
+    [ "$(head -c 44 "$REPO/docs/odex.txt" | tail -c 4 | head -c 3)" = dex ]
+    [ "$(head -c 77 "$REPO/docs/odex.txt" | tail -c 1)" = p ]
+    push_main_through_hook_with_shim
+    r10a_passes
+}
+
+@test "round 12d (decision 1, blob_pieces): a merge's binary path read whole, its result blob ending with the sidekiq URL and no final newline: refused naming the rule, the merge and the path (PUBLISHED at 0b6c76916, both scanners: the blob's last line was written with a newline; red under the mutant deleting blob_pieces' nonl)" {
+    r11a_base
+    r12d_base_file data/blob.dat 'hdr\nx\001y\n'
+    git -C "$REPO" checkout -q -b side
+    printf 'hdr\nx\000y\nside\n' > "$REPO/data/blob.dat"
+    git -C "$REPO" commit -qam "side: binary"
+    git -C "$REPO" checkout -q main
+    printf 'hdr\nx\001y\nmain\n' > "$REPO/data/blob.dat"
+    git -C "$REPO" commit -qam "main: text"
+    git -C "$REPO" merge -q --no-ff --no-commit side > /dev/null 2>&1 || :
+    printf 'hdr\nx\001y\nmerged\n%s' "$(r12d_sk)" > "$REPO/data/blob.dat"
+    git -C "$REPO" add data/blob.dat
+    r11b_commit "the merge of a binary path, ending with its own line"
+    is_merge "$sha"
+    [ "$(git -C "$REPO" diff-tree -p -c --text "$sha" | grep -c '^Binary files differ$')" -eq 1 ]
+    push_main_through_hook_with_shim
+    r12d_refused_as sidekiq-sensitive-url data/blob.dat
+}
+
+@test "round 12d table case: the RESULT BLOBS of the merges' own last lines: a git silent on cat-file --batch alone (exit 0, nothing printed), through a real push of item 3's evil merge, is refused naming the blobs it answered against the notes, and the remote stays at its base" {
+    r11a_base
+    r12d_sk_merge
+    calls_silent_on git tails '[ "${1:-}" = cat-file ] && [[ "${2:-}" == --batch=* ]]'
+    push_main_through_hook_with_shim
+    fired tails "cat-file --batch="
+    [ "$status" -ne 0 ]
+    [ "$(grep -cxF -- "romp pre-push: the RESULT BLOBS of the merges' own last lines were read short for the credential scan (git cat-file --batch exited 0 and answered 0 of the 1 blobs asked, whole); the scan is incomplete, so the push is refused" <<< "$output")" -eq 1 ]
+    at_base
+}
+
+@test "round 12d short case: the RESULT BLOBS of the merges' own last lines: a git whose cat-file --batch answers all but its last five bytes (exit 0, the URL's end and cat-file's newline cut), through a real push of item 3's evil merge, is refused naming the blobs answered whole against the notes, and the remote stays at its base" {
+    r11a_base
+    r12d_sk_merge
+    calls_short_on git tails '[ "${1:-}" = cat-file ] && [[ "${2:-}" == --batch=* ]]' less:5
+    push_main_through_hook_with_shim
+    fired_short tails "cat-file --batch="
+    [ "$status" -ne 0 ]
+    [ "$(grep -cxF -- "romp pre-push: the RESULT BLOBS of the merges' own last lines were read short for the credential scan (git cat-file --batch exited 0 and answered 0 of the 1 blobs asked, whole); the scan is incomplete, so the push is refused" <<< "$output")" -eq 1 ]
+    at_base
+}
+
+@test "round 12d (the RESULT BLOBS read, its foreign arm): a git whose cat-file --batch names the blob a tree in its answer's header, through a real push of item 3's evil merge, is refused naming that answer, and the remote stays at its base (red under the mutant deleting that arm, where the not-four-counts line refuses in its place)" {
+    r11a_base
+    r12d_sk_merge
+    git_shim "$(printf 'if [ "${1:-}" = cat-file ] && [[ "${2:-}" == --batch=* ]]; then echo fired >> %q; "$real_git" "$@" | sed "1s/ blob / tree /"; exit "${PIPESTATUS[0]}"; fi' "$TEST_DIR/calls.tforeign")"
+    push_main_through_hook_with_shim
+    [ "$(wc -l < "$TEST_DIR/calls.tforeign")" -eq 1 ]
+    [ "$status" -ne 0 ]
+    [ "$(grep -cxF -- "romp pre-push: the RESULT BLOBS of the merges' own last lines could not be read for the credential scan (git cat-file --batch exited 0 and answered blob 1 of the 1 asked as no blob under the name and line asked, or with more bytes than its size); the scan is incomplete, so the push is refused" <<< "$output")" -eq 1 ]
+    at_base
+}
+
+@test "round 12d (the RESULT BLOBS read, its piece arm): a git whose cat-file --batch first appends a byte to the piece the note names (the note file is its stdin), through a real push of item 3's evil merge, is refused naming the piece that no longer holds the feed's bytes, and the remote stays at its base (red under the mutant deleting that arm, where the not-four-counts line refuses in its place)" {
+    r11a_base
+    r12d_sk_merge
+    git_shim "$(printf 'if [ "${1:-}" = cat-file ] && [[ "${2:-}" == --batch=* ]]; then n=$(readlink "/proc/$$/fd/0"); p=$(cut -d " " -f 4 "$n" | head -n 1); printf x >> "${n%%/creds.tails}/creds.d/$p"; echo fired >> %q; fi' "$TEST_DIR/calls.tpiece")"
+    push_main_through_hook_with_shim
+    [ "$(wc -l < "$TEST_DIR/calls.tpiece")" -eq 1 ]
+    [ "$status" -ne 0 ]
+    [ "$(grep -cxF -- "romp pre-push: the PIECE holding a merge's own last line no longer holds the bytes the credential feed wrote there (note 1 of 1), so the line's missing final newline cannot be mirrored; the scan is incomplete, so the push is refused" <<< "$output")" -eq 1 ]
+    at_base
+}
+
+@test "round 12d (the RESULT BLOBS read, its record): an awk silent on the read's program (exit 0, no record written), through a real push of item 3's evil merge, is refused naming the empty record, not four counts, and the remote stays at its base (red under the mutant deleting that arm)" {
+    r11a_base
+    r12d_sk_merge
+    calls_silent_on_text awk trec 'ENVIRON["ROMP_TAIL_RECORD_FILE"]'
+    push_main_through_hook_with_shim
+    fired trec "ROMP_TAIL_RECORD_FILE"
+    [ "$status" -ne 0 ]
+    [ "$(grep -cxF -- "romp pre-push: the RESULT BLOBS of the merges' own last lines could not be read for the credential scan (its awk exited 0 and recorded \"\", not four counts); the scan is incomplete, so the push is refused" <<< "$output")" -eq 1 ]
+    at_base
+}
+
+@test "round 12d (the RESULT BLOBS read, the notes read back): a merge with two files of its own, clean.txt and then config/deploy.sh ending with the sidekiq URL and no final newline, whose note file is cut to its first line after the feed's awk writes it (a wrapper around that awk), through a real push, is refused naming the notes read back against the count its awk recorded, and the remote stays at its base (red by publication under the mutant deleting that arm: the URL's piece keeps its newline)" {
+    r11a_base
+    r12d_base_file config/deploy.sh 'a\nb\n'
+    git -C "$REPO" checkout -q -b side
+    printf 's\n' > "$REPO/s.txt"; git -C "$REPO" add s.txt; git -C "$REPO" commit -qm "side"
+    git -C "$REPO" checkout -q main
+    printf 'm\n' > "$REPO/m.txt"; git -C "$REPO" add m.txt; git -C "$REPO" commit -qm "main"
+    git -C "$REPO" merge -q --no-ff --no-commit side > /dev/null 2>&1 || :
+    printf 'clean line\n' > "$REPO/clean.txt"
+    printf 'a\nb\n%s' "$(r12d_sk)" > "$REPO/config/deploy.sh"
+    git -C "$REPO" add clean.txt config/deploy.sh
+    r11b_commit "the merge, two files of its own"
+    is_merge "$sha"
+    local real_awk real_head real_mv
+    real_awk="$(command -v awk)"; real_head="$(command -v head)"; real_mv="$(command -v mv)"
+    {
+        printf '#!/usr/bin/env bash\n'
+        printf 'case "$*" in *%q*)\n' 'ENVIRON["ROMP_BINARY_FILE"]'
+        printf '    %q "$@"; s=$?\n' "$real_awk"
+        printf '    t=$ROMP_TAIL_FILE; %q -n 1 "$t" > "$t.cut" && %q "$t.cut" "$t"\n' "$real_head" "$real_mv"
+        printf '    printf "%%s\\n" "awk cut $t" >> %q; exit "$s" ;;\n' "$TEST_DIR/calls.tailcut"
+        printf 'esac\n'
+        printf 'exec %q "$@"\n' "$real_awk"
+    } > "$TEST_DIR/shim/awk"
+    chmod 755 "$TEST_DIR/shim/awk"
+    push_main_through_hook_with_shim
+    [ "$(wc -l < "$TEST_DIR/calls.tailcut")" -eq 1 ]
+    [ "$status" -ne 0 ]
+    [ "$(grep -cxF -- "romp pre-push: the notes of the merges' own last lines the CREDENTIAL FEED of the push wrote were read back short (1 of the 2 its awk recorded), so the rest cannot be mirrored; the scan is incomplete, so the push is refused" <<< "$output")" -eq 1 ]
+    at_base
+}
+
+# The type table's deriving check (the 18:58Z ruling's (b)): the hook's own piecing text and the running gitleaks, over
+# pieces built for each entry of the hook's table (each alternative of each condition once, and each image, video or
+# audio entry beside a signature gitleaks skips), for each matcher of h2non/filetype v1.1.3 (R12D_H2NON, read from its
+# matchers/*.go, a NUL written as 0x01 as the feed maps it; each image, video and audio matcher also beside a skip
+# signature, ustar at 257 or MZ at 0), and for the edges (each length a matcher needs and one byte short, and near
+# misses). A piece is one line per row: a label, the piece's length (the marker line that ends it included), then
+# offset=hex conditions, or m=hex for the matroska search (B, 0x82 and a byte, then the word, after the other bytes).
+R12D_H2NON='wasm 20 0=0061736d01000000
+dex 60 0=6465780a 36=70
+dey 120 0=6465790a 40=6465780a 76=70
+jpg 20 0=ffd8ff
+jp2 30 0=0000000c6a5020200d0a870a00
+png 20 0=89504e47
+gif 20 0=474946
+webp 30 8=57454250
+cr2 30 0=49492a00 8=435202
+tif 30 0=49492a00
+tif2 30 0=4d4d002a
+bmp 20 0=424d
+jxr 20 0=4949bc
+psd 20 0=38425053
+ico 20 0=00000100
+heif 40 0=00000018 4=6674797068656963
+dwg 20 0=41433130
+mp4 30 4=66747970 8=69736f6d
+m4v 30 4=667479704d3456
+mkv 40 0=1a45dfa3 m=6d6174726f736b61
+webm 40 0=1a45dfa3 m=7765626d
+mov 30 0=00000014 4=66747970
+mov2 30 4=6d6f6f76
+mov3 30 4=6d646174
+mov4 30 12=6d646174
+avi 30 0=52494646 8=415649
+wmv 30 0=3026b2758e66cf11a6d9
+mpg 20 0=000001ba
+flv 20 0=464c5601
+3gp 30 4=66747970336770
+mid 20 0=4d546864
+mp3 20 0=494433
+mp3b 20 0=fffb
+m4a 30 4=667479704d3441
+m4a2 30 0=4d344120
+ogg 20 0=4f676753
+flac 20 0=664c6143
+wav 30 0=52494646 8=57415645
+amr 30 0=2321414d520a
+aac 20 0=fff1
+aac2 20 0=fff9
+aiff 30 0=464f524d 8=41494646
+woff 20 0=774f464600010000
+woff2 20 0=774f463200010000
+ttf 20 0=0001000000
+otf 20 0=4f54544f00
+doc 600 0=d0cf11e0 512=eca5
+xls 600 0=d0cf11e0 512=0908
+ppt 600 0=d0cf11e0 512=a046
+ole-short 200 0=d0cf11e0
+docx 60 0=504b0304 30=776f72642f
+xlsx 60 0=504b0304 30=786c2f
+pptx 60 0=504b0304 30=7070742f
+epub 60 0=504b03046d696d65747970656170706c69636174696f6e2f657075622b7a6970
+zip 20 0=504b0304
+zip2 20 0=504b0506
+zip3 20 0=504b0708
+tar 300 257=7573746172
+rar 20 0=526172211a0700
+rar1 20 0=526172211a0701
+gz 20 0=1f8b08
+bz2 20 0=425a68
+7z 20 0=377abcaf271c
+xz 20 0=fd377a585a00
+zst 20 0=28b52ffd
+zstskip 40 0=502a4d1804000000 8=7171717128b52ffd
+pdf 20 0=25504446
+exe 20 0=4d5a
+swf 20 0=435753
+swf2 20 0=465753
+rtf 20 0=7b5c727466
+eot 40 8=020001 34=4c50
+ps 20 0=2521
+sqlite 20 0=53514c69
+nes 20 0=4e45531a
+crx 20 0=43723234
+cab 20 0=4d534346
+cab2 20 0=49536328
+deb 40 0=213c617263683e0a64656269616e2d62696e617279
+ar 20 0=213c617263683e
+Z 20 0=1fa0
+Z2 20 0=1f9d
+lz 20 0=4c5a4950
+rpm 120 0=edabeedb
+elf 80 0=7f454c46
+dcm 150 128=4449434d
+iso 32800 32769=4344303031
+macho1 20 0=feedfacf
+macho2 20 0=feedface
+macho3 20 0=bebafeca
+macho4 20 0=cffaedfe
+macho5 20 0=cefaedfe
+macho6 20 0=cafebabe'
+R12D_H2NON_FIRST='jpg png gif webp bmp jxr psd dwg mp4 m4v mkv webm mov2 mov3 mov4 avi wmv flv 3gp mid mp3 mp3b m4a m4a2 ogg flac wav amr aac aac2 aiff'
+R12D_EDGES='elf-52 52 0=7f454c46
+elf-53 53 0=7f454c46
+rpm-96 96 0=edabeedb
+rpm-97 97 0=edabeedb
+dey-100 100 0=6465790a 40=6465780a 76=70
+dey-101 101 0=6465790a 40=6465780a 76=70
+dex-no-p 60 0=6465780a 36=71
+ole-513 513 0=d0cf11e0
+ole-514 514 0=d0cf11e0
+ole-514-doc 514 0=d0cf11e0 512=eca5
+iso-32773 32773 32769=4344303031
+iso-32774 32774 32769=4344303031
+tar-261 261 257=7573746172
+tar-at-255 300 255=7573746172
+dcm-at-126 150 126=4449434d
+rar-x 20 0=526172211a0778
+gz-07 20 0=1f8b07
+mov-15 15 4=6d6f6f76
+amr-11 11 0=2321414d520a
+mkv-far 5000 0=1a45dfa3 4200=42827a6d6174726f736b61
+dex+webp 60 0=6465780a 8=57454250 36=70
+mp4-badbrand+exe 30 0=4d5a 4=66747970 8=7a7a7a7a'
+r12d_types_check() {   # <hook file> <work directory>: prints "mismatch: <label> ..." for each piece whose skip by the running gitleaks differs from the hook's ~ line, "framed: <label>" for a framed piece gitleaks skips, and a closing line "types: entries=<n> pieces=<n> skipped=<n>"
+    local hook=$1 W=$2 P n=0 name cls lo hi rest c ci cj off hex a T num w t sk bad
+    local -a conds alts args
+    mkdir -p "$W/s" "$W/f" "$W/p"
+    P=$(awk -v q="'" '$0 == "CRED_PIECES_AWK=" q { p = 1; next } p { print; if (substr($0, length($0)) == q) exit }' "$hook"); P=${P%\'}
+    [ -n "$P" ] || { echo "no piecing text in $hook"; return 1; }
+    LC_ALL=C awk "$P"'
+        BEGIN { for (i = 1; i < 256; i++) ord[sprintf("%c", i)] = i
+            pieces_begin()
+            for (k = 1; k <= ns; k++) {
+                line = tn[k] " " tc[k] " " tlo[k] " " thi[k]
+                for (j = 1; j <= 3 && tb[k, j] != ""; j++) {
+                    b = tb[k, j]; h = ""
+                    for (i = 1; i <= length(b); i++) { c = substr(b, i, 1); h = h ((c == "|" && to[k, j] != "m") ? "|" : sprintf("%02x", ord[c])) }
+                    line = line " " to[k, j] "=" h
+                }
+                print line
+            } }' > "$W/table"
+    : > "$W/spec"
+    while read -r name cls lo hi rest; do
+        read -r -a conds <<< "$rest"
+        T=$lo; [ "$T" -ge 40 ] || T=40; if [ "$hi" -gt 0 ] && [ "$T" -gt "$hi" ]; then T=$hi; fi
+        for ci in "${!conds[@]}"; do
+            c=${conds[ci]}; off=${c%%=*}; hex=${c#*=}
+            IFS='|' read -r -a alts <<< "$hex"
+            for a in "${alts[@]}"; do
+                args=(); for cj in "${!conds[@]}"; do if [ "$cj" = "$ci" ]; then args+=("$off=$a"); else args+=("${conds[cj]%%|*}"); fi; done
+                printf 'hook:%s:%s:%s %s %s\n' "$name" "$off" "$a" "$T" "${args[*]}" >> "$W/spec"
+                if [ "$cls" = p ]; then
+                    if [ "${conds[0]%%=*}" = 0 ]; then printf 'hook:%s+tar 300 %s 257=7573746172\n' "$name" "${args[*]}" >> "$W/spec"
+                    else printf 'hook:%s+exe %s 0=4d5a %s\n' "$name" "$T" "${args[*]}" >> "$W/spec"; fi
+                fi
+            done
+        done
+    done < "$W/table"
+    while read -r name T rest; do printf 'h2non:%s %s %s\n' "$name" "$T" "$rest" >> "$W/spec"; done <<< "$R12D_H2NON"
+    for name in $R12D_H2NON_FIRST; do
+        rest=$(awk -v n="$name" '$1 == n { $1 = ""; $2 = ""; print }' <<< "$R12D_H2NON")
+        [ -n "$rest" ] || { echo "no h2non row $name"; return 1; }
+        case "$rest" in *" 0="*) printf 'h2non:%s+tar 300 %s 257=7573746172\n' "$name" "$rest" >> "$W/spec" ;; *) printf 'h2non:%s+exe 40 0=4d5a %s\n' "$name" "$rest" >> "$W/spec" ;; esac
+    done
+    while read -r name T rest; do printf 'edge:%s %s %s\n' "$name" "$T" "$rest" >> "$W/spec"; done <<< "$R12D_EDGES"
+    # the pieces, each with its marker line last, and each behind the ~ line in f
+    LC_ALL=C awk -v W="$W" '
+        BEGIN { for (i = 1; i < 256; i++) chr[sprintf("%02x", i)] = sprintf("%c", i); chr["00"] = sprintf("%c", 1) }
+        function bytes(h,   s, i) { s = ""; for (i = 1; i < length(h); i += 2) s = s chr[substr(h, i, 2)]; return s }
+        {
+            n++; T = $2 + 0; end = 0; mw = ""
+            for (i = 3; i <= NF; i++) { split($i, kv, "="); if (kv[1] == "m") { mw = bytes(kv[2]); continue } if (kv[1] + length(kv[2]) / 2 > end) end = kv[1] + length(kv[2]) / 2 }
+            if (mw != "") { mp = end; end += 3 + length(mw) }
+            mk = sprintf("\nzztype%04d\n", n)
+            if (T < end + length(mk)) T = end + length(mk)
+            b = "q"; while (length(b) < T) b = b b; b = substr(b, 1, T)
+            for (i = 3; i <= NF; i++) { split($i, kv, "="); if (kv[1] == "m") continue; v = bytes(kv[2]); b = substr(b, 1, kv[1]) v substr(b, kv[1] + length(v) + 1) }
+            if (mw != "") b = substr(b, 1, mp) "B" sprintf("%c", 130) "x" mw substr(b, mp + 4 + length(mw))
+            b = substr(b, 1, T - length(mk)) mk
+            printf "%s", b > (W "/s/" n); close(W "/s/" n)
+            printf "~\n%s", b > (W "/f/" n); close(W "/f/" n)
+            print n "\t" T "\t" $1 > (W "/manifest")
+        }' "$W/spec"
+    # the hook's writer over each piece, as blob_pieces pieces a blob: the bytes it writes
+    : > "$W/p/idx"; : > "$W/p/pidx"
+    LC_ALL=C D="$W" awk "$P"'
+        BEGIN { dir = ENVIRON["D"] "/p"; idx = dir "/idx"; pidx = dir "/pidx"; pieces_begin(); sha = "s"; choose("x.txt")
+            while ((getline row < (ENVIRON["D"] "/manifest")) > 0) {
+                split(row, r, "\t"); fl = ENVIRON["D"] "/s/" r[1]; open = 0
+                while ((getline l < fl) > 0) { if (!open) { open = 1; forget(); newpiece(0) } emit(l) }
+                close(fl); shut(); cur = ""
+                print r[1] "\t" pb
+            } }' > "$W/written"
+    printf '[[rules]]\nid = "zz-type"\nregex = %s\nkeywords = ["zztype"]\n' "'''zztype[0-9]{4}'''" > "$W/cfg.toml"
+    printf '{{range .}}{{.File}}\t.\n{{end}}' > "$W/tpl"
+    (cd "$W/s" && "$GL" dir . --no-banner --no-color --config "$W/cfg.toml" -f template --report-template "$W/tpl" -r "$W/rep.s" --exit-code 0 --log-level error) || { echo "the scanner failed over the pieces"; return 1; }
+    (cd "$W/f" && "$GL" dir . --no-banner --no-color --config "$W/cfg.toml" -f template --report-template "$W/tpl" -r "$W/rep.f" --exit-code 0 --log-level error) || { echo "the scanner failed over the framed pieces"; return 1; }
+    n=0; sk=0
+    while IFS=$'\t' read -r num T name; do
+        n=$((n + 1))
+        w=$(awk -F'\t' -v k="$num" '$1 == k { print $2 }' "$W/written")
+        t=0; [ "$w" = $((T + 2)) ] && t=1
+        [ "$w" = "$T" ] || [ "$t" -eq 1 ] || echo "mismatch: $name: the writer wrote $w bytes for $T"
+        bad=1; grep -qxF "$num	." "$W/rep.s" && bad=0
+        [ "$bad" -eq 0 ] || sk=$((sk + 1))
+        [ "$bad" -eq "$t" ] || echo "mismatch: $name: gitleaks skip=$bad, the hook's ~ line=$t"
+        if [ "$t" -eq 1 ] && ! grep -qxF "$num	." "$W/rep.f"; then echo "framed: $name"; fi
+    done < "$W/manifest"
+    echo "types: entries=$(wc -l < "$W/table") pieces=$n skipped=$sk"
+}
+
+@test "round 12d (b): the type table is DERIVED: the hook's own piecing text writes the ~ line ahead of exactly the pieces the running gitleaks skips by type, over a piece for each entry of the hook's table and each alternative, for each matcher of h2non/filetype v1.1.3 (which gitleaks 8.25.0 to 8.30.1 call), NUL bytes mapped as the feed maps them, for each image, video and audio matcher beside a skip signature, and for the edges; each framed piece is read; and the check reds over planted copies missing Mach-O's entry, the mp4 entry that claims a piece first, and the short OLE entry's bound" {
+    real_gitleaks
+    run r12d_types_check "$HOOK" "$TEST_DIR/types"
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"mismatch: "* ]]
+    [[ "$output" != *"framed: "* ]]
+    local last=${output##*$'\n'}
+    [[ "$last" == "types: entries="* ]]
+    [ "$(sed -E 's/.*entries=([0-9]+).*/\1/' <<< "$last")" -ge 50 ]              # the table was read: an empty read cannot pass the lines above
+    [ "$(sed -E 's/.*pieces=([0-9]+).*/\1/' <<< "$last")" -ge 250 ]
+    [ "$(sed -E 's/.*skipped=([0-9]+).*/\1/' <<< "$last")" -ge 90 ]               # gitleaks skipped pieces, so the comparison compared both answers
+    [ "$(grep -c . <<< "$R12D_H2NON")" -eq 93 ]                                    # every matcher of h2non/filetype v1.1.3, its alternatives as rows
+    # the planted copies: each red, naming the pieces its gap misses
+    sed '/sig("macho"/d' "$HOOK" > "$TEST_DIR/plant-macho"
+    run r12d_types_check "$TEST_DIR/plant-macho" "$TEST_DIR/types-macho"
+    [[ "$output" == *"mismatch: h2non:macho3: gitleaks skip=1, the hook's ~ line=0"* ]]
+    sed '/sig("mp4"/d' "$HOOK" > "$TEST_DIR/plant-mp4"
+    run r12d_types_check "$TEST_DIR/plant-mp4" "$TEST_DIR/types-mp4"
+    [[ "$output" == *"mismatch: h2non:mp4+exe: gitleaks skip=0, the hook's ~ line=1"* ]]
+    sed 's/sig("doc", "s", 4, 513,/sig("doc", "s", 4, 0,/' "$HOOK" > "$TEST_DIR/plant-ole"
+    run cmp -s "$HOOK" "$TEST_DIR/plant-ole"
+    [ "$status" -ne 0 ]
+    run r12d_types_check "$TEST_DIR/plant-ole" "$TEST_DIR/types-ole"
+    [[ "$output" == *"mismatch: edge:ole-514: gitleaks skip=0, the hook's ~ line=1"* ]]
+}
+
+@test "round 12d (item 3, a path-scoped file): an evil merge whose own last line, clean, ends deploy/app.yaml with no final newline passes: its piece is written again without the newline, and the path-scoped copies' figures follow it (red under the mutant that leaves the path-scoped bytes unadjusted, where the additive run's figure refuses)" {
+    r11a_base
+    r12d_base_file deploy/app.yaml 'a: 1\nb: 2\nc: 3\n'
+    git -C "$REPO" checkout -q -b side
+    printf 's\n' > "$REPO/s.txt"; git -C "$REPO" add s.txt; git -C "$REPO" commit -qm "side"
+    git -C "$REPO" checkout -q main
+    printf 'm\n' > "$REPO/m.txt"; git -C "$REPO" add m.txt; git -C "$REPO" commit -qm "main"
+    git -C "$REPO" merge -q --no-ff --no-commit side > /dev/null 2>&1 || :
+    printf 'a: 1\nb: 2\nc: 3\nd: merged' > "$REPO/deploy/app.yaml"
+    git -C "$REPO" add deploy/app.yaml
+    r11b_commit "the merge, its own last line in a yaml file"
+    is_merge "$sha"
+    push_main_through_hook_with_shim
+    r10a_passes
+}
+
+@test "round 12d (item 3, a gitlink): a merge whose own change moves a gitlink to a commit this store does not hold passes: git's Subproject commit line names no blob, so the feed notes no last line for it (red under the mutant that notes it, where the RESULT BLOBS read refuses the answer for the missing object)" {
+    r11a_base
+    git -C "$REPO" update-index --add --cacheinfo "160000,$BASE,sub"
+    git -C "$REPO" commit -qm "a gitlink"
+    git -C "$REPO" push -q origin main
+    BASE="$(git -C "$REPO" rev-parse HEAD)"
+    git -C "$REPO" checkout -q -b side
+    printf 's\n' > "$REPO/s.txt"; git -C "$REPO" add s.txt; git -C "$REPO" commit -qm "side"
+    git -C "$REPO" checkout -q main
+    printf 'm\n' > "$REPO/m.txt"; git -C "$REPO" add m.txt; git -C "$REPO" commit -qm "main"
+    git -C "$REPO" merge -q --no-ff --no-commit side > /dev/null 2>&1 || :
+    git -C "$REPO" update-index --cacheinfo "160000,$(printf '1%.0s' $(seq 1 40)),sub"
+    r11b_commit "the merge, moving the gitlink"
+    is_merge "$sha"
+    [ "$(git -C "$REPO" diff-tree -c -p --submodule=short "$sha" | grep -c '^++Subproject commit ')" -eq 1 ]
+    push_main_through_hook_with_shim
+    r10a_passes
 }

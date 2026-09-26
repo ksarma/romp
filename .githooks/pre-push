@@ -493,16 +493,18 @@
 #       is the round 10b case in tests/pre-push-hook.bats titled "round 10b
 #       (A.2's disclosed cost, with its witness)"), and refuses it anywhere
 #       else; a commit of 64 or more parents is refused apart (the PARENT
-#       COUNTS read); its record, five counts or the word that says where the
-#       read fell short, refused when it is neither. Its end: each commit's
-#       TAIL marker, its name printed again after its diff for its second
-#       --stdin line (<rev> <rev>, an empty diff), without which the awk
-#       records untailed, refused naming the read, and a line after the last
-#       tail is refused too; the tr ahead of the awk carries both markers, so
-#       a tr silent or cut short loses them (round 8: the stream gitleaks' own
-#       git read for the scan, cut inside a commit, published a credential
-#       through a real push, the read inside gitleaks with no row until round
-#       9 made it the hook's own)
+#       COUNTS read); in a diff --combined section the last line the awk
+#       writes is noted, with its number in the merge's result, and the notes
+#       are counted in the record (the RESULT BLOBS read, round 12d); its
+#       record, six counts or the word that says where the read fell short,
+#       refused when it is neither. Its end: each commit's TAIL marker, its
+#       name printed again after its diff for its second --stdin line (<rev>
+#       <rev>, an empty diff), without which the awk records untailed, refused
+#       naming the read, and a line after the last tail is refused too; the tr
+#       ahead of the awk carries both markers, so a tr silent or cut short
+#       loses them (round 8: the stream gitleaks' own git read for the scan,
+#       cut inside a commit, published a credential through a real push, the
+#       read inside gitleaks with no row until round 9 made it the hook's own)
 #   the RESULT listing of a merge
 #       the path the merge's diff --combined section named when it printed
 #       Binary files differ, git's quoted form, compared as a string with the
@@ -535,6 +537,24 @@
 #       record, four counts, refused when it is not. Its end: the size, so any
 #       cut counts short, the last byte of a blob with no final newline
 #       included, since the newline appended ends every whole answer
+#   the RESULT BLOBS of the merges' own last lines
+#       each answer's header, the name asked, blob, its size and the rest of
+#       the line asked (%(rest) echoes it), compared with the note it answers,
+#       then its size in bytes and the newline cat-file appends, counted by
+#       the awk (merge_tail_blobs, round 12d: a merge's combined diff prints
+#       no no-newline notice, so a URL the default rule sidekiq-sensitive-url
+#       catches, on a merge's own last line in a file with no final newline,
+#       published where main's hook refused it; decision 5's check, item 3,
+#       ruled fixed by romp-manager, 2026-09-26 18:58Z): an answer that is not
+#       a blob under the name and line asked, or holds more bytes than its
+#       size, is refused naming the read, and the count of blobs read whole is
+#       compared with the notes, fewer refused as read short; a piece that no
+#       longer holds the bytes the feed recorded refuses naming the piece; its
+#       record, four counts or the word that says where the read fell short,
+#       refused when it is neither. Its end: each blob's size, so an answer
+#       cut inside a blob leaves it short of its size and its newline, and one
+#       cut between blobs leaves fewer blobs than notes, each refused as read
+#       short
 #   the VERSION of the scanner
 #       a dotted version on one line, three numbers of at most nine digits (a
 #       release's own answer, 8.30.1; a leading v taken), compared with the
@@ -604,7 +624,9 @@
 #   the BYTE COUNT line of the scanner log
 #       the bytes written for the run (the pieces for the scan of record and
 #       the path-scoped copies for the additive run, as the feed's awk
-#       recorded writing them, a merge's binary path read whole among them;
+#       recorded writing them, a merge's binary path read whole among them,
+#       and a piece the RESULT BLOBS read wrote again without a merge's
+#       missing final newline, since round 12d, as that read's awk recorded;
 #       for the probe run, a third run since round 11b, the probes the shell
 #       wrote for it and the second copies of the path-scoped pieces; for the
 #       skip canary's run, since round 12b3, its pieces), compared with the
@@ -859,6 +881,9 @@
 # (creds.index, creds.pindex), the
 # feed's record (creds.record), the merges' binary paths the feed routes
 # (creds.binary) and the record of each one's whole read (creds.brecord),
+# the notes of the merges' own last lines (creds.tails, which the feed's awk
+# writes) and the record of their read (creds.trecord), whose awk writes
+# again, in place, a piece a note names (merge_tail_blobs),
 # the scanner's log (creds.log, one run's at a time, and the skip canary's
 # run's, creds.canary.log: written by the run's own
 # redirect under umask 077, whose failure fails the run, and deleted by an rm
@@ -939,25 +964,54 @@
 # reads as one in none of its parents, and merges of 64 and 65 parents
 # published a credential through the feed that way (the round 9 rulings,
 # 2026-09-25).
-# The awk writes each file's added lines, commit by commit, to scratch files
-# called pieces, each at most 98,304 bytes, a continuation repeating the last
-# 16,384 bytes (a line too long for one piece is cut into windows that overlap
-# by as much), and each beginning with a line holding ~. Why: gitleaks reads a
-# file of more than 100,000 bytes, or a stream, in chunks, and misses a match
-# across a cut (over one stream it found 1,703 of 2,000 key and value pairs
-# split by a blank line and 393 of 400 PGP private key blocks, where pieces
-# find 1,976 and 400, as its git mode does, and it missed a token across byte
-# 125,000 of a 3 MB line); and it skips a file whose first bytes carry an
-# archive or document signature (%PDF, PK, gzip), which the ~ line moves off
-# byte 0. gitleaks scans the pieces from inside their directory (gitleaks dir)
-# and runs no git, so no git configuration key reaches its read and no
-# .gitleaksignore of the work tree applies. It logs one figure for the bytes
-# it scanned, and the push is refused as unscanned when that figure is
-# missing, repeated or not the bytes the awk wrote; on any line at its ERR
-# level; and on any exit but 0 (clean) or 2 (a finding). A finding is named
-# with its commit and file, from the piece's name in the index the awk writes;
-# -v's File and Line name the piece, not the file. This run, the scan of
-# record, runs at gitleaks' trace level (--log-level trace, NO_COLOR=1), and
+# The awk writes each hunk's added lines, commit by commit, to scratch files
+# called pieces, a hunk's lines never sharing a piece with another hunk's
+# (romp-manager's ruling on decision 5, 2026-09-26 18:58Z), each piece at
+# most 98,304 bytes, a continuation repeating the last 16,384 bytes of its
+# hunk's lines (a line too long for one piece is cut into windows that
+# overlap by as much). Why pieces: gitleaks reads a file of more than 100,000
+# bytes, or a stream, in chunks, and misses a match across a cut (over one
+# stream it found 1,703 of 2,000 key and value pairs split by a blank line and
+# 393 of 400 PGP private key blocks, where pieces find 1,976 and 400, as its
+# git mode does, and it missed a token across byte 125,000 of a 3 MB line).
+# Why one hunk to a piece, as gitleaks' git mode, main's hook, frames a hunk:
+# a rule anchored at the start or the end of the text (^ or \A outside (?m),
+# or \s*$) matched a hunk's first or last added line in git mode and missed
+# it inside a piece that joined a file's hunks, so the round 11 rulings' M1,
+# M2 and M3 (nuget-config-password redefined) and a repository rule
+# ^zzkey_[0-9a-f]{16} on a hunk's first added line published where main's
+# hook refused them (decision 5's report, both scanners). A piece also ends
+# as its hunk's added text ends: git's no-newline notice after an added line
+# drops that line's newline in the piece, and a merge's own last line, after
+# which a combined diff prints no notice, loses it when the merge's result
+# blob ends without one (merge_tail_reads), so a rule ending in $ with no \s
+# beside it, the default sidekiq-sensitive-url among them, matches there as
+# git mode does (decision 1, the coordinator's ruling of 2026-09-26 17:20Z,
+# and item 3 of the 18:58Z ruling: that URL on the last line of a file with
+# no final newline published, in a commit and in a merge, where main's hook
+# refused it). And gitleaks skips a file whose first bytes its type check
+# (h2non/filetype v1.1.3) calls an application type, an archive, document or
+# executable signature (%PDF, PK, gzip, MZ, ELF, Mach-O, Dex, and ustar at
+# byte 257, DICM at 128 or CD001 at 32,769), where a skipped piece refuses
+# the push on the byte figure below; so a piece whose leading bytes would be
+# skipped, and no other, begins with a line holding ~, which moves them off
+# those offsets (the type table in CRED_PIECES_AWK, from the matchers'
+# source, and its deriving case in tests/pre-push-hook.bats, which checks it
+# against the running gitleaks; decision 5's check found that the
+# prototype's test of a piece's first line missed Mach-O's BE BA FE CA, which
+# its list lacked, and Dex and Dey, whose signatures reach past that line). A
+# rule anchored at the start of the text misses a credential on the first
+# line of a piece that carries the ~ line, where git mode reads it: a hunk
+# whose first bytes are such a signature. gitleaks scans the pieces from
+# inside their directory (gitleaks dir) and runs no git, so no git
+# configuration key reaches its read and no .gitleaksignore of the work tree
+# applies. It logs one figure for the bytes it scanned, and the push is
+# refused as unscanned when that figure is missing, repeated or not the bytes
+# the awk wrote; on any line at its ERR level; and on any exit but 0 (clean)
+# or 2 (a finding). A finding is named with its commit and file, from the
+# piece's name in the index the awk writes; -v's File and Line name the piece,
+# not the file. This run, the scan of record, runs at gitleaks' trace level
+# (--log-level trace, NO_COLOR=1), and
 # two more kinds of line in its log refuse the push as unscanned (path_skips;
 # the round 11 rulings' C and the coordinator's decision 2, 2026-09-26): a
 # trace line saying a rule allowlist skipped a rule by its path, whose
@@ -3514,12 +3568,15 @@ scan_identifiers() {
 # path may carry a backslash pair), checks each commit's head marker in the
 # order fed and its tail marker, and compares names as strings ($0 "" == sha:
 # two all-digit names compare as numbers otherwise); a commit two refs share
-# is fed twice and its lines written once (the seen set). Each file's added
-# lines in one commit start a new piece, a file named by its sequence number
-# in the piece directory, whose first line holds ~; a piece holds at most CAP
-# bytes, and the line that would pass it starts a new piece that first
-# repeats the last V bytes of the file's lines (the ring keeps whole lines,
-# the oldest cut to its tail); a line longer than LW = CAP - V - 4 bytes is
+# is fed twice and its lines written once (the seen set). Each hunk's added
+# lines start a new piece (the hunk header closes the piece before it, so no
+# piece holds two hunks' lines), a file named by its sequence number in the
+# piece directory, which begins with a line holding ~ only where gitleaks
+# would skip it by its type without one (the header; skipped, in the
+# piecing); a piece holds at most CAP bytes, and the line that would pass it
+# starts a new piece that first repeats the last V bytes of its hunk's lines
+# (the ring keeps whole lines, the oldest cut to its tail, and is emptied at
+# each hunk's first added line); a line longer than LW = CAP - V - 4 bytes is
 # cut into windows of LW bytes starting every LW - V, each after the first a
 # piece of its own (the piecing is CRED_PIECES_AWK, below, which blob_pieces
 # shares). The index names each piece's commit and file (the path as git
@@ -3548,14 +3605,28 @@ scan_identifiers() {
 # missing final newline, quoted, spaced and tab names and a three-parent
 # octopus; git 2.43.0). It READS a diff header, the +++ target a header just
 # opened, a hunk header inside a section (1 to 63 columns: a commit of 64 or
-# more parents is refused apart, parent_counts) and a content line, its
-# columns all + (in a commit two refs share, recognized and not written
-# again). It RECOGNIZES AND IGNORES, between a header and its first hunk, the
-# --- source line and the index, old mode, new mode, mode, new file mode,
+# more parents is refused apart, parent_counts; in a diff --combined section
+# also its result range, +<start> with an optional ,<count>, a header without
+# one foreign), a content line, its columns all + (in a commit two refs share,
+# recognized and not written again), the no-newline notice, which after a
+# content line the awk wrote drops that line's newline in the piece (decision
+# 1's mirror; after any other line it changes nothing the piece holds), and a
+# diff --combined section's index line, whose last name, the result blob
+# (--full-index spells it whole), the section's note takes. It RECOGNIZES AND
+# IGNORES, between a header and its first hunk, the --- source line and the
+# index (in a diff --git section), old mode, new mode, mode, new file mode,
 # deleted file mode, similarity index, rename from and rename to lines, and
-# inside a hunk the no-newline notice and a line whose columns are a run of
-# -, + and space not all + (a context, removed or added-against-one-parent
-# line, which the content rule skips on purpose). And in a diff --combined
+# inside a hunk a line whose columns are a run of -, + and space not all + (a
+# context, removed or added-against-one-parent line, which the content rule
+# skips on purpose; in a diff --combined section one whose columns hold no -
+# is a line of the merge's result and advances the count of its lines). The
+# note: for each diff --combined section in which the awk wrote a line, the
+# last such line's number in the merge's result, its piece, whether that
+# piece is path-scoped, and at the end whether it opens with the ~ line and
+# its bytes, written to the note file at the end and counted in the record,
+# unless the piece's newline was already dropped or the line is the
+# Subproject commit line of a gitlink (merge_tail_blobs reads the notes: a
+# combined diff prints no no-newline notice). And in a diff --combined
 # section it ROUTES the line Binary files differ: a merge's combined diff
 # applies git's binary verdict whatever --text says (combine-diff.c computes
 # it without reading the text flag), printing that line and no hunk for a
@@ -3573,47 +3644,203 @@ scan_identifiers() {
 # read, and a credential in a merge's binary path was published with every
 # count agreeing; the round 9 refuters, 2026-09-25). The record is one line: a
 # word that says where the read fell short (unmarked <n>, untailed <n>, short
-# <done>, foreign <n> <commit>, or nolist, the list file unread), or five
+# <done>, foreign <n> <commit>, or nolist, the list file unread), or six
 # counts (commits read whole, pieces, bytes written, bytes of the path-scoped
-# pieces, binary notices routed). The awk keeps draining after a bad marker
-# or a foreign line, so diff-tree is never cut off mid-write and the record
-# names the cause rather than a SIGPIPE status. Its status, under pipefail,
-# is diff-tree's, tr's or the awk's (a kill included).
-# The piecing, one awk text for the two reads that write pieces
-# (credential_feed's awk, from the feed's added lines, and blob_pieces', from
-# a merge's binary path read whole), so both cut, replay and index alike: the
-# constants CAP, V and LW, put (a line written and counted), the ring (keep
-# and forget), newpiece (the ~ line, the index lines, the replay), emit (a
-# line, or the windows of a long one), shut, choose, the path-scoped
-# selection by a path's basename (the header), and letters, a piece's number
-# spelled for its second copy's name. Each awk program is this text followed
-# by its own rules.
+# pieces, binary notices routed, notes written). The awk keeps draining
+# after a bad marker or a foreign line, so diff-tree is never cut off
+# mid-write and the record names the cause rather than a SIGPIPE status. Its
+# status, under pipefail, is diff-tree's, tr's or the awk's (a kill
+# included).
+# The piecing, one awk text for the three reads that write pieces
+# (credential_feed's awk, from the feed's added lines; blob_pieces', from a
+# merge's binary path read whole; and merge_tail_blobs', which writes again
+# a piece that ends with a merge's own last line in a file with no final
+# newline), so all cut, replay, frame and index alike: the constants CAP, V,
+# LW and HEAD; put (a line counted and written, its newline held until the
+# next line or shut, so that nonl can drop it: git's added text ends without
+# one where the file does, and the piece ends as that text ends); the head
+# (a piece's first lines held, unwritten, until they pass HEAD bytes or the
+# piece shuts, then written behind the ~ line only when skipped says gitleaks
+# would skip the piece by its type without it); room (the bytes a line may
+# add, two kept back while the ~ line is undecided, so no piece passes CAP);
+# the ring (keep and forget); newpiece (the index lines, the replay); emit (a
+# line, or the windows of a long one); shut; the type table (types, sig,
+# tmatch, mkv, hat and skipped); choose, the path-scoped selection by a
+# path's basename (the header); and letters, a piece's number spelled for its
+# second copy's name. Each awk program is this text followed by its own
+# rules.
+# The type table mirrors the type check of gitleaks 8.25.0 to 8.30.1, which
+# calls h2non/filetype v1.1.3's Match on the first read of a file, up to
+# 100,000 bytes and so all of a piece, and skips the file when the type
+# matched is an application one (detect/directory.go in 8.25.0,
+# sources/file.go since; its archive road names archives by the file's name
+# alone, and a piece is named by a number). Match tries its matchers by
+# category, application, then image, video, audio, font, document and
+# archive, and answers the first that matches, so the table holds three
+# classes: a (application: Dex and Dey), which skip whatever else matches; p
+# (image, video, audio), which claim a piece first, so gitleaks reads it; and
+# s (document, archive), which skip unless a p entry matches. An entry is a
+# name, its class, the least length it needs (Go's len(buf) > n, as n + 1),
+# the most (0 for none), and up to three conditions, each an offset and the
+# bytes there, alternatives joined by | (no signature holds that byte), or m
+# and a word: the matroska search, the word's first place in the first 4,096
+# bytes at an offset of 3 or more, B and 0x82 three and two bytes before it.
+# Left out, each with its reason: every matcher that needs a NUL byte, which
+# no piece holds (tr maps NUL to 0x01 ahead of every writer): wasm, xz, eot,
+# the four fonts, jpeg2000, cr2, tiff, ico and mpeg, and mov's first form;
+# heif, whose box size, the first four bytes read as a number, would have to
+# be at most the piece's length, and four bytes with no NUL read at least
+# 16,843,009; zstd's skippable frames, for the same reason in bytes 4 to 7;
+# rar's 0x00 at byte 6 (a NUL there reads 0x01, the byte the entry names);
+# and epub, docx, xlsx, pptx and deb, whose signatures begin with zip's
+# PK\003\004 or ar's !<arch>, entries the table holds. The deriving case
+# (tests/pre-push-hook.bats, round 12d, the case titled "the type table is
+# DERIVED") builds a piece for each entry's alternatives and for each
+# matcher of h2non/filetype v1.1.3, runs gitleaks on it and compares its
+# skip with skipped's answer.
 CRED_PIECES_AWK='
         function pieces_begin() {
             bytes = 0; pbytes = 0; pieces = 0; cur = ""; curq = 0; q = 0; rh = 1; rt = 0; rb = 0
             CAP = 98304; V = 16384; LW = CAP - V - 4
+            HEAD = 32775; hd = 1; hn = 0; hb = 0; nlp = 0; nl0 = 0; tl = 0
+            types()
         }
-        function put(s,   k) { print s > cur; k = length(s) + 1; pb += k; bytes += k }
+        function put(s,   k) {
+            if (nl0) { nl0 = 0; pb++; bytes++; if (hd) nlp = 1; else hb++ }
+            k = length(s) + 1; pb += k; bytes += k
+            if (!hd) { hl[++hn] = s; hb += k; if (hb >= HEAD) head(); return }
+            if (nlp) printf "\n" > cur
+            printf "%s", s > cur; nlp = 1
+        }
+        function nonl() { if (nl0 || (hd && !nlp) || (!hd && !hn)) return; nl0 = 1; pb--; bytes--; if (hd) nlp = 0; else hb-- }
+        function head(   i) {
+            hd = 1; tl = skipped()
+            if (tl) { printf "~\n" > cur; pb += 2; bytes += 2 }
+            for (i = 1; i <= hn; i++) { if (i > 1) printf "\n" > cur; printf "%s", hl[i] > cur; delete hl[i] }
+            nlp = (hn > 0 && !nl0); hn = 0
+        }
+        function room() { return CAP - pb - (hd ? 0 : 2) }
         function forget() { for (; rh <= rt; rh++) delete rl[rh]; rh = rt + 1; rb = 0 }
         function keep(s) { rl[++rt] = s; rb += length(s) + 1
             while (rt > rh && rb - length(rl[rh]) - 1 >= V) { rb -= length(rl[rh]) + 1; delete rl[rh]; rh++ } }
-        function shut() { if (cur != "") { close(cur); if (curq) pbytes += pb } }
+        function shut() {
+            if (cur == "") return
+            if (!hd) head()
+            if (nlp) printf "\n" > cur
+            nlp = 0; close(cur); if (curq) pbytes += pb
+            if (pieces in pend) { cpb[pieces] = pb; ctl[pieces] = tl; cnl[pieces] = nl0 }
+        }
         function newpiece(replay,   i, s, x) {
             shut()
-            cur = dir "/" (++pieces); pb = 0; curq = q; put("~")
+            cur = dir "/" (++pieces); pb = 0; curq = q; hd = 0; hn = 0; hb = 0; nlp = 0; nl0 = 0; tl = 0
             printf "%d\t%s\t%s\t.\n", pieces, sha, f >> idx
             if (q) printf "%d\t%s\t%s\t%s\t.\n", pieces, (sfx == "nuget.config" ? sfx : pieces sfx), "romp-copy-" letters(pieces) (substr(osfx, 1, 1) == "." ? "" : ".") osfx, srule >> pidx
             if (replay) { x = rb - V; for (i = rh; i <= rt; i++) { s = rl[i]; if (i == rh && x > 0) s = substr(s, x + 1); put(s) } }
         }
         function emit(t,   L, s, w) {
             L = length(t)
-            if (L <= LW) { if (pb + L + 1 > CAP) newpiece(1); put(t); keep(t); return }
+            if (L <= LW) { if (L + 1 > room()) newpiece(1); put(t); keep(t); return }
             for (s = 1; ; s += LW - V) {
                 w = substr(t, s, LW)
-                if (s == 1) { if (pb + length(w) + 1 > CAP) newpiece(1) } else newpiece(0)
+                if (s == 1) { if (length(w) + 1 > room()) newpiece(1) } else newpiece(0)
                 put(w); if (s + LW > L) break
             }
             forget(); keep(w)
+        }
+        function sig(nm, c, lo, hi, o1, b1, o2, b2, o3, b3) {
+            ns++; tn[ns] = nm; tc[ns] = c; tlo[ns] = lo; thi[ns] = hi
+            to[ns, 1] = o1; tb[ns, 1] = b1; to[ns, 2] = o2; tb[ns, 2] = b2; to[ns, 3] = o3; tb[ns, 3] = b3
+        }
+        function types(   k, m, a, i, c) {
+            ns = 0
+            sig("dex", "a", 37, 0, 0, "dex\n", 36, "p")
+            sig("dey", "a", 101, 0, 0, "dey\n", 40, "dex\n", 76, "p")
+            sig("jpg", "p", 3, 0, 0, "\377\330\377")
+            sig("png", "p", 4, 0, 0, "\211PNG")
+            sig("gif", "p", 3, 0, 0, "GIF")
+            sig("webp", "p", 12, 0, 8, "WEBP")
+            sig("bmp", "p", 2, 0, 0, "BM")
+            sig("jxr", "p", 3, 0, 0, "II\274")
+            sig("psd", "p", 4, 0, 0, "8BPS")
+            sig("dwg", "p", 4, 0, 0, "AC10")
+            sig("mp4", "p", 12, 0, 4, "ftyp", 8, "avc1|dash|iso2|iso3|iso4|iso5|iso6|isom|mmp4|mp41|mp42|mp4v|mp71|MSNV|NDAS|NDSC|NSDC|NDSH|NDSM|NDSP|NDSS|NDXC|NDXH|NDXM|NDXP|NDXS|F4V |F4P ")
+            sig("m4v", "p", 11, 0, 4, "ftypM4V")
+            sig("mkv", "p", 4, 0, 0, "\032E\337\243", "m", "matroska")
+            sig("webm", "p", 4, 0, 0, "\032E\337\243", "m", "webm")
+            sig("mov", "p", 16, 0, 4, "moov|mdat")
+            sig("mov", "p", 16, 0, 12, "mdat")
+            sig("avi", "p", 11, 0, 0, "RIFF", 8, "AVI")
+            sig("wmv", "p", 10, 0, 0, "0&\262u\216f\317\021\246\331")
+            sig("flv", "p", 4, 0, 0, "FLV\001")
+            sig("3gp", "p", 11, 0, 4, "ftyp3gp")
+            sig("mid", "p", 4, 0, 0, "MThd")
+            sig("mp3", "p", 3, 0, 0, "ID3|\377\373")
+            sig("m4a", "p", 11, 0, 4, "ftypM4A")
+            sig("m4a", "p", 11, 0, 0, "M4A ")
+            sig("ogg", "p", 4, 0, 0, "OggS")
+            sig("flac", "p", 4, 0, 0, "fLaC")
+            sig("wav", "p", 12, 0, 0, "RIFF", 8, "WAVE")
+            sig("amr", "p", 12, 0, 0, "#!AMR\n")
+            sig("aac", "p", 2, 0, 0, "\377\361|\377\371")
+            sig("aiff", "p", 12, 0, 0, "FORM", 8, "AIFF")
+            sig("doc", "s", 4, 513, 0, "\320\317\021\340")
+            sig("doc", "s", 514, 0, 0, "\320\317\021\340", 512, "\354\245|\011\010|\240F")
+            sig("zip", "s", 4, 0, 0, "PK", 2, "\003|\005|\007", 3, "\004|\006|\010")
+            sig("tar", "s", 262, 0, 257, "ustar")
+            sig("rar", "s", 7, 0, 0, "Rar!\032\007\001")
+            sig("gz", "s", 3, 0, 0, "\037\213\010")
+            sig("bz2", "s", 3, 0, 0, "BZh")
+            sig("7z", "s", 6, 0, 0, "7z\274\257\047\034")
+            sig("zst", "s", 4, 0, 0, "(\265/\375")
+            sig("pdf", "s", 4, 0, 0, "%PDF")
+            sig("exe", "s", 2, 0, 0, "MZ")
+            sig("swf", "s", 3, 0, 0, "CWS|FWS")
+            sig("rtf", "s", 5, 0, 0, "{\\rtf")
+            sig("ps", "s", 2, 0, 0, "%!")
+            sig("sqlite", "s", 4, 0, 0, "SQLi")
+            sig("nes", "s", 4, 0, 0, "NES\032")
+            sig("crx", "s", 4, 0, 0, "Cr24")
+            sig("cab", "s", 4, 0, 0, "MSCF|ISc(")
+            sig("ar", "s", 7, 0, 0, "!<arch>")
+            sig("Z", "s", 2, 0, 0, "\037\240|\037\235")
+            sig("lz", "s", 4, 0, 0, "LZIP")
+            sig("rpm", "s", 97, 0, 0, "\355\253\356\333")
+            sig("elf", "s", 53, 0, 0, "\177ELF")
+            sig("dcm", "s", 132, 0, 128, "DICM")
+            sig("iso", "s", 32774, 0, 32769, "CD001")
+            sig("macho", "s", 4, 0, 0, "\376\355\372\317|\376\355\372\316|\276\272\376\312|\317\372\355\376|\316\372\355\376|\312\376\272\276")
+            for (k = 1; k <= ns; k++)
+                if (to[k, 1] == 0) { m = split(tb[k, 1], a, "|"); for (i = 1; i <= m; i++) { c = substr(a[i], 1, 1); if (index(tk[c] " ", " " k " ") == 0) tk[c] = tk[c] " " k } }
+                else tk[""] = tk[""] " " k
+        }
+        function hat(o, k,   i, p, L, s, r) {
+            r = ""; p = 0
+            for (i = 1; i <= hn && p < o + k; i++) {
+                L = length(hl[i]) + (i < hn || !nl0)
+                if (p + L > o) { s = (o > p ? o - p : 0); r = r substr(hl[i] "\n", s + 1, L - s) }
+                p += L
+            }
+            return substr(r, 1, k)
+        }
+        function mkv(h, w,   i) { i = index(h, w); return i >= 4 && substr(h, i - 3, 2) == "B\202" }
+        function tmatch(k, n, h,   j, o, b, m, a, i, ok) {
+            if (n < tlo[k] || (thi[k] && n > thi[k])) return 0
+            for (j = 1; j <= 3 && tb[k, j] != ""; j++) {
+                o = to[k, j]; b = tb[k, j]
+                if (o == "m") { if (!mkv(h, b)) return 0; continue }
+                m = split(b, a, "|"); ok = 0
+                for (i = 1; i <= m && !ok; i++) ok = ((o + length(a[i]) <= 4096 ? substr(h, o + 1, length(a[i])) : hat(o, length(a[i]))) == a[i])
+                if (!ok) return 0
+            }
+            return 1
+        }
+        function skipped(   n, h, m, a, i, k, s) {
+            n = hb; h = hat(0, 4096)
+            m = split(tk[substr(h, 1, 1)] tk[""], a, " ")
+            for (i = 1; i <= m; i++) { k = a[i]; if (tc[k] != "p" && tmatch(k, n, h)) { if (tc[k] == "a") return 1; s = 1 } }
+            if (!s) return 0
+            for (k = 1; k <= ns; k++) if (tc[k] == "p" && tmatch(k, n, h)) return 0
+            return 1
         }
         function choose(p) {
             f = p; base = f
@@ -3629,34 +3856,40 @@ CRED_PIECES_AWK='
             else if (sfx == ".php") srule = "freemius-secret-key"
         }
         function letters(n,   s, i) { n = n ""; s = ""; for (i = 1; i <= length(n); i++) s = s substr("abcdefghij", substr(n, i, 1) + 1, 1); return s }'
-credential_feed() {   # <list file> <record file> <piece directory> <index file> <path-scoped index file> <binary paths file>
-    env -u GIT_DIFF_OPTS git -c core.quotePath=true -c diff.suppressBlankEmpty=false diff-tree --stdin -p -U0 -r -M -c --root --always --text --no-color --no-textconv --no-ext-diff --ignore-submodules=none --submodule=short < "$1" \
+credential_feed() {   # <list file> <record file> <piece directory> <index file> <path-scoped index file> <binary paths file> <merges' last lines file>
+    env -u GIT_DIFF_OPTS git -c core.quotePath=true -c diff.suppressBlankEmpty=false diff-tree --stdin -p -U0 -r -M -c --root --always --text --no-color --no-textconv --no-ext-diff --ignore-submodules=none --submodule=short --full-index < "$1" \
     | LC_ALL=C tr '\000' '\001' \
-    | LC_ALL=C ROMP_LIST_FILE=$1 ROMP_RECORD_FILE=$2 ROMP_PIECE_DIR=$3 ROMP_INDEX_FILE=$4 ROMP_PATH_INDEX_FILE=$5 ROMP_BINARY_FILE=$6 awk "$CRED_PIECES_AWK"'
+    | LC_ALL=C ROMP_LIST_FILE=$1 ROMP_RECORD_FILE=$2 ROMP_PIECE_DIR=$3 ROMP_INDEX_FILE=$4 ROMP_PATH_INDEX_FILE=$5 ROMP_BINARY_FILE=$6 ROMP_TAIL_FILE=$7 awk "$CRED_PIECES_AWK"'
         BEGIN {
             list = ENVIRON["ROMP_LIST_FILE"]; rec = ENVIRON["ROMP_RECORD_FILE"]; dir = ENVIRON["ROMP_PIECE_DIR"]
-            idx = ENVIRON["ROMP_INDEX_FILE"]; pidx = ENVIRON["ROMP_PATH_INDEX_FILE"]; bin = ENVIRON["ROMP_BINARY_FILE"]
+            idx = ENVIRON["ROMP_INDEX_FILE"]; pidx = ENVIRON["ROMP_PATH_INDEX_FILE"]; bin = ENVIRON["ROMP_BINARY_FILE"]; tails = ENVIRON["ROMP_TAIL_FILE"]
             while ((r = (getline l < list)) > 0) if (index(l, " ") == 0) want[++nwant] = l ""
             if (r < 0) bad = "nolist"
             close(list)
-            pieces_begin(); done = 0; state = 0; nbin = 0
+            pieces_begin(); done = 0; state = 0; nbin = 0; nt = 0; ntail = 0
             pluses = "++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++"
         }
+        function endsec() {
+            if (kind == "combined" && last > 0 && ltext != "Subproject commit " res) { nt++; tsha[nt] = sha; tres[nt] = (res == "" ? "-" : res); tline[nt] = last; tpiece[nt] = lpiece; tq[nt] = lq; pend[lpiece] = 1 }
+            last = 0; res = ""
+        }
+                                         { wasplus = isplus; isplus = 0 }
         bad != ""                        { next }
         state == 0 {
             if (done >= nwant || $0 "" != want[done + 1]) { bad = "unmarked " (done + 1); next }
-            sha = $0 ""; state = 1; hdr = 0; n = 0; kind = ""; hp = ""; f = ""; base = ""; q = 0; open = 0
+            sha = $0 ""; state = 1; hdr = 0; n = 0; kind = ""; hp = ""; f = ""; base = ""; q = 0; open = 0; last = 0; res = ""
             skip = (sha in seen); seen[sha] = 1; next
         }
-        $0 "" == sha                     { state = 0; done++; next }
-        /^diff --git /                   { hdr = 1; kind = "git"; hp = ""; n = 0; f = ""; base = ""; q = 0; open = 0; next }
-        /^diff --combined /              { hdr = 1; kind = "combined"; hp = substr($0, 17); n = 0; f = ""; base = ""; q = 0; open = 0; next }
+        $0 "" == sha                     { endsec(); state = 0; done++; next }
+        /^diff --git /                   { endsec(); hdr = 1; kind = "git"; hp = ""; n = 0; f = ""; base = ""; q = 0; open = 0; next }
+        /^diff --combined /              { endsec(); hdr = 1; kind = "combined"; hp = substr($0, 17); n = 0; f = ""; base = ""; q = 0; open = 0; next }
         hdr && /^\+\+\+ / {
             f = substr($0, 5); sub(/\t$/, "", f)
             if (substr(f, 1, 2) == "b/") f = substr(f, 3)
             else if (substr(f, 1, 3) == "\"b/") f = "\"" substr(f, 4)
             choose(f); next
         }
+        hdr && kind == "combined" && /^index [0-9a-f,]+\.\.[0-9a-f]+( [0-7]+)?$/ { res = $0; sub(/.*\.\./, "", res); sub(/ .*/, "", res); next }
         hdr && /^(--- |index |old mode |new mode |mode |new file mode |deleted file mode |similarity index |rename from |rename to )/ { next }
         hdr && kind == "combined" && hp != "" && $0 == "Binary files differ" {
             if (!skip) { printf "%s\t%s\t.\n", sha, hp >> bin; nbin++ }
@@ -3665,46 +3898,55 @@ credential_feed() {   # <list file> <record file> <piece directory> <index file>
         kind != "" && /^@/ {
             match($0, /^@+/); n = RLENGTH - 1
             if (n < 1 || n > 63) { bad = "foreign " (done + 1) " " sha; next }
-            hdr = 0; plus = substr(pluses, 1, n); next
-        }
-        !hdr && n > 0 && $0 == "\\ No newline at end of file" { next }
-        !hdr && n > 0 && substr($0, 1, n) == plus {
-            if (!skip) { if (!open) { open = 1; forget(); newpiece(0) } emit(substr($0, n + 1)) }
+            hdr = 0; open = 0; plus = substr(pluses, 1, n)
+            if (kind == "combined") { rn = $(n + 2); if (rn !~ /^\+[0-9]+(,[0-9]+)?$/) { bad = "foreign " (done + 1) " " sha; next } sub(/^\+/, "", rn); sub(/,.*/, "", rn); rn += 0 }
             next
         }
-        !hdr && n > 0 { pre = substr($0, 1, n); if (length(pre) == n && pre !~ /[^-+ ]/) next }
+        !hdr && n > 0 && $0 == "\\ No newline at end of file" { if (wasplus) nonl(); next }
+        !hdr && n > 0 && substr($0, 1, n) == plus {
+            if (!skip) {
+                if (!open) { open = 1; forget(); newpiece(0) }
+                emit(substr($0, n + 1)); isplus = 1
+                if (kind == "combined") { last = rn; lpiece = pieces; lq = curq; ltext = substr($0, n + 1) }
+            }
+            if (kind == "combined") rn++
+            next
+        }
+        !hdr && n > 0 { pre = substr($0, 1, n); if (length(pre) == n && pre !~ /[^-+ ]/) { if (kind == "combined" && index(pre, "-") == 0) rn++; next } }
         { bad = "foreign " (done + 1) " " sha }
         END {
-            shut()
+            endsec(); shut()
+            for (k = 1; k <= nt; k++) if (!cnl[tpiece[k]]) { printf "%s %s %d %d %d %d %d .\n", tres[k], tsha[k], tline[k], tpiece[k], tq[k], ctl[tpiece[k]], cpb[tpiece[k]] > tails; ntail++ }
             if (bad != "")          print bad > rec
             else if (state != 0)    print "untailed " (done + 1) > rec
             else if (done != nwant) print "short " done > rec
-            else                    print done, pieces, bytes, pbytes, nbin > rec
+            else                    print done, pieces, bytes, pbytes, nbin, ntail > rec
         }'
 }
 
 # A merge's binary path read whole (merge_binary_reads, the header): the
 # blob's bytes, NUL mapped to 0x01 as the feed maps them, pieced exactly as
-# the feed pieces a file's added lines (CRED_PIECES_AWK: each piece opens
-# with the ~ line and holds at most CAP bytes, a continuation replays the
-# last V bytes, a line longer than LW is cut into overlapping windows),
-# numbered after the pieces already written, indexed to the merge and the
-# path, and listed in the path-scoped index when choose takes the path's
-# name. Why pieces and not the blob as one file: gitleaks reads a file of
-# more than 100,000 bytes in chunks, so a credential across its cut
-# published (a 140,000-byte merged path with the token at byte 124,990), and
-# it skips a file that opens with an archive or document signature, so a
-# clean merge of a zip or a pdf path was refused on the byte figure (the
-# round 9 rulings, 2026-09-25). The group appends one newline after
-# cat-file's answer, only when cat-file exited 0, so the stream always ends
-# with a newline the blob did not have: the awk drops the empty last line
-# that newline makes, or keeps a last line the blob left without one (read
-# as a line and a newline, as the feed reads a missing final newline), and
-# the bytes it read are the blob's size and one when cat-file answered
-# whole, so any cut, the last byte of a blob with no final newline included,
-# counts short. The record: four counts (bytes read, pieces written, bytes
-# written, bytes of those pieces the path-scoped index lists). Its status,
-# under pipefail, is cat-file's, tr's or the awk's.
+# the feed pieces a hunk's added lines (CRED_PIECES_AWK: a piece holds at
+# most CAP bytes, a continuation replays the last V bytes, a line longer than
+# LW is cut into overlapping windows, and the ~ line opens a piece only where
+# gitleaks would skip it by its type without one), numbered after the pieces
+# already written, indexed to the merge and the path, and listed in the
+# path-scoped index when choose takes the path's name. Why pieces and not the
+# blob as one file: gitleaks reads a file of more than 100,000 bytes in
+# chunks, so a credential across its cut published (a 140,000-byte merged
+# path with the token at byte 124,990), and it skips a file that opens with
+# an archive or document signature, so a clean merge of a zip or a pdf path
+# was refused on the byte figure (the round 9 rulings, 2026-09-25). The group
+# appends one newline after cat-file's answer, only when cat-file exited 0,
+# so the stream always ends with a newline the blob did not have: the awk
+# drops the empty last line that newline makes, or writes a last line the
+# blob left without one without its newline too (nonl: decision 1's mirror,
+# the coordinator's ruling of 2026-09-26 17:20Z, so the piece ends as the
+# blob ends), and the bytes it read are the blob's size and one when
+# cat-file answered whole, so any cut, the last byte of a blob with no final
+# newline included, counts short. The record: four counts (bytes read,
+# pieces written, bytes written, bytes of those pieces the path-scoped index
+# lists). Its status, under pipefail, is cat-file's, tr's or the awk's.
 blob_pieces() {   # <blob> <record file> <piece directory> <index file> <path-scoped index file> <merge> <path, as git quotes it> <pieces already written>
     { git cat-file -p "$1" && printf '\n'; } \
     | LC_ALL=C tr '\000' '\001' \
@@ -3719,9 +3961,83 @@ blob_pieces() {   # <blob> <record file> <piece directory> <index file> <path-sc
         function line(t) { if (!open) { open = 1; forget(); newpiece(0) } emit(t) }
         { got += length($0) + 1; if (held) line(last); last = $0; held = 1 }
         END {
-            if (held && last != "") line(last)
+            if (held && last != "") { line(last); nonl() }
             shut()
             print got, pieces - first, bytes, pbytes > rec
+        }'
+}
+
+# A merge's own last lines (merge_tail_reads, the header): a merge's
+# combined diff prints no no-newline notice (git 2.43.0), so the feed cannot
+# see that the last line a merge adds ends a file with no final newline, and
+# writes it with one; the default rule sidekiq-sensitive-url, which ends in $
+# with no \s beside it, then missed a URL on that line, where main's hook,
+# reading the merge first-parent, refused it (decision 5's check, item 3,
+# ruled fixed by romp-manager, 2026-09-26 18:58Z). The feed notes each
+# section of a merge whose last line written may end its file: the result
+# blob its --full-index index line names, that line's number in the result
+# (from the result range of each hunk header and the lines after it that
+# are in the result, those whose columns hold no -), the piece holding it,
+# whether that piece is path-scoped, whether it opens with the ~ line, and
+# its bytes; a gitlink's section is not noted (its line is git's own
+# Subproject commit line, with no blob behind it). ONE git cat-file --batch
+# for the push, fed that note file, answers each result blob whole: its
+# header (the name asked, blob, its size, and the rest of the line asked,
+# which %(rest) echoes and the awk compares with the line asked), then its
+# size in bytes and the newline cat-file appends. The awk counts the blob's
+# lines and reads its last byte: when the blob does not end in a newline and
+# the noted line is its last line, it checks that the piece holds the bytes
+# the feed recorded and writes the piece again through the piecing's own
+# put, nonl and shut, so the piece ends as the blob ends and its ~ line is
+# decided again on the bytes it now holds. The record: a word that says
+# where the read fell short (short <n> or cut <n>, the answers read whole
+# ahead of it; foreign <n>, an answer that is not a blob under the name and
+# line asked; over <n>, more bytes than its size; piece <n>, a piece that no
+# longer holds the bytes the feed wrote; nolist, the note file unread), or
+# four counts (blobs read whole, pieces written again, and the bytes of all
+# pieces and of the path-scoped ones, as they now stand). Its status, under
+# pipefail, is cat-file's, tr's or the awk's.
+merge_tail_blobs() {   # <note file> <record file> <piece directory> <bytes written> <path-scoped bytes written>
+    git cat-file --batch='%(objectname) %(objecttype) %(objectsize) %(rest)' < "$1" \
+    | LC_ALL=C tr '\000' '\001' \
+    | LC_ALL=C ROMP_TAIL_FILE=$1 ROMP_TAIL_RECORD_FILE=$2 ROMP_PIECE_DIR=$3 ROMP_TAIL_BYTES=$4 ROMP_TAIL_PBYTES=$5 awk "$CRED_PIECES_AWK"'
+        BEGIN {
+            list = ENVIRON["ROMP_TAIL_FILE"]; rec = ENVIRON["ROMP_TAIL_RECORD_FILE"]; dir = ENVIRON["ROMP_PIECE_DIR"]
+            while ((r = (getline l < list)) > 0) want[++nw] = l
+            if (r < 0) bad = "nolist"
+            close(list)
+            pieces_begin(); k = 0; st = 0; fits = 0; db = 0; dq = 0
+        }
+        function refit(   p, fl, r, l, m, old, i, t, qq) {
+            p = w[4]; qq = w[5] + 0; t = w[6] + 0; fl = dir "/" p; m = 0; old = 0
+            while ((r = (getline l < fl)) > 0) { old += length(l) + 1; ln[++m] = l }
+            close(fl)
+            if (r < 0 || old != w[7] + 0 || m < 1 + t || (t && ln[1] != "~")) { bad = "piece " k; return }
+            cur = fl; pb = 0; curq = qq; hd = 0; hn = 0; hb = 0; nlp = 0; nl0 = 0; tl = 0
+            for (i = 1 + t; i <= m; i++) put(ln[i])
+            nonl(); shut(); cur = ""
+            fits++; db += pb - old; if (qq) dq += pb - old
+            for (i = 1; i <= m; i++) delete ln[i]
+        }
+        bad != "" { next }
+        st == 0 {
+            if (++k > nw) { bad = "foreign " k; next }
+            split(want[k], w, " ")
+            if ($1 != w[1] || $2 != "blob" || $3 !~ /^[0-9]+$/ || substr($0, length($1 $2 $3) + 4) != substr(want[k], length(w[1]) + 2)) { bad = "foreign " k; next }
+            size = $3 + 0; got = 0; nr = 0; st = 1; next
+        }
+        {
+            got += length($0) + 1; nr++; tail = $0
+            if (got < size + 1) next
+            if (got > size + 1) { bad = "over " k; next }
+            st = 0
+            if (tail != "" && nr == w[3] + 0) refit()
+        }
+        END {
+            if (bad != "")     print bad > rec
+            else if (st != 0)  print "cut " (k - 1) > rec
+            else if (k != nw)  print "short " k > rec
+            else               print k, fits, ENVIRON["ROMP_TAIL_BYTES"] + db, ENVIRON["ROMP_TAIL_PBYTES"] + dq > rec
         }'
 }
 
@@ -4758,8 +5074,9 @@ canary_form() {   # <rule|targeted|and>: cpiece and cword, the caller's
 # form and saying its skip wording is not recognized, with the remedies
 # (re-verify the hook against that gitleaks; ROMP_NO_GITLEAKS=1 for one
 # push, last). A form a gitleaks does not apply logs no skip line either,
-# and refuses the same way: 8.25.0 applies no targeted allowlist (the
-# header). Status 0 always; a refusal sets failed_creds.
+# and refuses the same way: tests/pre-push-hook.bats drives it in the case
+# titled "round 12b3 (a form the scanner does not apply)", with a piece its
+# allowlist does not reach. Status 0 always; a refusal sets failed_creds.
 canary_check() {   # <log file>
     local kind sa sb cnamed=0 sd=0 send="" seen=" " f cpiece cword
     if judged_read gate="the PATH SKIPS in the trace log of the skip canary" 0 "$what could not be judged: its trace log could not be read for the skip lines of the canary's allowlists (awk exited {rc})" -- path_skips "$1"; then
@@ -4947,6 +5264,42 @@ merge_binary_reads() {   # <count of routed paths the feed recorded>
     fi
 }
 
+# The merges' own last lines (the header; merge_tail_blobs): called with the
+# count of notes the feed recorded, when the feed's record is whole, ahead of
+# merge_binary_reads. One judged read; its record is four counts, whose first
+# must be that count (fewer is a note file read back short), or a word, which
+# refuses naming the read; the two figures it answers replace rbytes and
+# rpbytes, the caller's, the bytes the scanner runs are checked against. A
+# read that fails, or records neither, leaves the figures unknown: rbytes and
+# rpbytes are emptied and failed_creds set.
+merge_tail_reads() {   # <count of notes the feed recorded>
+    local want="$1" trec="" tdone="" tfit="" tb="" tpb="" rest=""
+    : > "$scratch/creds.trecord"
+    if ! judged_read gate="the RESULT BLOBS of the merges' own last lines" 0 "the RESULT BLOBS of the merges' own last lines could not be read for the credential scan (a stage of git cat-file --batch, tr and awk exited {rc})" -- merge_tail_blobs "$scratch/creds.tails" "$scratch/creds.trecord" "$scratch/creds.d" "$rbytes" "$rpbytes"; then
+        failed_creds=1; rbytes=""; rpbytes=""; return 0
+    fi
+    { IFS= read -r trec || :; } < "$scratch/creds.trecord"
+    read -r tdone tfit tb tpb rest <<< "$trec" || :
+    case "$trec" in
+        "short "*|"cut "*)
+            unscanned "the RESULT BLOBS of the merges' own last lines were read short for the credential scan (git cat-file --batch exited 0 and answered ${trec#* } of the $want blobs asked, whole)" ;;
+        "foreign "*|"over "*)
+            unscanned "the RESULT BLOBS of the merges' own last lines could not be read for the credential scan (git cat-file --batch exited 0 and answered blob ${trec#* } of the $want asked as no blob under the name and line asked, or with more bytes than its size)" ;;
+        "piece "*)
+            unscanned "the PIECE holding a merge's own last line no longer holds the bytes the credential feed wrote there (note ${trec#* } of $want), so the line's missing final newline cannot be mirrored" ;;
+        *)
+            case "$tdone:$tfit:$tb:$tpb:${rest:+x}" in
+                *[!0-9:]*|:*|*::*)
+                    unscanned "the RESULT BLOBS of the merges' own last lines could not be read for the credential scan (its awk exited 0 and recorded \"$trec\", not four counts)" ;;
+                *)
+                    if [ "$tdone" -eq "$want" ]; then rbytes=$tb; rpbytes=$tpb; return 0; fi
+                    unscanned "the notes of the merges' own last lines the CREDENTIAL FEED of the push wrote were read back short ($tdone of the $want its awk recorded), so the rest cannot be mirrored" ;;
+            esac ;;
+    esac
+    failed_creds=1; rbytes=""; rpbytes=""
+    return 0
+}
+
 # The per-piece directories of the path-scoped copies and the probe run (its
 # arguments: <scratch>/creds.p/<piece> and creds.q/<piece> for each selected
 # piece, handed over in the shell, where no exec's limit applies), made by
@@ -5011,8 +5364,8 @@ piece_dirs() {   # <directory>...: makes each; prints nothing
 scan_credentials() {
     local gl local_ref local_sha _remote_ref remote_sha revs rev peeled peeled_read nfed record n what
     # shellcheck disable=SC2034  # cfg_name: set by gitleaks_config, for the lines that name the config the runs read
-    local rdone rpieces rbytes rpbytes rbin rest piece fsha fpath fterm data pdone plisted pbig nbig pcount scanning dmade=0 dmiss dfirst d cfg_name="" cfg_forms="" gl_version=""
-    local sname prule qtext qbytes qn qwant qv qp_pkcs qp_nuget qp_k8s qp_tf qp_php kind qa qb qc qd qnamed qmiss qfound qother qend seen_lines="" run_rc=0
+    local rdone rpieces rbytes rpbytes rbin rtail rest piece fsha fpath fterm data pdone plisted pbig nbig pcount scanning dmade=0 dmiss dfirst d cfg_name="" cfg_forms="" gl_version=""
+    local sname prule qtext qbytes qn qwant qv qp_pkcs qp_nuget qp_k8s qp_tf qp_php kind qa qb qc qd qnamed qmiss qfound qother qend qseen seen_lines="" run_rc=0
     local -a cfg=() ix_sha ix_path pdirs
     if ! credential_scan_armed; then
         [ -n "${ROMP_NO_GITLEAKS:-}" ] && return 0     # a skip asked for: silent
@@ -5049,7 +5402,7 @@ scan_credentials() {
             done >> "$scratch/creds.list" 4>> "$scratch/creds.revs"
         done 5<<< "$refs"
         mkdir "$scratch/creds.d" "$scratch/creds.p" "$scratch/creds.q"
-        : > "$scratch/creds.index"; : > "$scratch/creds.pindex"; : > "$scratch/creds.record"; : > "$scratch/creds.binary"; : > "$scratch/creds.parents"
+        : > "$scratch/creds.index"; : > "$scratch/creds.pindex"; : > "$scratch/creds.record"; : > "$scratch/creds.binary"; : > "$scratch/creds.tails"; : > "$scratch/creds.parents"
         # The parent counts (parent_counts): a commit of 64 or more parents
         # refuses the push by name, since git's combined diff cannot show the
         # lines such a merge adds (the header); the lines of the list read are
@@ -5097,10 +5450,10 @@ scan_credentials() {
                 failed_creds=1
             fi
         fi
-        rbytes=""; rpbytes=""; rbin=""
+        rbytes=""; rpbytes=""; rbin=""; rtail=""
         if [ "$nfed" -eq 0 ]; then
             rbytes=0; rpbytes=0
-        elif judged_read gate="the CREDENTIAL FEED of the push" 0 "the CREDENTIAL FEED of the push could not be read (a stage of git diff-tree, tr and awk exited {rc})" -- credential_feed "$scratch/creds.list" "$scratch/creds.record" "$scratch/creds.d" "$scratch/creds.index" "$scratch/creds.pindex" "$scratch/creds.binary"; then
+        elif judged_read gate="the CREDENTIAL FEED of the push" 0 "the CREDENTIAL FEED of the push could not be read (a stage of git diff-tree, tr and awk exited {rc})" -- credential_feed "$scratch/creds.list" "$scratch/creds.record" "$scratch/creds.d" "$scratch/creds.index" "$scratch/creds.pindex" "$scratch/creds.binary" "$scratch/creds.tails"; then
             record=""
             { IFS= read -r record || :; } < "$scratch/creds.record"
             case "$record" in
@@ -5124,11 +5477,11 @@ scan_credentials() {
                     unscanned "the CREDENTIAL FEED of the push was read short (git diff-tree exited 0 and ended after ${record#short } of the $nfed commits it was given)"
                     failed_creds=1 ;;
                 *)
-                    rdone=""; rpieces=""; rbytes=""; rpbytes=""; rbin=""; rest=""
-                    read -r rdone rpieces rbytes rpbytes rbin rest <<< "$record" || :
-                    case "$rdone:$rpieces:$rbytes:$rpbytes:$rbin:${rest:+x}" in
+                    rdone=""; rpieces=""; rbytes=""; rpbytes=""; rbin=""; rtail=""; rest=""
+                    read -r rdone rpieces rbytes rpbytes rbin rtail rest <<< "$record" || :
+                    case "$rdone:$rpieces:$rbytes:$rpbytes:$rbin:$rtail:${rest:+x}" in
                         *[!0-9:]*|:*|*::*)
-                            unscanned "the CREDENTIAL FEED of the push could not be read (its awk exited 0 and recorded \"$record\", not five counts)"
+                            unscanned "the CREDENTIAL FEED of the push could not be read (its awk exited 0 and recorded \"$record\", not six counts)"
                             failed_creds=1; rbytes=""; rpbytes="" ;;
                         *)
                             if [ "$rdone" -ne "$nfed" ]; then
@@ -5139,6 +5492,12 @@ scan_credentials() {
             esac
         else
             failed_creds=1
+        fi
+        # The merges' own last lines the feed noted (merge_tail_reads), when
+        # its record is whole: a piece whose last line ends a file with no
+        # final newline is written again without it, and the figures follow.
+        if [ -n "$rbytes" ] && [ -n "$rtail" ] && [ "$rtail" -gt 0 ]; then
+            merge_tail_reads "$rtail"
         fi
         # Each merge's binary path the feed routed, read whole
         # (merge_binary_reads), when the feed's record is whole: its pieces
@@ -5302,14 +5661,23 @@ scan_credentials() {
             scanner_run "$gl" "the PROBE run of the path-scoped copies" "$scratch/creds.q" "$qwant" "$scratch/creds.qreport" probe ${cfg[@]+"${cfg[@]}"} --enable-rule pkcs12-file,nuget-config-password,kubernetes-secret-yaml,hashicorp-tf-password,freemius-secret-key
             if [ "$run_rc" -eq 0 ] || [ "$run_rc" -eq 2 ]; then
                 if judged_read gate="the PROBE CHECK of the path-scoped copies" 0 "the PROBE CHECK of the path-scoped copies could not be read (awk exited {rc}), so whether the config drops a path-scoped rule at a copy's name is unknown" -- probe_check "$scratch/creds.pindex" "$scratch/creds.qreport"; then
-                    qnamed=0; qmiss=0; qfound=0; qother=0; qend=""; qd=0
+                    qnamed=0; qmiss=0; qfound=0; qother=0; qend=""; qd=0; qseen=$'\n'
                     while IFS=$'\t' read -r kind qa qb qc; do
                         case "$kind" in
                             named) qnamed=$((qnamed + 1)) ;;
                             missing)
+                                # One line per path and rule, the first of its pieces'
+                                # copies named (the 18:58Z ruling's (c): a file edited in
+                                # many places is many pieces, one probe each), every
+                                # missing line still counted below.
                                 qmiss=$((qmiss + 1))
                                 qa=${ix_path[qa]:-}; [ -n "$qa" ] || qa="a path whose name is unknown"
-                                unscanned "the config the scan read ($cfg_name) dropped $qb's probe at $qc, the name the scan gives the copy of $qa, so the scan cannot check $qa under $qb; the hook cannot tell which entry of the config dropped the probe, or whether $qa itself gets the same verdict; excuse a false alarm by its value with a regex or stopword allowlist instead of a path, keep $qb's default path, or set ROMP_NO_GITLEAKS=1 for one push"
+                                case "$qseen" in
+                                    *$'\n'"$qb"$'\t'"$qa"$'\n'*) ;;
+                                    *)
+                                        qseen="$qseen$qb"$'\t'"$qa"$'\n'
+                                        unscanned "the config the scan read ($cfg_name) dropped $qb's probe at $qc, the name the scan gives the copy of $qa, so the scan cannot check $qa under $qb; the hook cannot tell which entry of the config dropped the probe, or whether $qa itself gets the same verdict; excuse a false alarm by its value with a regex or stopword allowlist instead of a path, keep $qb's default path, or set ROMP_NO_GITLEAKS=1 for one push" ;;
+                                esac
                                 failed_creds=1 ;;
                             found) qfound=$((qfound + 1)); credential_line "$qa" "$qb"; blocked_creds=1 ;;
                             foreign)
