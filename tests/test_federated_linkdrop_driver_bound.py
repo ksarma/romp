@@ -1,0 +1,1350 @@
+"""The link-drop lab's driver ends before CI ends the served process (2026-09-19).
+
+CI's served job runs every served lab in ONE pytest process under pytest-timeout's per-test cap (600 s, thread method:
+the process ends with a thread dump and no summary), and tests/test_federated_linkdrop_served.py drives its two kernels
+and the browser in setUpClass. The author's pass 3 (its verifiers' review of the pass-2 head) found the node driver's subprocess timeout at 900 s, above the cap, with
+waits that alone summed past it: a drive degraded by one unmet precondition (a supervisor that never re-read the row up)
+would have been ended by pytest-timeout inside setUpClass, taking every served lab collected after the module with it
+and leaving no summary for the labs already run. The module now bounds the drive in three layers, pinned here without a
+kernel or a browser:
+- the arithmetic: the driver's worst case (its shared wait budget plus the bounded work between the waits) is under the
+  subprocess timeout, which is under CI's cap with room for the rest of setUpClass, and the cap the constant is chosen
+  against is the one the workflow's served step states; and the down dwell holds DOWN_WINDOW_MARGIN times wait_ms, the
+  cap waitVisible puts on the delivery the gate legs measure it against, plus DOWN_READ_ROOM_MS (a phase's delivery is
+  stamped after the reads that follow its wait, so a wait that resolved at the cap's edge is stamped past it by their
+  duration; a wait that ran to its cap is refused by the margin leg itself, seen.expired, beside the visibility legs),
+  so that pin holds for every drive whose link-up waits all resolved and showed, the reads inside the room;
+- the bytes sent: _drive hands subprocess.run the timeout and writes the budget, the wait caps and the settle values
+  into the driver's cfg from the class that drives (a stub class, the driver replaced by a spy), and the driver it writes
+  opens with the budget and reads every one of those keys;
+- the budget under node: BUDGET_JS, the driver's opening lines, run with a clock of its own: a wait that never comes
+  spends the budget once and is recorded, every later wait returns at once, no timeout handed on is ever 0 (playwright
+  reads 0 as no timeout), and a wait that comes spends only what it took;
+- the premise of the arithmetic (the maintainer's round 2, fresh-1): every wait the driver places is one the sum counts. A census of the
+  driver's wait call sites against a table of the forms it may use requires each playwright wait to carry
+  timeout: budget.capped(...) as the WHOLE value (pass 5: `budget.capped(x) + N`, `* N` or a second argument left the
+  value uncapped and the census green; a wait with no timeout key inherits playwright's 30 s default, which no budget
+  caps: the driver never calls setDefaultTimeout) and each waitForTimeout to draw on the budget or be one of the two fixed
+  dwells driver_worst_case_s counts; the navigations (goto, reload, goBack, goForward) are wait forms too; and an unlisted
+  wait form or an auto-waiting action fails by name. Pass 8 added the other half of that premise as an ALLOW-list: every
+  method the driver calls on a playwright receiver (a page, a locator made from one, the context, the browser, chromium)
+  must be one ALLOWED_CALLS names for that receiver kind, because a deny-list's gap passes (the pass-7 head listed the
+  auto-waiting ACTIONS and not the auto-waiting locator READS, so `locator(...).textContent()`, which inherits playwright's
+  30 s default that no budget caps, kept the census green while the pinned headroom under the subprocess timeout is 7.5 s
+  and 27.5 s); `evaluate` is allowed on a page receiver only, since a locator's evaluate auto-waits, and since pass 11 only as
+  the first argument of budget.bounded(...), the budget's race against what is left of it, since a page's evaluate takes no
+  timeout option and waits on the page with no default bound (UNTIMED_READS; the maintainer's round 6, extra4-2). Pass 8's fixer pass
+  closed the walk's own gap: the walk follows chains on the names it knows (page, pages, context, browser, chromium),
+  so a receiver or a locator reachable under any other name was invisible to it and a bound locator's read left the census
+  green; it refuses a binding or assignment to a name outside WALKED_NAMES, a locator-making call whose chain ends on it and
+  a receiver passed bare to anything but Object.keys or a driver helper whose one parameter is a walked name. Those are the
+  SPELLINGS this module's censuses check, and the rule (the maintainer's round 4) is that a census over a form is keyed on the property, or
+  it parses, or its message says which spellings it checks: these are regular expressions over the driver text, so a
+  receiver reached any other way (an object literal, an array, a ternary, `null ||`, a helper's return, an awaited argument,
+  optional chaining, bracket access, a space or a comment before the member, a second browser type), a member read followed
+  by a call (`pages.feed.request.get(url)`) and a wait spelled `. waitFor`, `["goto"]` or `goto?.()` are outside them by
+  construction, and the census that reads those is tests/test_federated_linkdrop_driver_parsed_served.py, the same driver
+  through the typescript compiler's parse with every receiver known by its TYPE (it runs where the extension's node deps
+  are, CI's served job; this module runs on the Python matrix, which has none). The two are read together: this one is the
+  matrix's backstop and says what it checks; that one refuses the rest of those spellings, but for the class its own docstring
+  discloses, which neither census sees and no budget bounds.
+
+Three more pins ride here because the module they pin has no kernel-free test of its own: LinkDropBothNew gates on no
+knob, wherever such a gate could sit (a class-level skip, setUpClass, _knobs), and LinkDropOldLocal skips as optional
+(the maintainer's round 1's high, closed by a value; the maintainer's round 2 asked for the pin, pass 5 for the property over every site); a hub a knob
+asked for whose bundle cannot be made ready, or whose root holds no kernel, is an error through _boot, while this
+checkout's own bundle failing to build stays a skip (the maintainer's round 1's tests-3, ruled twice); the old-hub storm's allowance
+for an empty phase is keyed on a notice post that found the Outline without an open, served relay socket and then on a
+whole keyed feed frame after the bundle's last notice, over a synthetic record, and the floor it guards reds on a planted
+miss with the frame present (the maintainer's round 3: the frame alone excused most recorded phase windows; the census, its figures, its
+population and its drive are in _outline_caught_up_whole's docstring, one derivation, and are not repeated here); and the
+gate's control in time takes a phase's waitedMs as a delivery only when every wait behind it resolved and its visibles
+showed, over a synthetic record for each class (pass 6: a wait that ran to its cap measured as a delivery at the cap).
+
+Synthetic: no kernel, no browser; stub classes over scratch directories.
+"""
+import ast
+import glob
+import importlib.util
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+import types
+import unittest
+from unittest import mock
+
+HERE = os.path.dirname(os.path.realpath(__file__))
+ROOT = os.path.dirname(HERE)
+# The ledger pin loads scripts/upstream-ledger.py through importlib (_ledger), and every test module that loads code through a
+# loader isolates the state root first (tests/test_state_isolation_order.py enforces the order; the script reads no state root).
+os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
+os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XDG floor
+sys.path.insert(0, HERE)
+import test_federated_linkdrop_served as L   # noqa: E402  the lab module: the constants, BUDGET_JS, _drive
+
+CFG_KEYS = ("driverBudgetMs", "pageWaitMs", "phaseSettleMs", "quietTries", "quietStepMs")   # plus waitsMs.<mark>, below
+KNOBS = ("ROMP_LINKDROP_LAB", "ROMP_CORNER_OLD_HUB_ROOT", "ROMP_LINKDROP_OLD_HUB_BUILD", "ROMP_LINKDROP_HUB_ROOT")   # the lab's four
+# every ast node class that is a function definition, derived from the property (a class with args, body, decorator_list and
+# returns: FunctionDef and AsyncFunctionDef on this Python; Lambda has no decorator_list or returns) rather than spelled (pass 10,
+# the maintainer's round 5 tests-4: two pins keyed on `ast.FunctionDef` and were blind to `async def`); pinned by name below
+FUNCTION_NODES = tuple(c for c in vars(ast).values() if isinstance(c, type) and issubclass(c, ast.AST) and {"args", "body", "decorator_list", "returns"} <= set(c._fields))
+
+# Every wait form the driver may place, and what caps it (the premise of driver_worst_case_s). "timeout": a playwright wait
+# (the waitFor* family and the navigations goto, reload, goBack and goForward, which wait under the same 30 s default) whose
+# options must carry exactly one timeout key whose WHOLE value is one budget.capped(...) call (CAPPED); "dwell":
+# waitForTimeout, whose argument is one such call or one of FIXED_DWELLS, the two fixed waits the arithmetic counts by name;
+# "budget": the budget's own poll (const waitFor = budget.waitFor), whose positional timeout makeBudget caps inside (the node
+# test below). The two fetches (ctl and tunnelsStatus) carry no timeout and are the acknowledged driver_error road: a hang
+# there ends the node process at DRIVER_TIMEOUT_S, which the arithmetic does not count and _drive reports as "driver timed out".
+WAIT_FORMS = {"goto": "timeout", "reload": "timeout", "goBack": "timeout", "goForward": "timeout",
+              "waitForFunction": "timeout", "waitForSelector": "timeout", "waitForEvent": "timeout",
+              "waitForURL": "timeout", "waitForLoadState": "timeout", ".waitFor": "timeout", "waitForTimeout": "dwell", "waitFor": "budget"}
+FIXED_DWELLS = ("cfg.phaseSettleMs", "cfg.downDwellMs")
+# exactly one capped call and nothing around it: `budget.capped(x) + 600000`, `budget.capped(x) * 30` and `budget.capped(x, 99999)`
+# all begin with the call and none is bounded by the budget (pass 5)
+CAPPED = re.compile(r"budget\.capped\(\s*[\w.]+\s*\)")
+AUTO_WAITING_ACTIONS = ("click", "dblclick", "fill", "press", "type", "check", "uncheck", "hover", "tap", "selectOption", "setInputFiles", "dragTo", "focus")
+# The calls the driver may make on a playwright receiver, by the receiver's kind (the maintainer's round 3, regression-2): an ALLOW-list, so a
+# call it does not name fails by name whatever it is, where a deny-list's gap passes. Every allowed call is in ONE of three
+# classes, and the rule is the split, not "known not to wait" (the maintainer's round 6, extra4-2: `evaluate` was listed under
+# that phrase and is not one): (1) a call with no round trip to the page, or one that does not auto-wait (measured at the
+# pass-8 head, the refuter's probe against the lab's playwright: locator.textContent, innerText, ariaSnapshot and a locator's
+# evaluate auto-wait under the 30 s default; count, first, isVisible, isHidden, allTextContents and allInnerTexts do not;
+# locator, on, addInitScript, newContext, newPage, launch and close are the driver's makers and hooks, the launch carried by the
+# arithmetic as a fixed term, LAUNCH_TIMEOUT_S; "does not auto-wait" is not "does not wait": count is a protocol read the renderer
+# answers, so a renderer a busy evaluate callback has wedged holds every later count() until the loop ends, outside the budget,
+# whose race bounded the driver's wait on that evaluate and not the renderer, and the drive's bound there is DRIVER_TIMEOUT_S,
+# the kill that keeps a RESULT the driver had printed: pass 11's fixer pass measured it); (2) a wait form, WAIT_FORMS, whose timeout the census above requires to be one
+# budget.capped(...) call; (3) an UNTIMED PROTOCOL READ, UNTIMED_READS (a page's evaluate: no timeout option, no default bound,
+# a wedged renderer holds it open), allowed ONLY as the first argument of budget.bounded(...), the budget's race of the read
+# against what is left of it (BUDGET_JS), which the arithmetic cell checks here by spelling (_bounded_reads) and the parsed
+# census by node. The classification is per CALL SITE wherever the site sits: a helper's inner calls are judged at their own
+# lines (provText's evaluate, reached from visible, is judged where it is written), so no call is classified by the helper it
+# sits in and no transitive rule is needed. A new call is added here in its class, or added to WAIT_FORMS as a wait the budget caps.
+ALLOWED_CALLS = {"page": ("locator", "evaluate", "goto", "waitForFunction", "waitForTimeout", "on", "addInitScript"),
+                 "locator": ("first", "count", "waitFor"),
+                 "context": ("newPage",), "browser": ("newContext", "close"), "chromium": ("launch",)}
+UNTIMED_READS = {"page": ("evaluate",)}   # class (3): allowed only as budget.bounded's first argument (BOUNDED_READ, below RECV_EXPR, is its spelling here)
+LOCATOR_MAKERS = ("locator", "first", "last", "nth", "filter", "and", "or", "getByText", "getByRole", "getByTestId", "getByLabel", "getByPlaceholder", "getByAltText", "getByTitle")
+RECEIVERS = re.compile(r"\b(?P<recv>pages\.\w+|pages\[(?:[^\[\]]|\[[^\[\]]*\])*\]|page|context|browser|chromium)(?=\s*\.)")
+MEMBER = re.compile(r"\s*\.\s*(?P<name>[\w$]+)\s*")
+# The names the walk follows: a playwright receiver, or a locator made from one, reachable under any OTHER name is invisible to
+# it, so the census refuses the spellings of a receiver leaving the walk that these expressions read (pass 8's fixer pass:
+# `const row = pages.feed.locator(sel); await row.textContent();` and `const fp = pages.feed; await fp.locator(sel).textContent();`
+# left the allow-list green): a binding or assignment whose target is not a walked name (BINDING against WALKED_TARGET), a
+# locator-making call whose chain ends on it (stored, returned or passed on; _receiver_calls reports it), and a receiver passed
+# bare as an argument (PASSED_BARE), allowed only to BARE_CALLEES or to a driver helper whose one parameter is itself a walked
+# name (HELPER_PARAM: snap's is `page`). Not an exhaustive list of the ways a receiver can leave the walk: the class outside
+# these spellings is the parsed census's, tests/test_federated_linkdrop_driver_parsed_served.py, whose PLANTS table carries the
+# measured rows (no count is kept here).
+WALKED_NAMES = ("page", "pages", "context", "browser", "chromium")
+RECV_EXPR = r"pages(?:\.\w+|\[[^\[\]]*\])?|page|context|browser|chromium"
+BOUNDED_READ = re.compile(r"budget\.bounded\(\s*(?P<recv>%s)\s*\.\s*evaluate\s*\(" % RECV_EXPR)   # class (3)'s spelling: the read opening budget.bounded's argument list
+BINDING = re.compile(r"(?:\b(?:const|let|var)\s+)?(?P<target>[\w$]+(?:\s*(?:\.\s*[\w$]+|\[[^\[\]]*\]))*|[\[{][^=;]*[\]}])\s*(?<![=!<>])=(?![=>])\s*(?:await\s+)?(?P<recv>%s)(?![\w$])" % RECV_EXPR)
+WALKED_TARGET = re.compile(r"page|context|browser|chromium|pages(?:\.\w+|\[[^\[\]]*\])?")
+PASSED_BARE = re.compile(r"(?:(?P<callee>[\w$]+(?:\.[\w$]+)*)\s*\(|,)\s*(?P<recv>%s)\s*(?=[,)])(?!\s*\)\s*=>)" % RECV_EXPR)   # not an arrow's parameter list
+PARAM_LIST_HEADS = ("async", "function")   # `async (page) =>` and `function (page)` declare a parameter, they pass nothing
+HELPER_PARAM = re.compile(r"\bconst\s+(?P<name>[\w$]+)\s*=\s*(?:async\s*)?\(\s*(?P<param>[\w$]+)\s*\)\s*=>")
+BARE_CALLEES = ("Object.keys",)
+RECEIVER_MAKERS = ("launch", "newContext", "newPage")   # the calls that return a receiver (chromium, browser, context); with LOCATOR_MAKERS, a chain ending on one binds a receiver
+# The driver's record keys by the read that produced them (the maintainer's round 4, tests-3): a waitVisible record (a phase's `seen`, D's
+# `seenAfterReturn`) carries the waits' outcomes and is read with waited=True by every _assert_seen site that reads it; a
+# visible() record (seenWhileDown, seenA, seenB, seenD) carries none and is read without. Both tuples are pinned against the
+# driver text by the spelling it stores a read under (`<key>: await waitVisible(` in a literal, `.<key> = await waitVisible(`
+# as an assignment; the same for visible), and every _assert_seen call site in the served module is read from its parse.
+WAITED_READS = ("seen", "seenAfterReturn")
+UNWAITED_READS = ("seenWhileDown", "seenA", "seenB", "seenD")
+READ_STORE = re.compile(r"(?:\.|\b)(?P<key>\w+)\s*[:=]\s*await\s+(?P<fn>waitVisible|visible)\s*\(")
+
+
+def _strip_js_comments(text):
+    """The driver's // comments removed (a full-line comment, or one after ; { or }), so a `timeout:` in BUDGET_JS's own
+    comment is not a site. The driver carries no // in a string or a regex; the census asserts none is left."""
+    text = re.sub(r"(?m)^\s*//.*$", "", text)
+    return re.sub(r"(?m)(?<=[;{}])\s*//.*$", "", text)
+
+
+def _call_args(text, i):
+    """The text between the parenthesis at `i` and its match, string literals skipped."""
+    depth, j, quote = 0, i, None
+    while j < len(text):
+        ch = text[j]
+        if quote:
+            if ch == "\\":
+                j += 1
+            elif ch == quote:
+                quote = None
+        elif ch in "'\"`":
+            quote = ch
+        elif ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+            if depth == 0:
+                return text[i + 1:j]
+        j += 1
+    raise AssertionError("no closing parenthesis from %d" % i)
+
+
+# a wait-shaped call with the receiver before its dot captured whole, every dotted segment of it (pass 8): `budget.waitFor(` is
+# the poll; `mybudget.waitFor(`, `obj.budget.waitFor(` and `this.budget.waitFor(` are a locator's or a member's. The pass-7 head's
+# lookback read the seven characters BEFORE the dot and compared them to "budget.", which could never match, so the receiver
+# form of the poll classified as an uncapped locator wait, green only because the driver uses the alias; pass 8's first capture
+# took one segment, so a receiver whose LAST segment was budget read as the poll (the fixer pass)
+WAIT_SITE = re.compile(r"(?:(?P<recv>(?:[\w$]+\.)*[\w$]*)(?P<dot>\.))?\b(?P<name>goto|reload|goBack|goForward|waitFor\w*)\s*\(")
+
+
+def _wait_sites(text):
+    """Every call site of a wait-shaped name in the (comment-stripped) driver: (form, args, line), the navigations included
+    (pass 5: `page.reload()` waited under playwright's default and was neither listed nor flagged). `.waitFor(` on a locator
+    is the form ".waitFor"; a bare `waitFor(` or `budget.waitFor(` is the budget's poll, the receiver compared whole across its
+    dots (WAIT_SITE), so a receiver merely ending in budget, or whose last segment is budget (`obj.budget`), is a locator's.
+    The spelling read: the name immediately after a dot (`recv.name(`) or bare (`name(`); a wait written with a space after
+    the dot, by bracket (`["goto"](`) or as an optional call (`goto?.(`) is not a site to this expression and is the parsed
+    census's."""
+    out = []
+    for m in WAIT_SITE.finditer(text):
+        name = m.group("name")
+        if name == "waitFor" and m.group("dot") and m.group("recv") != "budget":
+            name = ".waitFor"
+        out.append((name, _call_args(text, m.end() - 1), text.count("\n", 0, m.start()) + 1))
+    return out
+
+
+def _receiver_calls(text, escapes=None):
+    """Every method call chained on a playwright receiver expression in the (comment-stripped) driver: (kind, method, line).
+    The receivers are the driver's names for them (`page`, `pages.<app>`, `pages[...]`: a page; `context`; `browser`;
+    `chromium`), the chain is walked call by call with _call_args skipping each call's arguments, and the kind becomes
+    `locator` after a locator-making call (LOCATOR_MAKERS), so `pages.feed.locator(sel).first().waitFor({...})` yields
+    (page, locator), (locator, first), (locator, waitFor). A member read without a call ends the chain SILENTLY here (so a
+    call on that member's value, `pages.feed.request.get(url)`, is not seen: the parsed census refuses the read). A chain that ends
+    ON a locator-making call left that locator unconsumed (stored, returned or passed on, to be read under a name the walk
+    does not follow) and is appended to `escapes` as (line, what) when a list is given (pass 8's fixer pass)."""
+    out = []
+    for m in RECEIVERS.finditer(text):
+        kind = "page" if m.group("recv").startswith("page") else m.group("recv")
+        j, last = m.end(), None
+        while True:
+            c = MEMBER.match(text, j)
+            if not c or text[c.end():c.end() + 1] != "(":
+                break
+            name = c.group("name")
+            out.append((kind, name, text.count("\n", 0, m.start()) + 1))
+            last = name
+            if name in LOCATOR_MAKERS:
+                kind = "locator"
+            j = c.end() + 1 + len(_call_args(text, c.end())) + 1   # past the call's closing parenthesis
+        if escapes is not None and last in LOCATOR_MAKERS:
+            escapes.append((text.count("\n", 0, m.start()) + 1, "%s(...) left its chain unconsumed" % last))
+    return out
+
+
+def _escaped_receivers(text):
+    """The bindings and bare passes of a playwright receiver in the (comment-stripped) driver, as (line, what, allowed): a
+    binding or assignment whose right side begins with a receiver name and YIELDS a receiver (no call after it, a member read
+    without a call, or a chain ending on a receiver-making or locator-making call: RECEIVER_MAKERS, LOCATOR_MAKERS) is allowed
+    only when its target is a walked name (WALKED_TARGET: `const context = await browser.newContext(...)`, `pages[app] = page`),
+    while a chain ending on any other call binds a value, not a receiver (`const c = await pages.feed.locator(s).count()`), and
+    is not a binding here; a receiver passed bare as an argument is allowed only to BARE_CALLEES or to a driver helper whose one
+    parameter is a walked name (HELPER_PARAM), since the walk follows the parameter by its name. Any other binding or bare
+    pass these expressions match is a receiver reaching a name the walk does not follow; a receiver leaving the walk by a
+    spelling they do not match (through an object literal, an array, a ternary, a helper's return, an awaited argument, a
+    computed or optional member) is not read here at all and is the parsed census's to refuse."""
+    out = []
+    for m in BINDING.finditer(text):
+        j, last = m.end("recv"), None
+        while True:
+            c = MEMBER.match(text, j)
+            if not c or text[c.end():c.end() + 1] != "(":
+                break
+            last = c.group("name")
+            j = c.end() + 1 + len(_call_args(text, c.end())) + 1
+        if last is not None and last not in RECEIVER_MAKERS and last not in LOCATOR_MAKERS:
+            continue   # the chain ends on a call that returns a value: nothing playwright is bound
+        target = re.sub(r"\s+", "", m.group("target"))
+        out.append((text.count("\n", 0, m.start()) + 1, "%s = %s" % (target, m.group("recv")), bool(WALKED_TARGET.fullmatch(target))))
+    helpers = {h.group("name"): h.group("param") for h in HELPER_PARAM.finditer(text)}
+    for m in PASSED_BARE.finditer(text):
+        callee = m.group("callee")
+        if callee in PARAM_LIST_HEADS:
+            continue
+        out.append((text.count("\n", 0, m.start()) + 1, "%s(%s)" % (callee or "<a later argument>", m.group("recv")),
+                    callee in BARE_CALLEES or helpers.get(callee) in WALKED_NAMES))
+    return out
+
+
+def _assert_seen_sites(src):
+    """Every call of _assert_seen in the parsed served module, as (line, key, waited): the key of the record its `seen` argument
+    reads (`D["seenAfterReturn"]`, `self._phase("B")["seen"]`, or a local assigned in the same function from `rec.get("seen")`,
+    the `or {}` default stripped), or None when the argument resolves to no such key (an offender), and whether the call passes
+    waited=True. A source pin over the SITES (the maintainer's round 4, tests-3: the helper's waited branch had a cell and its wiring none, so
+    removing waited=True from every site left the module green), read from the tree and not from the text. Keyed on the CALL
+    (pass 10, the maintainer's round 5 extra7-2: a call whose `seen` was keyword-spelled was skipped, since the census read the
+    first positional): the argument is the first positional or the `seen` keyword, and a call with neither (a `**kwargs` pass,
+    a starred positional) is an offender with key None rather than a dropped site. What the census keys on: a call spelled
+    `<x>._assert_seen(...)` inside a function of any kind (FUNCTION_NODES, `def` and `async def`), a lambda inside one read with
+    it; a call at module level or in a class body (inside a lambda there too), or one through a name bound to the method or
+    through getattr, is outside it by construction."""
+    def key_of(node):
+        if isinstance(node, ast.BoolOp):
+            node = node.values[0]
+        if isinstance(node, ast.Subscript) and isinstance(node.slice, ast.Constant):
+            return node.slice.value
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "get" and node.args and isinstance(node.args[0], ast.Constant):
+            return node.args[0].value
+        return None
+    out = []
+    for fn in ast.walk(ast.parse(src)):
+        if not isinstance(fn, FUNCTION_NODES):
+            continue
+        assigned = {t.id: a.value for a in ast.walk(fn) if isinstance(a, ast.Assign) for t in a.targets if isinstance(t, ast.Name)}
+        for call in ast.walk(fn):
+            if isinstance(call, ast.Call) and isinstance(call.func, ast.Attribute) and call.func.attr == "_assert_seen":
+                kw = {k.arg: k.value for k in call.keywords}
+                arg = call.args[0] if call.args else kw.get("seen")   # None, or a starred positional, resolves to no key: an offender
+                if isinstance(arg, ast.Name):
+                    arg = assigned.get(arg.id)
+                waited = any(k.arg == "waited" and isinstance(k.value, ast.Constant) and k.value.value is True for k in call.keywords)
+                out.append((call.lineno, key_of(arg), waited))
+    return out
+
+
+def _since_at_the_sites(src):
+    """The `since` each attach reader passes, read from the served module's parse (the maintainer's round 4, extra6-2: the values are read at
+    three sites and a cell reached one helper's): per function of any kind (FUNCTION_NODES), the source text of the argument
+    bound to the `since_ms` PARAMETER of every _minus_attach_rows call (its second positional, or the `since_ms` keyword; the
+    third positional is `slack_s`; neither method has a `since` parameter, so a `since=` keyword would bind to nothing and is
+    not read as one) and of every _attaches_since call (its first), and of the right side of an assignment to a name `since`,
+    in source order. Widening any site's since changes its text here. Keyed on the call and the parameter (pass 10,
+    the maintainer's round 5 extra7-2: the census read the LAST positional, so a keyword-spelled since was skipped and a slack
+    passed positionally was read as the since): a site whose since the census cannot read (a starred positional at or before
+    the parameter's position, past which no position resolves; a `**kwargs` pass) is recorded as `<a since this census cannot
+    read>` rather than dropped, and reds the pin (pass 10's fixer pass: `(*a, since)` was read as the since, though the star
+    before it makes the position unresolvable).
+    A call through a name bound to the method or through getattr is outside the census by construction (it keys on
+    `<x>._minus_attach_rows(...)` and `<x>._attaches_since(...)`)."""
+    out = {}
+    for fn in ast.walk(ast.parse(src)):
+        if not isinstance(fn, FUNCTION_NODES):
+            continue
+        found = []
+        for n in ast.walk(fn):
+            if isinstance(n, ast.Assign) and any(isinstance(t, ast.Name) and t.id == "since" for t in n.targets):
+                found.append((n.lineno, n.col_offset, "since = " + ast.unparse(n.value)))
+            elif isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and n.func.attr in ("_minus_attach_rows", "_attaches_since"):
+                pos = 1 if n.func.attr == "_minus_attach_rows" else 0
+                kw = {k.arg: k.value for k in n.keywords}
+                starred = any(isinstance(a, ast.Starred) for a in n.args[:pos + 1])   # a star at or before the position: no position past it resolves
+                v = None if starred else (n.args[pos] if len(n.args) > pos else kw.get("since_ms"))
+                shown = ast.unparse(v) if v is not None else "<a since this census cannot read>"
+                found.append((n.lineno, n.col_offset, ("_minus_attach_rows(..., %s)" if n.func.attr == "_minus_attach_rows" else "_attaches_since(%s)") % shown))
+        if found:
+            out[fn.name] = [text for _, _, text in sorted(found)]
+    return out
+
+
+def _ledger():
+    """scripts/upstream-ledger.py as a module (the shape tests/test_upstream_ledger.py loads it by), for the render the ledger pin reads."""
+    spec = importlib.util.spec_from_file_location("upstream_ledger_for_linkdrop", os.path.join(ROOT, "scripts", "upstream-ledger.py"))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def _expand_braces(cell):
+    """The paths a where cell names, one brace group expanded per comma-separated item (`tests/test_x_{a,b}.py` is tests/test_x_a.py
+    and tests/test_x_b.py); an item with no brace is itself. One level, the spelling the entry uses."""
+    out = []
+    for item in _split_outside_braces(cell):
+        m = re.fullmatch(r"([^{}]*)\{([^{}]*)\}([^{}]*)", item)
+        if m:
+            out += [m.group(1) + alt.strip() + m.group(3) for alt in m.group(2).split(",")]
+        else:
+            out.append(item)
+    return out
+
+
+def _split_outside_braces(cell):
+    items, depth, cur = [], 0, ""
+    for ch in cell:
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+        if ch == "," and depth == 0:
+            items.append(cur.strip())
+            cur = ""
+        else:
+            cur += ch
+    if cur.strip():
+        items.append(cur.strip())
+    return items
+
+
+def _without_knobs():
+    """The environment with the lab's four knobs unset, the rest kept (a bare clear=True would take PATH and HOME too)."""
+    return mock.patch.dict(os.environ, {k: v for k, v in os.environ.items() if k not in KNOBS}, clear=True)
+
+BUDGET_HARNESS = r"""
+const out = { timeouts: [] };
+let clock = 0; const now = () => clock; const sleep = async (ms) => { clock += ms; };
+const res = {};
+const b = makeBudget({ budgetMs: 1000, now, sleep, out });
+res.capBig = b.capped(5000);
+res.capSmall = b.capped(300);
+let polls = 0;
+res.r1 = await b.waitFor(async () => { polls++; return false; }, 5000, "w1");
+res.clock1 = clock; res.polls1 = polls; res.timeouts1 = out.timeouts.slice(); res.left1 = b.left();
+const c = clock;
+res.r2 = await b.waitFor(async () => false, 5000, "w2");
+res.spent2 = clock - c; res.timeouts2 = out.timeouts.slice(); res.capSpent = b.capped(5000);
+const out2 = { timeouts: [] }; clock = 0; let n = 0;
+const b2 = makeBudget({ budgetMs: 1000, now, sleep, out: out2 });
+res.r3 = await b2.waitFor(async () => ++n >= 3, 5000, "w3");
+res.clock3 = clock; res.left3 = b2.left(); res.timeouts3 = out2.timeouts;
+// the bounded read (pass 11): a read that settles returns its value and records nothing; one that never settles returns the
+// fallback when the budget's remaining time is spent and records the expiry; with the budget spent it returns at once
+const out3 = { timeouts: [] }; clock = 0;
+const b3 = makeBudget({ budgetMs: 1000, now, sleep, out: out3 });
+res.b1 = await b3.bounded(Promise.resolve(42), "settled", "fb");
+res.timeoutsB1 = out3.timeouts.slice();
+const out4 = { timeouts: [] }; clock = 0;
+const b4 = makeBudget({ budgetMs: 1000, now, sleep, out: out4 });
+res.b2 = await b4.bounded(new Promise(() => {}), "never", "fb");
+res.clockB2 = clock; res.leftB2 = b4.left(); res.timeoutsB2 = out4.timeouts.slice();
+res.b3 = await b4.bounded(new Promise(() => {}), "after", { empty: true });
+res.clockB3 = clock; res.timeoutsB3 = out4.timeouts.slice();
+console.log("RESULT:" + JSON.stringify(res));
+"""
+
+
+class TheDriverEndsBeforeCI(unittest.TestCase):
+    maxDiff = None
+
+    def _served_step_line(self):
+        with open(os.path.join(ROOT, ".github", "workflows", "ci.yml"), encoding="utf-8") as f:
+            ci = f.read()
+        served = [ln for ln in ci.splitlines() if "tests/test_*_served.py" in ln and "pytest" in ln]
+        self.assertEqual(len(served), 1, "the served step's one pytest line: %r" % (served,))
+        return served[0]
+
+    def test_the_arithmetic_and_the_cap_it_is_chosen_against(self):
+        self.assertGreaterEqual(L.DOWN_WINDOW_MARGIN, 2.0, "the maintainer's round 2's ruling: the while-down read comes at least twice this drive's slowest link-up delivery after phase D's "
+                                                          "post; widen down_dwell_ms, never the margin. The floor is pinned here because the margin pin's cells are derived from "
+                                                          "the constant and shrink with it (a lowered margin passes them all); the relation pin below ceilings it at 2.0 for the "
+                                                          "dwell and the cap as they stand, so the constant is bracketed from both sides")
+        for cls in (L.LinkDropBothNew, L.LinkDropOldLocal):
+            worst = L.driver_worst_case_s(cls)
+            self.assertGreater(worst, cls.driver_budget_ms / 1000.0 + L.hub_restart_bound_s(),
+                               "the worst case counts more than the budget and the restart (the bundles, the dwell, the settles): %r" % (worst,))
+            self.assertLess(worst, L.DRIVER_TIMEOUT_S, "%s's driver at its worst (%.1f s) ends before its subprocess timeout (%d s)" % (cls.__name__, worst, L.DRIVER_TIMEOUT_S))
+            print("%s: driver_worst_case_s %.1f s, headroom %.1f s under DRIVER_TIMEOUT_S %d s (the launch term %d s of DRIVER_FIXED_S %d s)"
+                  % (cls.__name__, worst, L.DRIVER_TIMEOUT_S - worst, L.DRIVER_TIMEOUT_S, L.LAUNCH_TIMEOUT_S, L.DRIVER_FIXED_S))
+            self.assertGreaterEqual(cls.down_dwell_ms, L.DOWN_WINDOW_MARGIN * cls.wait_ms + L.DOWN_READ_ROOM_MS,
+                                    "%s's down dwell (%d ms) holds DOWN_WINDOW_MARGIN (%g) times wait_ms (%d ms), the cap waitVisible puts on the delivery the "
+                                    "gate legs measure the dwell against, plus DOWN_READ_ROOM_MS (%d ms) for the reads after the wait (seen.waitedMs is stamped "
+                                    "after visible()'s reads, so a wait that resolved at the cap's edge is stamped past it by their duration; a wait that ran "
+                                    "to its cap is refused by the margin leg itself, seen.expired, never measured); with the room the per-drive margin pin "
+                                    "holds for every drive whose link-up waits all resolved and showed, the reads inside the room (DOWN_READ_ROOM_MS over "
+                                    "DOWN_WINDOW_MARGIN, %d ms), and reds only for a window shorter than that"
+                                    % (cls.__name__, cls.down_dwell_ms, L.DOWN_WINDOW_MARGIN, cls.wait_ms, L.DOWN_READ_ROOM_MS, int(L.DOWN_READ_ROOM_MS / L.DOWN_WINDOW_MARGIN)))
+        self.assertLessEqual(L.DRIVER_TIMEOUT_S + L.BOOT_ROOM_S, L.CI_TEST_TIMEOUT_S,
+                             "the subprocess timeout leaves BOOT_ROOM_S of CI's per-test cap for the rest of setUpClass")
+        # the launch is carried as a fixed term (the maintainer's round 6, extra4-1: a sentence called it a wait the arithmetic does not
+        # count, while DRIVER_FIXED_S's launch term is load-bearing against the headroom above; a term deleted from the sum would
+        # understate the driver by the launch and stay green, so the coupling is executed here)
+        self.assertEqual(L.LAUNCH_TIMEOUT_S, 30, "the launch term is playwright's default launch timeout, 30 s: chromium.launch is handed no timeout option (the parsed "
+                                                 "module's config cell pins the lab writes no `launch` key), so that default is the bound the launch runs under")
+        self.assertGreaterEqual(L.DRIVER_FIXED_S, L.LAUNCH_TIMEOUT_S, "DRIVER_FIXED_S carries the launch at its bound (%d s): a sum without the launch term is no bound on the driver" % L.LAUNCH_TIMEOUT_S)
+        self.assertGreater(L.PROBE_TIMEOUT_S, 0, "the browser probe has a bound of its own")
+        self.assertLessEqual(L.PROBE_TIMEOUT_S, L.BOOT_ROOM_S, "the browser probe's bound is inside BOOT_ROOM_S, the room the arithmetic leaves setUpClass outside the drive")
+        served = self._served_step_line()
+        self.assertIn("--timeout=%d --timeout-method=thread" % L.CI_TEST_TIMEOUT_S, served,
+                      "CI_TEST_TIMEOUT_S is the cap the served step runs under: %r" % (served,))
+        # The premise (the maintainer's round 2, fresh-1): the sum is an upper bound only if every wait the driver places is one it counts.
+        driver = _strip_js_comments(L.DRIVER)
+        self.assertNotIn("//", driver, "a // the comment stripper cannot see past (a new comment shape, or // inside a string): teach _strip_js_comments")
+        self.assertEqual(driver.count("const waitFor = budget.waitFor;"), 1, "the bare waitFor( sites the census reads as the budget's poll are that one alias of "
+                                                                             "budget.waitFor at the driver's module level (the maintainer's round 4, extra8-3: a bare waitFor bound to anything else "
+                                                                             "would read as the poll here; the parsed census classifies the bare call by the binding the tree holds)")
+        sites = _wait_sites(driver)
+        self.assertTrue(sites, "the census saw the driver's wait sites")
+        unlisted = sorted({(name, ln) for name, _, ln in sites if name not in WAIT_FORMS})
+        self.assertEqual(unlisted, [], "a wait form WAIT_FORMS does not list (name it there with what caps it, and count it in driver_worst_case_s if fixed); "
+                                       "the sites read are the spellings WAIT_SITE matches, a wait name right after a dot or bare: %r" % (unlisted,))
+        uncapped, dwells = [], set()
+        for name, args, ln in sites:
+            rule = WAIT_FORMS[name]
+            if rule == "timeout":
+                keys = [k.strip() for k in re.findall(r"\btimeout\s*:\s*([^,}]+)", args)]
+                if len(keys) != 1 or not CAPPED.fullmatch(keys[0]):
+                    uncapped.append((ln, name, keys or "no timeout key (playwright's 30 s default, which no budget caps)"))
+            elif rule == "dwell":
+                a = args.strip()
+                if CAPPED.fullmatch(a):
+                    continue
+                dwells.add(a)
+                if a not in FIXED_DWELLS:
+                    uncapped.append((ln, name, a))
+        self.assertEqual(uncapped, [], "every wait the driver places draws on the budget (its timeout, or its dwell, is exactly one budget.capped(...) "
+                                       "call and nothing more) or is a fixed dwell driver_worst_case_s counts (%r); these do neither, so the arithmetic is not "
+                                       "a bound: %r" % (FIXED_DWELLS, uncapped))
+        self.assertEqual(sorted(dwells), sorted(FIXED_DWELLS), "the fixed dwells the driver places are exactly the two the arithmetic counts "
+                                                                "(down_dwell_ms and phases x PHASE_SETTLE_MS): %r" % (sorted(dwells),))
+        self.assertLessEqual({"goto", "waitForFunction", ".waitFor", "waitForTimeout", "waitFor"}, {name for name, _, _ in sites},
+                             "the census is not vacuous: the forms the driver uses today are all seen: %r" % (sorted({name for name, _, _ in sites}),))
+        actions = re.findall(r"\.(%s)\s*\(" % "|".join(AUTO_WAITING_ACTIONS), driver)
+        self.assertEqual(actions, [], "an auto-waiting playwright action in the driver (it waits under playwright's 30 s default, which no budget caps; the driver reads pages, it does not act on them): %r" % (actions,))
+        # the allow-list (pass 8): every call on a playwright receiver is one ALLOWED_CALLS names for that receiver's kind; the
+        # deny-list above is the backstop it was, and its gap (the auto-waiting locator READS: textContent, innerText, ariaSnapshot,
+        # a locator's evaluate, each under the 30 s default) is what this refuses
+        escapes = []
+        calls = _receiver_calls(driver, escapes)
+        self.assertTrue(calls, "the walk saw the driver's calls on its playwright receivers")
+        unlisted = sorted({(kind, name, ln) for kind, name, ln in calls if name not in ALLOWED_CALLS.get(kind, ())})
+        self.assertEqual(unlisted, [], "a call on a playwright receiver that ALLOWED_CALLS does not name for its kind (an auto-waiting read such as a locator's "
+                                       "textContent, innerText, ariaSnapshot or evaluate inherits playwright's 30 s default, which no budget caps, and one such read "
+                                       "outruns the headroom under the subprocess timeout; a call known not to wait is added there by receiver kind, a wait goes "
+                                       "to WAIT_FORMS): %r" % (unlisted,))
+        self.assertLessEqual({("page", "locator"), ("page", "evaluate"), ("page", "goto"), ("page", "waitForFunction"), ("page", "waitForTimeout"), ("page", "on"),
+                              ("page", "addInitScript"), ("locator", "first"), ("locator", "count"), ("locator", "waitFor"), ("context", "newPage"),
+                              ("browser", "newContext"), ("browser", "close"), ("chromium", "launch")}, {(kind, name) for kind, name, _ in calls},
+                             "the walk is not vacuous: every receiver call the driver makes today is seen, by kind: %r" % (sorted({(kind, name) for kind, name, _ in calls}),))
+        # class (3) of the allow-list: every untimed read sits as budget.bounded's first argument (the spelling BOUNDED_READ; the parsed census reads the rule by node)
+        untimed = [(kind, name, ln) for kind, name, ln in calls if name in UNTIMED_READS.get(kind, ())]
+        bounded = [driver.count("\n", 0, m.start()) + 1 for m in BOUNDED_READ.finditer(driver)]
+        self.assertTrue(untimed, "the census saw the driver's untimed reads (the snapshot's and the provisional row's page.evaluate)")
+        self.assertEqual(sorted(ln for _, _, ln in untimed), sorted(bounded),
+                         "an untimed protocol read (a page's evaluate takes no timeout option and has no default bound) outside budget.bounded(...), the budget's race "
+                         "against what is left of it: the reads at %r, the bounded reads at %r" % (untimed, bounded))
+        # the walk's own gap (pass 8's fixer pass): a receiver or a locator reaching a name the walk does not follow is refused
+        self.assertEqual(escapes, [], "a locator made on a playwright receiver and not consumed by a call in its own chain (stored, returned or passed on) is read "
+                                      "under a name the walk does not follow, so its reads never reach the allow-list (the spellings this walk reads: a receiver written "
+                                      "page, pages.<app>, pages[...], context, browser or chromium, then `.name(` members; the parsed census reads the rest): %r" % (escapes,))
+        leaves = _escaped_receivers(driver)
+        self.assertEqual([(ln, what) for ln, what, ok in leaves if not ok], [],
+                         "a playwright receiver, or a locator made from one, reaching a name the walk does not follow (bound or assigned to a name outside "
+                         "WALKED_NAMES, or passed bare to anything but Object.keys or a driver helper whose one parameter is a walked name; the spellings BINDING "
+                         "and PASSED_BARE match, the other roads being the parsed census's); a call on that name is invisible to the allow-list: %r"
+                         % ([(ln, what) for ln, what, ok in leaves if not ok],))
+        self.assertLessEqual({"context = browser", "page = context", "pages[app] = page", "snap(pages[app])"}, {what for _, what, ok in leaves if ok},
+                             "the census is not vacuous: the driver's bindings of the context and the page, the page table's assignment and snap's argument "
+                             "are seen: %r" % (sorted({what for _, what, ok in leaves if ok}),))
+        self.assertEqual(len(re.findall(r"\bfetch\s*\(", driver)), 2, "the driver's two fetches (ctl and tunnelsStatus) carry no timeout: the acknowledged driver_error road, DRIVER_TIMEOUT_S, "
+                                                                        "which the arithmetic does not count; a third fetch is a new uncounted wait")
+
+    def test_a_wait_site_is_classified_by_the_receiver_before_its_dot(self):
+        """The census's classifier (_wait_sites), by cell: the budget's poll through the alias and through its receiver (`waitFor(`,
+        `budget.waitFor(`) is the budget form, whose positional timeout makeBudget caps; a locator's `.waitFor(` (a bare receiver,
+        a chain) is the timeout form the census requires capped; a receiver merely ending in budget (`mybudget`, `xbudget`) or
+        whose last dotted segment is budget (`obj.budget`, `this.budget`) is a locator's or a member's, never the poll; a
+        navigation and a waitFor* keep their names; the alias assignment is no site. Pass 8: the pass-7 head's lookback
+        compared the seven characters before the dot to "budget." and could never match, so `budget.waitFor(` classified as an
+        uncapped locator wait (a driver with the alias deleted and every poll written through the receiver redded the census
+        with seven false "no timeout key" entries); the six-character compare the findings offered would have taken `mybudget`
+        for the poll, which is why the receiver is captured whole; and pass 8's first capture took one segment, so
+        `obj.budget.waitFor(` read as the poll (the fixer pass), which is why the capture spans every dotted segment."""
+        self.assertEqual(_wait_sites('await budget.waitFor(fn, 1, "w");'), [("waitFor", 'fn, 1, "w"', 1)])
+        self.assertEqual(_wait_sites('await waitFor(fn, cfg.waitsMs.held, "w");'), [("waitFor", 'fn, cfg.waitsMs.held, "w"', 1)])
+        self.assertEqual(_wait_sites('await row.waitFor({ timeout: budget.capped(x) })'), [(".waitFor", "{ timeout: budget.capped(x) }", 1)])
+        self.assertEqual(_wait_sites('\nawait pages.feed.locator(s).first().waitFor({ state: "attached", timeout: budget.capped(ms) });'),
+                         [(".waitFor", '{ state: "attached", timeout: budget.capped(ms) }', 2)])
+        for recv in ("mybudget", "xbudget", "budget2", "the_budget", "$budget", "obj.budget", "this.budget", "a.b.budget"):
+            self.assertEqual([n for n, _, _ in _wait_sites('await %s.waitFor(fn, 1, "w")' % recv)], [".waitFor"], "%s is not the budget" % recv)
+        self.assertEqual([n for n, _, _ in _wait_sites('await page.goto(u, { timeout: budget.capped(x) }); await page.waitForFunction(f, null, { timeout: budget.capped(x) });')],
+                         ["goto", "waitForFunction"])
+        self.assertEqual(_wait_sites("const waitFor = budget.waitFor;"), [], "an assignment is no site")
+
+    def test_the_receiver_walk_classifies_a_call_by_the_receiver_it_is_chained_on(self):
+        """The allow-list's instrument (_receiver_calls), by cell: a page's locator chain yields the page call and the locator calls
+        after it; a bracketed page expression is a page; a member read without a call ends the chain; a locator's textContent,
+        innerText, ariaSnapshot and evaluate are locator calls the allow-list refuses while a page's evaluate is allowed (the
+        refuter measured a locator's evaluate auto-waiting and a page's returning at once); text that names no receiver yields
+        nothing. The failing-before is a driver mutation, not a cell: provText rewritten as a locator's `textContent()`
+        passed the pass-7 head's census and reds this one by name."""
+        self.assertEqual(_receiver_calls('await pages.feed.locator(cardSel(ch, n)).first().waitFor({ state: "attached", timeout: budget.capped(ms) });'),
+                         [("page", "locator", 1), ("locator", "first", 1), ("locator", "waitFor", 1)])
+        self.assertEqual(_receiver_calls('x = (await pages.waiting.locator(".ut-text", { hasText: ch.todoText }).count()) > 0;'),
+                         [("page", "locator", 1), ("locator", "count", 1)])
+        self.assertEqual(_receiver_calls('await pages[APPS[0]].waitForTimeout(budget.capped(cfg.quietStepMs));'), [("page", "waitForTimeout", 1)])
+        self.assertEqual(_receiver_calls('await pages[app].waitForFunction(() => true, null, { timeout: budget.capped(x) });'), [("page", "waitForFunction", 1)])
+        self.assertEqual(_receiver_calls('const u = page.url; const c = await context.newPage();'), [("context", "newPage", 1)])
+        self.assertEqual(_receiver_calls('\nconst t = await pages.feed.locator(cfg.provSel).textContent();'), [("page", "locator", 2), ("locator", "textContent", 2)])
+        for read in ("textContent", "innerText", "ariaSnapshot", "evaluate"):
+            calls = _receiver_calls("await pages.feed.locator(sel).%s();" % read)
+            self.assertEqual([(k, n) for k, n, _ in calls if n not in ALLOWED_CALLS.get(k, ())], [("locator", read)], "a locator's %s is refused by the allow-list" % read)
+        calls = _receiver_calls("await pages.feed.evaluate((sel) => document.querySelector(sel), cfg.provSel);")
+        self.assertEqual([(k, n) for k, n, _ in calls if n not in ALLOWED_CALLS.get(k, ())], [], "a page's evaluate is allowed")
+        self.assertEqual(_receiver_calls("const webpage = 1; out.pages[app] = await snap(pages[app]); w.send(d);"), [], "no receiver, no call")
+
+    def test_a_receiver_or_a_locator_that_leaves_the_walk_is_refused(self):
+        """The walk's own gap (pass 8's fixer pass): the allow-list reads chains on the names it knows, so a receiver or a locator
+        reaching any other name was invisible to it and a bound locator's `textContent()` left the census green. By cell: a
+        locator bound to a name (refused twice: the binding, and the chain that ended on the maker), a page bound to a name, a
+        destructured page table, a locator passed on or returned unconsumed, a page passed bare to a helper whose parameter is
+        not a walked name and to a helper the text does not define (all refused); the driver's own shapes (the browser, context
+        and page bindings, the page table's assignment, a page passed to snap whose parameter is `page`, Object.keys over the
+        table) and chains consumed by a count or tested for truth (all allowed)."""
+        def refused(text):
+            escapes = []
+            _receiver_calls(text, escapes)
+            return sorted([what for _, what, ok in _escaped_receivers(text) if not ok] + [what for _, what in escapes])
+        self.assertEqual(refused("const row = pages.feed.locator(cfg.provSel); await row.textContent();"), ["locator(...) left its chain unconsumed", "row = pages.feed"])
+        self.assertEqual(refused("const fp = pages.feed; await fp.locator(cfg.provSel).textContent();"), ["fp = pages.feed"])
+        self.assertEqual(refused("const snap = async (page) => 1; const g = function (page, x) {}; const h = async (a, page) => 1;"), [], "a parameter list declares a name, it passes nothing")
+        self.assertEqual(refused("let p2 = page; const { feed } = pages;"), ["p2 = page", "{feed} = pages"])
+        self.assertEqual(refused("const p = await context.newPage(); const b = await chromium.launch({}); const u = page.url;"), ["b = chromium", "p = context", "u = page"],
+                         "a receiver-making call binds a receiver; a member read bound to a name is refused on the safe side (a member read then CALLED, "
+                         "`page.request.get(u)`, ends the chain here unseen and is the parsed census's)")
+        self.assertEqual(refused("await read(pages.feed.locator(sel)); return pages[app].locator(sel).first();"), ["first(...) left its chain unconsumed", "locator(...) left its chain unconsumed"])
+        self.assertEqual(refused("const read = async (p) => p.locator(sel).textContent(); await read(pages.feed);"), ["read(pages.feed)"])
+        self.assertEqual(refused("await read(pages[app]); await f(1, page);"), ["<a later argument>(page)", "read(pages[app])"])
+        self.assertEqual(refused("let browser; browser = await chromium.launch({}); const context = await browser.newContext({}); const page = await context.newPage(); pages[app] = page;"), [])
+        self.assertEqual(refused("const snap = async (page) => page.evaluate(() => 1); const s = await snap(pages[app]); for (const app of Object.keys(pages)) {}"), [])
+        self.assertEqual(refused("const c = await pages.feed.locator(sel).count(); if (pages.feed && x) y = 1; x = (await pages.waiting.locator(s).count()) > 0;"), [])
+        allowed = {what for _, what, ok in _escaped_receivers("const context = await browser.newContext({}); const page = await context.newPage(); pages[app] = page; const snap = async (page) => 1; await snap(pages[app]);") if ok}
+        self.assertEqual(allowed, {"context = browser", "page = context", "pages[app] = page", "snap(pages[app])"}, "the allowed shapes are reported as allowed, so the driver's non-vacuity check reads them")
+
+    def test_the_new_bundle_class_gates_on_no_knob_and_the_old_hub_class_skips_as_optional(self):
+        """The maintainer's round 1's high (this lab was the one served lab of 94 with no executing test in CI: its base class gated on a knob)
+        was closed by a value, _LinkDrop._knobs returning None. The property, pinned (the maintainer's round 2, extra6-1; pass 5 widened it
+        from the one call site to every site a gate could sit at, since the same optional gate re-planted as a class
+        decorator or in setUpClass re-created the high with the pin green): with the four knobs unset, LinkDropBothNew
+        carries no class-level skip (what unittest.skip* sets, __unittest_skip__), its _knobs returns, and its setUpClass runs
+        to the boot (with _boot stubbed) without a SkipTest; LinkDropOldLocal's _knobs raises a SkipTest whose reason starts
+        with "optional:" and names its knob. The new class's calls are wrapped so a regression fails the pin instead of
+        skipping it; throwaway subclasses, so nothing _knobs or setUpClass assigns reaches the real classes. And the served
+        step runs with -rs, so an optional skip prints its reason in CI's log rather than folding into a count."""
+        class New(L.LinkDropBothNew):
+            pass
+
+        class Old(L.LinkDropOldLocal):
+            pass
+        self.assertFalse(getattr(New, "__unittest_skip__", False),
+                         "LinkDropBothNew carries a class-level skip (unittest.skip*), so the lab would collect in CI's served job with no executing test: %r"
+                         % (getattr(New, "__unittest_skip_why__", ""),))
+        with _without_knobs():
+            try:
+                New._knobs()
+            except unittest.SkipTest as e:
+                self.fail("LinkDropBothNew._knobs raised SkipTest with the four knobs unset, so the lab would collect in CI's served job with no executing test: %s" % e)
+            try:
+                with mock.patch.object(New, "_boot", classmethod(lambda cls: None)):
+                    New.setUpClass()
+            except unittest.SkipTest as e:
+                self.fail("LinkDropBothNew.setUpClass raised SkipTest before its boot with the four knobs unset (a gate outside _knobs), so the lab would "
+                          "collect in CI's served job with no executing test: %s" % e)
+            with self.assertRaises(unittest.SkipTest) as cm:
+                Old._knobs()
+        reason = str(cm.exception)
+        self.assertTrue(reason.startswith("optional:"), "the old-hub class's skip is optional (the CI census reads the prefix): %r" % (reason,))
+        self.assertIn("ROMP_LINKDROP_LAB", reason, "…and names the knob that runs it")
+        self.assertIn(" -rs ", self._served_step_line(), "CI's served step prints skip reasons (-rs), so the optional skip is visible there")
+
+    def _boot_stub(self, base, **attrs):
+        """A class over a scratch lab that _boot runs to its build statement without node deps or a browser: L.EXT repointed
+        at a scratch with a playwright package directory, the node probe answered by the spy with a path that exists, every
+        other subprocess a failure of the test (the kernels are never reached), the remote's routes read from this checkout's
+        kernel. Returns the class; the caller cleans its lab."""
+        scratch = tempfile.mkdtemp(prefix="linkdrop-boot-")
+        self.addCleanup(shutil.rmtree, scratch, True)
+        os.makedirs(os.path.join(scratch, "node_modules", "playwright"))
+        self.addCleanup(setattr, L, "EXT", L.EXT)
+        L.EXT = scratch
+
+        class Boot(base):
+            pass
+        Boot.procs, Boot.proxy, Boot.ctl = [], None, None
+        for k, v in attrs.items():
+            setattr(Boot, k, v)
+        test = self
+
+        def probe_only(cmd, *a, **kw):
+            if cmd[:2] == ["node", "-e"]:
+                return subprocess.CompletedProcess(cmd, 0, stdout=scratch + "\n", stderr="")
+            test.fail("_boot ran a subprocess past the build statement: %r" % (cmd,))
+        p = mock.patch.object(L.subprocess, "run", probe_only)
+        p.start()
+        self.addCleanup(p.stop)
+        return Boot
+
+    def _boot_expecting_error(self, Boot):
+        """_boot's outcome as one of three: a RuntimeError (returned), a SkipTest (a failure of the pin, never a skip), a return."""
+        try:
+            Boot._boot()
+        except RuntimeError as e:
+            return e
+        except unittest.SkipTest as e:
+            self.fail("a build the runner asked for skipped instead of erring (the class would skip and the run report green): %s" % e)
+        finally:
+            shutil.rmtree(getattr(Boot, "lab", "") or "", ignore_errors=True)
+        self.fail("_boot returned without building")
+
+    def test_a_hub_a_knob_asked_for_errs_when_its_bundle_cannot_be_made_ready_and_this_checkouts_stays_a_skip(self):
+        """The maintainer's round 1's tests-3, through _boot with a stub build: the mint knob with a build that skips (lab_dist's esbuild
+        failure) is a RuntimeError carrying the knob and the build's words; a knob-named root with no prebuilt dist is the
+        same, under the old-hub class's own knob and under the base-hub lever; a knob-named root with no kernel file at all (a
+        mistyped root) is the same through the kernel check one statement earlier (pass 5: it skipped, whatever the knob
+        said); and with no knob this checkout's own bundle failing to build stays a SkipTest, as in every other served lab."""
+        words = "esbuild failed here: the stub build"
+
+        class StubBuild:
+            def __init__(self, ext, root):
+                self.ext, self.root = ext, root
+
+            def copy_to(self, dest):
+                raise unittest.SkipTest(words)
+        # the mint knob: a mint that succeeds (stubbed: the checkout's kernel and extension directory appear) and a build that skips
+        def mint(cls):
+            wt = os.path.join(cls.lab, "oldhub")
+            os.makedirs(os.path.dirname(os.path.join(wt, L.KERNEL_BIN)))   # the kernel entry point _boot requires, by the module's own name for it
+            os.makedirs(os.path.join(wt, "vscode-extension"))
+            with open(os.path.join(wt, L.KERNEL_BIN), "w") as f:
+                f.write("#!/bin/sh\n")
+            cls.old_hub_wt = wt
+            return wt
+        with _without_knobs(), mock.patch.dict(os.environ, {"ROMP_LINKDROP_LAB": "1", "ROMP_LINKDROP_OLD_HUB_BUILD": "1"}), mock.patch.object(L.lab_dist, "DistBuild", StubBuild):
+            Boot = self._boot_stub(L.LinkDropOldLocal, _mint_old_hub=classmethod(mint))
+            e = self._boot_expecting_error(Boot)
+        self.assertIn("ROMP_LINKDROP_OLD_HUB_BUILD=1", str(e), "the error names the knob that asked: %s" % e)
+        self.assertIn(words, str(e), "…and carries the build's words: %s" % e)
+        self.assertTrue(Boot.old_hub_wt and Boot.old_hub_wt in str(e), "…and the minted checkout: %s" % e)
+        # a knob-named root with a kernel and no prebuilt dist, under the old-hub class's knob and under the base-hub lever
+        for base, knob, env in ((L.LinkDropOldLocal, "ROMP_CORNER_OLD_HUB_ROOT", {"ROMP_LINKDROP_LAB": "1"}), (L.LinkDropBothNew, "ROMP_LINKDROP_HUB_ROOT", {})):
+            root = tempfile.mkdtemp(prefix="linkdrop-hubroot-")
+            self.addCleanup(shutil.rmtree, root, True)
+            os.makedirs(os.path.dirname(os.path.join(root, L.KERNEL_BIN)))
+            with open(os.path.join(root, L.KERNEL_BIN), "w") as f:
+                f.write("#!/bin/sh\n")
+            with _without_knobs(), mock.patch.dict(os.environ, dict(env, **{knob: root})):
+                Boot = self._boot_stub(base)
+                e = self._boot_expecting_error(Boot)
+            self.assertEqual(Boot.hub_knob, knob, "the knob that named the hub is recorded")
+            self.assertIn(knob, str(e), "the error names the knob that asked: %s" % e)
+            self.assertIn("no prebuilt dist under %s" % root, str(e), "…and says what was missing: %s" % e)
+        # a knob-named root with NO kernel file (a mistyped root), under both knobs: the kernel check follows the same rule
+        for base, knob, env in ((L.LinkDropOldLocal, "ROMP_CORNER_OLD_HUB_ROOT", {"ROMP_LINKDROP_LAB": "1"}), (L.LinkDropBothNew, "ROMP_LINKDROP_HUB_ROOT", {})):
+            root = tempfile.mkdtemp(prefix="linkdrop-hubroot-empty-")
+            self.addCleanup(shutil.rmtree, root, True)
+            with _without_knobs(), mock.patch.dict(os.environ, dict(env, **{knob: root})):
+                Boot = self._boot_stub(base)
+                e = self._boot_expecting_error(Boot)
+            self.assertIn(knob, str(e), "the error names the knob that asked: %s" % e)
+            self.assertIn("no %s" % L.KERNEL_BIN, str(e), "…and the kernel file the root lacks: %s" % e)
+            self.assertIn(root, str(e), "…and the root: %s" % e)
+        # no knob: this checkout's own bundle, whose failed build stays a skip
+        def skip_dist(dest):
+            raise unittest.SkipTest(words)
+        with _without_knobs(), mock.patch.object(L.lab_dist, "copy_dist", skip_dist):
+            Boot = self._boot_stub(L.LinkDropBothNew)
+            try:
+                with self.assertRaises(unittest.SkipTest) as cm:
+                    Boot._boot()
+            finally:
+                shutil.rmtree(getattr(Boot, "lab", "") or "", ignore_errors=True)
+        self.assertEqual(str(cm.exception), words, "the unknobbed arm's skip is lab_dist's own, unwrapped")
+        self.assertIsNone(Boot.hub_knob)
+
+    def test_an_empty_phase_is_excused_only_by_a_whole_frame_after_the_bundles_last_notice(self):
+        """The old-hub storm's allowance (_outline_caught_up_whole, both floors) excuses a phase with no patch and no row only
+        when one of the bundle's notice posts happened while the Outline held no open relay socket that had already received
+        its first feed-family frame (the gap that could have swallowed a notice), and then only for a whole keyed feed frame
+        the Outline received after the earliest the bundle's LAST notice could have been posted (the change record's t0 plus
+        the gaps between the notices) and before the window's padded end. Pass 5 found the key was the window: a frame at
+        A0 + 5 ms or between notice 1 and notice 2 excused a stripped phase, though it could not have carried the notices
+        posted after it. The maintainer's round 3 found the frame alone was no key either: on the old bundle a routine redial produces a whole
+        frame after the notices were already delivered as patches, so the excuse was available in most recorded phase windows
+        (the census, its figures and its drive are in _outline_caught_up_whole's docstring, one derivation, not repeated here)
+        and a planted miss stayed green, and the cells below could not tell the keys apart, since a synthetic socket
+        with no openAt reads as never open and the gap held in every cell. Over a synthetic record, by cell: with the socket
+        recording no open, a frame before the window, before the first post, between the notices, one millisecond before the
+        last notice's earliest post (all no excuse), at it, after the bundle, at the right pad's edge (all an excuse), past
+        the pad and unkeyed (no excuse); a frame on the feed page's socket counts for nothing; a phase with no change record
+        fails rather than widening. Then the socket's state at the posts: open and served across all three posts with a
+        later frame in the window (no excuse: the recorded windows the frame alone excused with their patches delivered),
+        the same socket closing after the last post with the redial's frame (no excuse), closed before the posts (an excuse),
+        closing between notice 1 and notice 2 (an excuse: the churn's shape as the cells model it, the socket open and served at
+        the first post and closed before the second; the recorded churned drives and their dating are _outline_caught_up_whole's
+        docstring's, not repeated here; pass 8's fixer pass corrected the labels, which had put the recorded churn on the
+        closed-before cell), open across the
+        posts but served only after notice 2 (an excuse). And the floor the excuse guards, with the excuse frame PRESENT in
+        the record: a phase with no patch and no row whose socket was open and served across the posts reds
+        _assert_one_row_per_outline_feed_patch (the planted miss), the same with the socket closed across the posts passes
+        (the churn), and a patch with its row passes (the storm)."""
+        A0 = 1_000_000
+        made = {"phase": "A", "t0": A0 / 1000.0 + 0.010, "t1": A0 / 1000.0 + 2.015, "noticeKeys": ["k1", "k2", "k3"], "noticeRevs": [1, 2, 3], "notices": []}
+        last_post = (made["t0"] + (L.NOTICES_PER_PHASE - 1) * L.NOTICE_GAP_S) * 1000   # the earliest the last notice's post could start
+        A1 = int(made["t1"] * 1000) + L.PHASE_SETTLE_MS
+        self.assertGreater(last_post, A0 + 1000, "the cells straddle the key: the last notice comes after the between-notices cell")
+        self.assertLess(last_post, A1, "…and before the phase's end")
+
+        def frame(at, asks=11):
+            return {"t": "feed", "slot": "", "len": 1, "at": at, "asks": asks, "buildId": None}
+        cells = [(A0 - 500, 11, False, "before the window (the ready-time frame)"),
+                 (A0 + 5, 11, False, "inside the window, before the bundle's first post"),
+                 (A0 + 1000, 11, False, "after notice 1, before notices 2 and 3"),
+                 (int(last_post) - 1, 11, False, "one millisecond before the last notice's earliest post"),
+                 (int(last_post) + 1, 11, True, "just after the last notice's earliest post"),
+                 (A0 + 3000, 11, True, "after the bundle (where a churn's redial frame lands, past the last post)"),
+                 (A1 + 1500, 11, True, "at the right pad's edge"),
+                 (A1 + 1501, 11, False, "past the right pad"),
+                 (A0 + 3000, None, False, "unkeyed (no asks list)")]
+
+        class Rec(L.LinkDropOldLocal):
+            driver_error = None
+
+        def record(outline_frames, feed_frames=(), socks=None, rows=()):
+            outline = list(socks) if socks is not None else [{"relay": True, "frames": list(outline_frames)}]   # no openAt: never open
+            Rec.result = {"marks": {"A0": A0, "A1": A1, "end": A1 + 1}, "died": None,
+                          "pages": {"fleet": {"socks": outline}, "feed": {"socks": [{"relay": True, "frames": list(feed_frames)}]}}}
+            Rec.changes_made = [dict(made)]
+            Rec.hub_diag_rows = list(rows)
+            return Rec("test_nothing_was_asked_of_the_remote")   # an instance for the helper; the test method is never run
+        for at, asks, want, why in cells:
+            got = record([frame(at, asks)])._outline_caught_up_whole("A0", "A1")
+            self.assertEqual(bool(got), want, "a whole frame %s (at A0 %+d ms; the last notice's earliest post at A0 %+d ms) %s excuse an empty phase A: %r"
+                             % (why, at - A0, int(last_post) - A0, "should" if want else "must not", got))
+        self.assertEqual(record([], [frame(A0 + 3000)])._outline_caught_up_whole("A0", "A1"), [], "a frame on the feed page's socket is not the Outline's")
+        t = record([frame(A0 + 3000)])
+        Rec.changes_made = []
+        with self.assertRaises(AssertionError, msg="a phase with no change record fails rather than widening") as cm:
+            t._outline_caught_up_whole("A0", "A1")
+        self.assertIn("made phase A's change bundle once", str(cm.exception), "the helper's own words for the missing record, not any red (pass 9's fixer pass: a bare assertRaises here): %s" % cm.exception)
+        # the socket's state at the three posts (A0 + 10, + 1010, + 2010 ms): the gap the excuse is keyed on
+        posts = [int((made["t0"] + i * L.NOTICE_GAP_S) * 1000) for i in range(L.NOTICES_PER_PHASE)]
+        self.assertEqual(posts, [A0 + 10, A0 + 1010, A0 + 2010], "the derived post times the cells are placed against")
+
+        def sock(i, open_at, close_at, frames):
+            return {"i": i, "relay": True, "dialedAt": open_at - 100, "openAt": open_at, "closeAt": close_at, "frames": list(frames)}
+        held = sock(0, A0 - 5000, None, [frame(A0 - 4000)])                       # open and served since before the window
+        redial = sock(1, A0 + 2500, None, [frame(A0 + 3000)])                      # the retry's socket, its whole frame after the last post
+        state_cells = [([sock(0, A0 - 5000, None, [frame(A0 - 4000), frame(A0 + 3000)])], False,
+                        "open and served across all three posts, with a later whole frame in the window (the redial after the notices were delivered)"),
+                       ([sock(0, A0 - 5000, A0 + 2500, [frame(A0 - 4000)]), sock(1, A0 + 2900, None, [frame(A0 + 3000)])], False,
+                        "open and served across all three posts, closing after the last post, the redial's frame in the window"),
+                       ([sock(0, A0 - 5000, A0 - 100, [frame(A0 - 4000)]), redial], True,
+                        "closed before the first post (every post found no open socket), the redial's frame after the last post"),
+                       ([sock(0, A0 - 5000, A0 + 500, [frame(A0 - 4000)]), redial], True,
+                        "closing between notice 1 and notice 2 (posts 2 and 3 found no open socket: the churn's shape as modelled, the socket closing "
+                        "after the first post and before the second)"),
+                       ([sock(0, A0 - 5000, None, [frame(A0 + 1500), frame(A0 + 3000)])], True,
+                        "open across the posts but served its first frame only after notice 2 (posts 1 and 2 found it unserved)")]
+        for socks, want, why in state_cells:
+            with self.subTest(socket=why):
+                got = record([], socks=socks)._outline_caught_up_whole("A0", "A1")
+                self.assertEqual(bool(got), want, "the Outline's socket %s: a whole frame after the last post %s excuse an empty phase A: %r"
+                                 % (why, "should" if want else "must not", got))
+        # the floor the excuse guards, with the excuse frame present in the record (a whole keyed frame at A0 + 3 s, after the
+        # last post, inside the window): the planted miss reds it, the churn passes it, the storm passes it
+        with self.assertRaises(AssertionError) as cm:
+            record([], socks=[sock(0, A0 - 5000, None, [frame(A0 - 4000), frame(A0 + 3000)])])._assert_one_row_per_outline_feed_patch("A0", "A1", patches_due=True)
+        self.assertIn("neither happened", str(cm.exception), "a phase with no patch and no row whose socket was open and served across the posts is a change that "
+                                                              "reached the Outline as nothing; the later whole frame excuses nothing: %s" % cm.exception)
+        self.assertEqual(record([], socks=[held.copy() | {"closeAt": A0 + 700}, redial])._assert_one_row_per_outline_feed_patch("A0", "A1", patches_due=True), 0,
+                         "the churn as recorded: no patch and no row, the socket closed 0.7 s in (after the first post, before the second), the redial's whole frame after the last post")
+        patch = {"t": "delta", "slot": "feed", "at": A0 + 1200, "coll": ["asks"], "rev": 1, "len": 300, "restAll": False}
+        row = {"surface": "outline", "what": "delta-unapplied", "t": (A0 + 1200) // 1000, "wid": "w1", "reconnect": False, "data": {"rev": 1, "slot": "feed"}}
+        self.assertEqual(record([], socks=[sock(0, A0 - 5000, None, [frame(A0 - 4000), patch, frame(A0 + 3000)])], rows=[row])._assert_one_row_per_outline_feed_patch("A0", "A1", patches_due=True), 1,
+                         "the storm: one patch, its row, the socket open and served throughout")
+
+    def test_the_down_windows_attach_exemption_takes_one_feed_row_per_attach_stamped_at_or_after_it(self):
+        """The down window's exemption for the connect push's ledgers attach (the maintainer's round 2's regression-3 fix: a card-less feed slot
+        patch at or after the resume, and the row the old bundle files for it, are the return's, not the down window's) landed
+        keyed on the row's REV as a set over the drive's attaches, with no test, and the Outline's feed patch revs restart at 1
+        on every relay socket, so the gate leg's exact zero was weaker than its message (pass 8, on the maintainer's round 3 regression-1: the row is matched to the
+        attach, at most one row per attach, naming the feed slot, stamped at or after the attach's floored second with a
+        second of slack for the kernel's clock against the browser's). Over a synthetic record (one Outline relay socket
+        opened after the resume, one card-less feed slot patch 50 ms after it, rows at chosen stamps), the storm test's
+        down-window call returns 0 for the attach's row floored a second below the attach, at its floored second and a second
+        above it; a second row of the attach's rev, also stamped at or after it, is the down window's and reds (the pass-7
+        head's set exempted both); a row of the attach's rev stamped two seconds below is not the attach's and reds (the set
+        exempted it); a row of the attach's rev naming another slot is not the attach's and reds (the set exempted it before
+        the slot check ran); a second row with no attach behind it reds (narrowness: a widened exemption passes the first
+        cell alone); and the card conditioning is pinned where each reader applies it (pass 9, on the maintainer's round 4 extra6-1: the earlier control, the
+        card-carrying patch through the storm site, redded through the patch-side clause at both trees and stayed green when
+        either card clause was dropped alone, so it controlled nothing and is replaced): a feed patch carrying cards is no
+        attach to _attaches_since, its row stays through _minus_attach_rows and through the gate leg's own read, and the storm
+        site reds on its patch side, in that clause's words. The gate leg
+        reads attaches from 1.5 s before the resume and the storm test from the resume: an attach 1 s before the resume is in
+        the first set and not the second, through the helpers at both since values and through the gate leg's own read
+        (_rows_down_minus_attaches, which carries its since; pass 8's fixer pass: the leg's inline since was reached by no
+        test, and a mutation moving it to the resume stayed green; pass 9 pins the since at every SITE, in the cell after
+        this one). And the return window's read (_return_window_stray, the
+        third reader of the attaches, which kept a set of revs until the fixer pass), in cells beside the down window's: one
+        row of an attach's rev in the window is the attach's and nothing is stray (the control); two rows of the same rev
+        leave one stray, so the gate leg's exact zero reds on the second where the set passed both; a row of a rev no attach
+        carries is stray; a row of the attach's rev two seconds before its floored second is stray. The switch's witness is
+        the down window's own: the two-row shape injected over a recorded old-hub drive (the connect push's attach 1.54 s
+        after the resume, two rows of its rev at its floored second and a second later) passed the gate leg's stray
+        assertion through the module before the switch, whose message promised one row per attach, and reds it through the
+        module after, the second row reported as the stray; these cells red through the set restored inside the helper.
+        Nothing here reaches the test methods' own lines; the replays over recorded drives do (0 rows and 0 attaches in every
+        recorded down window and return window, so neither exemption fires on any recorded drive: the census is in the
+        served module's _minus_attach_rows docstring)."""
+        DROP, RESUME = 1_000_000, 1_030_000
+        B0, END = RESUME + 20_000, RESUME + 60_000
+
+        class Rec(L.LinkDropOldLocal):
+            driver_error = None
+
+        def row(rev, t_ms, slot="feed"):
+            return {"surface": "outline", "what": "delta-unapplied", "t": t_ms // 1000, "wid": "w1", "reconnect": False, "data": {"rev": rev, "slot": slot}}
+
+        def patch(at, coll, rev=7):
+            return {"t": "delta", "slot": "feed", "at": at, "coll": list(coll), "rev": rev, "len": 300, "restAll": False}
+
+        def record(rows, frames):
+            Rec.result = {"marks": {"drop": DROP, "resume": RESUME, "B0": B0, "end": END}, "died": None, "timeouts": [],
+                          "pages": {"fleet": {"socks": [{"i": 1, "relay": True, "dialedAt": RESUME + 10, "openAt": RESUME + 20, "closeAt": None, "url": "", "frames": list(frames)}], "sends": []}}}
+            Rec.changes_made = []
+            Rec.hub_diag_rows = list(rows)
+            return Rec("test_nothing_was_asked_of_the_remote")   # an instance for the helpers; the test method is never run
+
+        def down(rows, frames):
+            return record(rows, frames)._assert_one_row_per_outline_feed_patch("drop", "resume", patches_due=False, attach_after="resume")
+        attach = patch(RESUME + 50, ["ledgers"])   # the connect push's ledgers attach: card-less, 50 ms after the resume, floored second RESUME // 1000
+        floor = (RESUME + 50) // 1000
+        for t_ms, why in ((RESUME - 900, "floored a second below the attach (the kernel's clock behind the browser's)"),
+                          (RESUME + 50, "at the attach's floored second"), (RESUME + 1050, "a second above it")):
+            with self.subTest(row=why):
+                self.assertEqual(down([row(7, t_ms)], [attach]), 0, "the attach's row %s (t %d against the attach's floored second %d) is the return's, not the down window's" % (why, t_ms // 1000, floor))
+        with self.subTest(rows="two rows of the attach's rev, both stamped at or after it"):
+            with self.assertRaises(AssertionError, msg="a second row of the attach's rev is the down window's (one row per attach; the set of revs exempted both)") as cm:
+                down([row(7, RESUME - 900), row(7, RESUME + 1050)], [attach])
+            self.assertIn("one outline/delta-unapplied row per feed slot patch", str(cm.exception), cm.exception)
+        with self.subTest(rows="a row of the attach's rev two seconds below its floored second"):
+            with self.assertRaises(AssertionError, msg="a row of the attach's rev two seconds below its floored second is not the attach's (the slack is one second)") as cm:
+                down([row(7, RESUME - 2000)], [attach])
+            self.assertIn("one outline/delta-unapplied row per feed slot patch", str(cm.exception), "the row stays and the by-rev equality reds on it: %s" % cm.exception)
+        with self.subTest(rows="a row of the attach's rev naming another slot"):
+            with self.assertRaises(AssertionError, msg="a row of the attach's rev naming another slot is not the attach's (the set exempted it before the slot check)") as cm:
+                down([row(7, RESUME - 900, slot="ledgers")], [attach])
+            self.assertIn("names the feed slot", str(cm.exception), "the row stays and the slot check reds on it: %s" % cm.exception)
+        with self.assertRaises(AssertionError, msg="a second row with no attach behind it reds (narrowness)") as cm:
+            down([row(7, RESUME - 900), row(99, RESUME - 900)], [attach])
+        self.assertIn("one outline/delta-unapplied row per feed slot patch", str(cm.exception), "the attach takes its one row and rev 99's stays: %s" % cm.exception)
+        # the card conditioning at each reader that applies it (the maintainer's round 4, extra6-1: the control this replaces, the card-carrying
+        # patch through the storm site alone, redded on the patch side at both trees and stayed green with either card clause
+        # dropped alone): the same patch carrying cards is no attach, so its row is nobody's and stays, at the helper, at the
+        # gate leg's own read (which has no patch side to red for it) and at the storm site, which reds on its patch side
+        carded = record([row(7, RESUME - 900)], [patch(RESUME + 50, ["asks"])])
+        stamped_c = carded._outline_unapplied_stamped(carded._rows_in("drop", "resume"))
+        self.assertEqual(carded._attaches_since(RESUME), [], "a feed slot patch carrying cards is no attach (_attaches_since's card clause)")
+        self.assertEqual(carded._minus_attach_rows(stamped_c, RESUME), [{"rev": 7, "slot": "feed"}], "...so its row is nobody's and stays (the row side of the conditioning)")
+        self.assertEqual(carded._rows_down_minus_attaches(), [{"rev": 7, "slot": "feed"}], "...at the gate leg's own read too, which has no patch side to red for it")
+        self.assertEqual(carded._return_window_stray(), ([{"rev": 7, "slot": "feed"}], []),
+                         "...and at the return window's read, the third reader with no patch side (the row's floored second sits inside its window): the carded patch is "
+                         "no attach there either, so the row is stray and the attach list empty (pass 9's fixer pass: extra6-1's clause named this reader and no cell read it)")
+        with self.assertRaises(AssertionError, msg="the storm site reds on its patch side: a card-carrying feed patch in the down window reached the Outline while the link was down") as cm:
+            down([row(7, RESUME - 900)], [patch(RESUME + 50, ["asks"])])
+        self.assertIn("no feed slot patch reached the Outline", str(cm.exception), "the patch filter's card clause keeps the patch, so the storm site reds on it and not on the row: %s" % cm.exception)
+        # the gate leg's separate copy reads attaches from resume - 1500 ms, the storm test's from resume
+        early = patch(RESUME - 1000, ["ledgers"], rev=5)
+        t = record([row(5, RESUME - 1000)], [early])
+        stamped = t._outline_unapplied_stamped(t._rows_in("drop", "resume"))
+        self.assertEqual((t._attaches_since(RESUME - 1500), t._attaches_since(RESUME)), ([(5, (RESUME - 1000) // 1000)], []),
+                         "an attach 1 s before the resume is in the gate leg's set of attaches and not the storm test's")
+        self.assertEqual((t._minus_attach_rows(stamped, RESUME - 1500), t._minus_attach_rows(stamped, RESUME)), ([], [{"rev": 5, "slot": "feed"}]),
+                         "…so the gate leg's since exempts its row and the storm test's does not")
+        self.assertEqual(t._rows_down_minus_attaches(), [], "…and the gate leg's own read, which carries its since of 1.5 s before the resume, exempts the row (at the resume it would not)")
+        # the return window's read (the third reader of the attaches, _return_window_stray): one row per attach the Outline
+        # received there, matched to it; cells beside the down window's two above, the same shapes through the third reader
+        late = patch(RESUME + 1540, ["ledgers"], rev=1)   # the connect push's ledgers attach 1.54 s after the resume, past the down window's patch pad
+        f = (RESUME + 1540) // 1000   # the attach's floored second; row() takes milliseconds and floors them the same way
+        with self.subTest(window="the return window, one row per attach"):
+            self.assertEqual(record([row(1, f * 1000)], [late])._return_window_stray(), ([], [(1, f)]),
+                             "one row of the attach's rev at its floored second is the attach's: nothing stray, the attach listed (the control the leg's zero passes on)")
+        with self.subTest(window="the return window, two rows of the attach's rev"):
+            self.assertEqual(record([row(1, f * 1000), row(1, (f + 1) * 1000)], [late])._return_window_stray(), ([{"rev": 1, "slot": "feed"}], [(1, f)]),
+                             "of two rows of the attach's rev, stamped at its floored second and a second later, one is the attach's and the other is stray, so the "
+                             "leg's exact zero reds on the second (the set of revs passed both)")
+        with self.subTest(window="the return window, a row of a rev no attach carries"):
+            self.assertEqual(record([row(1, f * 1000), row(2, (f + 2) * 1000)], [late])._return_window_stray()[0], [{"rev": 2, "slot": "feed"}], "a row of a rev no attach carries is stray")
+        with self.subTest(window="the return window, a row two seconds before the attach"):
+            self.assertEqual(record([row(1, (f - 2) * 1000)], [late])._return_window_stray()[0], [{"rev": 1, "slot": "feed"}],
+                             "a row of the attach's rev two seconds before its floored second is not the attach's (the slack is one second; the set passed it)")
+        with self.subTest(window="the return window, a row four seconds after the attach (no upper bound)"):
+            self.assertEqual(record([row(1, (f + 4) * 1000)], [late])._return_window_stray(), ([], [(1, f)]),
+                             "a row of the attach's rev stamped four seconds after its floored second, inside the window, is the attach's: the match has no upper "
+                             "bound on the stamp (the flush lag, _minus_attach_rows's docstring), a choice this cell states rather than leaves implied")
+
+    def test_the_three_attach_readers_carry_their_since_at_their_sites(self):
+        """The since each reader of the attaches passes, pinned at the SITE (the maintainer's round 4, extra6-2: the gate leg's helper carried
+        its since where a cell could reach it, and the storm site's and the return window's were reached by no cell, so
+        widening either left the module green). From the served module's parse: the storm site takes the mark itself
+        (`since = self._marks()[attach_after]`, handed to _minus_attach_rows), the gate leg's read takes the resume less
+        1500 ms, the return window takes the resume less 1500 ms at both its calls, and _minus_attach_rows hands its own
+        since to _attaches_since; a widened or moved since changes its text here. Then by behaviour, over the synthetic
+        record: through the storm site's own call a card-less feed patch 1 s before the resume with its row inside the down
+        window reds on the patch side (the site's since is the resume, so the patch is no attach to it; from 1.5 s before it
+        would be, and the call would return 0); through the return window a card-less attach 2.5 s before the resume with a
+        row of its rev inside the window leaves that row stray (the window's since is 1.5 s before the resume; from 3 s
+        before, the attach would take the row)."""
+        with open(L.__file__, encoding="utf-8") as f:
+            src = f.read()
+        self.assertEqual(_since_at_the_sites(src), {
+            "_assert_one_row_per_outline_feed_patch": ["since = self._marks()[attach_after]", "_minus_attach_rows(..., since)"],
+            "_minus_attach_rows": ["_attaches_since(since_ms)"],
+            "_rows_down_minus_attaches": ["_minus_attach_rows(..., self._marks()['resume'] - 1500)"],
+            "_return_window_stray": ["_minus_attach_rows(..., m['resume'] - 1500)", "_attaches_since(m['resume'] - 1500)"]},
+            "the since at every reader of the attaches, as the served module's parse reads it: the storm site the mark itself, the gate leg and the return window 1.5 s before the resume")
+        DROP, RESUME = 1_000_000, 1_030_000
+        B0, END = RESUME + 20_000, RESUME + 60_000
+
+        class Rec(L.LinkDropOldLocal):
+            driver_error = None
+
+        def row(rev, t_ms, slot="feed"):
+            return {"surface": "outline", "what": "delta-unapplied", "t": t_ms // 1000, "wid": "w1", "reconnect": False, "data": {"rev": rev, "slot": slot}}
+
+        def patch(at, coll, rev):
+            return {"t": "delta", "slot": "feed", "at": at, "coll": list(coll), "rev": rev, "len": 300, "restAll": False}
+
+        def record(rows, frames):
+            Rec.result = {"marks": {"drop": DROP, "resume": RESUME, "B0": B0, "end": END}, "died": None, "timeouts": [],
+                          "pages": {"fleet": {"socks": [{"i": 1, "relay": True, "dialedAt": RESUME + 10, "openAt": RESUME + 20, "closeAt": None, "url": "", "frames": list(frames)}], "sends": []}}}
+            Rec.changes_made = []
+            Rec.hub_diag_rows = list(rows)
+            return Rec("test_nothing_was_asked_of_the_remote")
+        early = record([row(5, RESUME - 1000)], [patch(RESUME - 1000, ["ledgers"], 5)])
+        with self.assertRaises(AssertionError, msg="the storm site's since is the resume: a card-less feed patch 1 s before it is no attach to that site") as cm:
+            early._assert_one_row_per_outline_feed_patch("drop", "resume", patches_due=False, attach_after="resume")
+        self.assertIn("no feed slot patch reached the Outline", str(cm.exception), "the patch stays in the window and the site reds on it (from 1.5 s before the resume it would be exempt and the call would return 0): %s" % cm.exception)
+        late = record([row(3, RESUME + 500)], [patch(RESUME - 2500, ["ledgers"], 3)])
+        self.assertEqual(late._return_window_stray(), ([{"rev": 3, "slot": "feed"}], []),
+                         "the return window's since is 1.5 s before the resume: an attach 2.5 s before it is none of this window's, so its row is stray (from 3 s before, it would take the row)")
+
+    def test_the_ledger_entry_names_every_module_of_this_family(self):
+        """The upstream ledger entry's RENDERED where cell names every module of the link-drop lab's family in the tree, and
+        nothing the tree lacks (pass 10, the maintainer's round 5 correctness-5: the line named three modules while the delta
+        added a fourth, the omission the maintainer's round 2 had closed once on the same entry; the maintainer's round 6,
+        rules-1: the paths-only line grew to 227 characters with the fifth module and the rendered table dropped that module
+        whole, the third recurrence, while the pin read the raw line and declared the cut out of scope). The population is
+        derived from the TREE by the glob tests/test_federated_linkdrop*.py, a spelling-keyed population (a module named
+        otherwise escapes it), stated here because the alternative is a tool reading git's delta against a base a CI checkout
+        may not hold; the pre-push check reads that delta. The cell is what scripts/upstream-ledger.py's render prints for the
+        entry's row over the tree's entries (the renderer's own cut applied by the renderer, never spelled here), read from the
+        row and brace-expanded (`tests/test_federated_linkdrop_{a,b}.py` names two paths: five full paths cannot fit under the
+        cut in any order, so the line is one stem); every module of the family is on the cell and every path on the cell is a
+        file of the tree, so a module the cut drops, a module the tree gained, or a stale path on the line is a red naming it.
+        The paths on the cell beyond the family (since the author's pass 11: the shared round-label rule
+        tests/review_round_labels_rule.py and its test, the branch's other files) are git's to derive, the branch's diff against
+        its merge base, which a CI checkout may not hold; the author's walk of the where line against that diff at each push
+        holds them complete, not this pin, which holds them to be files of the tree. The entry's body points at the where line
+        and keeps no count of modules and no class list (correctness-2: both hand-kept lists went stale as the family grew), and
+        the pin reads the body for a count word before "module"."""
+        ledger = _ledger()
+        entries, problems = ledger.load_entries(os.path.join(ROOT, "upstream"))
+        self.assertEqual(problems, [], "the tree's ledger entries parse: %r" % (problems,))
+        name = "2026-09-19-tests-federated-linkdrop-served.md"
+        entry = next((e for e in entries if e.name == name), None)
+        self.assertIsNotNone(entry, "the family's ledger entry is in the tree: %s" % name)
+        rows = [r for r in ledger.render(entries).split("\n") if name in r]
+        self.assertEqual(len(rows), 1, "the rendered ledger has one row for the entry: %r" % (rows,))
+        cell = ledger.row_cells(rows[0])[1]
+        modules = sorted(os.path.relpath(p, ROOT) for p in glob.glob(os.path.join(HERE, "test_federated_linkdrop*.py")))
+        self.assertTrue(modules, "the family in the tree, by the glob (a glob that reads nothing is a broken glob, not a clean tree)")
+        named = sorted(_expand_braces(cell))
+        self.assertEqual(cell, entry.get("where"), "the rendered where cell is the entry's whole where value: the renderer cut it (%d characters), so a module is lost from "
+                                                   "the table CI publishes; shorten the spelling (one brace-expanded stem) rather than the family: %r" % (len(entry.get("where") or ""), cell))
+        self.assertEqual(sorted(set(modules) - set(named)), [], "the rendered where cell names every module of the family in the tree; missing from the cell %r (the cell: %r)"
+                         % (sorted(set(modules) - set(named)), cell))
+        stale = [p for p in named if not os.path.isfile(os.path.join(ROOT, p))]
+        self.assertEqual(stale, [], "a path on the where line that is not a file of the tree (stale, misspelled, or a file the branch no longer carries): %r (the cell: %r)" % (stale, cell))
+        with open(os.path.join(ROOT, "upstream", name), encoding="utf-8") as f:
+            text = f.read()
+        prose = text.split("---", 2)[2] if text.count("---") >= 2 else text
+        counted = re.findall(r"\b(?:one|two|three|four|five|six|seven|eight|nine|ten|\d+) modules?\b", prose)
+        self.assertEqual(counted, [], "the entry's body keeps a count of modules, a hand-kept number that went stale twice; point at the where line instead: %r" % (counted,))
+        self.assertIn("the where line names", prose, "the entry's body points at the where line for the modules")
+
+    def test_the_site_censuses_read_every_function_kind_and_every_argument_spelling(self):
+        """The two site censuses (pass 10, the maintainer's round 5 tests-4 and extra7-2) over a synthetic source: a call inside
+        an `async def` is a site like one inside a `def` (FUNCTION_NODES is derived from ast's node classes, pinned here by
+        name), a keyword-spelled `seen` or `since_ms` is read, a `**kwargs` pass and a starred positional are offenders
+        (key None; `<a since this census cannot read>`) and not dropped sites, a starred positional BEFORE the since's
+        position makes it unreadable too (pass 10's fixer pass: `(*a, since)` was read as `since`), a lambda inside a def is
+        read with the def, and a slack passed positionally is not read as the since. Red before: the async sites were
+        skipped, the keyword sites skipped, the unreadable sites dropped, and the positional slack read as the since."""
+        self.assertEqual(sorted(c.__name__ for c in FUNCTION_NODES), ["AsyncFunctionDef", "FunctionDef"],
+                         "the function node classes, derived from ast as every class with args, body, decorator_list and returns")
+        src = "\n".join(["class T:",
+                         "    def a(self):",
+                         "        self._assert_seen(D[\"seen\"], True, waited=True)",
+                         "    async def b(self):",
+                         "        self._assert_seen(seen=self._phase(\"B\")[\"seen\"], want_cards=True, waited=True)",
+                         "        return self._minus_attach_rows(stamped, since_ms=self._marks()[\"resume\"] + 5, slack_s=2.0)",
+                         "    def c(self):",
+                         "        self._assert_seen(**kw)",
+                         "        return self._attaches_since(*a)",
+                         "    def d(self):",
+                         "        return self._minus_attach_rows(stamped, since, 2.0)",
+                         "    def e(self):",
+                         "        f = lambda: self._assert_seen(D[\"x\"])",
+                         "        return self._minus_attach_rows(*a, since)",
+                         ""])
+        self.assertEqual(_assert_seen_sites(src), [(3, "seen", True), (5, "seen", True), (8, None, False), (13, "x", False)],
+                         "the async site and the keyword-spelled site are read; the **kwargs pass is an offender with no key; a lambda inside a def is read with the def")
+        self.assertEqual(_since_at_the_sites(src), {"b": ["_minus_attach_rows(..., self._marks()['resume'] + 5)"], "c": ["_attaches_since(<a since this census cannot read>)"],
+                                                    "d": ["_minus_attach_rows(..., since)"], "e": ["_minus_attach_rows(..., <a since this census cannot read>)"]},
+                         "the keyword since is read at the async site, the starred since is unreadable and kept, the positional slack is not the since, and a star before the since's position makes it unreadable")
+
+    def test_every_waitvisible_read_site_passes_waited_and_no_visible_read_does(self):
+        """The wiring of _assert_seen's `waited` (the maintainer's round 4, tests-3: the helper's waited branch had a cell, and removing
+        waited=True from every call site, phase D's after-return read included, left the module green). The driver stores a
+        waitVisible record under the keys WAITED_READS and a visible() record under UNWAITED_READS, pinned against the driver
+        text by the spelling it uses (READ_STORE: `<key>: await waitVisible(` in a literal, `.<key> = await waitVisible(` as an
+        assignment, the same for visible; `v` is the record waitVisible itself builds from visible), with every call of either
+        accounted for by one stored key so a call stored another way is a red. Then every _assert_seen call site in the served
+        module, read from its parse (_assert_seen_sites, over every function kind and both argument spellings), reads a key of
+        one tuple or the other and passes waited=True exactly when the key is a waitVisible record's; and both tuples are read
+        whole, so the pin is not vacuous."""
+        driver = _strip_js_comments(L.DRIVER)
+        stored = [(m.group("key"), m.group("fn")) for m in READ_STORE.finditer(driver)]
+        self.assertEqual({k for k, fn in stored if fn == "waitVisible"}, set(WAITED_READS), "the keys the driver stores a waitVisible record under: %r" % (stored,))
+        self.assertEqual({k for k, fn in stored if fn == "visible"} - {"v"}, set(UNWAITED_READS), "the keys the driver stores a visible() record under (`v` is waitVisible's own): %r" % (stored,))
+        self.assertEqual(driver.count("waitVisible("), sum(1 for _, fn in stored if fn == "waitVisible"), "every waitVisible call stores its record under a key the spelling READ_STORE reads: %r" % (stored,))
+        self.assertEqual(driver.count("visible("), sum(1 for _, fn in stored if fn == "visible"), "every visible() call stores its record under a key the spelling READ_STORE reads (the count is case-sensitive, so waitVisible( is not among them): %r" % (stored,))
+        with open(L.__file__, encoding="utf-8") as f:
+            src = f.read()
+        sites = _assert_seen_sites(src)
+        bad = [(ln, key, waited) for ln, key, waited in sites if key not in WAITED_READS + UNWAITED_READS or waited != (key in WAITED_READS)]
+        self.assertEqual(bad, [], "an _assert_seen site that reads a waitVisible record without waited=True (its expired list goes unchecked, the maintainer's round 3 tests-1 hole), "
+                                  "a visible() record with it (a healthy drive reds), or a record the pin cannot name (line, key, waited): %r" % (bad,))
+        self.assertEqual({key for _, key, w in sites if w}, set(WAITED_READS), "every waitVisible record is read with waited=True somewhere: %r" % (sites,))
+        self.assertEqual({key for _, key, w in sites if not w}, set(UNWAITED_READS), "every visible() record is read without: %r" % (sites,))
+        self.assertGreaterEqual(sum(1 for _, _, w in sites if w), 7, "the waited sites the served module had at the pass-9 head (a site removed is read here): %r" % (sites,))
+
+    def test_the_margin_leg_takes_no_expired_or_unshown_wait_as_a_delivery(self):
+        """The gate's control in time (_assert_the_down_window_outlasts_the_drives_slowest_delivery) reads a phase's
+        seen.waitedMs as this drive's delivery. Pass 6 found that a waitVisible wait that TIMED OUT left waitedMs at about
+        wait_ms with no other trace (the driver swallowed the TimeoutError; out.timeouts held only budget.waitFor's
+        expiries), so the yardstick became the cap and the leg passed at 42 >= 2 x 20.0x by the relation pin's arithmetic
+        with the true delivery unknown; on the old-hub class phase A's visibles were asserted nowhere, so an old-hub drive
+        whose phase-A churn came past 20 s was green. Over a synthetic record for each class with a 42.005 s down window
+        (the recorded span): every wait resolved and the slowest delivery 19,900 ms passes and is measured; then in each
+        link-up phase in turn, a wait that expired with the visibles absent (waitedMs 20,012), the same with the visibles
+        present (the card attached inside the read gap: an honest 20.0x s, refused all the same, since the leg keys on the
+        wait's outcome and not on a read that happened to catch it), an older driver's record with no expired list and the
+        visibles shown (the outcome cannot be established, so the read alone does not make it a delivery) and a resolved
+        wait whose read found nothing (the belt: the DOM changed between the wait and the read) each fail naming the phase and in
+        the words of the check that refused it (the expired check's own clause, not a token the record's repr carries: the seen
+        record embeds 'expired' as a key, so that word alone would let a visibles failure pass for an expired one); a resolved wait
+        at 20,012 ms with the visibles present passes, since a resolved wait ended by its cap and the excess is the reads
+        (DOWN_READ_ROOM_MS). Then the inequality itself, which every cell above exercises the guards of and none the bound (the maintainer's round
+        3, correctness-1: the bound deleted, the margin lowered to 0.001, and that with the dwell reverted to the pass-3 head's 12 s left every
+        kernel-free test green): with every wait resolved and shown and the slowest delivery 19,900 ms, a window one millisecond
+        under DOWN_WINDOW_MARGIN times it reds in the inequality's own words. Two halves pin the margin and both are needed: this
+        cell is derived from the constant, so it moves with it and catches a deleted or inverted bound but not a lowered constant,
+        and the floor on DOWN_WINDOW_MARGIN in test_the_arithmetic_and_the_cap_it_is_chosen_against catches the lowered constant but
+        not a deleted bound. No passing sibling at the bound itself: int() truncation of the product would make such a cell red for
+        arithmetic reasons rather than for the property."""
+        span_ms = 42005                     # settled less phase D's t1: 42.004 to 42.010 s over the recorded head drives
+        d_t1 = 2_000_000.0                  # phase D's post end, in the control door's seconds
+        settled = int(d_t1 * 1000) + span_ms
+        for cls in (L.LinkDropBothNew, L.LinkDropOldLocal):
+            self.assertTrue(cls.local_drop, "both classes drive the local drop, so A, B and C are the phases the yardstick reads")
+
+            class Rec(cls):
+                driver_error = None
+
+            def change(p):
+                return {"phase": p, "prompt": "synthetic prompt %s" % p, "noticeKeys": ["k1", "k2", "k3"], "noticeRevs": [1, 2, 3]}
+
+            def seen(waited, p, shown=True, expired=(), key=True):
+                v = {"cards": [shown] * 3, "waitedMs": waited}
+                if "todo" in cls.changes:
+                    v["todo"] = shown
+                if "append" in cls.changes:
+                    v["prov"] = change(p)["prompt"] if shown else "the row before the change"
+                if key:
+                    v["expired"] = list(expired)
+                return v
+
+            def record(settled=settled, **over):
+                Rec.result = {"marks": {"settled": settled, "resume": settled + 20, "end": settled + 60000}, "died": None, "timeouts": [],
+                              "phases": {p: {"change": change(p), "seen": over.get(p) or seen(1000 * (i + 1), p)} for i, p in enumerate("ABC")}}
+                Rec.changes_made = [change(p) for p in "ABC"] + [{"phase": "D", "t0": d_t1 - 2.0, "t1": d_t1, "noticeKeys": ["k1", "k2", "k3"]}]
+                return Rec("test_every_wait_the_driver_placed_was_met")   # an instance for the helper; the test method is never run
+            span_s, deliveries = record(C=seen(19900, "C"))._assert_the_down_window_outlasts_the_drives_slowest_delivery()
+            self.assertAlmostEqual(span_s, span_ms / 1000.0, places=3, msg="%s: the leg read the window from phase D's post end to settled" % cls.__name__)
+            self.assertEqual(deliveries, {"A": 1000, "B": 2000, "C": 19900}, "%s: every wait resolved and shown, so every phase's waitedMs is a delivery and the slowest is C's" % cls.__name__)
+            for X in "ABC":
+                cells = [("a wait that expired with the visibles absent", seen(20012, X, shown=False, expired=["card"]), "resolved before their cap"),
+                         ("a wait that expired though the read caught the card", seen(20012, X, shown=True, expired=["card"]), "resolved before their cap"),
+                         ("an older driver's record with no expired list, visibles shown", seen(20012, X, shown=True, key=False), "resolved before their cap"),
+                         ("a resolved wait whose read found nothing", seen(20012, X, shown=False, expired=[]), "phase %s's changes" % X)]
+                for why, v, token in cells:
+                    with self.assertRaises(AssertionError, msg="%s: %s in phase %s must fail the margin leg instead of measuring the cap" % (cls.__name__, why, X)) as cm:
+                        record(**{X: v})._assert_the_down_window_outlasts_the_drives_slowest_delivery()
+                    self.assertIn("phase %s" % X, str(cm.exception), "%s: %s: the failure names the phase: %s" % (cls.__name__, why, cm.exception))
+                    self.assertIn(token, str(cm.exception), "%s: %s: the failure says why: %s" % (cls.__name__, why, cm.exception))
+                span_s, deliveries = record(**{X: seen(20012, X, shown=True, expired=[])})._assert_the_down_window_outlasts_the_drives_slowest_delivery()
+                self.assertEqual(deliveries[X], 20012, "%s: a resolved wait at the cap's edge with the visibles shown is a delivery in phase %s (the reads after the wait)" % (cls.__name__, X))
+            # the bound: every wait resolved and shown, the slowest delivery 19,900 ms, the window one millisecond under the margin times it
+            under = int(d_t1 * 1000) + int(L.DOWN_WINDOW_MARGIN * 19900) - 1
+            with self.assertRaises(AssertionError, msg="%s: a window under DOWN_WINDOW_MARGIN times the slowest delivery must fail the inequality" % cls.__name__) as cm:
+                record(settled=under, C=seen(19900, "C"))._assert_the_down_window_outlasts_the_drives_slowest_delivery()
+            self.assertIn("widen down_dwell_ms, never the margin", str(cm.exception), "%s: the inequality's own words: %s" % (cls.__name__, cm.exception))
+            self.assertIn("phase C", str(cm.exception), "%s: the failure names the slowest phase: %s" % (cls.__name__, cm.exception))
+
+    def test_a_waited_read_requires_an_empty_expired_list_and_an_unwaited_read_none(self):
+        """_assert_seen's `waited` (the maintainer's round 3, tests-1): a record waitVisible produced (a phase's seen, D's seenAfterReturn) must carry
+        an empty expired list, so a wait that expired with the read catching the cards, or an older driver's record with no list,
+        reds in the expired check's own words; a visible() record carries no list and is read without one. The gate leg's D read
+        after the return is the waited read that had no reader (the record replay of that event is pass 8's failing-before)."""
+        class Rec(L.LinkDropOldLocal):
+            driver_error = None
+        t = Rec("test_nothing_was_asked_of_the_remote")
+        shown = {"cards": [True, True, True], "waitedMs": 20012}
+        t._assert_seen(dict(shown, expired=[]), True, what="a resolved wait", waited=True)
+        t._assert_seen(dict(shown), True, what="an unwaited read")
+        for why, rec in (("a wait that expired though the read caught the cards", dict(shown, expired=["card"])), ("an older driver's record with no expired list", dict(shown))):
+            with self.assertRaises(AssertionError, msg=why) as cm:
+                t._assert_seen(rec, True, what="phase D after the link's return", waited=True)
+            self.assertIn("resolved before their cap", str(cm.exception), "%s: the failure says why: %s" % (why, cm.exception))
+            self.assertIn("phase D after the link's return", str(cm.exception), "%s: the failure names the read: %s" % (why, cm.exception))
+
+    def test_drive_sends_the_timeout_the_budget_and_the_caps(self):
+        lab = tempfile.mkdtemp(prefix="linkdrop-bound-")
+        self.addCleanup(shutil.rmtree, lab, True)
+
+        class Drive(L._LinkDrop):
+            # values of the stub's own, so the cfg is read from the class that drives and not from the base's defaults
+            driver_budget_ms = 123456
+            page_wait_ms = 7777
+            waits_ms = {k: v + 1000 for k, v in L._LinkDrop.waits_ms.items()}
+        Drive.lab, Drive.hport, Drive.htoken, Drive.ctl = lab, 1, "testtok-bound", types.SimpleNamespace(port=2)
+        Drive.result, Drive.driver_error = None, None
+        seen = {}
+
+        def spy(cmd, *a, **kw):
+            seen["cmd"], seen["kw"] = list(cmd), kw
+            return subprocess.CompletedProcess(cmd, 0, stdout='RESULT:{"marks": {}}\n', stderr="")
+        with mock.patch.object(L.subprocess, "run", spy):
+            Drive._drive()
+        self.assertEqual(seen["cmd"][:1], ["node"], seen)
+        self.assertEqual(seen["kw"].get("timeout"), L.DRIVER_TIMEOUT_S, "the driver's subprocess timeout is DRIVER_TIMEOUT_S")
+        self.assertEqual(Drive.result, {"marks": {}}, "the spy's result was read")
+        with open(os.path.join(lab, "cfg.json"), encoding="utf-8") as f:
+            cfg = json.load(f)
+        self.assertEqual(cfg["driverBudgetMs"], Drive.driver_budget_ms)
+        self.assertEqual(cfg["waitsMs"], Drive.waits_ms)
+        self.assertEqual(cfg["pageWaitMs"], Drive.page_wait_ms)
+        self.assertEqual((cfg["phaseSettleMs"], cfg["quietTries"], cfg["quietStepMs"]), (L.PHASE_SETTLE_MS, L.QUIET_TRIES, L.QUIET_STEP_MS))
+        with open(seen["cmd"][1], encoding="utf-8") as f:
+            driver = f.read()
+        self.assertTrue(driver.startswith(L.BUDGET_JS), "the driver the class writes opens with BUDGET_JS")
+        unread = [k for k in CFG_KEYS if "cfg.%s" % k not in driver] + ["waitsMs.%s" % k for k in Drive.waits_ms if "cfg.waitsMs.%s" % k not in driver]
+        self.assertEqual(unread, [], "every value the cfg carries is read by the driver by name: %r" % (unread,))
+        self.assertEqual(set(Drive.waits_ms), set(re.findall(r"cfg\.waitsMs\.(\w+)", driver)), "…and the driver reads no cap the class does not send")
+
+    def test_the_browser_probe_is_bounded_and_a_hang_there_is_an_error_not_a_skip(self):
+        """_boot's playwright-browser probe, the one subprocess of setUpClass that had no timeout (the maintainer's round 6, extra4-3),
+        runs under PROBE_TIMEOUT_S: with a `node` on PATH that never answers and the bound at one second, _boot raises an
+        AssertionError naming the bound (a wedged node is not a missing browser, so the no-browser skip is wrong for it, and under
+        ROMP_SERVED_TESTS_REQUIRE=1 a skip would be a red with the wrong words); with a node that exits non-zero the skip stands.
+        Red before: the probe ran with no timeout, so a hang there ran to pytest-timeout's cap and ended the served process."""
+        stub = tempfile.mkdtemp(prefix="linkdrop-node-stub-")
+        self.addCleanup(shutil.rmtree, stub, True)
+        scratch = tempfile.mkdtemp(prefix="linkdrop-probe-ext-")
+        self.addCleanup(shutil.rmtree, scratch, True)
+        os.makedirs(os.path.join(scratch, "node_modules", "playwright"))
+        node = os.path.join(stub, "node")
+
+        def stub_node(body):
+            with open(node, "w", encoding="utf-8") as f:
+                f.write("#!/bin/sh\n" + body + "\n")
+            os.chmod(node, 0o755)
+
+        class Boot(L._LinkDrop):
+            pass
+        stub_node("exec sleep 5")
+        with mock.patch.object(L, "EXT", scratch), mock.patch.object(L, "PROBE_TIMEOUT_S", 1), mock.patch.dict(os.environ, {"PATH": stub + os.pathsep + os.environ.get("PATH", "")}):
+            try:
+                Boot._boot()
+            except AssertionError as e:
+                got = e
+            except unittest.SkipTest as e:   # caught by name: a SkipTest escaping an assertRaises would skip this pin instead of redding it
+                self.fail("the probe's hang was read as a skip (the no-browser text, or another): %s" % e)
+            else:
+                self.fail("_boot returned past a probe that never answered")
+        self.assertIn("did not finish in 1 s", str(got), "the probe's hang is an error naming its bound: %s" % got)
+        self.assertNotIn("no playwright browser", str(got), "a hang is not the missing-browser skip")
+        stub_node("exit 7")
+        with mock.patch.object(L, "EXT", scratch), mock.patch.object(L, "PROBE_TIMEOUT_S", 1), mock.patch.dict(os.environ, {"PATH": stub + os.pathsep + os.environ.get("PATH", "")}):
+            with self.assertRaises(unittest.SkipTest) as cm:
+                Boot._boot()
+        self.assertIn("no playwright browser", str(cm.exception), "a probe that answers no browser stays the skip: %s" % cm.exception)
+
+    def test_a_drive_that_outlives_its_timeout_keeps_the_result_it_printed(self):
+        """_drive's TimeoutExpired branch (the maintainer's round 6, extra4-4): the driver prints its RESULT line before `await
+        browser.close()`, so a kill at DRIVER_TIMEOUT_S can land in the close with the record whole in the partial output. Under
+        node with a stub driver and the timeout at one second: a RESULT line followed by a sleep past the timeout leaves the record
+        HELD (result parsed, no driver_error, the kill noted in driver_note naming DRIVER_TIMEOUT_S); a RESULT line the kill left
+        truncated (unbalanced JSON) stays driver_error naming the truncation, with no result; a driver that printed no RESULT stays
+        the timed-out driver_error. Red before: the branch discarded a complete RESULT it was already holding."""
+        if not shutil.which("node"):
+            raise unittest.SkipTest("node absent: the stub driver needs it")
+        record = 'console.log("RESULT:" + JSON.stringify({ marks: { end: 1 }, held: true }));\n'
+        hang = "await new Promise((r) => setTimeout(r, 30000));\n"
+        cases = (("held", record + hang, {"marks": {"end": 1}, "held": True}, None, "outlived DRIVER_TIMEOUT_S (1 s)"),
+                 ("truncated", 'console.log("RESULT:{\\"marks\\": {\\"end\\": 1");\n' + hang, None, "the kill left truncated", None),
+                 ("no result", 'console.log("starting");\n' + hang, None, "driver timed out; partial output", None))
+        for name, js, want_result, want_error, want_note in cases:
+            with self.subTest(driver=name):
+                lab = tempfile.mkdtemp(prefix="linkdrop-held-")
+                self.addCleanup(shutil.rmtree, lab, True)
+
+                class Drive(L._LinkDrop):
+                    pass
+                Drive.lab, Drive.hport, Drive.htoken, Drive.ctl = lab, 1, "testtok-held", types.SimpleNamespace(port=2)
+                Drive.result, Drive.driver_error, Drive.driver_note = None, None, None
+                with mock.patch.object(L, "DRIVER", js), mock.patch.object(L, "DRIVER_TIMEOUT_S", 1):
+                    Drive._drive()
+                self.assertEqual(Drive.result, want_result, "%s: the record %s: result %r, error %r" % (name, "is held" if want_result else "is not read", Drive.result, Drive.driver_error))
+                if want_error is None:
+                    self.assertIsNone(Drive.driver_error, "%s: no driver_error for a record the kill left whole: %r" % (name, Drive.driver_error))
+                else:
+                    self.assertIn(want_error, Drive.driver_error or "", "%s: the error names its cause: %r" % (name, Drive.driver_error))
+                if want_note is None:
+                    self.assertIsNone(Drive.driver_note)
+                else:
+                    self.assertIn(want_note, Drive.driver_note or "", "%s: the kill after the RESULT line is noted: %r" % (name, Drive.driver_note))
+
+    def test_the_budget_binds_every_wait_under_node(self):
+        if not shutil.which("node"):
+            raise unittest.SkipTest("node absent: the budget's node run needs it")
+        d = tempfile.mkdtemp(prefix="linkdrop-budget-")
+        self.addCleanup(shutil.rmtree, d, True)
+        path = os.path.join(d, "budget.mjs")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(L.BUDGET_JS + BUDGET_HARNESS)
+        p = subprocess.run(["node", path], capture_output=True, text=True, timeout=60)
+        self.assertEqual(p.returncode, 0, "the budget ran under node: %s%s" % (p.stdout[-800:], p.stderr[-800:]))
+        line = next((ln for ln in p.stdout.splitlines() if ln.startswith("RESULT:")), None)
+        self.assertIsNotNone(line, p.stdout)
+        res = json.loads(line[len("RESULT:"):])
+        spent = " (the driver's wait budget was spent)"
+        self.assertEqual((res["capBig"], res["capSmall"]), (1000, 300), "the budget caps a larger timeout and leaves a smaller one: %r" % (res,))
+        self.assertEqual((res["r1"], res["clock1"], res["polls1"], res["left1"]), (False, 1000, 4, 0),
+                         "a wait that never comes polls every 250 ms, spends the budget once and no more: %r" % (res,))
+        self.assertEqual(res["timeouts1"], ["w1" + spent], "…and is recorded as expired with the budget spent: %r" % (res,))
+        self.assertEqual((res["r2"], res["spent2"], res["capSpent"]), (False, 1, 1),
+                         "with the budget spent the next wait returns at once and no timeout handed on is 0: %r" % (res,))
+        self.assertEqual(res["timeouts2"], ["w1" + spent, "w2" + spent])
+        self.assertEqual((res["r3"], res["clock3"], res["left3"], res["timeouts3"]), (True, 500, 500, []),
+                         "a wait that comes on its third poll spends only what it took and records nothing: %r" % (res,))
+        self.assertEqual((res["b1"], res["timeoutsB1"]), (42, []), "a bounded read that settles returns its value and records nothing: %r" % (res,))
+        self.assertEqual((res["b2"], res["clockB2"], res["leftB2"], res["timeoutsB2"]), ("fb", 1000, 0, ["never expired" + spent]),
+                         "a bounded read that never settles returns the fallback when what was left of the budget is spent, and records the expiry: %r" % (res,))
+        self.assertEqual((res["b3"], res["clockB3"], res["timeoutsB3"]), ({"empty": True}, 1001, ["never expired" + spent, "after expired" + spent]),
+                         "with the budget spent a bounded read returns its fallback at once (the race's sleep is never 0): %r" % (res,))
+
+
+if __name__ == "__main__":
+    unittest.main()
