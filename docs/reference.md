@@ -445,10 +445,17 @@ headers at its next start. `check_sent` and `romp mail sent`
 show a message the bus had to give up on later (a cross-host record it could
 not write, a file it could not read, a write a restart found unfinished) as
 `bounced`, marked `refused` with the reason; a peer's refusal that did come
-back as a note still reads `undeliverable, returned to you`. A message file the bus cannot read, in a
+back as a note still reads `undeliverable, returned to you`. A message file the bus reads but cannot parse, in a
 recipient's inbox or in the cross-host outbox, is moved aside once (see the
 state files below), its sender's receipt reads refused, and the dashboard's
-error center says so under the `refused` kind.
+error center says so under the `refused` kind; an inbox file the bus cannot
+read is moved aside the same way, while a cross-host record (an outbox or
+readbox file) the bus cannot read is skipped and left in place, said once per
+fault spell on the error center and in the log, and its sender's receipt keeps
+reading pending until the record can be read. A cross-host store the bus
+cannot list at all (an outbox or readbox directory) is said the same way, once
+per fault spell, and the mail parked there stands until the directory can be
+read again.
 
 ## Configuration
 
@@ -5732,16 +5739,61 @@ raw string.
 
 The postal service's own files live under `postal/` there: `mail/<session>/`
 (a maildir per recipient), `outbox/<host>/` and `readbox/<host>/` (cross-host
-mail and read receipts awaiting their peer). A record or message file the bus
-cannot parse or read is moved aside once, never deleted, to
+mail and read receipts awaiting their peer) and `quarantine/` (cross-host mail
+held for your approval, one `<mid>.json` per message). A record or message
+file the bus reads but cannot parse, or an inbox message file it cannot read,
+is moved aside once, never deleted, to
 `<name>.corrupt-<UTC stamp>` beside the original (an inbox file lands beside
 its `new/` directory, out of every listing; a `-1`, `-2` suffix when two land
 in the same second), the rest of the store is served, the sender's receipt for
 that message reads refused, and the error center says so under the `refused`
-kind. At start the bus removes the temporary files a crash left behind (a
-message written but never placed, a store record never finished), closes each
-one's receipt as refused, and says so once. The sidecars are yours to inspect
-or delete.
+kind. An outbox or readbox record the bus cannot read is not moved: it is
+skipped and left in place, said once per fault spell, the rest of the store is
+served, and the sender's receipt keeps reading pending until the record can be
+read. The held-mail store is the exception to the first of those sentences: it
+has two readers, and the bus's is not the one that moves a file. Both follow
+the one statement of the states a reader of a store meets, in the kernel's
+`_note_read_fault_once`, and each reader's own code says what it does in each
+of its arms. A held record whose bytes exist but cannot be read (a stat or read
+fault on bytes that exist: permission denied, an I/O error) is skipped and left
+in place by both readers, said once per fault spell, and never reported absent.
+The bus (`GET /quarantine` and the summary peers see) says so in the log, and
+when nothing in the store could be served while such a record stands, one
+record alone included, it refuses the store rather than answering that nothing
+is held: `GET /quarantine` answers 503 with the reason, and a machine viewing
+the holder sees a fault row in place of the section. A record left unread
+beside records that were read is listed as unread on `GET /quarantine` beside
+`held` (the file's name, the errno and its text, on every answer, an empty list
+when nothing was left unread), counted on the summary peers see as one marker
+row after the message rows, and shown on a viewing machine's Held for approval
+elsewhere as a line naming how many could not be read, beside the count of
+messages held. The kernel, which builds the held-mail cards from the same
+directory, says so on the error center too and keeps the board. A held record
+the kernel read and could not parse or take is the one it moves aside, under
+the same `<name>.corrupt-<UTC stamp>` naming,
+with the error center saying so under the `refused` kind; the shapes that earn
+the move are listed in that statement, not here. That move changes no receipt:
+the relay was acknowledged when the hold landed, so the sender's side reads as
+it did, and the message is off the board until you act on the file. The one
+exception on the never-rename side is a `.json` link with nothing behind it:
+reading it proves the record absent, so the kernel moves the link itself aside
+by its own name, moving no message bytes, and the bus skips it. A record that
+parsed keeps its card and its listing whatever the types of its fields: a field
+that should be text and is not is named by its type, an `at` the reader cannot
+read as a whole number, or that is empty or zero, gives the card the build's
+time (the bus sorts such a record as the oldest), and any other value it reads
+as a whole number (a string of digits, a decimal number) is read as its value
+by both readers. A held record
+the kernel moved aside is named again by the error center each time its entry
+has left it, after a kernel restart or once forty later entries have pushed it
+out (several asides share one entry), until you deal with the file; the entry
+carries the advice for the record it names: rename it back without its
+`.corrupt-` suffix to try the record again, or, when its id is one the bus
+cannot decide, give it a name the bus can decide with a matching message id,
+or delete it. At start the bus removes the
+temporary files a crash left behind (a message written but never placed, a
+store record never finished), closes each one's receipt as refused, and says
+so once. The sidecars are yours to inspect or delete.
 
 ## The spend ceiling
 

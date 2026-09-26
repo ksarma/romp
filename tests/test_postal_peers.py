@@ -2,6 +2,7 @@
 """Peer-bus mode stage 1 (plans/postal-peer-buses.md): every machine runs its OWN bus — the
 client-only special case is retired under the flag — and the kernel feeds the bus a peer table
 over POST /peer on tunnel transitions. Synthetic only."""
+import errno
 import json
 import os
 import tempfile
@@ -425,6 +426,137 @@ class ThreeBusRelay(unittest.TestCase):
         verdict, bounce = pmb._relay_in("hosta", m)
         self.assertEqual(verdict, "bounce", "one hop max: an already-hopped message bounces, never re-forwards")
         self.assertIn("no live session", bounce["why"])
+
+
+class AHoldersUnlistableStoreReachesThePeerAsAFaultRow(_TwoBusHarness):
+    """The wire half of the fork PR's extra5-3 (2026-09-20), over the real exchange: A's held-mail directory cannot be
+    listed, so A's request carries ONE `holds` row with a `fault` key (the fault's kind and errno text, never a path) and
+    the ordinary keys empty; B's handler folds it into PEER_STATE as any hold's row, and B's remote_holds, what B's kernel
+    proxies to its panel, carries it stamped `atHost` with A's name. Before, A's summary swallowed the fault and shipped no
+    rows, so on B the held-elsewhere section for A disappeared with nothing said on B. A listable store on A ships no
+    fault key (the control). Skipped as root, who lists a mode-000 directory. Synthetic: the harness's hosta and hostb, a
+    placeholder mid.
+
+    Fails before over a git archive of bc88256e8: B's remote_holds is [] over A's fault."""
+
+    HOLD = {"mid": "11111111-2222-3333-4444-555555550801", "to": "beta", "toId": "sid-b", "frm": "alpha",
+            "frmId": "sid-a", "body": "invented held text", "kind": "coordinate", "origin": "hostc", "via": "hostc",
+            "at": 1700000000}
+
+    def setUp(self):
+        if hasattr(os, "geteuid") and os.geteuid() == 0:
+            self.skipTest("root lists a mode-000 directory; the fault cannot be staged")   # before the fixture patches
+        super().setUp()
+        pm.QUARANTINE.mkdir(parents=True, exist_ok=True)
+        for f in pm.QUARANTINE.iterdir():
+            f.unlink()
+        (pm.QUARANTINE / (self.HOLD["mid"] + ".json")).write_text(json.dumps(self.HOLD))
+        self._saved_log = pm._log
+        pm._log = lambda m: None
+        getattr(pm, "_UNLISTABLE_SAID", {}).clear()
+        self.addCleanup(self._restore)
+
+    def _restore(self):
+        try:
+            os.chmod(pm.QUARANTINE, 0o755)
+        except OSError:
+            pass
+        for f in pm.QUARANTINE.iterdir():
+            f.unlink()
+        pm._log = self._saved_log
+        getattr(pm, "_UNLISTABLE_SAID", {}).clear()
+
+    def test_the_fault_rides_the_exchange_and_lands_in_the_peers_remote_holds_with_at_host(self):
+        os.chmod(pm.QUARANTINE, 0)
+        req = pm.build_exchange_request("srv", wait=False)      # A dials: its holds are one fault row
+        self.assertEqual([r.get("mid") for r in req["holds"]], [""], req["holds"])
+        self.assertIn("cannot be listed", req["holds"][0]["fault"])
+        self.assertIn("errno %d" % errno.EACCES, req["holds"][0]["fault"])
+        self.assertNotIn(str(pm.QUARANTINE), req["holds"][0]["fault"], "no path on the wire")
+        self.assertNotIn("invented", json.dumps(req["holds"]), "no record text on the wire")
+        resp, status = pmb.peer_exchange_handle(req)
+        self.assertEqual(status, 200)
+        remote = pmb.remote_holds()
+        self.assertEqual(len(remote), 1, remote)
+        self.assertEqual(remote[0]["atHost"], "hosta", "stamped with the holder's name, as a hold's row is")
+        self.assertEqual(remote[0]["fault"], req["holds"][0]["fault"], "unchanged on the way")
+        self.assertEqual(pmb.peers_snapshot()["remoteHolds"], remote, "what B's kernel proxies to its panel")
+        os.chmod(pm.QUARANTINE, 0o755)
+        req = pm.build_exchange_request("srv", wait=False)
+        self.assertEqual([(r["mid"], "fault" in r) for r in req["holds"]], [(self.HOLD["mid"], False)], "listable: the hold, no fault key")
+        pmb.peer_exchange_handle(req)
+        self.assertEqual([(r["mid"], r["atHost"]) for r in pmb.remote_holds()], [(self.HOLD["mid"], "hosta")])
+
+
+class ARecordLeftUnreadOnTheHolderRidesTheExchangeAsAMarkerRow(_TwoBusHarness):
+    """The wire half of the fork PR's correctness-2 (round 3, 2026-09-20), over the real exchange: A's held-mail store holds
+    two readable records and one whose bytes cannot be read, so A's request carries the two message rows and ONE marker
+    row after them (the fault row's key shape with `fault` carrying the count wording, `unread` 1 and `served` 2, never a
+    path or a record's text); B's handler folds it into PEER_STATE as any row, B's remote_holds, what B's kernel proxies
+    to its panel, carries all three stamped `atHost` with A's name and the marker's text and counts unchanged on the way,
+    and peers_snapshot()["remoteHolds"] is that list. Before, A's summary gossiped the two read records alone and the
+    unread one was absent from B with nothing saying so (the refusal on nothing served closed the lone case and left this
+    one). A store every record of which reads ships no marker (the control). Skipped as root, who reads a mode-000 file.
+    Synthetic: the harness's hosta and hostb, placeholder mids.
+
+    Fails before over a git archive of f418f75e9: A's request carries two rows and no marker, B's remote_holds two."""
+
+    HOLD = {"mid": "11111111-2222-3333-4444-555555550811", "to": "beta", "toId": "sid-b", "frm": "alpha",
+            "frmId": "sid-a", "body": "invented held text", "kind": "coordinate", "origin": "hostc", "via": "hostc",
+            "at": 1700000000}
+    M2, M3 = "11111111-2222-3333-4444-555555550812", "11111111-2222-3333-4444-555555550813"
+
+    def setUp(self):
+        if hasattr(os, "geteuid") and os.geteuid() == 0:
+            self.skipTest("root reads a mode-000 file; the fault cannot be staged")   # before the fixture patches
+        super().setUp()
+        pm.QUARANTINE.mkdir(parents=True, exist_ok=True)
+        for f in pm.QUARANTINE.iterdir():
+            f.unlink()
+        for mid in (self.HOLD["mid"], self.M2, self.M3):
+            (pm.QUARANTINE / (mid + ".json")).write_text(json.dumps(dict(self.HOLD, mid=mid)))
+        self.locked = pm.QUARANTINE / (self.M3 + ".json")
+        os.chmod(self.locked, 0)
+        self._saved_log = pm._log
+        pm._log = lambda m: None
+        getattr(pm, "_HOLD_SKIPPED_SAID", {}).clear()
+        self.addCleanup(self._restore)
+
+    def _restore(self):
+        for f in pm.QUARANTINE.iterdir():
+            try:
+                os.chmod(f, 0o644)
+            except OSError:
+                pass
+            f.unlink()
+        pm._log = self._saved_log
+        getattr(pm, "_HOLD_SKIPPED_SAID", {}).clear()
+
+    def test_the_marker_rides_the_exchange_and_lands_in_the_peers_remote_holds_with_at_host(self):
+        req = pm.build_exchange_request("srv", wait=False)      # A dials: two message rows and the marker
+        rows = req["holds"]
+        self.assertEqual(sorted(r["mid"] for r in rows if r.get("mid")), sorted([self.HOLD["mid"], self.M2]), rows)
+        self.assertEqual(len(rows), 3, "the two read records and one marker row: %r" % (rows,))
+        marker = rows[2]
+        self.assertEqual((marker.get("mid"), marker.get("unread"), marker.get("served")), ("", 1, 2), marker)
+        self.assertEqual(marker["fault"], "held mail: 1 of its 3 records, %s, cannot be read (errno %d: %s); the rest is served"
+                         % (self.locked.name, errno.EACCES, os.strerror(errno.EACCES)))
+        self.assertNotIn(str(pm.QUARANTINE), json.dumps(rows), "no path on the wire")
+        self.assertNotIn("invented", json.dumps(marker), "no record text in the marker")
+        resp, status = pmb.peer_exchange_handle(req)
+        self.assertEqual(status, 200)
+        remote = pmb.remote_holds()
+        self.assertEqual(len(remote), 3, remote)
+        self.assertEqual({r["atHost"] for r in remote}, {"hosta"}, "every row stamped with the holder's name")
+        self.assertEqual(remote[2], dict(marker, atHost="hosta"), "the marker's text and counts unchanged on the way")
+        self.assertEqual(pmb.peers_snapshot()["remoteHolds"], remote, "what B's kernel proxies to its panel")
+        os.chmod(self.locked, 0o644)
+        req = pm.build_exchange_request("srv", wait=False)
+        self.assertEqual(sorted((r["mid"], "unread" in r) for r in req["holds"]),
+                         sorted((m, False) for m in (self.HOLD["mid"], self.M2, self.M3)), "every record read: no marker")
+        pmb.peer_exchange_handle(req)
+        self.assertEqual(len(pmb.remote_holds()), 3)
+        self.assertTrue(all("unread" not in r and "fault" not in r for r in pmb.remote_holds()))
 
 
 class ExchangeRelaysAreBudgeted(_TwoBusHarness):
@@ -1340,9 +1472,19 @@ class NewFalseReturnsAreHonoured(_LoudBus):
 
 
 class StoreFaultsAreLoud(_LoudBus):
-    """_atomic_json_put's failure path and _list_json_records' unreadable arm (review find,
-    2026-09-08). An unreadable record is moved aside like a torn one, once, with its ledger closed
-    and a bell row; the first cut skipped it in place on every exchange."""
+    """_atomic_json_put's failure path and _list_json_records' unreadable arm. From the review find of 2026-09-08 to the
+    fork PR's review (correctness-2, 2026-09-20) an unreadable record was moved aside like a torn one, its ledger closed
+    with a terminal bounced row and a bell row: a rename that declared bytes nobody had read corrupt, and a receipt read
+    refused over a message that may have been good, on a fault (EACCES, EIO) that can pass. Unreadable is not
+    unparseable, and neither is corrupt: a record the listing cannot READ is now skipped, left in place, said once per
+    (file, errno) per episode as a bell row and a log line, never moved and never closed, and served by the listing that
+    can read it; the receipt keeps reading pending, which is true. The move aside and the terminal row stay reserved for
+    bytes read and not parsed (StoresPublishAtomicallyAndQuarantineTornRecords, RefusalArms). A store none of whose two or
+    more records read is said once for the store with the count, never once per file (correctness-3), and the kernel's
+    held-mail reader holds the same line, so the two readers of one shape agree.
+
+    The unreadable cases fail before over a git archive of bc88256e8 (the move aside predates the PR): the file is
+    renamed to `.corrupt-` on the first listing with a bounced row, and a mode-400 store writes 45 lines."""
 
     def test_a_failed_replace_raises_and_leaves_no_temp(self):
         import errno
@@ -1360,26 +1502,194 @@ class StoreFaultsAreLoud(_LoudBus):
         self.assertEqual([p.name for p in d.iterdir()], [])
 
     @unittest.skipIf(os.geteuid() == 0, "root reads a mode-0 file; the fault cannot be staged")
-    def test_an_unreadable_record_is_moved_aside_once_and_closes_its_ledger(self):
+    def test_an_unreadable_record_is_left_in_place_said_once_and_served_when_it_reads(self):
         pm._tl_append("messages.jsonl", {"t": 10, "ev": "sent", "id": "px-locked", "from": "alpha",
                                          "from_id": _SND, "to_id": "peer:srv", "toName": "srv:beta",
                                          "body": "hi", "kind": "question"})
         pm.outbox_put("srv", {"mid": "px-locked", "to": "beta", "frm": "alpha", "frm_id": _SND, "body": "hi"})
         pm.outbox_put("srv", {"mid": "good", "to": "beta", "frm": "alpha", "frm_id": _SND, "body": "hi"})
-        os.chmod(pm.OUTBOX / "srv" / "px-locked.json", 0)
+        locked = pm.OUTBOX / "srv" / "px-locked.json"
+        os.chmod(locked, 0)
+        self.addCleanup(lambda: os.chmod(locked, 0o644) if locked.exists() else None)
         self.assertEqual([r["mid"] for r in pm.outbox_list("srv")], ["good"], "the rest of the store is served")
-        self.assertFalse((pm.OUTBOX / "srv" / "px-locked.json").exists())
-        aside = [p.name for p in (pm.OUTBOX / "srv").iterdir() if p.name.startswith("px-locked.json.corrupt-")]
-        self.assertEqual(len(aside), 1, "moved aside, kept as evidence")
-        term = [r for r in self._rows() if r.get("ev") == "bounced" and r.get("id") == "px-locked"]
-        self.assertEqual([(r["host"], r["why"]) for r in term], [("srv", pm.WHY_OUTBOX_UNREADABLE)])
+        self.assertTrue(locked.exists(), "a record the listing could not READ is left in place: nobody read its bytes")
+        self.assertEqual([p.name for p in (pm.OUTBOX / "srv").iterdir() if "corrupt" in p.name], [], "never moved aside")
+        self.assertEqual([r for r in self._rows() if r.get("ev") == "bounced"], [], "the ledger is not closed over it")
+        self.assertEqual(len(self._notices()), 1, "one bell row: %r" % (self.told,))
+        self.assertIn("px-locked.json is unreadable (errno %d" % errno.EACCES, self._notices()[0])
+        self.assertIn("left in place", self._notices()[0])
+        self.assertNotIn("moved aside", self._notices()[0], "nothing was attempted, so nothing claims to have failed")
         self.assertEqual(len([m for m in self.logged if "px-locked.json" in m]), 1)
-        self.assertEqual(len(self._notices()), 1, "one bell row")
-        self.assertIn("could not be read", self._notices()[0])
         self.assertEqual([r["mid"] for r in pm.outbox_list("srv")], ["good"])
         self.assertEqual((len([m for m in self.logged if "px-locked.json" in m]), len(self._notices())), (1, 1),
-                         "the second pass moves nothing and says nothing")
-        self.assertIn("refused", pm.format_receipts([pm._sent_receipts(_SND)[-1]]))
+                         "the second pass says nothing more: once per (file, errno) per episode")
+        receipt = pm.format_receipts([pm._sent_receipts(_SND)[-1]])
+        self.assertNotIn("refused", receipt, "the receipt is not closed over bytes nobody read")
+        self.assertIn("pending", receipt)
+        os.chmod(locked, 0o644)
+        self.assertEqual(sorted(r["mid"] for r in pm.outbox_list("srv")), ["good", "px-locked"], "readable again: served")
+        os.chmod(locked, 0)
+        pm.outbox_list("srv")
+        self.assertEqual(len(self._notices()), 2, "the clean read ended the episode; the fault's return is said again")
+
+    @unittest.skipIf(os.geteuid() == 0, "root reads through a mode-400 directory; the fault cannot be staged")
+    def test_a_store_none_of_whose_records_read_is_said_once_with_the_count(self):
+        for i in range(45):
+            pm.outbox_put("srv", {"mid": "px-%02d" % i, "to": "beta", "frm": "alpha", "frm_id": _SND, "body": "hi"})
+        d = pm.OUTBOX / "srv"
+        os.chmod(d, 0o400)                                 # lists, cannot be searched: every read fails with one errno
+        self.addCleanup(os.chmod, d, 0o755)
+        self.assertEqual(pm.outbox_list("srv"), [], "no record can be served, and none is invented")
+        self.assertEqual(len(self.logged), 1, "once for the store, not once per file: %d log lines" % len(self.logged))
+        self.assertEqual(len(self._notices()), 1, "one bell row for the store: %d rows" % len(self._notices()))
+        self.assertIn("outbox srv: none of its 45 records can be read (errno %d" % errno.EACCES, self._notices()[0])
+        pm.outbox_list("srv")
+        self.assertEqual((len(self._notices()), len(self.logged)), (1, 1), "the second pass says nothing more")
+        os.chmod(d, 0o755)
+        self.assertEqual(len(pm.outbox_list("srv")), 45, "the records stood the whole time")
+        self.assertEqual([p.name for p in d.iterdir() if "corrupt" in p.name], [], "nothing moved aside")
+        self.assertEqual([r for r in self._rows() if r.get("ev") == "bounced"], [], "no ledger row closed")
+        os.chmod(d, 0o400)
+        pm.outbox_list("srv")
+        self.assertEqual(len(self._notices()), 2, "a clean listing ended the episode; the next fault is a new one")
+
+
+class StoreDirectoriesThatCannotBeListedAreLoud(_LoudBus):
+    """The bus side of the fold investigation's F3 (2026-09-19): _list_json_records enumerated a store with Path.glob,
+    which on Python 3.12 swallows a PermissionError and yields nothing, so its `except OSError` never ran for that fault
+    and an outbox or readbox that could not be listed read as an empty one, nothing said, while the parked mail sat. Now the
+    listing is os.listdir (_json_files): a directory fault is one bell row and one log line per episode, naming the
+    store and the errno; the listing answers no records and never raises (the exchange's acks, bounces, reads and
+    presence had nothing to do with the store); nothing is moved aside or closed in the ledger; a clean listing
+    re-arms the episode."""
+
+    def setUp(self):
+        if hasattr(os, "geteuid") and os.geteuid() == 0:
+            # before super().setUp(): unittest runs no tearDown when setUp raises, SkipTest included, so a skip after the
+            # fixture had patched the module would leave its patches and the peers flag standing for every later test
+            # (review round 2, 2026-09-19; ARootRunSkipsBeforeTheFixturePatches pins it by execution)
+            self.skipTest("root lists a mode-000 directory; the fault cannot be staged")
+        super().setUp()
+        getattr(pm, "_UNLISTABLE_SAID", {}).clear()   # getattr: absent before the fix, where the run must reach the assertions
+        self._locked = []
+
+    def tearDown(self):
+        for d in self._locked:
+            try:
+                os.chmod(d, 0o755)
+            except OSError:
+                pass
+        getattr(pm, "_UNLISTABLE_SAID", {}).clear()
+        super().tearDown()
+
+    def _lock(self, d):
+        self._locked.append(d)
+        os.chmod(d, 0)
+
+    def _said(self):
+        return [m for m in self.logged if "cannot be listed" in m]
+
+    def test_an_outbox_that_cannot_be_listed_is_said_once_per_episode_and_its_mail_stands(self):
+        pm.outbox_put("srv", {"mid": "px-parked", "to": "beta", "frm": "alpha", "frm_id": _SND, "body": "hi"})
+        d = pm.OUTBOX / "srv"
+        self._lock(d)
+        self.assertEqual(pm.outbox_list("srv"), [], "no record can be served, and none is invented")
+        self.assertEqual(len(self._notices()), 1, "one bell row: %r" % (self.told,))
+        self.assertIn("outbox srv", self._notices()[0])
+        self.assertIn("cannot be listed", self._notices()[0])
+        self.assertIn("errno %d" % errno.EACCES, self._notices()[0])
+        self.assertEqual(len(self._said()), 1, self.logged)
+        self.assertEqual(pm.outbox_list("srv"), [])
+        self.assertEqual((len(self._notices()), len(self._said())), (1, 1), "the second pass says nothing more")
+        os.chmod(d, 0o755)
+        self.assertEqual([r["mid"] for r in pm.outbox_list("srv")], ["px-parked"], "the record stood the whole time")
+        self.assertEqual([p.name for p in d.iterdir()], ["px-parked.json"], "nothing was moved aside")
+        self.assertEqual([r for r in self._rows() if r.get("ev") == "bounced"], [], "no ledger row was closed")
+        self._lock(d)
+        self.assertEqual(pm.outbox_list("srv"), [])
+        self.assertEqual(len(self._notices()), 2, "a clean listing ended the episode; the next fault is a new one")
+
+    def test_a_readbox_that_cannot_be_listed_is_said_the_same_way(self):
+        pm.readbox_put("srv", {"mid": "rx-1", "unread": False})
+        d = pm.READBOX / "srv"
+        self._lock(d)
+        self.assertEqual(pm.readbox_list("srv"), [])
+        self.assertEqual(len(self._notices()), 1, self.told)
+        self.assertIn("readbox srv", self._notices()[0])
+        self.assertIn("cannot be listed", self._notices()[0])
+        os.chmod(d, 0o755)
+        self.assertEqual([r["mid"] for r in pm.readbox_list("srv")], ["rx-1"])
+        self.assertEqual([p.name for p in d.iterdir()], ["rx-1.json"])
+
+    def test_the_exchange_request_still_builds_over_stores_that_cannot_be_listed(self):
+        pm.outbox_put("srv", {"mid": "px-parked", "to": "beta", "frm": "alpha", "frm_id": _SND, "body": "hi"})
+        pm.readbox_put("srv", {"mid": "rx-1", "unread": False})
+        self._lock(pm.OUTBOX / "srv")
+        self._lock(pm.READBOX / "srv")
+        req = pm.build_exchange_request("srv", wait=False)      # never raised out of over a store it cannot read
+        self.assertEqual((req["relays"], req["reads"]), ([], []))
+        self.assertEqual(sorted(n.split(":")[0] for n in self._notices()), ["outbox srv", "readbox srv"], "each store once")
+
+
+class ARootRunSkipsBeforeTheFixturePatches(unittest.TestCase):
+    """Review round 2 (2026-09-19): StoreDirectoriesThatCannotBeListedAreLoud's setUp called super().setUp() first, which
+    patches pm._log, pm._kernel_post, pm.local_agents and pm.local_agents_checked and sets ROMP_POSTAL_PEERS, and skipped
+    as root only after; unittest runs no tearDown when setUp raises (SkipTest included), so on a root run the four patches
+    and the flag outlived the class for every test collected after it. The root check now comes first. Pinned by execution
+    rather than by reading the source: the class's cases run under a geteuid that answers 0, and the module's four names
+    and the environment flag must be what they were before; the same run over a planted subclass that patches first and
+    skips after shows the leak, so the pin is known to be able to fail. Fails before the reorder over a git archive of
+    4383cc9af (the four names left bound to _LoudBus.setUp's lambdas, the flag left at '1'); green after."""
+
+    NAMES = ("_log", "_kernel_post", "local_agents", "local_agents_checked")
+
+    def _run_as_root(self, cls):
+        """Every case of `cls` run under a geteuid that answers 0, with a plain unittest result; returns it."""
+        saved = os.geteuid
+        os.geteuid = lambda: 0
+        try:
+            suite = unittest.TestLoader().loadTestsFromTestCase(cls)
+            result = unittest.TestResult()
+            suite.run(result)
+        finally:
+            os.geteuid = saved
+        self.assertEqual(len(result.skipped), suite.countTestCases(), "every case skipped as root: %r" % (result.skipped,))
+        self.assertEqual((result.errors, result.failures), ([], []))
+        return result
+
+    def test_the_class_skipped_as_root_leaves_the_module_and_the_environment_as_they_were(self):
+        before = tuple(getattr(pm, n) for n in self.NAMES)
+        flag_before = os.environ.get("ROMP_POSTAL_PEERS")
+
+        def restore():
+            for n, v in zip(self.NAMES, before):
+                setattr(pm, n, v)
+            if flag_before is None:
+                os.environ.pop("ROMP_POSTAL_PEERS", None)
+            else:
+                os.environ["ROMP_POSTAL_PEERS"] = flag_before
+        self.addCleanup(restore)      # the pin's own red must not leak what it found into the tests after it
+
+        self._run_as_root(StoreDirectoriesThatCannotBeListedAreLoud)
+        for n, b in zip(self.NAMES, before):
+            self.assertIs(getattr(pm, n), b, "pm.%s was left patched by a setUp that skipped after it had patched" % n)
+        self.assertEqual(os.environ.get("ROMP_POSTAL_PEERS"), flag_before, "the peers flag is what it was before the skip")
+
+        class PatchesThenSkips(_LoudBus):
+            """The shape the reorder retired, planted: the fixture patches first, the root check comes after."""
+            def setUp(self):
+                super().setUp()
+                if hasattr(os, "geteuid") and os.geteuid() == 0:
+                    self.skipTest("planted: skips after the patch")
+
+            def test_never_runs(self):
+                raise AssertionError("a case skipped in setUp never reaches its body")
+        self._run_as_root(PatchesThenSkips)
+        leaked = [n for n, b in zip(self.NAMES, before) if getattr(pm, n) is not b]
+        self.assertEqual(leaked, list(self.NAMES), "the pin sees the leak the retired shape makes: %r" % (leaked,))
+        self.assertEqual(os.environ.get("ROMP_POSTAL_PEERS"), "1", "and the flag it leaves standing")
+        restore()
+        self.assertEqual(tuple(getattr(pm, n) for n in self.NAMES), before)
 
 
 class BusStartSweepsUnfinishedWrites(_LoudBus):

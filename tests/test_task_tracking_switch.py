@@ -576,7 +576,7 @@ class TheClearAllOp(_Base):
         def boom(*a, **k):
             raise AssertionError("build_feed called while task tracking is off")
         km.build_feed = boom
-        km._clear_all = lambda ids: calls.append(("clear", list(ids))) or {"ok": True}
+        km._clear_all = lambda ids, written=None: calls.append(("clear", list(ids))) or {"ok": True}   # `written`: the clearAll door's out-list (2026-09-20)
         km._gesture_store_refusal = lambda client, what, res: calls.append(("refusal", what))
         km._send_to_app = lambda app, m: calls.append(("app", m.get("type")))
         km._mark_views_dirty = lambda: calls.append(("dirty",))

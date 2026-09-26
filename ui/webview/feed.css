@@ -1142,7 +1142,12 @@ body { display: flex; flex-direction: column; position: relative; }   /* column 
    a read-only prose block above the actions, shown IN FULL — the human is deciding on this text, so
    none of it hides behind a scroll (the user 2026-07-26). */
 .fdismiss.fq:disabled { opacity: 0.55; cursor: default; }
-.fdismiss.fq-ok { color: var(--accent); border-color: rgba(156, 210, 255, 0.6); }
+.fdismiss.fq-ok { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 60%, transparent); }
+/* ^ the edge is the accent at 0.6 through the sheet's tint idiom (.fb-row.active, .fileview-editor:focus), so the
+   light theme's clay reaches it. Written as the dark literal rgba(156, 210, 255, 0.6), the edge matched the text
+   only in the dark theme (both rgb(156, 210, 255)); in the light theme the button computed the clay text
+   rgb(194, 65, 12) inside that blue edge (headless Chromium, 2026-09-19; button-vocab.test.ts resolves the rule
+   under both blocks). */
 .fdismiss.fq-ok:hover:not(:disabled) { color: var(--accent-fg); background: var(--accent); border-color: var(--accent); }
 .fdismiss.fq-no { color: #e5484d; border-color: rgba(229, 72, 77, 0.6); }
 .fdismiss.fq-no:hover:not(:disabled) { color: #fff; background: #e5484d; border-color: #e5484d; }
@@ -1241,8 +1246,25 @@ body { display: flex; flex-direction: column; position: relative; }   /* column 
 /* The feed's DOCKED control bar (the user 2026-06-29): its own dedicated rectangle in normal flow at the
    bottom of the pane, NOT a floating overlay. The body is a column flex, so #feed-list flexes to fill above
    it and the bar sits below without overlapping a card. Layout (the user 2026-07-13): the VIEW controls
-   (the view-menu icon · Session ▴ · Search) sit left; the ACTIONS (Clear all, then Undo) dock right — flex
-   `order` + margin-left:auto, so the split holds whatever order the ensure* calls appended the buttons in. */
+   (the view-menu icon · Session ▴ · Search) sit left; the ACTIONS (Clear all, then Undo) dock right. The split
+   rides the actions' own wrapper (#feed-actions, minted by feed.ts ensureActions with both buttons inside it):
+   margin-left:auto on the wrapper, PER LINE, so the pair wraps as one flex item and docks at the right edge of
+   whatever row the wrap puts it on, whether Clear all is offered or not. The wrapper carries its own flex order
+   too (order:10; the view controls sit at the default 0), which sorts it after them however the ensure* calls
+   appended the controls: feed.ts's off arm (a pane whose first feed frame is an off frame, the switch off at pane
+   open) calls ensureClearAll and returns before any renderBody, so the wrapper is minted as the FIRST child of an
+   empty footer and every later frame appends the view controls after it, and an auto margin on that first child
+   with no order pushed the whole bar right, Clear all and Undo standing left of View and Sessions for the life of
+   the page (the held-mail readers PR's review round 4). The buttons' own order:10 and order:11 bought that
+   immunity while the dock rode them directly; once the margin moved to the wrapper, the wrapper needed the
+   order. Two earlier homes for the margin failed: on Clear all itself, until the held-mail
+   readers PR's review (2026-09-20) hid that button on a board of held messages or placeholders alone and Undo
+   slid left beside Search; then margin-right:auto on the session box, which held on one line and failed on a
+   bar that wraps, since a margin on the row above cannot dock a row below it. Two auto margins on one line
+   would split the free space between them, so #feed-search carries none. On the empty board the left cluster
+   is hidden and Undo stays at the left edge by state: renderBody marks the bar with .empty-board and the
+   wrapper's auto margin is off under it. Measured in feed-css-footer.test.ts on a one-line bar, a wrapped bar,
+   the empty board and the bar minted in the off arm's order, one line and wrapped. */
 #feed-foot { flex: 0 0 auto; z-index: 5;
   display: flex; align-items: center; gap: 8px; padding: 6px 12px;
   flex-wrap: wrap; row-gap: 5px;   /* a narrow pane folds buttons onto another row — never a horizontal scrollbar */
@@ -1252,7 +1274,9 @@ body { display: flex; flex-direction: column; position: relative; }   /* column 
      bar itself must sit on the same dark): the border-top hairline is the separator now. The old
      editorWidget token resolved to #252526 under the kernel's THEME_CSS. */
   background: var(--bg); }
-#feed-clearall { order: 10; margin-left: auto; }   /* accent hover like every action button */
+#feed-actions { display: inline-flex; align-items: center; gap: 8px; order: 10; margin-left: auto; }   /* the actions' wrapper: the footer's right dock, per line, sorted after the view controls by its own order (the comment above) */
+#feed-foot.empty-board #feed-actions { margin-left: 0; }   /* the empty board: the lone Undo keeps the left edge by state (renderBody sets the class) */
+#feed-clearall { order: 10; }   /* accent hover like every action button; the pair's order inside #feed-actions, whatever order the buttons were minted in */
 #feed-undoclear { order: 11; }                     /* restorative — far right */
 #feed-foot .fdismiss { font-size: 10.5px; padding: 1px 9px; opacity: 0.95; }
 
@@ -1517,6 +1541,7 @@ body { display: flex; flex-direction: column; position: relative; }   /* column 
   background: var(--vscode-menu-background, var(--surface-raised)); color: var(--fg);
   border: 1px solid rgba(255, 255, 255, 0.12); border-left: 3px solid var(--warn); border-radius: var(--radius-toast);
   box-shadow: var(--shadow-toast); font-size: 0.86em; line-height: 1.35;
+  white-space: pre-line;   /* a folded Clear all answer is one line per machine (feed.ts clearAllFold); no other toast carries a line break */
   opacity: 0; transition: opacity 0.18s ease, transform 0.18s ease; pointer-events: none;
 }
 .feed-toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
@@ -2554,10 +2579,14 @@ a.fileview-gh-note { border-style: dashed; }
 .reveal-pulse { animation: revealPulse 1.6s ease; }
 @keyframes revealPulse {
   0%, 100% { box-shadow: none; }
-  15%, 40% { box-shadow: 0 0 0 2px var(--accent), 0 0 16px rgba(156, 210, 255, 0.5); }
+  15%, 40% { box-shadow: 0 0 0 2px var(--accent), 0 0 16px color-mix(in srgb, var(--accent) 50%, transparent); }
   55% { box-shadow: none; }
-  70%, 85% { box-shadow: 0 0 0 2px var(--accent), 0 0 16px rgba(156, 210, 255, 0.5); }
+  70%, 85% { box-shadow: 0 0 0 2px var(--accent), 0 0 16px color-mix(in srgb, var(--accent) 50%, transparent); }
 }
+/* ^ the glow is the accent at 0.5 through the sheet's tint idiom (.fdismiss.fq-ok above), so the light theme's clay
+   reaches it. Written as the dark literal rgba(156, 210, 255, 0.5), the ring followed the theme's accent and the glow
+   stayed the dark blue: two hues on one card in the light theme (button-vocab.test.ts's census reads every rule of
+   both sheets for that pair, a keyframe taken whole). */
 
 /* ── per-card notification bell (the user 2026-07-28) ─────────────────────────────────────────────
    Right-click a card → a one-item context menu (the chat tab menu's chrome, mirrored here because the
@@ -2703,7 +2732,7 @@ body.filebrowse-open { overflow: hidden; }
    it whole (the footer wraps) rather than overflowing. Expansion animates max-width, so it still
    "grows" out of the button instead of popping. Active (a live query) keeps the button accented like
    every .on toggle. */
-#feed-search { display: inline-flex; align-items: center; gap: 5px; position: relative; }
+#feed-search { display: inline-flex; align-items: center; gap: 5px; position: relative; }   /* no auto margin here: the footer's dock is #feed-actions' (#feed-foot) */
 #feed-search.open { flex: 1 1 150px; min-width: 110px; max-width: 340px; }
 #feed-search input { flex: 1 1 auto; min-width: 0; max-width: 0; padding: 0; border: 0; opacity: 0;
   transition: max-width 0.15s ease, opacity 0.15s ease;

@@ -16,6 +16,7 @@ import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { prefixInbound } from "./federation";
 
 const read = (...p: string[]) => fs.readFileSync(path.resolve(process.cwd(), "..", ...p), "utf8");
 const GEAR = read("ui", "webview", "gear.js");
@@ -183,4 +184,21 @@ test("the kept value rides when cheap, and reads as words (booleans become on/of
   assert.ok(sentinels.length >= 5, `the selects' literal sentinel options located (${sentinels.length})`);
   for (const [, value, label] of sentinels)
     assert.ok(wordsSrc![1].includes(`'${value}': '${label}'`), `STALE_WORDS words ${JSON.stringify(value)} as ${label}`);
+});
+
+test("the footer's Clear all answer is host-stamped the same way: a remote kernel's clearAllResult names its host, a local one carries no host key", () => {
+  // the held-mail readers PR's review round 2: the press is broadcast to every known host and each kernel answers about
+  // its own board, so the feed pane needs the machine each answer is about (it labels the toast and the bell row with
+  // the host, the local kernel's frame as this machine, the gear's word, and folds one press's answers into one toast).
+  // The stamp sits beside settingStale's; the local host's identity exit leaves its frame without the key.
+  const answer = { type: "clearAllResult", ok: false, cleared: 0, left: 2, held: 2,
+                   text: "nothing was cleared: the board holds 2 held messages awaiting your decision; approve or deny each" };
+  const remote = prefixInbound("box2", answer);
+  assert.equal(remote.host, "box2", "the remote kernel's answer names its host");
+  assert.deepEqual(remote, { ...answer, host: "box2" }, "and nothing else about it changed");
+  const local = prefixInbound("", answer);
+  assert.ok(!("host" in local), "the local kernel's frame carries no host key");
+  assert.deepEqual(local, answer);
+  const FED = read("ui", "webview", "federation.ts");
+  assert.ok(FED.includes('if (out.type === "clearAllResult") out.host = host;'), "the stamp sits in prefixInbound, beside settingStale's");
 });

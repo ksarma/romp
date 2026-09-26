@@ -1175,3 +1175,213 @@ test("a NOTICE CARD (T370) renders its producer, body, pinned image and action b
   c2._clr.onclick(ev);
   assert.deepEqual(posted.slice(sent2).filter((m) => m.type === "askClear"), [{ type: "askClear", itemId: "notice:" + API + ":dropped-sends:1", sid: API }]);
 });
+
+test("the footer's Clear all is offered only while a card would take the clear: hidden on a board of held messages alone, or of placeholders alone; the count-gated controls stay", async () => {
+  // the held-mail readers PR's review (2026-09-20): the kernel declines a hold's id and re-lists a placeholder, so with the
+  // button gated on the card count a board of holds alone offered a press that moved nothing and said nothing
+  const hold = (id: string, mid: string) => cardOf(id, WEB, "web", "#3366cc", "New message", "needs_input",
+    { blocked: { state: "quarantine", mid, frm: "api", origin: "", to: "web", body: "the README draft is ready for a look", gist: "the README draft is ready" } });
+  const q1 = hold("q1", "m1"), q2 = hold("q2", "m2");
+  const p1 = cardOf("provisional:" + API, API, "api", "#cc6633", "Working on the exporter", "working", { provisional: true, tree: [] });
+  const clearAll = () => body.byId("feed-clearall")!, viewMenu = () => body.byId("feed-viewbtn")!, tagLens = () => body.byId("feed-taglens")!, sessBox = () => body.byId("feed-search")!;
+  await dispatch(frame([q1, q2], { working: ["web"] }));
+  assert.equal(clearAll().style.display, "none", "two held messages: nothing a clear would take, so no Clear all");
+  assert.deepEqual([viewMenu().style.display, tagLens().style.display, sessBox().style.display, foot.style.display], ["", "", "", ""], "the view menu, the tag lens, the session box and the footer read the card count and stay");
+  await dispatch(frame([q1, p1], { working: ["web", "api"] }));
+  assert.equal(clearAll().style.display, "none", "a held message beside a placeholder (provisional: the kernel lists it again on every build): still nothing to take");
+  await dispatch(frame([q1, g1], { working: ["web"] }));
+  assert.equal(clearAll().style.display, "", "one ordinary card beside the hold: the press has something to take, so it is offered");
+  await dispatch(frame([g1]));
+  assert.equal(clearAll().style.display, "", "an ordinary board, as before");
+  // the merged-board edge: a host attached with no frame yet has its cards absent from this frame; the button is offered
+  // while the board has a card and a host's cards are unknown, and hides when the frame that knows every host lands
+  await dispatch(frame([q1], { working: ["web"], pendingHosts: ["box2"] }));
+  assert.equal(clearAll().style.display, "", "a hold alone, a host's frame pending: an absence proves nothing yet, and a press is answered truthfully");
+  await dispatch(frame([q1], { working: ["web"], hostsUnread: true }));
+  assert.equal(clearAll().style.display, "", "the first merged frame before the host list is read: the same");
+  await dispatch(frame([q1], { working: ["web"], pendingHosts: [] }));
+  assert.equal(clearAll().style.display, "none", "every host's cards known and none clearable: the button leaves, once, on that frame");
+  await dispatch(frame([], { pendingHosts: ["box2"] }));
+  assert.deepEqual([clearAll().style.display, foot.style.display], ["none", "none"], "an empty board with a host pending: no card, no button, no footer (nowhere the count hid it before)");
+  await dispatch(frame([g1, g2, g3], { working: ["web"] }));
+  assert.equal(clearAll().style.display, "");
+});
+
+test("the kernel's clearAllResult is rendered: a refusal is toasted and rings the shell's bell; a partial clear is toasted; nothing on the board is moved by either", async () => {
+  const bell: any[] = [];
+  const prevPost = win.postMessage;
+  win.postMessage = (m: any) => { bell.push(m); };
+  const press = () => body.byId("feed-clearall")!.onclick!(ev);   // the press each answer belongs to (the fold below is keyed on it)
+  try {
+    // the local kernel's frame carries no host (federation's identity exit), so its answer is about this machine, the
+    // gear's word for its own kernel's frame (the held-mail readers PR's review round 2): on a merged board the bare
+    // text would read as the whole board's answer while another host's cards had just left
+    const refusal = "nothing was cleared: the board holds 2 held messages awaiting your decision; approve or deny each";
+    press();
+    await dispatch({ type: "clearAllResult", ok: false, cleared: 0, left: 2, held: 2, text: refusal });
+    assert.equal(body.querySelector(".feed-toast")?.textContent, "this machine: " + refusal, "the refusal is said in the kernel's words, about this machine");
+    assert.deepEqual(bell.filter((m) => m && m.romp === "notify").map((m) => [m.kind, m.text]), [["refused", "this machine: " + refusal]], "and kept by the shell's bell under the refused kind, the same words");
+    assert.deepEqual([card("g1"), card("g2"), card("g3")].map((c) => !!c), [true, true, true], "the cards are the payload's business, not this frame's");
+    const partial = "1 card cleared; 1 held message awaiting your decision stays on the board";
+    press();
+    await dispatch({ type: "clearAllResult", ok: true, cleared: 1, left: 1, held: 1, text: partial });
+    assert.equal(body.querySelector(".feed-toast")?.textContent, "this machine: " + partial, "a partial clear says what stayed and why");
+    assert.equal(bell.filter((m) => m && m.romp === "notify").length, 1, "a partial clear is no refusal: no bell row");
+    await dispatch({ type: "clearAllResult", ok: false, cleared: 0, left: 1, held: 1 });
+    assert.equal(body.querySelector(".feed-toast")?.textContent, "this machine: " + partial, "a frame with no text says nothing new");
+  } finally {
+    win.postMessage = prevPost;
+  }
+});
+
+test("on a merged board each kernel's clearAllResult is about its own board: a remote host's refusal is toasted and belled under that host's name, never as the bare text; one press's answers fold into one toast, a line per machine, one bell row per refusing host; a new press, a gone toast or another notice starts a fresh one", async () => {
+  // the held-mail readers PR's review round 2: clearAll is broadcast to every known host and each kernel answers scoped to
+  // its own board, and feedToast replaces the toast on screen, so a host that cleared nothing said "nothing was cleared"
+  // for the whole board while another host's cards had just left, and two refusing hosts left only the last one showing
+  const bell: any[] = [];
+  const prevPost = win.postMessage;
+  win.postMessage = (m: any) => { bell.push(m); };
+  const rows = () => bell.filter((m) => m && m.romp === "notify").map((m) => [m.kind, m.text]);
+  const toast = () => body.querySelector(".feed-toast")?.textContent;
+  const press = () => body.byId("feed-clearall")!.onclick!(ev);
+  const refusal = "nothing was cleared: the board holds 2 held messages awaiting your decision; approve or deny each";
+  const other = "nothing was cleared: the board holds 1 held message awaiting your decision; approve or deny each";
+  const partial = "1 card cleared; 1 held message awaiting your decision stays on the board";
+  mock.timers.enable({ apis: ["Date", "setTimeout", "setInterval"], now: T0 * 1000 });   // the toast's own fade is driven by hand below
+  try {
+    // one press, two kernels: box2 cleared nothing and answered first; this machine cleared a card and answered second
+    press();
+    await dispatch({ type: "clearAllResult", host: "box2", ok: false, cleared: 0, left: 2, held: 2, text: refusal });
+    assert.equal(toast(), "box2: " + refusal, "the remote kernel's refusal is about box2's board");
+    assert.notEqual(toast(), refusal, "never the bare text, which would read as the whole board's");
+    assert.deepEqual(rows(), [["refused", "box2: " + refusal]], "the durable row carries the same name");
+    await dispatch({ type: "clearAllResult", ok: true, cleared: 1, left: 1, held: 1, text: partial });
+    assert.equal(toast(), "box2: " + refusal + "\nthis machine: " + partial, "the local kernel's answer joins the press's toast under this machine: one line per machine, the earlier answer kept");
+    assert.equal(body.querySelectorAll(".feed-toast").length, 1, "one toast for the press");
+    assert.deepEqual(rows(), [["refused", "box2: " + refusal]], "a partial clear is no refusal: no second row");
+    // one press, two refusing hosts: two lines on one toast, two rows that differ by host (the shell folds byte-identical rows into one)
+    press();
+    await dispatch({ type: "clearAllResult", host: "box2", ok: false, cleared: 0, left: 2, held: 2, text: refusal });
+    assert.equal(toast(), "box2: " + refusal, "a press opens a fresh fold: the earlier press's lines are gone");
+    await dispatch({ type: "clearAllResult", host: "box3", ok: false, cleared: 0, left: 1, held: 1, text: other });
+    assert.equal(toast(), "box2: " + refusal + "\nbox3: " + other, "both refusing hosts named on the one toast");
+    assert.deepEqual(rows().slice(1), [["refused", "box2: " + refusal], ["refused", "box3: " + other]], "one row per refusing host, each about its own board");
+    // the toast gone by its own fade (the toast's state is the fold's key, not a clock of the fold's own): a late answer starts a new toast alone
+    mock.timers.tick(4300); mock.timers.tick(400);
+    assert.equal(body.querySelector(".feed-toast"), null, "the toast has faded");
+    await dispatch({ type: "clearAllResult", host: "box2", ok: true, cleared: 2, left: 1, held: 1, text: partial });
+    assert.equal(toast(), "box2: " + partial, "a lone answer renders as one line, as before");
+    // another notice took the toast's place: the fold's toast is no longer on screen, so the next answer stands alone too
+    press();
+    await dispatch({ type: "clearAllResult", host: "box2", ok: false, cleared: 0, left: 2, held: 2, text: refusal });
+    await dispatch({ type: "redistillResult", itemId: "g2", ok: false, error: "the judge is busy" });   // a notice of another kind takes the toast's place
+    assert.equal(toast(), "couldn't retry the summary: the judge is busy");
+    await dispatch({ type: "clearAllResult", ok: true, cleared: 1, left: 1, held: 1, text: partial });
+    assert.equal(toast(), "this machine: " + partial, "a fresh toast: the press's earlier line left the screen with the notice that replaced it");
+    assert.deepEqual([card("g1"), card("g2"), card("g3")].map((c) => !!c), [true, true, true], "the cards are the payload's business throughout");
+  } finally {
+    win.postMessage = prevPost;
+    mock.timers.reset();
+  }
+});
+
+test("the Task tracking switch's off frame hides the footer's Clear all and keeps Undo; a settings change while off leaves it hidden; a built frame offers it again", async () => {
+  // the held-mail readers PR's review round 2 (extra8-2): the off arm returns before renderBody, so the button of the last
+  // render stood under the notice while the list was hidden, and a press reached a kernel that builds no feed while off,
+  // clears nothing and answers nothing; and a storage event on romp:settings re-runs renderBody over the still-populated
+  // asks, so hiding the button once would not have held. Undo is not hidden: the off frame carries canUndoClear and the
+  // undoClear door has no tracking gate. The off arm and the gate predate the PR (T404); the button's own gate is the PR's.
+  const clearAll = () => body.byId("feed-clearall")!, undo = () => body.byId("feed-undoclear")!;
+  await dispatch(frame([g1, g2, g3], { working: ["web"], canUndoClear: true }));
+  assert.deepEqual([clearAll().style.display, undo().style.display, foot.style.display], ["", "", ""], "clearable cards and an undoable clear: both actions offered");
+  const off = { type: "feed", off: true, now: K0, nowAt: T0 * 1000, asks: [], items: [], working: [], awaiting: [], stateUnknown: [], order: [], sessions: [],
+                clearNotices: [], sdkNotices: [], syncNotices: [], dismissedCount: 3, showDismissed: false, canUndoClear: true };
+  await dispatch(off);
+  assert.equal(list.hidden, true, "the list is hidden behind the notice, as before");
+  assert.equal(clearAll().style.display, "none", "off: no Clear all under the notice (a press would reach a kernel that clears nothing while off and answers nothing)");
+  assert.equal(undo().style.display, "", "Undo stays: the off frame carries canUndoClear and the undoClear door has no tracking gate");
+  const setPrefs = (v: string) => { stores.local.set("romp:settings", v); win.dispatchEvent(Object.assign(new Event("storage"), { key: "romp:settings", newValue: v })); };
+  setPrefs(JSON.stringify({ grouped: true }));   // the gear in another pane: renderBody re-runs over the asks the off frame left standing
+  assert.equal(clearAll().style.display, "none", "still hidden: the latch holds through a render the switch did not cause");
+  assert.equal(undo().style.display, "");
+  setPrefs("{}");
+  await dispatch(frame([g1, g2, g3], { working: ["web"], canUndoClear: true }));
+  assert.equal(list.hidden, false);
+  assert.equal(clearAll().style.display, "", "a built frame: the switch is on, and the button is offered again where its own gate says");
+  await dispatch(frame([g1, g2, g3], { working: ["web"] }));
+});
+
+// ui-2 (the held-mail readers PR's review round 3): the latch above cleared in applyFeedPayload, which the hover-freeze
+// flush also runs, over a payload QUEUED while a card or a header was held under the pointer. A payload queued before
+// the off frame is older than the switch's last word, so applying it late brought Clear all back under the notice with
+// the list still hidden, a button the kernel's off door answers with nothing. The latch clears at a built frame's
+// ARRIVAL now, above the freeze queue, so the flush of an earlier frame leaves it set on both of the flush's triggers,
+// the pointer leaving the held row and the window losing focus. The queued frame's cards still land in the hidden list
+// (the flush applies it; the next frame owns the list), which is the notice's contract, not this case's.
+const offFrame = () => ({ type: "feed", off: true, now: K0, nowAt: T0 * 1000, asks: [], items: [], working: [], awaiting: [], stateUnknown: [], order: [], sessions: [],
+                          clearNotices: [], sdkNotices: [], syncNotices: [], dismissedCount: 3, showDismissed: false, canUndoClear: true });
+const webHead = () => body.querySelectorAll(`.feed-sess-head[data-fsid="${WEB}"]`).filter((h) => !h.classList.contains("sess-exit"))[0];
+const g4 = cardOf("g4", WEB, "web", "#3366cc", "Draft the notes-api changelog", "working");
+
+test("the footer's Clear all latch clears only on a built frame that ARRIVES: the hover-freeze flush of a frame queued before the off frame leaves the button hidden under the notice", async () => {
+  const clearAll = () => body.byId("feed-clearall")!, undo = () => body.byId("feed-undoclear")!;
+  await dispatch(frame([g1, g2, g3], { working: ["web"], canUndoClear: true }));
+  assert.equal(clearAll().style.display, "", "clearable cards and an undoable clear: Clear all offered");
+  const hw = webHead();
+  assert.ok(hw, "web's header row in Working");
+  hw.dispatchEvent(new Event("mouseenter"));                     // the pointer rests on the row: the payload gate is held
+  try {
+    await dispatch(frame([g1, g2, g3, g4], { working: ["web"], canUndoClear: true }));   // a built frame while held: queued, not applied
+    assert.equal(card("g4"), null, "the frame is queued behind the held row");
+    await dispatch(offFrame());                                  // the switch goes off: the list hides, the button with it
+    assert.equal(list.hidden, true, "off: the list is hidden behind the notice");
+    assert.equal(clearAll().style.display, "none", "off: Clear all hidden");
+  } finally {
+    hw.dispatchEvent(new Event("mouseleave"));                   // release: the flush applies the frame queued BEFORE the off frame
+    await settle();
+  }
+  assert.equal(list.hidden, true, "the list stays hidden: the off frame is the switch's last word");
+  assert.equal(clearAll().style.display, "none", "the flush of a frame queued before the off frame does not offer Clear all under the notice: the latch clears on a built frame arriving, never on one applied late");
+  assert.equal(undo().style.display, "", "Undo stays, as under any off frame");
+  // the control: a built frame arriving now IS the evidence the switch is on
+  await dispatch(frame([g1, g2, g3], { working: ["web"], canUndoClear: true }));
+  assert.equal(list.hidden, false);
+  assert.equal(clearAll().style.display, "", "a built frame arriving: the button is offered again where its own gate says");
+  await dispatch(frame([g1, g2, g3], { working: ["web"] }));
+});
+
+test("...and the same through the window-blur flush, the other trigger of the same flush: the latch stays set", async () => {
+  const clearAll = () => body.byId("feed-clearall")!;
+  await dispatch(frame([g1, g2, g3], { working: ["web"], canUndoClear: true }));
+  const hw = webHead();
+  assert.ok(hw, "web's header row in Working");
+  hw.dispatchEvent(new Event("mouseenter"));
+  try {
+    await dispatch(frame([g1, g2, g3, g4], { working: ["web"], canUndoClear: true }));
+    assert.equal(card("g4"), null, "queued");
+    await dispatch(offFrame());
+    assert.equal(clearAll().style.display, "none", "off: Clear all hidden");
+  } finally {
+    win.dispatchEvent(new Event("blur"));                        // focus leaves the pane: both gate holders release and the queue flushes
+    await settle();
+  }
+  assert.equal(list.hidden, true, "the list stays hidden");
+  assert.equal(clearAll().style.display, "none", "the blur flush of a frame queued before the off frame does not offer Clear all under the notice");
+  await dispatch(frame([g1, g2, g3], { working: ["web"], canUndoClear: true }));
+  assert.equal(clearAll().style.display, "", "a built frame arriving offers it again");
+  await dispatch(frame([g1, g2, g3], { working: ["web"] }));
+});
+
+test("the control: with nothing queued, a built frame arriving after the off frame offers Clear all again where its gate says, and a later off frame hides it again", async () => {
+  const clearAll = () => body.byId("feed-clearall")!;
+  await dispatch(frame([g1, g2, g3], { working: ["web"], canUndoClear: true }));
+  await dispatch(offFrame());
+  assert.equal(clearAll().style.display, "none", "off: hidden");
+  await dispatch(frame([g1, g2, g3], { working: ["web"], canUndoClear: true }));
+  assert.equal(list.hidden, false);
+  assert.equal(clearAll().style.display, "", "a built frame arriving with nothing queued: offered again");
+  await dispatch(offFrame());
+  assert.equal(clearAll().style.display, "none", "off again: hidden again");
+  await dispatch(frame([g1, g2, g3], { working: ["web"] }));
+  assert.equal(clearAll().style.display, "", "and back on the built frame that ends the case");
+});
