@@ -211,14 +211,13 @@ const programsNamed = (cmd, table = NAMED_PROBE) => Object.keys(table).filter((p
 // program of this machine's (since the fifty-ninth commit, "elsewhere" is counted: the text spells the path whole more often than a first
 // walk, which steps past every wrapper's path, reads it as the program a segment runs; THE WRAPPER'S PATH, at programsInvoked). The walk stops at
 // each name these readings set aside, and at each such path that names a wrapper (on a second walk, run only where the first sets such a
-// path aside), and does not step past it, so what that name or path runs is not read (below); a wrapper's path is stepped past only where
-// every run of it is one the walk reads, however many (the fifty-ninth commit, on the reviewer's re-verifier: the stop asked whether the
-// text spelled a wrapper's path twice, which counted its program words, so a missing program behind a wrapper's path the text runs twice,
-// `/usr/bin/env q780-no-such-program x; /usr/bin/env q780-no-such-program y`, or runs again in a pipe, a substitution or a -c text, was
-// measured); a run the walk does not read (in a text THE NON-LITERAL WORDS leave unread, after an assignment the walk stops at, behind
-// `builtin eval`, or behind a wrapper name the text binds or rebinds) counts as a spelling elsewhere, so that path is set aside and the
-// walk stops there (the sixtieth commit cut this text's claim that a wrapper's path the text only runs, however often, is stepped past, on
-// the reviewer's re-verifier: THE STATED LIMIT, below, names its witness). At any
+// path aside), and does not step past it, so what that name or path runs is not read (below): the path reading sets a wrapper's path aside
+// where the raw text spells that path whole more often than the first walk reads it as a program, and a wrapper's path these readings do
+// not set aside is stepped past (the fifty-ninth commit, on the reviewer's re-verifier: the stop asked whether the text spelled a wrapper's
+// path twice, which counted its program words, so `/usr/bin/env q780-no-such-program x; /usr/bin/env q780-no-such-program y` was
+// measured). A spelling that is not whole, with a quote, a backslash or a glob inside the path (`/usr/bin/e''nv`), is not counted as a
+// spelling (the sixtieth and sixty-first commits, on the reviewer's re-verifiers, cut this text's sentences on the runs of a wrapper's
+// path). At any
 // other such path the walk reads on as at the program the path
 // names, so a shell's texts and find's -exec are read there and only the path is set aside (the fifty-eighth commit cut this text's claim
 // that the walk stops at every path these readings set aside, on the reviewer's verifier: a copy of bash the text makes and then runs with
@@ -242,18 +241,16 @@ const programsNamed = (cmd, table = NAMED_PROBE) => Object.keys(table).filter((p
 // witnesses, `alias c="q780-no-such-program $x"`, `alias [=q780-no-such-program` and a literal value beside such a word, are the
 // fifty-eighth commit's); what a name the text binds or
 // rebinds runs, where that is a hashed path, a table entry's value or the value of an alias that a name defining aliases defines; the
-// command a wrapper or a shell runs where the text binds or rebinds that wrapper's or shell's name, or also spells whole elsewhere the
-// wrapper's path it runs (the path reading above: a copy it makes, and an operand, an assignment's value or a here-document line that
-// spells the path, `ls /usr/bin/env` among them), since the walk does not step past such a name or path (the fifty-seventh commit, on the reviewer's verifier: THE STATED LIMIT's
+// command a wrapper or a shell runs where the text binds or rebinds that wrapper's or shell's name, or where the path reading above sets
+// aside the wrapper's path it runs, since the walk stops at such a name or path (the fifty-seventh commit, on the reviewer's verifier: THE STATED LIMIT's
 // witnesses, `hash -p /usr/bin/env env`, `alias env='env '`, `aliases[env]=env`, a function env and a copy of env made as ../scratch/env,
 // each then running env q780-no-such-program, are measured, and since the fifty-eighth so are `hash -p /usr/bin/bash bash`, `alias
 // bash=bash`, a function bash and a bash the text copies under a PATH it sets, each then running bash -c 'q780-no-such-program x'; a
-// shell's or find's path the text makes is read on, above; and since the fifty-ninth a copy of env the text makes and runs twice is measured
-// too, while env's path run twice with nothing made, each run one the walk reads, is stepped past); the command a wrapper's path runs when
-// the text also runs that path at a place the walk does not read (in a text THE NON-LITERAL WORDS leave unread, after an assignment the walk
-// stops at, behind `builtin eval`, or behind a wrapper name the text binds or rebinds), since that run counts as a spelling elsewhere and
-// the walk stops at the path (the sixtieth commit, on the reviewer's re-verifier: `eval "/usr/bin/env $x"; /usr/bin/env
-// q780-no-such-program ../base/report.md report.md` is measured); a global alias's value, which runs wherever its name stands; and a
+// shell's or find's path the text makes is read on, above; and since the fifty-ninth the stop at a wrapper's path asks the path reading's
+// count, as the filter at the walk's end does); the command behind a wrapper's path set aside on a count that takes in a whole spelling at
+// a place the first walk does not read, since a whole spelling counts wherever it stands (the sixtieth commit, on the reviewer's
+// re-verifier: `eval "/usr/bin/env $x"; /usr/bin/env q780-no-such-program ../base/report.md report.md` is measured); a global alias's
+// value, which runs wherever its name stands; and a
 // program a shell reaches by a road the list above does not follow (a script file's own lines, a `(( ))` or `$((` body read as
 // commands, an array's elements, a pattern a `case` or zsh's `for NAME (..)` holds). A miss there runs the leg. Where the leg asserts that
 // a shell writes, the absent program then reds it by name on that machine (no shell writes), never a false pass; where the leg asserts
@@ -542,12 +539,9 @@ const reboundBy = (r, text, word) => r.names.has(word) || [...r.suffixes].some((
 // redirection's target: a file the text makes, copies or links before it runs it; a longer path it starts or ends is none, since the
 // fifty-seventh commit), the reads counted on a first walk that steps past every wrapper's path (THE WRAPPER'S PATH, below). The walk stops
 // at a name so set aside, and at a path so set aside that names a wrapper (on a second walk, run only where the first sets such a path
-// aside), so what it runs is not read (THE STATED LIMIT, in the header); a wrapper's path is stepped past only where every run of it is one
-// the walk reads, however many (the fifty-ninth commit: the stop counted the path's own program words, so a path run twice stopped it), and
-// a run the walk does not read (in a text THE NON-LITERAL WORDS leave unread, after an assignment the walk stops at, behind `builtin eval`,
-// or behind a wrapper name the text binds or rebinds) counts as a spelling elsewhere, so that path is set aside and the walk stops there
-// (the sixtieth commit cut this comment's claim that a wrapper's path the text only runs, however often, is stepped past); at any other
-// path so set aside it
+// aside), so what it runs is not read (THE STATED LIMIT, in the header); a wrapper's path neither so set aside nor bound as a name
+// (definedNames) is stepped past (the fifty-ninth commit: the stop counted the path's own program words; the sixtieth and sixty-first cut
+// this comment's sentences on the runs of such a path); at any other path so set aside it
 // reads on as at the program the path names (a shell's texts, find's -exec), and the filter at its end sets the path aside (the fifty-eighth
 // commit cut this comment's claim that the walk stops at every path so set aside). `unknown`, when given, receives each rebinding whose
 // names the reader cannot know (THE REBOUND NAMES' `unknowable`, and a global alias's name standing where a command stands), for namedPresent's
@@ -16965,7 +16959,7 @@ test("round 7 of fork PR #780 review, fifty-eighth commit, THE STATED LIMIT's al
 // for alias alone, where it holds for eval, trap, emulate -c, mapfile -C and what echo or printf print into a shell, for a shell's operand,
 // and for an assignment's word, where the walk stops: the header states it once (THE NON-LITERAL WORDS), the claim cut, the check not
 // widened, and its witnesses are pinned below as measured.
-test("round 7 of fork PR #780 review, fifty-ninth commit, THE WRAPPER'S PATH (the reviewer's re-verifier on the fifty-eighth; the condition at 00:29Z; the claim cut by the sixtieth commit): the walk stops at a wrapper's path only where the filter sets that path aside, the text spelling it whole more often than a first walk reads it as a program, so a truly missing program behind a wrapper's path the text runs twice, or runs again in a pipe, a substitution, a -c text or behind a made wrapper's path, every run one the walk reads, is NOT RUN by name, through env, nice, timeout, xargs, sudo and env -S alike, and a missing path the text runs behind a made wrapper's path and again bare is NOT RUN, the filter counting on the first walk; a wrapper's path the text makes, run once or twice, or spells as another command's operand, still stops the walk and is measured (THE STATED LIMIT), and a run the walk does not read counts as a spelling elsewhere, so that path is set aside and the walk stops there (THE STATED LIMIT; no case here has such a run); and the two committed rows that run a made wrapper's path derive as before", () => {
+test("round 7 of fork PR #780 review, fifty-ninth commit, THE WRAPPER'S PATH (the reviewer's re-verifier on the fifty-eighth; the condition at 00:29Z; the claim cut by the sixtieth and sixty-first commits): the count sets a wrapper's path aside, and the walk stops at it, where the text spells that path whole more often than a first walk reads it as a program; so in each case here where the count does not set the path aside, the walk steps past it and a truly missing program behind it is NOT RUN by name, through env, nice, timeout, xargs, sudo and env -S alike, and the case whose missing path runs behind a made wrapper's path and again bare is NOT RUN, the filter counting on the first walk; each case whose missing program runs only behind a path the count sets aside is measured (THE STATED LIMIT); and the two committed rows that run a made wrapper's path derive as before", () => {
   const RUN = '../base/report.md report.md';
   const M = Q780_MISSING;
   const MISS = `NOT RUN: real ${M} is not on this runner`;
@@ -16997,7 +16991,7 @@ test("round 7 of fork PR #780 review, fifty-ninth commit, THE WRAPPER'S PATH (th
       ...kept.map(([label, cmd]) => [label, cmd, true, []]),
     ];
     const got = cases.map(([label, cmd]) => [label, ...gateLines(cmd, `synthetic: ${cmd}`, { ...NAMED_PROBE }, { cwd })]);
-    assert.deepEqual(got, cases.map(([label, , ok, lines]) => [label, ok, [...lines].sort()]), "a missing program behind a wrapper's path the text only runs, every run one the walk reads, is NOT RUN by name, and one behind a wrapper's path the text spells elsewhere is measured");
+    assert.deepEqual(got, cases.map(([label, , ok, lines]) => [label, ok, [...lines].sort()]), "in each case here, a missing program behind a wrapper's path the count does not set aside is NOT RUN by name, and one only behind a wrapper's path the count sets aside is measured");
     // the two committed rows whose wrapper's path the text makes (the rows table above): their text as committed, the derivation the
     // fifty-eighth commit gave them, and measured
     const src = fs.readFileSync(fileURLToPath(import.meta.url), 'utf8');
