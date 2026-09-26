@@ -279,8 +279,8 @@ const SHELL_OWN = new Set(['!', '{', '}', '[[', ']]', '((', '))', 'if', 'then', 
 // command, `assign` the NAME=VALUE words it takes (`any`: every word holding `=`, as env takes one, `BASH_FUNC_c%%=..` among them, since
 // the fifty-second commit, whose execve record found env's command unread past such a word), `text` the options whose next word is a
 // command line it runs, `query` an option under which it runs nothing, `sub` a subcommand word first, `own` a shell's own word (no program
-// looked up). `time` is own only to bash and zsh, and only where it heads a command: dash has no such word and runs /usr/bin/time, and
-// bash runs it too after an assignment or a pipe, and bash and zsh after a wrapper, so the walk reads `time` as a program except at a
+// looked up). `time` is own only to bash and zsh: dash has no such word and runs /usr/bin/time, and
+// bash runs it too after an assignment or a pipe, so the walk reads `time` as a program except at a
 // segment's head, after no pipe, in a text only bash or zsh reads (THE TIME WORD, at readSegment; the sixty-second commit, on the reviewer's
 // execution checker, whose record showed dash running /usr/bin/time in six committed commands while this comment called time a shell's own
 // word; zsh reads it as its own after an assignment or a pipe as well, where the walk reads a program, the stricter side). numactl joined
@@ -461,9 +461,9 @@ const aliasVariable = (text, at, name) => {
   const k = segAt(at);
   if (k < 0 || !top[k] || segs[k].words[0].text !== 'alias') return null;   // the alias at top level, the head of its segment
   const hits = [...text.slice(0, segs[k].start).matchAll(new RegExp(`(?<![A-Za-z0-9_])${v}(?![A-Za-z0-9_])`, 'g'))];
-  if (hits.length !== 1) return null;   // the variable named once before the alias: its one write
+  if (hits.length !== 1) return null;   // the variable named once before the alias
   const j = segAt(hits[0].index);
-  if (j < 0 || j >= k || !top[j]) return null;   // that write at top level
+  if (j < 0 || j >= k || !top[j]) return null;   // that spelling at top level
   const s = segs[j];
   if (s.redirects.length || s.subs.length || (s.viaSubs || []).length) return null;
   const ws = s.words.map((w) => w.raw);
