@@ -128,8 +128,15 @@ through gc.get_objects() by identity against setUpModule's list of those gc.get_
 held to the end, so a node kept without its tree's root is counted), on a read of the tree that aborted in the module
 run, reported with the file it stopped at and the cause (_ABORTED), and on a text of the tree's read, as the read
 recorded it at its parse, parsed other than the parse pin expects over the whole module run, and then drops that value
-(_release). No check of the teardown collects: every scan the module builds has its bindings released before it is
-dropped, so no cycle holds a tree the module made, and one that did would red those checks. The release pin holds the
+(_release). No check of the teardown collects. A read's scan of each file (_roads_row), a planted source's scan
+(_scan_plant), the comparison's scan of a source it is handed no scan of (_regex_scan_comparison) and the scans a scan
+makes of a -c program in it (_program_spawns_kernel, _program_calls) each release their bindings before the scan is
+dropped, so its tree is freed by reference counting, and two tests hold those releases with automatic collection off,
+so a cycle a scan left would survive to their checks and red them: the cycle test holds _roads_row's, and the plant
+scan pin (test_a_scan_of_a_planted_source_leaves_no_cycle_holding_its_tree) the others. The teardown's checks run with
+the collector as the process has it, so a cycle holding a tree the module made reds them only when no collection has
+reclaimed it first, neither an automatic collection nor the cycle test's gc.collect(), which reclaims what the tests
+before it left. The release pin holds the
 release, the plain value and the checks on a tree or a Bindings still alive and on the objects made in the module's run;
 the aborted read's pin (test_an_aborted_read_of_the_tree_reports_where_it_stopped_and_expects_no_parse_count) holds the
 check on an aborted read, and that the parse check then names no file; the parse pin holds the parse check. This is an
@@ -1309,7 +1316,8 @@ def _kernel_spawn_sites(src, filename="<src>"):
 def _scan_plant(src, filename="planted.py"):
     """(sites, unresolved) of a planted source: its scan (_SpawnScan over _parse_text) read, and its bindings released
     before this returns or raises (Bindings.release), so the plant's tree is freed by reference counting and no cycle
-    outlives the call for the module end's count to find (it reads no collection)."""
+    outlives the call for the module end's count to find (it reads no collection). The plant scan pin holds the release
+    with automatic collection off."""
     scan = _SpawnScan(_parse_text(src, filename), filename)
     try:
         return scan.sites(), list(scan.unresolved)
@@ -1461,19 +1469,26 @@ def _roads_row(name, src, tree, hand=()):
 
 
 def _read_root(root, skip=(), listing=None, count=False):
-    """THE READ of a directory, one function for the real tree (_tree_read: `root` tests/, `skip` TREE_SKIP) and for
-    every plant (_roads_table over any other directory; _peers_writers handed a plant's read): every .py under `root`,
-    walked recursively (_tree_module_paths; over tests/ the peers test's population), and every module directly under
-    `root` but `skip` (the table's population; over tests/ the trio test's, every module but this one), each file parsed
-    ONCE (_parse) and its tree dropped before the next file is parsed, the bindings of its scan released in _roads_row,
-    so the read holds one file's tree at a time and none once it returns: _parse counts the file trees alive at each
-    file parse, the read resets that count's maximum when it starts and carries it as `most_trees`; with `count`, the
-    read also takes the list of the objects of _HELD_TYPES alive when it starts (_held_alive) and, when its loop ends,
-    carries as `born` those alive then that are not in that list, by class (_born: through gc.get_objects(), no
-    collection), so a tree's node still alive when the loop ends, root or not, is seen (one let go before then is not;
-    the module docstring states it; PR #850's eleventh review round). The cycle test holds `most_trees` to one and
-    `born` to none over its plant read, and the release pin over the tree's read (_tree_read counts); the other plant
-    reads do not count, which saves two walks of every object gc.get_objects() lists for each. From that one parse: each
+    """THE READ of a directory, one function for the real tree (_tree_read: `root` tests/, or the scratch directory the
+    aborted read's pin hands it in tests/'s place, `skip` TREE_SKIP) and for every plant (among them _roads_table over
+    any other directory, and the tests' own reads of a plant directory, the peers test's handed to _peers_writers):
+    every .py under `root`, walked recursively (_tree_module_paths; over tests/ the peers test's population), and every
+    module directly under `root` but `skip` (the table's population; over tests/ the trio test's, every module but this
+    one), each file parsed ONCE (_parse) and its tree dropped before the next file is parsed, the bindings of its scan
+    released in _roads_row, so the read holds one file's tree at a time and none once it returns: _parse counts the file
+    trees alive at each file parse, the read resets that count's maximum when it starts and carries it as `most_trees`;
+    with `count`, the read also takes the list of the objects of _HELD_TYPES alive when it starts (_held_alive, once the
+    directory is listed and before its first file is parsed) and, when its loop ends, carries as `born` those alive then
+    that are not in that list, by class (_born: through gc.get_objects(), no collection), so a tree's node still alive
+    when the loop ends, root or not, is seen (one let go before then is not; the module docstring states it; PR #850's
+    eleventh review round). Taking that list and reading `born` each walk every object gc.get_objects() lists, so a read
+    that counts makes two walks when it completes, one when it stops at a file, and none when it stops at its listing.
+    The reads that count are every read through _tree_read, which always passes `count`, and each plant read that passes
+    it itself. Through _tree_read: the module run's read of tests/, whose `most_trees` the release pin holds to one and
+    whose `born` to none, and the aborted read's pin's two reads of its scratch directory, the first stopping at a file
+    and the second completing. Passing it itself: the cycle test's second plant read, whose `most_trees` the cycle test
+    holds to one and whose `born` to none, and the aborted read's pin's read of a directory that does not exist, which
+    stops at its listing. The other plant reads do not count and make neither walk. From that one parse: each
     walked file's module-level environment writes (_module_level_env_writes: the set of keys, or the message of the
     UnreadableEnvWrite raised for a file whose keys the scan cannot read, which _peers_writers raises again), and each
     table module's roads row (_roads_row), its comparison read with the module's entries of `listing`, the hand listing
@@ -1556,8 +1571,9 @@ def _born(before):
     """{class name: count} of the objects of _HELD_TYPES alive now (gc.get_objects()) that are not among `before`
     (_held_alive, read earlier and held since, so none of it has died and no id among it was reused): the objects made
     since `before` was read and still alive, whatever holds them (a tree, a list of its statements, a closure), by
-    class. It changes no collector state, so an object only a collection would free is counted: the module leaves no
-    such cycle holding a tree (every scan's bindings released before the scan is dropped)."""
+    class. It changes no collector state, so an object only a collection would free is counted while no collection has
+    run; the module docstring names the scans that release their bindings, which leave no such cycle holding a tree,
+    and the tests that hold those releases."""
     seen = {id(o) for o in before}
     return dict(collections.Counter(type(o).__name__ for o in gc.get_objects() if isinstance(o, _HELD_TYPES) and id(o) not in seen))
 
@@ -3748,6 +3764,76 @@ class HermeticKernelPostal(unittest.TestCase):
         self.assertEqual({key: _PARSES[key] - before[key] for key in texts}, {key: 2 * n for key, n in texts.items()},
                          "each read parses every planted module once (_parse_text), so the two reads move the module's "
                          "counter by two for each module that holds a planted text")
+
+    def test_a_scan_of_a_planted_source_leaves_no_cycle_holding_its_tree(self):
+        """THE PLANT SCAN PIN (PR #850's twelfth review round: _scan_plant's release had no test that reds without it on
+        3.10 or 3.12, where an automatic collection reclaimed the cycles it left before the module end's checks read
+        them). A scan's bindings are cyclic and hold its tree (the cycle test's docstring says how), so a scan dropped
+        with its bindings unreleased leaves its tree to the collector. Pinned by an event, the call's return, with
+        automatic collection off for the whole test (gc.disable(), the collector's state as the test found it put back
+        by a cleanup registered before the disable), so such a cycle survives to the check: every PLANT_TABLE row is
+        scanned by _scan_plant (a refused row's UnreadableSpawn caught) and then by _regex_scan_comparison handed no
+        scan, and each call is read by the records it added (_TREES and _BINDINGS past their lengths before the call,
+        the weak references tearDownModule reads): once it has returned and its value is dropped, every tree and
+        Bindings it recorded is dead. The records read are the call's own: each call's first tree and first Bindings
+        carry the filename it was handed, and some call records more than one Bindings, the others its scans of a -c
+        program (the only scans a scan makes), whose records are read as well. The check's premise is held on every run:
+        a scan built the same way (_SpawnScan over _parse_text) and dropped with its bindings unreleased leaves its tree
+        and its Bindings alive, read through the same records, and releasing those bindings then frees both. The reds
+        are mutant runs, one release removed in each: _scan_plant's, _regex_scan_comparison's, and the -c program scans'
+        (_program_spawns_kernel's and _program_calls'), each red here on 3.10, 3.12 and 3.14t."""
+        was = gc.isenabled()                                           # the collector's state as the test found it...
+        self.addCleanup(gc.enable if was else gc.disable)              # ...put back by a cleanup registered first
+        gc.disable()                                                   # no automatic collection before any check
+        name = "scan-pin-plant.py"
+
+        def alive(t0, b0):
+            """(kind, filename) of every tree and Bindings recorded past `t0` and `b0` that is still alive."""
+            return ([("tree", f) for f, ref in _TREES[t0:] if ref() is not None]
+                    + [("bindings", f) for f, ref in _BINDINGS[b0:] if ref() is not None])
+
+        left, not_own, nested = {}, {}, []
+        for label, _kind, _site, src in PLANT_TABLE:
+            for road in ("_scan_plant", "_regex_scan_comparison"):
+                t0, b0 = len(_TREES), len(_BINDINGS)
+                try:
+                    if road == "_scan_plant":
+                        value = _scan_plant(src, name)
+                    else:
+                        value = _regex_scan_comparison(src, name, scan_all=True)
+                except UnreadableSpawn:
+                    value = None
+                del value                                              # the call has returned: its value dropped too
+                row = "%s %s" % (label.split()[0], road)
+                first = ([f for f, _ in _TREES[t0:t0 + 1]], [f for f, _ in _BINDINGS[b0:b0 + 1]])
+                if first != ([name], [name]):
+                    not_own[row] = first
+                if len(_BINDINGS) - b0 > 1:
+                    nested.append(row)
+                if alive(t0, b0):
+                    left[row] = alive(t0, b0)
+        self.assertEqual(not_own, {}, "calls whose first recorded tree and Bindings are not the plant's (the "
+                         "filename the call was handed): (row road: ([the first tree's filename], [the first Bindings' "
+                         "filename]))")
+        self.assertTrue(nested, "no call recorded more than one Bindings (its scan of a -c program), so no such scan's "
+                         "release was read")
+        self.assertEqual(sorted(left), [], "calls of a scan of a planted source (row road) that recorded a tree "
+                         "or a Bindings still alive once the call had returned, with no collection since the test "
+                         "began, %d of them; the first three, with what each left alive (kind, filename): %r. A scan "
+                         "dropped with its bindings unreleased leaves its tree in a cycle only the collector reclaims"
+                         % (len(left), sorted(left.items())[:3]))
+        t0, b0 = len(_TREES), len(_BINDINGS)
+        scan = _SpawnScan(_parse_text(PLANT_TABLE[0][3], "scan-pin-unreleased.py"), "scan-pin-unreleased.py")
+        scan.sites()
+        del scan                                                       # dropped with its bindings unreleased
+        self.assertEqual(alive(t0, b0), [("tree", "scan-pin-unreleased.py"), ("bindings", "scan-pin-unreleased.py")],
+                         "a scan dropped with its bindings unreleased leaves its tree and its Bindings alive with no "
+                         "collection, read through the records the check reads")
+        bindings = _BINDINGS[b0][1]()
+        bindings.release()
+        del bindings
+        self.assertEqual(alive(t0, b0), [], "releasing the unreleased scan's bindings frees its tree and its "
+                         "Bindings with no collection")
 
     def test_the_module_that_loads_the_kernel_in_process_and_attaches_places_each_leg_of_the_trio_where_it_is_read(self):
         """Read by position from the module's ast, not by text (_placement_faults): the port is assigned at module level
