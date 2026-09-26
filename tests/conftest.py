@@ -697,6 +697,19 @@ def redact_env_values(text: str, values) -> str:
     return _ENV_CUT_FRAG_RE.sub(cut_piece, text)
 
 
+def env_sparing_texts(env, texts) -> dict:
+    """`env` (a mapping) without every entry whose value the env-value net above would rewrite one of `texts` with in a
+    pytest started under it: an entry that qualifies (env_value_qualifies) and whose value alone makes redact_env_values
+    change the text. For a test that asserts a literal in a child pytest's report: an inherited value whose whole text,
+    or a whitespace-separated chunk of ENV_VALUE_MIN_LEN or more characters of it, appears in that literal made the
+    child's report show ENV_VALUE_REDACTED in its place and the test red on a correct verdict (round 6's ruling B on the
+    SDK switch cases, 2026-09-25: sudo's SUDO_COMMAND and GNU make's MAKEFLAGS carry a command line's assignment of
+    the switch, and SUDO_COMMAND carries an interpreter named by its path). Keyed on the net's own two functions, not a
+    copy of their rule. Returns a new dict; `env` is not changed."""
+    return {name: value for name, value in env.items()
+            if not (env_value_qualifies(name, value) and any(redact_env_values(t, (value,)) != t for t in texts))}
+
+
 def redact_credential_tokens(text):
     """The pattern net: credential-shaped tokens, whatever their provenance (tests/credential_patterns.py)."""
     return _credpat.scrub(text)

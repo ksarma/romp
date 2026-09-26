@@ -318,7 +318,7 @@ import unittest
 import warnings
 from unittest import mock
 from romp_load import load_source
-from tests.conftest import never_skip_files_as_written
+from tests.conftest import ENV_VALUE_MIN_LEN, env_sparing_texts, never_skip_files_as_written, redact_env_values
 import sdk_blocker   # noqa: E402  the shared test helper, registered by name in tests/__init__.py like romp_load
 
 HERE = os.path.dirname(os.path.realpath(__file__))
@@ -864,7 +864,22 @@ class RequireSwitch(unittest.TestCase):
     The message texts witness that the blocker took effect where there is an SDK to hide: an unloaded blocker on such a
     venv reads as a pass under the switch and as a pass without the warning off it, and both are red here.
     Before this case the fail branch was a non-red mutant: with its four lines deleted this module read 22 passed,
-    1 warning under the switch on a venv without the SDK, and 22 passed in CI's shape on one with it (2026-09-20)."""
+    1 warning under the switch on a venv without the SDK, and 22 passed in CI's shape on one with it (2026-09-20).
+    The child's environment is the inherited one less every variable whose value the child's env-value redaction would
+    rewrite the switch's message or the interpreter's path with (tests/conftest.py's env_sparing_texts; round 6's
+    ruling B, 2026-09-25): sudo's SUDO_COMMAND for `sudo env ROMP_SDK_REQUIRE=1 python -m pytest ...` and GNU make's
+    MAKEFLAGS for `make -s test ROMP_SDK_REQUIRE=1` hold the switch's assignment as a chunk of 16 or more characters,
+    SUDO_COMMAND for `sudo <interpreter> -m pytest ...` holds the interpreter's path, and the child's report read
+    [REDACTED-ENV-VALUE] in place of the text this case asserts, red on a correct verdict. The drop comes first: the
+    case then sets ROMP_SDK_REQUIRE and prepends the blocker's directory to PYTHONPATH, and those two decide the child's
+    road (the switch it reads, and the SDK hidden from it). The switch case hands its child sudo's and make's shapes of
+    the switch, and a second case hands down sudo's shape naming the interpreter."""
+
+    SWITCH_MESSAGE = "ROMP_SDK_REQUIRE=1: this run requires the SDK"
+    # sudo's and GNU make's shapes of a command line that sets the switch (the refuter's runs of the frozen head: the
+    # switch case red with [REDACTED-ENV-VALUE] in place of the switch's assignment under each)
+    SWITCH_SPELLED = {"SUDO_COMMAND": "/usr/bin/env ROMP_SDK_REQUIRE=1 python -m pytest -q tests/test_ci_sdk_pin.py",
+                      "MAKEFLAGS": "s -- ROMP_SDK_REQUIRE=1"}
 
     def setUp(self):
         self.d = tempfile.mkdtemp(prefix="sdk-require-")
@@ -873,10 +888,14 @@ class RequireSwitch(unittest.TestCase):
             f.write(sdk_blocker.SITECUSTOMIZE)
         self.node = "%s::%s" % (os.path.relpath(os.path.realpath(__file__), ROOT), InstalledVersion.__name__)
 
-    def _run_installed_version(self, require):
+    def _run_installed_version(self, require, inherited=None):
         """pytest in a child over InstalledVersion's class node id with the blocker's directory prepended to the
-        inherited PYTHONPATH; `require` sets ROMP_SDK_REQUIRE=1, else the variable is popped from the child's env."""
-        env = dict(os.environ)
+        inherited PYTHONPATH; `require` sets ROMP_SDK_REQUIRE=1, else the variable is popped from the child's env.
+        `inherited` (this process's environment when None) is what the child inherits, less every variable whose value
+        the child's redaction would rewrite the switch's message or the interpreter's path with (env_sparing_texts). A
+        plant is handed down here and never written into this process's environment, whose write hook would note its
+        value for every later report this process redacts."""
+        env = env_sparing_texts(os.environ if inherited is None else inherited, (self.SWITCH_MESSAGE, "(%s)" % sys.executable))
         env.pop("ROMP_SDK_REQUIRE", None)
         if require:
             env["ROMP_SDK_REQUIRE"] = "1"
@@ -886,15 +905,44 @@ class RequireSwitch(unittest.TestCase):
         return p.returncode, p.stdout + p.stderr
 
     def test_on_the_switch_an_interpreter_without_the_sdk_fails_the_run_naming_the_switch(self):
-        rc, out = self._run_installed_version(require=True)
+        # the environment handed down carries sudo's and make's spellings of the switch (round 6's ruling B): each is one
+        # the redaction rewrites the message with, so a child that inherited either would read red here
+        for name, value in self.SWITCH_SPELLED.items():
+            self.assertNotEqual(redact_env_values(self.SWITCH_MESSAGE, (value,)), self.SWITCH_MESSAGE,
+                                "the planted %s no longer reaches the redaction: re-shape it" % name)
+        rc, out = self._run_installed_version(require=True, inherited=dict(os.environ, **self.SWITCH_SPELLED))
         self.assertNotEqual(rc, 0, "ROMP_SDK_REQUIRE=1 on an interpreter without the SDK must fail the run, not warn: " + out[-3000:])
-        self.assertIn("ROMP_SDK_REQUIRE=1: this run requires the SDK", out, "the red must carry the switch's own message: " + out[-3000:])
+        self.assertIn(self.SWITCH_MESSAGE, out, "the red must carry the switch's own message: " + out[-3000:])
         # the refusal names the interpreter (review round 4, 2026-09-23: ci.yml, the docstring, tests/README.md and the
         # ledger say so, and with sys.executable dropped from the fail text this module stayed green). The child runs as
         # sys.executable -m pytest, so its sys.executable is this process's
         self.assertIn("(%s)" % sys.executable, out, "the refusal must name the interpreter running pytest: " + out[-3000:])
         self.assertIn("FAILED %s::" % self.node, out, "the red must be InstalledVersion's own test: " + out[-3000:])
         self.assertIn("1 failed", out, "one test, failed, nothing skipped: " + out[-3000:])
+
+    def test_under_sudo_naming_the_interpreter_by_its_path_the_refusal_still_names_it(self):
+        # round 6's ruling B, the interpreter's road: `sudo <interpreter> -m pytest ...` sets SUDO_COMMAND to a value
+        # whose chunk is the interpreter's path, which the redaction rewrote in the refusal's text whatever the parent's
+        # switch (a path shorter than ENV_VALUE_MIN_LEN is never redacted, and there the road does not exist)
+        plant = "%s -m pytest -q tests/test_ci_sdk_pin.py" % sys.executable
+        named = "(%s)" % sys.executable
+        if len(sys.executable) >= ENV_VALUE_MIN_LEN:
+            self.assertNotEqual(redact_env_values(named, (plant,)), named, "the planted SUDO_COMMAND no longer reaches the "
+                                "redaction: re-shape it")
+        rc, out = self._run_installed_version(require=True, inherited=dict(os.environ, SUDO_COMMAND=plant))
+        self.assertNotEqual(rc, 0, "ROMP_SDK_REQUIRE=1 on an interpreter without the SDK must fail the run, not warn: " + out[-3000:])
+        self.assertIn(named, out, "the refusal must name the interpreter running pytest: " + out[-3000:])
+        self.assertIn(self.SWITCH_MESSAGE, out, "the red must carry the switch's own message: " + out[-3000:])
+
+    def test_the_childs_environment_drops_only_what_would_rewrite_an_asserted_text(self):
+        # env_sparing_texts over a synthetic environment, in process: it drops the variables whose value the redaction
+        # would rewrite the switch's message with (sudo's and make's shapes, and a value that is the bare name), and keeps
+        # one whose chunk is the switch's assignment under a name the redaction exempts (PYTEST_), whose value it never
+        # rewrites, and one that holds no asserted text; so the drop is the redaction's own rule, not every variable that
+        # spells the switch
+        env = dict(self.SWITCH_SPELLED, BARE="ROMP_SDK_REQUIRE", PYTEST_ADDOPTS="-k ROMP_SDK_REQUIRE=1",
+                   UNRELATED="an-unrelated-value-of-some-length")
+        self.assertEqual(sorted(env_sparing_texts(env, (self.SWITCH_MESSAGE,))), ["PYTEST_ADDOPTS", "UNRELATED"])
 
     def test_off_the_switch_the_same_interpreter_passes_with_the_warning(self):
         rc, out = self._run_installed_version(require=False)

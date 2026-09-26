@@ -35,6 +35,7 @@ from importlib.machinery import ModuleSpec
 from pathlib import Path
 from unittest import mock
 from romp_load import load_source
+from tests.conftest import env_sparing_texts, redact_env_values
 import sdk_blocker   # noqa: E402  the shared test helper, registered by name in tests/__init__.py like romp_load
 
 HERE = os.path.dirname(os.path.realpath(__file__))
@@ -5093,7 +5094,18 @@ class HostProcess(unittest.TestCase):
         carries the case's own message. On a venv with the SDK this reds only once the gate's probe reads the spawn's
         PYTHONPATH (the cases above): with the probe dropping it, the child's gate saw the venv's SDK, HOST_SDK read True
         and the switch case passed while every host that run spawned took the pipe transport. -p no:anyio as every pytest
-        child the suite spawns passes it, -p no:cacheprovider so the child writes no cache into the tree."""
+        child the suite spawns passes it, -p no:cacheprovider so the child writes no cache into the tree. The child's
+        environment is the inherited one less every variable whose value the child's env-value redaction would rewrite
+        the case's message with (tests/conftest.py's env_sparing_texts; round 6's ruling B, 2026-09-25): sudo's
+        SUDO_COMMAND for `sudo env ROMP_SDK_REQUIRE=1 python -m pytest ...`, like GNU make's MAKEFLAGS for `make -s test
+        ROMP_SDK_REQUIRE=1`, holds the switch's assignment as a chunk of 16 or more characters, and the child's report
+        read [REDACTED-ENV-VALUE] in place of it, red on a correct verdict. The drop comes before HOME, the switch and
+        the blocker's PYTHONPATH are set, which decide the child's road; the case hands down sudo's shape, and never
+        writes it into this process's environment, whose write hook would note it for every later report here."""
+        message = "ROMP_SDK_REQUIRE=1: this run requires the SDK"
+        sudo = "/usr/bin/env ROMP_SDK_REQUIRE=1 python -m pytest -q tests/test_session_host.py"
+        self.assertNotEqual(redact_env_values(message, (sudo,)), message, "the planted SUDO_COMMAND no longer reaches the "
+                            "redaction: re-shape it")
         site = os.path.join(self.state, "blocker-site")
         os.makedirs(site)
         with open(os.path.join(site, "sitecustomize.py"), "w") as f:
@@ -5102,7 +5114,7 @@ class HostProcess(unittest.TestCase):
         os.makedirs(home)
         node = "%s::%s::%s" % (os.path.relpath(os.path.realpath(__file__), ROOT), type(self).__name__,
                                self.test_where_the_run_requires_the_sdk_the_hosts_interpreter_imports_it.__name__)
-        env = dict(os.environ, HOME=home, ROMP_SDK_REQUIRE="1")
+        env = dict(env_sparing_texts(dict(os.environ, SUDO_COMMAND=sudo), (message,)), HOME=home, ROMP_SDK_REQUIRE="1")
         env["PYTHONPATH"] = os.pathsep.join([site] + [p for p in (env.get("PYTHONPATH", ""),) if p])
         p = subprocess.run([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "-p", "no:anyio", node],
                            cwd=ROOT, env=env, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=240)
@@ -5110,7 +5122,7 @@ class HostProcess(unittest.TestCase):
         self.assertNotEqual(p.returncode, 0, "ROMP_SDK_REQUIRE=1 where no host the run spawns imports the SDK must fail the "
                             "run, not skip or pass: " + out[-3000:])
         self.assertIn("FAILED %s" % node, out, "the red must be the switch case itself: " + out[-3000:])
-        self.assertIn("ROMP_SDK_REQUIRE=1: this run requires the SDK", out, "the red must carry the case's own message: " + out[-3000:])
+        self.assertIn(message, out, "the red must carry the case's own message: " + out[-3000:])
         self.assertIn("1 failed", out, "one test, failed, nothing skipped: " + out[-3000:])
 
     @unittest.skipUnless(HOST_SDK, "the host's interpreter does not import the SDK and this machine has no SDK venv; the pipe transport covered the host")
