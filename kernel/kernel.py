@@ -7030,14 +7030,20 @@ def _refuse_setting(client, exc, what, gesture, sid="", item_id="", flag="", val
     REFUSED because the store it edits could not be read -- or, since the maintainer's fold on PR
     #1019, WRITTEN (_StateUnwritable: the publish itself failed): one stderr line, and the refusal answered
     on the DELIVERING socket as a `settingRefused` frame -- the same targeted _reply idiom the
-    settingStale stand-down and the saveFile acks use, never a broadcast. The frame names the
+    settingStale stand-down and the saveFile acks use, never a broadcast. Two ops answer more causes on
+    this frame, each before a setter runs: a value that is not a JSON boolean, on the setSessionFlag op
+    and on the cardNotify op (the validator's complaint, `value` what the display path paints for that
+    flag or bell), and, on the setSessionFlag op, a flag name outside _LANE_FLAGS (_lane_flag_refusal's
+    sentence, `value` None since no pane paints an unlisted flag, and `flag` the name as str() spells it,
+    the empty string for a falsy name, which never equals a listed name). The frame names the
     `gesture` ("flag" / "bell" / "order" -- the views store's doors answer on their own acks, _ack_views_write, and
     never draw this frame -- so a pane never infers it from which fields are
     empty), the gesture's own address (sid / itemId / flag), and `value`: what the kernel's display
     path still paints for that flag or bell -- the value the next push carries -- so the pane
     repaints the refused toggle to it on THIS event rather than to a value it recorded at the click
     (two clicks before the first refusal made such a record wrong until the next push). None for a
-    gesture with no single value (an order, a whole-blob view write). A `warn` frame did none of
+    gesture with no single value (an order, a whole-blob view write) and for a flag refused by name.
+    A `warn` frame did none of
     this: only the chat page renders `warn`, so a refused bell on the feed page and a refused lane
     flag on the timeline page stayed painted as if they had landed until a reload. A dead socket is
     the client's problem: the refusal already stands. `log`, when given, is what stderr gets INSTEAD of
@@ -73063,6 +73069,24 @@ _LANE_FLAGS = ("hideFromFeed", "postalServiceOff", "notify")   # the per-session
 #                                    (setSessionFlag in ui/webview/render.ts)
 
 
+def _lane_flag_refusal(flag):
+    """The ONE whitelist of the per-session flags a client may write: None when `flag` is one of _LANE_FLAGS, else
+    the refusal, naming the list and a bounded echo of what arrived. The two flag doors ask it, POST /flag (its 400's
+    error) and the setSessionFlag socket op (its settingRefused frame, which wraps the same sentence), for every flag
+    name a request carries, a falsy one included, so they cannot disagree on which flag names a client may set; a
+    request with no flag key is where they differ, POST /flag answering this refusal ("got null") and the socket op
+    the terminal arm's unknownOp, the kernel's answer for a known op missing a field its arm requires
+    (_note_unknown_op). The saveFile socket op, under the file-editing consent, can write session-flags.json whole,
+    as it can any text file; it is not a flag door and does not ask this. Until the reviewer's ruling in the round-3
+    review of fork PR #897 the socket op wrote any name it was sent: a client could set `threadMail`, the key that
+    turns a comment thread's mail on, or the legacy `postalOff`, while the route refused both. The kernel and the
+    postal bus read those keys; no dashboard, panel or extension sends them. tests/test_obsidian_state_routes.py pins
+    the doors (FlagWriterPopulation) and executes both refusals."""
+    if flag in _LANE_FLAGS:
+        return None
+    return "flag must be one of %s, got %s" % (", ".join(_LANE_FLAGS), _clip_json(flag))
+
+
 def _unknown_keys_error(b, allowed):
     """A typed body's refusal of keys the route does not read (the /restart helper's rule): a typo key
     must never pass as "not asked" while the caller reads ok:true as its field applying."""
@@ -73106,9 +73130,9 @@ def _state_write_route(path, b):
             return 400, {"ok": False, "error": "id (the session's id) required"}
         sid = sid.strip()
         flag = b.get("flag")
-        if flag not in _LANE_FLAGS:
-            return 400, {"ok": False, "error": "flag must be one of %s, got %s"
-                         % (", ".join(_LANE_FLAGS), _clip_json(flag))}
+        err = _lane_flag_refusal(flag)                 # the whitelist the setSessionFlag socket op asks too
+        if err:
+            return 400, {"ok": False, "error": err}
         if b.get("value") is None:
             return 400, {"ok": False, "error": "value (true or false) required"}
         value, ferr = _as_bool(b.get("value"), "value")
@@ -76588,10 +76612,23 @@ class Handler(BaseHTTPRequestHandler):
                 except Exception:
                     pass
             _apih_resend(client)          # and the bottom bar's API cell, from the last frame (same reason)
-        elif msg and msg.get("type") == "setSessionFlag" and msg.get("id") and msg.get("flag"):
+        elif msg and msg.get("type") == "setSessionFlag" and msg.get("id") and "flag" in msg:
             # timeline lane gear → toggle a per-session view flag (e.g. hideFromFeed). Persisted +
             # re-broadcast so the feed drops/restores that session's cards immediately. The notify
             # bell is tri-state (an override on the master default) → its own setter.
+            # The name first, as POST /flag checks it: one of the lane toggles, by the predicate the route asks
+            # (_lane_flag_refusal has the why). Refused on the settingRefused frame like a bad value below, with
+            # `value` null, since no pane paints an unlisted flag; the log names the field's type, never the name.
+            # The arm keys on the flag key's PRESENCE, not its truthiness, so every name a frame carries, null, "",
+            # 0, false, [] and {} included, meets the predicate and draws the refusal a truthy unlisted name draws.
+            # A frame with NO flag key falls to the terminal arm's unknownOp (_note_unknown_op, the answer for a
+            # known op missing a field its arm requires), where POST /flag answers its 400 ("got null")
+            nerr = _lane_flag_refusal(msg["flag"])
+            if nerr:
+                _refuse_setting(client, nerr, "that setting", "flag", sid=msg["id"], flag=msg["flag"], value=None,
+                                log="refused %s: 'flag' is %s, not one of %s"
+                                    % (msg["type"], _json_type_name(msg["flag"]), ", ".join(_LANE_FLAGS)))
+                return
             value, ferr = _as_bool(msg.get("value"), "value")
             if ferr:
                 # the lane gear's own refusal frame (settingRefused, which the timeline page renders and
