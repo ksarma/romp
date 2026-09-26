@@ -4,10 +4,11 @@
 // before any install, does not). The test below began as fork PR 860's test of this behaviour, copied with its mechanism
 // unchanged (two lines differed: the comment's name for the leg it drives, and the --test-name-pattern that picks it); this
 // branch adds a third arm, the switch set to a non-"1" non-empty value ("yes"), which executes the arming rule every header
-// states (any non-empty value counts) and is OFFERED to 860 for its copy, so the two branches carry one mechanism and,
-// until 860 takes the arm, not one test. Beside the third arm, whose words already made the test's title differ from 860's,
-// this branch narrows the title from the browser legs' skip to the skip of a leg that launches through the shared launch:
-// inBrowser's read of the switch changes that skip alone.
+// states (any non-empty value counts) and is OFFERED to 860 for its copy. Until 860 takes the arm the two branches do not
+// carry one test, and their mechanisms differ as well: this branch alone gives each child a temporary directory of its own
+// (below). Beside the third arm, whose words already made the test's title differ from 860's, this branch narrows the title
+// from the browser legs' skip to the skip of a leg that launches through the shared launch: inBrowser's read of the switch
+// changes that skip alone.
 // This branch also asserts, under both armed arms, that the failure's message begins with the phrase the step's script
 // reads a lost browser by, read at run time from vscode-extension/scripts/ci-browser-legs.sh, which 860 does not have, so
 // that assertion stays this branch's and the offer to 860 is the third arm alone.
