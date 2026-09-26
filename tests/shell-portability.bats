@@ -1,9 +1,9 @@
 #!/usr/bin/env bats
 # The shell surfaces run on a stock mac too: /bin/sh, and a /bin/bash at 3.2. The bats macOS cell runs on manual dispatch
 # alone, so nothing in CI reads them under that bash; this pins the bash-4-plus constructs out of every shell script the
-# repo ships (bin/, scripts/*.sh, install.sh, bootstrap.sh, hooks/*.sh, .githooks/pre-push, tools/ and the extension's
-# install.sh) statically instead (round four of issue 1600: a ${1,,} in romp-service's escape-hatch reader made the
-# install die with a bad substitution after writing the plist and before bootstrapping the agent). Non-comment lines
+# repo ships (bin/, scripts/*.sh, install.sh, bootstrap.sh, hooks/*.sh, .githooks/pre-push, tools/, and the extension's
+# install.sh and scripts/) statically instead (round four of issue 1600: a ${1,,} in romp-service's escape-hatch reader
+# made the install die with a bad substitution after writing the plist and before bootstrapping the agent). Non-comment lines
 # only, so a construct NAMED in a comment is fine; one named in a string is a hit, and the line is reworded. The patterns
 # are bash-shaped on purpose: a Python heredoc inside a script writes [-1] and a nested ${a:-${b:-c}} default is not a
 # negative-length substring, and neither may read as a hit.
@@ -43,7 +43,7 @@ _shell_files() {   # the surfaces: every TRACKED shell script the repo ships, fo
                    # set (the tagged tip's confirming macOS run stalled here for the job's whole 180 s per-test bound where the proof
                    # run took 3.3 s, with no shell file changed between them, 2026-09-16)
     local f
-    git -C "$REPO" ls-files -z -- bin 'scripts/*.sh' install.sh bootstrap.sh 'hooks/*.sh' .githooks tools vscode-extension/install.sh 2>/dev/null \
+    git -C "$REPO" ls-files -z -- bin 'scripts/*.sh' install.sh bootstrap.sh 'hooks/*.sh' .githooks tools vscode-extension/install.sh vscode-extension/scripts 2>/dev/null \
         | tr '\0' '\n' | while IFS= read -r f; do
             [ -n "$f" ] && [ -f "$REPO/$f" ] || continue
             head -1 "$REPO/$f" | grep -qE '^#!.*(/|env )(ba)?sh([[:space:]]|$)' && echo "$REPO/$f"
@@ -96,6 +96,9 @@ _scan() {   # $@ files: every non-comment line holding a construct, as "family: 
     [[ "$output" == *"/hooks/romp-wake.sh"* ]]
     [[ "$output" == *"/.githooks/pre-push"* ]]
     [[ "$output" == *"/vscode-extension/install.sh"* ]]
+    # the shell job's macOS cell executes this one too, through tools/ci-browser-legs.test.mjs, which runs a copy of it under
+    # bash with a stub node; the browser-legs step itself runs on ubuntu alone
+    [[ "$output" == *"/vscode-extension/scripts/ci-browser-legs.sh"* ]]   # the extension's CI scripts
     [[ "$output" == *"/tools/romp-lab/lab.sh"* ]]      # the tools live one directory down: tools/*/*.sh
     [[ "$output" == *"/tools/ui-verify/shot.sh"* ]]
     [[ "$output" != *".py"* ]]                        # a python file under bin/ is not read

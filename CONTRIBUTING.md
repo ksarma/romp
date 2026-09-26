@@ -13,6 +13,7 @@ If you're interested in reporting bugs and making PRs, please try to reproduce t
 ```bash
 python3 -m pytest -q       # the Python pipeline (kernel/, cli/, postal/)
 bats tests/*.bats          # the shell surfaces (hooks, postal, manager)
+node --test tools/ci-browser-legs.test.mjs   # the browser-legs roster against the tree (CI's shell job, no npm ci)
 cd vscode-extension && npm ci && npm test
 ```
 
@@ -41,6 +42,56 @@ or cgroup limit (`systemd-run --scope -p MemoryMax=...`, `prlimit`). To use anot
 worker count, build the tests and start the runner yourself, from `vscode-extension/`:
 `node esbuild.js --tests && node --max-old-space-size=2048 --test --test-concurrency=N
 'out-tests/**/*.test.js'`.
+
+CI's vscode-extension job runs `npm test` before it installs a browser, so every browser leg (a test
+module that launches a Playwright browser; `tests/ui-bench.test.mjs` under `ROMP_UI_BENCH_REQUIRE` and the
+served pytest files under `ROMP_SERVED_TESTS_REQUIRE` carry their own switch) skips at launch there. The
+legs named in `vscode-extension/ci-browser-legs.txt`, one compiled bundle path per line, run again after
+the job's Chromium install with `ROMP_BROWSER_LEGS_REQUIRE=1`. The one shared launcher, `inBrowser` in
+`ui/webview/real-viewer-leg.ts`, reads the switch (any non-empty value counts), and under the switch,
+`inBrowser` fails a launch it cannot make, naming the switch and the reason, instead of skipping. A PR
+that wants its legs run adds their bundle paths to the roster and puts each leg's own whole-file seconds,
+measured, in its body: node runs the rostered files concurrently, so the step's total does not give one
+leg's time, and node's `--test-timeout` in the step's script, which cuts each file's whole run at its
+bound, has to sit above it.
+
+The roster rule: under the switch, a rostered leg passes only when `inBrowser` has launched Chromium, and
+the leg does nothing that lets it pass otherwise (for example: it launches no browser of its own; nothing
+catches or settles `inBrowser`'s rejection, so the rejection fails its test; it does not change
+`ROMP_BROWSER_LEGS_REQUIRE`, and hands `inBrowser` no test context but the one node gave it; it does not
+end its own process, from a test, a hook or a timer; no condition the runner can leave unmet stands
+between a browser test and its `inBrowser` call; it skips and marks todo nothing). The reviewer of any PR
+that adds a roster line or changes a rostered leg's source or `inBrowser` checks the rule; the step does
+not. Nothing in the tree reads a leg's source for the rule, so the step can read green a rostered leg that
+breaks it. Examples, not the whole set: a rostered leg that launches its own browser and swallows a failed
+launch without skipping; a rostered module that launches nothing; a leg that drives a browser from a child
+process and tolerates the child's failure; a todo test that passes beside a real pass; a leg that catches
+`inBrowser`'s rejection and passes (a try and catch around the awaited call, `.catch()`, .then's second
+argument or Promise's allSettled). A leg built to pass without a browser is outside what the step can
+detect. `tools/ci-browser-legs.test.mjs` runs a synthetic leg of each example and reads it green. Nothing
+checks that every browser leg in the tree is rostered, and main has no such check. A leg with no line runs
+only under the Test step, before the job installs a browser. `inBrowser`'s read of the switch changes
+`inBrowser`'s own skip alone: a leg's own skip is not turned into a failure by it, and its own failed
+launch is not `inBrowser`'s failure naming the switch. Chromium is the one engine the job installs, so a
+leg's Firefox and WebKit runs happen only in a local run. A Firefox or WebKit test in a rostered file
+breaks the roster rule, since `inBrowser` launches Chromium alone. On the runner its skip is red, and a
+failed launch the leg does not swallow is node's red, but a leg can be built that holds such a test and
+reads green there when the bundle has a passing test of its own (the witness spelling: one that registers
+the test only where that engine is installed): a leg built to pass without a browser is outside what the
+step can detect.
+
+The step's script, `vscode-extension/scripts/ci-browser-legs.sh`, refuses before `node --test` a roster
+line that is malformed, duplicated or names a source that moved or was deleted, and a rostered bundle
+that is not built. After `node --test` it reads its own reporter's record, and a rostered leg with no
+passing test, a skipped test, a failure inside a todo, or a file that failed as a whole is red, naming
+the leg or the test; a leg that follows the roster rule and whose launch failed under the switch is
+named with the remedy to check the Chromium install step. The script's header states which results those
+reads cover. Before you push,
+`node --test tools/ci-browser-legs.test.mjs` from the repo root runs the tree checks CI's shell job runs
+(no `npm ci` needed). From `vscode-extension/`,
+`bash scripts/ci-browser-legs.sh --check` runs the step's pre-run checks except the bundle check,
+without starting a browser, and the step itself is `bash scripts/ci-browser-legs.sh` with
+`ROMP_BROWSER_LEGS_REQUIRE=1`, after `node esbuild.js --tests`.
 
 `tests/gitleaks-config.bats` checks the secret-scanning rules in `.gitleaks.toml`
 against the real scanner and skips itself when `gitleaks` is not installed
