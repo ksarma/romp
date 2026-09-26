@@ -957,8 +957,10 @@ def _require_served_test_ran(item, rep) -> None:
 # allowlist and a key of its merged env outside its env allowlist; no conftest in the tree sets collect_ignore or
 # collect_ignore_glob or defines a collection hook (this file, the only one, implements two reporting hooks,
 # pytest_make_collect_report and pytest_collectreport, which drop nothing); and the repo has no pytest.ini,
-# .pytest.ini, pytest.toml, .pytest.toml, pyproject.toml, setup.cfg or tox.ini. Nothing pins the rest of that read,
-# the conftest and the ini files.
+# .pytest.ini, pytest.toml, .pytest.toml, pyproject.toml, setup.cfg or tox.ini. Of the rest of that read,
+# tests/test_thread_stop_census.py's test_the_population_is_what_pytest_collects_under_tests holds pytest.ini,
+# setup.cfg, tox.ini and pyproject.toml absent at the repository root and in tests/ itself; nothing pins the conftest
+# read, .pytest.ini, pytest.toml or .pytest.toml, or any of the seven in a directory below those two.
 _NEVER_SKIP_FILES = ("test_ci_sdk_pin.py",)
 
 

@@ -283,25 +283,24 @@ jobs:
           # no value on an env: key's line), or the check refuses it by name, valid YAML included (an
           # anchor, an alias, a folded block, a quoted scalar over two lines, among others): a form the
           # check does not accept is refused by name; reword the step in an accepted form. Every line here that
-          # spells pytest, outside a comment or a name: key's own line and other than a pip install, is
-          # read as a command or is red until it is read (its line census), and so is a job key it does
-          # not read; among what it leaves unread (pytest_invocations' docstring in tests/test_ci_sdk_pin.py
-          # states the read in full) are a run line that never spells pytest, a pytest run by a script or
-          # action a step calls, and the other workflow files. It also holds this step's failure to the
-          # cell: this step's exit status is pytest's and the cell's is the step's (run_pytest_status in
-          # tests/test_ci_sdk_pin.py; its docstring is the rule). So each of these is red at its line,
-          # among others: an if: or a continue-on-error on this step or its job; a key of its job outside
-          # its job-key allowlist (a container: among them); the command followed by
-          # ||, a pipe or a trailing &; a second command or command line (an earlier trap 'exit 0' EXIT
-          # among them); an argument outside its option allowlist (--collect-only, --co and --setup-plan
-          # among the refused); a shell: here, or a defaults: on the job or the workflow; a key of this
-          # step's merged env outside its env allowlist (PYTEST_ADDOPTS and BASH_ENV among them); and a
-          # run block of this job that spells GITHUB_ENV, GITHUB_PATH or BASH_ENV. Outside it, among others
-          # (run_pytest_status's docstring states the residual): a write to those files that does not spell
-          # their names, such as one by a script or action a step calls; a command that names its
-          # interpreter or pytest by a path; and an earlier step whose run block changes the runner without
-          # spelling those names, such as one that replaces or shadows the python on PATH, reinstalls
-          # pytest, or deletes or edits test files.
+          # spells pytest, other than the lines its line census excuses (pytest_line_census's docstring in
+          # tests/test_ci_sdk_pin.py states the rule), is read as a command or is red until it is read, and so
+          # is a job key it does not read; among what it leaves unread (pytest_invocations' docstring in
+          # tests/test_ci_sdk_pin.py states the read in full) are a run line that never spells pytest, a pytest
+          # run by a script or action a step calls, and the other workflow files. It also holds this step's
+          # failure to the cell: this step's exit status is pytest's and the cell's is the step's
+          # (run_pytest_status in tests/test_ci_sdk_pin.py; its docstring is the rule). So each of these is red
+          # at its line, among others: an if: or a continue-on-error on this step or its job; a key of its job
+          # outside its job-key allowlist (a container: among them); the command followed by ||, a pipe or a
+          # trailing &; a second command or command line (an earlier trap 'exit 0' EXIT among them); an argument
+          # outside its option allowlist (--collect-only, --co and --setup-plan among the refused); a shell:
+          # here, or a defaults: on the job or the workflow; a key of this step's merged env outside its env
+          # allowlist (PYTEST_ADDOPTS and BASH_ENV among them); and a run block of this job that spells
+          # GITHUB_ENV, GITHUB_PATH or BASH_ENV. Outside it, among others (run_pytest_status's docstring states
+          # the residual): a write to those files that does not spell their names, such as one by a script or
+          # action a step calls; a command that names its interpreter or pytest by a path; and an earlier step
+          # whose run block changes the runner without spelling those names, such as one that replaces or
+          # shadows the python on PATH, reinstalls pytest, or deletes or edits test files.
           ROMP_SDK_REQUIRE: "1"
           # The free-threaded cell runs with the GIL off, stated rather than defaulted (a 't'
           # build disables it by default, and an extension that lacks free-threading support
