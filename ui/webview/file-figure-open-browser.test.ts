@@ -3395,7 +3395,9 @@ for (const surface of ["chat", "pane"] as Surface[]) {
 // its press in the slot, the record having ended at its pointerup; every tap cell reads the same at 0ab74924c as at the fix, by
 // design (the stale records too: there the covered tap's own press was the record its click read; and the clicks after a drag of a
 // picture and after a drag in another pane, Chromium ending the drag's press with a pointercancel and the next press sending its
-// pointerdown, so the first click with the control shown opens once and no cost is paid); the double tap's second click carries
+// pointerdown, so the first click with the control shown opens once and no cost is paid, while in WebKit, which sends neither, the
+// mouse's first click after any drag in the page, another pane's included, opens nothing and reveals the sign, whatever covers or
+// shows it, and the click after it opens, the cost the engines leg's cells record); the double tap's second click carries
 // detail 2 and opens nothing. The press with no click is a real two-finger touch here. The cells of a finger beside the mouse, on the
 // hybrid page (its extra5-2): a finger held on the picture, the mouse's click beside it, the finger lifted, then the mouse's press on
 // the picture with the control out of view or under the text-size flyout, a finger's swipe while the mouse is held, and the
