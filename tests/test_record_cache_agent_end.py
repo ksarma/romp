@@ -652,7 +652,8 @@ class AgentEnd(unittest.TestCase):
     # ---- an end the kernel saw before it held the file (PR 913 round 1, group H) ----
     # The end finds nothing to release (release_entry answers "absent"), and a read inside the quiescent drop's 120 s window
     # then holds the finished agent's file whole with every later fold a hit. The kernel remembers such an end and releases
-    # the file at the first cycle after a read holds it; a start for the agent forgets the end.
+    # the file at the first cycle after a read holds it; a start of the agent that a cycle drains forgets the end (a start
+    # queued after the drain of the cycle that releases the file, or dropped past the queue's bound, does not).
 
     def _end_before_any_read(self):
         """The agent starts and ends with no read of its file in between: the end finds nothing held, and is remembered."""
@@ -870,6 +871,62 @@ class AgentEnd(unittest.TestCase):
         self.assertIsNone(self._weight(self.agent), "the re-read is released at the next cycle (held: %s of %d bytes)"
                           % (self._weight(self.agent), size))
         self.assertEqual(self._stat("released"), {"agentEnded": {"count": 2, "bytes": 2 * size}})
+
+    # ---- a batch end for a remembered pair: its own outcome governs (PR 913 round 2, tests-1) ----
+    # The agent's stop finds nothing held and is remembered, a whole read then holds its file, and its task's end reaches a
+    # later batch, which speaks for the pair: the remembered loop skips it, and the batch end's release decides. When that
+    # release is lost or raises, the pair is forgotten and the release given up, not retried at a later cycle.
+
+    def _remembered_then_task_end(self):
+        """The task-end road to a batch end for a remembered pair; returns the file's size, which the whole read holds."""
+        self.s._on_task_event("task_started", {"task_id": AID, "task_type": "local_agent"})
+        self._end_before_any_read()
+        self.assertEqual(km._AGENT_ENDED_UNHELD.get((SID, AID)), self.agent, "precondition: the stop is remembered")
+        em._read_jsonl_incremental(self.agent)                           # a whole reader holds the finished agent's file
+        size = os.path.getsize(self.agent)
+        self.assertEqual(self._weight(self.agent), size, "precondition: the read holds the whole file")
+        self._task_end()
+        return size
+
+    def _given_up_not_retried(self, size):
+        """After the cycle that gave the batch end's release up: that cycle forgot the pair, and the next cycle, with the
+        writes on, releases nothing."""
+        self.assertEqual((self._weight(self.agent), self._stat("releaseLost")), (size, 1),
+                         "precondition: the release was given up and the entry stayed")
+        remembered = (SID, AID) in km._AGENT_ENDED_UNHELD
+        km._begin_checkpoint_cycle()                                     # the next cycle, the drop writes on
+        self.assertEqual(self._weight(self.agent), size, "the next cycle, with the writes on, leaves the given-up file held "
+                         "(held: %s of %d bytes)" % (self._weight(self.agent), size))
+        self.assertEqual(self._stat("released"), NOTHING_RELEASED, "nothing released")
+        self.assertFalse(remembered, "the batch end's outcome forgot the remembered pair")
+
+    def test_a_batch_end_for_a_remembered_pair_whose_release_is_lost_is_given_up(self):
+        """Red when a lost batch end leaves the pair remembered: the next cycle releases the file."""
+        size = self._remembered_then_task_end()
+        km.CKPT_CONVERGE_MS = 0                                          # the drop writes off: the batch end's release is lost
+        with contextlib.redirect_stderr(io.StringIO()):
+            km._begin_checkpoint_cycle()
+        km.CKPT_CONVERGE_MS = 150.0
+        self._given_up_not_retried(size)
+
+    def test_a_batch_end_for_a_remembered_pair_whose_release_raises_is_given_up(self):
+        """Red when a batch end that raises leaves the pair remembered: the next cycle releases the file."""
+        size = self._remembered_then_task_end()
+        real = em.release_entry
+
+        def release(key, reason):
+            if key == self.agent:
+                raise RuntimeError("synthetic")
+            return real(key, reason)
+        em.release_entry = release
+        err = io.StringIO()
+        try:
+            with contextlib.redirect_stderr(err):
+                km._begin_checkpoint_cycle()
+        finally:
+            em.release_entry = real
+        self._assert_raise_line(err.getvalue(), (SID, AID, self.agent))
+        self._given_up_not_retried(size)
 
     # ---- false ends: no liveness snapshot ends an agent ----
 
