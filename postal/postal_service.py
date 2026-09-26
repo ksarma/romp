@@ -5208,9 +5208,10 @@ def _remote_sids_document(now, previous, owned=frozenset(), lost=None):
     unanswered word, whose word releases the held one, or, for an answer with an empty listing, omits the host, for a
     far bus heard answering in this process); this bus's restart releases nothing (the reviewer's decision 4 on round
     5: a carried host row keeps its bit and holds the arm): no timer. The ruling asked for no new writer state; the
-    population needs the writer state rounds 4 and 6 of fork PR #897 add, all in memory and gone with the process
-    (the keys the recorders store that they did not at the twenty-eighth commit, round 3's last, derived by running
-    both, and the state beside the table: the reviewer's round-5 ruling E). Round 4's: on every row a recorder
+    population carries the writer state rounds 4 and 6 of fork PR #897 add, two of its keys unread since round 6
+    (`road` and `hubRoad`, below), all in memory and gone with the process (the keys the recorders store that they
+    did not at the twenty-eighth commit, round 3's last, derived by running both, and the state beside the table: the
+    reviewer's round-5 ruling E). Round 4's: on every row a recorder
     files, the road that filed it (`road`, "dial" or "answer"); on a hub's row, its held words (`viaHeld`), since
     without them a restarted hub's silence released the hold (the thirty-first commit), each word stamped with the
     seenAt of the hub's row it left (`heldAt`, which the via row's seenAt reads), with the hub process whose roster
@@ -5225,7 +5226,9 @@ def _remote_sids_document(now, previous, owned=frozenset(), lost=None):
     PEER_STATE's shape comment, and tests/test_postal_remote_sids_mirror.py
     test_the_peer_state_shape_comment_names_every_key_each_writer_stores and
     test_the_recorders_stamp_road_on_each_row_and_heldat_hubbus_and_hubroad_on_each_held_word pin both, the naming
-    by running every writer and the stamps' values. Round 6's: the far bus ids heard answering (_ANSWERED_BUSES),
+    by running every writer on the branches the first's docstring names (a key a writer stores only on another branch
+    is not seen, a stated limit with its witness there) and the stamps' values. Round 6's: the far bus ids heard
+    answering (_ANSWERED_BUSES),
     which the reviewer's round-5 ruling B approves; and the ORDER STATE, which its ruling C approves: the recording
     sequence (_PEER_SEQ), each row's mark and each name's recording and roster bus id (`mark`, `namedAt`), each far
     host's mark and release (`viaMark`), and each dial's capture of the sequence handed to its fold.
@@ -5760,7 +5763,11 @@ PEER_STATE = {}                            # host -> its row. THE ROW'S SHAPE: e
 #                                            (round 6 of fork PR #897, the reviewer's round-5 ruling E and decision 5 on round 5;
 #                                            tests/test_postal_remote_sids_mirror.py
 #                                            test_the_peer_state_shape_comment_names_every_key_each_writer_stores runs every writer
-#                                            the lock's census finds and requires these keys, no more and no fewer). Each recorder
+#                                            the lock's census finds, on the branches its docstring names (a peer's dial and
+#                                            its answer to ours, each carrying a bus id, the down notify of a heard host, and a
+#                                            dial refused with 409 and one refused with 403 and a body), and requires the keys
+#                                            stored there to be these, no more and no fewer; a key a writer stores only on
+#                                            another branch is not seen, a stated limit with its witness there). Each recorder
 #                                            files its row whole (peer_exchange_handle for a peer's dial, peer_exchange_apply for its
 #                                            answer to ours): "presence" [...], "presenceAnswered" bool, "epoch" int and "holds" [...] from
 #                                            the exchange (the first two as ordered below), "seenAt" t, this bus's clock at the recording,

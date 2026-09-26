@@ -2595,7 +2595,7 @@ def unanswered_words(bus, host):
     return sorted([list(w) for w in {(pa.get("via"), pa.get("id")) for pa in st.get("viaHeld") or []}
                    | {(pa.get("via"), pa.get("id")) for pa in st.get("presence") or []
                       if pa.get("via") and pa.get("viaAnswered") is not True}])
-def held_stamps(bus, host):                        # [far host, sid, the road whose roster last named it] per held word
+def held_stamps(bus, host):                        # [far host, sid, the road of the row the word left (hubRoad)] per held word
     return sorted([pa.get("via"), pa.get("id"), pa.get("hubRoad")] for pa in (bus.PEER_STATE.get(host) or {}).get("viaHeld") or [])
 road = "farAnswersEmptyOurDial"                    # ...through our dial (our fold of the hub's answer)
 us, f, hub, c = held_after_relay(road, HUB, "px-hub5")
@@ -2702,7 +2702,9 @@ step(road, "farAnswersHere", us, newOnFar=S["new"], nobody=S["nobody"], other=S[
 # THE ROAD (round 4 of fork PR #897, the thirty-third commit; the reviewer's verifier at the thirty-second, by execution):
 # our bus hears a hub's rosters by two roads, the hub's dial (our handler) and its answer to our dial (our fold), and the
 # hub can take its answer to our dial BEFORE its own later dial while our fold of that answer runs AFTER the dial is
-# recorded. So the same hub process's omission releases a held word only on the road whose roster last named the host
+# recorded. So the same hub process's omission released a held word only on the road whose roster last named the host;
+# since round 6 (the reviewer's round-5 ruling C and its decision 1) only in its answer to a dial our bus built after
+# the host's last unanswered word, whatever road named the host
 road = "farWithNoBusId"                            # F from before busId and presenceAnswered: its word through the hub carries no viaBus
 us = fresh_us(); f, hub, c = other(road, "f"), other(road, "hub"), other(road, "c")
 f.BUS_ID = ""                                      # F's exchanges carry no bus id, so the hub stamps viaBus "" on F's rows
@@ -5031,15 +5033,17 @@ print(json.dumps(out))
         payloads lacking the field, then its request carrying it holds (rule 5 at the forty-ninth commit), and our dial's
         answer releases. The same for a hub's word (X_far_cached_via_hub's releasedOurDial). A writer that kept a row's
         hold across an answer placed after its mark reds at ourDialAnswers and releasedOurDial.
-        The writer state the holds and this release use, all in memory and gone with the process (the reviewer's round-5
-        ruling E; until round 6 this docstring called a hub's held word the population's one piece of writer state):
-        round 4's, which the reviewer's decision 5 on round 5 approves, `road` on every row a recorder files and, on a
-        hub's row, `viaHeld`, each held word stamped `heldAt`, `hubBus` and `hubRoad` (since round 6 nothing reads
-        `hubRoad`, nor `road` but to stamp it); and round 6's, the far bus ids heard answering (_ANSWERED_BUSES, its
-        ruling B) and the order state (its ruling C): the recording sequence, each row's `mark` and `namedAt`, each far
-        host's `viaMark` and each dial's capture handed to its fold. postal/postal_service.py PEER_STATE's shape comment
-        names every key a writer stores on a row (tests/test_postal_remote_sids_mirror.py
-        test_the_peer_state_shape_comment_names_every_key_each_writer_stores)."""
+        The writer state the population carries, all in memory and gone with the process (the reviewer's round-5 ruling
+        E; until round 6 this docstring called a hub's held word the population's one piece of writer state): round 4's,
+        which the reviewer's decision 5 on round 5 approves, `road` on every row a recorder files and, on a hub's row,
+        `viaHeld`, each held word stamped `heldAt`, `hubBus` and `hubRoad`; and round 6's, the far bus ids heard
+        answering (_ANSWERED_BUSES, its ruling B) and the order state (its ruling C): the recording sequence, each row's
+        `mark` and `namedAt`, each far host's `viaMark` and each dial's capture handed to its fold. Two of these keys are
+        unread since round 6: nothing reads `hubRoad`, and nothing reads `road` but to stamp `hubRoad`.
+        postal/postal_service.py PEER_STATE's shape comment names every key a writer stores on a row, pinned on the
+        branches its test's drive takes (tests/test_postal_remote_sids_mirror.py
+        test_the_peer_state_shape_comment_names_every_key_each_writer_stores; a key stored only on another branch is not
+        seen, a stated limit with its witness there)."""
         b = NO_VOUCH(R_B + " (listing unanswered)")
         for shape, got in self.roads.items():
             with self.subTest(shape=shape):

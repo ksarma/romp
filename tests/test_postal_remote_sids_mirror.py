@@ -93,12 +93,14 @@ hub, vouching for absence, let rule 5 presume a live session closed for one exch
 hub's HELD word (round 4 of fork PR #897, the thirty-first commit): a far host's unanswered word through a hub stays
 heard on the hub's row across a restarted hub's rosters that omit the host, until the hub names the host again, by
 name or by bus id, while an answered word the hub omits is carried as before, and the same hub process's omission, the
-far host's answer with an empty listing, releases it (the thirty-second commit; a hub with no bus id holds it) on the
-road whose roster last named the host, the hub's dial or its answer to our dial (the thirty-third commit), for a far
-bus heard answering in this process (round 6, the reviewer's round-5 ruling B: a word with no viaBus, or whose far bus
-this bus has not heard answer, stays held; the sources of that evidence pinned), a hub from before viaBus renaming a
-far host holding the old name's word within one process and across its restart (within one process released until
-round 6); and
+far host's answer with an empty listing, releases it (the thirty-second commit; a hub with no bus id holds it), from
+the thirty-third commit on the road whose roster last named the host, the hub's dial or its answer to our dial, and
+since round 6 (the reviewer's round-5 ruling C and its decision 1, ONE RELEASE RULE) only in the hub's answer to a
+dial this bus built after the host's last unanswered word, whatever road named the host, a dial releasing nothing;
+for a far bus heard answering in this process (round 6, the reviewer's round-5 ruling B: a word with no viaBus, or
+whose far bus this bus has not heard answer, stays held; the sources of that evidence pinned), a hub from before
+viaBus renaming a far host holding the old name's word within one process and across its restart (within one process
+released until round 6); and
 the heartbeat row's scheme gate (round 3 of fork PR #897, the reviewer's ruling): a beat through the real recorder
 during a listing blink in peer mode vouching for presence alone, nothing vouching beside a peer the kernel holds down,
 the same rows under ROMP_POSTAL_PEERS=0 vouching by the TTL; the four earlier heartbeat pins of this module that
@@ -136,8 +138,9 @@ recorder's write takes the lock keeps no comment thread's row; the mark's bus-lo
 scheme at the write; the JSON literal null marking the document; the mark's second pinned on every conjunct of its shape
 check; and JSON true alone counting as answered at the dialer's fold, the writer's read of a gossiped row and a held word.
 And (round 6 of fork PR #897, the reviewer's round-5 ruling E and decision 5 on round 5) PEER_STATE's shape comment
-naming every key each writer stores, derived by running every writer the lock's census finds, and the recorders' stamps
-of the writer state round 4 added: road on each row, heldAt, hubBus and hubRoad on each held word.
+naming every key each writer stores on the branches a drive of every writer the lock's census finds takes (a key stored
+only on another branch is not seen, a stated limit with its witness), and the recorders' stamps of the writer state
+round 4 added: road on each row, heldAt, hubBus and hubRoad on each held word.
 tests/test_dead_session_staleness.py ReaderFollowsTheWriter
 runs this writer and the judge's reader together over one root; tests/test_postal_bus_lifetime.py
 MonitorTick pins the poll's write. SYNTHETIC fixtures only: private synthetic sids, hostname TESTHOST."""
@@ -2625,8 +2628,10 @@ class Mirror(unittest.TestCase):
         """Round 4 of fork PR #897, the thirty-first commit (the reviewer's verifier at the thirtieth, by execution): a far
         host's UNANSWERED word through a hub stays on the hub's row (`viaHeld`, _via_held) when the hub's next roster omits
         the host (a restarted hub has not heard it yet), and this writer files it as the hub's word, heard in this process,
-        unanswered, so the reader's listing-unanswered arm keeps holding; each held row carries the second its word was
-        last heard (`heldAt`), which the via row's seenAt reads. The hub's word naming the host again releases it, under
+        unanswered, so the reader's listing-unanswered arm keeps holding; each held row carries the seenAt of the hub's
+        row the word left (`heldAt`, PEER_STATE's shape comment: since round 6 of fork PR #897 that row may have been
+        filed by a later roster that kept the word in the merged roster without naming it), which the via row's seenAt
+        reads. The hub's word naming the host again releases it, under
         the hub's name for the host or under a new name by the host's bus id (the hub's own fold). A word whose bit was
         True is NOT held: carried, heard false, as before. Through the real builder and fold of this bus's dial (the answer road, where this bus places each of the hub's rosters after the last: round 6 of fork PR #897, the reviewer's round-5 ruling C; the hub's dials merge and release nothing) and this writer."""
         self._forget_presence_cache()
@@ -3126,26 +3131,68 @@ class Mirror(unittest.TestCase):
         """PEER_STATE'S SHAPE COMMENT (round 6 of fork PR #897, the reviewer's round-5 ruling E on its refuter's
         regression-3, and decision 5 on round 5, which approves road, viaHeld, heldAt, hubBus and hubRoad and asks that
         each be named in the shape comment and pinned). Every writer the lock's census derives
-        (_peer_state_lock_census's writerFunctions) runs through the real bus (_drive_every_peer_state_writer), and the
-        keys found on any row after any step, with the keys _via_held stamps on a held word beyond the gossip row's own
-        (a recorder replaces its row whole, so a key one exchange carries, theirTier, is gone after the next), are exactly
-        the keys the declaration's comment names in double quotes (road's two values beside them): a key a writer stores
-        and the comment omits reds here, and so does a key the comment names that no writer stores. The census's writer
-        population must equal the writers the drive ran, so a new writer reds here until the drive runs it and its keys
-        are named. Red at the forty-ninth commit, whose comment named presence, presenceAnswered, epoch, seenAt and
-        drift alone."""
+        (_peer_state_lock_census's writerFunctions) runs through the real bus (_drive_every_peer_state_writer), on the
+        branches that drive takes: the handler's dial and the fold's answer, each roster answered and carrying a bus id
+        (the dials a tier, the answers with a tier and without, each answer with its dial's capture), filed under the
+        name the hub declares and then under the alias, with _drop_peer_name_dupes forgetting the declared row; the far
+        hosts' unanswered words the answers then omit, held; the kernel's up notify, which stores nothing, and its down
+        notify of a host with a row; and the dialer's 409 and a 403 that carries a body. The keys found on any row after
+        any step, with the keys _via_held stamps on a held word beyond the gossip row's own (a recorder replaces its row
+        whole, so a key one exchange carries, theirTier, is gone after the next), are exactly the keys the declaration's
+        comment names in double quotes (road's two values beside them): a key stored on those branches that the comment
+        omits reds here, and so does a key the comment names that no step stores. A STATED LIMIT (round 6 of fork PR
+        #897, the reviewer's verifier at the sixty-second commit, by execution): a key a writer stores only on a branch
+        the drive does not take is not seen (among them a dial or an answer carrying no bus id, an unanswered roster,
+        a refusal whose body is empty), so the comment's word for such a branch rests on reading the writer; the
+        witness, test_the_shape_pin_does_not_see_a_key_a_writer_stores_only_on_a_branch_its_drive_does_not_take. The
+        census's writer population must equal the writers the drive ran, so a new writer reds here until the drive runs
+        it and its keys are named. Red at the forty-ninth commit, whose comment named presence, presenceAnswered, epoch,
+        seenAt and drift alone."""
         called, snap, stored, stamps = self._drive_every_peer_state_writer()
         named = _peer_state_shape_comment_keys()
         self.assertEqual(sorted(named), sorted(stored | stamps),
                          "PEER_STATE's shape comment names, in double quotes, every key a writer stores on a row and every "
-                         "key _via_held stamps on a held word, and no other (missing: %r; named, stored by no writer: %r)"
-                         % (sorted((stored | stamps) - named), sorted(named - stored - stamps)))
+                         "key _via_held stamps on a held word on the branches the drive takes, and no other (missing: %r; "
+                         "named, stored by no step: %r)" % (sorted((stored | stamps) - named), sorted(named - stored - stamps)))
         self.assertTrue({"road", "viaHeld", "heldAt", "hubBus", "hubRoad"} <= stored | stamps,
                         "decision 5's five, each stored by a writer: %r" % sorted(stored | stamps))
         self.assertEqual((snap["drift"], snap["refused"]), ("drift", "refused"), "the dialer's two notes ran")
         census = _peer_state_lock_census(Path(os.path.realpath(os.path.join(BIN, "romp-postal-service"))).read_text())
         self.assertEqual(sorted(called), census["writerFunctions"],
                          "the drive ran every writer the census derives, and no other: %r" % called)
+
+    def test_the_shape_pin_does_not_see_a_key_a_writer_stores_only_on_a_branch_its_drive_does_not_take(self):
+        """The shape pin's STATED LIMIT, witnessed (round 6 of fork PR #897, the reviewer's verifier at the sixty-second
+        commit, by execution, its mutant MUV1): test_the_peer_state_shape_comment_names_every_key_each_writer_stores
+        sees the keys stored on the branches its drive takes, and a key a writer stores only on another branch is not
+        seen. Here the real handler (peer_exchange_handle), compiled from the bus's source with one change, also stores
+        a key the comment does not name on a row whose dial carries no bus id, a branch the drive does not take: the
+        drive runs that handler and the pin's comparison with the comment's keys still passes, the key unseen; the same
+        handler then stores the key on a dial with no bus id, so the change is live. It turns red when the limit closes
+        (a drive that takes that branch)."""
+        path = Path(os.path.realpath(os.path.join(BIN, "romp-postal-service")))
+        source = path.read_text()
+        defs = [n for n in ast.parse(source).body if isinstance(n, ast.FunctionDef) and n.name == "peer_exchange_handle"]
+        self.assertEqual(len(defs), 1, "the handler stands once in the bus's source")
+        text = ast.get_source_segment(source, defs[0])
+        stamp = '            row["busId"] = bus_id\n'
+        self.assertEqual(text.count(stamp), 1, "the handler's busId stamp, the one line the change follows, stands once")
+        ns = {}
+        exec(compile(text.replace(stamp, stamp + '        else:\n            row["noBus"] = True\n'), str(path), "exec"),
+             vars(pm), ns)
+        self.addCleanup(setattr, pm, "peer_exchange_handle", pm.peer_exchange_handle)
+        pm.peer_exchange_handle = ns["peer_exchange_handle"]
+        called, _, stored, stamps = self._drive_every_peer_state_writer()
+        self.assertGreater(called.get("peer_exchange_handle", 0), 0, "the drive ran the changed handler: %r" % called)
+        self.assertNotIn("noBus", stored | stamps, "THE LIMIT: every dial the drive sends carries a bus id, so the key a "
+                                                   "dial with none stores is not seen")
+        self.assertEqual(sorted(_peer_state_shape_comment_keys()), sorted(stored | stamps),
+                         "the shape pin's comparison passes under the changed handler")
+        old = HOST + "-old"
+        resp, status = pm.peer_exchange_handle(self._exchange_request(old, [{"id": E, "name": "web"}]))
+        self.assertEqual(status, 200, resp)
+        self.assertIs((pm.PEER_STATE.get(old) or {}).get("noBus"), True,
+                      "the change is live: the handler stores the key on a dial with no bus id")
 
     def test_the_recorders_stamp_road_on_each_row_and_heldat_hubbus_and_hubroad_on_each_held_word(self):
         """The writer state round 4 added, pinned by value (round 6 of fork PR #897, decision 5 on round 5 and the
