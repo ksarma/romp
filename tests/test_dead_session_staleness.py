@@ -3121,6 +3121,139 @@ with As(us):
     out["roads"][road]["torn"] = torn(us, "_remote_sids_lost_cleared", B, handle_b_lost, read_held_lost)
 out["roads"][road]["markAfter"] = mark(us)
 step(road, "afterB", us, other=S["other"], csid=S["csid"], nobody=S["nobody"])
+# (3) the link state (round 6 of fork PR #897, a verifier's finding at the fifty-first commit): that commit's writer read
+# each host's link state (PEERS's port and up) live, after its copy of the table. Our kernel holds B down while B's dials
+# still land here, so B's answered dial during the down (R2) is stored with no mark; a session (goss) starts on B and the
+# hub names it. A mirror write takes its copy (R2, the hub's word naming goss, B down) and is held at its first
+# _direct_row_speaks while, on a second thread, B's next dial (R3, naming goss) is stored, and then, on a third, the kernel's
+# up notify writes PEERS[B] up. Each thread is started once the one before it has blocked on _REMOTE_SIDS_LOCK, which the
+# held write holds (each stores its part before its own write takes that lock), or on the table's lock, or has finished;
+# both locks are instrumented and installed by assignment, a bounded wait that expires fails the road, and no sleep. The
+# threads' own writes wait, bounded, until the held write's document has been read
+class WatchLock:                                   # a lock, instrumented: each watched thread finding it held says so, once
+    def __init__(self):
+        self.lock, self.watch, self.blocked = threading.Lock(), {}, set()
+    def acquire(self, blocking=True, timeout=-1):
+        if self.lock.acquire(False):
+            return True
+        me = threading.current_thread()
+        if me in self.watch and me not in self.blocked:
+            self.blocked.add(me)
+            self.watch[me].set()
+        return self.lock.acquire(blocking, timeout)
+    def release(self):
+        self.lock.release()
+    def locked(self):
+        return self.lock.locked()
+    def __enter__(self):
+        return self.acquire()
+    def __exit__(self, *exc):
+        self.release()
+def torn_many(bus, gate_name, seconds, at_gate, read_held):
+    release = threading.Event()
+    got = {"gate": None, "blocked": [], "errors": {}, "done": [], "atGate": None}
+    locks = {name: WatchLock() for name in ("_REMOTE_SIDS_LOCK", "_PEER_STATE_LOCK")}
+    saved = {name: bus.__dict__.get(name) for name in locks}
+    threads = []
+    for name, fn in seconds:
+        ev, done = threading.Event(), threading.Event()
+        def run(fn=fn, name=name, ev=ev, done=done):
+            try:
+                fn()
+            except BaseException as e:
+                got["errors"][name] = "%s: %s" % (type(e).__name__, e)
+            finally:
+                done.set()
+                ev.set()
+        t = threading.Thread(target=run, daemon=True)
+        threads.append((name, t, ev, done))
+        for lk in locks.values():
+            lk.watch[t] = ev
+    started = set(t for _, t, _, _ in threads)
+    real_gate, real_doc = getattr(bus, gate_name), bus._remote_sids_document
+    def gated(*a, **k):
+        if got["gate"] is None and threading.current_thread() is threading.main_thread():
+            got["gate"] = "waiting"
+            for name, t, ev, done in threads:
+                t.start()
+                if not ev.wait(30):                # bounded: expiry fails the road and never opens the gate
+                    got["gate"] = "expired"
+                    raise RuntimeError("the gate's wait expired: %s neither blocked nor finished" % name)
+                where = [ln for ln, lk in sorted(locks.items()) if t in lk.blocked]
+                got["blocked"].append([name, (where or ["done" if done.is_set() else "opened"])[0]])
+            got["gate"] = "opened"
+            got["atGate"] = at_gate()
+        return real_gate(*a, **k)
+    def doc(*a, **k):
+        if threading.current_thread() in started:
+            release.wait(30)                       # a thread's own write waits until the held write's document is read
+        return real_doc(*a, **k)
+    for name, lk in locks.items():
+        setattr(bus, name, lk)
+    setattr(bus, gate_name, gated)
+    bus._remote_sids_document = doc
+    try:
+        bus._write_remote_sids()                   # the held write (it logs and keeps the previous file if the gate raised)
+        read_held()
+    finally:
+        release.set()
+        for name, t, ev, done in threads:
+            if t.ident is not None:
+                t.join(30)
+        got["done"] = [name for name, t, ev, done in threads if done.is_set()]
+        setattr(bus, gate_name, real_gate)
+        bus._remote_sids_document = real_doc
+        for name, v in saved.items():
+            if v is None:
+                delattr(bus, name)
+            else:
+                setattr(bus, name, v)
+    return got
+def b_heard_while_down(road):                      # B held down while its dials land (R2, no mark); goss starts on B; the hub names it
+    us = fresh_us(); b, hub = other(road, "b"), other(road, "hub")
+    LISTINGS["b"], LISTINGS["hub"] = [S["other"]], [S["hubsid"]]
+    notify(us, B, True); notify(us, HUB, True)
+    dial(b, B, us, US); dial(b, B, hub, HUB); dial(hub, HUB, us, US)
+    notify(us, B, False)                           # the kernel holds B down (our tunnel to B is out)
+    out["roads"][road] = {"r2": dial(b, B, us, US)}   # R2: B's dial still lands (its tunnel to us works): answered, no mark
+    step(road, "r2HeardWhileDown", us, goss=S["goss"], other=S["other"], nobody=S["nobody"])
+    out["roads"][road]["r2Row"] = [bool(us.PEER_STATE[B].get("seenAt")), bool(us.PEER_STATE[B].get("linkDown")),
+                                   us.PEER_STATE[B].get("presenceAnswered")]
+    LISTINGS["b"] = [S["other"], S["goss"]]        # a session (goss) starts on B; the hub hears it and names it here
+    dial(b, B, hub, HUB); dial(hub, HUB, us, US)
+    step(road, "hubNamesGoss", us, goss=S["goss"], other=S["other"], nobody=S["nobody"])
+    with As(b):
+        breq = b.build_exchange_request(US, wait=False)   # R3: B's next dial, answered, naming goss
+    breq["host"] = B
+    return us, breq
+road = "oneHoldLinkState"
+us, breq = b_heard_while_down(road)
+def handle_r3(bus=us, req=breq, road=road):
+    out["roads"][road]["handled"] = [bus.peer_exchange_handle(req)[1]]
+def notify_up(bus=us, road=road):
+    out["roads"][road]["notified"] = list(bus.peer_update({"host": B, "port": 50002, "up": True}))
+def at_gate_link(bus=us):                          # B's row and B's link state, live, while the held write waits at its gate
+    st = bus.PEER_STATE.get(B) or {}
+    return [bool(st.get("seenAt")), bool(st.get("linkDown")),
+            sorted(pa.get("id") for pa in st.get("presence") or [] if not pa.get("via")), (bus.PEERS.get(B) or {}).get("up")]
+with As(us):
+    out["roads"][road]["torn"] = torn_many(us, "_direct_row_speaks", [("dial", handle_r3), ("upNotify", notify_up)], at_gate_link,
+                                           lambda: step(road, "held", us, goss=S["goss"], other=S["other"], nobody=S["nobody"]))
+step(road, "afterBoth", us, goss=S["goss"], other=S["other"], nobody=S["nobody"])
+# the serial controls, every order of the same history (R3 stored before the up notify), and the notify first, another history
+for road, order in (("oneHoldLinkStateWriteFirst", ("write", "dial", "up")), ("oneHoldLinkStateDialThenWrite", ("dial", "write", "up")),
+                    ("oneHoldLinkStateWriteLast", ("dial", "up", "write")), ("oneHoldLinkStateUpFirst", ("up", "write", "dial"))):
+    us, breq = b_heard_while_down(road)
+    for act in order:
+        with As(us):
+            if act == "write":
+                us._write_remote_sids()
+                step(road, "written", us, goss=S["goss"], nobody=S["nobody"])
+            elif act == "dial":
+                out["roads"][road]["handled"] = [us.peer_exchange_handle(breq)[1]]
+            else:
+                out["roads"][road]["notified"] = list(us.peer_update({"host": B, "port": 50002, "up": True}))
+    step(road, "afterAll", us, goss=S["goss"], nobody=S["nobody"])
 print(json.dumps(out))
 """, HERE, BIN, str(others), json.dumps(ROAD_SIDS), R_US, R_B, R_C, R_HUB, R_F, R_HUB2, R_HUB_DECL, R_G, R_HUB_DECL2],
                              capture_output=True, text=True, env=full, cwd=str(home), timeout=120)
@@ -5285,6 +5418,69 @@ print(json.dumps(out))
                                  "the serial control: the same write whole before B's dial keeps the mark")
                 self.assertEqual((self._road(got, name, "afterB", "other"), road["markAfter"]), (RULE_4, None),
                                  "B's own write: B heard since the mark, the mark clears with B's rows in the document")
+
+    def test_one_mirror_write_reads_each_hosts_link_state_from_its_one_hold_so_an_up_notify_written_after_it_cannot_let_an_older_roster_speak(self):
+        """The link state (round 6 of fork PR #897, a finding of the reviewer's verifier at the fifty-first commit, by
+        execution). Our kernel holds B down while B's dials still land here (the far side dialing us, a case _link_down's
+        docstring models), so B's answered dial during the down (R2) is stored with no mark; a session (goss) starts on B
+        and the hub names it: rule 4 by the hub's word, B's row held down. A mirror write (the monitor's poll) takes its
+        copy and is held at its first _direct_row_speaks while B's next dial (R3, naming goss) is stored on a second
+        thread and then the kernel's up notify writes PEERS[B] up on a third, each gate opened by its thread blocking on
+        _REMOTE_SIDS_LOCK, which the held write holds. Reading the link state live, the fifty-first commit's write paired
+        R2 from its copy with the link up from after it: R2 spoke for B, the hub's word folded into it, goss was in no
+        row, and it answered [true, 5, no-reachable-host-names-it] in that write's document while the hub vouched (also
+        at the fiftieth and forty-ninth commits). No serial order of this history gives that state (the next test).
+        Reading the link state from the copy it takes in the same hold as the table, B is down in that write, R2 does
+        not speak, and the hub's word stands: rule 4. Red at the fifty-first, fiftieth and forty-ninth commits with this
+        module overlaid (the reader's answer)."""
+        S = ROAD_SIDS
+        for shape, got in self.roads.items():
+            with self.subTest(shape=shape):
+                name = "oneHoldLinkState"
+                road = got["roads"][name]
+                torn = road["torn"]                # the interleaving ran, asserted first, so a red below is the reader's
+                self.assertEqual((torn["gate"], torn["errors"], torn["done"]), ("opened", {}, ["dial", "upNotify"]),
+                                 "each thread was started at the gate and finished, and no wait expired: %r" % torn)
+                self.assertEqual(torn["blocked"], [["dial", "_REMOTE_SIDS_LOCK"], ["upNotify", "_REMOTE_SIDS_LOCK"]],
+                                 "B's dial stored R3 and then waited on the lock the held write holds, and so did the up "
+                                 "notify after writing PEERS: %r" % torn)
+                self.assertEqual(torn["atGate"], [True, False, sorted([S["other"], S["goss"]]), True],
+                                 "inside the held write's window: R3 stored, naming the session, and PEERS[B] up")
+                self.assertEqual((road["handled"], road["notified"]), ([200], [{"ok": True, "up": 2}, 200]))
+                self.assertEqual(self._road(got, name, "held", "goss"), RULE_4,
+                                 "THE ONE HOLD: the held write reads B's link state from the copy it takes with the table, so "
+                                 "R2, heard while B was down, does not speak for B and the hub's word naming the session "
+                                 "stands (with the link state read live after the copy [true, 5, no-reachable-host-names-it])")
+                held = road["held"]["rows"]
+                self.assertEqual((held[R_B][1], held[R_B][6], held.get(R_VIA_B, [None] * 7)[6]),
+                                 (True, [S["other"]], sorted([S["other"], S["goss"]])),
+                                 "in the held write B's row is R2, held down by the copied link state, and the hub's word "
+                                 "stands beside it")
+                self.assertEqual(road["r2Row"], [True, False, True], "the premise: R2 heard during the down, no mark, answered")
+                self.assertEqual(self._road(got, name, "hubNamesGoss", "goss"), RULE_4,
+                                 "the premise: before the race the hub's word names the session beside B's held-down row")
+                self.assertEqual(self._road(got, name, "afterBoth", "goss"), RULE_4, "the writes after: R3 names the session")
+                self.assertEqual(self._road(got, name, "held", "nobody"), RULE_5, "a sid nothing names, while the hub vouches")
+
+    def test_the_serial_controls_of_the_link_state_road_answer_rule_4_in_every_order_and_the_notify_first_is_residual_1(self):
+        """The serial controls of the road above, every order of its history (R3 stored before the up notify): the write
+        whole before both, between them, and after both. Each reads rule 4 for goss at this head and at the fifty-first,
+        so the rule 5 the interleaving read there is the torn read's, not the road's. The up notify BEFORE R3 is another
+        history: R2, heard and answered and no longer held down, is older than the hub's word and folds it, so goss is in
+        no row until R3 names it. That is residual (1) as disclosed (postal/postal_service.py, the writer's docstring),
+        and this road is its witness here: rule 5 in the write after the notify, rule 4 after R3."""
+        for shape, got in self.roads.items():
+            with self.subTest(shape=shape):
+                for name in ("oneHoldLinkStateWriteFirst", "oneHoldLinkStateDialThenWrite", "oneHoldLinkStateWriteLast"):
+                    road = got["roads"][name]
+                    self.assertEqual((road["handled"], road["notified"]), ([200], [{"ok": True, "up": 2}, 200]), name)
+                    self.assertEqual((self._road(got, name, "written", "goss"), self._road(got, name, "afterAll", "goss")),
+                                     (RULE_4, RULE_4), name)
+                name = "oneHoldLinkStateUpFirst"
+                self.assertEqual(self._road(got, name, "written", "goss"), RULE_5,
+                                 "RESIDUAL (1): the up notify before R3, R2 answered and not held down folds the hub's word, "
+                                 "so the session is in no row until B's next exchange")
+                self.assertEqual(self._road(got, name, "afterAll", "goss"), RULE_4, "R3, B's next exchange, closes the window")
 
     def test_a_peer_mode_beat_vouches_for_presence_alone_and_the_legacy_scheme_keeps_its_ttl_vouch(self):
         """Round 3 of fork PR #897, the reviewer's ruling on its refuters' finding (the peer-mode beat phase of the class

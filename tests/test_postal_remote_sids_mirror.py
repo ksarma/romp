@@ -2757,6 +2757,8 @@ class Mirror(unittest.TestCase):
 # ── PEER_STATE's ONE LOCK (round 6 of fork PR #897, the reviewer's round-5 ruling A) ──
 _TABLE, _TABLE_LOCK = "PEER_STATE", "_PEER_STATE_LOCK"
 _ORDER_LOCK, _ORDER_WRITER = "_REMOTE_SIDS_LOCK", "_write_remote_sids"
+_LINK_STATE = ("PEERS", "_PEERS_SEEDED")          # the link state one mirror write reads beside the table
+_ROW_KINDS = ("row", "rowsdict", "rows", "items", "pair")
 _MUTATORS = frozenset({"pop", "popitem", "setdefault", "update", "clear", "append", "extend", "insert", "remove", "add",
                        "discard", "sort", "reverse", "__setitem__", "__delitem__", "__ior__"})
 _FUNCS = (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)
@@ -2765,10 +2767,12 @@ _DEFS = (ast.FunctionDef, ast.AsyncFunctionDef)
 
 def _peer_state_lock_census(source):
     """The census of PEER_STATE's lock over the bus's `source`, derived by AST, never listed. Returns {"writers",
-    "iterations", "writerReads", "mirrorReads": [[function, line, text]], "protected", "takers", "writerFunctions",
-    "writerReach", "mirrorTree": [function], "mirrorHolds": [[function, line]], "callSites": {function: n}, "refused":
-    [text]}. The rules (the reviewer's round-5 ruling A, and decision 6 at its end; the last two, round 6 of fork PR
-    #897, the verifier's findings at the fiftieth commit):
+    "iterations", "writerReads", "mirrorReads", "mirrorLinkReads": [[function, line, text]], "protected", "takers",
+    "writerFunctions", "writerReach", "mirrorTree", "handoffTakers": [function], "mirrorHolds": [[function, line]],
+    "holdBound": [[function, name, line of the hold]], "callSites": {function: n}, "refused": [text]}. The rules (the
+    reviewer's round-5 ruling A, and decision 6 at its end; READS IN A WRITER'S FUNCTION and ONE MIRROR WRITE, round 6
+    of fork PR #897, the verifier's findings at the fiftieth commit; ONE HOLD and the link state, its findings at the
+    fifty-first):
       WRITERS, the rule the ruling's scan used: a store, delete or augmented assignment whose target is a subscript
         or attribute rooted at PEER_STATE or at a name bound to a ROW reached from it (PEER_STATE.get, .setdefault,
         .pop, PEER_STATE[k], a value target of a loop over PEER_STATE.items() or .values(), and so on through a copy
@@ -2803,8 +2807,23 @@ def _peer_state_lock_census(source):
         in a function the write reaches by one call outside a loop at each step up to _write_remote_sids, and every
         read of the name among them, the atomic ones included, sits inside it: every table input of one write, each
         row's linkDown mark and each seenAt the lost-carry clear reads among them, comes from one moment of the table.
-        Refused, each prefixed "one copy:": no hold, a second hold, a hold under a loop or reached other than by one
-        call, and a read outside the one hold."""
+        So does every read of the LINK STATE among them (the names PEERS and _PEERS_SEEDED: each host's port and up,
+        which _link_down and _link_up read, and the seed flag the lost-carry clear reads), so a host's row from the
+        copy is never paired with a link state from after it. Refused, each prefixed "one copy:": no hold, a second
+        hold, a hold under a loop or reached other than by one call, a read of the table outside the one hold, and a
+        read of the link state outside it.
+      ONE HOLD: a read-modify-write sits in one hold. In every function, a name bound from a READ OF THE TABLE (an
+        expression that loads PEER_STATE, reads a name the rules above bind to a row or to a container of rows, or
+        calls a function that reads the table, one whose body loads PEER_STATE or calls such a function, by name to a
+        fixpoint) or from a name so bound (to a fixpoint, flow-insensitively, through every binding form: an
+        assignment, an augmented one, a loop target, a with target, a walrus; a comprehension's own targets are that
+        comprehension's, as Python 3 scopes them), inside one `with _PEER_STATE_LOCK` or outside every hold, is read
+        inside another hold of that function only after that hold has rebound it (a binding in the hold that ends before the read starts); and a name so bound inside a hold
+        is handed outside it, in any argument of a call, to no function that takes the lock and writes the table
+        (a function holding a writer node, or calling one, by name to a fixpoint). Refused: "split hold in
+        <function>: <name> ...", naming the hold or holds it was bound in and the hold that reads it. Read outside
+        every hold (a name chosen under the lock and used after it, a log line's decision) it is not refused: the
+        rule is about a value read at one moment of the table and written back at another."""
     tree = ast.parse(source)
     nodes = list(ast.walk(tree))
     parent, scopes = {}, {}
@@ -3153,6 +3172,136 @@ def _peer_state_lock_census(source):
             refused.append("read outside the lock in %s, which a function that writes the table reaches outside the lock "
                            "(line %d: %s; reached from %s)" % (line(n)[0], n.lineno, line(n)[2], reached_from[sc]))
 
+    # ONE HOLD (round 6 of fork PR #897, the verifier's finding at the fifty-first commit): a read-modify-write sits in ONE
+    # hold. A name bound from a read of the table, in one hold or outside every hold, is read in another hold only after
+    # that hold rebinds it, and a name bound inside a hold is handed outside it to no function that takes the lock and
+    # writes the table
+    def hold_of(node):                                # the innermost `with` on the lock whose BODY holds `node`, in its function
+        child, p = node, parent.get(node)
+        while p is not None and not isinstance(p, _FUNCS):
+            if is_with(p, _TABLE_LOCK) and any(child is b for b in p.body):
+                return p
+            child, p = p, parent.get(p)
+        return None
+
+    def callee_of(call):
+        return call.func.id if isinstance(call.func, ast.Name) else (
+            call.func.attr if isinstance(call.func, ast.Attribute) else None)
+
+    calls_in = {name: {callee_of(x) for d in ds for x in ast.walk(d) if isinstance(x, ast.Call)} for name, ds in defs.items()}
+
+    def closure(seed):                                # `seed` and every def calling one of them, by name, to a fixpoint
+        out, changed = set(seed), True
+        while changed:
+            changed = False
+            for name, called in calls_in.items():
+                if name not in out and called & out:
+                    out.add(name)
+                    changed = True
+        return out
+
+    readers = closure({name for name, ds in defs.items() for d in ds for x in ast.walk(d)
+                       if isinstance(x, ast.Name) and x.id == _TABLE and isinstance(x.ctx, ast.Load)})
+    handoff = closure({d.name for d in writer_fns}) & table_takers
+
+    def reads_table(v, sc):
+        for x in ast.walk(v):
+            if isinstance(x, ast.Name) and isinstance(x.ctx, ast.Load) and (x.id == _TABLE or look(x.id, sc) in _ROW_KINDS):
+                return True
+            if isinstance(x, ast.Call) and callee_of(x) in readers:
+                return True
+        return False
+
+    bindings, bound = [], set()                       # (scope, name, value, hold, end of the binding)
+    for node in nodes:
+        if isinstance(node, _FUNCS):
+            a = node.args
+            for arg in a.posonlyargs + a.args + a.kwonlyargs + [x for x in (a.vararg, a.kwarg) if x is not None]:
+                bound.add((node, arg.arg))            # a parameter shadows an enclosing name
+        sc = scope(node)
+        if sc is None:
+            continue                                  # the module scope runs at import, before any thread starts
+        if isinstance(node, ast.Assign):
+            targets, value, end = node.targets, node.value, node
+        elif isinstance(node, ast.AnnAssign) and node.value is not None:
+            targets, value, end = [node.target], node.value, node
+        elif isinstance(node, ast.AugAssign):
+            targets, value, end = [node.target], node, node
+        elif isinstance(node, ast.NamedExpr):
+            targets, value, end = [node.target], node.value, node
+        elif isinstance(node, (ast.For, ast.AsyncFor)):
+            targets, value, end = [node.target], node.iter, node.target
+        elif isinstance(node, ast.withitem) and node.optional_vars is not None:
+            targets, value, end = [node.optional_vars], node.context_expr, node.optional_vars
+        else:
+            continue                                  # a comprehension's targets are its own (comp_local)
+        for t in targets:
+            for x in ast.walk(t):
+                if isinstance(x, ast.Name) and isinstance(x.ctx, ast.Store):
+                    bindings.append((sc, x.id, value, hold_of(node), (end.end_lineno, end.end_col_offset)))
+                    bound.add((sc, x.id))
+
+    def comp_local(n):                                # a name a comprehension around `n` binds: Python 3 scopes it to that
+        p = parent.get(n)                             # comprehension, so it is none of the function's names
+        while p is not None and not isinstance(p, _FUNCS):
+            if isinstance(p, (ast.ListComp, ast.SetComp, ast.GeneratorExp, ast.DictComp)) and any(
+                    isinstance(x, ast.Name) and x.id == n.id for g in p.generators for x in ast.walk(g.target)):
+                return True
+            p = parent.get(p)
+        return False
+
+    def owner(sc, name):                              # the function scope a name resolves to: the nearest that binds it
+        while sc is not None:
+            if (sc, name) in bound:
+                return sc
+            sc = scope(sc)
+        return None
+
+    taint, changed = {}, True                         # (scope, name) -> the holds its value was read from (None: outside every hold)
+    while changed:
+        changed = False
+        for sc, name, value, hold, _ in bindings:
+            add = {hold} if reads_table(value, sc) else set()
+            for x in ast.walk(value):
+                if isinstance(x, ast.Name) and isinstance(x.ctx, ast.Load) and not comp_local(x):
+                    o = owner(scope(x), x.id)
+                    if o is not None:
+                        add |= taint.get((o, x.id), set())
+            if not add <= taint.get((sc, name), set()):
+                taint.setdefault((sc, name), set()).update(add)
+                changed = True
+
+    def where(holds_):
+        return "; ".join(sorted("in the hold at line %d" % h.lineno if h is not None else "outside every hold"
+                                for h in holds_))
+
+    hold_bound = sorted({(fname(sc), name, hold.lineno) for sc, name, value, hold, _ in bindings
+                         if hold is not None and hold in taint.get((sc, name), set())})
+    for n in nodes:
+        if not (isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load)) or scope(n) is None or comp_local(n):
+            continue
+        o = owner(scope(n), n.id)
+        t = taint.get((o, n.id)) if o is not None else None
+        if not t:
+            continue
+        h2 = hold_of(n)
+        if h2 is not None:
+            others = t - {h2}
+            rebound = any(b[0] is o and b[1] == n.id and b[3] is h2 and b[4] <= (n.lineno, n.col_offset) for b in bindings)
+            if others and not rebound:
+                refused.append("split hold in %s: %s, bound from a read of the table %s, is read in the hold at line %d "
+                               "(line %d)" % (fname(scope(n)), n.id, where(others), h2.lineno, n.lineno))
+            continue
+        if not any(h is not None for h in t):
+            continue
+        child, p = n, parent.get(n)                   # handed outside its hold: an argument of a call, at any depth of it
+        while p is not None and not isinstance(p, (ast.stmt, ast.Lambda)):
+            if isinstance(p, ast.Call) and (child in p.args or child in p.keywords) and callee_of(p) in handoff:
+                refused.append("split hold in %s: %s, bound from a read of the table %s, is handed outside it to %s, which "
+                               "takes the lock and writes the table (line %d)"
+                               % (fname(scope(n)), n.id, where(h for h in t if h is not None), callee_of(p), n.lineno))
+            child, p = p, parent.get(p)
+
     # ONE MIRROR WRITE, ONE COPY: every function the mirror write reaches (_write_remote_sids and, to a fixpoint, every
     # function a reference in a reached function names, by name, a method by its attribute name) reads the table only
     # inside ONE `with` on the lock, taken once per write (not under a loop, in a function the write reaches by one call
@@ -3187,13 +3336,20 @@ def _peer_state_lock_census(source):
         if not any(inside(n, h) for h in holds[:1]):
             refused.append("one copy: the mirror write reads the table outside its one copy in %s (line %d: %s)"
                            % (line(n)[0], n.lineno, line(n)[2]))
+    link_reads = [n for n in nodes if isinstance(n, ast.Name) and n.id in _LINK_STATE and isinstance(n.ctx, ast.Load)
+                  and within(n, tree)]            # the link state, read in the same hold as the table (round 6 of fork PR #897)
+    for n in link_reads:
+        if not any(inside(n, h) for h in holds[:1]):
+            refused.append("one copy: the mirror write reads the link state outside its one copy in %s (line %d: %s)"
+                           % (line(n)[0], n.lineno, line(n)[2]))
     return {"writers": [line(n) for n in writers], "iterations": [line(n) for n in iterations],
             "protected": sorted(protected), "takers": sorted(table_takers),
             "callSites": {n: len(rs) for n, rs in refs.items() if n in protected},
             "writerFunctions": sorted({d.name for d in writer_fns}), "writerReads": [line(n) for n in writer_reads],
             "writerReach": sorted({d.name for d in reached_from}),
             "mirrorTree": sorted({d.name for d in tree}), "mirrorHolds": [line(h)[:2] for h in holds],
-            "mirrorReads": [line(n) for n in mirror_reads],
+            "mirrorReads": [line(n) for n in mirror_reads], "mirrorLinkReads": [line(n) for n in link_reads],
+            "holdBound": [list(x) for x in hold_bound], "handoffTakers": sorted(handoff),
             "refused": refused}
 
 
@@ -3212,7 +3368,12 @@ class PeerStateLock(unittest.TestCase):
     the table reads it only under the lock (the fold's previous-row read hoisted before its hold passed every other pin
     and lost a far host's word under stress), and one mirror write reads the table only through its one copy (its link
     marks and seenAt read from the live table gave a write a torn table; the interleavings are
-    tests/test_dead_session_staleness.py ReaderFollowsTheWriter's test_one_mirror_write_* witnesses)."""
+    tests/test_dead_session_staleness.py ReaderFollowsTheWriter's test_one_mirror_write_* witnesses). Two more joined on
+    the verifier's findings at the fifty-first commit: one mirror write reads the link state (PEERS, the seed flag) only
+    inside its one hold as well (read live, B's row from the copy met the up notify written after it and a session on B
+    answered rule 5: the test_one_mirror_write_reads_each_hosts_link_state_* witness there), and a read-modify-write
+    sits in ONE hold (the fold's row built in one hold and stored in a second, and three shapes like it, each under the
+    lock, passed every pin; two of them lost a far host's word under a deterministic interleaving)."""
 
     SOURCE = Path(os.path.realpath(os.path.join(BIN, "romp-postal-service"))).read_text()
     BASE = None                                       # the bus's own refusals, read once (the plants add to them)
@@ -3419,6 +3580,182 @@ class PeerStateLock(unittest.TestCase):
         self.assertEqual((got["refused"], [fn for fn, _ in got["mirrorHolds"]]), ([], ["_remote_sids_document"]),
                          "the control: the copy taken once, in the write")
 
+    # ── round 6 of fork PR #897, the verifier's findings at the fifty-first commit ──
+
+    def test_the_census_refuses_a_mirror_write_that_reads_the_link_state_outside_its_one_copy_by_name(self):
+        """One mirror write reads the link state only through the copies it takes in its one hold: each host's port and
+        up from PEERS, which _link_down and _link_up read, and the seed flag and the list of links the lost-carry clear
+        reads. The fifty-first commit read them live after its copy of the table (a finding of the reviewer's verifier,
+        by execution: B's answered dial heard while the kernel held B down met the up notify written after the copy and
+        spoke for B, and a session started on B since answered rule 5; tests/test_dead_session_staleness.py
+        ReaderFollowsTheWriter's test_one_mirror_write_reads_each_hosts_link_state_from_its_one_hold_* witness). Refused
+        by name: each of those four live reads, put back into the bus's own source, and the copy of the link fields moved
+        after the hold there; a copy of PEERS taken after the hold in a source of its own; accepted: the same copies taken
+        in the hold."""
+        got = _peer_state_lock_census(self.SOURCE)
+        self.assertEqual([r for r in got["refused"] if r.startswith("one copy: the mirror write reads the link state")], [],
+                         "the bus's own source reads the link state only in the write's one hold")
+        self.assertEqual(sorted((fn, text) for fn, _, text in got["mirrorLinkReads"]),
+                         [("_remote_sids_document", "PEERS"), ("_remote_sids_document", "_PEERS_SEEDED")],
+                         "the link state is read in the whole write twice, both in the snapshot's hold: %r"
+                         % got["mirrorLinkReads"])
+        live = [   # the fifty-first commit's reads, each put back into the bus's own source
+            ("_link_down", [('    p = links.get(host) or {}                          # the writer\'s copy of the link state, '
+                             'never the live PEERS\n    if p.get("port") and not p.get("up"):',
+                             '    p = PEERS.get(host) or {}\n    if p.get("port") and not p.get("up"):')]),
+            ("_link_up", [('    p = links.get(host) or {}                          # the writer\'s copy of the link state, '
+                           'never the live PEERS\n    return bool(p.get("port") and p.get("up"))',
+                           '    p = PEERS.get(host) or {}\n    return bool(p.get("port") and p.get("up"))')]),
+            ("_remote_sids_lost_cleared", [('    dialable = [h for h, p in links.items() if p.get("port")]',
+                                            '    dialable = [h for h, p in list(PEERS.items()) if p.get("port")]')]),
+            ("_remote_sids_lost_cleared", [('    if not seeded:                                    # the seed flag and the',
+                                            '    if not _PEERS_SEEDED[0]:                          # the seed flag and the')]),
+            ("_remote_sids_document", [   # and the copy of the link fields moved after the hold, in the bus's own source
+                ('        links = {h: {"port": p.get("port"), "up": bool(p.get("up"))} for h, p in dict(PEERS).items()}\n', ''),
+                ('    peers = {h: st for h, st in table.items() if st.get("seenAt")}   # the hosts heard in this process',
+                 '    links = {h: {"port": p.get("port"), "up": bool(p.get("up"))} for h, p in dict(PEERS).items()}\n'
+                 '    peers = {h: st for h, st in table.items() if st.get("seenAt")}   # the hosts heard in this process')]),
+        ]
+        for fn, edits in live:
+            with self.subTest(function=fn, read=edits[-1][1].split("\n")[0].strip()):
+                got = self._mutant(*edits)
+                self.assertTrue(any(r.startswith("one copy: the mirror write reads the link state outside its one copy in "
+                                                 "%s (line" % fn) for r in got["refused"]), got["refused"])
+        head = ("PEER_STATE = {}\nPEERS = {}\ndef _write_remote_sids():\n    with _REMOTE_SIDS_LOCK:\n"
+                "        return _remote_sids_document()\n")      # a write over a source of its own: whatever the bus holds
+        after = head + ("def _remote_sids_document():\n    with _PEER_STATE_LOCK:\n"
+                        "        table = {h: dict(st) for h, st in PEER_STATE.items()}\n"
+                        "    links = dict(PEERS)\n    return table, links\n")
+        with self.subTest(plant="a copy of PEERS after the hold"):
+            refused = _peer_state_lock_census(after)["refused"]
+            self.assertTrue(any(r.startswith("one copy: the mirror write reads the link state outside its one copy in "
+                                             "_remote_sids_document (line 9:") for r in refused),
+                            "a copy after the hold: %r" % refused)
+        inside = head + ("def _remote_sids_document():\n    with _PEER_STATE_LOCK:\n"
+                         "        table = {h: dict(st) for h, st in PEER_STATE.items()}\n        links = dict(PEERS)\n"
+                         "    return table, links\n")
+        self.assertEqual(_peer_state_lock_census(inside)["refused"], [], "the control: the copy taken in the hold")
+
+    def test_the_census_refuses_a_read_modify_write_split_across_two_holds_by_name(self):
+        """A read-modify-write sits in ONE hold (ONE HOLD in _peer_state_lock_census): a name bound from a read of the
+        table in one hold, or outside every hold, is read in another hold only after that hold rebinds it, and a name
+        bound in a hold is handed outside it to no function that takes the lock and writes the table. The reviewer's
+        verifier found at the fifty-first commit that every read and write sitting under SOME hold passed the census:
+        the fold's row built in one hold and stored in a second (M13), the same in the handler (M14), the fold's
+        previous-row read in a hold of its own (M15), and the down notify's membership test in one hold and its mark in
+        another (M16) each refused nothing and passed every group-A pin, and M13 and M15 lost a far host's word under a
+        deterministic interleaving. Refused by name here: those four, put into the bus's own source; the shapes planted,
+        with a value derived between the holds, a read taken by a helper that holds the lock itself before the hold,
+        a value handed after its hold to a function that takes the lock and writes, and a name read in a second hold
+        before that hold rebinds it; accepted: each shape in one hold, a name each hold rebinds before reading (the
+        dialer's two notes), a name chosen under the lock and used after it by a function that writes no table (the
+        handler's host), and a value bound outside every hold from no read of the table (the recorders' bus_id)."""
+        got = _peer_state_lock_census(self.SOURCE)
+        self.assertEqual([r for r in got["refused"] if r.startswith("split hold")], [],
+                         "the bus's own read-modify-writes each sit in one hold")
+        bound = {(fn, name) for fn, name, _ in got["holdBound"]}
+        self.assertTrue({("peer_exchange_apply", "row"), ("peer_exchange_handle", "row"), ("peer_exchange_handle", "host"),
+                         ("_peer_exchange_once", "st")} <= bound,
+                        "the population: the names the recorders and the dialer's notes bind from the table in a hold: %r"
+                        % got["holdBound"])
+        self.assertTrue({"peer_exchange_apply", "peer_exchange_handle", "peer_update", "_peer_exchange_once"}
+                        <= set(got["handoffTakers"]), "the functions that take the lock and write: %r" % got["handoffTakers"])
+        fold_store = ('        PEER_STATE[host] = row\n        if bus_id:                                   # fold any row it '
+                      'left under its self-declared hostname\n')
+        hand_store = ('        PEER_STATE[host] = row\n        if bus_id:\n            _drop_peer_name_dupes(host, bus_id)\n'
+                      '    _write_remote_sids()                           # presence changed: refresh the deadness mirror, '
+                      'AFTER the busId\n')
+        fold_hold = ('    with _PEER_STATE_LOCK:                           # the previous row\'s read, the row\'s store and the '
+                     'fold: one step, so\n')
+        mark = ('    with _PEER_STATE_LOCK:                           # the membership test and the mark, one step (round 6 '
+                'of fork PR #897)\n        if not up and host in PEER_STATE:\n')
+        mutants = {   # the verifier's four, each read and write under some hold, put into the bus's own source
+            "M13": ([(fold_store, "    with _PEER_STATE_LOCK:\n" + fold_store)],
+                    "split hold in peer_exchange_apply: row, bound from a read of the table in the hold at line"),
+            "M14": ([(hand_store, "    with _PEER_STATE_LOCK:\n" + hand_store)],
+                    "split hold in peer_exchange_handle: row, bound from a read of the table in the hold at line"),
+            "M15": ([(fold_hold, "    with _PEER_STATE_LOCK:\n        prev_row = PEER_STATE.get(host)\n" + fold_hold),
+                     ('_via_held(resp.get("presence") or [], bus_id, "answer", PEER_STATE.get(host))}',
+                      '_via_held(resp.get("presence") or [], bus_id, "answer", prev_row)}')],
+                    "split hold in peer_exchange_apply: prev_row, bound from a read of the table in the hold at line"),
+            "M16": ([(mark, "    with _PEER_STATE_LOCK:\n        marked = not up and host in PEER_STATE\n"
+                            "    with _PEER_STATE_LOCK:\n        if marked:\n")],
+                    "split hold in peer_update: marked, bound from a read of the table in the hold at line"),
+        }
+        for name, (edits, want) in mutants.items():
+            with self.subTest(mutant=name):
+                got = self._mutant(*edits)
+                self.assertTrue(any(r.startswith(want) for r in got["refused"]), got["refused"])
+        with self.subTest(mutant="M14, the canonicalization"):
+            got = self._mutant(*mutants["M14"][0])
+            self.assertTrue(any(r.startswith("split hold in peer_exchange_handle: host, bound from a read of the table in "
+                                             "the hold at line") for r in got["refused"]),
+                            "M14's canonicalization, read in the first hold, keys the second's store: %r" % got["refused"])
+        build = '{"presence": resp, "viaHeld": _via_held(resp, "", "answer", %s)}'
+        plants = {   # (shape split across two holds, its refusal's start; the one-hold control, or None)
+            "M13": ("def _planted_split(host, resp):\n    with _PEER_STATE_LOCK:\n        row = %s\n"
+                    "    with _PEER_STATE_LOCK:\n        PEER_STATE[host] = row\n" % (build % "PEER_STATE.get(host)"),
+                    "split hold in _planted_split: row, bound from a read of the table in the hold at line",
+                    "def _planted_split(host, resp):\n    with _PEER_STATE_LOCK:\n        row = %s\n"
+                    "        PEER_STATE[host] = row\n" % (build % "PEER_STATE.get(host)")),
+            "M15": ("def _planted_split(host, resp):\n    with _PEER_STATE_LOCK:\n        prev_row = PEER_STATE.get(host)\n"
+                    "    with _PEER_STATE_LOCK:\n        PEER_STATE[host] = %s\n" % (build % "prev_row"),
+                    "split hold in _planted_split: prev_row, bound from a read of the table in the hold at line",
+                    "def _planted_split(host, resp):\n    with _PEER_STATE_LOCK:\n        prev_row = PEER_STATE.get(host)\n"
+                    "        PEER_STATE[host] = %s\n" % (build % "prev_row")),
+            "M16": ("def _planted_split(host, up):\n    with _PEER_STATE_LOCK:\n        marked = not up and host in PEER_STATE\n"
+                    "    with _PEER_STATE_LOCK:\n        if marked:\n            PEER_STATE[host][\"linkDown\"] = True\n",
+                    "split hold in _planted_split: marked, bound from a read of the table in the hold at line",
+                    "def _planted_split(host, up):\n    with _PEER_STATE_LOCK:\n        marked = not up and host in PEER_STATE\n"
+                    "        if marked:\n            PEER_STATE[host][\"linkDown\"] = True\n"),
+            "derived between the holds": (
+                "def _planted_split(host, resp):\n    with _PEER_STATE_LOCK:\n        prev_row = PEER_STATE.get(host)\n"
+                "    held = _via_held(resp, \"\", \"answer\", prev_row)\n"
+                "    with _PEER_STATE_LOCK:\n        PEER_STATE[host] = {\"presence\": resp, \"viaHeld\": held}\n",
+                "split hold in _planted_split: held, bound from a read of the table in the hold at line", None),
+            "a helper's own hold before the hold": (
+                "def _planted_prev_locked(host):\n    with _PEER_STATE_LOCK:\n        return PEER_STATE.get(host)\n"
+                "def _planted_split(host, resp):\n    prev_row = _planted_prev_locked(host)\n"
+                "    with _PEER_STATE_LOCK:\n        PEER_STATE[host] = %s\n" % (build % "prev_row"),
+                "split hold in _planted_split: prev_row, bound from a read of the table outside every hold, is read in "
+                "the hold at line", None),
+            "handed to a function that writes": (
+                "def _planted_store_locked(host, row):\n    with _PEER_STATE_LOCK:\n        PEER_STATE[host] = row\n"
+                "def _planted_split(host, resp):\n    with _PEER_STATE_LOCK:\n        row = %s\n"
+                "    _planted_store_locked(host, row)\n" % (build % "PEER_STATE.get(host)"),
+                "split hold in _planted_split: row, bound from a read of the table in the hold at line", None),
+            "read before the second hold rebinds it": (
+                "def _planted_split(host):\n    with _PEER_STATE_LOCK:\n        st = PEER_STATE.setdefault(host, {})\n"
+                "        st[\"a\"] = 1\n    with _PEER_STATE_LOCK:\n        seen = st.get(\"a\")\n"
+                "        st = PEER_STATE.setdefault(host, {})\n        st[\"b\"] = seen\n",
+                "split hold in _planted_split: st, bound from a read of the table in the hold at line", None),
+        }
+        for name, (split, want, one) in plants.items():
+            with self.subTest(plant=name):
+                got = self._plant(split)
+                self.assertTrue(any(r.startswith(want) for r in got["refused"]), got["refused"])
+                if name == "handed to a function that writes":
+                    self.assertTrue(any("is handed outside it to _planted_store_locked, which takes the lock and writes "
+                                        "the table" in r for r in got["refused"]), got["refused"])
+                if one is not None:
+                    self.assertEqual(self._plant(one)["refused"], [], "the control: %s in one hold" % name)
+        controls = {
+            "each hold rebinds before reading (the dialer's two notes)":
+                "def _planted_notes(host):\n    with _PEER_STATE_LOCK:\n        st = PEER_STATE.setdefault(host, {})\n"
+                "        st[\"a\"] = 1\n    with _PEER_STATE_LOCK:\n        st = PEER_STATE.setdefault(host, {})\n"
+                "        st[\"b\"] = 1\n",
+            "a name chosen under the lock and used after it by a function that writes no table (the handler's host)":
+                "def _planted_name(host, row):\n    with _PEER_STATE_LOCK:\n"
+                "        host = host if host in PEER_STATE else \"x\"\n        PEER_STATE[host] = row\n"
+                "    _log(\"peer %s\" % host)\n",
+            "a value bound outside every hold from no read of the table (the recorders' bus_id)":
+                "def _planted_bus(host, resp):\n    bus_id = str(resp.get(\"busId\") or \"\")\n    with _PEER_STATE_LOCK:\n"
+                "        PEER_STATE[host] = {\"busId\": bus_id, \"viaHeld\": _via_held([], bus_id, \"answer\", "
+                "PEER_STATE.get(host))}\n",
+        }
+        for name, text in controls.items():
+            with self.subTest(control=name):
+                self.assertEqual(self._plant(text)["refused"], [], name)
 
 if __name__ == "__main__":
     unittest.main()
