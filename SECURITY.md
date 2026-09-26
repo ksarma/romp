@@ -249,29 +249,69 @@ application/xhtml+xml among them; and text/javascript under each name a browser
 takes for JavaScript, application/javascript among them). A script-running
 route's page body is the call's second positional argument, read only when the
 call passes it positionally, with no starred argument before it and no `**`, and
-the definition's one output is its one `<x>.write(<its second positional
-parameter>)`, nothing in a method's definition binding self again, in any form
-(a lambda's or a nested def's parameter among them), or declaring it global,
-every call in the definition being one the census reads: that
-write; send_response, send_header or end_headers on self; getattr of self with a
-string-constant name; isinstance, str or len, where neither the definition nor
-the module binds the name and the module holds no star import; or a method
-called on a parameter or on a value built from parameters and literals
-(`body.encode`, `(headers or {}).items()`), self and the name the write's stream
-hangs from never counting as a parameter here, and a parameter the definition
-rebinds counting only while every rebinding is such a value. Any other
-script-running call fails the run by name, its reason naming the road (a second
-write, a write through an alias, a print to a stream and a call the reader does
-not read among the reasons), among them a keyword body, a starred or `**` call,
-a definition whose one
-write is of another parameter, a local or an expression, or that writes nothing,
-and in the definition any other call, any other read of an attribute named
-`write`, `writelines`, `send`, `sendall`, `sendfile` or `sendmsg`, called or
-not, a string constant equal to one of those names and a reference to the
-write's receiver other than as its receiver. A stream the definition reaches
-through no name it spells (a module global holding the socket, written by a
-method the definition calls on self) is not read. The page function of each
-script-running route is followed to the text it returns or inlines, and a
+the definition's one output is its one `self.wfile.write(<its second positional
+parameter>)`, with nothing in its signature or body outside the node kinds, in
+their roles, of the kernel's Handler._send: that write, the definition's last
+statement, directly after its one `self.end_headers()`, and before them
+send_response with its one argument and send_header, called on self as
+statements; isinstance, str, len, and getattr of self with a string-constant
+name and a None default, where neither the definition nor the module binds the
+name, nothing rebinds it (no function binds it under a `global` declaration, no
+module-level statement writes it, and the file does none of the writes listed
+below that rebind every builtin) and the module holds no star import; the
+one rebinding of the page parameter to itself encoded, its one argument the
+string constant `"utf-8"` (`body = body.encode("utf-8") if isinstance(body, str)
+else body`); a loop over a parameter's items (`for k, v in (headers or
+{}).items():`) and an if on a parameter or on that getattr, each into header
+calls; header values built from string constants holding no CR or LF,
+parameters, the loop's targets, attributes read on self, str, len and a `%`
+format on a string constant; and a signature of positional parameters, none
+positional-only, with None defaults and no annotation. Any other script-running
+call fails the run by name,
+its reason naming the road (a second write, a write through an alias, a print to
+a stream and, for any other statement or expression, its node kind and line
+among the reasons), among them a keyword body, a starred or `**` call, a
+definition whose one write is of another parameter, a local or an expression, or
+that writes nothing, a method's definition that binds self again, in any form (a
+lambda's or a nested def's parameter among them), or declares it global, any
+other read of an attribute named `write`, `writelines`, `send`, `sendall`,
+`sendfile` or `sendmsg`, called or not, a string constant equal to one of those
+names, a reference to the write's receiver other than as its receiver, and in
+the definition a statement after the end_headers (which writes the header buffer
+to the stream, so a header call after it would reach the body), a second
+end_headers or none, any other rebinding of the page parameter, another codec
+name or a second argument to `.encode` (either can name a codec or an error
+handler the file registers at run time), a store or delete of an attribute or a
+subscript, a read of a name the module binds, a call not listed above, and a
+nested def, class or lambda. The reader governs the definition's own text, and
+code the definition runs from outside that text is not read: a header value is
+not scanned, and a response that a Content-Type in its headers argument, passed
+or defaulted, makes a page is outside the served pass, the call being typed by
+its content-type argument; nor is code the definition runs through an object it
+is handed (a parameter's methods, its mapping's items, its __str__), code behind
+a name the definition calls or reads on self (a header method, a property or
+`__getattr__`, however the class, a base or other code defines or replaces it)
+and any stream that code writes, or a `_send` replaced at run time through a
+name no code spells (setattr or a class `__dict__` with a computed name, a
+metaclass namespace key, a base's `__init_subclass__`). The census does not see
+a module namespace rewritten at run time by code outside the forms listed below
+that rebind every name: a listed name reached any other way or a name the list
+does not hold (through `__self__` of a builtin, a container or a copy of a
+namespace mapping, a module's own `__setattr__` or `__delattr__` method, a
+listed name, attrgetter or methodcaller imported from a module other than its
+own, a name built at run time, gc or ctypes among them, and through a module
+reached by a tuple or list unpacking, an inline walrus,
+`sys.modules.__getitem__`, a for-loop target, a parameter default or a starred
+argument) is outside the list and not seen,
+and a module
+name or a builtin so rewritten is read as the file's text binds it. A `_send`
+definition in a class that a function
+defines, and a page function that a function encloses,
+fail the run by name: the census does not read the enclosing function's scope,
+so it would take a name that function binds (a builtin or a module name it
+shadows) for the module's. The page
+function of each script-running route is followed to the text it returns or
+inlines, and a
 parameter a followed call omits is read from its default value as that argument
 would be, in the scope the def statement runs in (a default the pass cannot read
 is refused by name, among them a method's default naming a name its class body
@@ -295,11 +335,12 @@ values) among them. In that text the served pass reads a
 BoolOp's operands, a method call's receiver and a subscript's container when
 they name a module constant (a name one plain single-name assignment binds as a
 top-level statement and nothing else binds at module level, in a module with no
-star import) or a local, the
+star import that writes no name of its module namespace through a computed name
+and may not rewrite it at run time, as listed below) or a local, the
 receiver of `.encode` or `.format_map` whatever it is, a class attribute the
 class body binds, a loop, unpacking or with target from its source, and a local
-container's appended or stored values; it passes over a base that carries no
-page text of its own (in a module that holds no star import, a top-level import
+container's appended or stored values; it passes over a base whose own text it
+does not read (in a module that holds no star import, a top-level import
 statement that is its name's one module-level binding and is not rebound, or a
 builtin that no module-level binding shadows and that is not rebound, a call of
 super() excepted, whose methods are a base class's; a parameter, an except name,
@@ -308,19 +349,82 @@ reading as text the arguments of a call of such a base or of a method on one
 (`dict(X).get(k)` and `json.loads(json.dumps(X))[0]` read X), and over a bare
 module name that is such an import or such a builtin, or, in such a module, a
 top-level def or class statement that is its name's one module-level binding and
-is not rebound; a name is rebound when a function binds it under `global` or a
-statement at module level writes it, in one of the forms listed above for a
-route's type, and by nothing else: a function's `X = []` of a local of the same
-name, or its `X.append(...)`, does not rebind it. It follows a call whose callee
+is not rebound. Text such a base holds is not read, as with code behind a name
+on self: a constant that a sibling module defines and the page imports, or an
+attribute set on self or another parameter before the call. A name is rebound
+when a function binds it under `global` or a statement at module level writes
+it, in one of the forms listed above for a route's type; every name is rebound,
+as under a star import, in a file that writes its module namespace through a
+computed name (globals() or vars() used any way but for a `.get` read, the
+`__dict__` or vars() of a module the file may be, or a store, setattr or delattr
+on that module; globals, vars, setattr and delattr each reached in the first
+three of the four ways below, and any of those four read other than as a call; a
+module the file may be is `sys.modules[k]` or `sys.modules.get(k)`, on any name
+or attribute spelled `modules`, or a call of `__import__` or import_module
+reached in those three ways with the first argument k, where k is no string
+constant, `__name__` among them, or is "__main__" or a dotted name whose last
+part is the file's own module name; a name that an assignment (as a name target,
+alone or in a chain), an annotated assignment or a walrus binds to one of these,
+read by that name; or an if-expression or a boolean operation with one of these
+among its operands) or that may rewrite it at run time by
+one of these forms, each named with its line in the reason: an import from the
+file's own package (a relative import, an import under its top package, the file
+itself among them, an import naming the file's own bare stem, its working
+absolute name when its directory runs as a script, or `__main__`), which closes
+every
+write through the name by one arm; an attribute named `__globals__`,
+`__builtins__`, f_globals, f_builtins or f_locals, on any receiver; a listed
+callable (locals, exec, eval, compile, `__import__`, import_module or _getframe)
+reached in the first three ways; or one of those callables or attributes,
+globals, vars, setattr, delattr or `__dict__` reached in the fourth. The four
+ways, the whole of the reach the census reads for each of these names
+(`__dict__` in the fourth alone, beside the attribute the computed-name forms
+above name): by its own name, in any context; by a name
+an import anywhere in the file binds to it from its module (locals, exec, eval,
+compile, `__import__`, globals, vars, setattr and delattr from builtins,
+import_module and
+`__import__` from importlib, _getframe from sys), in any context, read as the
+name itself; as an attribute of that name on a builtins receiver
+(`__builtins__`, a name that `import builtins [as X]` or `from X import builtins
+[as Y]` binds, for any module X, `sys.modules["builtins"]` or
+`sys.modules.get("builtins")`, or `__import__("builtins")` or
+`import_module("builtins")`, a call of either reached in these ways), or on any
+receiver for exec, eval, locals, `__import__`,
+import_module and _getframe; or by its name spelled as a string, or as a join of
+string constants that reads as one, where a run-time lookup by name takes it
+(the second argument of getattr, setattr, delattr or hasattr, called by its
+name, by a name an import binds to it or as an attribute of a builtins receiver;
+any argument of operator.attrgetter (any dotted part of the name) or
+operator.methodcaller, called as `.attrgetter` or `.methodcaller` on a name that
+`import operator [as X]` or `from X import operator [as Y]` binds, for any
+module X, or by a name that `from operator import attrgetter [as Y]` or `from
+operator import methodcaller [as Y]` binds; or a key
+on a namespace
+expression: a subscript's slice, or the first argument of `.get`, `.pop`,
+`.setdefault` or a `__getitem__`-family call, whose receiver is a `__dict__`,
+`__builtins__` or a call of vars, globals or locals reached in the first three
+ways). Every builtin is rebound in such a file and in a
+file that names `__builtins__`, imports the builtins module or writes a module
+spelled "builtins" (an attribute store, a setattr or delattr, or a write through
+its `__dict__` or vars()). A function's `X = []` of a local of the same name, or
+its `X.append(...)`, does not rebind it. It follows a call whose callee
 is a module function (a top-level def statement that is its name's one
 module-level binding, not rebound, in a module with no star import, and bound by
 no function scope of the page), a function defined in the page function or a
 method of the route's class (to what it returns, any decorator on it not
 applied), a text method or a file read, or any other method (through its
 receiver, as above, so `_K.__call__(t)` on a module constant `_K` that holds a
-lambda reads `_K`, and a lambda is a value slot with no text), and it reads
-every call's arguments; a call to any other callee passes when the callee is
-such an import, such a builtin or a parameter. The run fails by name (SERVED) on
+lambda reads `_K` and the lambda's body, whose parameters are value slots), and
+it reads every call's arguments; a call to any other callee passes when the
+callee is such an import, such a builtin or a parameter. It reads both operands
+of a `/`, a path join, where `__file__` is a value slot when no statement of the
+file binds it, in any scope and by any form, the file neither writes a name of
+its module namespace through a computed name nor may rewrite it at run time and
+the module holds no star import, and is refused by name otherwise. It reads a
+lambda's body, its
+parameters value slots, and its defaults where the lambda stands. A None, bool
+or int constant, the empty bytes constant and a `*` or `<<` over int constants
+are value slots with no text. The run fails by name (SERVED) on
 any other reference to `_send` (a read of it that is not a call's function, a
 store or delete of an attribute so named, or a string equal to `_send`), a
 content type the pass cannot read, a script-running
@@ -329,21 +433,47 @@ than it writes a Content-Type header, a container the module writes at run time,
 any other receiver or container, any other callee (a module constant, a local, a
 class, a subscript, a call and a lambda among them), any other bare module name
 (one bound other than by one assignment, one bound by an annotated, unpacking or
-chained assignment, one no module-level statement binds that a function or a
+chained assignment, one annotated at module level beside its assignment, one no
+module-level statement binds that a function or a
 class body binds under a `global` declaration, an import, a function or a class
 beside
 another module-level binding, an import, a def or a class bound once inside a
 module-level block and not by a top-level statement, a name bound once in any
-other form inside such a block's body, a name a star import may rebind, and a
-rebound import, builtin, function or class among them), and a route whose text
-the pass cannot read, unless the served allowlist, SERVED_ALLOW, names the place
+other form inside such a block's body, a name a star import may rebind, a module
+name in a file that writes its module namespace through a computed name or may
+rewrite it at run time (the reason naming the form and its line), a builtin in a
+file that may rewrite the builtins, and a rebound import, builtin,
+function or class among them), any other kind of
+expression in a page (a non-empty bytes, float, complex or Ellipsis constant, an
+f-string's format spec, any other operator, a comparison and a unary expression
+among them), and a route whose text the pass cannot read, unless the served
+allowlist, SERVED_ALLOW, names the place
 by its function and expression, with the number of places the entry covers and
 the reason (the two answers with no body, the CORS preflight's 204 and the
 websocket upgrade's 101, are named there); an entry that names nothing in the
 run, or covers a different number of places, fails the run too. In served text
 every `fetch(` and `import(` on a line is read by its own argument, and no
 comment skip applies, since a joined constant is one line whatever it starts
-with. A file the page reads at run time is covered by the walk when it is a
+with. Each string literal is read on its own, and so is the text of each of
+these joins of string constants, at its first literal's line: a `+` of them
+(an f-string's literal text at its start or end among them), an f-string whose
+fields are string constants, a `%`, `.format` or `.format_map` of them, a
+`.join` over a list or tuple of them or over a dict literal whose keys they are
+(the keys in order, a repeated key at its first place) and a `.replace` of them
+(implicitly concatenated literals are one constant already). A tool's name, a
+tag, an
+attribute, an import or a fetch URL split across such a join is therefore read
+whole, and a site both reads find is listed once; a fetch URL cut at the join is
+listed as the joined text reads it, whole. Text a page joins through anything
+but a string constant (a name, a call, an attribute, or a field or a `%` slot
+holding one) is read piece by piece: a tool's name, a tag or an
+attribute split there is not seen, and a fetch
+URL cut there is classed by the part before the cut. A `.join` over a set
+literal or a set comprehension, its one argument or, unbound as in
+`str.join("", {...})`, its second, refuses by name, its iteration order not
+fixed, so its join is no one text. A file the page reads at
+run time is covered
+by the walk when it is a
 scanned kind, and a stylesheet is named, not scanned. The shell and browser
 sides are matched by a named list with no completeness gate: a tool or a client
 the lists do not name is no site and no line; the Python side's gate is

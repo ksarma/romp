@@ -14,7 +14,10 @@
 // - A require or import() call the parse finds on any other first argument (a template, a computed value) must stand on a line
 //   where that refusal fires (an IMPORT line, or a place JS_ALLOW names); an import() on a computed argument that is not a
 //   template must stand instead on a line the census lists as a browser-computed-url site (line_scan's import() tool).
-// - A file the parse reports an error in is red: its specifiers are not known.
+// - A file the parse reports an error in is red: its specifiers are not known. The errors are read from the SourceFile's
+//   parseDiagnostics, a property typescript does not declare, once per file and asserted to be an array (the eighth round of the
+//   review): a typescript whose SourceFile lacks it fails the case, where a fallback to an empty list would read every walked file
+//   as parsed.
 // No skip: a missing python3 or a missing typescript FAILS this case, on purpose. file-comments.test.ts and
 // file-comments-model-note-trim.test.ts skip without python3; here there would be nothing to compare, and a skip reads as a pass.
 // The case holds walked files only. The pages the kernel serves are fragments of Python string literals, not files, so they are
@@ -66,7 +69,9 @@ function censusReads(): Census {
 function parseFile(ts: typeof TS, file: string, text: string, specs: Read[], calls: Call[], errors: string[]): void {
   const starts = lineStarts(text);
   const sf = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true, file.endsWith(".ts") ? ts.ScriptKind.TS : ts.ScriptKind.JS);
-  for (const d of (sf as unknown as { parseDiagnostics?: readonly TS.Diagnostic[] }).parseDiagnostics ?? [])
+  const diags: unknown = (sf as unknown as { parseDiagnostics?: unknown }).parseDiagnostics;
+  assert.ok(Array.isArray(diags), "typescript's SourceFile carries no parseDiagnostics: the pin cannot see parse errors");
+  for (const d of diags as readonly TS.Diagnostic[])
     errors.push(`${file}:${lineOf(starts, d.start ?? 0)} ${ts.flattenDiagnosticMessageText(d.messageText, " ")}`);
   const spec = (lit: TS.StringLiteral) => specs.push([file, lineOf(starts, lit.getStart(sf)), lit.text]);
   const call = (node: TS.CallExpression, callee: string) => {
