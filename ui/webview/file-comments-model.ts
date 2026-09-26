@@ -657,7 +657,9 @@ export type Card = {
   replies: CardTurn[];
 };
 
-const oneLine = (s: string, max: number): string => {
+/** A text on one line, each run of white space one space, cut to `max` characters with an ellipsis: a card's reference
+ *  (cardModel), a todo's label, and a refused comment's note in the panel (file-comments.ts refusedWhat). */
+export const oneLine = (s: string, max: number): string => {
   const t = s.replace(/\s+/g, " ").trim();
   return t.length > max ? t.slice(0, max - 1) + "…" : t;
 };
