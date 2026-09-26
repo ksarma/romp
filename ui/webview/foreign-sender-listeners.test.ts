@@ -524,7 +524,7 @@ test("the census rule reads what it claims: a listener that acts before the chec
   const probe = (text: string) => {
     const sf = ts.createSourceFile("probe.ts", "window.addEventListener(\"message\", " + text + ");", ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
     const call = (sf.statements[0] as any).expression;
-    return headCheck({ file: "probe.ts", line: 1, receiver: "window", fn: call.arguments[1], text });
+    return headCheck({ file: "probe.ts", line: 1, receiver: "window", fn: call.arguments[1], text, kind: "addEventListener" });
   };
   assert.equal(probe('(e) => { if (windowSender(e) === "foreign") return; go(e.data); }'), null);
   assert.equal(probe('(e) => { const m = e.data; if (!m || m.type !== "x") return; if (windowSender(e) === "foreign") return; go(m); }'), null);
