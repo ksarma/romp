@@ -34,6 +34,12 @@ guard's exclusion of that plugin's own timer, alive through every test's teardow
   not a sleep through the cap: each within-cap thread writes its end time as its last act, and the session must finish
   within half the cap of the process's last one (it finishes milliseconds after; a guard that slept its cap would finish
   nine seconds after).
+- The guard runs AFTER THE RUNNER HAS TORN DOWN EVERY FIXTURE. The scratch conftest carries two autouse fixtures, one
+  session-scoped and one function-scoped, each starting a non-daemon thread that waits on its own event and is stopped
+  and joined only at the fixture's teardown. Every run above stays free of their names and the green runs pass, so a
+  thread a fixture stops at teardown is never waited for or named. A guard moved before the runner's teardown (tryfirst,
+  or no ordering, since pytest's runner plugin registers before any conftest and pluggy calls later registrations first)
+  waits its cap for them and fails the green runs naming them.
 
 - A thread listed while its start() is still running, which Thread.join refuses with a RuntimeError, is read again on
   the guard's next pass rather than raised (JoinRace, in this process under the conftest: a thread never started, which
@@ -72,6 +78,7 @@ RELEASE = threading.Event()     # set by the scratch conftest at pytest_unconfig
 
 CONFTEST = '''\
 import json, os, sys, threading, time
+import pytest
 import plant_shared
 
 CAP = {cap!r}                   # None keeps the guard's own cap
@@ -92,6 +99,29 @@ def pytest_sessionfinish(session):
 
 def pytest_unconfigure(config):
     plant_shared.RELEASE.set()  # the leaked and daemon threads end, so the process can exit
+
+
+def _fixture_thread(tag):
+    # a non-daemon thread that only this fixture's teardown ends: alive through the test, stopped and joined when the
+    # runner tears the fixture down, which must happen before the guard reads the threads
+    stop = threading.Event()
+    t = threading.Thread(target=stop.wait, args=(120,), name="plant-fx-" + tag)
+    t.start()
+    with open(os.path.join(os.environ["PLANT_OUT"], "started-%d-fx-%s.json" % (os.getpid(), tag)), "w") as f:
+        json.dump([[t.name, t.daemon]], f)
+    yield
+    stop.set()
+    t.join()
+
+
+@pytest.fixture(scope="session", autouse=True)
+def plant_session_thread():
+    yield from _fixture_thread("session")
+
+
+@pytest.fixture(autouse=True)
+def plant_function_thread(request):
+    yield from _fixture_thread(request.node.name)
 '''
 
 PLANT = '''\
@@ -200,6 +230,7 @@ class SessionEndThreadGuard(unittest.TestCase):
                       "the report carries the thread's stack, down to the plant's frame")
         self.assertIn("session-end thread guard", out, "the report says what made it")
         self.assertNotIn("plant-daemon", out, "daemon threads alive at the same moment are not named")
+        self.assertNotIn("plant-fx-", out, "threads the fixtures stop at teardown are not named")
 
     def test_a_leaked_non_daemon_thread_fails_a_serial_run_and_the_report_names_it(self):
         plant = "".join(DAEMON_TEST.format(i=i) for i in range(TESTS)) + LEAK_TEST + POOL_TEST
@@ -225,9 +256,19 @@ class SessionEndThreadGuard(unittest.TestCase):
         self.assertEqual(rc, 0, "threads that end within the cap and daemon threads do not fail the run:\n" + out)
         self.assertIn("%d passed" % TESTS, out, out)
         self.assertNotIn("error", out.lower(), out)
-        names = sorted(n for ns in started.values() for n, _daemon in ns)
+        names = sorted(n for ns in started.values() for n, _daemon in ns if not n.startswith("plant-fx-"))
         expected = ["plant-within-cap-%d" % i for i in range(TESTS)] + ["plant-daemon-%d" % i for i in range(TESTS)]
         self.assertEqual(names, sorted(expected), "the plant started its threads:\n" + out)
+        # the fixtures' threads: one per test from the function-scoped fixture, and one in every process that ran tests
+        # from the session-scoped one, each stopped only by its fixture's teardown. A guard that ran before the runner's
+        # teardown (tryfirst, or no ordering at all, since the runner's plugin registers before any conftest) would wait
+        # its cap for them and then fail the run naming them.
+        fx = [n for ns in started.values() for n, _daemon in ns if n.startswith("plant-fx-")]
+        self.assertEqual(sorted(n for n in fx if n != "plant-fx-session"), ["plant-fx-test_%d" % i for i in range(TESTS)],
+                         "the function-scoped fixture started a thread for each test:\n" + out)
+        self.assertEqual(fx.count("plant-fx-session"), len(ended), "the session-scoped fixture started a thread in each "
+                         "process that ran tests:\n" + out)
+        self.assertNotIn("plant-fx-", out, "threads the fixtures stop at teardown are not named")
         for pid, ns in started.items():
             self.assertIn(pid, finish, "the process that started threads reached pytest_sessionfinish:\n" + out)
             for name, daemon in ns:
