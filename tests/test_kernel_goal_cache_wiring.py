@@ -182,6 +182,9 @@ class SharedViewInBuilds(unittest.TestCase):
         self._saved_live_map, km._live_map = km._live_map, (lambda: {})
         self.td = tempfile.TemporaryDirectory()
         self.saved_state = jd.STATE
+        self.saved_sdk = km._sdk_backend      # km.build_feed below reaches km._sdk(), which caches the kernel's backend singleton
+                                              # over the sandbox when this class builds first in its worker; put back in tearDown
+                                              # before the directory is removed (the removed-sandbox flavor)
         jd._rebind_state(Path(self.td.name))         # clears the cache and lifts any earlier off switch
         self.saved = {nm: getattr(km, nm) for nm in ("_timeline_sessions", "_derive_judging_marks")}
         km._lanes_memo.clear()                        # a lane the timeline memo holds never reaches the spy below
@@ -208,6 +211,7 @@ class SharedViewInBuilds(unittest.TestCase):
             setattr(km, nm, v)
         jd.discover = self.saved_discover
         jd._rebind_state(self.saved_state)
+        km._sdk_backend = self.saved_sdk
         self.td.cleanup()
 
     def _delta(self, key):
@@ -408,6 +412,10 @@ class PushSurvivesOneFailedChatBuild(unittest.TestCase):
         self.saved = {nm: getattr(km, nm) for nm in self.STUBS}
         self.saved_state = (km.jd.STATE, dict(km._built_chat), dict(km._prev_chat_events),
                             dict(km._prev_chat_ledger), list(km._last_tab_order))
+        self.saved_sdk = km._sdk_backend      # km._push reaches km._sdk(), which caches the kernel's backend singleton over the
+                                              # state root below when this class builds first in its worker; the root is kept
+                                              # (mkdtemp, never removed), so the leak is the kept-sandbox flavor: a singleton
+                                              # over a directory that stands but is not the run root; put back in tearDown
         km.NAMES = names
         km.jd.STATE = Path(self.tmp) / "state"
         km.jd.STATE.mkdir(parents=True, exist_ok=True)
@@ -439,6 +447,7 @@ class PushSurvivesOneFailedChatBuild(unittest.TestCase):
             setattr(km, nm, v)
         st, bc, pe, pl, lo = self.saved_state
         km.jd.STATE = st
+        km._sdk_backend = self.saved_sdk
         km._built_chat.clear(); km._built_chat.update(bc)
         km._prev_chat_events.clear(); km._prev_chat_events.update(pe)
         km._prev_chat_ledger.clear(); km._prev_chat_ledger.update(pl)

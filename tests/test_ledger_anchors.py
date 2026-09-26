@@ -319,6 +319,11 @@ class FeedWarmResolveBumpsTheLedgerRevision(unittest.TestCase):
             (names / sid).write_text("%s\t%s\t%s\n" % (self.NAME_OF[sid], cdir, self.COLOR_OF[sid]))
             self.tpath[sid] = tp
         self.saved = (jd.STATE, jd.PROJECTS, km.NAMES, km._GLOBAL_CLAUDE_MD)
+        # The warm parse below reaches Sessions.backend_for and so km._sdk(), which builds the kernel's backend singleton
+        # over jd.STATE as it stands when this class is the worker's first builder: saved here, before the rebind, and
+        # put back in tearDown before the sandbox is removed (the suite's ratchet in tests/conftest.py names a class that
+        # leaves it there).
+        self.saved_sdk = km._sdk_backend
         with km._feed_memo_lock:
             self.saved_memo = (dict(km._feed_memo), json.loads(json.dumps(km._FEED_MEMO_STATS)))
             km._feed_memo.clear()                     # every case starts with the memo cold and its counters at zero
@@ -360,6 +365,7 @@ class FeedWarmResolveBumpsTheLedgerRevision(unittest.TestCase):
         for sid in self.SIDS:
             jd.parse_cache_drop(sid)
         jd._rebind_state(self.saved[0])
+        km._sdk_backend = self.saved_sdk
         jd.PROJECTS, km.NAMES, km._GLOBAL_CLAUDE_MD = self.saved[1:]
         km._live_scope.names = None
         km._live_scope.snapshot = None
