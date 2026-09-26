@@ -790,9 +790,9 @@ class AgentEnd(unittest.TestCase):
         """The remembered releases' road of the rule that a release popping a path forgets every end remembered for that path
         (kernel._forget_unheld_paths over the paths popped in the cycle): two ends remembered for one file, a whole read, one
         cycle. The first remembered end's release pops the file; the second's then finds nothing held and would stay
-        remembered, and the popped path forgets it. A batch end's release adds its path to the popped paths too, and that is
-        reached only when the remembered releases before it did not pop the path. Red when the popped paths forget nothing:
-        the second end stays remembered."""
+        remembered, and the popped path forgets it. A batch end's release adds its path to the popped paths too, pinned by
+        test_a_batch_end_release_that_pops_a_path_forgets_the_other_ends_remembered_for_it. Red when the popped paths forget
+        nothing: the second end stays remembered."""
         km._AGENT_ENDED_UNHELD[(SID, WF_AID)] = self.agent               # two ends remembered for one file
         km._AGENT_ENDED_UNHELD[(OTHER_SID, AID)] = self.agent
         em._read_jsonl_incremental(self.agent)                           # a whole read holds it
@@ -802,6 +802,25 @@ class AgentEnd(unittest.TestCase):
         self.assertIsNone(self._weight(self.agent), "released at the cycle after the read")
         self.assertEqual(self._stat("released"), {"agentEnded": {"count": 1, "bytes": size}}, "by one release")
         self.assertEqual(km._AGENT_ENDED_UNHELD, {}, "the popped path forgot both remembered ends")
+
+    def test_a_batch_end_release_that_pops_a_path_forgets_the_other_ends_remembered_for_it(self):
+        """The batch ends' road of the same rule: two ends in one batch whose (session, agent) pairs resolve to one file
+        (_subagent_file stubbed, since no real road maps two agent ids to one transcript), a whole read, one cycle. The
+        first end's release pops the file, and the second's then finds nothing held. Red when a taken batch end's release
+        adds nothing to the popped paths: the second end stays remembered."""
+        real = km._subagent_file
+        km._subagent_file = lambda path, aid: Path(self.agent) if aid in (AID, WF_AID) else real(path, aid)
+        self.addCleanup(setattr, km, "_subagent_file", real)
+        em._read_jsonl_incremental(self.agent)                           # a whole read holds it
+        size = os.path.getsize(self.agent)
+        self.assertEqual(self._weight(self.agent), size, "precondition: the read holds the whole file")
+        self.be.note_agent_live(SID, AID, False)                         # two ends in one batch, both for that file
+        self.be.note_agent_live(SID, WF_AID, False)
+        km._begin_checkpoint_cycle()
+        self.assertIsNone(self._weight(self.agent), "released at the batch's cycle")
+        self.assertEqual(self._stat("released"), {"agentEnded": {"count": 1, "bytes": size}}, "by one release")
+        self.assertEqual(km._AGENT_RELEASED, {(SID, AID): [self.agent, True]}, "only the first end's release was taken")
+        self.assertEqual(km._AGENT_ENDED_UNHELD, {}, "the popped path forgot the second end")
 
     # ---- an agent's later end after its earlier release was taken (PR 913 round 1, the texts' account of two ends) ----
     # An agent reports two ends (its stop and its task's end, or its workflow slot's done state), and the second can reach a
