@@ -225,8 +225,8 @@ const programsNamed = (cmd, table = NAMED_PROBE) => Object.keys(table).filter((p
 // name the reader cannot know, the row is NOT RUN with that reason, its hook verdict still asserted, never measured and never red: a name so
 // bound, or a table's key, spelled with an expansion (an alias's name that is one variable's expansion binds that variable's value only where
 // the text spells the variable once before the alias, that spelling a literal assignment `n=c` or a read of it from a literal here-string
-// `read n <<< c`, it and the alias at top level, the text naming no IFS, and, since the sixty-second commit, the variable no parameter a
-// shell sets itself or treats as special (THE SHELLS' PARAMETERS); a write that never spells the name is not seen, in the class below); a
+// `read n <<< c`, it and the alias at top level, the text naming no IFS, and, since the sixty-second commit, the variable no parameter
+// THE SHELLS' PARAMETERS lists; a write that never spells the name is not seen, in the class below); a
 // PATH set wholly to an expansion or holding an expansion entry other
 // than the PATH it replaces (`<lit>:$PATH` and `$PATH:<lit>` are known); an alias of an alias beyond one level (an alias whose value is the
 // word `alias` defines aliases, and the words after its name bind as alias's do; one whose value runs alias with words of its own is no
@@ -360,8 +360,8 @@ const definedNames = (text) => new Set([
 //   an alias whose name is one variable's expansion (`alias $n=cp`) binds that variable's value where the text spells the variable once
 //   before the alias and names no IFS, that spelling and the alias each standing at top level (topLevelSegments: in no subshell, brace
 //   group, conditional or loop, run in sequence), that spelling is a literal assignment (`n=c`) or a read of that one name from a literal
-//   here-string (`read n <<< c`), and, since the sixty-second commit (the reviewer's ruling B), the variable is no parameter of THE SHELLS'
-//   PARAMETERS (`alias $RANDOM=cp` goes to `unknowable`); a write that never spells the name is not seen (the header's class of what the
+//   here-string (`read n <<< c`), and, since the sixty-second commit (the reviewer's ruling B), the variable is no parameter THE SHELLS'
+//   PARAMETERS lists (`alias $RANDOM=cp` goes to `unknowable`); a write that never spells the name is not seen (the header's class of what the
 //   derivation does not read);
 //   a PATH the text sets is known where each entry is a literal directory or the PATH it replaces (`<lit>:$PATH`, `$PATH:<lit>`) and at least
 //   one entry is a literal directory: the inherited PATH plus literal directories;
@@ -370,7 +370,7 @@ const definedNames = (text) => new Set([
 //   runs such a name, and one such a name defines to run alias, are chains the reader does not follow;
 //   a global alias's value is never read as a command line, and its name binds no name.
 // `unknowable` holds each rebinding whose names the reader cannot know: an alias's, a hashed, an autoloaded or an enabled name, or a table's
-// key, spelled with an expansion the first reading does not follow (an alias's name that expands a parameter of THE SHELLS' PARAMETERS
+// key, spelled with an expansion the first reading does not follow (an alias's name that expands a parameter THE SHELLS' PARAMETERS lists
 // among them); a PATH the second does not know; a chain the third does not follow; a
 // zsh module outside the table; a handler for every name not found. programsInvoked adds a global alias's name standing where a command
 // stands. namedPresent makes such a row NOT RUN with that reason, its hook verdict asserted before its legs, never measured and never red, and
@@ -380,15 +380,19 @@ const ZSH_MODULE_BUILTINS = {
   'zsh/system': ['syserror', 'sysread', 'syswrite', 'sysopen', 'sysseek', 'zsystem'],
   'zsh/mapfile': [],
 };
-// THE SHELLS' PARAMETERS (round 8 of fork PR #780 review, sixty-second commit; the reviewer's ruling B): the parameters a shell sets itself or
-// treats as special, whose value a literal assignment in the text does not fix (bash and zsh bind no `c` for `RANDOM=c; alias $RANDOM=cp`;
-// dash does), so an alias whose name expands one of them goes to `unknowable` (THE REBOUND NAMES). Derived by execution: each list is the
-// output of the command beside it, run on this box (bash 5.2.21 gives 44 names under `-c`, 43 when the same text is fed on its standard input;
-// zsh 5.9 gives 73 under plain `zsh -f` with no module named, 111 with zsh/parameter, zsh/datetime, zsh/system and zsh/mapfile loaded, 118
-// with those and zsh/zleparameter, zsh/terminfo, zsh/termcap, zsh/sched and zsh/watch, and 125 with those nine and zsh/curses and
-// zsh/langinfo, the two other modules of its build that add one, which is the command here). The union is read, the stricter side: a name
-// listed that a shell does not set only sends a row NOT RUN. The sixty-second commit's test re-derives the bash list on every runner and the
-// zsh list where zsh is present, each contained in its table.
+// THE SHELLS' PARAMETERS (round 8 of fork PR #780 review, sixty-second commit; the reviewer's ruling B): the names the two commands below
+// print, among them parameters whose literal write bash and zsh do not keep (RANDOM, SECONDS: bash and zsh bind no `c` for
+// `RANDOM=c; alias $RANDOM=cp`; dash does), so an alias whose name expands one of them goes to `unknowable` (THE REBOUND NAMES). Derived by
+// execution: each list is the output of the command beside it, run on this box, bash's under the environment its own `env -i` sets and zsh's
+// under an environment of PATH and LANG=C.UTF-8 (zsh lists some parameters as special only where they are set, LANG, TERM, TERMINFO,
+// POSTEDIT and LC_ALL among them). Under those environments bash 5.2.21 gives 44 names under `-c`, 43 when the same text is fed on its
+// standard input; zsh 5.9 gives 73 under plain `zsh -f` with no module named, 111 with zsh/parameter, zsh/datetime, zsh/system and
+// zsh/mapfile loaded, 118 with those and zsh/zleparameter, zsh/terminfo, zsh/termcap, zsh/sched and zsh/watch, and 125 with those nine and
+// zsh/curses and zsh/langinfo, the two other modules of its build that add one, which is the command here. The union is read, the stricter
+// side: a name listed that a shell does not set only sends a row NOT RUN. The sixty-second commit's test re-derives the bash list on every
+// runner and the zsh list where zsh is present, each contained in its table; since the sixty-third commit (the reviewer's verifier, whose
+// run with TERM set turned the zsh half red) it runs zsh's command under an environment of PATH alone, beside the ZDOTDIR and SHLVL that
+// NO STARTUP FILE OF THE ACCOUNT'S adds, where zsh on this box lists 124 of the table's names, LANG not among them.
 const SHELL_PARAMETERS = {
   bash: {
     argv: ['env', '-i', 'PATH=/usr/bin:/bin', 'bash', '--norc', '--noprofile', '-c', 'compgen -v'],
@@ -611,8 +615,8 @@ const programsInvoked = (cmd, { collect = null, unknown = null } = {}) => {
   let records = [];   // collect's records of the walk under way
   let cannotKnow = [];   // unknown's, of the walk under way (a global alias's name where a command stands)
   const cannot = (why) => { if (!cannotKnow.includes(why)) cannotKnow.push(why); };
-  // THE TIME WORD (the sixty-second commit; the reviewer's execution checker, round 8 of fork PR #780): `time` is bash's and zsh's own word
-  // where it heads a command, and dash has none (WRAPPERS' comment). `dashReads` holds whether a shell with no such word may read the text
+  // THE TIME WORD (the sixty-second commit; the reviewer's execution checker, round 8 of fork PR #780): `time` is a word of bash's
+  // and zsh's own, and dash has none (WRAPPERS' comment). `dashReads` holds whether a shell with no such word may read the text
   // under way: the row's own text, which every leg's dash runs; the text a shell other than bash or zsh runs; the text env -S, flock -c, su,
   // runuser or script run, through a program or the account's shell; and a text eval, trap, alias, emulate -c or mapfile -C runs, as the
   // text around it. readSegment reads `time` as a program there, and after an assignment, a pipe or a wrapper, where bash runs /usr/bin/time
@@ -16824,7 +16828,7 @@ test("round 7 of fork PR #780 review, fifty-sixth commit, A BOUND NAME beside a 
   }
   assert.deepEqual(got, want, 'each missing program beside a bound name is NOT RUN by name, and the binding alone runs');
 });
-test("round 7 of fork PR #780 review, fifty-sixth commit, THE REBOUND NAMES (the reviewer's rulings at 00:32Z and 01:00Z): a text that rebinds names sets aside only the names it rebinds (the walk not stepping past them, THE STATED LIMIT at the fifty-seventh commit's test), so a different missing name beside each rebinding form is NOT RUN by name; a rebinding the reader cannot know makes the row NOT RUN with that reason, never measured and never every name set aside (an unknowable alias name beside a missing program); an alias name that is one variable's expansion is followed where the text spells that variable once before the alias, in a literal write, `n=c` or `read n <<< c`, at top level (AL-name-var and AL-name-read-var measured), and the variable is no parameter a shell sets itself or treats as special (since the sixty-second commit an alias of `$RANDOM` or `${RANDOM}` goes NOT RUN with that reason, beside the missing program it would have bound); a second spelling of the variable, a conditional, a later or a non-literal write, or one in a subshell, a group, a loop or a function, goes NOT RUN (a write that never spells the name is not seen: the stated limit, at the sixty-second commit's test); a PATH of literal directories and the PATH it replaces is known, one with any other expansion is not; an alias of an alias is followed one level; `aliases[` binds as `functions[` does; a global alias's value is never read as a command line and its name where a command stands goes NOT RUN; a zsh module outside the measured table, a handler for every name not found and a hashed name that is an expansion go NOT RUN; since the sixty-second commit, one plant per rebinding form (a `commands[` and a `functions[` entry, zsh's `hash NAME=PATH`, `path=(..)`, `path+=(..)`, `path[1]=..`, `PATH+=:..`, a suffix alias, and a zmodload of each module in the table), each beside a missing program that is NOT RUN by name, and each red under a mutant that sets every bare name aside where its form appears; and the table's builtins are zsh's own, by execution where zsh is here", () => {
+test("round 7 of fork PR #780 review, fifty-sixth commit, THE REBOUND NAMES (the reviewer's rulings at 00:32Z and 01:00Z): a text that rebinds names sets aside only the names it rebinds (the walk not stepping past them, THE STATED LIMIT at the fifty-seventh commit's test), so a different missing name beside each rebinding form is NOT RUN by name; a rebinding the reader cannot know makes the row NOT RUN with that reason, never measured and never every name set aside (an unknowable alias name beside a missing program); an alias name that is one variable's expansion is followed where the text spells that variable once before the alias, in a literal write, `n=c` or `read n <<< c`, at top level (AL-name-var and AL-name-read-var measured), and the variable is no parameter THE SHELLS' PARAMETERS lists (since the sixty-second commit an alias of `$RANDOM` or `${RANDOM}` goes NOT RUN with that reason, beside the missing program it would have bound); a second spelling of the variable, a conditional, a later or a non-literal write, or one in a subshell, a group, a loop or a function, goes NOT RUN (a write that never spells the name is not seen: the stated limit, at the sixty-second commit's test); a PATH of literal directories and the PATH it replaces is known, one with any other expansion is not; an alias of an alias is followed one level; `aliases[` binds as `functions[` does; a global alias's value is never read as a command line and its name where a command stands goes NOT RUN; a zsh module outside the measured table, a handler for every name not found and a hashed name that is an expansion go NOT RUN; since the sixty-second commit, one plant per rebinding form (a `commands[` and a `functions[` entry, zsh's `hash NAME=PATH`, `path=(..)`, `path+=(..)`, `path[1]=..`, `PATH+=:..`, a suffix alias, and a zmodload of each module in the table), each beside a missing program that is NOT RUN by name, and each red under a mutant that sets every bare name aside where its form appears; and the table's builtins are zsh's own, by execution where zsh is here", () => {
   const M = Q780_MISSING;
   const RUN = '../base/report.md report.md';
   const MISS = `NOT RUN: real ${M} is not on this runner`;
@@ -16851,9 +16855,8 @@ test("round 7 of fork PR #780 review, fifty-sixth commit, THE REBOUND NAMES (the
     unfollowed('a read of an expansion', `read n <<< $m\nalias $n=cp\nc ${RUN}`),
     unfollowed('a text naming IFS', `IFS=:\nn=c\nalias $n=cp\nc ${RUN}`),
     unfollowed('the alias under a condition', `n=c\nif true; then alias $n=cp; fi\nc ${RUN}`),
-    // round 8's ruling B (the sixty-second commit): an alias whose name expands a parameter a shell sets itself or treats as special (THE
-    // SHELLS' PARAMETERS), whose literal write bash and zsh do not keep, goes NOT RUN with that reason, and the missing program its write names
-    // is read
+    // round 8's ruling B (the sixty-second commit): an alias whose name expands a parameter THE SHELLS' PARAMETERS lists (RANDOM, whose
+    // literal write bash and zsh do not keep) goes NOT RUN with that reason, and the missing program its write names is read
     ['an alias of $RANDOM beside the missing program its write names', `shopt -s expand_aliases\nRANDOM=${M}\nalias $RANDOM=cp\n${M} ${RUN}`, false, [cannotKnow(`alias $RANDOM=cp: ${SPECIAL}`), MISS]],
     ['an alias of ${RANDOM} beside the missing program its write names', `shopt -s expand_aliases\nRANDOM=${M}\nalias \${RANDOM}=cp\n${M} ${RUN}`, false, [cannotKnow(`alias \${RANDOM}=cp: ${SPECIAL}`), MISS]],
     // item 3: PATH
@@ -17125,11 +17128,12 @@ test("round 7 of fork PR #780 review, fifty-ninth commit, THE NON-LITERAL WORDS 
 //
 // The reviewer's rulings on round 8, sections B and D, under the loop stop at 17:18Z, and the reviewer's decisions 5, 6, 8 and 11. B: item
 // 2's reader followed a parameter a shell sets itself (`RANDOM=c; alias $RANDOM=cp`, where bash and zsh bind no `c`), so an alias whose name
-// expands such a parameter now goes to `unknowable`, the parameters derived by execution (THE SHELLS' PARAMETERS, at ZSH_MODULE_BUILTINS),
-// and a write the reader cannot see, one that never spells the name, is a stated limit pinned below. D: four pins had no plant (THE WRITE'S
+// expands a parameter THE SHELLS' PARAMETERS lists now goes to `unknowable`, the table derived by execution (at ZSH_MODULE_BUILTINS), and a
+// write the reader cannot see, one that never spells the name, is a stated limit pinned below. D: four pins had no plant (THE WRITE'S
 // PLACE against the fixture's masks, THE REBOUND NAMES per form, A MADE PATH's left edge, THE RECORDED ABSENCES with a missing program
 // appended); each plant is in its pin. And WRAPPERS gains numactl, so it holds every wrapper of the hook's PREFIXES but builtin, and the
-// walk reads `time` as a program wherever a shell runs /usr/bin/time, dash in the six committed commands (THE TIME WORD, at programsInvoked).
+// walk reads `time` as a program in a text dash may read (dash runs /usr/bin/time in six committed commands), after an assignment, a pipe or
+// a wrapper, and in a find -exec (THE TIME WORD, at programsInvoked).
 test("round 8 of fork PR #780 review, sixty-second commit, THE SHELLS' PARAMETERS and THE STATED LIMIT's unseen write (the reviewer's ruling B and decisions 5 and 6): the bash list of THE SHELLS' PARAMETERS is re-derived by its own command on every runner and the zsh list by its own command where zsh is present (NOT RUN elsewhere), each contained in its table; and a write to the variable an alias's name expands that never spells the variable's name (`export \"$(printf '\\156')=zz\"`) is not seen, so that witness is measured, while the same text whose second write spells the name is NOT RUN (a change that sees such a write reds here, and the header's sentence changes with it)", () => {
   const RUN = '../base/report.md report.md';
   const M = Q780_MISSING;
@@ -17137,8 +17141,11 @@ test("round 8 of fork PR #780 review, sixty-second commit, THE SHELLS' PARAMETER
   // the bash command clears the environment before it starts bash, which THE CLEARED ENVIRONMENT refuses unless the leg lists it: this bash
   // reads no startup file of the account's (--norc shuts the socket road, --noprofile the login one, and env -i leaves no BASH_ENV)
   const spawn = guardedSpawn(SHELL_PROBE, _spawnSync, new Map([...CLEARED_LEGS, ['env -i PATH=/usr/bin:/bin bash --norc --noprofile -c', null]]));
-  const listed = (argv, sh = argv[0]) => {
-    const r = spawn(sh, argv.slice(1), { encoding: 'utf8', timeout: 20000 });
+  // zsh lists some parameters as special only where they are set (LANG, TERM and LC_ALL among them), so its command runs under an environment
+  // of PATH alone, as the bash command runs under its own env -i (the sixty-third commit, on the reviewer's verifier: with TERM set in this
+  // file's environment the zsh half listed TERM and went red)
+  const listed = (argv, sh = argv[0], env = null) => {
+    const r = spawn(sh, argv.slice(1), { encoding: 'utf8', timeout: 20000, ...(env ? { env } : {}) });
     assert.equal(r.status, 0, `${argv.join(' ')} ran (${r.error ? r.error.message : String(r.stderr).slice(0, 200)})`);
     const names = String(r.stdout).split('\n').filter(Boolean);
     assert.ok(names.includes('RANDOM') && names.includes('SECONDS'), `${argv.join(' ')} lists the parameters (RANDOM and SECONDS among them): ${names.length} names`);
@@ -17150,9 +17157,9 @@ test("round 8 of fork PR #780 review, sixty-second commit, THE SHELLS' PARAMETER
   console.log(`# THE SHELLS' PARAMETERS: bash lists ${bash.length} here, the table ${SHELL_PARAMETERS.bash.names.length}; the union read ${SHELL_PARAMETER_NAMES.size}`);
   // the zsh half, where zsh is present
   for (const sh of shellsFor(['zsh'], "THE SHELLS' PARAMETERS: the zsh table against zsh's own list")) {
-    const zsh = listed(SHELL_PARAMETERS.zsh.argv, sh);
-    assert.deepEqual(zsh.filter((n) => !SHELL_PARAMETERS.zsh.names.includes(n)), [], `every parameter \`${SHELL_PARAMETERS.zsh.argv.join(' ')}\` lists here is in THE SHELLS' PARAMETERS' zsh table`);
-    console.log(`# THE SHELLS' PARAMETERS: zsh (${sh}) lists ${zsh.length} here with the table's modules, the table ${SHELL_PARAMETERS.zsh.names.length}`);
+    const zsh = listed(SHELL_PARAMETERS.zsh.argv, sh, { PATH: process.env.PATH });
+    assert.deepEqual(zsh.filter((n) => !SHELL_PARAMETERS.zsh.names.includes(n)), [], `every parameter \`${SHELL_PARAMETERS.zsh.argv.join(' ')}\` lists here under an environment of PATH alone is in THE SHELLS' PARAMETERS' zsh table`);
+    console.log(`# THE SHELLS' PARAMETERS: zsh (${sh}) lists ${zsh.length} here with the table's modules under an environment of PATH alone, the table ${SHELL_PARAMETERS.zsh.names.length}`);
   }
   // the stated limit: a write that never spells the name is not seen
   const cases = [
@@ -17162,7 +17169,7 @@ test("round 8 of fork PR #780 review, sixty-second commit, THE SHELLS' PARAMETER
   const got = cases.map(([label, cmd]) => [label, ...gateLines(cmd)]);
   assert.deepEqual(got, cases.map(([label, , ok, lines]) => [label, ok, [...lines].sort()]), 'the witness of the unseen write is measured, and its control is NOT RUN');
 });
-test("round 8 of fork PR #780 review, sixty-second commit, THE TIME WORD and numactl (the reviewer's decisions 8 and 11(1)): WRAPPERS holds every wrapper of the hook's PREFIXES but builtin, numactl among them, so a missing program behind numactl is NOT RUN by name; and `time` is read as a program wherever a shell runs /usr/bin/time: in a text dash may read (the row's own, a text sh runs, what env -S, flock -c, su, runuser or script run), and after an assignment, a pipe or a wrapper, and in a find -exec; it is read as a shell's own word only at a segment's head, after no pipe, in a text only bash or zsh runs (a change to either reading reds here)", () => {
+test("round 8 of fork PR #780 review, sixty-second commit, THE TIME WORD and numactl (the reviewer's decisions 8 and 11(1)): WRAPPERS holds every wrapper of the hook's PREFIXES but builtin, numactl among them, so a missing program behind numactl is NOT RUN by name; and the walk reads `time` as a program in a text dash may read (the row's own, a text sh runs, what env -S, flock -c, su, runuser or script run), after an assignment, a pipe or a wrapper, and in a find -exec, and as a shell's own word only at a segment's head, after no pipe, in a text only bash or zsh runs", () => {
   const RUN = '../base/report.md report.md';
   const M = Q780_MISSING;
   const MISS = `NOT RUN: real ${M} is not on this runner`;
@@ -17199,7 +17206,7 @@ test("round 8 of fork PR #780 review, sixty-second commit, THE TIME WORD and num
     ["in su -c's text inside bash", `bash -c "su -c 'time cp ${RUN}'"`, true],
     ["in a find -exec inside bash", `bash -c 'find . -exec time cp ${RUN} +'`, true],
   ];
-  assert.deepEqual(shapes.map(([label, cmd]) => [label, programsInvoked(cmd).includes('time')]), shapes.map(([label, , reads]) => [label, reads]), '`time` is read as a program exactly where a shell runs /usr/bin/time, and as its own word at the head of a text bash or zsh runs');
+  assert.deepEqual(shapes.map(([label, cmd]) => [label, programsInvoked(cmd).includes('time')]), shapes.map(([label, , reads]) => [label, reads]), "the walk reads `time` in each shape as listed: as a program in a text dash may read, after an assignment, a pipe or a wrapper, and in a find -exec, and as a shell's own word at a segment's head, after no pipe, in a text only bash or zsh runs");
 });
 test("round 8 of fork PR #780 review, sixty-second commit, THE TIME WORD on the committed rows (the reviewer's decision 11(1), on the execution checker's record of dash running /usr/bin/time): the six committed commands whose dash leg runs /usr/bin/time, as the legs gated them in this process (seven rows: R6W-RT-time-echo-producer runs R6W-N-time-echo-closer's command, which the legs gated under the first), each read `time` as a program, so where no `time` is on the PATH the gate makes each NOT RUN with one line naming time, and with a `time` on the PATH each is measured (runs last: it reads the rows the legs gated)", () => {
   assert.ok(GATED_ROWS.size > 0, 'the legs above gated rows in this process (run the whole file)');
