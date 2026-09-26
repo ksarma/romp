@@ -189,9 +189,9 @@ version is back.
   userspace design changes that. Don't keep long-lived credentials on hosts
   whose root you don't trust.
 - **Do not** set `ROMP_SERVE_HOST` to `0.0.0.0` or a LAN address on an untrusted
-  network — the token still gates every request, but it widens the surface; use
-  an ssh tunnel or `tailscale serve` instead, which keep the listener on
-  loopback.
+  network. The token, or a browser sign-in made with it, still gates every
+  request, but it widens the surface; use an ssh tunnel or `tailscale serve`
+  instead, which keep the listener on loopback.
 - For defense-in-depth on Linux you can still run romp inside a per-user
   **network namespace** (`unshare -n`) or rootless container, so its loopback is
   not even reachable by other users' processes.

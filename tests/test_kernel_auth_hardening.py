@@ -8,8 +8,9 @@
        (Jupyter's model: loopback is reachable by every local user on the
        machine, so the 0600 token file, not the socket, is the same-user trust
        boundary). The old loopback bypass (and with it the whole notion of
-       "locality") is gone: a token-less loopback request is denied, and the Host
-       header carries no authorization weight in any direction. Accepted forms:
+       "locality") is gone: a loopback request that carries neither the token nor
+       a browser sign-in made with it is denied, and the Host header carries no
+       authorization weight in any direction. Accepted forms:
        the serve token as ?token= or the X-Romp-Token header (CLI/hooks/daemons),
        and a one-time ?c= code; a page navigation carrying ?token= or ?c= signs
        a browser in. A signed-in browser sends this kernel's session cookie,

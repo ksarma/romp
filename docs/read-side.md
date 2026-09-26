@@ -984,7 +984,8 @@ The Python kernel (`kernel/kernel.py`) closes it.
   same proxy) must still never be enabled for this port, since the token would
   then be the only gate with no device identity in front of it.
 - Regression tests: a cross-site `/ws` upgrade with a foreign `Origin` must be
-  rejected, and a token-less loopback request to any gated route must 403
+  rejected, and a loopback request to any gated route that carries neither the
+  token nor a browser sign-in made with it must 403
   (tests/test_kernel_auth_hardening.py, tests/test_kernel_ws_auth.py,
   tests/test_postal_token.py).
 

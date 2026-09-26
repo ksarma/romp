@@ -56,8 +56,9 @@ class CorsDelivery(unittest.TestCase):
 
     def _req(self, method, path, origin=None, headers=None, token=True):
         # token=True sends X-Romp-Token (the serve token, or a browser sign-in made with it, is
-        # required on every gated route, loopback included); the deny-path tests pass token=False so the ORIGIN gate is
-        # what decides (a valid token would authorize any origin and defeat the point).
+        # required on every gated route, loopback included); the deny-path tests pass
+        # token=False so the ORIGIN gate is what decides (a valid token would authorize any
+        # origin and defeat the point).
         conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=3)
         try:
             h = dict(headers or {})
