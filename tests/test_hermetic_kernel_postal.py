@@ -3435,9 +3435,9 @@ def _conftest_reasserted_names(src=None, where=None):
     each runner label by fork PR #916's evaluator, as GitHub values them; the reviewer's hold of 2026-09-25 22:24Z), and
     so the cache plugin loaded: its run with no worker has the options of the runners whose step sets no worker (-n 0,
     on macos-latest) and its run with workers those of the runners whose step sets some (-n 2, on ubuntu-latest;
-    _proof_ci_forms, _proof_mode_options). The developer's form has none of those options and has -p no:cacheprovider
-    and -k reassert (_PROOF_DEVELOPER_OPTIONS), which blocks the cache plugin and deselects none of the four, and -n 2
-    in its run with workers.
+    _proof_ci_forms, _proof_mode_options). The developer's form has none of those options but -n, and has
+    -p no:cacheprovider and -k reassert (_PROOF_DEVELOPER_OPTIONS), which blocks the cache plugin and deselects none of
+    the four, and -n 2 in its run with workers.
     THE PROOF'S LIMIT, IN THREE TIERS (the reviewer's ruling of 2026-09-25 08:14Z on round 2 of fork PR #894, (10)). The
     proof refuses an unconditional removal of a counted fixture's re-assert (from every test), the class of the bug, and
     any removal keyed on a fact of the first tier. The second and third tiers are what it grants although pytest may not
@@ -3690,15 +3690,15 @@ def _proof_modes():
 _PROOF_DEVELOPER_OPTIONS = (("-p", "no:cacheprovider"), ("-k", "reassert"))
 #   THE DEVELOPER'S FORM (the reviewer's ruling of 2026-09-25 09:17Z on round 2 of fork PR #894, (11), after the
 #   verifier's finding N4 at the forty-third commit: every child passed CI's options, so a removal keyed on their
-#   absence was granted, and a developer's run leaked): the options of the proof's runs in that form, none of CI's
-#   options and the two a developer's run of this suite passes that CI's step does not, the cache plugin blocked, as
+#   absence was granted, and a developer's run leaked): the options of the proof's runs in that form besides -n, none
+#   of CI's options and the two a developer's run of this suite passes that CI's step does not, the cache plugin blocked, as
 #   this repository's sweeps run, and a -k, which selects a test by name ("reassert" is in the name of each module the
 #   proof adds, so it deselects none); its run with workers adds -n 2 (_proof_mode_options)
 
 
 def _proof_developer_options():
-    """The options of the execution proof's runs in a developer's form (_PROOF_DEVELOPER_OPTIONS), none of which CI's
-    pytest step passes (_proof_options), as words in their order."""
+    """The options of the execution proof's runs in a developer's form besides -n (_PROOF_DEVELOPER_OPTIONS), none of
+    which CI's pytest step passes (_proof_options), as words in their order."""
     return [word for option in _PROOF_DEVELOPER_OPTIONS for word in option]
 
 
@@ -3713,11 +3713,10 @@ def _proof_options(os_label, root=None):
     `os_label`, as GitHub runs them, read from the python job of _proof_ci_yml(root) by fork PR #916's evaluator,
     imported from tests/test_ci_pytest_workers.py, not copied: python_job_steps gives the step's one-line command,
     command_on values each `${{ }}` expression in it for `os_label` as GitHub values it, and the words after
-    `python -m pytest` are returned, today with -n 2 on ubuntu-latest and with -n 0 on macos-latest. What the evaluator
-    does not read is REFUSED by name (AssertionError), never read by a default: an expression of any other shape, which
-    command_on's LookupError names (planted: an expression on matrix.python-version), a python job with no single Run
-    pytest step with a one-line command (planted: the step renamed), and a command that is not one `python -m pytest`
-    line (planted: `pytest` run bare)."""
+    `python -m pytest` are returned, today with -n 2 on ubuntu-latest and with -n 0 on macos-latest. REFUSED by name
+    (AssertionError): an expression of a shape command_on does not read, which its LookupError names (planted: an
+    expression on matrix.python-version), a python job with no single Run pytest step with a one-line command (planted:
+    the step renamed), and a command whose first three words are not `python -m pytest` (planted: `pytest` run bare)."""
     path = _proof_ci_yml(root)
     try:
         runs = [run for name, run in python_job_steps(path) if name == "Run pytest"]
@@ -3740,9 +3739,10 @@ def _proof_ci_forms(root=None):
     worker, and those whose step sets some, each with the options those runners share: today macos-latest's with -n 0,
     xdist's in-process run, and ubuntu-latest's with -n 2. The count is read by fork PR #916's worker_counts, as
     pytest's parser reads it: none, or one whole number, 0 being no worker. REFUSED by name (AssertionError): a count it
-    reads that is not one whole number (planted: -n auto), two runners of one kind whose options differ (planted: a
-    second expression that gives one of them -x), and no runner of a kind (planted: a step with no -n, and one that
-    gives every runner -n 2), since the proof makes one run in CI's form with no worker and one with workers."""
+    reads that is not one whole number in decimal digits (planted: -n auto, and a superscript two), two runners of one
+    kind whose options differ (planted: a second expression that gives one of them -x), and no runner of a kind
+    (planted: a step with no -n, and one that gives every runner -n 2), since the proof makes one run in CI's form with
+    no worker and one with workers."""
     path = _proof_ci_yml(root)
     try:
         labels = matrix_os_labels(path)
@@ -3752,7 +3752,7 @@ def _proof_ci_forms(root=None):
     for label in labels:
         words = _proof_options(label, root)
         counts = worker_counts(" ".join(shlex.quote(w) for w in words))
-        if counts and (len(counts) != 1 or not counts[0].isdigit()):
+        if counts and (len(counts) != 1 or not counts[0].isdecimal()):
             raise AssertionError("the execution proof reads CI's worker count on %s as none or one whole number, and the Run "
                                  "pytest step of %s sets %r there: %s" % (label, path, counts, " ".join(words)))
         kinds["xdist" if counts and int(counts[0]) > 0 else "serial"].setdefault(tuple(words), []).append(label)
@@ -7252,17 +7252,17 @@ class HermeticKernelPostal(unittest.TestCase):
     def test_the_proofs_ci_form_is_the_run_pytest_step_valued_per_runner_and_a_shape_it_does_not_read_is_refused(self):
         """CI'S FORM, EVALUATED (the reviewer's hold of 2026-09-25 22:24Z on round 2 of fork PR #894: fork PR #916 put
         `-n ${{ matrix.os == 'ubuntu-latest' && '2' || '0' }}` in CI's Run pytest step, and the proof, which split that
-        line into words, handed pytest '${{' as a worker count and every child refused to start). From the real
-        .github/workflows/ci.yml, read through fork PR #916's evaluator: the ubuntu-latest form sets two workers and the
-        macos-latest form none (-n 0), each count read by its worker_counts; _proof_ci_forms files the first as CI's form
-        with workers and the second as CI's form with none; and where pytest-xdist and pytest-timeout are installed the
-        proof's runs in CI's form pass those two forms word for word (_proof_mode_options). With pytest-xdist out of
-        reach, each run in CI's form leaves out -n and its count and nothing else; with pytest-timeout out of reach, the
-        words that begin --timeout. REFUSED BY NAME, each over a copy of ci.yml with one change: an expression on another
-        matrix key (matrix.python-version), the Run pytest step renamed, `pytest` run bare, a worker count of auto, a
-        second expression that gives one of two runners with no worker -x, a step with no -n, and a step that gives every
-        runner -n 2; and, with pytest-xdist out of reach, -n with its count attached, which the run with no worker cannot
-        leave out."""
+        line into words, handed pytest '${{' as a worker count and every child in CI's form refused to start). From the
+        real .github/workflows/ci.yml, read through fork PR #916's evaluator: the ubuntu-latest form sets two workers
+        and the macos-latest form none (-n 0), each count read by its worker_counts; _proof_ci_forms files the first as
+        CI's form with workers and the second as CI's form with none; and where pytest-xdist and pytest-timeout are
+        installed the proof's runs in CI's form pass those two forms word for word (_proof_mode_options). With
+        pytest-xdist out of reach, each run in CI's form leaves out -n and its count and nothing else; with
+        pytest-timeout out of reach, the words that begin --timeout. REFUSED BY NAME, each over a copy of ci.yml with
+        one change: an expression on another matrix key (matrix.python-version), the Run pytest step renamed, `pytest`
+        run bare, a worker count of auto, one of a superscript two (a digit, not a decimal one), a second expression
+        that gives one of two runners with no worker -x, a step with no -n, and a step that gives every runner -n 2;
+        and, with pytest-xdist out of reach, -n with its count attached, which the run with no worker cannot leave out."""
         from unittest import mock
         ubuntu, macos = _proof_options("ubuntu-latest"), _proof_options("macos-latest")
         self.assertEqual((worker_counts(" ".join(ubuntu)), worker_counts(" ".join(macos))), (["2"], ["0"]),
@@ -7295,6 +7295,8 @@ class HermeticKernelPostal(unittest.TestCase):
                    "is not one `python -m pytest` line"),
                   ("a worker count of auto", real.replace(expression, "matrix.os == 'ubuntu-latest' && 'auto' || '0'"),
                    "sets ['auto'] there"),
+                  ("a worker count of a superscript two, a digit but not a decimal one",
+                   real.replace(expression, "matrix.os == 'ubuntu-latest' && '\u00b2' || '0'"), "sets ['\u00b2'] there"),
                   ("two runners with no worker whose options differ",
                    real.replace("        include:\n", "        include:\n          - os: windows-latest\n            python-version: '3.12'\n", 1)
                    .replace("--timeout-method=thread\n", "--timeout-method=thread ${{ matrix.os == 'windows-latest' && '-x' || '' }}\n", 1),

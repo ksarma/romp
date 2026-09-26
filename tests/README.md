@@ -189,7 +189,7 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   is loaded: its run with no worker has the options of the runners whose step
   sets no worker (`-n 0`, on `macos-latest`), and its run with workers those of
   the runners whose step sets some (`-n 2`, on `ubuntu-latest`). The
-  developer's form has none of those options and has
+  developer's form has none of those options but `-n`, and has
   `-p no:cacheprovider -k reassert`, which blocks the cache plugin and
   deselects none of the four, and `-n 2` in its run with workers. Where
   pytest-xdist is installed, as it is in each of CI's cells, the run makes
