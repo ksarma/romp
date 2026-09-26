@@ -114,11 +114,12 @@ function jobs(text) {
  *  trimmed, quotes kept (null for a step with neither, a bare `uses:` step), so a name: line at another indent is not
  *  its name. Its comments are its lines whose first non-blank character is #, blank by \s (a no-break space among it,
  *  so a # line led by one is a comment here, where the env reader below does not read it as one), and `code` the rest,
- *  a line with a # after code included. Its fields are its code lines of eight spaces, a field of letters and -, and a
- *  colon, the rest of the line trimmed as the value, and its opening line when that is `      - <field>: ` and a value,
- *  a later line of a field replacing an earlier one; a field at another indent, a field holding a digit or _, a quoted
- *  field key, and a line holding a carriage return, U+2028 or U+2029, which the value's . does not match, are not read
- *  as a field (U+0085, which it matches, stays in the value). Its table: STEPS_ROWS, run by the test after it.
+ *  a line with a # after code included. Its fields are its code lines of eight spaces, a field of letters and -, a
+ *  colon and at most one space or tab, the rest of the line trimmed as the value, and its opening line when that is
+ *  `      - <field>: ` and a value, a later line of a field replacing an earlier one; a field at another indent, a field
+ *  holding a digit or _, a quoted field key, and a line holding a carriage return, U+2028 or U+2029, directly after the
+ *  colon included, which neither that space or tab nor the value's . matches, are not read as a field (U+0085, which
+ *  the . matches, stays in the value). Its table: STEPS_ROWS, run by the test after it.
  *  Its env, the env reader, which reads every step and fails closed: a line it cannot read is refused, named by its
  *  line (the step's envRefused), rather than read past. A line of the step holding a carriage return or a Unicode line
  *  break (U+0085, U+2028, U+2029) is refused wherever it sits in the step, a # line included: YAML ends a line there,
@@ -194,7 +195,7 @@ function steps(job) {
     s.comments = s.lines.filter((l) => /^\s*#/.test(l));
     s.fields = {};
     for (const l of s.code) {
-      const f = /^        ([A-Za-z-]+):\s?(.*)$/.exec(l) || /^      - ([A-Za-z-]+): (.*)$/.exec(l);
+      const f = /^        ([A-Za-z-]+):[ \t]?(.*)$/.exec(l) || /^      - ([A-Za-z-]+): (.*)$/.exec(l);
       if (f) s.fields[f[1]] = f[2].trim();
     }
     s.env = {};
@@ -251,6 +252,10 @@ const STEPS_ROWS = [
   { what: 'a field line holding U+2028 is not read', lines: ['      - name: A', '        run: a\u2028b'], steps: [{ name: 'A', fields: { name: 'A' } }] },
   { what: 'a field line holding U+2029 is not read', lines: ['      - name: A', '        run: a\u2029b'], steps: [{ name: 'A', fields: { name: 'A' } }] },
   { what: 'a field line holding U+0085 is read, the character in its value', lines: ['      - name: A', '        run: a\u0085b'], steps: [{ name: 'A', fields: { name: 'A', run: 'a\u0085b' } }] },
+  { what: 'a field line with a carriage return directly after the colon is not read', lines: ['      - name: A', '        run:\ra'], steps: [{ name: 'A', fields: { name: 'A' } }] },
+  { what: 'a field line with U+2028 directly after the colon is not read', lines: ['      - name: A', '        run:\u2028a'], steps: [{ name: 'A', fields: { name: 'A' } }] },
+  { what: 'a field line with U+2029 directly after the colon is not read', lines: ['      - name: A', '        run:\u2029a'], steps: [{ name: 'A', fields: { name: 'A' } }] },
+  { what: 'a field line with a tab directly after the colon is read', lines: ['      - name: A', '        run:\ta'], steps: [{ name: 'A', fields: { name: 'A', run: 'a' } }] },
 ];
 test('steps()\' table: each row\'s steps, names and fields read as steps()\' docstring states', () => {
   const wrong = [];
@@ -611,9 +616,10 @@ test('the step is bounded twice: its own timeout-minutes fits the margin under t
  *  break inside a # line are read too. By the word boundary, npx playwright install-deps is read as well. It reads a
  *  Playwright cache from the same joined lines, after a line's leading whitespace: path: ~/.cache/ms-playwright with
  *  only whitespace after it, and key: playwright-. A spelling outside them is not read: a run: whose command is on the
- *  next line, another launcher, another key, and a run: after the dash of a line steps() does not read as a step's
- *  opener with that field (a step whose fields sit at ten spaces, more than one space after the dash, a tab after the
- *  opener's run:). The code-line patterns are those of the gate-adopt pin in
+ *  next line (after a line feed, or after a carriage return, U+2028 or U+2029 directly after its colon, which steps()
+ *  does not read as a field), another launcher, another key, and a run: after the dash of a line steps() does not read
+ *  as a step's opener with that field (a step whose fields sit at ten spaces, more than one space after the dash, a tab
+ *  after the opener's run:). The code-line patterns are those of the gate-adopt pin in
  *  tools/markdown-viewer-plan-gate-adopt.test.mjs (its installBefore and cacheBefore), but the two pins read different
  *  regions (the gate-adopt pin reads the region its npmTestJob docstring states), differ on the run fields steps()
  *  reads that the code-line pattern does not (the step's `- run:` opener among them), which this pin reads and the
@@ -650,6 +656,7 @@ const INSTALL_ROWS = [
   ['a step whose fields sit at ten spaces, read by the code-line pattern', ['      -   name: Install', '          run: npx playwright install chromium', ...TEST_LINES], true, false],
   ['a run: nested under with:, read by the code-line pattern', ['      - uses: actions/x@v1', '        with:', '          run: npx playwright install chromium', ...TEST_LINES], true, false],
   ['a run: whose command is on the next line, not read', ['      - name: Install', '        run: |', '          npx playwright install chromium', ...TEST_LINES], false, false],
+  ['a run: whose command follows a carriage return directly after its colon, on the next line for YAML, not read', ['      - name: Install', '        run:\r          npx playwright install chromium', ...TEST_LINES], false, false],
   ['another launcher, not read', ['      - name: Install', '        run: pnpm exec playwright install chromium', ...TEST_LINES], false, false],
   ['a # line holding a carriage return with run: npx playwright install after it, read by the code-line pattern (the line split at the break)', ['      - name: A', '        # a note\r        run: npx playwright install chromium', '        run: echo', ...TEST_LINES], true, false],
   ['a # line holding U+2028 with the cache path after it, read (the line split at the break)', ['      - uses: actions/cache@v4', '        with:', '          # a note\u2028          path: ~/.cache/ms-playwright', ...TEST_LINES], false, true],
