@@ -1371,8 +1371,8 @@ test("the inertness premise, held where CI runs: MD_PURIFY is its six-key litera
   const bindAt = mdCode.indexOf(bind), adoptAt = mdCode.indexOf(adopt);
   assert.ok(bindAt > 0 && adoptAt > bindAt, "the body is bound to `clean` and adopted later");
   const between = mdCode.slice(bindAt + bind.length, adoptAt);
-  assert.deepEqual(between.match(/\w+\(clean\b/g), ["resolveFigureRefs(clean", "gateRemoteFigures(clean", "rewriteFigureSrcs(clean", "gateRemoteFigures(clean", "capAuthoredFileUrls(clean"],
-    "between the sanitize and the adoption `clean` is handed to the four chain calls (the URL kind's resolution and gate, the file kind's rewrite and gate) and to the cap pass (authored-file-caps.ts: it adds this page's cap to this origin's /file URLs, and sets no other attribute), and to nothing else");
+  assert.deepEqual(between.match(/\w+\(clean\b/g), ["resolveFigureRefs(clean", "gateRemoteFigures(clean", "rewriteFigureSrcs(clean", "gateRemoteFigures(clean", "keepAuthoredSpellings(clean", "capAuthoredFileUrls(clean"],
+    "between the sanitize and the adoption `clean` is handed to the four chain calls (the URL kind's resolution and gate, the file kind's rewrite and gate), to the file kind's keepAuthoredSpellings (it writes data-fv-src and data-fv-srcset, attributes nothing fetches through, with the spelling the cap pass is about to change), and to the cap pass (authored-file-caps.ts: it adds this page's cap to this origin's /file URLs, and sets no other attribute), and to nothing else");
   assert.deepEqual(between.match(/\bclean\.\w+/g), ["clean.querySelectorAll"], "and the one property read of `clean` there is the fence pass's (a new use of the body before the adoption, a call or a read, is red here first)");
   assert.deepEqual(between.match(/\bdocument\.\w+/g), ["document.baseURI", "document.baseURI", "document.baseURI"], "the live document is read there for its base URI alone");
   assert.doesNotMatch(between, /\bbox\b|adoptNode|importNode|appendChild|\bappend\(|prepend\(|insertBefore|replaceChildren|replaceWith|\bafter\(|\bbefore\(/, "nothing moves a node into the live document before the chain is done");

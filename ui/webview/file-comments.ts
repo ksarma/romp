@@ -398,7 +398,8 @@ export function srcIsEmbed(src: string, dest: string, filePath: string | null | 
 }
 const imgsIn = (root: Element): HTMLElement[] => Array.from(root.querySelectorAll("img")) as HTMLElement[];
 /** The destination a rendered picture was written with: the authored attribute the viewer keeps as `data-fv-src` when it
- *  rewrites `src` through /file (file-view.ts rewriteFigureSrcs), else `src` itself — a picture the viewer left as written.
+ *  rewrites `src` through /file (file-view.ts rewriteFigureSrcs) or before its cap pass adds this page's cap to a /file URL
+ *  written with its scheme (file-view.ts keepAuthoredSpellings), else `src` itself: a picture the viewer left as written.
  *  Null for a picture with neither. */
 export function pictureDest(img: Element): string | null {
   const kept = img.getAttribute("data-fv-src");

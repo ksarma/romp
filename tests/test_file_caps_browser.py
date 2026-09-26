@@ -31,7 +31,8 @@ the REAL chat page of a hermetic kernel in playwright's Chromium and checks ever
      never cleared.
   4. A same-origin /file address typed where no markdown renderer runs carries the cap and opens: a code span holding
      one URL, a user todo's text and its link chip (in the chat and in the Waiting pane), and, in the viewer, a figure
-     and a link the note writes with the scheme.
+     and a link the note writes with the scheme; the figure keeps the spelling its author wrote in data-fv-src, which the
+     comments panel pairs it with its embed by.
   5. Nothing the session cookie alone reads (every page route, /sw.js, every file under /dist/ and /media/) carries the
      page key, the session id, the serve token, or the planted session's id, folder or message; the page key is in a
      sign-in response once and nowhere else.
@@ -523,7 +524,8 @@ out.todoChip = await open(page, "a.ut-link");
 await page.click('#content .file-uri-link[data-path="docs/note.md"]');
 await page.waitForSelector("#romp-fileview", { timeout: cfg.deadline });
 await page.waitForFunction(() => { const i = document.querySelector('#romp-fileview img[alt="abs figure"]'); return !!i && i.complete; }, null, { timeout: cfg.deadline }).catch(() => {});
-out.viewerFigure = await page.evaluate(() => { const i = document.querySelector('#romp-fileview img[alt="abs figure"]'); if (!i) return null; let cap = null, absolute = null; try { cap = new URL(i.getAttribute("src") || "", location.href).searchParams.has("cap"); absolute = /^https?:\/\//.test(i.getAttribute("src") || ""); } catch (e) {} return { loaded: i.naturalWidth > 0, cap, absolute }; });
+// the figure's spelling as its author wrote it stays in data-fv-src, where the comments panel pairs a picture with its embed
+out.viewerFigure = await page.evaluate((authored) => { const i = document.querySelector('#romp-fileview img[alt="abs figure"]'); if (!i) return null; let cap = null, absolute = null; try { cap = new URL(i.getAttribute("src") || "", location.href).searchParams.has("cap"); absolute = /^https?:\/\//.test(i.getAttribute("src") || ""); } catch (e) {} return { loaded: i.naturalWidth > 0, cap, absolute, authoredKept: i.getAttribute("data-fv-src") === authored }; }, cfg.absFigure);
 out.viewerLink = await open(page, '#romp-fileview a:text-is("dashboard address")');
 await page.keyboard.press("Escape").catch(() => {});
 const w = await ctx.newPage();
@@ -584,6 +586,7 @@ class ServedFileCapsAndPageKey(unittest.TestCase):
                     "The same figure by its [dashboard address](%s/file?%s).\n\n![abs figure](%s/file?%s)\n"
                     % (origin, q, origin, q)).encode()
         Path(cwd, "docs", "note.md").write_bytes(cls.note)
+        cls.abs_figure = "%s/file?%s" % (origin, q)   # the note's figure as its author wrote it, with its scheme
         cls.cwd = cwd
         Path(state, "names", SID).write_text("web\t%s\t#9cd2ff\t#0c1a2e\n" % cwd)
         Path(state, "sdk", SID + ".json").write_text(json.dumps(
@@ -780,7 +783,7 @@ class ServedFileCapsAndPageKey(unittest.TestCase):
         self.assertTrue(other["kept"], "the jar keeps it, with its value: %r" % other)
 
     def test_a_typed_file_address_carries_the_cap_and_opens(self):
-        r = self._drive(TYPED_LINKS)
+        r = self._drive(TYPED_LINKS, absFigure=self.abs_figure)
         for where in ("codeSpan", "todoText", "todoChip", "viewerLink", "waitingText", "waitingChip"):
             got = r[where]
             self.assertTrue(got["found"], "%s: the anchor was made: %r" % (where, got))
@@ -791,6 +794,8 @@ class ServedFileCapsAndPageKey(unittest.TestCase):
         self.assertIsNotNone(r["viewerFigure"], "the viewer rendered the note's absolute figure")
         self.assertTrue(r["viewerFigure"]["cap"] and r["viewerFigure"]["loaded"] and r["viewerFigure"]["absolute"],
                         "the note's figure written with its scheme loads, capped, and stays absolute: %r" % r["viewerFigure"])
+        self.assertTrue(r["viewerFigure"]["authoredKept"], "and its authored spelling stays in data-fv-src, which the comments panel "
+                        "pairs it with its embed by (file-view-figure-cap-spelling-browser.test.ts runs the pairing): %r" % r["viewerFigure"])
 
     def _http(self, path, cookie=None, key=None, headers=None):
         req = urllib.request.Request("http://127.0.0.1:%d%s" % (self.port, path), headers=dict(headers or {}))
