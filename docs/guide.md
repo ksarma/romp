@@ -1363,7 +1363,9 @@ states what each value authenticates). A browser can lose the site's storage whi
 keeps the cookie (cleared site data, a private window, a browser that clears a
 site's storage after a week without a visit); it then lands on the sign-in page.
 Paste the token there, open the link `romp url` prints, or run `romp` on the
-machine to open a signed-in window. A signed-in browser can reach your sessions,
+machine to open a signed-in window. A browser that refuses site storage for the
+address cannot keep the key at all, and the page says so; once site data is
+allowed for the address, a reload shows the sign-in page. A signed-in browser can reach your sessions,
 so treat a machine holding a sign-in as you would one holding the token.
 
 **Rotating the token.** Rotating replaces the token and ends every browser

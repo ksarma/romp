@@ -4076,14 +4076,25 @@ _PAGE_KEY_SLOT = "romp.pageKey." + _SESSION_COOKIE
 # origin is left untouched; exposes __rompKeyQ() for the socket dials and __rompPageKey() for
 # ui/webview/file-cap.ts. It sends the TOP frame to /login (a pane never navigates itself) in two
 # cases. First, this origin holds no key at all (site data cleared), which the top frame checks as it
-# loads; a browser that refuses storage gets a sentence instead of a redirect loop. Second, a
-# same-origin fetch in ANY frame, the top or a pane, comes back with the kernel's distinct re-sign-in
-# 403 (X-Romp-Reauth: a valid session whose stored key no longer matches, as when two sign-ins race
-# and leave the cookie of one beside the key of the other), in which case it drops the stale key and
-# hops the top frame. Neither case can loop: nothing is sent from /login itself, and /login navigates
-# only when the person submits it.
+# loads. Second, a same-origin fetch in ANY frame, the top or a pane, comes back with the kernel's
+# distinct re-sign-in 403 (X-Romp-Reauth: a valid session whose stored key no longer matches, as when
+# two sign-ins race and leave the cookie of one beside the key of the other, or a session with no key
+# stored at all), in which case it drops the stale key and hops the top frame. Before either hop it
+# checks that this origin's storage takes a write (stores()). A browser that keeps cookies but refuses
+# site storage cannot keep the key a sign-in hands it, so each sign-in would come back keyless, be
+# refused and hop to /login again; that browser gets a sentence in the top frame's document instead
+# (refused()) and no hop. The sentence is styled like /login and sets its own background, since this
+# script runs in every top-level page. Neither hop can loop: nothing is sent from /login itself, and
+# /login navigates only when the person submits it.
 _PAGE_KEY_JS = ("(function(){if(window.__rompPageKey)return;var KN=" + json.dumps(_PAGE_KEY_SLOT) + ";"
     "function key(){try{return localStorage.getItem(KN)||''}catch(e){return ''}}"
+    "function stores(){try{localStorage.setItem(KN+'.probe','1');localStorage.removeItem(KN+'.probe');return true}catch(e){return false}}"
+    "function refused(d){var w=function(){var b=d.body;if(!b)return;d.documentElement.style.background='#101418';"
+    "b.setAttribute('style','margin:0 auto;max-width:30em;min-height:100vh;box-sizing:border-box;display:flex;"
+    "align-items:center;justify-content:center;padding:2em;background:#101418;color:#dfe7ee;"
+    "font:15px/1.5 system-ui,-apple-system,sans-serif;text-align:center');"
+    "b.textContent='romp keeps its sign-in in this site\\'s storage, which this browser refuses: allow site data for this address, then reload.';};"
+    "if(d.readyState==='loading')d.addEventListener('DOMContentLoaded',w);else w();}"
     "window.__rompPageKey=key;window.__rompKeyQ=function(){var k=key();return k?'&k='+encodeURIComponent(k):''};"
     "var f=window.fetch;if(f)window.fetch=function(input,init){try{var k=key();if(k){"
     "var isReq=(typeof Request!=='undefined')&&(input instanceof Request);"
@@ -4092,11 +4103,9 @@ _PAGE_KEY_JS = ("(function(){if(window.__rompPageKey)return;var KN=" + json.dump
     "h.set('X-Romp-Key',k);init=Object.assign({},init||{},{headers:h});}}}catch(e){}"
     "return f.call(window,input,init).then(function(r){try{"
     "if(r&&r.status===403&&r.headers&&r.headers.get('X-Romp-Reauth')){var t=window.top;"
-    "if(t.location.pathname!=='/login'){try{localStorage.removeItem(KN)}catch(e){}t.location.replace('/login');}}}catch(e){}return r;});};"
-    "if(!key()&&window===window.top&&location.pathname!=='/login'){var ok=true;"
-    "try{localStorage.setItem(KN+'.probe','1');localStorage.removeItem(KN+'.probe');}catch(e){ok=false;}"
-    "if(ok)location.replace('/login');else document.addEventListener('DOMContentLoaded',function(){"
-    "document.body.textContent='romp keeps its sign-in in this site\\'s storage, which this browser refuses: allow site data for this address, then reload.';});}})();")
+    "if(t.location.pathname!=='/login'){if(!stores())refused(t.document);"
+    "else{try{localStorage.removeItem(KN)}catch(e){}t.location.replace('/login');}}}}catch(e){}return r;});};"
+    "if(!key()&&window===window.top&&location.pathname!=='/login'){if(stores())location.replace('/login');else refused(document);}})();")
 
 
 # The WebSocket handshake headers a peer's 101 may pass back to the browser, each with the spelling
@@ -4165,7 +4174,9 @@ def _peer_header_value_ok(value):
 # saved sign-in is gone: the key lives in site storage, which a browser can lose while the cookie
 # stays, and only the token (or a fresh `romp url` link, or a window `romp` opens) mints a new one.
 # Static and self-contained (every other asset route is token-gated), and it carries no credential.
-# Colors follow the UI: the accent button is --accent #9cd2ff on --accent-fg #0c1a2e.
+# Colors follow the UI: the accent button is --accent #9cd2ff on --accent-fg #0c1a2e. The default view
+# is the one sentence, the form and the `romp url` / `romp` pointer; why a browser is signed out, and
+# what to do when `romp` is not found, sit behind two <details> folds, which open with no script.
 # The login page stays on the SYSTEM stack, deliberately: it renders pre-auth and /media is
 # token-gated (only the install icons ride exempt), so an 'Inter' lead could never load here —
 # it would just misstate the stack (PR-730 review, 2026-08-27).
@@ -4178,10 +4189,7 @@ background:#101418;color:#dfe7ee;font:15px/1.5 system-ui,-apple-system,sans-seri
 location.replace('/?token='+encodeURIComponent(document.getElementById('t').value.trim()));return false">
   <div style="font-size:1.6em;letter-spacing:.04em;margin-bottom:.4em">romp</div>
   <div style="opacity:.8;margin-bottom:1.2em">Sign in with this dashboard's access token. If this
-  tab worked before, you are signed out, not broken. Either this browser lost its saved sign-in
-  (cleared site data, a private window, a browser that clears a site's storage after a week
-  without a visit, or an app just added to the Home Screen, which keeps storage of its own), or
-  romp's token changed because romp was reinstalled or its token file was replaced.</div>
+  tab worked before, you are signed out, not broken.</div>
   <input id="t" autofocus placeholder="paste token"
     style="width:100%;box-sizing:border-box;padding:.55em .7em;border:1px solid #35414d;\
 border-radius:6px;background:#0c1117;color:#dfe7ee">
@@ -4189,9 +4197,17 @@ border-radius:6px;background:#0c1117;color:#dfe7ee">
 background:#9cd2ff;color:#0c1a2e;font-weight:600;cursor:pointer">Open</button>
   <div style="opacity:.6;margin-top:1.2em;font-size:.9em">To skip pasting, run <code>romp url</code>
   on the machine romp runs on and open the link it prints, or run <code>romp</code> there to open a
-  signed-in window. In an app on the Home Screen, paste the token here. If romp was just installed,
-  use a new terminal: an older one has a stale <code>PATH</code>. No <code>romp</code> yet?
-  <code>cat ~/.local/state/romp/serve-token</code></div>
+  signed-in window.</div>
+  <details style="opacity:.6;margin-top:1em;font-size:.9em;text-align:left">
+  <summary style="cursor:pointer;text-align:center">Why am I signed out?</summary>
+  <p>Either this browser lost its saved sign-in (cleared site data, a private window, a browser that
+  clears a site's storage after a week without a visit, or an app just added to the Home Screen, which
+  keeps storage of its own), or romp's token changed because romp was reinstalled or its token file
+  was replaced. In an app on the Home Screen, paste the token here.</p></details>
+  <details style="opacity:.6;margin-top:.4em;font-size:.9em;text-align:left">
+  <summary style="cursor:pointer;text-align:center"><code>romp</code> not found?</summary>
+  <p>If romp was just installed, use a new terminal: an older one has a stale <code>PATH</code>. No
+  <code>romp</code> yet? <code>cat ~/.local/state/romp/serve-token</code></p></details>
 </form>
 """
 

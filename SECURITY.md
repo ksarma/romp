@@ -80,7 +80,9 @@ at, or the kernel's own port on `127.0.0.1` or `localhost`), any
 send; the WebSocket upgrade is checked the same way. A page whose stored key
 no longer matches its session (two sign-ins that overlapped, or storage cleared
 while the tab was open) gets a refusal of its own and moves to the sign-in
-page, as does a page whose origin holds no key.
+page, as does a page whose origin holds no key. A browser that refuses site
+storage cannot keep a page key at all, so its page stays where it is and says
+why instead.
 
 When the dashboard shows an attached machine through this kernel
 (`/remote/<host>/...`), this kernel checks the browser's sign-in and calls the

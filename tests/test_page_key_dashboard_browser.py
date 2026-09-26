@@ -23,6 +23,17 @@ fails, never skips, when that engine is missing):
      sign-ins can leave). Its next request, a POST, is refused with the re-sign-in 403 and changes nothing; the tab goes to
      /login and drops the stale key; signing in through the form brings the dashboard back, with every pane loading and the
      POST answered again.
+  4. A browser that keeps cookies but refuses site storage (Firefox with dom.storage.enabled off; on the other engines an
+     init script that makes localStorage throw) signs in through the /login form: the boot's requests come back with the
+     re-sign-in 403, and the tab stays on the dashboard's address showing the sentence that says why, with no hop back to
+     /login once they have come back. A pane that finds storage refused while the top frame does not writes the sentence
+     into the top frame's document, and nothing navigates.
+  5. That sentence is legible on every top-level page it can land on (the dashboard and a pane page opened on its own): a
+     contrast of at least 4.5:1, measured twice, from the computed styles and from the pixels of a screenshot, and set in
+     from the window's edge.
+  6. /login on a phone-sized screen (320x568 and 375x667) shows its default view with nothing to scroll: the sentence,
+     the form and the pointer to `romp url`, with every fold closed; a click on a fold's summary opens it with the page's
+     scripts turned off.
 
 Nothing here prints a token, a session id or a key: the driver compares them in memory and reports booleans, statuses and
 counts. The lab token is minted at run time. Skips LOUDLY without the extension deps or a Chromium; the CI extension job
@@ -43,6 +54,7 @@ import time
 import unittest
 import urllib.request
 import zlib
+from collections import Counter
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -68,6 +80,71 @@ def _png(w=2, h=2, rgb=(60, 120, 200)):
     raw = b"".join(b"\x00" + bytes(rgb) * w for _ in range(h))
     return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0))
             + chunk(b"IDAT", zlib.compress(raw)) + chunk(b"IEND", b""))
+
+
+def _png_rgb(path):
+    """The pixels of an 8-bit RGB or RGBA non-interlaced PNG (the form a playwright screenshot takes), as rows of (r, g, b)."""
+    data = Path(path).read_bytes()
+    assert data[:8] == b"\x89PNG\r\n\x1a\n", "a PNG"
+    pos, idat, head = 8, b"", None
+    while pos < len(data):
+        n, tag = struct.unpack(">I", data[pos:pos + 4])[0], data[pos + 4:pos + 8]
+        if tag == b"IHDR":
+            head = struct.unpack(">IIBBBBB", data[pos + 8:pos + 8 + n])
+        elif tag == b"IDAT":
+            idat += data[pos + 8:pos + 8 + n]
+        elif tag == b"IEND":
+            break
+        pos += 12 + n
+    w, h, depth, ctype, _, _, interlace = head
+    assert depth == 8 and ctype in (2, 6) and interlace == 0, "an 8-bit RGB or RGBA PNG, not interlaced: %r" % (head,)
+    bpp = 3 if ctype == 2 else 4
+    raw, stride, rows, prev, i = zlib.decompress(idat), w * bpp, [], bytearray(w * bpp), 0
+    for _ in range(h):
+        ft, line = raw[i], bytearray(raw[i + 1:i + 1 + stride])
+        i += 1 + stride
+        for x in range(stride):
+            a = line[x - bpp] if x >= bpp else 0
+            b, c = prev[x], (prev[x - bpp] if x >= bpp else 0)
+            if ft == 1:
+                line[x] = (line[x] + a) & 255
+            elif ft == 2:
+                line[x] = (line[x] + b) & 255
+            elif ft == 3:
+                line[x] = (line[x] + ((a + b) >> 1)) & 255
+            elif ft == 4:
+                pa, pb, pc = abs(b - c), abs(a - c), abs(a + b - 2 * c)
+                line[x] = (line[x] + (a if pa <= pb and pa <= pc else b if pb <= pc else c)) & 255
+        rows.append([tuple(line[x:x + 3]) for x in range(0, stride, bpp)])
+        prev = line
+    return rows
+
+
+def _rgb(css):
+    """(r, g, b) of a computed CSS colour: rgb()/rgba(), or color(srgb ...)."""
+    m = re.search(r"color\(srgb ([\d.]+) ([\d.]+) ([\d.]+)", css or "")
+    if m:
+        return tuple(255 * float(m.group(k)) for k in (1, 2, 3))
+    return tuple(float(x) for x in re.findall(r"\d+(?:\.\d+)?", css or "")[:3])
+
+
+def _ratio(a, b):
+    """The WCAG contrast ratio of two sRGB colours, each (r, g, b) in 0 to 255."""
+    def lum(c):
+        ch = [v / 255 for v in c]
+        ch = [v / 12.92 if v <= 0.03928 else ((v + 0.055) / 1.055) ** 2.4 for v in ch]
+        return 0.2126 * ch[0] + 0.7152 * ch[1] + 0.0722 * ch[2]
+    la, lb = lum(a), lum(b)
+    return (max(la, lb) + 0.05) / (min(la, lb) + 0.05)
+
+
+def _pixel_contrast(path):
+    """The contrast a screenshot of text measures: between its commonest colour (the ground behind the text) and the pixel
+    farthest from it in contrast (the ink at the core of a stroke)."""
+    counts = Counter(px for row in _png_rgb(path) for px in row)
+    ground = counts.most_common(1)[0][0]
+    ink = max(counts, key=lambda px: _ratio(px, ground))
+    return _ratio(ink, ground)
 
 
 def _free_port():
@@ -114,6 +191,8 @@ catch (e) { console.error("browser-launch-failed: " + e); process.exit(3); }
 const VIEW = { viewport: { width: 1600, height: 1000 } };
 const out = {};
 const pathOf = (u) => { try { return new URL(u).pathname; } catch (e) { return "?"; } };
+/** p, or "timeout" after ms: a step that waits on the page is bounded, so a scene reports what it saw rather than hanging. */
+const bounded = (p, ms) => Promise.race([p, new Promise((r) => setTimeout(() => r("timeout"), ms))]);
 const onKernel = (u) => { try { return new URL(u).origin === cfg.origin; } catch (e) { return false; } };
 const sessionCookies = async (ctx) => (await ctx.cookies(cfg.origin)).filter((c) => c.name.startsWith("romp_s_"));
 const slotOf = async (ctx) => { const s = await sessionCookies(ctx); return s.length === 1 ? "romp.pageKey." + s[0].name : ""; };
@@ -349,6 +428,157 @@ await browser.close();
 process.exit(0);
 """
 
+# A browser that keeps cookies but refuses site storage, and the storage-refused sentence as a page shows it. Firefox runs
+# it for real, with dom.storage.enabled off; the other engines take an init script that makes localStorage throw the
+# SecurityError a refusing browser throws.
+REFUSING = r"""
+let refusing = browser;
+if (cfg.engine === "firefox") {
+  await browser.close();
+  try { browser = refusing = await pw.firefox.launch({ firefoxUserPrefs: { "dom.storage.enabled": false } }); }
+  catch (e) { console.error("browser-launch-failed: " + e); process.exit(3); }
+}
+async function refusingContext() {
+  const ctx = await refusing.newContext(VIEW);
+  if (cfg.engine !== "firefox") await ctx.addInitScript(() => { Object.defineProperty(window, "localStorage", { configurable: true,
+    get() { throw new DOMException("The operation is insecure.", "SecurityError"); } }); });
+  return ctx;
+}
+const storageRefused = (page) => page.evaluate(() => { try { localStorage.setItem("romp.probe", "1"); localStorage.removeItem("romp.probe"); return false; }
+  catch (e) { return true; } }).catch(() => "unknown");
+/** The sentence as the page shows it: whether the body says it, its ink and the first opaque background behind it (computed
+ *  styles), the box its text fills, and a screenshot of that box (written to `shot`) for the pixel check. */
+async function sentenceLook(page, shot) {
+  const m = await bounded(page.evaluate(() => {
+    const b = document.body;
+    if (!b) return null;
+    let ground = "";
+    for (let el = b; el && !ground; el = el.parentElement) {
+      const c = getComputedStyle(el).backgroundColor;
+      if (c && c !== "transparent" && !/^rgba\([^)]*,\s*0\)$/.test(c)) ground = c;
+    }
+    const r = document.createRange(); r.selectNodeContents(b); const box = r.getBoundingClientRect();
+    return { said: (b.innerText || "").includes("which this browser refuses"), ink: getComputedStyle(b).color, ground: ground || "rgb(255, 255, 255)",
+             box: { x: box.x, y: box.y, width: box.width, height: box.height } };
+  }).catch(() => null), 10000);
+  if (m === "timeout") return null;
+  if (m && m.said && m.box.width > 0 && m.box.height > 0) { await page.screenshot({ path: shot, clip: m.box }); m.shot = true; }
+  return m;
+}
+"""
+
+STORAGE_REFUSED = HEAD + REFUSING + r"""
+const ctx = await refusingContext();
+const rec = recorder(ctx, (k) => k === undefined || k === null ? "none" : "some");
+const page = await ctx.newPage();
+const navs = [];
+page.on("framenavigated", (f) => { if (f === page.mainFrame()) navs.push(pathOf(f.url())); });
+await page.goto(cfg.origin + "/login");
+out.refused = await storageRefused(page);
+await page.fill("#t", cfg.token);
+const t0 = Date.now();
+await page.click("form button");
+await page.waitForURL((u) => new URL(u).pathname === "/", { timeout: cfg.deadline }).catch(() => {});
+// the boot's requests: wait until a re-sign-in refusal has come back to the page, then give the page time to act on it
+for (const end = Date.now() + cfg.deadline; Date.now() < end && !rec.log.some((r) => r.t >= t0 && r.reauth); ) await page.waitForTimeout(200);
+await page.waitForTimeout(4000);
+out.settled = (await bounded(rec.settle(), 10000)) !== "timeout";
+out.reauth = rec.log.filter((r) => r.t >= t0 && r.reauth).length;
+out.cookies = (await sessionCookies(ctx)).length;
+out.navs = navs;
+out.at = pathOf(page.url());
+out.look = await sentenceLook(page, cfg.shots + "/after-sign-in.png");
+fs.writeSync(1, "RESULT:" + JSON.stringify(out) + "\n");
+await browser.close();
+process.exit(0);
+"""
+
+# A pane is refused while the top frame is not: the dashboard signs in with working storage, then the chat pane's document
+# alone stops reaching this origin's storage (the init script's refusal, applied to that one frame), and the pane makes a
+# request. The pane's re-sign-in branch finds storage refused and writes the sentence into the TOP frame's document; nothing
+# navigates. The top frame's own load check never ran refused, so only the pane's branch can put the sentence there.
+PANE_REFUSED = HEAD + r"""
+const ctx = await browser.newContext(VIEW);
+const rec = recorder(ctx, () => "n/a");
+const page = await ctx.newPage();
+const navs = [];
+page.on("framenavigated", (f) => { if (f === page.mainFrame()) navs.push(pathOf(f.url())); });
+await page.goto(cfg.origin + "/?token=" + encodeURIComponent(cfg.token));
+await page.waitForFunction(() => !!window.__rompPaneToggle, null, { timeout: cfg.deadline });
+const table = await paneTable(page);
+const chatRoute = (table.find((p) => p.label === "Chat") || {}).route;
+await page.evaluate((k) => window.__rompPaneToggle(k, true), (table.find((p) => p.label === "Chat") || {}).key);
+const chat = await frameAt(page, chatRoute);
+out.chat = !!chat;
+out.topBefore = await page.evaluate(() => (document.body.innerText || "").includes("which this browser refuses"));
+if (chat) {
+  await chat.evaluate(() => Object.defineProperty(window, "localStorage", { configurable: true,
+    get() { throw new DOMException("The operation is insecure.", "SecurityError"); } }));
+  out.pane = await chat.evaluate(async () => { const r = await fetch("/sessions"); return { status: r.status, reauth: !!r.headers.get("X-Romp-Reauth") }; })
+    .catch(() => "frame gone");
+}
+await page.waitForTimeout(2000);
+out.settled = (await bounded(rec.settle(), 10000)) !== "timeout";
+out.paneRefusals = rec.log.filter((r) => r.path === "/sessions" && r.frame === chatRoute && r.status === 403 && r.reauth).length;
+out.navs = navs;
+out.at = pathOf(page.url());
+out.topSays = await bounded(page.evaluate(() => (document.body.innerText || "").includes("which this browser refuses")).catch(() => false), 10000);
+fs.writeSync(1, "RESULT:" + JSON.stringify(out) + "\n");
+await browser.close();
+process.exit(0);
+"""
+
+# The sentence as each page's own load check shows it, with the kernel's data requests held back, so no refusal reaches the
+# page and the sentence stays whatever the re-sign-in branch does: the dashboard, and a pane page opened on its own, whose
+# stylesheets differ.
+SENTENCE_PAGES = ("/", "/chat")
+SENTENCE = HEAD + REFUSING + r"""
+out.pages = {};
+for (const p of cfg.pages) {
+  const ctx = await refusingContext();
+  await ctx.route((u) => onKernel(String(u)), (route) => route.request().resourceType() === "fetch" ? route.abort() : route.continue());
+  const page = await ctx.newPage();
+  await page.goto(cfg.origin + p + "?token=" + encodeURIComponent(cfg.token));
+  const refused = await storageRefused(page);
+  await page.waitForFunction(() => !!document.body && (document.body.innerText || "").includes("which this browser refuses"), null, { timeout: cfg.deadline }).catch(() => {});
+  await page.waitForTimeout(1000);
+  out.pages[p] = { refused, at: pathOf(page.url()), look: await sentenceLook(page, cfg.shots + "/sentence" + p.replace(/\W/g, "-") + ".png") };
+  await ctx.close();
+}
+fs.writeSync(1, "RESULT:" + JSON.stringify(out) + "\n");
+await browser.close();
+process.exit(0);
+"""
+
+# /login on phone-sized screens, with the page's scripts turned off: the default view fits, every fold starts closed, and a
+# click on the first fold's summary opens it.
+LOGIN_SIZES = ((320, 568), (375, 667))
+LOGIN_SMALL = HEAD + r"""
+out.sizes = {};
+for (const [w, h] of cfg.sizes) {
+  const ctx = await browser.newContext({ viewport: { width: w, height: h }, javaScriptEnabled: false });
+  const page = await ctx.newPage();
+  await page.goto(cfg.origin + "/login");
+  const m = await page.evaluate(() => {
+    const below = (el) => !el || el.getBoundingClientRect().bottom > innerHeight;
+    const pointer = Array.from(document.querySelectorAll("form > div")).find((d) => /romp url/.test(d.textContent || ""));
+    return { scroll: document.documentElement.scrollHeight, view: innerHeight, folds: document.querySelectorAll("details").length,
+             open: document.querySelectorAll("details[open]").length, inputBelow: below(document.getElementById("t")),
+             buttonBelow: below(document.querySelector("form button")), pointerBelow: below(pointer) };
+  });
+  m.opened = null;
+  if (m.folds) {
+    await page.click("details summary");
+    m.opened = await page.evaluate(() => { const d = document.querySelector("details"); return !!d.open && (d.innerText || "").includes("cleared site data"); });
+  }
+  out.sizes[w + "x" + h] = m;
+  await ctx.close();
+}
+fs.writeSync(1, "RESULT:" + JSON.stringify(out) + "\n");
+await browser.close();
+process.exit(0);
+"""
+
 # Every pane the rail lists, by the word it wears, and the settings page: each has a data check in the driver's LOADED.
 PANES = ("Chat", "Sessions", "Outline", "Feed", "Waiting", "Files", "Settings")
 
@@ -439,11 +669,14 @@ class ServedDashboardOverThePageKey(unittest.TestCase):
         except OSError:
             return ""
 
-    def _drive(self, src):
+    def _drive(self, src, **extra):
         cfg = os.path.join(self.lab, "cfg.json")
+        self.shots = os.path.join(self.lab, "shots-" + self._testMethodName)
+        os.makedirs(self.shots, exist_ok=True)
         with open(cfg, "w") as f:
-            json.dump({"origin": "http://127.0.0.1:%d" % self.port, "token": self.token, "sid": SID, "deadline": 30000,
-                       "engine": ENGINE, "other": "http://127.0.0.1:%d" % self.other.server_address[1]}, f)
+            json.dump(dict({"origin": "http://127.0.0.1:%d" % self.port, "token": self.token, "sid": SID, "deadline": 30000,
+                            "engine": ENGINE, "other": "http://127.0.0.1:%d" % self.other.server_address[1],
+                            "shots": self.shots}, **extra), f)
         driver = os.path.join(self.lab, "driver.mjs")
         with open(driver, "w") as f:
             f.write(src)
@@ -462,6 +695,9 @@ class ServedDashboardOverThePageKey(unittest.TestCase):
         if os.environ.get("PAGE_KEY_DASHBOARD_REPORT"):   # a directory: each scene's report (booleans, statuses, counts) for the record
             with open(os.path.join(os.environ["PAGE_KEY_DASHBOARD_REPORT"], ENGINE + "-" + self._testMethodName + ".json"), "w") as f:
                 f.write(line[len("RESULT:"):] + "\n")
+            for name in os.listdir(self.shots):      # and the scene's screenshots, which the pixel checks read
+                shutil.copy(os.path.join(self.shots, name),
+                            os.path.join(os.environ["PAGE_KEY_DASHBOARD_REPORT"], ENGINE + "-" + self._testMethodName + "-" + name))
         return json.loads(line[len("RESULT:"):])
 
     def _assert_panes(self, panes, when):
@@ -537,6 +773,55 @@ class ServedDashboardOverThePageKey(unittest.TestCase):
         self.assertEqual([s for s in r["afterSockets"] if s["key"] != "mine" or not s["heard"]], [], "the sockets carry the key again and are answered")
         self.assertEqual(r["post"]["status"], 200, "the POST is answered again")
         self.assertTrue(r["post"]["flipped"] and r["post"]["held"], "and takes effect")
+
+    def _assert_legible(self, look, shot, where):
+        """The storage-refused sentence reads: its ink on the first opaque background behind it clears 4.5:1 by the computed
+        styles and by the screenshot's pixels, and the text is set in from the window's edge."""
+        self.assertTrue(look and look.get("said"), where + ": the page shows the sentence: %r" % (look,))
+        self.assertTrue(look.get("shot"), where + ": the sentence's box was captured")
+        styled = _ratio(_rgb(look["ink"]), _rgb(look["ground"]))
+        self.assertGreaterEqual(styled, 4.5, where + ": the computed ink %s on %s is %.2f:1" % (look["ink"], look["ground"], styled))
+        seen = _pixel_contrast(os.path.join(self.shots, shot))
+        self.assertGreaterEqual(seen, 4.5, where + ": the screenshot's text measures %.2f:1" % seen)
+        self.assertGreaterEqual(min(look["box"]["x"], look["box"]["y"]), 16, where + ": the text is set in from the edge: %r" % look["box"])
+
+    def test_a_browser_that_refuses_site_storage_stays_on_the_sentence_and_never_hops_to_login(self):
+        r = self._drive(STORAGE_REFUSED)
+        self.assertIs(r["refused"], True, "the browser refuses site storage")
+        self.assertEqual(r["cookies"], 1, "and keeps the session cookie the sign-in set")
+        self.assertGreater(r["reauth"], 0, "the boot's requests came back with the re-sign-in 403, the answer that sends a tab to /login")
+        self.assertEqual(r["navs"][0], "/login", "the scene starts on /login: %r" % r["navs"])
+        self.assertNotIn("/login", r["navs"][1:], "no hop back to /login after the sign-in: %r" % r["navs"])
+        self.assertEqual(r["at"], "/", "the tab stays on the dashboard's address")
+        self._assert_legible(r["look"], "after-sign-in.png", "after the sign-in")
+
+    def test_a_pane_that_finds_storage_refused_shows_the_sentence_in_the_top_frame_and_nothing_navigates(self):
+        r = self._drive(PANE_REFUSED)
+        self.assertTrue(r["chat"], "the chat pane loaded")
+        self.assertIs(r["topBefore"], False, "the dashboard signed in with working storage: no sentence before the pane's request")
+        self.assertGreaterEqual(r["paneRefusals"], 1, "the pane's keyless request came back with the re-sign-in 403: %r" % (r.get("pane"),))
+        self.assertNotIn("/login", r["navs"], "nothing navigated to /login: %r" % r["navs"])
+        self.assertEqual(r["at"], "/", "the tab stays on the dashboard's address")
+        self.assertIs(r["topSays"], True, "the top frame's document shows the sentence the pane's branch wrote there")
+
+    def test_the_storage_refused_sentence_is_legible_on_every_top_level_page(self):
+        r = self._drive(SENTENCE, pages=list(SENTENCE_PAGES))
+        for p in SENTENCE_PAGES:
+            m = r["pages"][p]
+            self.assertIs(m["refused"], True, p + ": the browser refuses site storage")
+            self.assertEqual(m["at"], p, p + ": the page stays where it was opened")
+            self._assert_legible(m["look"], "sentence" + re.sub(r"\W", "-", p) + ".png", p)
+
+    def test_the_sign_in_page_fits_a_phone_screen_with_its_folds_closed(self):
+        r = self._drive(LOGIN_SMALL, sizes=[list(s) for s in LOGIN_SIZES])
+        for w, h in LOGIN_SIZES:
+            m = r["sizes"]["%dx%d" % (w, h)]
+            self.assertGreaterEqual(m["folds"], 1, "%dx%d: the page has a fold: %r" % (w, h, m))
+            self.assertEqual(m["open"], 0, "%dx%d: every fold starts closed" % (w, h))
+            self.assertLessEqual(m["scroll"], m["view"], "%dx%d: the default view fits, nothing to scroll: %r" % (w, h, m))
+            self.assertEqual((m["inputBelow"], m["buttonBelow"], m["pointerBelow"]), (False, False, False),
+                             "%dx%d: the token field, the Open button and the romp url pointer are on screen: %r" % (w, h, m))
+            self.assertIs(m["opened"], True, "%dx%d: a click on the first fold's summary opens it, with the page's scripts off" % (w, h))
 
 
 if __name__ == "__main__":
