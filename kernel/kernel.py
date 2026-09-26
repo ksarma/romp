@@ -2473,7 +2473,7 @@ _PERF_HTTP_ROUTES = {
     "GET": (
         "/", "/analytics", "/api-health", "/api-health/frame", "/busy", "/chat", "/classify",
         "/commands", "/defaults", "/diag/sendvis", "/emoji", "/feed", "/feed.json", "/file", "/files",
-        "/fleet", "/followup-preview", "/handoff", "/healthz", "/logins", "/manifest.webmanifest",
+        "/fleet", "/followup-preview", "/handoff", "/healthz", "/login", "/logins", "/manifest.webmanifest",
         "/mcp", "/models", "/notify-all", "/notify-turns", "/palette", "/perf", "/push/pending",
         "/push/vapid-key", "/session-events", "/sessions", "/sessions/by-fsid", "/settings",
         "/spend/detail", "/ssh-hosts", "/sw.js", "/timeline", "/tunnels", "/tunnels/of",
@@ -3854,11 +3854,14 @@ def _serve_token_read_or_mint(f, who):
 
 def _load_token():
     """The serve token, baked into launch so the human never passes --token: ROMP_SERVE_TOKEN if
-    set, else a stable random token persisted under the state dir at 0600 — file perms are the
-    same-user gate (Jupyter's model). Required on EVERY request, loopback included: loopback is
-    reachable by any local user, so a token-free loopback would let a same-host co-tenant drive
-    sessions. Local clients read the file (same user) and send X-Romp-Token; browsers carry
-    ?token= once and ride the auto-set cookie. The file is read or minted by
+    set, else a stable random token persisted under the state dir at 0600: file perms are the
+    same-user gate (Jupyter's model). Required on EVERY request, loopback included, presented
+    directly or through a browser sign-in made with it: loopback is reachable by any local user, so
+    a token-free loopback would let a same-host co-tenant drive sessions. Local clients read the
+    file (same user) and send X-Romp-Token; a browser presents ?token= (or a one-time ?c= code)
+    once, on a page navigation, which signs it in with a session cookie that opens the page
+    documents and static files, and a page key for every other request (a /file load carries a
+    capability made from it; Handler._authorize). The file is read or minted by
     _serve_token_read_or_mint (locked, born 0600, never rotated by a read fault); a fault there at
     import refuses to start the kernel rather than hand out a token no client holds (under
     bin/romp-manager the respawn backoff repeats that refusal until the file is repaired, then the
@@ -3892,9 +3895,9 @@ def _mint_handoff():
         for k, exp in list(_HANDOFF.items()):    # a browser that never opened must not accumulate
             if exp <= now:
                 _HANDOFF.pop(k, None)
-        # Mint is gated (you must already hold the token/cookie), but the cookie rides from any
-        # same-site loopback page, so a hostile dev server can mint without bound INSIDE the TTL
-        # window — unbounded memory, and an O(n)-under-lock sweep that turns quadratic under a flood.
+        # Mint is gated (the caller presents the serve token, or a signed-in page's session cookie and
+        # page key), but a gated caller can still mint without bound INSIDE the TTL window: unbounded
+        # memory, and an O(n)-under-lock sweep that turns quadratic under a flood.
         # Cap it: drop the soonest-to-expire (oldest, and a real open never leaves one unspent) so the
         # live set never exceeds _HANDOFF_MAX (found on re-review 2026-08-06).
         if len(_HANDOFF) >= _HANDOFF_MAX:
@@ -3963,10 +3966,225 @@ def _ct_eq(a, b):
         return False
 
 
-# Unauthorized browser GET of "/" gets this instead of a bare 403 — Jupyter's login-page flow: paste
-# the token once, the redirect's ?token= sets the year-long cookie, never see this page again. Static,
-# self-contained (every other asset route is token-gated), leaks nothing. Colors follow the UI: the
-# accent button is --accent #9cd2ff on --accent-fg #0c1a2e.
+# ── browser sessions: the login cookie holds a session id, never the serve token ──────────────────
+# The browser's login cookie carries a per-kernel SESSION ID. The kernel accepts that id, on its own,
+# for the PAGE class (the page documents) and the STATIC class (/dist, /media, /sw.js): code, no
+# session data. Every other request needs a second value the cookie never carries. For the full and
+# socket classes that is the PAGE KEY K, held in this origin's localStorage and presented as the
+# X-Romp-Key header (or as k= on a socket dial). For a header-less /file load that is a per-file CAP
+# in the URL. The four values are domain-separated HMACs, each under a DISTINCT FIXED LABEL so a value
+# minted for one role never validates for another: the cookie name, the session id and K derive from
+# the serve token, the cap from K. Nothing is stored, so a restart keeps every browser signed in and
+# rotating the serve token retires every session at once. The serve token itself (X-Romp-Token, the
+# ?token= query, the one-time ?c= code, the 0600 file) authenticates the CLI, hooks, the extension
+# host, the VS Code webview and kernel-to-kernel calls exactly as before. Every credential compare
+# below is constant time (_ct_eq / hmac.compare_digest).
+_SESSION_LABEL = "romp-session\0"       # the session id's HMAC label
+_PAGE_KEY_LABEL = "romp-page-key\0"     # the page key's HMAC label
+_FILE_CAP_LABEL = "romp-file-cap\0"     # the file cap's HMAC label
+_COOKIE_NAME_LABEL = "romp-cookie-name\0"   # the per-kernel cookie name's HMAC label
+_MIGRATION_LABEL = "romp-migration\0"   # the legacy cookie's migration session's HMAC label
+
+
+def _hmac_b64(key, msg, n=32):
+    """base64url(HMAC-SHA256(key, msg)[:n]) with no padding. The one primitive the four derivations
+    below share; ui/webview/file-cap.ts recomputes the cap half of it, and the two are pinned to one
+    shared vector so they cannot drift."""
+    d = hmac.new(key.encode("utf-8"), msg.encode("utf-8"), hashlib.sha256).digest()[:n]
+    return base64.urlsafe_b64encode(d).decode().rstrip("=")
+
+
+# The cookie's name is this kernel's own, a function of its serve token that reveals nothing of it:
+# so a second kernel on this host (a kernels.json profile, a peer reached over an ssh forward) keeps
+# its own session under its own name rather than one shared cookie slot.
+_SESSION_COOKIE = "romp_s_" + _hmac_b64(TOKEN or "-", _COOKIE_NAME_LABEL)[:10]
+
+# The header value that clears the legacy romp_token cookie, which a kernel before the session-id design
+# set to the serve token itself. Handler._clears_legacy_cookie decides which responses carry it.
+_LEGACY_COOKIE_CLEAR = "romp_token=; Path=/; Max-Age=0; SameSite=Lax; HttpOnly"
+
+
+def _mint_session():
+    """A fresh session id: 144 random bits, and their tag under the serve token. The tag is what the
+    kernel checks; the random half only keys the tag so two logins differ."""
+    n = base64.urlsafe_b64encode(os.urandom(18)).decode().rstrip("=")
+    return n + "." + _hmac_b64(TOKEN, _SESSION_LABEL + n)
+
+
+def _migration_session():
+    """The session a browser signing in with the legacy romp_token cookie gets: one fixed id per serve
+    token. Tabs of one browser that migrate at the same moment (the tabs a browser restores after the
+    upgrade, each request carrying the old cookie) are all handed the same cookie and the same page key,
+    so whichever response lands last leaves the cookie and the stored key in step. Every browser that
+    migrates gets this id; each of them held the serve token itself, so sharing one session grants none
+    of them anything new. Its random half is an HMAC under the serve token under its own label, it
+    validates like any other session id (_session_ok), and it ends, like every session, when the token
+    is rotated."""
+    n = _hmac_b64(TOKEN, _MIGRATION_LABEL, 18)
+    return n + "." + _hmac_b64(TOKEN, _SESSION_LABEL + n)
+
+
+def _session_ok(sess):
+    """True when `sess` is a session id this kernel minted (its tag matches, in constant time)."""
+    n, dot, tag = (sess or "").partition(".")
+    return bool(TOKEN and n and dot and tag) and _ct_eq(tag, _hmac_b64(TOKEN, _SESSION_LABEL + n))
+
+
+def _page_key(sess):
+    """The page key K for one session: the full-class and socket-class credential, handed to the page
+    once at login and kept in its localStorage. Derived from the serve token under its own label, so
+    the session id (which the cookie carries) never equals it."""
+    return _hmac_b64(TOKEN, _PAGE_KEY_LABEL + sess)
+
+
+def _cap_input(host, path, sid):
+    """The cap's MAC message, length-prefixed so the map from (host, path, sid) to bytes is INJECTIVE:
+    each field is its UTF-8 byte length in decimal, a NUL, then the field's bytes. No other triple can
+    produce the same message (a separator moved into a field, a byte shifted across a boundary, or a
+    NUL inside a value all change a declared length), so the cap binds one triple and one only. The
+    fixed label leads, keeping the cap's domain distinct from the session id's and the page key's.
+    ui/webview/file-cap.ts builds the identical bytes; tests/fixtures/file-cap-vectors.json pins the
+    two to one constant so they cannot drift."""
+    return _FILE_CAP_LABEL + "".join(
+        "%d\0%s" % (len(p.encode("utf-8")), p) for p in (host, path, sid))
+
+
+def _file_cap(sess, host, path, sid):
+    """The cap for one /file URL: an HMAC under the session's page key K, bound to exactly this
+    (host, path, sid). `host` is "" for the local /file route and the attached host for a
+    /remote/<host>/file URL; `path` and `sid` are the request's decoded query values. Bound to the
+    decoded spelling through an injective input (_cap_input), so any other host or sid, and any
+    spelling whose decoded path differs (a trailing slash, a dot segment, a percent-encoded dot
+    segment, a symlink to the same file), needs its own cap and this one does not validate for it.
+    Percent-encoding that decodes to the same string is the same path and validates."""
+    return _hmac_b64(_page_key(sess), _cap_input(host, path, sid), 16)
+
+
+def _one_file_term_each(q):
+    """True when a parsed /file query names path, sid and cap at most once each. A cap binds the one
+    (host, path, sid) it was made for, and the route resolves the first path and sid it is given, so a
+    cap-authorized load with a second value of any of the three is refused rather than left to which
+    occurrence each reader takes (parse_qs has already dropped a blank value such as `path=`)."""
+    return all(len(q.get(k) or ()) <= 1 for k in ("path", "sid", "cap"))
+
+
+# The localStorage slot for THIS kernel's page key, named after the session cookie, whose name is a
+# function of the serve token. Site storage is partitioned by origin, port included, so kernels on two
+# ports never share a slot whatever it is named. The name is for one address over time: the same kernel
+# finds its key again after a restart (the same token names the same slot), and a key minted under one
+# serve token is never read under another at the same address (after a rotation, or when a reused port
+# or an ssh forward is answered by another kernel).
+_PAGE_KEY_SLOT = "romp.pageKey." + _SESSION_COOKIE
+
+# The first script in every authorized page document, injected at serve time by _send (so the page
+# renderers are not edited). It reads K from this origin's localStorage (the per-kernel slot above);
+# wraps window.fetch so a request to this origin carries K as X-Romp-Key and a request to any other
+# origin is left untouched; exposes __rompKeyQ() for the socket dials and __rompPageKey() for
+# ui/webview/file-cap.ts. It sends the TOP frame to /login (a pane never navigates itself) in two
+# cases. First, this origin holds no key at all (site data cleared), which the top frame checks as it
+# loads. Second, a same-origin fetch in ANY frame, the top or a pane, comes back with the kernel's
+# distinct re-sign-in 403 (X-Romp-Reauth: a valid session whose stored key no longer matches, as when
+# two sign-ins race and leave the cookie of one beside the key of the other, or a session with no key
+# stored at all), in which case it drops the stale key and hops the top frame. Before either hop it
+# checks that this origin's storage takes a write (stores()). The re-sign-in branch drops the key
+# before that check, so on an origin whose storage is full the check's write fits in the room the key
+# held and the tab still reaches /login, where a sign-in seeds the key into that room again. A browser
+# that keeps cookies but refuses site storage cannot keep the key a sign-in hands it, so each sign-in
+# would come back keyless, be refused and hop to /login again; that browser gets a sentence in the top
+# frame's document instead (refused()) and no hop. The sentence is styled like /login and sets its own
+# background, since this script runs in every top-level page. Neither hop can loop: nothing is sent
+# from /login itself, and /login navigates only when the person submits it.
+_PAGE_KEY_JS = ("(function(){if(window.__rompPageKey)return;var KN=" + json.dumps(_PAGE_KEY_SLOT) + ";"
+    "function key(){try{return localStorage.getItem(KN)||''}catch(e){return ''}}"
+    "function stores(){try{localStorage.setItem(KN+'.probe','1');localStorage.removeItem(KN+'.probe');return true}catch(e){return false}}"
+    "function refused(d){var w=function(){var b=d.body;if(!b)return;d.documentElement.style.background='#101418';"
+    "b.setAttribute('style','margin:0 auto;max-width:30em;min-height:100vh;box-sizing:border-box;display:flex;"
+    "align-items:center;justify-content:center;padding:2em;background:#101418;color:#dfe7ee;"
+    "font:15px/1.5 system-ui,-apple-system,sans-serif;text-align:center');"
+    "b.textContent='romp keeps its sign-in in this site\\'s storage, which this browser refuses: allow site data for this address, then reload.';};"
+    "if(d.readyState==='loading')d.addEventListener('DOMContentLoaded',w);else w();}"
+    "window.__rompPageKey=key;window.__rompKeyQ=function(){var k=key();return k?'&k='+encodeURIComponent(k):''};"
+    "var f=window.fetch;if(f)window.fetch=function(input,init){try{var k=key();if(k){"
+    "var isReq=(typeof Request!=='undefined')&&(input instanceof Request);"
+    "var u=new URL(isReq?input.url:String(input),location.href);"
+    "if(u.origin===location.origin){var h=new Headers((init&&init.headers)||(isReq?input.headers:undefined));"
+    "h.set('X-Romp-Key',k);init=Object.assign({},init||{},{headers:h});}}}catch(e){}"
+    "return f.call(window,input,init).then(function(r){try{"
+    "if(r&&r.status===403&&r.headers&&r.headers.get('X-Romp-Reauth')){var t=window.top;"
+    "if(t.location.pathname!=='/login'){try{localStorage.removeItem(KN)}catch(e){}"
+    "if(stores())t.location.replace('/login');else refused(t.document);}}}catch(e){}return r;});};"
+    "if(!key()&&window===window.top&&location.pathname!=='/login'){if(stores())location.replace('/login');else refused(document);}})();")
+
+
+# The WebSocket handshake headers a peer's 101 may pass back to the browser, each with the spelling
+# this kernel writes it in. The relay rebuilds the peer's response head from THIS allowlist rather than
+# trusting it to send nothing extra: the browser talks to this kernel's origin through the relay, so a
+# Set-Cookie the peer writes would land here, and a Clear-Site-Data or a cache directive would act on
+# this origin too.
+_WS_MIRROR_HEADERS = {b"upgrade": b"Upgrade", b"connection": b"Connection",
+                      b"sec-websocket-accept": b"Sec-WebSocket-Accept",
+                      b"sec-websocket-protocol": b"Sec-WebSocket-Protocol",
+                      b"sec-websocket-extensions": b"Sec-WebSocket-Extensions"}
+# The bounds on reading a peer's 101 head: its status line, its headers and the blank line after them
+# arrive within _WS_HEAD_MAX bytes and within _WS_HEAD_TIMEOUT_S seconds of the relay's first read (one
+# deadline for the whole read, not one per read), or the relay answers 502 and the browser gets none of it.
+# Module constants so a test can lower the time bound.
+_WS_HEAD_MAX = 65536
+_WS_HEAD_TIMEOUT_S = 15.0
+# A control byte: C0 (NUL to US, which takes in CR, LF and HTAB) and DEL. A genuine peer writes none in
+# a header block beyond the CRLF that ends each line, so a head or a mirrored value holding one is
+# refused, not cleaned: browsers differ in which of these bytes they read as the end of a line.
+_CONTROL_BYTE = re.compile(rb"[\x00-\x1f\x7f]")
+_CONTROL_CHAR = re.compile(r"[\x00-\x1f\x7f]")
+_WS_STATUS_101 = re.compile(rb"HTTP/1\.1 101(?: .*)?\Z")
+
+
+def _ws_head_allowlist(head, extra=()):
+    """Rebuild a peer's raw 101 response head for the browser, or None to refuse it. The head is read
+    the way a browser reads one and only what this kernel writes itself goes out: its own status line,
+    each allowlisted handshake header (_WS_MIRROR_HEADERS) as `Name: value` in this kernel's spelling,
+    then the `extra` lines (this kernel's own, such as the legacy cookie's clear), the blank line, and
+    the bytes that came past the peer's blank line (its first frames) unchanged. Every other header line
+    (a Set-Cookie, a Clear-Site-Data, a cache directive) is dropped, and so is a line that starts with
+    whitespace (a folded continuation) or has anything but the bare name before its colon.
+    None, and none of it reaches the browser, when: no blank line (CRLF CRLF) ends the head within
+    _WS_HEAD_MAX bytes; the status line or any header line holds a bare LF, a bare CR or another
+    control byte (_CONTROL_BYTE); or the status is not HTTP/1.1 101. A genuine peer (a romp kernel,
+    whose BaseHTTPRequestHandler writes strict CRLF) is refused by none of these."""
+    sep = head.find(b"\r\n\r\n")
+    if sep < 0 or sep + 4 > _WS_HEAD_MAX:
+        return None
+    lines = head[:sep].split(b"\r\n")
+    if any(_CONTROL_BYTE.search(ln) for ln in lines) or not _WS_STATUS_101.match(lines[0]):
+        return None
+    kept = []
+    for ln in lines[1:]:
+        name, colon, value = ln.partition(b":")
+        spelled = _WS_MIRROR_HEADERS.get(name.lower()) if colon else None
+        if spelled:
+            kept.append(spelled + b": " + value.strip(b" "))
+    return (b"\r\n".join([b"HTTP/1.1 101 Switching Protocols"] + kept + list(extra))
+            + b"\r\n\r\n" + head[sep + 4:])
+
+
+def _peer_header_value_ok(value):
+    """False when a header value a relay read from a peer's reply holds a CR, an LF or another control
+    character (_CONTROL_CHAR). http.client keeps a folded line's CRLF inside the value it returns, and
+    BaseHTTPRequestHandler.send_header writes a value as it is given, so a relay that mirrors such a
+    value would write the peer's line break, and whatever follows it, into this kernel's own response.
+    A relay refuses the reply (502) instead of mirroring it."""
+    return not _CONTROL_CHAR.search(value)
+
+
+# Unauthorized browser GET of "/" gets this instead of a bare 403, Jupyter's login-page flow: paste
+# the token once, and the redirect's ?token= signs this browser in (the session cookie, and the page
+# key in this origin's storage). It is also /login, where the page-key script sends a browser whose
+# saved sign-in is gone: the key lives in site storage, which a browser can lose while the cookie
+# stays, and only the token (or a fresh `romp url` link, or a window `romp` opens) mints a new one.
+# Static and self-contained (every other asset route is token-gated), and it carries no credential.
+# Colors follow the UI: the accent button is --accent #9cd2ff on --accent-fg #0c1a2e. The default view
+# is the one sentence, the form and the `romp url` / `romp` pointer; why a browser is signed out, and
+# what to do when `romp` is not found, sit behind two <details> folds, which open with no script.
 # The login page stays on the SYSTEM stack, deliberately: it renders pre-auth and /media is
 # token-gated (only the install icons ride exempt), so an 'Inter' lead could never load here —
 # it would just misstate the stack (PR-730 review, 2026-08-27).
@@ -3978,18 +4196,26 @@ background:#101418;color:#dfe7ee;font:15px/1.5 system-ui,-apple-system,sans-seri
 <form style="text-align:center;max-width:26em;padding:2em" onsubmit="\
 location.replace('/?token='+encodeURIComponent(document.getElementById('t').value.trim()));return false">
   <div style="font-size:1.6em;letter-spacing:.04em;margin-bottom:.4em">romp</div>
-  <div style="opacity:.8;margin-bottom:1.2em">This dashboard needs its access token &mdash; every
-  request is token-gated, loopback included. If this tab worked before, romp was reinstalled and
-  minted a new token: you are signed out, not broken.</div>
+  <div style="opacity:.8;margin-bottom:1.2em">Sign in with this dashboard's access token. If this
+  tab worked before, you are signed out, not broken.</div>
   <input id="t" autofocus placeholder="paste token"
     style="width:100%;box-sizing:border-box;padding:.55em .7em;border:1px solid #35414d;\
 border-radius:6px;background:#0c1117;color:#dfe7ee">
   <button style="margin-top:.9em;padding:.5em 1.4em;border:0;border-radius:6px;\
 background:#9cd2ff;color:#0c1a2e;font-weight:600;cursor:pointer">Open</button>
-  <div style="opacity:.6;margin-top:1.2em;font-size:.9em">Get a ready-made link with
-  <code>romp url</code> &mdash; in a NEW terminal if romp was just installed, since the old one
-  has a stale <code>PATH</code>. No <code>romp</code> yet?
-  <code>cat ~/.local/state/romp/serve-token</code></div>
+  <div style="opacity:.6;margin-top:1.2em;font-size:.9em">To skip pasting, run <code>romp url</code>
+  on the machine romp runs on and open the link it prints, or run <code>romp</code> there to open a
+  signed-in window.</div>
+  <details style="opacity:.6;margin-top:1em;font-size:.9em;text-align:left">
+  <summary style="cursor:pointer;text-align:center">Why am I signed out?</summary>
+  <p>Either this browser lost its saved sign-in (cleared site data, a private window, a browser that
+  clears a site's storage after a week without a visit, or an app just added to the Home Screen, which
+  keeps storage of its own), or romp's token changed because romp was reinstalled or its token file
+  was replaced. In an app on the Home Screen, paste the token here.</p></details>
+  <details style="opacity:.6;margin-top:.4em;font-size:.9em;text-align:left">
+  <summary style="cursor:pointer;text-align:center"><code>romp</code> not found?</summary>
+  <p>If romp was just installed, use a new terminal: an older one has a stale <code>PATH</code>. No
+  <code>romp</code> yet? <code>cat ~/.local/state/romp/serve-token</code></p></details>
 </form>
 """
 
@@ -25062,12 +25288,13 @@ def _live_map():
 # of the child ssh procs). ONE ssh per host carries both directions:
 #     -L <local_port>:127.0.0.1:<remote_kernel_port>   this kernel → remote kernel  (dashboard relay)
 #     -R <bus_port>:127.0.0.1:<bus_port>               remote sessions → this bus (postal messaging)
-# The browser reaches a remote kernel via GET /remote/<host>/ws on THIS kernel, which splices the
-# connection onto the -L port byte-for-byte (_remote_ws). It has to be a relay: the forwarded port
+# The browser reaches a remote kernel via GET /remote/<host>/ws on THIS kernel, which relays the
+# connection onto the -L port (_remote_ws): it reads the remote's 101 head and writes the one it
+# rebuilds (_ws_head_allowlist), then splices the frames byte for byte. It has to be a relay: the forwarded port
 # lives on THIS machine's loopback, so when the browser dialed it directly, any dashboard viewed
 # from OFF this machine — the phone, through `tailscale serve` — reached its own loopback instead
 # and every remote host silently vanished, with no disconnected mark (the user 2026-07-30). The
-# kernel still reads nothing (no frame parsing; the remote enforces its own token per connection),
+# kernel parses no frames (the remote enforces its own token per connection),
 # and this registry still just opens the door + reports state. It persists to STATE/remotes.json
 # so attached hosts survive a kernel restart (the supervisor re-spawns their procs).
 
@@ -26295,7 +26522,8 @@ CHECKIN_REFRESH_S = 300      # the slow steady re-announce floor while checked i
 def _checkin_handshake(r):
     """Tell the hub (through our own -L to its kernel) where our reverse forwards landed and hand it
     our token — the PUSH that replaces the hub ever fetching credentials. Authorizes with the HUB's
-    token (r["token"], fetched at attach — the hub requires it on every request, loopback included).
+    token (r["token"], fetched at attach: the hub requires it, or a browser sign-in made with it, on every
+    request, loopback included).
     True on ack; the caller records success per tunnel incarnation and retries otherwise.
 
     A REFUSAL is read, said and held (review find, 2026-09-08: only the reply's status was read, so the
@@ -58369,13 +58597,19 @@ def _html_esc(s):
 def _too_large_page(msg, name, q, route="/file"):
     """The 413 a PDF's OWN TAB shows (2026-09-06): the same sentence the text form carries, plus the way
     out — a link to the download half of the SAME route (`route`: /file, or a federated session's
-    /remote/<host>/file relay) for the same path and sid. Same-origin, so the cookie rides the download
-    exactly as it rode the view. Built from the parsed query, never the raw request line, and every value
-    is escaped; the page has no script and inherits _send's nosniff."""
+    /remote/<host>/file relay) for the same path and sid. The download link carries the request's OWN
+    cap (`q["cap"]`): the browser reached this page over a file-class request that already presented a
+    valid cap, and download is outside the cap's MAC, so the same cap authorizes the download exactly as
+    the view was authorized. Same-origin, so the session cookie rides the download too. Built from the
+    parsed query, never the raw request line, and every value is escaped; the page has no script and
+    inherits _send's nosniff."""
     dq = {"path": (q.get("path") or [""])[0], "download": "1"}
     sid = (q.get("sid") or [""])[0]
     if sid:
         dq["sid"] = sid
+    cap = (q.get("cap") or [""])[0]
+    if cap:
+        dq["cap"] = cap
     href = route + "?" + urlencode(dq)
     return ("<!doctype html><html><head><meta charset=\"utf-8\"><title>%s</title>"
             "<style>body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;"
@@ -60798,7 +61032,7 @@ def _path_tokens(md):
 
 _MENTION_PINS = None                                   # resolved lazily: jd.STATE / "mention-pins"
 _PIN_STORE_MAX_BYTES = 500 * 1024 * 1024               # bounded: evict oldest-mtime past this
-_PIN_ID_RE = re.compile(r"^[0-9a-f]{64}\.[a-z0-9]{1,8}$")   # sha256 + the original extension
+_PIN_ID_RE = re.compile(r"^[0-9a-f]{64}\.[a-z0-9]{1,8}\Z")   # sha256 + the original extension (\Z: no trailing newline, which $ admits)
 
 
 def _pin_dir():
@@ -66381,7 +66615,7 @@ if(awaitLink)return;   // [fork] D3 (review round 2, 2026-09-18): while this ret
 if(returnAt)returnRedialed=true;   // a dial inside a return window (whatever path led here) → the return-fresh row says so
 connT=Date.now();var proto=location.protocol==="https:"?"wss://":"ws://";
 var active="";try{var st0=JSON.parse(localStorage.getItem(SK)||"null");active=(st0&&st0.activeId)||"";}catch(e){}
-ws=new WebSocket(proto+location.host+"/ws?app=%s&delta=1&iid="+encodeURIComponent(IID)+(wid?"&wid="+encodeURIComponent(wid):"")+(active?"&active="+encodeURIComponent(active):"")+(CAPS?"&caps="+encodeURIComponent(CAPS):"")+((everConnected&&bundleReady&&readyAcked&&!readyQueued)?"&reconnect=1&proto="+readyProto:"")+(COL?"&col="+encodeURIComponent(COL):"")+((SKEL||(RESTART_DIET&&!everConnected))?"&skeleton=1":"")+(APP==="fleet"?"&provrows=1":""));   // skeleton=1: a later chat column, or the main pane's FIRST dial after any reload the reload core fired (RESTART_DIET), served as a view of the session its ?active= names (above). reconnect=1: this page has held a socket before AND its bundle has said ready AND the kernel's caps frame has answered that ready AND the ready is not still waiting in the queue for this open, so it holds the sessions the kernel served it; the kernel skeletons the tabs it is not looking at (2026-09-07). A socket that opened and died before the bundle said ready held nothing for the page, and neither did one whose bundle said ready only after it died (the ready queued, and flushes onto this socket as the bundle's own); a ready that left on an open socket the kernel never answered (the socket died before its caps frame came back) served the page nothing either: all three redials dial as a fresh page, the last for the page's life, since the bundle posts ready once and no later socket carries one for a caps frame to answer (2026-09-10)
+ws=new WebSocket(proto+location.host+"/ws?app=%s&delta=1&iid="+encodeURIComponent(IID)+(wid?"&wid="+encodeURIComponent(wid):"")+(active?"&active="+encodeURIComponent(active):"")+(CAPS?"&caps="+encodeURIComponent(CAPS):"")+((everConnected&&bundleReady&&readyAcked&&!readyQueued)?"&reconnect=1&proto="+readyProto:"")+(COL?"&col="+encodeURIComponent(COL):"")+((SKEL||(RESTART_DIET&&!everConnected))?"&skeleton=1":"")+(APP==="fleet"?"&provrows=1":"")+(window.__rompKeyQ?window.__rompKeyQ():""));   // the page key (k=): the socket class's credential on this origin, added by the page-key script; skeleton=1: a later chat column, or the main pane's FIRST dial after any reload the reload core fired (RESTART_DIET), served as a view of the session its ?active= names (above). reconnect=1: this page has held a socket before AND its bundle has said ready AND the kernel's caps frame has answered that ready AND the ready is not still waiting in the queue for this open, so it holds the sessions the kernel served it; the kernel skeletons the tabs it is not looking at (2026-09-07). A socket that opened and died before the bundle said ready held nothing for the page, and neither did one whose bundle said ready only after it died (the ready queued, and flushes onto this socket as the bundle's own); a ready that left on an open socket the kernel never answered (the socket died before its caps frame came back) served the page nothing either: all three redials dial as a fresh page, the last for the page's life, since the bundle posts ready once and no later socket carries one for a caps frame to answer (2026-09-10)
 // onopen: flush the queue; a RECONNECT (after a drop) also PROMPTS a reload — the fresh socket resyncs live via
 // the kernel's next push, and the banner offers a full reload for anything a live push doesn't cover. This
 // replaced the old silent location.reload() (the user 2026-07-05: don't foist a reload; let me click). Since T265
@@ -68759,8 +68993,8 @@ return '<div class="ru-tip-row ah-row'+(full?'':' ah-ro')+'"'+(full?' role=butto
 +(bg?'<span class=ah-nm style="color:'+bg+'">':'<span class=ah-nm>')+esc(r.name)+'</span>'   // the name in its colour is the whole cue: no square beside it (T340)
 +'<span class=ah-desc>'+(r.kind==='retrying'?'retrying':'stopped')+' · '+clsWords(r)+(r.since?' · since '+hm(r.since):'')
 +(r.suppressed?' · auto-retry off for this session (you interrupted it)':'')+'</span></div>';}
-// -- History: GET /api-health at show time. The shell authenticates the way its other fetches do (the romp_token
-// cookie; a same-origin GET sends no Origin, which _origin_ok accepts). A failed read is said in the section, in
+// -- History: GET /api-health at show time. The shell authenticates the way its other fetches do (the session
+// cookie and the page key the fetch wrapper adds; a same-origin GET sends no Origin, which _origin_ok accepts). A failed read is said in the section, in
 // place of the rows: never stale numbers, never silence. Painted through the same held / dirty gate as a frame.
 // fresh=true (a show) drops the last answer first, so a hover never paints an earlier hover's numbers while its
 // own read is in flight. A frame on an open card re-reads behind the stamped answer the card shows, and a pin from
@@ -70133,7 +70367,7 @@ shConnT=Date.now();var proto=location.protocol==='https:'?'wss://':'ws://';
 // script mints before any pane connects): an op the shell sends that the kernel answers with a reveal (the API
 // detail's openSession) then lands on THIS dashboard's chat alone (_reveal_chat_for), the way the feed's own session
 // links do. Without it the shell client's wid was '' and the reveal fell to the broadcast.
-var ws=new WebSocket(proto+location.host+'/ws?app=shell&wid='+encodeURIComponent(wid()));
+var ws=new WebSocket(proto+location.host+'/ws?app=shell&wid='+encodeURIComponent(wid())+(window.__rompKeyQ?window.__rompKeyQ():''));   // +k=: the page key the socket class needs, added by the page-key script
 shWs=ws;var shOpened=false;   // [fork] D3: this dial's socket for the liveness machinery, and whether it ever opened (the return probe's attempt count keys on it)
 // ready → the kernel sends the current needs-you count, so a relaunched installed app trues up
 // its icon badge immediately instead of waiting for the next change (plans/ios-app.md proposal 3)
@@ -71799,15 +72033,26 @@ def _landing():
             "if(navigator.standalone){document.documentElement.className+=' ios-standalone';"
             "var _vp=document.querySelector('meta[name=viewport]');"
             "_vp.setAttribute('content',_vp.getAttribute('content')+',viewport-fit=cover');}"
-            # The token this page was opened with (`/?token=`: the login page, `romp url`, the CLI's open) is
-            # spent by the time this runs: the response that served the page turned it into the cookie every
-            # later request rides (_authorize, then _send's Set-Cookie). The URL copy would otherwise outlive
-            # it for the page's lifetime, as what a Referer carries, what every same-origin pane iframe reads
-            # as document.referrer, and what the address bar shows. Dropped HERE, in the head, before the
-            # manifest link or the first <iframe> can make a request, so no request this document makes ever
-            # carries it; the other params (panes, wid, a push deep link the reveal script strips later) and
-            # the hash stay, re-serialized by URLSearchParams (a comma becomes %2C, which every reader's
-            # searchParams.get decodes). A reload rides the cookie, as the pane iframes already do.
+            # The token this page was opened with (`/?token=`: the login page, `romp url`, the CLI's open) must
+            # not outlive the response that spent it, as what a Referer carries, what every same-origin pane
+            # iframe reads as document.referrer, and what the address bar shows. On a sign-in navigation the
+            # sign-in seed, which _send puts first in the head, has already dropped token= and c= before this
+            # runs, so this finds nothing there. This is the fallback for a shell served on ?token= without a
+            # sign-in: a load _is_navigation does not count (its Sec-Fetch-Dest names neither a document nor an
+            # iframe or, with no Sec-Fetch headers, its Accept does not name text/html) gets no session and no
+            # seed, and this is the one step that drops the token from that document's address. Which element
+            # loads fall there depends on the engine and on whether the origin gets Sec-Fetch headers. A frame's
+            # load does only where the browser sends Sec-Fetch-Dest: frame. A plain-http origin off loopback gets
+            # no Sec-Fetch headers, and there a same-origin frame's load asks for text/html, counts as a
+            # navigation, and is signed in and seeded like one. frame-ancestors 'self' and X-Frame-Options keep the
+            # shell from showing in a frame on a page of another origin. It runs HERE, in the head, before the
+            # manifest link or the first <iframe> can make a request, so a request this document makes after it
+            # carries no token in its Referer. A speculative preload, which the parser can start before a head
+            # script runs, is outside this step: its Referer is the address the document was opened with, sent
+            # to this origin only (_send's Referrer-Policy: same-origin). The other params (panes, wid, a push
+            # deep link the reveal script strips later) and the hash stay, re-serialized by URLSearchParams (a
+            # comma becomes %2C, which every reader's searchParams.get decodes). After a sign-in, a reload rides
+            # the session cookie, as the pane iframes do.
             "try{var _u=new URL(location.href);if(_u.searchParams.has('token')){_u.searchParams['delete']('token');"
             "history.replaceState(null,'',_u.pathname+(_u.searchParams.toString()?'?'+_u.searchParams.toString():'')+_u.hash);}}"
             "catch(e){}</script>"
@@ -73172,13 +73417,100 @@ def _state_write_route(path, b):
     return 404, {"ok": False, "error": "no such route"}
 
 
+# ── the route table the router and the auth classifier both read ───────────────────────────────────
+# ONE declaration of which GET paths are the PAGE class (a document, served text/html) and which are
+# the STATIC class (the built bundles and assets: code, no session data). do_GET dispatches a page by
+# looking its renderer up here, and Handler._need classifies a request's auth class off the same two
+# structures, so a page or static route added in one place is covered in the other by construction and
+# neither can drift from the other. Everything not named here is the full, socket or file class
+# (Handler._need); the cookie on its own opens the page and static classes and nothing else.
+_PAGE_RENDERERS = {
+    "": _landing, "/": _landing,          # the shell (a bare path classes as "/" the same way _need does)
+    "/chat": _chat_page, "/feed": _feed_page, "/timeline": _timeline_page,
+    "/fleet": _fleet_page, "/waiting": _waiting_page, "/files": _files_page,
+    "/settings": _settings_page,
+}
+_STATIC_EXACT = ("/sw.js",)               # the push service worker
+_STATIC_PREFIXES = ("/dist/", "/media/")  # the built bundles and static assets
+
+
+def _static_route(p):
+    """True for the STATIC class: the service worker and the built-bundle/asset trees. The install
+    manifest and the three home-screen icons are served auth-exempt earlier and are not classed here."""
+    return p in _STATIC_EXACT or p.startswith(_STATIC_PREFIXES)
+
+
 class Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
 
     def log_message(self, *a):
         pass
 
+    def handle_one_request(self):
+        # What end_headers reads about a request starts empty before the request's line and headers are
+        # read, so an error the base class answers mid-parse on a keep-alive connection reads nothing from
+        # the request before it. This is also the one reset of the session a sign-in sets (_set_cookie), and
+        # with it of the seed and the no-store, which _send writes only beside that cookie: every request on
+        # a keep-alive connection passes here first, the routes served before the gate included.
+        self._legacy_ours = self._legacy_signed_in = False
+        self._set_cookie = None
+        super().handle_one_request()
+
+    def parse_request(self):
+        """The base parse, then two facts about the request's cookies that every response reads
+        (_clears_legacy_cookie): whether the legacy romp_token cookie holds THIS kernel's token, and
+        whether the request carries a valid session cookie of this kernel. Both are computed for every
+        request, and both compares are constant time (_ct_eq, and _session_ok's)."""
+        ok = super().parse_request()
+        if ok:
+            self._legacy_ours = bool(TOKEN) and _ct_eq(self._cookie("romp_token"), TOKEN)
+            self._legacy_signed_in = bool(self._browser_session())
+        return ok
+
+    def _clears_legacy_cookie(self):
+        """True when this response clears the legacy romp_token cookie (a kernel before the session-id
+        design set it, and its value WAS the serve token). It is cleared only when its value is THIS
+        kernel's token, and only when the browser is signed in without it: this response sets the session
+        cookie (the sign-in that migrates it), or the request already carries a valid session cookie of
+        this kernel beside it (the browser signed in earlier; a request carries both when an earlier
+        version, run after this one, set the old cookie again and this version then came back with the
+        same token). Every response that holds, of any route class, a refusal and a socket upgrade
+        included, carries the clear. Apart from the response that signs the browser in, a request with no
+        valid session is never answered with it, so a dashboard that has not migrated keeps the cookie it
+        still signs in with (its polls and socket redials carry no session, and the reload that migrates
+        it finds the cookie), and a romp_token holding any other value (a second, older kernel on the same
+        host) is never touched."""
+        return bool(getattr(self, "_legacy_ours", False)
+                    and (getattr(self, "_legacy_signed_in", False) or getattr(self, "_set_cookie", None)))
+
+    def end_headers(self):
+        # the one place every response's headers end, so the legacy cookie's clear reaches each response
+        # _clears_legacy_cookie names (the socket relay writes the 101 head it rebuilds without this, and
+        # adds the clear to that head's lines itself)
+        if self._clears_legacy_cookie():
+            self.send_header("Set-Cookie", _LEGACY_COOKIE_CLEAR)
+        super().end_headers()
+
     def _send(self, code, body, ctype, cache=None, headers=None):
+        seeded = False
+        if getattr(self, "_page_ok", False) and isinstance(body, str) and ctype.startswith("text/html") and "<head>" in body:
+            # An authorized page document: the page-key script goes first in its head, before the page
+            # makes any request. On the login response (a session was just minted or kept: _set_cookie
+            # holds it) the SEED goes ahead of it: it stores this origin's page key (in the per-kernel
+            # slot _PAGE_KEY_SLOT) and drops token= and c= from the address. That seed is the one and
+            # only place the page key ever reaches the browser; a page served on the session cookie alone
+            # carries neither the seed nor the key.
+            seed = ""
+            if getattr(self, "_set_cookie", None):
+                seed = ("<script>try{localStorage.setItem(%s,%s)}catch(e){}"
+                        "try{var u=new URL(location.href);u.searchParams['delete']('token');u.searchParams['delete']('c');"
+                        "history.replaceState(history.state,'',u.pathname+(u.searchParams.toString()?'?'+"
+                        "u.searchParams.toString():'')+u.hash)}catch(e){}</script>"
+                        % (json.dumps(_PAGE_KEY_SLOT), json.dumps(_page_key(self._set_cookie))))
+                seeded = True
+            body = body.replace("<head>", "<head>" + seed + "<script>" + _PAGE_KEY_JS + "</script>", 1)
+        if seeded:
+            cache = "no-store"                        # the key-bearing login response is never stored
         body = body.encode("utf-8") if isinstance(body, str) else body
         self.send_response(code)
         self.send_header("Content-Type", ctype)
@@ -73197,30 +73529,42 @@ class Handler(BaseHTTPRequestHandler):
         # Phone and tailnet frame the kernel's own origin, which 'self' permits.
         self.send_header("X-Frame-Options", "SAMEORIGIN")
         self.send_header("Content-Security-Policy", "frame-ancestors 'self'")
-        # Referrer policy: a document's URL is what its requests send as Referer, and the shell's URL is
-        # `/?token=` on its first load (the address scrub in _landing's head script drops it; a pane page
-        # opened bare as `/chat?token=` keeps it). same-origin sends the full Referer on requests to this
-        # origin and nothing cross-origin (a transcript's <img> from another host, a link out), whatever
-        # the browser's default, on every page the kernel serves: the SECURITY.md claim that a cross-site
-        # page cannot obtain the token then holds by construction. same-origin and not no-referrer: a
-        # same-origin GET carries no Origin header, so the Referer is the one header that names the page
-        # origin behind it to the kernel, and this keeps it.
+        # Referrer policy: a document's URL is what its requests send as Referer, and a page's URL holds
+        # `?token=` (or `?c=`) on the load that signs a browser in. The sign-in seed, which this method puts
+        # first in the head of the page a sign-in response serves (above), drops token= and c= from the
+        # address before the page makes a request, and _landing's head script drops token= from the shell's
+        # address on a load that is not a navigation and so gets no seed. Neither reaches a speculative
+        # preload the parser starts before a head script runs, or a page other than the shell loaded on
+        # `?token=` by a load that is not a navigation; this header covers those. same-origin sends the
+        # full Referer on requests to this origin and nothing cross-origin (a transcript's <img> from
+        # another host, a link out), whatever the browser's default, on every page the kernel serves: the
+        # SECURITY.md claim that a cross-site page cannot obtain the token then holds by construction.
+        # same-origin and not no-referrer: a same-origin GET carries no Origin header, so the Referer is
+        # the one header that names the page origin behind it to the kernel, and this keeps it.
         self.send_header("Referrer-Policy", "same-origin")
+        if getattr(self, "_reauth", False):
+            # A valid session whose stored page key no longer matches: the page-key script reads this
+            # marker off the fetch's own 403 response, drops the stale key and hops to /login. A
+            # denial for any other reason carries no marker, so nothing else triggers the hop.
+            self.send_header("X-Romp-Reauth", "1")
         for k, v in (headers or {}).items():
             self.send_header(k, v)
         if cache:                                     # e.g. "no-cache" — keeps a tab from running a stale bundle
             self.send_header("Cache-Control", cache)
-        if getattr(self, "_set_cookie", None):       # auto-inject the token so a client never 401-loops
-            # Max-Age=1yr so the phone persists the token past its browser session (no re-prompt on
+        if getattr(self, "_set_cookie", None):       # the browser session this login minted or kept (never the serve token)
+            # Max-Age=1yr so the phone persists the session past its browser session (no re-prompt on
             # the tailnet after the tab is closed) — for simplify's auto-serve/permanence work.
             # SameSite=Lax, NOT Strict (the user 2026-08-08): Android launches an installed
             # home-screen app through a launcher INTENT, which Chrome scores as a cross-site
             # top-level navigation — Strict withheld the cookie on every launch and the app opened
             # on the login page each time, a token re-ask per launch. Lax still attaches only on
             # top-level navigations (never on a cross-site POST/subresource, and every
-            # state-changing route here is a POST), so the gate the token provides is unchanged.
-            self.send_header("Set-Cookie", "romp_token=%s; Path=/; Max-Age=31536000; "
-                             "SameSite=Lax; HttpOnly" % self._set_cookie)
+            # state-changing route here is a POST), so the gate the cookie provides is unchanged.
+            # The cookie holds the SESSION ID and its name is this kernel's own (_SESSION_COOKIE); the
+            # serve token is never a cookie value. When the request carried the legacy romp_token cookie
+            # holding this kernel's token, end_headers adds its clear beside this (_clears_legacy_cookie).
+            self.send_header("Set-Cookie", "%s=%s; Path=/; Max-Age=31536000; "
+                             "SameSite=Lax; HttpOnly" % (_SESSION_COOKIE, self._set_cookie))
         # CORS delivery for an AUTHORIZED browser origin (set at the _authorize call sites).
         # A VS Code webview's synthetic origin makes every kernel fetch cross-origin, and
         # without an echoed Access-Control-Allow-Origin the browser withholds the response
@@ -73234,9 +73578,10 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    # ── serve-layer security (docs/read-side.md): Origin/Host gate always; token required for ALL
-    # access, loopback included (Jupyter's model — loopback is shared by every local user on the
-    # machine, so it is not a trust boundary; the 0600 token file is the same-user gate) ──
+    # ── serve-layer security (docs/read-side.md): Origin/Host gate always; the token, presented directly
+    # or through a browser sign-in made with it, required for ALL access, loopback included (Jupyter's
+    # model: loopback is shared by every local user on the machine, so it is not a trust boundary; the
+    # 0600 token file is the same-user gate) ──
     def _origin_ok(self):
         """Reject cross-site browser origins — the ClawJacked/WS hole (WS isn't covered by CORS, so
         this is the real gate). Allow same-origin, the local kernel origin, vscode-webview, and an
@@ -73253,57 +73598,112 @@ class Handler(BaseHTTPRequestHandler):
             return True                              # same-origin (covers local AND tailnet self-access)
         return o in ("http://127.0.0.1:%d" % PORT, "http://localhost:%d" % PORT)
 
-    def _cookie_token(self):
+    def _cookie(self, name):
         for part in (self.headers.get("Cookie") or "").split(";"):
             k, _, v = part.strip().partition("=")
-            if k == "romp_token":
+            if k == name:
                 return v
         return ""
 
-    def _authorize(self, q):
-        """(ok, cookie_to_set, reason). An EXPLICITLY PRESENTED token is sufficient auth and bypasses
-        the Origin gate. This is what lets the FEDERATED dashboard work: a browser served by ANOTHER
-        kernel opens a tunnel'd /ws (or fetch) here carrying ?token — a foreign Origin, but the
-        unguessable token is the credential, and a cross-site page can't forge it. The token is
-        REQUIRED for every gated route, loopback included (Jupyter's model: loopback is reachable by
-        every local user, so the 0600 token file — not the socket — is the same-user trust boundary).
-        Browsers present ?token once and ride the auto-set cookie; local CLIs/hooks read the file and
-        send X-Romp-Token (a custom header forces a CORS preflight through this same gate, so a
-        cross-site page can't forge it either). Token-less browser traffic still hits the Origin gate
-        first (the ClawJacked/WS hole) so a denial names the real reason.
+    def _browser_session(self):
+        """This browser's session id when its cookie holds one this kernel minted; "" otherwise."""
+        sess = self._cookie(_SESSION_COOKIE)
+        return sess if _session_ok(sess) else ""
 
-        The COOKIE is the one credential that does NOT bypass the Origin gate, because it is the one
-        the browser attaches for you: cookies are scoped by host and NOT by port (RFC 6265 §8.5), so
-        every `http://127.0.0.1:<any-port>` page is same-site with the dashboard and rides this
-        cookie — SameSite=Strict included. Without the Origin check below, any page served by
-        anything else on loopback (an agent-cloned repo's dev server) reached `/ws`, which streams
-        every session and accepts sendMessage. Presenting a token proves you are not a drive-by page;
-        carrying a cookie proves only that the browser had one. Nothing in the shipped UI needs the
-        cookie cross-origin: the dashboard's own socket is same-origin, federation relays through the
-        hub's own origin WITH ?token, and the VS Code webview origin is allowed by _origin_ok."""
+    @staticmethod
+    def _need(p):
+        """The auth class of a route, read off the shared route table (_PAGE_RENDERERS / _static_route):
+        (class, file host). "page" and "static" are the two the session cookie opens on its own; "ws"
+        (a socket upgrade), "file" (/file and /remote/<host>/file, whose header-less loads carry a cap)
+        and "full" (everything else) each need the page key or the cap on top of the cookie. The file
+        host is the attached host a /remote/<host>/file URL names, "" for the local route."""
+        if p in _PAGE_RENDERERS:
+            return "page", ""
+        if _static_route(p):
+            return "static", ""
+        if p == "/ws" or (p.startswith("/remote/") and p.endswith("/ws")):
+            return "ws", ""
+        if p == "/file":
+            return "file", ""
+        if p.startswith("/remote/") and p.endswith("/file"):
+            return "file", unquote(p[len("/remote/"):-len("/file")])
+        return "full", ""
+
+    def _authorize(self, q):
+        """(ok, session_to_set, reason). An EXPLICITLY PRESENTED serve token (?token= or X-Romp-Token)
+        or a one-time ?c= code authorizes from any Origin, as before: it is the credential the CLI,
+        hooks, the extension host, the VS Code webview and kernel-to-kernel calls present, and a
+        cross-site page cannot forge it. The BROWSER's own credential is two parts. The session cookie
+        alone opens only the page and static classes (a page document, /dist, /media, /sw.js: code, no
+        session data). The full and socket classes additionally need the page key (the X-Romp-Key
+        header, or k= on a socket dial); the file class additionally needs a per-file cap. The cookie
+        still passes through the Origin gate (_origin_ok), which refuses a request that names a foreign
+        Origin. A request that names none passes it with the cookie, and a browser names none on a GET
+        navigation (a frame's included) or on a subresource load made without CORS (a script, an image),
+        whichever page made it: that is why the page and static classes carry code and no session data.
+        session_to_set is the session a login mints or keeps: a
+        GET navigation to a page authorized by ?token=, ?c=, or the old romp_token cookie (which held
+        the serve token itself, migrated once here); every other authorized response sets no cookie."""
+        need, fhost = self._need(urlparse(getattr(self, "path", "") or "").path)
+        cmd = getattr(self, "command", "GET")
+        if cmd == "HEAD":
+            if need != "file":
+                need = "full"                         # HEAD serves /file alone (the existence probe); nothing else
+        elif cmd != "GET":
+            need = "full"                             # only GET opens a shell, the socket or the file class; a POST/PUT is full
+        self._page_ok = False
+        self._reauth = False
+        self._trace_ok = False
+        login = migrate = False
         if TOKEN and _ct_eq((q.get("token") or [""])[0], TOKEN):
-            return True, TOKEN, ""                    # valid ?token → authorize (any origin) + set cookie
-        if _spend_handoff((q.get("c") or [""])[0]):
-            return True, TOKEN, ""                    # one-time handoff (the browser we opened) → cookie, once
-        if TOKEN and _ct_eq(self._cookie_token(), TOKEN) and self._origin_ok():
-            return True, None, ""                     # valid token cookie + same-site origin
-        if TOKEN and _ct_eq(self.headers.get("X-Romp-Token") or "", TOKEN):
-            return True, None, ""                     # header form — local CLI/hook/daemon clients
-        if not self._origin_ok():
-            return False, None, "cross-site origin"
-        return False, None, "token required (loopback included; token file: ~/.local/state/romp/serve-token)"
+            ok, login = True, True                    # valid ?token → authorize (any origin) + a page navigation seeds a session
+            self._trace_ok = True
+        elif _spend_handoff((q.get("c") or [""])[0]):
+            ok, login = True, True                    # one-time handoff (the browser we opened) → likewise, once
+            self._trace_ok = True
+        elif TOKEN and _ct_eq(self.headers.get("X-Romp-Token") or "", TOKEN):
+            ok = True                                 # header form: local CLI/hook/daemon clients; sets no cookie
+            self._trace_ok = True
+        else:
+            ok = False
+            if self._origin_ok():
+                sess = self._browser_session()
+                if sess:
+                    pk = self.headers.get("X-Romp-Key") or ((q.get("k") or [""])[0] if need == "ws" else "")
+                    key_ok = bool(pk and _ct_eq(pk, _page_key(sess)))
+                    ok = (need in ("page", "static")
+                          or key_ok
+                          or (need == "file" and _one_file_term_each(q) and _ct_eq((q.get("cap") or [""])[0], _file_cap(
+                              sess, fhost, (q.get("path") or [""])[0], (q.get("sid") or [""])[0]))))
+                    self._trace_ok = key_ok               # the page key opens every route, so a 500 may carry its traceback
+                    # A VALID session whose key/cap does not match: a DISTINCT refusal (X-Romp-Reauth via
+                    # _send) so the page-key script drops the stale key and hops to /login, rather than a
+                    # plain 403 the page cannot tell from any other denial (the concurrent-login case: the
+                    # cookie of one login with the stored key of another).
+                    self._reauth = not ok
+                elif need == "page" and TOKEN and _ct_eq(self._cookie("romp_token"), TOKEN):
+                    ok, login, migrate = True, True, True   # the old token cookie, once: this response migrates it (and clears it: _clears_legacy_cookie)
+        if not ok:
+            if not self._origin_ok():
+                return False, None, "cross-site origin"
+            if self._reauth:
+                return False, None, "session key required"
+            return False, None, "token required (loopback included; token file: ~/.local/state/romp/serve-token)"
+        self._reauth = False
+        self._page_ok = need == "page"
+        if login and need == "page" and self._is_navigation():
+            # a browser already signed in keeps its session; one migrating from the old cookie gets the
+            # migration session, the same id for every tab that migrates at once (_migration_session)
+            return True, self._browser_session() or (_migration_session() if migrate else _mint_session()), ""
+        return True, None, ""
 
     def _write_token_ok(self, q):
         """An EXPLICITLY PRESENTED serve token — ?token= or the X-Romp-Token header — and nothing
-        else. STRICTER than _authorize on purpose: it does NOT accept the ambient romp_token cookie,
-        because the cookie is the one credential the browser attaches for you, so a drive-by
-        loopback subresource GET (an <img>/<script>/no-cors fetch to this route) rides it with no
-        Origin, and _authorize takes that pair as authorized. A state-changing GET must require
-        proof the caller is not a drive-by page — the reason _authorize's own docstring gives for
-        preferring the token — and only an explicit token clears BOTH the cross-origin-fetch and the
-        cookie-carrying-subresource vectors (a custom header forces a CORS preflight no-cors cannot
-        send, and no subresource load can set it or guess ?token=). Local daemons (the manager) read
-        the 0600 token file and send X-Romp-Token — exactly this."""
+        else. STRICTER than _authorize on purpose: it accepts neither the session cookie nor the page
+        key, only the token itself. The state-changing GETs it gates (the drain arm, the park stamp) are
+        the manager's, and a custom header forces a CORS preflight while no subresource load can set it
+        or name ?token=, so only a caller holding the token reaches them. Local daemons (the manager)
+        read the 0600 token file and send X-Romp-Token, exactly this."""
         return bool(TOKEN) and (_ct_eq((q.get("token") or [""])[0], TOKEN)
                                 or _ct_eq(self.headers.get("X-Romp-Token") or "", TOKEN))
 
@@ -73524,6 +73924,9 @@ class Handler(BaseHTTPRequestHandler):
         first). Approve only what the auth gate itself allows — the actual request
         still runs the full _authorize on arrival; this grants delivery, not access."""
         q = parse_qs(urlparse(self.path).query)
+        # Nothing from an earlier request on this keep-alive connection reaches this response, with no reset
+        # here: handle_one_request clears the session cookie before every request, and _authorize, which runs
+        # before either response below, resets the page, re-sign-in and traceback flags itself.
         ok, _, _ = self._authorize(q)
         origin = self.headers.get("Origin")
         if not (ok and origin):
@@ -73544,7 +73947,9 @@ class Handler(BaseHTTPRequestHandler):
         # 501s every HEAD, which the client would read as "gone" and hide a live chip.
         u = urlparse(self.path)
         q = parse_qs(u.query)
-        self._set_cookie = None
+        # No reset of the per-request flags here: handle_one_request clears the session cookie before every
+        # request, and _authorize runs before any response this method writes and resets the page,
+        # re-sign-in and traceback flags itself.
         # CORS delivery baseline: an allowed browser origin echoes on every response,
         # including the auth-EXEMPT routes (/healthz, /version) served before _authorize
         # runs; the _authorize call site then refines it (a valid token authorizes a
@@ -73575,13 +73980,23 @@ class Handler(BaseHTTPRequestHandler):
         u = urlparse(self.path)
         p = u.path
         q = parse_qs(u.query)
-        self._set_cookie = None
+        # The routes served before the gate below never run _authorize, so these two resets are the clear of
+        # the re-sign-in marker and the traceback permission an earlier request on this keep-alive connection
+        # set. The session cookie needs none here (handle_one_request clears it before every request), and
+        # the page flag needs none: _authorize sets it on every gated request, and no route before the gate
+        # serves a document with a <head> for _send to put the page-key script in.
+        self._reauth = False
+        self._trace_ok = False
         # CORS delivery baseline: an allowed browser origin echoes on every response,
         # including the auth-EXEMPT routes (/healthz, /version) served before _authorize
         # runs; the _authorize call site then refines it (a valid token authorizes a
         # foreign origin — the federated dashboard — and a denial clears the echo).
         self._cors_origin = self.headers.get("Origin") if self._origin_ok() else None
         try:
+            if p == "/login":
+                # the sign-in page, served exempt so a browser holding no page key can reach it (the
+                # page-key script sends the top frame here when this origin's storage was cleared)
+                return self._send(200, _TOKEN_LOGIN_HTML, "text/html", cache="no-cache")
             if p == "/healthz":
                 # liveness probe — exempt from auth. X-Romp-Boot identifies THIS kernel process: the
                 # restart button reloads only when the id flips (a bare 200 can still be the old kernel
@@ -73602,9 +74017,9 @@ class Handler(BaseHTTPRequestHandler):
                 # new turn starts, refreshable forever — so it is GATED on an explicit token
                 # (_write_token_ok), unlike the exempt read. Before this gate it armed in the
                 # exempt block: a drive-by loopback page's no-cors GET or a tailnet client could
-                # loop it and freeze all turn starts (the _authorize docstring's drive-by-loopback
-                # adversary). An unauthorized drain still returns the count (the read stays exempt)
-                # but arms nothing; the manager reads the serve-token file and sends X-Romp-Token.
+                # loop it and freeze all turn starts. An unauthorized drain still returns the count
+                # (the read stays exempt) but arms nothing; the manager reads the serve-token file and
+                # sends X-Romp-Token.
                 be = _sdk()
                 n = be.busy_count() if be and hasattr(be, "busy_count") else 0
                 # the breakdown rides beside the total (T240): the manager defers on EITHER kind of
@@ -74084,31 +74499,13 @@ class Handler(BaseHTTPRequestHandler):
                                   "application/json", cache="no-cache")
             # HTML pages are served no-cache so a reload always gets the freshest markup — which carries
             # the latest ?v= bundle url, so even a cached old bundle is bypassed (stale-client fix).
-            if p in ("/", ""):
-                # combined chat + feed (both ported); the timeline pane joins this layout next.
+            # The PAGE class is dispatched off the shared route table (_PAGE_RENDERERS), the same table
+            # _need reads to class a request, so the router and the classifier can never disagree on
+            # which paths a session cookie opens on its own.
+            _page = _PAGE_RENDERERS.get(p)
+            if _page is not None:
                 _client_seen[0] = time.time()
-                return self._send(200, _landing(), "text/html; charset=utf-8", cache="no-cache")
-            if p == "/chat":
-                _client_seen[0] = time.time()
-                return self._send(200, _chat_page(), "text/html; charset=utf-8", cache="no-cache")
-            if p == "/feed":
-                _client_seen[0] = time.time()
-                return self._send(200, _feed_page(), "text/html; charset=utf-8", cache="no-cache")
-            if p == "/timeline":
-                _client_seen[0] = time.time()
-                return self._send(200, _timeline_page(), "text/html; charset=utf-8", cache="no-cache")
-            if p == "/fleet":
-                _client_seen[0] = time.time()
-                return self._send(200, _fleet_page(), "text/html; charset=utf-8", cache="no-cache")
-            if p == "/waiting":
-                _client_seen[0] = time.time()
-                return self._send(200, _waiting_page(), "text/html; charset=utf-8", cache="no-cache")
-            if p == "/files":
-                _client_seen[0] = time.time()
-                return self._send(200, _files_page(), "text/html; charset=utf-8", cache="no-cache")
-            if p == "/settings":
-                _client_seen[0] = time.time()
-                return self._send(200, _settings_page(), "text/html; charset=utf-8", cache="no-cache")
+                return self._send(200, _page(), "text/html; charset=utf-8", cache="no-cache")
             if p == "/sw.js":
                 # the push service worker (see _SW_JS). Behind the gate on purpose: the browser's
                 # register() fetch is same-origin and carries the cookie, and only an authed shell
@@ -74241,7 +74638,7 @@ class Handler(BaseHTTPRequestHandler):
                 # subscription and states where its page runs (its Referer — a same-origin GET carries no Origin)
                 _push_backfill_origin(_pep, _request_page_origin(self.headers))
                 return self._send(200, json.dumps(_push_pending(_pep)), "application/json", cache="no-cache")
-            if p.startswith("/dist/") or p.startswith("/media/"):
+            if p.startswith(_STATIC_PREFIXES):        # the STATIC class's bundle/asset trees (the same prefixes _need reads)
                 base = DIST if p.startswith("/dist/") else MEDIA
                 fp = (base / p.split("/", 2)[2]).resolve()
                 if base.resolve() not in fp.parents or not fp.is_file():
@@ -74265,8 +74662,15 @@ class Handler(BaseHTTPRequestHandler):
         except (BrokenPipeError, ConnectionResetError):
             pass
         except Exception:
+            tb = traceback.format_exc()
+            sys.stderr.write("do_GET %s: %s\n" % (p, tb))
+            # A traceback can name an internal path or state, so the 500 carries it only to a caller that
+            # presented the serve token or the page key (_authorize sets _trace_ok): the CLI, the extension,
+            # a signed-in page's own fetch. Every other caller gets a bare 500: a page or static request on
+            # the session cookie alone, a file load on its cap, and the routes served before the gate. The
+            # traceback goes to stderr either way.
             try:
-                self._send(500, traceback.format_exc(), "text/plain")
+                self._send(500, tb if getattr(self, "_trace_ok", False) else b"internal error", "text/plain")
             except Exception:
                 pass
 
@@ -74337,7 +74741,13 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         u = urlparse(self.path)
         q = parse_qs(u.query)
-        self._set_cookie = None
+        # The push ack below is served before the gate and never runs _authorize, so these two resets are the
+        # clear of the re-sign-in marker and the traceback permission an earlier request on this keep-alive
+        # connection set. The session cookie needs none here (handle_one_request clears it before every
+        # request), and the page flag needs none: _authorize sets it on every gated request (a POST is never
+        # the page class), and the ack's answers are plain text or JSON.
+        self._reauth = False
+        self._trace_ok = False
         # CORS delivery baseline: an allowed browser origin echoes on every response,
         # including the auth-EXEMPT routes (/healthz, /version) served before _authorize
         # runs; the _authorize call site then refines it (a valid token authorizes a
@@ -76323,8 +76733,10 @@ class Handler(BaseHTTPRequestHandler):
         except (BrokenPipeError, ConnectionResetError):
             pass
         except Exception:
-            try:
-                self._send(500, traceback.format_exc(), "text/plain")
+            tb = traceback.format_exc()
+            sys.stderr.write("do_POST %s: %s\n" % (u.path, tb))
+            try:                                      # the traceback only to a token or page-key caller, as do_GET's
+                self._send(500, tb if getattr(self, "_trace_ok", False) else b"internal error", "text/plain")
             except Exception:
                 pass
 
@@ -77836,8 +78248,9 @@ class Handler(BaseHTTPRequestHandler):
         viewed from anywhere else (the phone, through `tailscale serve`) reached its own loopback
         and every remote host's sessions silently vanished (the user 2026-07-30). Relaying under
         the kernel's own origin gives any client that can reach this kernel the whole fleet, with
-        no per-host setup. The kernel stays a dumb pipe: after do_GET's local auth gate the two
-        sockets are spliced byte-for-byte (no frame parsing), and the REMOTE kernel still enforces
+        no per-host setup. The kernel stays a dumb pipe past the handshake: after do_GET's local
+        auth gate, and after the remote's 101 head is read and rebuilt here (_ws_head_allowlist),
+        the two sockets are spliced byte for byte (no frame parsing), and the REMOTE kernel still enforces
         its own token — rewritten into the forwarded query here, so the browser only ever needs
         its local credential — keeping the per-host trust boundary unchanged."""
         with _remotes_lock:
@@ -77848,7 +78261,8 @@ class Handler(BaseHTTPRequestHandler):
         if not self.headers.get("Sec-WebSocket-Key"):
             return self._send(400, "expected websocket", "text/plain")
         q = parse_qs(query or "")
-        q.pop("token", None)         # whatever the browser sent never travels — with or without a row token
+        for _k in ("token", "c", "k", "cap"):
+            q.pop(_k, None)          # this kernel's browser credentials never travel to the peer, with or without a row token
         if rtok:
             q["token"] = [rtok]      # the remote's own credential; whatever the browser sent means nothing there
         q["relay"] = ["1"]           # the dial's kind, stated the way the shim states proto, reconnect and skeleton (2026-09-15): the remote
@@ -77875,15 +78289,23 @@ class Handler(BaseHTTPRequestHandler):
         self.close_connection = True             # hijacked socket — no keep-alive after the splice
         down = self.connection
         # The remote's answer decides whether this hub side is an accepted socket at all: its head (the status line and the
-        # headers, up to the blank line) is read here, forwarded byte for byte, and only a 101 files the hub's own wsopen row,
-        # kind hub, naming the host, so the auditor sees the browser's pane here AND its relay dial on the remote; a refusal
-        # (401, 404, a dead tunnel) files nothing, the splice going on as before (2026-09-15). Bytes past the blank line are
-        # the remote's first frames and ride along in the same send. The read is bounded; a remote that answers nothing in
-        # time gets the pumps below as before, and no row.
+        # headers, up to the blank line) is read here, within _WS_HEAD_MAX bytes and _WS_HEAD_TIMEOUT_S seconds. Only a 101
+        # head that _ws_head_allowlist can rebuild reaches the browser, and as that rebuild, never as the remote's bytes: the
+        # browser talks to THIS kernel's origin through the relay, so any header the peer sets beyond the WebSocket handshake
+        # (a Set-Cookie, a Clear-Site-Data, a cache directive) would act on this origin and is dropped. Bytes past the blank
+        # line are the remote's first frames and ride along in the same send. A 101 files the hub's own wsopen row, kind hub,
+        # naming the host, so the auditor sees the browser's pane here AND its relay dial on the remote (2026-09-15).
+        # Anything else (a refusal such as a 401 or a 404, a head with no blank line within the bounds, a remote that closes
+        # or stays silent, a head the rebuild refuses) is this kernel's own 502, with this kernel's headers: the remote's
+        # bytes never reach the browser, no row is filed and the pumps below never start.
         head = b""
+        deadline = time.monotonic() + _WS_HEAD_TIMEOUT_S
         try:
-            up.settimeout(15)
-            while b"\r\n\r\n" not in head and len(head) < 65536:
+            while b"\r\n\r\n" not in head and len(head) < _WS_HEAD_MAX:
+                left = deadline - time.monotonic()
+                if left <= 0:
+                    break
+                up.settimeout(left)
                 b = up.recv(65536)
                 if not b:
                     break
@@ -77892,14 +78314,31 @@ class Handler(BaseHTTPRequestHandler):
             pass
         finally:
             up.settimeout(None)
-        if head:
+        # this kernel's own clear of the legacy cookie, which end_headers adds to every other response
+        # (_clears_legacy_cookie): the rebuilt head is written here, not through end_headers, so the clear
+        # goes in as one of the lines this kernel writes
+        extra = ([b"Set-Cookie: " + _LEGACY_COOKIE_CLEAR.encode("ascii")] if self._clears_legacy_cookie() else [])
+        rebuilt = _ws_head_allowlist(head, extra)
+        if rebuilt is None:
             try:
-                down.sendall(head)
+                up.close()
             except OSError:
                 pass
-        if head.split(b"\r\n", 1)[0].startswith(b"HTTP/1.1 101"):
-            _note_ws_open({"app": (q.get("app") or ["chat"])[0], "wid": (q.get("wid") or [""])[0], "iid": (q.get("iid") or [""])[0],
-                           "cid": uuid.uuid4().hex[:12], "kind": "hub", "host": host}, reconnect=(q.get("reconnect") or [""])[0] == "1")
+            code, sep = re.match(rb"HTTP/1\.[01] (\d{3})(?: |\r\n)", head), head.find(b"\r\n\r\n")
+            if sep < 0 or sep + 4 > _WS_HEAD_MAX:
+                why = "%s sent no complete socket handshake within %d bytes and %g s" % (
+                    host, _WS_HEAD_MAX, _WS_HEAD_TIMEOUT_S)
+            elif code and code.group(1) != b"101":
+                why = "%s refused the socket (HTTP %s)" % (host, code.group(1).decode("ascii"))
+            else:
+                why = "%s answered the socket with a handshake this kernel does not relay" % host
+            return self._send(502, why, "text/plain")
+        try:
+            down.sendall(rebuilt)
+        except OSError:
+            pass
+        _note_ws_open({"app": (q.get("app") or ["chat"])[0], "wid": (q.get("wid") or [""])[0], "iid": (q.get("iid") or [""])[0],
+                       "cid": uuid.uuid4().hex[:12], "kind": "hub", "host": host}, reconnect=(q.get("reconnect") or [""])[0] == "1")
 
         def _quiet_shutdown(s):
             # shutdown only, never close: `down` still belongs to the base handler (its finish()
@@ -78091,9 +78530,8 @@ class Handler(BaseHTTPRequestHandler):
         the same table and the same 404 the local /file route applies — and the remote's own
         Content-Type header is discarded. Mirroring it let a compromised remote kernel answer
         `text/html` for a path the preview lightbox opens in a SAME-ORIGIN, unsandboxed iframe
-        (ui/webview/preview.ts), i.e. script on the dashboard's origin with the token cookie
-        attached. An attached host is trusted to serve its own files, not to choose how this
-        browser interprets them."""
+        (ui/webview/preview.ts), i.e. script running on the dashboard's own origin. An attached
+        host is trusted to serve its own files, not to choose how this browser interprets them."""
         with _remotes_lock:
             r = _remotes.get(host)
             port, rtok = (r or {}).get("local_port") or 0, (r or {}).get("token") or ""
@@ -78103,6 +78541,10 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(404, b"" if head else ("no attached host %r" % host), "text/plain",
                               headers={_FILE_404_REASON_HDR: "detached"})
         q = parse_qs(query or "")
+        _browser_cap = (q.get("cap") or [""])[0]      # kept before the strip: a 413 way-out page rebuilt here for
+        #   THIS browser links back to this relay's download half, which needs the browser's own cap again
+        for _k in ("token", "c", "k", "cap"):
+            q.pop(_k, None)          # this kernel's browser credentials are its own, never the peer's (the peer runs its own gate)
         if (q.get("download") or [""])[0] == "1":
             # The download half rides the same relay (the user 2026-08-09: anything on disk is
             # downloadable — see _file_download). No local extension gate: the gate below exists so the
@@ -78158,6 +78600,16 @@ class Handler(BaseHTTPRequestHandler):
                 conn.close()
             except OSError:
                 pass
+        if not all(_peer_header_value_ok(v) for v in (clen, lastmod, r_ns, r_u8, crange) if v):
+            # Each of these five is written into this response's headers as the remote gave it on one arm or more: the
+            # HEAD arm writes Content-Length, Last-Modified and X-Romp-Mtime-Ns, a GET's 206 arm writes Content-Range,
+            # and a GET's 200 arm writes Last-Modified, X-Romp-Mtime-Ns and X-Romp-Text-Utf8. The check runs ahead of
+            # every arm, so a value that carries a line break or another control character refuses the reply, on an
+            # arm that would not have written it too, rather than writing the remote's bytes as a header of this
+            # kernel's own. The 404's cause needs no check: it is mirrored only when it equals one of this kernel's
+            # own words (_FILE_404_REASONS).
+            return self._send(502, b"" if head else ("%s answered with a header value this kernel does not relay" % host),
+                              "text/plain")
         if len(body) > _MEDIA_MAX_BYTES:       # backstop only — the remote's own cap 413s long before this
             return self._send(413, b"" if head else "too large to preview", "text/plain")
         if status not in (200, 206):
@@ -78175,8 +78627,13 @@ class Handler(BaseHTTPRequestHandler):
             if head:
                 return self._send(status, b"", "text/plain", headers=why)
             if status == 413 and mime == "application/pdf" and self._is_navigation():
+                # q had the browser's cap stripped (it never travels to the peer); restore it here so the
+                # way-out page's download link back to this relay carries the cap the browser must present
+                _pq = dict(q)
+                if _browser_cap:
+                    _pq["cap"] = [_browser_cap]
                 return self._send(413, _too_large_page(_decode_text(body) or "too large to show",
-                                                       os.path.basename(rp), q,
+                                                       os.path.basename(rp), _pq,
                                                        route="/remote/%s/file" % quote(host, safe="")),
                                   "text/html; charset=utf-8", cache="no-cache")
             return self._send(status, body, "text/plain", cache="no-cache", headers=why)
@@ -78258,6 +78715,11 @@ class Handler(BaseHTTPRequestHandler):
                     body = b"" if head else resp.read(_TEXT_MAX_BYTES)
                     return self._send(resp.status, body, "text/plain", cache="no-cache")
                 clen = resp.getheader("Content-Length")
+                if clen is not None and not _peer_header_value_ok(clen):
+                    # passed through below as the remote gave it: a line break or another control character in
+                    # it refuses the reply, like the preview arm's mirrored values (_remote_file)
+                    return self._send(502, b"" if head else ("%s answered with a header value this kernel does not relay"
+                                                             % host), "text/plain")
             except (OSError, http.client.HTTPException):
                 _demand_redial(host, "timeout")
                 return self._send(502, b"" if head else ("tunnel to %s is not answering — re-dialing now" % host),
@@ -78789,11 +79251,11 @@ def main():
     url = "http://127.0.0.1:%d" % PORT
     sys.stderr.write("romp-kernel: serving the ported UI at %s  (Ctrl-C to stop)\n" % url)
     sys.stderr.write("romp-kernel: records under %s ; bundles from %s\n" % (jd.STATE, DIST))
-    sys.stderr.write("romp-kernel: every request needs the serve token (loopback included) — "
-                     "browser entry: `romp`\n")
+    sys.stderr.write("romp-kernel: every request needs the serve token or a browser sign-in made with it "
+                     "(loopback included); browser entry: `romp`\n")
     if BIND != "127.0.0.1":
         # reachable off-box (tailnet/phone): the Origin gate blocks cross-site browsers token-free,
-        # and the token is required everywhere. Open from the phone:
+        # and the token, or a browser sign-in made with it, is required everywhere. Open from the phone:
         sys.stderr.write("romp-kernel: bound %s — open from the phone:\n"
                          "  http://<this-host>:%d/?token=%s\n" % (BIND, PORT, TOKEN))
     if not os.environ.get("ROMP_KERNEL_NO_OPEN"):

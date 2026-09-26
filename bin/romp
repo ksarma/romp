@@ -178,9 +178,10 @@ if [[ "${1:-}" == "spend-repair" ]]; then
     exec romp-spend-repair "$@"
 fi
 
-# The kernel serve token — required on EVERY kernel/bus request, loopback included (Jupyter's
-# model: the 0600 file, not the socket, is the same-user trust boundary). Same resolution order
-# as the kernel's _load_token: env override, else the state file.
+# The kernel serve token: required on EVERY kernel/bus request, loopback included, presented directly
+# or, by a browser, through a sign-in made with it (Jupyter's model: the 0600 file, not the socket, is
+# the same-user trust boundary). Same resolution order as the kernel's _load_token: env override, else
+# the state file.
 _romp_token() {
     if [[ -n "${ROMP_SERVE_TOKEN:-}" ]]; then printf '%s' "$ROMP_SERVE_TOKEN"; return; fi
     cat "${ROMP_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/romp}/serve-token" 2>/dev/null || true

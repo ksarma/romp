@@ -331,7 +331,7 @@ test("render.ts installs the listener once, parks known-failed URLs on its OWN m
   assert.match(RENDER, /installMdImgHeal\(\);/);
   assert.doesNotMatch(RENDER, /registerMdPostPass\(mdImgPostPass\)/, "never through the shared sanitizer: the file viewer rewrites its images' paths after the sanitize (the review's find)");
   assert.equal((RENDER.match(/mdImgPostPass\(clean\);/g) || []).length, 2, "md() and userMd() park a known-failed image before the browser fetches it");
-  assert.match(RENDER, /linkifyPrRefs\(clean, repo\);\s*\n\s*mdImgPostPass\(clean\);[^\n]*\n\s*return clean\.innerHTML;/, "after the sanitize and the PR links, before the string leaves");
+  assert.match(RENDER, /linkifyPrRefs\(clean, repo\);\s*\n\s*capAuthoredFileUrls\(clean\);[^\n]*\n\s*mdImgPostPass\(clean\);[^\n]*\n\s*return clean\.innerHTML;/, "after the sanitize, the PR links and the cap pass (so a parked URL is the capped one the browser would fetch), before the string leaves");
   // the page-load row: the ?v= of the render.js script this page loaded, one row per load
   assert.match(RENDER, /\.find\(\(u\) => \/\\\/dist\\\/render\\\.js\(\\\?\|\$\)\/\.test\(u\)\)/);
   assert.match(RENDER, /vscodeApi\?\.postMessage\(\{ type: "clientDiag", surface: "chat", what: "pageload", data: \{ distVer: m \? Number\(m\[1\]\) : 0, path: location\.pathname \} \}\);/);

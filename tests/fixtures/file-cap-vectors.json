@@ -1,0 +1,55 @@
+{
+  "note": "Synthetic cross-language vectors for the /file cap derivation; the key below is a plainly fake, readable string, not a real credential. cap = base64url(HMAC-SHA256(key_utf8, cap_input_utf8)[:16]) with no '=' padding. cap_input = 'romp-file-cap\\u0000' then, for each of host, path, sid in order, its utf-8 byte length in decimal, a NUL byte, then the field's bytes. The Python kernel (_cap_input, _file_cap) and ui/webview/file-cap.ts are both pinned to this file so the two implementations cannot drift. The last three rows put a NUL, or digits and a NUL shaped like a length prefix, inside a field: a NUL-joined input would give some other triple the same bytes, the length-prefixed one does not.",
+  "label": "romp-file-cap\u0000",
+  "key": "romp-file-cap-vector-key-synthetic-not-a-secret",
+  "caps": [
+    {
+      "host": "",
+      "path": "/tmp/plot.png",
+      "sid": "11111111-2222-3333-4444-555555555555",
+      "cap": "DAwmwptkxkvjNH7XZ8BpUw"
+    },
+    {
+      "host": "gpu1",
+      "path": "/home/user/figure.png",
+      "sid": "11111111-2222-3333-4444-555555555555",
+      "cap": "51BzMiZ7OFlKj-9qN5pnLA"
+    },
+    {
+      "host": "",
+      "path": "/tmp/rapport-français.pdf",
+      "sid": "99999999-8888-7777-6666-555555555555",
+      "cap": "9lCVa1v57TpS5KBvrx3kYQ"
+    },
+    {
+      "host": "hôte",
+      "path": "/tmp/файл.png",
+      "sid": "11111111-2222-3333-4444-555555555555",
+      "cap": "TDthPwcSZlNuM-eJvdSzNg"
+    },
+    {
+      "host": "",
+      "path": "/tmp/絵.png",
+      "sid": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+      "cap": "GtdTRfgvga1790xrFOI01w"
+    },
+    {
+      "host": "",
+      "path": "/tmp/a\u0000b.png",
+      "sid": "11111111-2222-3333-4444-555555555555",
+      "cap": "fXyF0Ba89Eh0c8X-_ZqbGw"
+    },
+    {
+      "host": "12\u0000gpu1",
+      "path": "/tmp/plot.png",
+      "sid": "",
+      "cap": "GAk0INrCYtmnszT6qIW2XA"
+    },
+    {
+      "host": "",
+      "path": "3\u0000abc/plot.png",
+      "sid": "1\u0000",
+      "cap": "eQkmFVcL5FMK27CIDAiRAA"
+    }
+  ]
+}

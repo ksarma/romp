@@ -30,6 +30,8 @@ import { headVerdict, mtimeMoved, ABSENT } from "./file-comments-model";   // th
 import { kernelUrl } from "./media";
 import { quoteSrcLabel } from "./docreview";
 import { fileCommentsAction, panelMark } from "./file-comments";
+import { capAuthoredFileUrls } from "./authored-file-caps";   // a /file URL the document names with a scheme carries this page's cap (mdBlock)
+import { withFileCap } from "./file-cap";   // whether the cap pass will change a figure's URL, so its authored spelling is kept first (keepAuthoredSpellings)
 import { pictureDest } from "./file-comments";       // the authored source a failed figure's label names (armFigureLabels): the panel's own rule, not a second reading of data-fv-src
 import { readPlace, seatPlaceOutcome, followPlace, blockHolding, blockIndexAt, type Place } from "./reader-place";   // the reader's place across a paint (Slice 2 of plans/markdown-viewer.md); blockHolding: the block an open's `{ offset }` names, blockIndexAt: the block a remembered place's span starts, followPlace: the last measured place into the text a reload landed under a boxless body (Slice 6)
 import { sourceBlockSpans, renderedBlockElements } from "./anchor-map";   // the block table and its elements, for an open's `{ offset }` in the Rendered view (Slice 6 of plans/markdown-viewer.md)
@@ -789,7 +791,8 @@ export interface FileViewActionCtx {
   pdfPages(): HTMLElement[];
   /** the figures inside a Rendered markdown body, in document order, as of the latest onRendered; [] in every other
    *  view. A path figure's `src` (relative or absolute) is the kernel's /file URL by then and its authored value rides
-   *  in `data-fv-src` (rewriteFigureSrcs); the figures' own load events are the caller's to await */
+   *  in `data-fv-src` (rewriteFigureSrcs), as does that of a /file URL of this origin written with its scheme, whose
+   *  `src` the cap pass changes (keepAuthoredSpellings); the figures' own load events are the caller's to await */
   renderedImages(): HTMLImageElement[];
   /** the session the file was opened from, as the hosting document resolves it (the title-bar chip's source) */
   identity(): FileViewIdentity | null;
@@ -2241,8 +2244,8 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
 
   // ── download (the user 2026-08-09) ── Any linked file can be SAVED, including everything the pane
   // cannot show: the kernel's ?download=1 serves anything on disk (the rationale lives with
-  // _file_download in kernel.py). Same-origin and cookie-authed like the view fetch, and
-  // federation-aware for free — fileUrl already routes a remote session's file through the relay.
+  // _file_download in kernel.py). Same-origin, authorized by the cap fileUrl adds (file-cap.ts) as the
+  // view is, and federation-aware for free: fileUrl already routes a remote session's file through the relay.
   const dlUrl = fileUrl(path, sid) + "&download=1";
   const dl = el("button", "fileview-btn") as HTMLButtonElement;
   dl.type = "button"; dl.innerHTML = ICON_DOWNLOAD; dl.classList.add("fileview-icon"); dl.dataset.icon = "1";   // the tray glyph the lightbox wears (icons.ts)
@@ -3596,8 +3599,8 @@ function offersDownload(status: number | undefined): boolean {
 // It presents here instead: same modal, same Rendered ⇄ Raw preference (FMT_KEY), same loader-first
 // wait, same mdBlock — fetched by the BROWSER from the URL itself, with no kernel in the loop. Zero new
 // kernel surface is the point: the kernel's /file relay is a preview relay and has stayed one on
-// purpose (_remote_file's docstring), and a same-origin URL needs no relay — the browser already has
-// the cookie. Cross-origin .md links are never routed here (render.ts checks isMarkdownUrl first).
+// purpose (_remote_file's docstring), and a same-origin URL needs no relay: the fetch carries the
+// page key like every other. Cross-origin .md links are never routed here (render.ts checks isMarkdownUrl first).
 //
 // The shell is built here rather than threaded through openFileView because almost everything in that
 // row is keyed on the KERNEL's reply — Edit on the text/plain + mtime verdicts, Download on the
@@ -3813,7 +3816,7 @@ export function openUrlView(href: string): void {
     parts = urlTitleParts(loc);
     dir.textContent = parts.dir; base.textContent = parts.base; name.title = loc;
   };
-  // Same-origin, cookie-authed, cache: no-store like every viewer fetch, on this open's abort signal.
+  // Same-origin (the fetch wrapper adds the page key), cache: no-store like every viewer fetch, on this open's abort signal.
   // mode: "same-origin" holds the rule through REDIRECTS too: the clicked URL passed isMarkdownUrl, but
   // a same-origin alias that 302s to a foreign host answering with a permissive CORS header would
   // otherwise be fetched and rendered with that host as the base for every relative figure (review
@@ -3852,7 +3855,7 @@ export function openUrlView(href: string): void {
 }
 
 // Kick the browser's downloader at `url` without touching the pane: a clicked <a download> starts a
-// same-origin, cookie-authed request the BROWSER owns (its progress UI, its save location), and since
+// same-origin request, authorized by the cap in its URL, that the BROWSER owns (its progress UI, its save location), and since
 // the kernel answers with Content-Disposition: attachment the page never navigates — the viewer, the
 // feed behind it, and the scroll position all stay put. The button acknowledges the click itself
 // (ui/CLAUDE.md), because the browser's download UI can take a beat to appear over a slow tunnel.
@@ -4301,7 +4304,16 @@ function mdBlock(text: string, doc?: MdDocLoc): HTMLElement {
     // gated, so a file's own attachments load on open; the list is read at every paint (loadSettings inside), so a
     // change in the gear reaches the next paint, and an open document through the settings listener the gate installs.
     gateRemoteFigures(clean, document.baseURI);
+    // The cap pass below changes the src of a figure written with its scheme, which the rewrite left as written, so the
+    // spelling the author wrote is kept first, where the comments panel reads it (keepAuthoredSpellings).
+    keepAuthoredSpellings(clean);
   }
+  // A /file URL of this origin that the document names as written, with its scheme (a figure `![](http://<this host>/file?...)`
+  // or a link to one), carries this page's cap, as every authored-markdown renderer's does (authored-file-caps.ts): the
+  // rewrite above re-points relative and absolute-path figures through fileUrl, which caps them, and leaves a URL with a
+  // scheme as written. Before the adoption, like every pass that sets a fetching attribute (the chain block above); an
+  // absolute URL stays absolute (file-cap.ts withFileCap), so linkMarkdownAnchors below still opens such a link in a new tab.
+  capAuthoredFileUrls(clean);
   // Adopted as they are, no re-parse here or after (the fence pass's re-parse ran above, before the chain), every fetching
   // attribute gated or repointed above, so the adoption starts no fetch to an unlisted host and none at a pre-rewrite URL, in
   // any engine; what it does start is the fetch of every figure left with a live attribute, the folder's through /file and an
@@ -4412,15 +4424,35 @@ function mintHeadingIds(root: ParentNode): void {
   heads.forEach((h, i) => { h.id = "md-" + slugs[i]; });
 }
 
-/** The authored candidates of a srcset rewriteFigureSrcs rewrote, kept on the element beside the rewrite (the label of a figure
- *  that failed names the candidate the browser asked for by them, failedSource). */
+/** The authored candidates of a srcset rewriteFigureSrcs rewrote or the cap pass capped (keepAuthoredSpellings), kept on the
+ *  element beside the rewrite (the label of a figure that failed names the candidate the browser asked for by them,
+ *  failedSource). */
 const FV_SRCSET = "data-fv-srcset";
+/** For a file document, just before the cap pass (capAuthoredFileUrls, in mdBlock): the spelling the author wrote, for each
+ *  figure whose URL that pass is about to change. The rewrite (rewriteFigureSrcs) leaves a URL written with its scheme as
+ *  written, and the cap pass then adds this page's cap to one that names this origin's /file route, so without this an img's
+ *  `src` would read as the capped URL, not the embed's destination, and the comments panel could not pair the picture with
+ *  its embed (pictureDest, embedFor, imgForRange in file-comments.ts). So an img whose `src` withFileCap would change, and
+ *  that has no `data-fv-src`, gets its current `src` there (an img's src alone, as rewriteFigureSrcs keeps it); a srcset
+ *  whose candidates the pass would change gets FV_SRCSET, unless one already stands: rewriteFigureSrcs stamps the authored
+ *  candidates of every srcset it rewrote, one that mixes path and scheme candidates included, and that stamp holds the
+ *  author's spelling of each. */
+function keepAuthoredSpellings(root: ParentNode): void {
+  for (const ref of figureRefs(root)) {
+    const el = ref.el as HTMLElement;
+    if (ref.attr === "srcset") {
+      if (!el.hasAttribute(FV_SRCSET) && parseSrcset(ref.value).some((c) => withFileCap(c.url) !== c.url)) el.setAttribute(FV_SRCSET, ref.value);
+      continue;
+    }
+    if (el.tagName === "IMG" && ref.attr === "src" && !el.hasAttribute("data-fv-src") && withFileCap(ref.value) !== ref.value) el.setAttribute("data-fv-src", ref.value);
+  }
+}
 /** A markdown file's path figures — `![](plot.png)`, `<img src="figs/a.png">`, `![](/srv/notes-api/figs/a.png)` — name
  *  files on the kernel's disk, and a browser resolving them against the page URL (/files, /chat, /feed) 404'd every
  *  one: a relative src against the page's directory, an absolute path against the dashboard ORIGIN, where no route
  *  serves it; only http(s), data: and other URLs ever rendered (plans/file-review.md, Images and PDFs; Slice 3). So
  *  each path `src` in the sanitized rendered DOM is re-pointed at the kernel's /file route — fileUrl: same-origin,
- *  cookie-authed, and a remote session's figure relays through /remote/<host>/file exactly as the file itself did.
+ *  capped (file-cap.ts), and a remote session's figure relays through /remote/<host>/file exactly as the file itself did.
  *  A relative src names `<dir of the open file>/<src>`; an absolute one (`/…`) names that path itself, which is how
  *  every other reader of an embed's destination already takes it — the panel's embed matching (embedPath, in
  *  file-comments.ts), the poll's figurePath (file-comments-model.ts) and the host's resolveSrc (file-comments-host.mjs)
@@ -4439,7 +4471,9 @@ const FV_SRCSET = "data-fv-srcset";
  *  the attribute is decoded back to a path first (decodeURI; a malformed escape is taken as written). The authored
  *  attribute value survives as `data-fv-src` on every rewritten figure: the panel's embed matching (embedFor /
  *  imgForRange in file-comments.ts) and a region comment's `src` need the source's own spelling, not a URL. An
- *  untouched figure's `src` IS that value, and an authored `data-fv-src` on one is dropped so the attribute means one
+ *  untouched figure's `src` is that value unless mdBlock stamped `data-fv-src` after this rewrite (keepAuthoredSpellings,
+ *  for a /file URL of this origin written with its scheme, whose src the cap pass then changes), and an authored
+ *  `data-fv-src` on one is dropped here so the attribute means one
  *  thing: this viewer rewrote this src. Runs on the DOM after DOMPurify, never on marked's HTML string — a string
  *  rewrite would re-parse attribute syntax the sanitizer already settled, and a src the sanitizer removed must stay
  *  removed. `dir` carries its trailing slash ("" for a bare relative file name, which then resolves against the
@@ -4567,8 +4601,8 @@ function absUrl(u: string): string {
  *  a label naming `src` for a picture or a srcset img named a file the browser never asked for, one that may well be there
  *  (the review's round 1). `img.currentSrc` is the browser's answer: when it is set and is not the img's own src, the
  *  candidate it names is matched against the srcset carriers (the picture's sources, then the img) and named by the authored
- *  spelling rewriteFigureSrcs kept beside the rewritten candidates (FV_SRCSET), or as written when the candidates were left as
- *  written (a remote host's absolute ones; a URL document's relative candidates are rewritten to absolute URLs by
+ *  spelling kept beside the rewritten or capped candidates (FV_SRCSET: rewriteFigureSrcs, keepAuthoredSpellings), or as
+ *  written when the candidates were left as written (a remote host's absolute ones; a URL document's relative candidates are rewritten to absolute URLs by
  *  resolveFigureRefs with no data-fv-src and no FV_SRCSET stamp, so its label names the resolved URL). The img's own src, or an
  *  img with no currentSrc to read (the node stand-in), keeps pictureDest's rule: `data-fv-src` when the viewer rewrote the src,
  *  else `src`; a figure with neither names nothing. */
@@ -4600,7 +4634,8 @@ function shownSource(src: string): string {
  *  label printed that string, "Image failed to load:  (alt)", a dangling colon before two spaces and nothing named. */
 const FIGURE_NO_SOURCE = "the source is empty";
 /** The label's words (the slice's contract C2, and its round 1 line): FIGURE_FAILED, the source the browser asked for as the
- *  author wrote it (failedSource: pictureDest's rule, `data-fv-src` when rewriteFigureSrcs rewrote the src, else `src`, or
+ *  author wrote it (failedSource: pictureDest's rule, `data-fv-src` when rewriteFigureSrcs rewrote the src or the cap pass
+ *  changed it, else `src`, or
  *  the srcset candidate the browser chose; a data: source cut to its head, shownSource) or FIGURE_NO_SOURCE when there is
  *  none to name, and the alt in parentheses when it is not empty. */
 function figureLabelText(img: Element): string {

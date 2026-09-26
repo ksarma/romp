@@ -1299,6 +1299,12 @@ class Collector(unittest.TestCase):
                 paths.update([m.group(1)] if m.group(1) is not None else re.findall(r'"(/[^"]*)"', m.group(2)))
             n += len(paths)
             derived[meth[3:]] = paths
+        # The page documents no longer dispatch on a literal `p == "/chat"` in do_GET: they are looked up
+        # in the shared route table _PAGE_RENDERERS (which the auth classifier reads too), and served by
+        # `_PAGE_RENDERERS.get(p)`. So the page routes come from that table, not the source regex (the ""
+        # bare-path spelling is the same route as "/", not a distinct register key).
+        derived["GET"] |= set(km._PAGE_RENDERERS) - {""}
+        n = sum(len(v) for v in derived.values())   # per-method count, pages included
         self.assertGreaterEqual(n, 80, "the derivation lost the route table (did the dispatch shape change?)")
         self.assertGreaterEqual(km._PerfStats.HTTP_PATHS, int(n * 1.5),
                                 "%d fixed routes: raise HTTP_PATHS, or routes land in other for the kernel's lifetime" % n)

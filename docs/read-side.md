@@ -958,19 +958,25 @@ The Python kernel (`kernel/kernel.py`) closes it.
   origin plus known local client origins (the browser at the kernel's host, the
   `vscode-webview://` extension, the timeline), reject everything cross-site. This
   kills ClawJacked for free; legit local clients send the right Origin/Host.
-- **Token REQUIRED on every gated route, loopback included** (Jupyter's model:
-  loopback is one network stack shared by every local UID, so the `0600` token
-  file — not the socket — is the same-user trust boundary; the gate keeps a
-  same-host co-tenant out of `/send` and the bus). Accepted forms: `?token=`
-  (browser bootstrap, seeds a `SameSite=Strict` cookie so it never re-prompts),
-  the cookie, and `X-Romp-Token` (CLI/hooks/daemons, read from the file). The
+- **Token REQUIRED on every gated route, loopback included, directly or through
+  a browser sign-in made with it** (Jupyter's model: loopback is one network
+  stack shared by every local UID, so the `0600` token file, not the socket, is
+  the same-user trust boundary; the gate keeps a same-host co-tenant out of
+  `/send` and the bus). Accepted forms: `X-Romp-Token`
+  (CLI/hooks/daemons, read from the file) and `?token=`, from any client; a
+  browser presents `?token=` once, and that response signs it in with a session
+  cookie that opens only the page documents and static files, a page key in site
+  storage sent as `X-Romp-Key` (or `k=` on a socket dial), and a per-file
+  capability in each `/file` URL the page builds (`SECURITY.md` states each). The
   token is baked into how the kernel launches (env/autostart), never a manual
   per-launch flag; a bare browser open of `/` gets a paste-the-token login page
-  (bare `romp` prints the link + opens a browser). Two kinds of route are exempt:
-  the no-side-effect liveness probes (`/healthz`, `/version`, `/busy`; bus
-  `/ping`) so liveness never breaks token-less monitors, and the install files
-  (`/manifest.webmanifest`, plus three icon names under `/media/`, an allowlist
-  rather than a prefix) because a browser fetches a manifest and its icons with
+  (bare `romp` prints the link + opens a browser). The exempt routes: the
+  no-side-effect liveness probes (`/healthz`, `/version`, `/busy`; bus `/ping`)
+  so liveness never breaks token-less monitors; the sign-in page (`/login`, a
+  static form); the push worker's acknowledgement (`POST /push/ack`, admitted by
+  the push's own unguessable id, since a worker's fetch carries no token); and
+  the install files (`/manifest.webmanifest`, plus three icon names under
+  `/media/`, an allowlist rather than a prefix) because a browser fetches a manifest and its icons with
   credentials omitted, so a gated manifest 403s the moment "Add to Home Screen"
   consults it. The install files are static (a JSON literal, three PNG files)
   and read no session state. `tailscale serve` traffic needs the token
@@ -978,7 +984,8 @@ The Python kernel (`kernel/kernel.py`) closes it.
   same proxy) must still never be enabled for this port, since the token would
   then be the only gate with no device identity in front of it.
 - Regression tests: a cross-site `/ws` upgrade with a foreign `Origin` must be
-  rejected, and a token-less loopback request to any gated route must 403
+  rejected, and a loopback request to any gated route that carries neither the
+  token nor a browser sign-in made with it must 403
   (tests/test_kernel_auth_hardening.py, tests/test_kernel_ws_auth.py,
   tests/test_postal_token.py).
 
