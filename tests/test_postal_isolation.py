@@ -280,7 +280,8 @@ class ThreadOwnSendRefused(unittest.TestCase):
         each mention of a derived name that the derivation does not follow (fork PR #897, each under the reviewer's
         ruling on section G: derived in round 3, to a fixpoint at round 4's thirty-sixth commit, the net at its
         forty-first, the net per mention at its forty-second, its folds, rows and limit at its forty-third, its one
-        hop, the class body and the folds restored at its forty-fourth). Returns (writers, references), and raises,
+        hop, the class body and the folds restored at its forty-fourth, and at round 6's sixty-sixth the hop's steps
+        worded as the closed list they are and the limit's round-5 faces stated). Returns (writers, references), and raises,
         naming each mention the net refuses by its function, clause, token, line and what its value is handed to,
         unless a row of `exempt` lifts it; with refusals=True it returns the refused mentions as a third element
         instead, each as (function, clause, token, line). Each rule below names its plant, a subtest of
@@ -348,19 +349,22 @@ class ThreadOwnSendRefused(unittest.TestCase):
         THE ONE HOP: the net follows a keyed value exactly ONE hop, to its consumer or to the name it lands in. A value
         that leaves the function through a return, a container, an attribute or a store, and is read back elsewhere, is
         inside the stated limit, with witnesses. The hop climbs from the mention (from a path function's call, for its
-        name) each step that hands the value on as it is: a division, a keyword argument, a conversion (a call named str,
-        bytes, fspath, fsencode, fsdecode, Path, PurePath, abspath, realpath, normpath, expanduser, resolve, absolute or
-        as_posix, by bare name or as a method, the value an argument or the receiver; each planted in the three forms,
-        this list asserted equal to the list planted), a tuple, a list, a set or a dict display, a starred item, a
-        comprehension's element, an operand of and or or, a conditional expression's branch, and an assignment
-        expression, whose target the value lands in on its way ("a refused mention's value lands in a name through each
-        step"). Its CONSUMER is the node holding it at the end of the hop (the rows' key, below). The names it LANDS IN
+        name) exactly the steps this closed list names, and no other: a division, a keyword argument, a conversion (a
+        call named str, bytes, fspath, fsencode, fsdecode, Path, PurePath, abspath, realpath, normpath, expanduser,
+        resolve, absolute or as_posix, by bare name or as a method, the value an argument or the receiver; each planted
+        in the three forms, this list asserted equal to the list planted), a tuple, a list, a set or a dict display, a
+        starred item, a comprehension's element, an operand of and or or, a conditional expression's branch, and an
+        assignment expression, whose target the value lands in on its way ("a refused mention's value lands in a name
+        through each step"). A step off the list ends the hop even where it hands the value on unchanged, as a full
+        slice does. Its CONSUMER is the node holding it at the end of the hop (the rows' key, below); what the consumer
+        returns is not followed (the limit, below). The names it LANDS IN
         are the names that node binds: among the targets of an assignment, plain, chained, annotated or augmented,
         unpacked, a starred or a list target included, or of a for loop or a comprehension, and the parameter whose
         default it is; an attribute or a subscript is none, holding the value outside the function's names ("a lifted
         mention's value landing in a name, written through it", "a refused mention's value lands in a name by each kind
         of target", "a name bound by unpacking into a tuple", "a name bound by a for loop's target", "a name bound by an
-        assignment expression", "a name bound by a parameter's default", "a name bound by a comprehension's target"). A
+        assignment expression", "a name bound by a parameter's default", "a name bound by a comprehension's target"),
+        and the net does not follow the value into it, in the same function either (the limit, below). A
         name the value of a mention the net refuses, before any row lifts it, lands in is keyed as a name bound to the
         path throughout the outermost function around it ("a name a value landed in, read by a nested function"), a
         name the module binds everywhere ("a name the module binds, a value landed in, read in a function"), and its own
@@ -416,7 +420,7 @@ class ThreadOwnSendRefused(unittest.TestCase):
         count, or one the row does not list, the same clause and token handed to something else among them, is refused
         at every line of it, the function's row notwithstanding ("a mention beyond its row is refused", "a lifted
         mention handed elsewhere is refused"); a refusal the net makes fewer times than its row lists raises, so a lifted
-        mention edited to hand the path elsewhere raises, as does a row that is not a reason and its refusals so keyed
+        mention edited to hand its value to another consumer raises, as does a row that is not a reason and its refusals so keyed
         ("a row entry the net refuses fewer times"); and when the function has become a writer, the entry being of a
         clause the writer rule classifies, the message says so and names the writers ("a row of a function that has
         become a writer").
@@ -432,7 +436,18 @@ class ThreadOwnSendRefused(unittest.TestCase):
         back elsewhere, is inside the stated limit, with witnesses. Those witnesses, each source's refusal lifted by a
         row as on the real kernel.py: "a path returned as a string and written by the caller", "a path appended to a
         module-level list and written from it", "a path held in an attribute as a string and written in another
-        method" and "a path stored as a cache's key and read back elsewhere". Inside it too, a path or a name reached
+        method" and "a path stored as a cache's key and read back elsewhere". Beyond the hop as well, as the reviewer
+        ruled in round 5: a row-lifted consumer's own result carried on inside the function, the value the consumer
+        returns (a subscript's, a lookup's, a call's) landed in a name and handed on ("a lifted subscript's result
+        handed on inside the function", "a lifted lookup's default handed on inside the function", "a lifted call's
+        result handed on inside the function", "a lifted call's result handed on through its attribute inside the
+        function"); and an attribute or a subscript among the targets of an assignment a row lifts the value at, which
+        the net does not follow the value into, read back in the same function ("a lifted assignment's attribute
+        target written in the same function", "a lifted assignment's subscript target written in the same
+        function"; an attribute named like the name the value lands in is refused by that name, as the bound clause
+        keys it: "a lifted assignment's attribute target named like the name the value lands in"). Each of these six
+        is asserted beside a control, the one step undone, whose write the net refuses. Inside the limit too, a path
+        or a name reached
         at run time rather than written: a path built at run time, so that no string holds the store's name and no
         derived name carries it ("a path built by string concatenation"); a local read back by reflection without its
         name, a caller's through its frame or a function's own through locals() ("a caller's local read through its
@@ -632,8 +647,8 @@ class ThreadOwnSendRefused(unittest.TestCase):
         conversions = ("str", "bytes", "fspath", "fsencode", "fsdecode", "Path", "PurePath", "abspath", "realpath", "normpath",
                        "expanduser", "resolve", "absolute", "as_posix")
 
-        def hop(clause, node):                         # ONE hop: the value climbed through the steps that hand it on as it is (the
-            call = parent.get(node)                    # docstring's pass-through), to the node holding it, with the names an
+        def hop(clause, node):                         # ONE hop: the value climbed through the docstring's closed list of
+            call = parent.get(node)                    # steps and no other, to the node holding it, with the names an
             n = call if clause == "a path function" and isinstance(call, ast.Call) and call.func is node else node   # assignment
             names = set()                                                                                            # expression binds
             while True:
@@ -1532,8 +1547,8 @@ class ThreadOwnSendRefused(unittest.TestCase):
                                  "THE NET (round 4 of fork PR #897, the reviewer's ruling on section G): %s. The census's "
                                  "docstring names this plant beside the rule it pins; the third element is what the net "
                                  "refuses, each as (function, clause, token, line)" % label)
-        # THE ONE HOP (the census docstring's rule): a refused mention's value, followed through the steps that hand it on as
-        # it is, lands in the name it is bound to, which the net then keys as a name bound to the path
+        # THE ONE HOP (the census docstring's rule): a refused mention's value, followed through the steps the docstring's
+        # closed list names, lands in the name it is bound to, which the net then keys as a name bound to the path
         import re
         value, path = 'str(jd.STATE / "session-flags.json")', 'jd.STATE / "session-flags.json"'
         conversions = ("str", "bytes", "fspath", "fsencode", "fsdecode", "Path", "PurePath", "abspath", "realpath", "normpath",
@@ -1652,6 +1667,57 @@ class ThreadOwnSendRefused(unittest.TestCase):
                                  "THE ONE-HOP LIMIT'S WITNESS (round 4 of fork PR #897, the reviewer's ruling): the value leaves "
                                  "the function beyond its one hop, and the writer that reads it back is neither found nor "
                                  "refused, its source's refusal lifted by a row as on the real kernel.py: %s" % label)
+        # Beyond the hop as well (round 5 of fork PR #897, the reviewer's ruling on section G, the refuters' N1, N2, N3, N4,
+        # G1 and G2): each plant writes the store through a value the net does not follow, a row lifting its source as on the
+        # real kernel.py; its control undoes the one step, and the net refuses the control's write at the plant's write line.
+        doc = " ".join((census.__doc__ or "").split())
+        head = save + 'def _by_result(cur):\n    p = jd.STATE / "session-flags.json"\n'
+        target = ('def _by_target(cur):\n    p = %s = str(jd.STATE / "session-flags.json")\n    _write_state_json(%s, cur)\n'
+                  '    return p in SEEN and CACHE.get(p) is None\n')
+        target_control = target.replace("p = %s = ", "p = ").replace("(%s, cur)", "(p, cur)")
+        target_row = {(name, "session-flags.json", "Assign"): 1, (bound, "p", "Compare"): 1, (bound, "p", ".get"): 1}
+        target_source = [("_by_target", name, "session-flags.json", 2), ("_by_target", bound, "p", 4), ("_by_target", bound, "p", 4)]
+        lookup_control = head + '    q = str(p)\n    hit = _flags_cache.get(q)\n    _save(q, cur)\n'
+        for label, refuters, plant, control, lifted, source, write in (
+                ("a lifted subscript's result handed on inside the function", "N1, a full slice",
+                 head + '    q = str(p)[:]\n    _save(q, cur)\n', head + '    q = str(p)\n    _save(q, cur)\n',
+                 {(bound, "p", "Subscript"): 1}, [("_by_result", bound, "p", 5)], ("_by_result", bound, "q", 6)),
+                ("a lifted lookup's default handed on inside the function", "N4, the display cache's lookup",
+                 head + '    q = _flags_cache.get("", str(p))\n    hit = _flags_cache.get(q)\n    _save(q, cur)\n', lookup_control,
+                 {(bound, "p", ".get"): 1}, [("_by_result", bound, "p", 5)], ("_by_result", bound, "q", 7)),
+                ("a lifted call's result handed on inside the function", "G1, a call consumer",
+                 head + '    q = {}.get(None, str(p))\n    hit = _flags_cache.get(q)\n    _save(q, cur)\n', lookup_control,
+                 {(bound, "p", ".get"): 1}, [("_by_result", bound, "p", 5)], ("_by_result", bound, "q", 7)),
+                ("a lifted call's result handed on through its attribute inside the function", "G2, a fault notice's path",
+                 head + '    u = _StateUnreadable(p, "torn")\n    _note_state_fault(u)\n    _save(u.path, cur)\n',
+                 head + '    u = p\n    _note_state_fault(u)\n    _save(u, cur)\n',
+                 {(bound, "p", "_StateUnreadable"): 1}, [("_by_result", bound, "p", 5)], ("_by_result", bound, "u", 7)),
+                ("a lifted assignment's attribute target written in the same function", "N2, an attribute target",
+                 target % ("_BOX.where", "_BOX.where"), target_control, target_row, target_source, ("_by_target", bound, "p", 3)),
+                ("a lifted assignment's subscript target written in the same function", "N3, a subscript target",
+                 target % ("_SLOT[0]", "_SLOT[0]"), target_control, target_row, target_source, ("_by_target", bound, "p", 3))):
+            with self.subTest(net=label):
+                row = {write[0]: ("a planted reason", lifted)}
+                self.assertIn(label, doc, "the census's docstring names this witness of the limit by its label")
+                self.assertEqual(census(plant, exempt=row), (set(), []),
+                                 "THE ONE-HOP LIMIT'S WITNESS (round 5 of fork PR #897, the reviewer's ruling on section G; the "
+                                 "refuters' %s): the path goes on inside the function past its consumer, or through an attribute "
+                                 "or a subscript the lifted assignment targets, and the write at line %d is neither found nor "
+                                 "refused, its source's refusal lifted by a row as on the real kernel.py" % (refuters, write[3]))
+                self.assertEqual(census(plant, refusals=True), (set(), [], source),
+                                 "with no row the net refuses the source alone, never the write at line %d: the value the "
+                                 "write reads is not keyed (%s)" % (write[3], refuters))
+                self.assertIn(write, census(control, refusals=True)[2],
+                              "THE CONTROL: the one step undone, the value lands in a name the net keys, and the write at line "
+                              "%d is refused, so the plant passes by the limit alone (%s)" % (write[3], refuters))
+        with self.subTest(net="a lifted assignment's attribute target named like the name the value lands in"):
+            stop = "a lifted assignment's attribute target named like the name the value lands in"
+            self.assertIn(stop, doc, "the census's docstring names where the limit stops by its label")
+            with self.assertRaises(AssertionError) as keyed:
+                census(target % ("_BOX.p", "_BOX.p"), exempt={"_by_target": ("a planted reason", target_row)})
+            self.assertIn("_by_target mentions a name bound to the path 'p' at line 3, handed to _write_state_json",
+                          str(keyed.exception), "WHERE THE LIMIT STOPS: the attribute read back is named like p, the name the "
+                          "value lands in, so the bound clause keys it by that name and the write through it is refused")
         shutil_src = planted[[p[0] for p in planted].index("shutil.copy")][1]
         row = {"_by_library": ("a planted reason", {(name, "session-flags.json", ".copy"): 1})}
         with self.subTest(net="a row lifts a refused mention"):
@@ -1807,10 +1873,12 @@ class ThreadOwnSendRefused(unittest.TestCase):
         WebSocket arm, so a new route fails the set pin, and a mention the net refuses there fails it by name, but for the
         net's stated limit: the net follows a keyed value one hop, to its consumer or to the name it lands in, so a value
         that leaves the function through a return, a container, an attribute or a store and is read back elsewhere passes
-        it, as do a path built at run time, a local or a name read back at run time through reflection, and a path or a
-        writer in a module the kernel loads. Executed over the real handlers: the listing with thread rows has the thread and the roster omits it; a
-        send to a session on a peer host, a relay destination for any session whose mail is on, is refused and nothing is
-        parked in the peer's outbox; POST /flag refuses the key and the send is still refused; the key written through
+        it, as do a row-lifted consumer's own result carried on inside its function, an attribute or a subscript a
+        row-lifted assignment targets, read back in the same function under a name the net does not key, a path built
+        at run time, a local or a name read back at run time through reflection, and a path or a writer in a module the
+        kernel loads. Executed over the real handlers: the listing with thread rows has the thread and the roster omits
+        it; a send to a session on a peer host, a relay destination for any session whose mail is on, is refused and
+        nothing is parked in the peer's outbox; POST /flag refuses the key and the send is still refused; the key written through
         the kernel's real WebSocket arm, into the file the bus reads, lets the same send be parked (the disclosed road,
         whose shape, if thread mail is ever re-enabled, is a separate exchange field carrying the mirror-relevant thread
         sids, never the roster with thread rows). The fix PR flips exactly the WebSocket half: its pin here turns red and
