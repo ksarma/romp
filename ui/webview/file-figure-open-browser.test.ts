@@ -3028,16 +3028,20 @@ for (const surface of ["chat", "feed", "pane"] as Surface[]) for (const width of
 //   coordinator's decision 1 on the file review's round 17), Enter and Space held on the out-of-view control through two repeats open nothing (none at the head the file review's round 16 read either,
 //   by design; red under a gate that reads the repeat and the release afresh, since the first keydown's reveal put the control on the
 //   screen);
-// - covered signs (decisions 4 and 5), each red at the head the file review's round 16 read by one open: the Outline popover over the control of a picture
+// - covered signs (decisions 4 and 5), each but the author's overlay red at the head the file review's round 16 read by one open: the Outline popover over the control of a picture
 //   490 wide, a click and a tap on the picture's visible part, the popover closed by that press, and a second gesture then opens once;
 //   the text-size flyout over the same control with its top 3px inside the body, a click and a tap the same way, and the keyboard,
 //   Tab to the control with the flyout opened by Enter still open, then Enter, which opens nothing and closes the flyout, the viewer's
 //   own chrome, since no other key but Escape closes it, and a second Enter, which opens once (red under the gate before the key's
 //   refusal closed the flyout by the second Enter, the flyout still open); an author's element of two page classes laid over the
-//   figure (`picker-overlay tx-starting`: fixed, over the whole Rendered box), Tab then Enter, fine and under touch, opening nothing
-//   twice (the disclosed cost: such an element keeps the picture from opening at all), and a tap there, which the element itself
-//   takes, opening nothing at either head (a guard); and an author's element a press would pass through, whose page class, style
-//   declaration or inert attribute the viewer takes off (dropPressThrough; the block before the middle button's guard says the rest);
+//   figure (`picker-overlay tx-starting`), which the sheets would position fixed over the whole Rendered box above the control, has
+//   its raising class taken off (dropStackClasses), so it stands static in the flow off the control, and Tab then Enter, fine and
+//   under touch, and under touch a tap at the picture's point each open once with the control shown (red at the head the file
+//   review's round 16 read by the element's state, its class and its fixed position over the control's centre, and under touch by
+//   the tap, which the fixed element took, Enter opening once there; and red at 2f5d29017, before the author's closing pass after
+//   the file review's round 17 took the class off, by the state, by Enter and, under touch, by the tap); and an author's element a
+//   press would pass through, whose page class, style declaration or inert attribute the viewer takes off (dropPressThrough; the block
+//   before the middle button's guard says the rest, and what the drops leave of the cost the file review's round 16 disclosed);
 // - the middle button (fact 1 of the rulings): on the picture with its control out of view, on the control and on the picture in view,
 //   no open at either head, the auxclick firing (a guard);
 // - the mark, under touch emulation: a picture from the web under the floor wearing the mark, scrolled wholly out of the body, and a
@@ -3048,8 +3052,9 @@ for (const surface of ["chat", "feed", "pane"] as Surface[]) for (const width of
 //   each opens once (keep); the reveal, the second open and the keep cells red under a gate that looks for the control after the img
 //   instead of after its anchor;
 // - the row: the Comments panel open under touch emulation (a coarse pointer, the layer's overlay off), a Ctrl-click refused on the
-//   out-of-view picture opens nothing and stops before the row, whose listener would offer a comment (green at the head the file review's round 16 read,
-//   which stopped the modified click before opening; red under a gate placed before openFigure's stopPropagation);
+//   out-of-view picture opens nothing and stops before the row, whose listener would offer a comment (the row cell green at the head the file review's round 16 read,
+//   which stopped the modified click before opening, and the opens cell red there by group A's open, since that head had no gate; red
+//   under a gate placed before openFigure's stopPropagation);
 // - a local picture, not gated: its control out of view, a Ctrl-click opens the kernel's /file URL in a tab and a plain click opens the
 //   picture in the viewer (green at both heads; red under a gate that reads no target kind);
 // - the pinch zoom, a fine pointer on the focus report: the top page zoomed to 3 with the big picture's control outside the top's
@@ -3360,7 +3365,7 @@ for (const surface of ["chat", "pane"] as Surface[]) {
       g.cell("the second Enter's opens, and the flyout still open", [[1, 1], false], [opensOf(await g.opens()), await g.page.evaluate(() => !(document.querySelector(".fileview-zoom-menu") as HTMLElement).hidden)]);
     });
   });
-  for (const device of ["fine", "touch"] as GateDevice[]) test("in a browser " + gateOn(device, surface).replace("a fine click", "a fine pointer") + ", the one gate's covered sign, an author's element of a page class the sheets would raise, laid over the figure (the coordinator's decisions 4 and 5, continued): `<div class=\"picker-overlay tx-starting\">`, which the sheets would position fixed over the Rendered box and give a z-index above the control's, has its raising class taken off, so it falls into the flow off the control; the body focused and Tab to the web control, then Enter opens once, and a tap at the picture's point opens once too, the control shown (red before this pass took the raising class off, where the overlay stood fixed over the control so a press reached the overlay and the picture never opened, the disclosed cost the file review's round 16 recorded; and red at the head the file review's round 16 read by one open on the first Enter)", { timeout: 180000 }, async (t) => {
+  for (const device of ["fine", "touch"] as GateDevice[]) test("in a browser " + gateOn(device, surface).replace("a fine click", "a fine pointer") + ", the one gate's covered sign, an author's element of a page class the sheets would raise, laid over the figure (the coordinator's decisions 4 and 5, continued): `<div class=\"picker-overlay tx-starting\">`, which the sheets would position fixed over the Rendered box and give a z-index above the control's, has its raising class taken off, so it stands static in the flow off the control; the body focused and Tab to the web control, then Enter opens once, and under touch a tap at the picture's point opens once too, the control shown (red at the head the file review's round 16 read by the element's state, its class and its fixed position over the control's centre, and under touch by the tap, which the fixed element took, Enter opening once there; and red at 2f5d29017, before the author's closing pass after the file review's round 17 took the raising class off, by the element's state, by Enter and, under touch, by the tap, each refused where the element stood over the control)", { timeout: 180000 }, async (t) => {
     const rec: Record<string, unknown> = { scene: "overlay" };
     await gateCase(t, device, surface, OVERLAY_TEXT, rec, async (g) => {
       const st = await g.page.evaluate(() => { const o = document.getElementById("user-content-pt") as HTMLElement | null; const w = window as any; const c = w.__ctl("ov"); const r = c.getBoundingClientRect(); const e = document.elementFromPoint((r.left + r.right) / 2, (r.top + r.bottom) / 2); return { overlay: !!o, classes: o ? o.getAttribute("class") : null, position: o ? getComputedStyle(o).position : null, overCentre: !!e && !!o && (e === o || o.contains(e)) }; });
@@ -3406,15 +3411,21 @@ for (const device of ["phone", "hybrid"] as TapCellDevice[]) for (const surface 
 // extra5-1, the covered sign) ── The hit test at a gesture's start (elementFromPoint) reads the element a press would reach, and a press
 // passes through an element a page class sets pointer-events none on, one whose style attribute does, and an inert one; file-view.ts
 // dropPressThrough takes those off a file document's author markup, and dropStackClasses takes off the classes the sheets give a z-index
-// at or above the control's, so an author element the sheets would raise falls into the flow, below the control. Four scenes, each after
+// at or above the control's, so no author element is left at or above the control's stacking level. Four scenes, each after
 // a loaded remote picture 300 by 200 near the report's top: the locate-toast shape (a page class the sheets both position fixed and let a
 // press pass through), whose class goes, so the element stands in the flow below the picture and a gesture opens with the control shown;
 // and three shapes of a full-screen overlay of picker-overlay tx-starting (the sheets position picker-overlay fixed and give it a z-index
 // above the control's): with a page class that sets pointer-events none (fc-overlay-off), with that declaration in its style attribute,
 // and inert. In every scene dropStackClasses takes picker-overlay off, so the overlay falls into the flow off the control and the gesture
-// opens with the control shown; the disclosed cost the file review's round 16 recorded (a full-screen overlay the reader could not
-// dismiss kept that picture from opening) is closed by that drop, so these scenes open once here where before it they opened nothing. The
-// two-way pin holding the raising list to the sheets is file-figure-open.test.ts's.
+// opens with the control shown, where before that drop these scenes opened nothing. The drops narrow the cost the file review's round 16
+// disclosed (an author's element laid over a picture kept it from opening) and do not close it: an element that a class the drops take
+// off had placed over the figure no longer covers the control; an element that a page class the viewer keeps positions over a picture
+// that wears the control rests below the control, whose z-index keeps it on top, so the control opens the picture on every gesture,
+// while a press on the picture's own body lands on that element and opens nothing, and inside what was a stacking context around the
+// picture the same holds, the shape the file review's round 17 found there (extra9-2) closed by the context drop and a top-level table's
+// position and left; and an element a kept page class positions over a small picture that wears the mark still keeps that picture from
+// opening, since the mark has no stacking level of its own and no button for a key to reach (its round 17, fresh-1). The two-way pin
+// holding the raising list to the sheets is file-figure-open.test.ts's.
 const PT_WORDS = Array.from({ length: 260 }, (_, i) => "word" + (i % 17)).join(" ");
 const PT_OVERLAY = (cover: string): string => "# Report\n\n" + PARA(1) + "\n\n![ov](" + WEB + "/ov.svg)\n\n" + cover + "\n\n" + Array.from({ length: 12 }, (_, i) => PARA(i + 3)).join("\n\n") + "\n";
 const PRESS_THROUGH: Array<{ scene: string; what: string; text: string; cls: string }> = [   // each element carries the id pt, which the sanitizer prefixes (user-content-pt), for the read to find it whatever its classes
@@ -3426,10 +3437,9 @@ const PRESS_THROUGH: Array<{ scene: string; what: string; text: string; cls: str
 // After the viewer's passes each element holds no class the sheets let a press pass through (dropPressThrough) or raise to the control's
 // stacking level (dropStackClasses), no inert attribute and no pointer-events declaration, so it stands in the flow off the control and
 // the picture opens with the control shown. The overlay scenes carry the page class picker-overlay, which the sheets both position fixed
-// and give a z-index above the control's, so dropStackClasses takes it off and the overlay falls into the flow: this closes the disclosed
-// cost the file review's round 16 recorded (a full-screen overlay the reader could not dismiss kept that picture from opening), so those
-// scenes open once here where before this pass they opened nothing. The toast's page class the sheets let a press pass through, so
-// dropPressThrough already took it off.
+// and give a z-index above the control's, so dropStackClasses takes it off and the overlay falls into the flow: those scenes open once
+// here where before this pass they opened nothing, which narrows the cost the file review's round 16 disclosed and does not close it
+// (the block above says what stays). The toast's page class the sheets let a press pass through, so dropPressThrough already took it off.
 for (const surface of ["chat", "pane"] as Surface[]) for (const device of ["fine", "touch"] as GateDevice[]) for (const pt of PRESS_THROUGH) {
   test("in a browser " + gateOn(device, surface).replace("a fine click", "a fine pointer") + ", the one gate's covered sign, an author's element a press would pass through or a page class would raise, " + pt.what + " (the file review's round 16, extra5-1, the covered sign): after the viewer's passes the element holds no class the sheets let a press pass through or raise to the control's stacking level, no inert attribute and no pointer-events declaration, so it stands in the flow off the control and a gesture on the picture and Enter on the control each open once with the control shown (" + (pt.scene === "toast" ? "red at the head the file review's round 16 read, which had no gate, where the element covered the control as a gesture opened" : "red before this pass took the raising page class off, where the overlay stood fixed over the control and no gesture opened, and at the head the file review's round 16 read, which had no gate") + ")", { timeout: 180000 }, async (t) => {
     const rec: Record<string, unknown> = { scene: "press-through " + pt.scene };
@@ -3578,7 +3588,7 @@ for (const surface of ["chat", "pane"] as Surface[]) {
       }
     });
   });
-  test("in a browser (CDP touch emulation, " + (surface === "chat" ? "the chat modal" : "the Files pane") + "), the one gate and the row: the Comments panel open on a coarse pointer (the layer's overlay off), a Ctrl-click on the remote picture with its control out of view opens nothing and stops before the row, whose listener would offer a comment (green at the head the file review's round 16 read, which stopped the modified click before its open; red under a gate placed before openFigure's stopPropagation, where the refused click reached the row)", { timeout: 180000 }, async (t) => {
+  test("in a browser (CDP touch emulation, " + (surface === "chat" ? "the chat modal" : "the Files pane") + "), the one gate and the row: the Comments panel open on a coarse pointer (the layer's overlay off), a Ctrl-click on the remote picture with its control out of view opens nothing and stops before the row, whose listener would offer a comment (the row cell green at the head the file review's round 16 read, which stopped the modified click before its open, and the opens cell red there by group A's open, since that head had no gate; red under a gate placed before openFigure's stopPropagation, where the refused click reached the row)", { timeout: 180000 }, async (t) => {
     const rec: Record<string, unknown> = { scene: "row" };
     await gateCase(t, "touch", surface, GATE_TEXT, rec, async (g) => {
       assert.equal(await g.page.evaluate(() => matchMedia("(pointer: coarse)").matches), true, "a coarse pointer under the emulation (a precondition)");

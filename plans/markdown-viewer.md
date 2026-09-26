@@ -8631,7 +8631,7 @@ does not see stays below the control, whose z-index keeps it on top where no sta
 having taken off the classes the sheets would raise it to the control's stacking level and, from a figure's ancestors, the classes that
 would make one a stacking context around it, and a top-level table's shift into the gutters being a position and a left, which make no
 stacking context (`dropStackClasses`, below; the file review's round 17, extra9-1, and the coordinator's decision 4 on it), the outbound
-mark of a picture with no control excepted, which has no stacking level of its own (its round 17, fresh-1 and extra7-1); a same-origin parent's own
+mark of a picture with no control excepted, which has no stacking level of its own, a stated boundary (its round 17, extra7-1); a same-origin parent's own
 chrome over the frame is not read), read at the gesture's start, at the press in the window's capture phase, before the popover's own capture listener closes it,
 and at the first keydown (repeat false) of Enter or Space, the press's verdict taken by its click: a click by a pointer reads the
 record under its own pointerId or, with none, the press a one-click slot took at the last pointerup, the slot emptied by any
@@ -8646,9 +8646,14 @@ a refused gesture opens nothing and scrolls the sign into view (`revealSign`, bl
 a pinch zoom's visual viewport included), moving no focus, so the next gesture opens; where the reveal cannot put the sign on the
 screen the gate stays closed, stated limits measured in Chromium: the chat page's modal framed by the dashboard under a pinch zoom of
 the top page (the viewer's card is fixed in its frame, and scrollIntoView from it pans no visual viewport of the top page, while
-the viewer as the top page and the Files pane's frame pan), until the reader pans by hand; an author's element of a page class laid over
-the figure no longer keeps that picture from opening, since `dropStackClasses` takes off the classes the sheets would raise it to the
-control's stacking level, so it falls into the flow below the control (the file review's round 16, extra5-1); a refused key closes the viewer's own text-size
+the viewer as the top page and the Files pane's frame pan), until the reader pans by hand; the drops narrow the cost the file review's
+round 16 disclosed for an author's element of a page class laid over the figure (extra5-1) and do not close it: an element that a class
+`dropStackClasses` takes off had placed over the figure no longer covers the control, and one that a page class the viewer keeps
+positions over a picture that wears the control rests below the control, whose z-index keeps it on top, so the control opens the
+picture on every gesture while a press on the picture's own body lands on that element and opens nothing, the same inside what was a
+stacking context around the picture (its round 17, extra9-2, a shape the context drop and a top-level table's position and left close),
+and one that a kept page class positions over a picture that wears the mark still keeps that picture from opening, since the mark has
+no stacking level of its own and no button for a key to reach (its round 17, fresh-1); a refused key closes the viewer's own text-size
 flyout as well, which no other key but Escape closes, so the next key opens where the flyout had covered the control; the later events of one gesture take its
 verdict by their own fields and never by time, a click whose detail is above 1 after a refused click of its run, a held key's
 repeats after a refused keydown, and Space's release, which also reads the control in view at the release; out of view a Space
