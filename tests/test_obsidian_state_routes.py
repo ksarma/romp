@@ -1396,9 +1396,9 @@ def _flag_census():
     permanent generation on every call) paid per read for everything frozen here. At bc9790a14, the last of those
     heads, the PR's own Python 3.10 cell (CI run 35942065383) took 58 s longer than main's at the same base
     (fa3ef54b5, CI run 35890814789), most of it in the snapshot readers that sort after this module and in the
-    thread-stop census, which reads the frozen count itself (the reviewer's ruling on round 1 of fork PR #909). So
-    the module changes no collector state at all: no gc.freeze, gc.disable or gc.collect, since the first is
-    process-global and the other two walk every tracked object.
+    thread-stop census, which reads the frozen count itself (the reviewer's ruling on round 1 of fork PR #909). So,
+    as that ruling directs, the module changes no collector state at all: no gc.freeze or gc.disable, which change the
+    collector's state for the whole process, and no gc.collect, which walks every tracked object.
     WHY NOT THE CACHE'S SHARED PARSE EITHER, this census's exception to tests/parse_cache.py's one-cache rule: read
     through source_and_tree, which freezes nothing, the trees stayed in the cache, tracked, from this module until the
     thread-stop census froze them, and every full collection in between walked them. Measured at 565043897 against
@@ -1414,11 +1414,13 @@ def _flag_census():
     by reference count, with no collection. Its value is plain data (dicts, sets, tuples, the trees and their nodes, and
     tables keyed by id(node)) and it makes no closure or object that refers back to itself. A cycle through the held
     object is pinned (tearDownModule's weak reference, pin 2). A cycle among the inner containers that does not pass
-    through the held object, or an inner container kept by another name, would leave the held object free and that pin
-    green, so that half is a measurement, with the collector off: at 7e5e74e95 and 4850e2ca8, heads that built
-    through derived() (before and after the one-walk cut), a collection right after a direct build was dropped found
-    nothing unreachable; at 909e3ced5, with the census's own parse (shape E), a collection right after the build found
-    nothing unreachable, and neither did one right after dropping the census."""
+    through the held object would leave the held object free and that pin green, so that half is a measurement, with
+    the collector off: at 7e5e74e95 and 4850e2ca8, heads that built through derived() (before and after the one-walk
+    cut), a collection right after a direct build was dropped found nothing unreachable; at 909e3ced5, with the
+    census's own parse (shape E), a collection right after the build found nothing unreachable, and neither did one
+    right after dropping the census. An inner container kept by another name (a module global holding the facts
+    table, say) also leaves the held object free and that pin green, and it stays reachable, so a collection does not
+    find it: neither that pin nor the measurement sees it, a limit of both."""
     global _CENSUS_BUILDS, _WALKS
     _WALKS = walks = {}
     try:
@@ -1463,7 +1465,8 @@ def tearDownModule():
     one full collection inside a build over 6 million tracked objects standing in for a serial cell's heap took 0.36 s
     on Python 3.10 and 0.67 to 0.82 s on 3.12). Red under a module-scope cache that keeps the census and under a build
     whose value refers back to itself. It does not see a cycle among the inner containers that does not pass through
-    the held object, or an inner container kept by another name (_flag_census states that half as a measurement). Not
+    the held object (_flag_census states that half as a measurement), nor an inner container kept by another name,
+    which stays reachable, so that measurement does not see it either (a limit, stated in _flag_census). Not
     read through gc.get_objects(), which does not list frozen objects, so under a derived() build it would find
     nothing and pass for the wrong reason.
     Neither pin skips without a word: a census built (_CENSUS_BUILDS above 0) with no weak reference taken reds pin
