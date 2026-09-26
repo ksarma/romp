@@ -4,6 +4,7 @@ any test that skips its own rebind writes into the REAL ~/.local/state/romp (the
 judge-errors.jsonl lines from legacy-flag fixtures made that visible). conftest.py imports before every
 test module, so this is a suite-wide floor; per-class _rebind_state/tempdir isolation still layers on
 top exactly as before."""
+import ast
 import atexit
 import importlib.util
 import os
@@ -93,13 +94,19 @@ def pytest_configure(config):
     built with can_use_tool set beside a permission mode or an allowed_tools entry that auto-approves a tool
     before the callback is consulted. tests/test_host_transport.py and tests/test_session_host.py put romp's
     SDK venv on sys.path and drive that path; under pytest-xdist the worker ships the warning to the
-    controller, whose venv has no claude_agent_sdk, and xdist's unserialize_warning_message imports the
+    controller, whose venv on a box has no claude_agent_sdk, and xdist's unserialize_warning_message imports the
     warning's module to rebuild it: ModuleNotFoundError, the node goes down, the run ends in INTERNALERROR
     (before this every -n run needed -p no:warnings). Matched on the MESSAGE PREFIX with the base category,
     never on the class: pytest parses each filterwarnings entry every time it applies them (configure,
     collection, each test), and an entry naming a class it cannot import is dropped with a
-    PytestConfigWarning, which is every worker until the emitting module inserts the venv path, the
-    controller always and CI always. A module-level warnings.filterwarnings in the emitting module does not
+    PytestConfigWarning, which is: every xdist worker whose interpreter has no SDK, which on a box is every
+    worker, until the emitting module inserts the venv path; a controller whose interpreter has no SDK,
+    which on a box is every controller; and the CI steps that install
+    no SDK, today the vscode-extension job's served-page pytest step, which loads this conftest (the Python matrix
+    cells' interpreter, the five Linux cells and the two macOS cells on a weekly or dispatch run, imports the class
+    since the SDK install step, in the controller and, on the Linux cells' two workers since batch 917, in each
+    worker, since the package is installed in that interpreter rather than added to the path at import). A
+    module-level warnings.filterwarnings in the emitting module does not
     hold either: pytest wraps collection and each test in catch_warnings, which restores the filter list on
     exit. addinivalue_line appends to the ini list, so an ini file added later merges with this line. Both
     of the SDK's message forms ("...: permission_mode ..." and "... for: <tools>") start with the prefix."""
@@ -692,6 +699,19 @@ def redact_env_values(text: str, values) -> str:
     return _ENV_CUT_FRAG_RE.sub(cut_piece, text)
 
 
+def env_sparing_texts(env, texts) -> dict:
+    """`env` (a mapping) without every entry whose value the env-value net above would rewrite one of `texts` with in a
+    pytest started under it: an entry that qualifies (env_value_qualifies) and whose value alone makes redact_env_values
+    change the text. For a test that asserts a literal in a child pytest's report: an inherited value whose whole text,
+    or a whitespace-separated chunk of ENV_VALUE_MIN_LEN or more characters of it, appears in that literal made the
+    child's report show ENV_VALUE_REDACTED in its place and the test red on a correct verdict (round 6's ruling B on the
+    SDK switch cases, 2026-09-25: sudo's SUDO_COMMAND and GNU make's MAKEFLAGS carry a command line's assignment of
+    the switch, and SUDO_COMMAND carries an interpreter named by its path). Keyed on the net's own two functions, not a
+    copy of their rule. Returns a new dict; `env` is not changed."""
+    return {name: value for name, value in env.items()
+            if not (env_value_qualifies(name, value) and any(redact_env_values(t, (value,)) != t for t in texts))}
+
+
 def redact_credential_tokens(text):
     """The pattern net: credential-shaped tokens, whatever their provenance (tests/credential_patterns.py)."""
     return _credpat.scrub(text)
@@ -773,12 +793,24 @@ def _redact_report(rep) -> None:
 def pytest_runtest_makereport(item, call):
     # ONE implementation per hook per module: a second `def` of this name would silently replace this one
     # (it did, for an afternoon on 2026-09-10, and every report printed its values again). Anything else
-    # that shapes a test report joins here: the served-tests switch first (its message quotes the skip's
-    # reason), the redaction last, so whatever any step wrote is read for values before it is printed.
+    # that shapes a test report joins here: the served-tests switch first, then the never-skips belt (each
+    # message quotes the skip's reason), the redaction last, so whatever any step wrote is read for values
+    # before it is printed.
     outcome = yield
     rep = outcome.get_result()
     _require_served_test_ran(item, rep)
+    _require_never_skip_ran(item, rep)
     _redact_report(rep)
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_make_collect_report(collector):
+    """The never-skips belt's collection half: a module-level skip (pytest.importorskip, or
+    pytest.skip(allow_module_level=True)) produces a skipped CollectReport and no items, so the item hook
+    above never sees it. The same flip here, on the report as it is made, turns it into a collection error,
+    and pytest stops the run red ("1 error during collection"). Redaction follows in pytest_collectreport."""
+    outcome = yield
+    _require_never_skip_collected(collector, outcome.get_result())
 
 
 @pytest.hookimpl(hookwrapper=True)
@@ -840,8 +872,45 @@ def wait_for_census(before, timeout=5.0):
 _SERVED_TESTS_REQUIRE = os.environ.get("ROMP_SERVED_TESTS_REQUIRE") == "1"
 
 
+def _node_file(node) -> str:
+    """The basename of the file a collected node (an item, a module collector) came from."""
+    return os.path.basename(str(getattr(node, "path", None) or node.fspath))
+
+
+def _skip_reason(rep) -> str:
+    """The text of a skipped report: the reason of its (path, line, reason) longrepr; an xfail's declared
+    reason (its longrepr is the traceback of the failure the xfail absorbed); else the longrepr's text."""
+    lr = rep.longrepr
+    if isinstance(lr, tuple) and len(lr) == 3:
+        return lr[2]
+    if getattr(rep, "wasxfail", None):
+        return "xfail: %s" % rep.wasxfail
+    return str(lr)
+
+
+def _fail_skipped_report(rep, longrepr) -> None:
+    """The one flip every belt uses: a skipped report (a TestReport or a CollectReport) becomes a failed one
+    carrying `longrepr`. An xfail's `wasxfail` attribute is removed first, and by hasattr, not truthiness: a bare
+    @pytest.mark.xfail sets it to "". pytest's session counts a failed report toward the exit status only when the
+    report has no `wasxfail` (Session.pytest_runtest_logreport), so a flipped xfail that kept it printed FAILED and
+    exited 0. The served switch did exactly that until the flip was shared here (2026-09-21): its caller flipped
+    the outcome without the delete while the never-skips belt beside it deleted, so the two belts disagreed on
+    the one report shape the shared _skip_reason has a branch for. Callers compute the skip's reason BEFORE this
+    call: _skip_reason reads wasxfail. A caller's exemption (the served switch's `optional:` skips) returns before
+    reaching here, so an exempt skip keeps its report untouched. Pinned by execution, each on an xfail that is a
+    file's ONLY skip, so the exit status is the assertion and no sibling skip carries it: in
+    tests/test_served_tests_require.py the xfail-alone case and its bare twin, in tests/test_ci_sdk_pin.py NeverSkips'
+    xfail-only case and its bare twin (BARE_XFAIL_ONLY). The bare twins pin the hasattr: a bare xfail's wasxfail is
+    empty, so a delete by truthiness kept it and the run printed FAILED and exited 0, while both reasoned cases passed
+    (review round 4, 2026-09-23)."""
+    if hasattr(rep, "wasxfail"):
+        del rep.wasxfail
+    rep.outcome = "failed"
+    rep.longrepr = longrepr
+
+
 def _is_served_test_file(item) -> bool:
-    name = os.path.basename(str(getattr(item, "path", None) or item.fspath))
+    name = _node_file(item)
     return name.startswith("test_") and (name.endswith("_browser.py") or name.endswith("_served.py"))
 
 
@@ -852,10 +921,94 @@ def _require_served_test_ran(item, rep) -> None:
     if not _SERVED_TESTS_REQUIRE:
         return
     if rep.skipped and _is_served_test_file(item):
-        lr = rep.longrepr
-        reason = lr[2] if isinstance(lr, tuple) and len(lr) == 3 else str(lr)
+        reason = _skip_reason(rep)
         if re.match(r"^(Skipped: )?optional:", reason):
             return
-        rep.outcome = "failed"
-        rep.longrepr = ("ROMP_SERVED_TESTS_REQUIRE=1: a browser-backed test skipped (at %s) where it must run: %s"
-                        % (rep.when, reason))
+        _fail_skipped_report(rep, "ROMP_SERVED_TESTS_REQUIRE=1: a browser-backed test skipped (at %s) where it must run: %s"
+                             % (rep.when, reason))
+
+
+# A file listed here declares that every one of its tests checks something on every road, so a skip outcome in it,
+# from any spelling (pytest.mark.skipif, unittest.skipIf, self.skipTest, SkipTest raised in setUpClass, a module-level
+# pytest.importorskip or pytest.skip(allow_module_level=True); an xfail too, which pytest records as a skipped
+# outcome), at collection, at setup or in the test body, is reported as a FAILURE carrying the skip's own reason.
+# Always on, no switch: no road of tests/test_ci_sdk_pin.py is a skip (on an interpreter without the SDK its
+# InstalledVersion test asserts the pin's form and warns; where the run requires the SDK it fails), so a skip there is
+# a pin reporting green having checked nothing. The property is read from the report, in the worker under xdist and in
+# the one process serially, so nothing depends on which test ran last or on which spelling an edit used.
+# 2026-09-20: the guard before this was a five-name list of unittest spellings inside the module, which
+# pytest.mark.skipif and a module-level pytest.importorskip passed, and which a module-level skip removed from the run
+# entirely (the guard never ran). Proved by execution in tests/test_ci_sdk_pin.py's NeverSkips. What a report cannot
+# show is a test that was never collected: a method renamed off the test_ prefix, deleted or fenced behind an if files
+# nothing to flip, so NeverSkips pins, in a child pytest --collect-only -q, that pytest's collector lists the ONE test
+# the belt exists for, InstalledVersion's, by node id; its in-process case pins only the method's name against
+# unittest's loader, which is not the collector (UnitTestCase.collect drops a class or method whose __test__ is False,
+# which the loader never reads); those census cases cover that one test, not the module. The literal below is checked
+# against the tree (2026-09-21; before this a copy renamed test_ci_sdk_pin_v2.py ran with the belt inert, a skip in it
+# a plain skip and every test green): NeverSkips asserts its own module's basename is in the tuple as written, and
+# tests/test_served_tests_require.py, outside the guarded module, asserts every entry names a file under tests/, so
+# a rename reds in both and a deletion reds there; both read it through never_skip_files_as_written below. The
+# residual, stated for what it is: the census lives in the module it guards, so a road that changes what a run
+# collects without touching the file files no report, takes the census with it or acts on the run where the
+# census's child may not see it, and the run stays green. The road is a class, and no list closes it: anything that changes what the run collects,
+# among them a collect_ignore or collect_ignore_glob, a collection hook in a conftest or plugin (pytest_ignore_collect,
+# pytest_collection_modifyitems), an ini file's test-file pattern, testpaths or addopts, PYTEST_ADDOPTS, --ignore or
+# --ignore-glob, -k, -m or --deselect, and a module-level __test__ = False. As read on 2026-09-24: none of these is on
+# ci.yml's Run pytest line (no path, no -k, no --ignore) or in its env (no PYTEST_ADDOPTS), and those two are held
+# since round 5's ruling C: tests/test_ci_sdk_pin.py's run_pytest_status refuses a word on that line outside its option
+# allowlist and a key of its merged env outside its env allowlist; no conftest in the tree sets collect_ignore or
+# collect_ignore_glob or defines a collection hook (this file, the only one, implements two reporting hooks,
+# pytest_make_collect_report and pytest_collectreport, which drop nothing); and the repo has no pytest.ini,
+# .pytest.ini, pytest.toml, .pytest.toml, pyproject.toml, setup.cfg or tox.ini. Of the rest of that read,
+# tests/test_thread_stop_census.py's test_the_population_is_what_pytest_collects_under_tests holds pytest.ini,
+# setup.cfg, tox.ini and pyproject.toml absent at the repository root and in tests/ itself; nothing pins the conftest
+# read, .pytest.ini, pytest.toml or .pytest.toml, or any of the seven in a directory below those two.
+_NEVER_SKIP_FILES = ("test_ci_sdk_pin.py",)
+
+
+def never_skip_files_as_written(path=None) -> tuple:
+    """The tuple assigned to _NEVER_SKIP_FILES above, read from THIS FILE'S TEXT with ast.literal_eval rather than
+    returned from the name: the two checks that consume it (NeverSkips' membership case in tests/test_ci_sdk_pin.py,
+    the existence case in tests/test_served_tests_require.py) are about the literal a reader sees and the belt keys
+    on, whichever conftest object their process loaded. A missing assignment, or one whose value is not a literal
+    tuple (a name, a call, a comprehension, a list), is an AssertionError that says so and names the line, never an
+    AttributeError from a walk over elts; `path` exists so those refusals can be run against a scratch file
+    (tests/test_served_tests_require.py), and defaults to this file."""
+    path = os.path.realpath(path or __file__)
+    where = os.path.join(os.path.basename(os.path.dirname(path)), os.path.basename(path))   # tests/conftest.py
+    with open(path) as f:
+        tree = ast.parse(f.read(), path)
+    for node in tree.body:
+        if isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) and t.id == "_NEVER_SKIP_FILES" for t in node.targets):
+            try:
+                value = ast.literal_eval(node.value)
+            except (ValueError, TypeError):
+                raise AssertionError("%s:%d: _NEVER_SKIP_FILES is not a literal tuple (a %s)"
+                                     % (where, node.lineno, type(node.value).__name__))
+            if not isinstance(value, tuple):
+                raise AssertionError("%s:%d: _NEVER_SKIP_FILES is a literal %s, not a tuple"
+                                     % (where, node.lineno, type(value).__name__))
+            return value
+    raise AssertionError("%s assigns no _NEVER_SKIP_FILES at module level" % where)
+
+
+def _never_skip_longrepr(name, where, reason) -> str:
+    return ("never-skips: %s skipped (at %s) where every test checks something on every road (tests/conftest.py, "
+            "_NEVER_SKIP_FILES): %s" % (name, where, reason))
+
+
+def _require_never_skip_ran(item, rep) -> None:
+    """A skipped report for a test in a _NEVER_SKIP_FILES file is a failure carrying the skip's reason. Called
+    from the one pytest_runtest_makereport above; always on. The flip is _fail_skipped_report's, which removes an
+    xfail's `wasxfail` so the failure counts toward the exit status."""
+    if rep.skipped and _node_file(item) in _NEVER_SKIP_FILES:
+        reason = _skip_reason(rep)
+        _fail_skipped_report(rep, _never_skip_longrepr(_node_file(item), rep.when, reason))
+
+
+def _require_never_skip_collected(collector, rep) -> None:
+    """The collection half (pytest_make_collect_report above): a skipped CollectReport for a _NEVER_SKIP_FILES
+    module, which a module-level skip produces in place of any items, becomes a failed one, a collection error."""
+    if rep.skipped and _node_file(collector) in _NEVER_SKIP_FILES:
+        reason = _skip_reason(rep)
+        _fail_skipped_report(rep, _never_skip_longrepr(_node_file(collector), "collection", reason))

@@ -106,17 +106,208 @@ jobs:
         # cryptography: the kernel's Web Push soft dependency (plans/ios-app.md). Installed here
         # so tests/test_kernel_webpush.py's crypto layers RUN in CI instead of skipping — the
         # kernel itself still degrades loudly without it (that path has its own test). It ships
-        # free-threaded (cp314t) wheels since 46.0, so the 3.14t cell installs it like the rest;
-        # that cell alone may continue without it, should a future release lag the interpreter,
-        # and the webpush tests then skip and say so rather than the whole cell going red.
+        # free-threaded (cp314t) wheels since 46.0, so the 3.14t cell installs it like the rest.
+        # The 3.14t allowance below no longer keeps that cell green without it (2026-09-20): the
+        # SDK step next requires cryptography through mcp's pyjwt[crypto] and carries no allowance,
+        # so a cryptography wheel lagging the interpreter reds the cell there. What the allowance
+        # still does is let the failure be named by this step first, where the package is.
         continue-on-error: ${{ endsWith(matrix.python-version, 't') }}
         run: python -m pip install cryptography
+      - name: Install the Claude Agent SDK
+        # The SDK behind the hosted-session backend, installed at the version the session host is written
+        # against: SDK_TESTED_VERSION in kernel/session_host.py, the repo's ONE declaration of it, read here
+        # with the sed bin/romp-sdk-setup runs over the same line. With it installed, the 48 SDK-gated tests
+        # (43 in tests/test_sdk_backend.py, 5 in tests/test_host_transport.py) and the two SDK-transport host
+        # tests in tests/test_session_host.py RUN in CI instead of skipping, and every session host a test
+        # spawns takes the SDK transport, as it does on a box with the venv bin/romp-sdk-setup builds (one
+        # control in tests/test_session_host.py hides the SDK from its host and keeps the pipe transport tested).
+        # Why that version and not PyPI's latest: it is the one the full suite passed under on the box that
+        # runs the hosted sessions (16875 passed, 566 skipped, 1 xfailed, 0 failed), and the newer release that existed
+        # when this landed (0.2.157, the fifth release in four days) was left alone on purpose: the version is
+        # chosen by a run of the host tests, not by the package index. Bumping it is the act the constant's
+        # comment describes: install the new version, run the host tests on it, move the number, and the
+        # installer, the host's own version check and this step follow the line. The residual is that nothing
+        # polls PyPI: a person notices a release, and a break in a newer SDK shows up only when someone moves
+        # the constant. A second residual, of the interpreter having the SDK: on the 3.10 to 3.13 cells (and
+        # the two macOS cells; not 3.14t, which defers annotations) tests/test_session_host.py run ALONE fails
+        # 8 SpawnSecrets tests, its Popen patch live when the module first imports the SDK and mcp's win32
+        # utilities evaluate subprocess.Popen[bytes] at class definition; the one pytest invocation below
+        # collects an SDK-importing module first and is green. Pre-existing on any such interpreter; the
+        # class's docstring has the detail; a follow-up.
+        # The constant pins the SDK alone. Its dependency closure resolves fresh on every run (26 packages on
+        # 2026-09-20: the 3.12 cell's pip line on run 35518107329 lists 27 names with the SDK, anyio among
+        # them), so a red that no commit explains is a transitive release, and the pin test below does not
+        # catch one: it compares the SDK's own version and nothing else. One of those packages, anyio,
+        # registers a pytest plugin (a pytest11 entry point) that pytest would auto-load in every cell across
+        # the whole suite; the pytest step passes -p no:anyio so it does not (2026-09-20). Blocked because:
+        # the box's default pytest run never loads it (romp's SDK lives in the venv bin/romp-sdk-setup builds,
+        # whose site joins sys.path at tests/test_host_transport.py's import, after plugin autoload, and the
+        # box venvs carry no anyio; the one box road that would load it, tests/README.md's PYTHONPATH recipe,
+        # which puts that site on the path before pytest starts, passes the same flag), so no pytest process
+        # the two checks below read loads a plugin the box's default run does not, unless something loads
+        # anyio's plugin again by its entry-point name or its module name (among them -p anyio or
+        # -p anyio.pytest_plugin after the flag, PYTEST_PLUGINS, plugins= on pytest.main), which the flag check does not
+        # read; on the Run pytest step run_pytest_status refuses a -p re-load on its line as a word outside its option
+        # allowlist and PYTEST_PLUGINS in its merged env as a key outside its env allowlist, and on the served-page step
+        # and in the launcher census nothing reads them. The flag is on
+        # both of this file's pytest lines and on every pytest the suite starts in the cell's interpreter in a
+        # form the launcher census reads (tests/test_ci_sdk_pin.py holds both populations, this file's by its population
+        # check and the suite's by its launcher census, whose read, refusals and residual _launchers_in's docstring
+        # there states in full; among them: it reads argv literals under tests/, the positional arguments of
+        # asyncio.create_subprocess_exec and of the os.exec and os.spawn l forms, and an in-process pytest.main,
+        # pytest.console_main or _pytest.config.main by name, alias or import; it refuses, red until rewritten, a pytest
+        # command in a constant string or f-string written at the call and handed to subprocess, os.system or os.popen,
+        # asyncio.create_subprocess_shell, shlex.split or a shell's -c, a call through a name it cannot resolve (in a
+        # comprehension in a class body that binds the name, or, beside a star import from a module it does not read,
+        # one the module binds or no scope binds, or one a function binds from such a name by a plain or annotated
+        # assignment from a name or an attribute), an argv it cannot read as a launcher (an interpreter option it does
+        # not take apart before pytest, as in -Bm pytest or -Impytest, -m pytest.__main__, and pytest after a wrapper
+        # such as env in an argv written at the call; its argv rule is _argv_command's docstring), and pytest.main held
+        # as a value rather than called where it is written (a Thread target, functools.partial, a parameter default, a
+        # tuple, a walrus or a conditional expression, among others); and outside its read are a string anywhere else,
+        # or one held in a variable or built with %, + or .format, an argv assembled one element at a time, an option it
+        # does not take apart that spells no pytest and that no pytest follows, other than a cluster ending in m right
+        # before an element that is not a constant, a wrapper-headed argv built away from the call, a call reached
+        # through a name the census does not resolve (a string call through tuple unpacking, a conditional expression or
+        # a parameter default, an import by name from a module that does not define the call, a relative one included, a
+        # class or instance attribute, getattr, importlib or runpy, a builtin or a module name such a star import
+        # rebinds, a function's binding from such a name made any other way, a class body's call before the class binds
+        # that name, among others), and every module whose text spells neither pytest nor py.test and holds no star
+        # import, which the census does not parse). pytest-xdist's two plugins, which the box's default run
+        # loads, load in every cell too since batch 917 (#916) installed it there, and xdist hands each worker
+        # the command's arguments, so the flag blocks anyio's plugin in the Linux cells' two workers as well
+        # (2026-09-26, in a venv holding anyio: with -n 2 and the flag no worker loaded it; without the flag
+        # both did). Nothing under tests/ is marked
+        # anyio or imports the one thing the plugin serves, the SDK's own pytest-marked conformance suite
+        # claude_agent_sdk.testing, so the plugin does no work here; and blocked in every pytest process the
+        # two checks read where nothing loads it again by its entry-point or module name, a bad anyio pytest
+        # plugin cannot fail one at pytest startup before a test runs.
+        # Unblocked in a child it did: a synthetic broken anyio/pytest_plugin.py in a CI-shaped venv red tests
+        # in each of the six modules whose pytest children lacked the flag, none of which imports the SDK
+        # (2026-09-20, before the children gained it). A bad anyio itself, not its plugin, still surfaces
+        # where anyio is imported: this step's own `python -c "import claude_agent_sdk"` below, with the
+        # import in the traceback, or the SDK-using tests at run time. Measured before the block, the two
+        # gated modules on a 3.12 venv with the pinned SDK, single process: 653 passed, 1 skipped, 0 warnings
+        # with the plugin (header: timeout, anyio) and the same counts without it (header: timeout). A test
+        # that imports the conformance suite lifts the block, and says why.
+        # The step refuses an empty, malformed or duplicated constant rather than installing the unpinned
+        # latest, and it carries no continue-on-error: the SDK requires cryptography (through mcp's
+        # pyjwt[crypto]), so a cryptography wheel lagging an interpreter fails THIS step, and that must be the
+        # cell's red, not 48 tests silently skipping. Runs after the cryptography step so pip finds it installed.
+        # After pip, the same `python` imports the package: pip and the pytest step below share that name on
+        # PATH, so an install that reached another interpreter reds THIS step, with its name on it, instead
+        # of a run with the 48 tests skipping and a warning as the only trace. The pytest step declares the
+        # requirement with ROMP_SDK_REQUIRE=1 (its env below), so the pin test fails on an interpreter that
+        # lost the SDK between the two steps.
+        # The 3.14t cell installs it too: the wheel is py3-none with Requires-Python >=3.10, its compiled
+        # dependencies (cryptography, cffi, pydantic-core, rpds-py) publish cp314t wheels, and on a free-threaded
+        # 3.14.6 the install, the import and the gated and host test modules ran green before this landed
+        # (2026-09-20). The free-threading evidence is the import with PYTHON_GIL UNSET: in that configuration
+        # CPython turns the GIL back on, with a RuntimeWarning, for an extension module that does not declare
+        # free-threading support, and the GIL read off after the import, so the four compiled extensions it
+        # loads (_cffi_backend, cryptography's _rust, pydantic_core, rpds) declare it. Under the PYTHON_GIL=0 the
+        # pytest step runs with, that read cannot fail: the setting forbids the re-enable and silences the
+        # warning, so "still off after the import" under it says nothing about the extensions. What the setting
+        # buys is that a later wheel without the declaration cannot turn the cell back into a GIL cell; the
+        # price is that such a wheel runs without the GIL and without a warning. The SDK's own classifiers
+        # stop at 3.13, so a release that breaks there shows as a red cell, which is the point of having the cell.
+        # Cost on the Linux cells: about 106.5 MB of download per cell after the cryptography step (the SDK
+        # wheel is 102 MB there, 92 MB on the macOS arm64 cells; it bundles the Claude Code binary; its other
+        # dependencies total about 4.5 MB) and a few seconds of install; the run's own step timings are the
+        # measurement that counts. The step timeout is the file's convention for a download (the bats,
+        # gitleaks and Playwright steps): a wedged fetch fails in minutes instead of eating the job's cap.
+        timeout-minutes: 5
+        shell: bash
+        run: |
+          set -euo pipefail
+          pin="$(sed -n 's/^SDK_TESTED_VERSION = "\([^"]*\)".*$/\1/p' kernel/session_host.py)"
+          [[ "$pin" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+            echo "kernel/session_host.py: expected exactly one line SDK_TESTED_VERSION = \"<x.y.z>\", read: '$pin'" >&2
+            exit 1
+          }
+          python -m pip install "claude-agent-sdk==$pin"
+          python -c "import claude_agent_sdk"
       - name: Run pytest
         env:
+          # This run requires the SDK the step above installed, said as a switch rather than inferred
+          # from GITHUB_ACTIONS (a future step that runs pytest without the SDK on purpose, as the
+          # served-page step in the extension job does, would red for the wrong reason under an
+          # inference): tests/test_ci_sdk_pin.py's InstalledVersion FAILS, naming the interpreter, where
+          # claude_agent_sdk does not import in the interpreter running pytest, instead of the warning a
+          # box's bare road gets, and tests/test_session_host.py's switch case asserts that the host a
+          # test spawns imports it. The stance of ROMP_SERVED_TESTS_REQUIRE below. Off (a box), that road
+          # warns and the host case skips, saying so. tests/test_ci_sdk_pin.py's population check holds
+          # this on every pytest invocation in this file, not on this step's text: each command that runs
+          # pytest here sets the switch to exactly 1 in the env Actions merges for it (pytest_invocations'
+          # docstring there states the merge; among the forms it reads are an env: key line of the
+          # workflow, the job or the step as this file writes them, and a prefix on the command; a quoted
+          # value read as written) or is listed there by job and step name with a reason the test checks (the
+          # served-page step alone today, whose job installs no SDK), and each passes -p no:anyio with no
+          # listing. The check does not run the shell: a step whose run block spells the switch other
+          # than as that prefix (among them an unset, an export, an assignment), or whose job's other run blocks
+          # spell it (a write to $GITHUB_ENV reaches the steps after), is red until read, and so is any
+          # other line here that spells the switch outside an env: key line it reads (among them an aliased
+          # or flow env:, a quoted or spaced key, a key-shaped line deeper than its block's keys, a step's
+          # shell: or a job's defaults; switch_line_census there states the rule), and a value on an env:
+          # key's own line, which may set the switch without spelling it, is refused. Any write of the
+          # switch that does not spell its name is outside it, among them one in a run block (env -i, an
+          # indirect unset, a loop over the environment), in a shell: or defaults key, by a script or action
+          # a step calls, or to $GITHUB_ENV, except on this step, where run_pytest_status refuses those it can
+          # see, among them a shell: here or a defaults: on the job or the workflow, a second command or
+          # anything before the pytest command (env -i, an unset), a key of this step's merged env outside its
+          # env allowlist (BASH_ENV among them), and a run block of this job that spells GITHUB_ENV,
+          # GITHUB_PATH or BASH_ENV (run_pytest_status's docstring in tests/test_ci_sdk_pin.py states the rule
+          # and its residual); among what stays outside, a write by a script or action a step calls, or one to
+          # $GITHUB_ENV or $GITHUB_PATH that does not spell the name. GitHub substitutes a ${{ }} expression
+          # into a run block before the shell reads it, so a block whose every expression is the one shape
+          # batch 917's evaluator reads (command_on in tests/test_ci_pytest_workers.py: matrix.os compared with
+          # one label, choosing between two quoted values, as this step's worker count is) is read once for
+          # each label its expressions name and once for every other label, each text substituted as that
+          # cell's shell reads it (matrix_os_texts in tests/test_ci_sdk_pin.py), and
+          # a step whose run block holds any other expression and spells pytest anywhere in it, in a comment
+          # line or a trailing comment too, is red until the value moves to an env: key the block reads as a
+          # shell variable (the substituted text can end a comment with a newline and run what follows it);
+          # anything that rewrites a pytest command's arguments after that (among them a shell function or
+          # alias, a python earlier on PATH, a step's shell:; pytest_invocations' docstring in
+          # tests/test_ci_sdk_pin.py states the read) is outside the check, except on this step, where it
+          # refuses those it can see, among them a function or alias, which is a second command here, this
+          # step's shell: and a defaults: on its job or the workflow, the BASH_ENV key in its merged env or
+          # spelled in a run block of this job, and a $GITHUB_PATH write spelled in a run block of this job,
+          # which could put another python earlier on PATH (run_pytest_status's docstring states the rule); a
+          # write to $GITHUB_PATH that does not spell the name stays outside.
+          # The check reads this file's text, in the YAML forms this file uses and no others: every line
+          # here is in one of them (YAML_FORMS_ACCEPTED in tests/test_ci_sdk_pin.py, which
+          # test_the_forms_the_allowlist_accepts_are_the_forms_ci_yml_uses holds equal to the forms this
+          # file uses: block mappings and sequences two columns per level, one-line plain and quoted
+          # scalars without escapes, one-line flow sequences of them, a literal block as a step's run,
+          # blank lines and comments; on a name: or working-directory: key a non-null plain scalar with no
+          # comment, and
+          # no value on an env: key's line), or the check refuses it by name, valid YAML included (an
+          # anchor, an alias, a folded block, a quoted scalar over two lines, among others): a form the
+          # check does not accept is refused by name; reword the step in an accepted form. Every line here that
+          # spells pytest, other than the lines its line census excuses (pytest_line_census's docstring in
+          # tests/test_ci_sdk_pin.py states the rule), is read as a command or is red until it is read, and so
+          # is a job key it does not read; among what it leaves unread (pytest_invocations' docstring in
+          # tests/test_ci_sdk_pin.py states the read in full) are a run line that never spells pytest, a pytest
+          # run by a script or action a step calls, and the other workflow files. It also holds this step's
+          # failure to the cell: this step's exit status is pytest's and the cell's is the step's
+          # (run_pytest_status in tests/test_ci_sdk_pin.py; its docstring is the rule). So each of these is red
+          # at its line, among others: an if: or a continue-on-error on this step or its job; a key of its job
+          # outside its job-key allowlist (a container: among them); the command followed by ||, a pipe or a
+          # trailing &; a second command or command line (an earlier trap 'exit 0' EXIT among them); an argument
+          # outside its option allowlist (--collect-only, --co and --setup-plan among the refused); a shell:
+          # here, or a defaults: on the job or the workflow; a key of this step's merged env outside its env
+          # allowlist (PYTEST_ADDOPTS and BASH_ENV among them); and a run block of this job that spells
+          # GITHUB_ENV, GITHUB_PATH or BASH_ENV. Outside it, among others (run_pytest_status's docstring states
+          # the residual): a write to those files that does not spell their names, such as one by a script or
+          # action a step calls; a command that names its interpreter or pytest by a path; and an earlier step
+          # whose run block changes the runner without spelling those names, such as one that replaces or
+          # shadows the python on PATH, reinstalls pytest, or deletes or edits test files.
+          ROMP_SDK_REQUIRE: "1"
           # The free-threaded cell runs with the GIL off, stated rather than defaulted (a 't'
           # build disables it by default, and an extension that lacks free-threading support
-          # would otherwise turn it back on silently). Empty on every other cell, which CPython
-          # reads as unset.
+          # would otherwise turn it back on, with a RuntimeWarning in pytest's summary that the
+          # cell does not fail on). Empty on every other cell, which CPython reads as unset.
           PYTHON_GIL: ${{ endsWith(matrix.python-version, 't') && '0' || '' }}
         # T230b: a hung test used to be 15 minutes of silence (five jobs since 2026-08-27, a
         # process-global time.sleep patch consumed by a foreign thread). pytest-timeout turns the
@@ -152,7 +343,13 @@ jobs:
         # which xdist's transport (execnet) points at /dev/null, so the log names the test but
         # carries no stacks; run the named test alone (without -n) and the dump prints, its bottom
         # frame the blocked primitive.
-        run: python -m pytest -q -n ${{ matrix.os == 'ubuntu-latest' && '2' || '0' }} --durations=10 --timeout=600 --timeout-method=thread
+        # -p no:anyio: the SDK step's closure carries anyio, whose pytest plugin would otherwise
+        # auto-load in this process, in the Linux cells' two workers (xdist hands each the command's
+        # arguments, the flag among them) and in every pytest child the suite spawns in this interpreter
+        # (the launchers under tests/ pass the same flag); the SDK step's comment states the decision
+        # and its measurement, and tests/test_ci_sdk_pin.py holds the flag on every pytest invocation
+        # in this file (its population check) and on the launchers under tests/ its launcher census reads.
+        run: python -m pytest -q -n ${{ matrix.os == 'ubuntu-latest' && '2' || '0' }} -p no:anyio --durations=10 --timeout=600 --timeout-method=thread
 
   shell:
     name: Shell (bats, ${{ matrix.os }})
@@ -406,10 +603,23 @@ jobs:
         # browser, still skipping these. --durations=20 names the slowest labs in the log: this step is
         # the job's long phase (12 min 44 s on main, 2026-09-14, against the job's cap above), and every
         # served lab added grows it, so the next growth should be visible by name.
+        # -p no:anyio, as on every pytest invocation in this file (tests/test_ci_sdk_pin.py's population
+        # check holds the flag on each, with no exemption): this interpreter has no anyio today (the pip
+        # line below installs pip, pytest, pytest-timeout and cryptography, none of which depends on it;
+        # run 35535192879's served step installed nine packages, none anyio) and pytest accepts the flag
+        # where the plugin is absent, so the flag costs nothing here and a package added to that line
+        # whose closure carries anyio cannot auto-load its pytest plugin without a word. No
+        # ROMP_SDK_REQUIRE: the switch declares that the interpreter running pytest has the SDK the Python
+        # job's install step put there, and this job installs none, so setting it would declare something
+        # untrue; the population check lists this step for the switch with that reason and checks its
+        # premises (no SDK install in this job's run blocks; no file the two globs collect, and no helper
+        # module under tests/ they could import, conftest included, spells the switch's name), so the day a
+        # served module spells the switch's name the listing goes red (keyed on the spelling in the file's
+        # text: a reader that spells the name indirectly is outside that read).
         working-directory: ${{ github.workspace }}
         env:
           ROMP_SERVED_TESTS_REQUIRE: "1"
           ROMP_SERVED_TESTS_ENGINES: chromium
         run: |
           python -m pip install --upgrade pip pytest pytest-timeout cryptography
-          python -m pytest tests/test_*_browser.py tests/test_*_served.py -q -rs -p no:cacheprovider --durations=20 --timeout=600 --timeout-method=thread
+          python -m pytest tests/test_*_browser.py tests/test_*_served.py -q -rs -p no:cacheprovider -p no:anyio --durations=20 --timeout=600 --timeout-method=thread

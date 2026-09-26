@@ -37,10 +37,71 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   Run: `python3 -m pytest tests/ -q` (~20s; a stalled run is a hang, not slow).
   The `_HAVE_SDK`-gated classes in `test_sdk_backend.py` (OptionsAssembly, the
   runner and can_use_tool bridge suites) SKIP unless `claude_agent_sdk` imports,
-  and a skip reads as green — to execute them, put romp's SDK venv on the path:
+  and a skip reads as green. CI installs the SDK (`.github/workflows/ci.yml`, the
+  "Install the Claude Agent SDK" step, since 2026-09-20) at `SDK_TESTED_VERSION`
+  from `kernel/session_host.py`, the repo's one declaration of the version the
+  session host is written against, into every Python cell's interpreter, the
+  3.14t cell included (it installed, imported with the GIL off and passed these
+  modules on a free-threaded 3.14.6 before the step landed). So the 48 gated tests
+  (43 here, 5 in `test_host_transport.py`) and the two SDK-transport host tests
+  in `test_session_host.py` RUN in CI, and every session host a test spawns
+  there takes the SDK transport, as on a box with the venv `bin/romp-sdk-setup`
+  builds. `tests/test_ci_sdk_pin.py` holds the pin and never skips
+  (`tests/conftest.py` reports any skip in that file, whatever its spelling, as a
+  failure carrying the skip's reason; its `NeverSkips` class proves that belt by
+  running pytest in a child): it executes
+  the step's own read of the constant and, wherever `claude_agent_sdk` imports,
+  asserts the installed version equals it, so a box whose venv moved and a CI
+  cell whose install disagreed with the constant both go red; on a venv without
+  the SDK it checks the pin's presence and form and warns (in pytest's warnings
+  summary) that the equality was not checked there; under `ROMP_SDK_REQUIRE=1`,
+  which the workflow's "Run pytest" step sets (the same stance as
+  `ROMP_SERVED_TESTS_REQUIRE`), that road is a failure naming the interpreter, and
+  the install step's own `python -c "import claude_agent_sdk"` reds first when the
+  install missed the interpreter on PATH. The step pins the SDK alone: its
+  dependency closure resolves fresh on every run (26 packages on 2026-09-20, the
+  3.12 cell of run 35518107329), so the pin does not catch a bad transitive
+  release, and one of those packages, anyio, ships a pytest plugin that every
+  pytest process a cell runs would auto-load, which both pytest lines in `ci.yml`
+  (the "Run pytest" step and the extension job's served-page step) and every
+  pytest the suite starts from a test in a form the launcher census reads, as a
+  child or in process through `pytest.main`, block with `-p no:anyio`, so no
+  pytest process that `tests/test_ci_sdk_pin.py` reads loads a plugin the box's
+  default run does not, unless something loads anyio's plugin again by its
+  entry-point name or its module name (among them `-p anyio` or
+  `-p anyio.pytest_plugin` after the flag, `PYTEST_PLUGINS`, `plugins=` on
+  `pytest.main`), which the module reads only on the "Run pytest" step, where
+  `run_pytest_status` refuses a `-p` re-load on its line and `PYTEST_PLUGINS` in
+  its merged env as outside its option and env allowlists (the install step's comment in
+  `ci.yml` has the reasons and the measurement; the module holds the flag on
+  both populations, the workflow's lines and the launchers under `tests/` in the
+  forms its launcher census reads, and `_launchers_in`'s docstring in it states
+  in full what that census reads, refuses and leaves unread; among what it
+  leaves unread: a pytest command in a string held in a variable or built with
+  `%`, `+` or `.format`, a string anywhere else, an argv assembled one element
+  at a time, an argv with interpreter options the census does not take apart
+  that spell no pytest and after which nothing spells pytest, a cluster ending
+  in m right before an element that is not a constant aside, a wrapper-headed
+  argv such as `["env", "pytest"]` built away from the call that runs it
+  (`_argv_command`'s docstring states the argv rule), and a call reached through
+  a name the census does not resolve, such as a string call through tuple
+  unpacking, a conditional expression or a parameter default, or a call through
+  `getattr`, `importlib` or `runpy`; `pytest.main` held as a value rather than
+  called where it is written, as a parameter default or a thread's target among
+  others, is refused, not left unread). pytest-xdist's two plugins, which the
+  box's default run loads, load in every cell too since batch 917 (#916)
+  installed it there, and xdist hands each worker the command's arguments, the
+  flag among them. To execute the gated
+  tests from a plain venv, put romp's SDK venv on the path:
   `PYTHONPATH=~/.local/state/romp/sdkvenv/lib/python3.12/site-packages python3 -m
-  pytest tests/test_sdk_backend.py -q` (the venv `bin/romp-sdk-setup` creates;
-  match the python version to it).
+  pytest tests/test_sdk_backend.py -q -p no:anyio` (the venv `bin/romp-sdk-setup`
+  creates, at the version the same constant names; match the python version to
+  it). The flag is there because this recipe is the one box road that WOULD load
+  the plugin: `PYTHONPATH` is on `sys.path` before pytest discovers plugins, so
+  without it the header reads `anyio` beside `timeout` and the run loads a plugin
+  that neither the box's default run nor any cell's pytest process that
+  `tests/test_ci_sdk_pin.py` reads does, where nothing loads it again by its
+  entry-point or module name.
   Under pytest-xdist (`python3 -m pytest tests/ -n 4`) two import-time effects of
   `tests/test_host_transport.py` decide what a red means. It puts that same SDK venv
   on `sys.path` at import (the kernel's own idiom), and every worker imports every
@@ -53,13 +114,22 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   `PYTHONPATH` recipe. Its cases that build SDK
   options with a `can_use_tool` callback raise
   `claude_agent_sdk.types.CanUseToolShadowedWarning` (a `UserWarning` subclass); a
-  worker ships the warning to the controller, whose venv cannot import the class, and
-  xdist's `unserialize_warning_message` takes the run down with an INTERNALERROR.
+  worker ships the warning to the controller, whose venv on a box cannot import the
+  class, and xdist's `unserialize_warning_message` takes the run down with an
+  INTERNALERROR.
   `conftest.py`'s `pytest_configure` ignores it by MESSAGE prefix
   (`ignore:can_use_tool will not be invoked:UserWarning`): pytest re-parses the
   entries at every application, and one naming a class it cannot import is dropped
-  with a PytestConfigWarning (every worker until the venv path is inserted, the
-  controller always, CI always); a module-level `warnings.filterwarnings` does not
+  with a PytestConfigWarning (every xdist worker whose interpreter has no SDK, which
+  on a box is every worker, until the emitting module inserts the venv path; a
+  controller whose interpreter has no SDK, which on a box is every controller; and
+  the CI steps that install no SDK, today the vscode-extension job's served-page
+  pytest step, which loads this conftest; the Python matrix cells' interpreter (the
+  five Linux cells, and the two macOS cells on a weekly or dispatch run) imports the
+  class since the SDK install step, in the controller and, on the Linux cells'
+  two workers since batch 917, in each worker, since the package is installed in
+  that interpreter rather than added to the path at import); a module-level
+  `warnings.filterwarnings` does not
   survive pytest's per-test `catch_warnings`. So `-p no:warnings` is no longer part of an
   `-n` run. One more import-time leak reached the postal suite the same way until
   2026-09-18: `tests/test_kernel_tunnels.py` set `ROMP_POSTAL_PEERS=0` at module

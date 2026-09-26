@@ -310,3 +310,9 @@ sys.modules.setdefault("fs_clock", _fs_clock)
 # runner, registered the same way for the same reason.
 from . import git_fixture as _git_fixture  # noqa: E402
 sys.modules.setdefault("git_fixture", _git_fixture)
+# `import sdk_blocker` in the two no-SDK controls, in tests/test_session_host.py's SDK gate (its probe of what a spawned
+# host imports) and in tests/test_ci_sdk_pin.py's RequireSwitch (tests/sdk_blocker.py, 2026-09-20): the self-witnessing
+# sitecustomize that hides an installed SDK from a spawned host or a child pytest, the probe that asks a child interpreter
+# whether it imports the SDK, and the assertions on the witness, registered the same way.
+from . import sdk_blocker as _sdk_blocker  # noqa: E402
+sys.modules.setdefault("sdk_blocker", _sdk_blocker)

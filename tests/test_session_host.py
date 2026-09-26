@@ -5,9 +5,13 @@ the fake CLI (tests/fixtures/fake_claude.py) while this test plays the kernel ov
 (HostProcess's pick case) lets the REAL backend loop play the kernel instead, for a settings pick on the hosted road.
 
 Hermetic: a temp state root per test, the fake CLI on a temp path, no scopes (the host is a plain child
-here), every process killed by the test, synthetic ids. The host runs on its built-in pipe transport when
-the SDK is not importable (CI, the plain test venv); one test runs the SDK transport when the machine has
-the SDK venv, and skips otherwise.
+here), every process killed by the test, synthetic ids. A spawned host runs the SDK transport when its own
+interpreter imports the SDK (CI, which installs the pinned SDK in every Python cell since 2026-09-20) and its
+built-in pipe transport otherwise (the plain test venv); two tests ask for the SDK transport by name, over the
+machine's SDK venv when there is one and over the host interpreter's own SDK otherwise, and skip only when
+neither exists (HOST_SDK below); one control hides the SDK from its host and asserts the pipe transport, so
+that road stays tested where the interpreter has the SDK. One road reds this module run ALONE, an interpreter
+with the SDK on 3.10 to 3.13: SpawnSecrets' docstring records it.
 """
 import ast
 import asyncio
@@ -31,6 +35,8 @@ from importlib.machinery import ModuleSpec
 from pathlib import Path
 from unittest import mock
 from romp_load import load_source
+from tests.conftest import env_sparing_texts, redact_env_values
+import sdk_blocker   # noqa: E402  the shared test helper, registered by name in tests/__init__.py like romp_load
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -53,6 +59,43 @@ def orphan_journal(d, offset=0):
 FAKE = os.path.join(HERE, "fixtures", "fake_claude.py")
 SDK_SITE = next(iter(sorted(Path(os.path.expanduser("~/.local/state/romp/sdkvenv/lib")).glob(
     "python%d.%d/site-packages" % sys.version_info[:2]))), None) if os.path.isdir(os.path.expanduser("~/.local/state/romp/sdkvenv")) else None
+
+
+def _host_env(host_env=None) -> dict:
+    """The environment HostProcess._start hands a spawned host, short of its ROMP_SDK_SITE decision: this process's,
+    PYTHONUNBUFFERED set, ROMP_SDK_SITE and the credential names removed (a host carries a credential only when a test
+    hands one), `host_env` on top. PYTHONPATH is inherited. One builder for the spawn and for the gate's probe below,
+    so a key the spawn keeps is one the probe cannot drop; HostProcess's drift case captures both by execution."""
+    env = dict(os.environ, PYTHONUNBUFFERED="1")
+    env.pop("ROMP_SDK_SITE", None)
+    for name in sb.AUTH_ENV_NAMES:
+        env.pop(name, None)
+    env.update(host_env or {})
+    return env
+
+
+def _host_imports_sdk() -> bool:
+    """The GATE question: whether a host started the way HostProcess._start starts one (sys.executable, the environment
+    _host_env builds, PYTHONPATH included, no ROMP_SDK_SITE) imports claude_agent_sdk on its own: CI's road since
+    2026-09-20, when the workflow began installing the pinned SDK into every Python cell's interpreter. Asked of a
+    CHILD, once at import, because this process's own find_spec is the wrong witness: tests/test_host_transport.py
+    puts the machine's SDK venv on THIS process's sys.path, which no child inherits, so an in-process probe would say
+    yes on a box where the spawned host would run the pipe transport. The probe's child runs under the spawn's own
+    environment (sdk_blocker.interpreter_imports_sdk with strip_pythonpath=False): until review round 3 (2026-09-20)
+    it asked the WITNESS question, which drops PYTHONPATH, so where the SDK reached the host through the parent's
+    PYTHONPATH alone (no sdkvenv for its minor) the gate read "no SDK", the switch case below failed under
+    ROMP_SDK_REQUIRE=1 and the two SDK-transport cases skipped, for a host that did take the SDK transport. The
+    witness question stays the no-SDK control's, which replaces its host's PYTHONPATH with the blocker's site.
+    bin/romp-session-host's _sdk_on_path takes its interpreter's SDK before it reads ROMP_SDK_SITE, so a positive
+    here means every host these tests spawn runs the SDK transport, whatever site _start hands it."""
+    return sdk_blocker.interpreter_imports_sdk(_host_env(), strip_pythonpath=False)
+
+
+# The gate of the two SDK-transport cases (2026-09-20): the machine's SDK venv, the box's road, or the host interpreter's
+# own SDK, CI's road. Until then the gate was the venv DIRECTORY alone, so on an interpreter that had the SDK and no
+# venv for its minor (every CI cell after the install; 3.14t on this box) the two cases skipped, reporting green for a
+# reason that no longer applied while checking nothing.
+HOST_SDK = SDK_SITE is not None or _host_imports_sdk()
 SID = "11111111-2222-3333-4444-0000000000a1"          # the romp sid the lease is filed under
 FSID = "11111111-2222-3333-4444-0000000000f1"         # the fake CLI's own conversation id (distinct on purpose)
 CLI_PID = 4194305       # the stand-in CLI's pid in the in-process classes: above Linux's pid_max (2^22), so it names no
@@ -116,7 +159,16 @@ class SpawnSecrets(unittest.TestCase):
     """A key or login token lives in the process environment only, never in a file (the fork's rule, 2026-09-05):
     a stored login's CLAUDE_CODE_OAUTH_TOKEN leaves the spawn spec before hosts/<sid>/spawn.json is written and
     rides bin/romp-session-host's process environment instead (the pull-in review's item 1, 2026-09-16). Every
-    assertion here is a presence check: no test output ever carries a token's value."""
+    assertion here is a presence check: no test output ever carries a token's value.
+
+    Residual (2026-09-20, recorded with the workflow's SDK step comment and the ledger entry): run ALONE on an
+    interpreter that imports claude_agent_sdk and evaluates annotations at class definition, 3.10 to 3.13 (since
+    CI installs the SDK, the four Linux cells 3.10 through 3.13 and the two macOS cells; not the 3.14t cell, which
+    defers annotations and is green alone), 8 of these 11 tests fail: _spawn's Popen patch is live when _ht()
+    first imports the SDK through kernel/host_transport.py, and mcp's win32 utilities evaluate
+    subprocess.Popen[bytes] at class definition, which the patched-in function does not support. Green whenever
+    a module that imports the SDK is collected first, as the suite and CI's one pytest invocation do; it predates
+    the install step (the same 8 fail at the base on such an interpreter) and is a follow-up, not fixed here."""
 
     def setUp(self):
         self.state = tempfile.mkdtemp()
@@ -4150,13 +4202,10 @@ class HostProcess(unittest.TestCase):
 
     def _start(self, sdk=False, host_env=None, **over):
         spec_path, spec = self._spec(**over)
-        env = dict(os.environ, PYTHONUNBUFFERED="1")
-        env.pop("ROMP_SDK_SITE", None)
-        for name in sb.AUTH_ENV_NAMES:          # the host's environment carries a credential only when a test hands one
-            env.pop(name, None)
-        env.update(host_env or {})
+        env = _host_env(host_env)               # the builder the SDK gate's probe runs under too (_host_imports_sdk)
         if sdk:
-            env["ROMP_SDK_SITE"] = str(SDK_SITE)
+            if SDK_SITE is not None:        # the machine venv's site; with none, the host's own interpreter imports the SDK (HOST_SDK)
+                env["ROMP_SDK_SITE"] = str(SDK_SITE)
         else:
             env["ROMP_SDK_SITE"] = os.path.join(self.state, "no-sdk-here")
         host = subprocess.Popen([sys.executable, os.path.join(BIN, "romp-session-host"), spec_path],
@@ -4890,7 +4939,7 @@ class HostProcess(unittest.TestCase):
         self.assertEqual(open(seen).read(), "absent", "no token anywhere: the probe reads the CLI's real environment")
         k.close()
 
-    @unittest.skipUnless(SDK_SITE, "the SDK venv is not on this machine; the pipe transport covered the host")
+    @unittest.skipUnless(HOST_SDK, "the host's interpreter does not import the SDK and this machine has no SDK venv; the pipe transport covered the host")
     def test_the_sdk_transport_hands_the_hosts_environment_to_the_cli_too(self):
         """The road a real install takes: the SDK's SubprocessCLITransport merges the host's environment under the
         spec's overlay, so the token rides there as well."""
@@ -4904,7 +4953,179 @@ class HostProcess(unittest.TestCase):
         k.recv_until(lambda f: f.get("t") == "exit")
         k.close()
 
-    @unittest.skipUnless(SDK_SITE, "the SDK venv is not on this machine; the pipe transport covered the host")
+    def test_a_host_hidden_from_the_sdk_drives_the_fake_cli_over_the_pipe_transport(self):
+        """The control for the switch above (2026-09-20). Under an interpreter that has the SDK (every CI cell since the
+        workflow installs it), every host these tests spawn takes the SDK transport, whatever ROMP_SDK_SITE says, so the
+        pipe transport, the road a plain venv's host runs, would have no test in CI. This host is hidden from the SDK the
+        way tests/test_session_host_sdk_pin.py's no-SDK control hides it: a site on PYTHONPATH whose sitecustomize.py sets
+        sys.modules["claude_agent_sdk"] = None before the host imports anything, so its find_spec answers None and the
+        launcher falls through to ROMP_SDK_SITE, which _start(sdk=False) points at a path that does not exist. The
+        blocker witnesses its own run (tests/sdk_blocker.py) and the control asserts the witness: without it, an
+        interpreter with no SDK passed this control with the blocker never loaded, the pipe transport being its only road."""
+        site = os.path.join(self.state, "no-sdk-site")
+        os.makedirs(site)
+        with open(os.path.join(site, "sitecustomize.py"), "w") as f:
+            f.write(sdk_blocker.SITECUSTOMIZE)
+        witness = os.path.join(self.state, "blocker-witness")
+        host, sock, spec = self._start(host_env={"PYTHONPATH": site, sdk_blocker.WITNESS_ENV: witness})
+        # the witness question, not the gate's: this host's PYTHONPATH is the blocker's site, so what the blocker hid is
+        # what the interpreter has on its own (tests/test_session_host_sdk_pin.py's no-SDK control asks the same)
+        sdk_blocker.assert_witnessed(self, witness, sdk_blocker.interpreter_imports_sdk())
+        k, hello = self._attach(sock)
+        k.send({"t": "in", "data": self._user("hi sleep=0.1")})
+        k.recv_until(lambda f: f.get("t") == "out" and f["data"].get("type") == "result")
+        self.assertEqual([r["transport"] for r in self._hostlog() if r["kind"] == "cli-spawned"], ["pipe-fallback"],
+                         "the host's built-in pipe transport spawned the CLI: its interpreter saw no SDK")
+        k.send({"t": "end", "grace": 10})
+        k.recv_until(lambda f: f.get("t") == "exit")
+        k.close()
+
+    @unittest.skipUnless(os.environ.get("ROMP_SDK_REQUIRE") == "1",
+                         "the run does not require the SDK (ROMP_SDK_REQUIRE unset): a box's host may run without it")
+    def test_where_the_run_requires_the_sdk_the_hosts_interpreter_imports_it(self):
+        """Under ROMP_SDK_REQUIRE=1, which the workflow's Run pytest step sets after every Python cell installs the pinned
+        SDK (.github/workflows/ci.yml; tests/test_ci_sdk_pin.py pins the line), the host a test spawns imports it and the
+        two SDK-transport cases run. Without this pin a cell whose interpreter lost the SDK (an install that did not
+        reach the interpreter pytest runs, a PYTHONPATH leak in the runner) read green: the two cases skipped, both
+        no-SDK controls passed on the pipe transport, and nothing was red (2026-09-20). Keyed on the switch the run
+        sets, not on GITHUB_ACTIONS: the switch declares the requirement, a platform variable only infers it. Off the
+        switch, a box's host may run without the SDK and this case skips, saying so."""
+        self.assertTrue(HOST_SDK, "ROMP_SDK_REQUIRE=1: this run requires the SDK, and a child of %s does not import "
+                        "claude_agent_sdk, and this runner has no SDK venv: the SDK-transport cases are skipping in this run"
+                        % sys.executable)
+
+    # The gate's probe measures the process that runs (review round 3, 2026-09-20): a host _start spawns inherits this
+    # process's PYTHONPATH, so the probe's child must too. Until this round the probe asked sdk_blocker's witness question,
+    # which drops PYTHONPATH, and gated "no SDK" for a host whose SDK came from PYTHONPATH alone (no sdkvenv for its minor):
+    # under ROMP_SDK_REQUIRE=1 the switch case failed and the two SDK-transport cases skipped. The three cases below are
+    # hermetic, a scratch package standing in for an SDK on PYTHONPATH and the blocker for one hidden there; against the
+    # stripping probe the package case red where the interpreter lacks the SDK (the probe found nothing), the blocker
+    # case where it has one (the probe found the venv's SDK) and the drift case on both, as each docstring states, so
+    # together they red on a box with or without an SDK; the fourth runs the switch case against its refusing input.
+    def test_the_sdk_gate_sees_a_package_the_parents_pythonpath_carries(self):
+        """A claude_agent_sdk package reachable through this process's PYTHONPATH alone (an empty __init__.py in a scratch
+        directory: find_spec is the probe's question, and bin/romp-session-host's _sdk_on_path asks the same one) gates
+        True, since the host _start spawns inherits that PYTHONPATH and finds it. Red before the fix on a venv without the
+        SDK: the probe dropped PYTHONPATH and answered False for a host that would have taken the SDK transport."""
+        stub = os.path.join(self.state, "stub-site")
+        os.makedirs(os.path.join(stub, "claude_agent_sdk"))
+        open(os.path.join(stub, "claude_agent_sdk", "__init__.py"), "w").close()
+        with mock.patch.dict(os.environ, {"PYTHONPATH": stub}):
+            self.assertTrue(_host_imports_sdk(), "the gate's probe must find the package this process's PYTHONPATH carries, "
+                            "as the host it stands for would")
+
+    def test_the_sdk_gate_sees_a_blocker_the_parents_pythonpath_carries(self):
+        """The mirror: tests/sdk_blocker.py's sitecustomize in a directory on this process's PYTHONPATH gates False, since a
+        host spawned with it cannot import the SDK whatever its interpreter has installed. Red before the fix on a venv WITH
+        the SDK: the probe dropped PYTHONPATH and answered True for a host that would have run the pipe transport."""
+        site = os.path.join(self.state, "blocker-site")
+        os.makedirs(site)
+        with open(os.path.join(site, "sitecustomize.py"), "w") as f:
+            f.write(sdk_blocker.SITECUSTOMIZE)
+        with mock.patch.dict(os.environ, {"PYTHONPATH": site}):
+            self.assertFalse(_host_imports_sdk(), "the gate's probe must run under the blocker this process's PYTHONPATH "
+                             "carries, as the host it stands for would")
+
+    # The variables that decide where a child's import resolves, each given a marker value inside the drift case below so
+    # that a drop of one the test's own environment leaves unset shows in its comparison (review round 4, 2026-09-23: on
+    # a non-venv 3.12, dropping PYTHONUSERBASE from the probe flipped the gate from True to False with the one-way check
+    # green). The set was checked against CPython's sys.path initialisation on 2026-09-23, one child per variable reading
+    # sys.path, on a 3.12 venv, the base 3.12 and a 3.14t venv: PYTHONPATH, PYTHONHOME, PYTHONSAFEPATH and
+    # PYTHONPLATLIBDIR changed it on all three; PYTHONEXECUTABLE and __PYVENV_LAUNCHER__ on the two venvs (they move the
+    # executable getpath starts from, and the venv's site-packages dropped out); PYTHONUSERBASE, PYTHONNOUSERSITE and
+    # HOME (the user base where PYTHONUSERBASE is unset) on the base interpreter, where a user site directory exists.
+    # Not marked, each unchanged on all three: PYTHONSTARTUP (read by interactive sessions only), PYTHONCASEOK (how a
+    # name matches on a case-insensitive filesystem, not where the search runs) and VIRTUAL_ENV (CPython does not read
+    # it). Nor APPDATA, the user base on Windows, which no job in ci.yml runs.
+    IMPORT_PATH_VARS = ("PYTHONPATH", "PYTHONHOME", "PYTHONSAFEPATH", "PYTHONPLATLIBDIR", "PYTHONEXECUTABLE",
+                        "__PYVENV_LAUNCHER__", "PYTHONUSERBASE", "PYTHONNOUSERSITE", "HOME")
+
+    def test_the_sdk_probes_child_runs_under_the_environment_start_hands_a_host(self):
+        """The probe's environment and the spawn's are the same keys with the same values, ROMP_SDK_SITE aside, in both
+        directions: the environment the probe's child receives (captured at sdk_blocker's subprocess.run) equals the one
+        _start hands the host (captured at its Popen) with ROMP_SDK_SITE removed, since that key is _start's decision on
+        the host's side alone, taken after _host_env (removed, not required: _start(sdk=True) with no SDK venv, CI's
+        road, adds nothing, and the call here, sdk=False, points it at a path that does not exist). One equality, so a
+        key the probe drops and the spawn keeps is red, and so is a key the spawn alone adds (review round 4, 2026-09-23:
+        the case compared the probe's keys alone, and a probe that dropped HOME, or a spawn that added PYTHONSAFEPATH,
+        read green). Inside the case, every variable in IMPORT_PATH_VARS carries a marker value, so a drop of one that
+        the test's own environment leaves unset is a difference and not two absent keys reading as equal; the markers
+        are asserted to reach both sides, so a builder that dropped one on both sides is red too. Both captures raise
+        before a child starts: _host_imports_sdk builds its dict and calls subprocess.run, and _start writes its spec
+        and builds its dict before its Popen, neither spawning anything earlier, so no process runs under a marker
+        PYTHONHOME. The failure names the keys and never their values: the environment can carry a credential. Keyed
+        on the captured values by execution, never on the two callers sharing a builder."""
+        markers = {name: os.path.join(self.state, "marker-" + name.strip("_").lower()) for name in self.IMPORT_PATH_VARS}
+        seen = {}
+
+        class Captured(Exception):
+            pass
+
+        def capture(slot):
+            def side_effect(*args, **kwargs):
+                seen[slot] = dict(kwargs["env"])
+                raise Captured()
+            return side_effect
+
+        with mock.patch.dict(os.environ, markers):
+            with mock.patch.object(sdk_blocker.subprocess, "run", side_effect=capture("probe")):
+                with self.assertRaises(Captured):
+                    _host_imports_sdk()
+            with mock.patch.object(subprocess, "Popen", side_effect=capture("spawn")):
+                with self.assertRaises(Captured):
+                    self._start()
+        self.assertNotIn("ROMP_SDK_SITE", seen["probe"], "the probe asks what the interpreter and PYTHONPATH give, with no site")
+        for slot in ("probe", "spawn"):
+            lost = sorted(name for name, value in markers.items() if seen[slot].get(name) != value)
+            self.assertEqual(lost, [], "the %s's environment does not carry this process's value of %s: a child started "
+                             "with it may resolve its imports elsewhere" % (slot, ", ".join(lost)))
+        spawn = {k: v for k, v in seen["spawn"].items() if k != "ROMP_SDK_SITE"}
+        probe = seen["probe"]
+        self.assertTrue(spawn == probe, "the probe's child and the host run under different environments (ROMP_SDK_SITE "
+                        "aside; keys named, values withheld): only the host has %r, only the probe's child has %r, the two "
+                        "differ in the value of %r" % (sorted(set(spawn) - set(probe)), sorted(set(probe) - set(spawn)),
+                                                       sorted(k for k in set(spawn) & set(probe) if spawn[k] != probe[k])))
+
+    def test_the_switch_case_fails_a_run_that_requires_the_sdk_when_its_host_cannot_import_it(self):
+        """The switch case above run against ITS refusing input: pytest in a child over that case's node id, HOME at an
+        empty directory (so SDK_SITE is None: no sdkvenv for the child to gate on), tests/sdk_blocker.py's sitecustomize
+        PREPENDED to the PYTHONPATH the child inherits (so no host the child could spawn imports the SDK, whichever venv
+        runs this module) and ROMP_SDK_REQUIRE=1. The child exits non-zero, its FAILED line names the case and its output
+        carries the case's own message. On a venv with the SDK this reds only once the gate's probe reads the spawn's
+        PYTHONPATH (the cases above): with the probe dropping it, the child's gate saw the venv's SDK, HOST_SDK read True
+        and the switch case passed while every host that run spawned took the pipe transport. -p no:anyio as every pytest
+        child the suite spawns passes it, -p no:cacheprovider so the child writes no cache into the tree. The child's
+        environment is the inherited one less every variable whose value the child's env-value redaction would rewrite
+        the case's message with (tests/conftest.py's env_sparing_texts; round 6's ruling B, 2026-09-25): sudo's
+        SUDO_COMMAND for `sudo env ROMP_SDK_REQUIRE=1 python -m pytest ...`, like GNU make's MAKEFLAGS for `make -s test
+        ROMP_SDK_REQUIRE=1`, holds the switch's assignment as a chunk of 16 or more characters, and the child's report
+        read [REDACTED-ENV-VALUE] in place of it, red on a correct verdict. The drop comes before HOME, the switch and
+        the blocker's PYTHONPATH are set, which decide the child's road; the case hands down sudo's shape, and never
+        writes it into this process's environment, whose write hook would note it for every later report here."""
+        message = "ROMP_SDK_REQUIRE=1: this run requires the SDK"
+        sudo = "/usr/bin/env ROMP_SDK_REQUIRE=1 python -m pytest -q tests/test_session_host.py"
+        self.assertNotEqual(redact_env_values(message, (sudo,)), message, "the planted SUDO_COMMAND no longer reaches the "
+                            "redaction: re-shape it")
+        site = os.path.join(self.state, "blocker-site")
+        os.makedirs(site)
+        with open(os.path.join(site, "sitecustomize.py"), "w") as f:
+            f.write(sdk_blocker.SITECUSTOMIZE)
+        home = os.path.join(self.state, "empty-home")
+        os.makedirs(home)
+        node = "%s::%s::%s" % (os.path.relpath(os.path.realpath(__file__), ROOT), type(self).__name__,
+                               self.test_where_the_run_requires_the_sdk_the_hosts_interpreter_imports_it.__name__)
+        env = dict(env_sparing_texts(dict(os.environ, SUDO_COMMAND=sudo), (message,)), HOME=home, ROMP_SDK_REQUIRE="1")
+        env["PYTHONPATH"] = os.pathsep.join([site] + [p for p in (env.get("PYTHONPATH", ""),) if p])
+        p = subprocess.run([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "-p", "no:anyio", node],
+                           cwd=ROOT, env=env, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=240)
+        out = p.stdout + p.stderr
+        self.assertNotEqual(p.returncode, 0, "ROMP_SDK_REQUIRE=1 where no host the run spawns imports the SDK must fail the "
+                            "run, not skip or pass: " + out[-3000:])
+        self.assertIn("FAILED %s" % node, out, "the red must be the switch case itself: " + out[-3000:])
+        self.assertIn(message, out, "the red must carry the case's own message: " + out[-3000:])
+        self.assertIn("1 failed", out, "one test, failed, nothing skipped: " + out[-3000:])
+
+    @unittest.skipUnless(HOST_SDK, "the host's interpreter does not import the SDK and this machine has no SDK venv; the pipe transport covered the host")
     def test_the_sdk_transport_drives_the_fake_cli_the_same_way(self):
         host, sock, spec = self._start(sdk=True)
         k, hello = self._attach(sock)
@@ -4928,7 +5149,8 @@ class HostProcess(unittest.TestCase):
         ended by the test and killed by its cleanup if it is not."""
         sid = "7c0e5d1a-3b2f-4e6d-9a8b-000000000315"
         saved_site = os.environ.get("ROMP_SDK_SITE")
-        os.environ["ROMP_SDK_SITE"] = os.path.join(self.state, "no-sdk-here")   # the spawned host inherits it: the pipe transport
+        os.environ["ROMP_SDK_SITE"] = os.path.join(self.state, "no-sdk-here")   # the spawned host inherits it: the pipe transport where
+        # its interpreter has no SDK of its own; where it has one (CI since 2026-09-20) the host runs the SDK transport and the hold is the same
 
         def restore_site():
             if saved_site is None:

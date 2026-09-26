@@ -3,7 +3,7 @@
 
 Two layers:
   * Pure translation logic (AskUserQuestion <-> the existing askLive picker shape,
-    state/registry files) is tested WITHOUT the SDK, so it runs in CI.
+    state/registry files) is tested WITHOUT the SDK, so it runs wherever pytest does, package or not.
   * The async runner + the can_use_tool round-trip is tested with a FAKE
     ClaudeSDKClient (monkeypatched in), skipped where claude_agent_sdk is absent.
     This exercises the headline path: a user turn -> the model calls
@@ -2273,9 +2273,10 @@ class AskArmedBeforePresent(unittest.TestCase):
     await must already find the future armed — or it is reported lost and the coroutine waits forever.
     Production dodges the gap by microseconds (only the kernel's click handlers answer, from another
     thread); an answer delivered synchronously INSIDE the presentation callback hits it every time. That
-    is exactly how the SDK-gated round-trip classes below drive their asks, and CI does not install the
-    SDK, so the hang was never seen there. Pinned WITHOUT the SDK: _ask_one needs none, so the standard
-    runner and CI exercise the invariant. The answer rides on_ask -> resolve_ask, the kernel's own path."""
+    is exactly how the SDK-gated round-trip classes below drive their asks; CI ran none of them until every
+    Python matrix cell installed the SDK (#872), so the hang was never seen there, and they run in every cell
+    now. Pinned WITHOUT the SDK: _ask_one needs none, so the standard runner and CI exercise the invariant.
+    The answer rides on_ask -> resolve_ask, the kernel's own path."""
 
     SID = "11111111-2222-3333-4444-555555555555"
 
@@ -3961,6 +3962,15 @@ class FastModeReportedState(unittest.TestCase):
 
     def tearDown(self):
         import asyncio
+        # The refresh the init branch parked on the loop never ran; cancel it and run the loop once so the task
+        # closes its coroutine, instead of leaving it to the collector, which warned "coroutine ... was never
+        # awaited" once per test (seven per run in every CI cell's warnings summary since the cells install the
+        # SDK, 2026-09-20). Cancelling before the first step never runs the coroutine's body.
+        pending = asyncio.all_tasks(self._loop)
+        for task in pending:
+            task.cancel()
+        if pending:
+            self._loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
         asyncio.set_event_loop(None)
         self._loop.close()
 
@@ -5264,10 +5274,12 @@ class UpdateRegDroppingUnreadable(unittest.TestCase):
 def _sdk_module_for_the_road_pins():
     """The module the connect loop imports ClaudeSDKClient from, and whether this call installed it: the installed SDK when
     there is one, else a stand-in with an inert class for any name the backend imports. The road pins stub the transport and
-    fake the client, so they need no package; CI installs none, and a gate on the package would let a re-key on the pre-read
-    go green on every Python (the follow-up's item a). The stand-in lives in sys.modules only for the test that asked (its
-    tearDown removes it): left behind, it made every later import of the SDK succeed with inert classes, and the kernel's own
-    wiring took roads it never takes without the package (two shared-parse tests red under the whole suite)."""
+    fake the client, so they need no package; the stand-in is for an interpreter without one (a box venv without the SDK, the
+    vscode-extension job's served-page pytest step; every Python matrix cell installs it since #872), and a gate on the package
+    would let a re-key on the pre-read go green wherever the package is absent (the follow-up's item a). The stand-in lives in
+    sys.modules only for the test that asked (its tearDown removes it): left behind, it made every later import of the SDK
+    succeed with inert classes, and the kernel's own wiring took roads it never takes without the package (two shared-parse
+    tests red under the whole suite)."""
     if _HAVE_SDK:
         return _sdk, False
     import types

@@ -363,17 +363,18 @@ polluted, extra8-1 of round 2). The rule keeps every one of them from bats (TMPD
 road is trusted for that not by this sentence but by two pins the job runs: the routes pin plants the three routes in the process
 and decides the candidates that read them, and the equality pin holds the built environment's keys to a literal, so a pass-through
 added to the rule reds there with no bats (the job was green while every local full-suite run was red, at the tenth commit). The
-five Python cells install pytest, pytest-timeout and cryptography and no bats (ci.yml's Install steps), so every bats-backed test
-of this module skips there, seventeen at this head (derived from a RUN and never typed: Counts runs every other class of this
-module in a child under a PATH holding every program but bats, and every skip is a bats skip; the `17 skipped` of the run line
-below; the wrapper runs sixteen of them, every one but the child pytest pin, which needs pytest importable by the runner's
-python3, so the two counts are two quantities, what skips and what the wrapper runs, and the pin reads both sentences against its
-derivation: before the fourteenth commit this sentence said thirteen, the wrapper's count, three lines from a run line saying 14,
-seven findings of round 2 on one number), and since the tenth commit the first skip warns once per process (WITHOUT_BATS_NOTICE,
-listed in pytest's warnings summary and counted in the summary line under -q, the cells' flags): a green Python cell says the
-corpus validation did not run in it. Installing bats in those cells was measured and refused: at the head before the tenth commit
-the module alone cost `45 passed in 199.86s` with bats against `34 passed, 11 skipped in 17.56s` without, 182 s more per cell (the
-register and the corpus most of it; at the fourteenth commit `58 passed, 4 subtests passed in 267.86s (0:04:27)` with bats 1.10.0,
+five Python cells install pytest, pytest-timeout, pytest-xdist, cryptography and the pinned Claude Agent SDK, and no bats
+(ci.yml's Install steps), so every bats-backed test of this module skips there, seventeen at this head (derived from a RUN and never
+typed: Counts runs every other class of this module in a child under a PATH holding every program but bats, and every
+skip is a bats skip; the `17 skipped` of the run line below; the wrapper runs sixteen of them, every one but the child
+pytest pin, which needs pytest importable by the runner's python3, so the two counts are two quantities, what skips and
+what the wrapper runs, and the pin reads both sentences against its derivation: before the fourteenth commit this sentence
+said thirteen, the wrapper's count, three lines from a run line saying 14, seven findings of round 2 on one number), and
+since the tenth commit the first skip warns once per process (WITHOUT_BATS_NOTICE, listed in pytest's warnings summary
+and counted in the summary line under -q, the cells' flags): a green Python cell says the corpus validation did not run
+in it. Installing bats in those cells was measured and refused: at the head before the tenth commit the module alone cost
+`45 passed in 199.86s` with bats against `34 passed, 11 skipped in 17.56s` without, 182 s more per cell (the register and
+the corpus most of it; at the fourteenth commit `58 passed, 4 subtests passed in 267.86s (0:04:27)` with bats 1.10.0,
 the bats-backed pins since the tenth commit among them, the child pytest 67 s and the skip count's child run 16 s in a run of
 those two pins alone, against `41 passed, 17 skipped, 1 warning in 36.01s` without, the skip count's child run the one cost added
 to a cell since that commit), on cells whose margin under their 25-minute cap was 4 to 8 minutes in fork PR #871's own CI run at
@@ -4372,7 +4373,7 @@ class BatsCorpus(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             env = _bats_env(d)
             env["TMPDIR"] = os.environ.get("ROMP_TESTS_SYSTEM_TMPDIR") or tempfile.gettempdir()
-            out, err, ended, status, secs = _run_bats([sys.executable, "-B", "-m", "pytest", "-q", "-s", "-p", "no:cacheprovider", "-k",
+            out, err, ended, status, secs = _run_bats([sys.executable, "-B", "-m", "pytest", "-q", "-s", "-p", "no:cacheprovider", "-p", "no:anyio", "-k",
                                                         "test_every_candidate_of_every_suite_is_read_by_bats", polluter, "tests/test_bats_bare_negation.py"],
                                                        ROOT, env, CHILD_TIMEOUT)
         tail = "\n".join((out + "\n" + err).splitlines()[-120:])

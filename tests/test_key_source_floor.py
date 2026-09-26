@@ -84,7 +84,7 @@ class KeySourceFloor(unittest.TestCase):
             env[name] = "synthetic-value-for-%s" % name.lower()
         env["ROMP_EXPECTED_AUTH"] = "login"
         env["OP_SESSION_testaccount"] = "synthetic-session"
-        r = subprocess.run([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider",
+        r = subprocess.run([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "-p", "no:anyio",
                             os.path.join(HERE, "test_key_source_floor.py") + "::KeySourceFloor::test_the_floor_holds_inside_a_test"],
                            env=env, capture_output=True, text=True, timeout=180, cwd=ROOT)
         self.assertEqual(r.returncode, 0, r.stdout[-800:] + r.stderr[-400:])

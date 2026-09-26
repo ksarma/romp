@@ -80,6 +80,7 @@ from importlib.machinery import ModuleSpec
 from pathlib import Path
 from unittest import mock
 from romp_load import load_source
+import sdk_blocker   # noqa: E402  the shared test helper, registered by name in tests/__init__.py like romp_load
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -469,9 +470,24 @@ class HostProcess(unittest.TestCase):
         self.spec_path.write_text(json.dumps(spec)); self.spec_path.chmod(0o600)
         self.hostdir = d
 
-    def _run_host(self, site: Path):
+    def _run_host(self, site: Path, no_sdk: bool = False):
+        """The real host over `site`, handed as ROMP_SDK_SITE and as PYTHONPATH. PYTHONPATH does two jobs, both
+        because the launcher's _sdk_on_path takes an SDK its interpreter imports before it reads ROMP_SDK_SITE. A
+        fake claude_agent_sdk package in `site` shadows a real SDK the interpreter has. And `no_sdk` (2026-09-20)
+        writes a sitecustomize.py into `site` that sets sys.modules["claude_agent_sdk"] = None before the host
+        imports anything, which hides a real SDK from the child (find_spec None, the import raises
+        ModuleNotFoundError); an empty site did not, so under an interpreter that has the SDK installed (every CI
+        cell since the workflow installs the pinned SDK; a venv built the same way on a box) the no-SDK control ran
+        the SDK transport and read CLINotFoundError for a missing CLI where the pipe transport reads
+        FileNotFoundError. The blocker witnesses its own run (tests/sdk_blocker.py) and the control asserts the witness:
+        without it, an interpreter with no SDK passed the control whatever the blocker did, the pipe transport being its
+        only road."""
+        if no_sdk:
+            site.mkdir(parents=True, exist_ok=True)
+            (site / "sitecustomize.py").write_text(sdk_blocker.SITECUSTOMIZE)
         env = dict(os.environ, PYTHONUNBUFFERED="1", ROMP_SDK_SITE=str(site), PYTHONPATH=str(site))
-        # PYTHONPATH too: an interpreter that has the real SDK would otherwise import it ahead of the fake
+        if no_sdk:
+            env[sdk_blocker.WITNESS_ENV] = str(self.hostdir / "blocker-witness")
         for name in sb.AUTH_ENV_NAMES:
             env.pop(name, None)
         err = self.hostdir / "host.stderr"
@@ -670,14 +686,16 @@ class HostProcess(unittest.TestCase):
         self.assertNotIn(sh.SDK_REPIN_COMMAND, reason, "a fact beside the failure, never its remedy (the closing check)")
 
     def test_a_spawn_failure_with_no_sdk_at_all_keeps_the_bare_type_name(self):
-        # the control: the pipe transport's spawn of a CLI that is not there, with no SDK in the host's site
+        # the control: the pipe transport's spawn of a CLI that is not there, with no SDK importable by the host
+        # (no_sdk: the site hides one the interpreter has; an empty site alone left this control on the SDK transport)
         spec = json.loads(self.spec_path.read_text())
         spec["cli_path"] = os.path.join(self.state, "no-such-cli")
         self.spec_path.write_text(json.dumps(spec))
         empty = Path(self.state, "nosite")
         empty.mkdir()
-        code, _ = self._run_host(empty)
+        code, _ = self._run_host(empty, no_sdk=True)
         self.assertEqual(code, 1)
+        sdk_blocker.assert_witnessed(self, str(self.hostdir / "blocker-witness"), sdk_blocker.interpreter_imports_sdk())
         kinds = [r["kind"] for r in self._hostlog()]
         self.assertNotIn("sdk-version-untested", kinds)
         self.assertIn("cli-spawn-failed", kinds)
@@ -1476,9 +1494,11 @@ class HostTransportNames(unittest.TestCase):
     """fresh-2 (round 1 of the review, 2026-09-18): kernel/host_transport.py read Transport, CLIConnectionError and
     ProcessError from the SDK's PRIVATE modules (_internal.transport, _errors) inside one try/except Exception that
     silently substituted stand-ins; all three are public exports at the pinned version. They are bound from the
-    public package now, and the duck-typed fallback stays for a machine with no SDK at all (the hermetic tests,
-    CI). Not added to SDK_INTERNALS: that check runs in the host process at spawn time, after this module has
-    already bound its imports in the kernel process, so it would not protect this binding."""
+    public package now, and the duck-typed fallback stays for an interpreter with no SDK at all (a box venv without
+    it; the vscode-extension job's served-page pytest step, which installs none; every Python matrix cell installs
+    it since #872, so there the fallback is inert). Not added to SDK_INTERNALS: that check runs in the host process at
+    spawn time, after this module has already bound its imports in the kernel process, so it would not protect this
+    binding."""
 
     _NAMES = ("claude_agent_sdk", "claude_agent_sdk._internal", "claude_agent_sdk._internal.transport", "claude_agent_sdk._errors")
 
