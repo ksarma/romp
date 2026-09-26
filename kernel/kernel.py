@@ -72033,13 +72033,18 @@ def _landing():
             # iframe reads as document.referrer, and what the address bar shows. On a sign-in navigation the
             # sign-in seed, which _send puts first in the head, has already dropped token= and c= before this
             # runs, so this finds nothing there. This is the fallback for a shell served on ?token= without a
-            # sign-in: a load _is_navigation does not count (into an object, embed or frame element) gets no
-            # session and no seed, and this is the one step that drops the token from that document's address.
-            # It runs HERE, in the head, before the manifest link or the first <iframe> can make a request, so
-            # no request this document makes carries it; the other params (panes, wid, a push deep link the
-            # reveal script strips later) and the hash stay, re-serialized by URLSearchParams (a comma becomes
-            # %2C, which every reader's searchParams.get decodes). After a sign-in, a reload rides the session
-            # cookie, as the pane iframes do.
+            # sign-in: a load _is_navigation does not count (its Sec-Fetch-Dest names neither a document nor an
+            # iframe or, with no Sec-Fetch headers, its Accept does not name text/html) gets no session and no
+            # seed, and this is the one step that drops the token from that document's address. Which element
+            # loads fall there depends on the engine and on whether the origin gets Sec-Fetch headers. A frame's
+            # load does only where the browser sends Sec-Fetch-Dest: frame. A plain-http origin off loopback gets
+            # no Sec-Fetch headers, and there a same-origin frame's load asks for text/html, counts as a
+            # navigation, and is signed in and seeded like one. frame-ancestors 'self' and X-Frame-Options keep the
+            # shell from showing in a frame on a page of another origin. It runs HERE, in the head, before the
+            # manifest link or the first <iframe> can make a request, so no request this document makes carries
+            # it; the other params (panes, wid, a push deep link the reveal script strips later) and the hash
+            # stay, re-serialized by URLSearchParams (a comma becomes %2C, which every reader's searchParams.get
+            # decodes). After a sign-in, a reload rides the session cookie, as the pane iframes do.
             "try{var _u=new URL(location.href);if(_u.searchParams.has('token')){_u.searchParams['delete']('token');"
             "history.replaceState(null,'',_u.pathname+(_u.searchParams.toString()?'?'+_u.searchParams.toString():'')+_u.hash);}}"
             "catch(e){}</script>"
