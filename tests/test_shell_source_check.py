@@ -28,11 +28,18 @@ with the opaque origin) and from a pane, and reads which function the check is w
 other pages' scripts run through the same exercise for their census (ServedPagesExecuted). Synthetic only: no session
 data, a loopback origin.
 
+The line after the adopted three is the fork's LOCK (2026-09-26): it makes the check's property read-only and
+non-configurable once defined, so a later write of it, under any name and on any road (a road the stand-in does not
+drive, a ui/ bundle's computed name), does not land. CheckLocked reads the property's descriptor after boot and tries
+each way a script can replace it; without the lock line, each of those attempts replaces the check.
+
 What no leg here runs: code behind a condition the stand-in does not meet (a secure-context test, a user agent, a stored
 setting, a key the stand-in event does not carry), an arm keyed other than by comparing a field with a string, and a
-registration through another object's method. A write of the check or a listener registered under a computed name on
-such a road is caught by none of these tests; the text censuses catch only the names they can read. Nor does any test
-here run a ui/ bundle: a bundle's write of the check under a computed name is caught by none of them.
+registration through another object's method. A listener registered under a computed name on such a road is caught by
+none of these tests; the text censuses catch only the names they can read. A write of the check on such a road is
+refused by the lock when it runs after the boot script; one that runs before it (the shell's head script and the one
+script between it and the boot script, both run here) would show in the descriptor CheckLocked reads, when it is on a
+road the stand-in drives.
 """
 import hashlib
 import json
@@ -70,6 +77,10 @@ REGION_TAIL = "return false;}catch(x){return false;}};"
 
 # The read every shell listener opens with, spelled as the project spells it (so a fold's lines match).
 GATE = "if(!window.__rompPaneSourceOk||!window.__rompPaneSourceOk(e))return;"
+# The fork's line right after the adopted three (2026-09-26): it locks the check, read-only and non-configurable, so no
+# later script replaces, redefines or deletes it. Not the project's text: a fold that takes the project's side of
+# _LANDING_BOOT_JS keeps this line after the project's definition (CheckLocked fails without it).
+LOCK = "try{Object.defineProperty(window,'__rompPaneSourceOk',{writable:false,configurable:false});}catch(x){}"
 
 # Every window message listener the shell runs, by a phrase only its own body carries. A listener added to the
 # shell must join this list (the census below fails until it does), which is where its senders get decided.
@@ -142,15 +153,19 @@ class AdoptedCheck(unittest.TestCase):
         self.assertEqual(region.count("\n"), 2, "three lines, as at the recorded commit")
         self.assertTrue(km._LANDING_BOOT_JS.startswith("\n" + region + "\n"),
                         "the region opens _LANDING_BOOT_JS, where the project has it (after its own comment lines)")
+        # the fork's lock sits outside the region, as the next line, so the region stays the project's text
+        self.assertTrue(km._LANDING_BOOT_JS.startswith("\n" + region + "\n" + LOCK + "\n"),
+                        "the lock is the line right after the adopted definition")
 
     def test_it_is_defined_once_on_the_served_shell_ahead_of_every_listener(self):
         html = km._landing()
         self.assertEqual(html.count(REGION_HEAD), 1)
         self.assertEqual(html.count("window.__rompPaneSourceOk="), 1, "one definition, no second copy to drift")
-        # every mention of the name on the page is the definition or one listener's fail-closed read (two mentions
-        # each), so no assignment in another spelling, and no other reader, sits anywhere in the served shell
-        self.assertEqual(html.count("__rompPaneSourceOk"), 1 + 2 * len(LISTENERS),
-                         "the name appears only in the adopted definition and in each named listener's gate")
+        self.assertEqual(html.count(LOCK), 1, "the lock, once")
+        # every mention of the name on the page is the definition, the lock, or one listener's fail-closed read (two
+        # mentions each), so no assignment in another spelling, and no other reader, sits anywhere in the served shell
+        self.assertEqual(html.count("__rompPaneSourceOk"), 2 + 2 * len(LISTENERS),
+                         "the name appears only in the adopted definition, the lock and each named listener's gate")
         self.assertEqual(html.count(GATE), len(LISTENERS), "each named listener's gate, once")
         scripts = _inline_scripts(html)
         where = [n for n, s in enumerate(scripts) if REGION_HEAD in s]
@@ -192,13 +207,14 @@ def _files_naming(name):
 
 
 class NoOtherWriter(unittest.TestCase):
-    """Nothing outside the adopted lines and the thirteen gates names the check: no other code in the kernel (the pane
-    shim, another page's script, a string it serves), and no file anywhere else in the tree (a ui/ bundle the shell or a
-    pane loads, the timeline view). So no code in the tree replaces the shell's check under its name, on its own window
-    or on a pane's window.parent. This census reads text. A replacement the landing makes under a computed name is what
-    the executed legs below catch, on the roads their stand-in drives (ShellListenersExecuted says which), and so is a
-    pane page's inline script's through window.parent (ServedPagesExecuted). One on a road the stand-in does not drive,
-    or one a ui/ bundle makes under a computed name, is caught by no test here."""
+    """Nothing outside the adopted lines, the lock and the thirteen gates names the check: no other code in the kernel
+    (the pane shim, another page's script, a string it serves), and no file anywhere else in the tree (a ui/ bundle the
+    shell or a pane loads, the timeline view). So no code in the tree replaces the shell's check under its name, on its
+    own window or on a pane's window.parent. This census reads text. A replacement the landing makes under a computed
+    name is what the executed legs below catch, on the roads their stand-in drives (ShellListenersExecuted says which),
+    and so is a pane page's inline script's through window.parent (ServedPagesExecuted). One on a road the stand-in does
+    not drive, or one a ui/ bundle makes under a computed name, is refused by the lock once the boot script has run
+    (CheckLocked)."""
 
     def test_no_file_but_the_kernel_names_the_check(self):
         hits, read = _files_naming("__rompPaneSourceOk")
@@ -210,13 +226,14 @@ class NoOtherWriter(unittest.TestCase):
         self.assertGreater(len([f for f in read if f.startswith("ui/")]), 100, "the walk read ui/ (%d files)" % len(read))
         self.assertEqual(hits, ["kernel/kernel.py"], "a file outside the kernel names the shell's check")
 
-    def test_the_kernel_names_it_only_in_the_adopted_lines_and_the_gates(self):
+    def test_the_kernel_names_it_only_in_the_adopted_lines_the_lock_and_the_gates(self):
         # the Python comment lines that describe it aside, every mention is in the served JavaScript
         code = _kernel_code()
         self.assertEqual(code.count(REGION_HEAD), 1, "the adopted definition, once")
+        self.assertEqual(code.count(LOCK), 1, "the lock, once")
         self.assertEqual(code.count(GATE), len(LISTENERS), "each gate, once")
-        self.assertEqual(code.count("__rompPaneSourceOk"), 1 + 2 * len(LISTENERS),
-                         "the name appears in kernel.py's code only in the adopted definition and the gates")
+        self.assertEqual(code.count("__rompPaneSourceOk"), 2 + 2 * len(LISTENERS),
+                         "the name appears in kernel.py's code only in the adopted definition, the lock and the gates")
 
     def test_no_page_but_the_shell_carries_it(self):
         pages = _served_pages()
@@ -225,7 +242,7 @@ class NoOtherWriter(unittest.TestCase):
             with self.subTest(page=name):
                 self.assertGreater(len(page), 100, "the page was built")
                 self.assertNotIn("__rompPaneSourceOk", page)
-        self.assertEqual(km._landing().count("__rompPaneSourceOk"), 1 + 2 * len(LISTENERS))
+        self.assertEqual(km._landing().count("__rompPaneSourceOk"), 2 + 2 * len(LISTENERS))
 
 
 class ShellListenerCensus(unittest.TestCase):
@@ -546,13 +563,32 @@ const BUILTINS = new Set(['Object', 'Array', 'JSON', 'Math', 'Date', 'String', '
   'TypeError', 'RangeError', 'SyntaxError', 'ReferenceError', 'Map', 'Set', 'WeakMap', 'WeakSet', 'Symbol', 'Promise',
   'parseInt', 'parseFloat', 'isNaN', 'isFinite', 'encodeURIComponent', 'decodeURIComponent', 'encodeURI', 'decodeURI',
   'Infinity', 'NaN', 'undefined', 'Intl', 'URL', 'URLSearchParams', 'Reflect', 'Proxy', 'BigInt', 'Function']);
+// The global keeps a browser's rules for a locked property (the shell's check after its lock): a write to a read-only
+// property keeps the value (a strict-mode script's throws), and a define or delete the property refuses is refused.
+// (vm's global answers most of these before a trap runs, from the property's descriptor, which is read through
+// getOwnPropertyDescriptor below.) A define counts as a write only when it carries a value or an accessor; one that
+// changes attributes alone, as the lock's {writable:false,configurable:false} does, writes nothing and the property keeps
+// its value. vm hands this trap a define that carries no value as one whose value is undefined (node's contextify
+// definer fills the missing value in), so on a data property an undefined value is taken as no value: the property
+// keeps what it holds, as in a browser. (A define that really sets the check to undefined is taken the same way, and
+// missed: an undefined check refuses every message, which is no widening for the tests here to catch.)
 const G = new Proxy(target, {
   has() { return true; },
   get(t, k) { if (k in t) return t[k]; if (typeof k === 'symbol') return undefined; if (BUILTINS.has(k)) return globalThis[k]; return STUB; },
-  set(t, k, v) { onGlobalWrite(k, v); t[k] = v; return true; },
-  defineProperty(t, k, d) { onGlobalWrite(k, 'value' in d ? d.value : d); Object.defineProperty(t, k, d); return true; },
+  set(t, k, v) {
+    const d = Object.getOwnPropertyDescriptor(t, k);
+    if (d && ('value' in d ? !d.writable : !d.set)) return false;
+    onGlobalWrite(k, v); t[k] = v; return true;
+  },
+  defineProperty(t, k, d) {
+    const held = Object.getOwnPropertyDescriptor(t, k);
+    if ('value' in d && d.value === undefined && held && 'value' in held) d = Object.assign({}, d, { value: held.value });
+    else if ('value' in d) onGlobalWrite(k, d.value);
+    else if ('get' in d || 'set' in d) onGlobalWrite(k, d);
+    return Reflect.defineProperty(t, k, d);
+  },
   getOwnPropertyDescriptor(t, k) { return Object.getOwnPropertyDescriptor(t, k); },
-  deleteProperty(t, k) { delete t[k]; return true; },
+  deleteProperty(t, k) { return Reflect.deleteProperty(t, k); },
 });
 Object.assign(target, {
   window: G, self: G, top: G, parent: G, globalThis: G, document,
@@ -652,7 +688,7 @@ const MODE = process.env.ROMP_TEST_MODE || 'reads';
 // message listener's arms compare against, from each pane; then whatever those left for later. In rounds, since one may
 // register, hand over or queue more (a listener registered here is a listener the census and the reads below count)
 const EXERCISE = { ran: 0, errors: 0, words: 0, rounds: 0, left: 0, types: {} };
-if (MODE === 'reads' || MODE === 'census') {
+if (MODE === 'reads' || MODE === 'census' || MODE === 'overwrite') {
   const worded = new Set();
   for (let round = 0; round < 6; round++) {
     const batch = OTHER.splice(0, OTHER.length);
@@ -674,11 +710,23 @@ if (MODE === 'reads' || MODE === 'census') {
 }
 // the check the listeners will read, as the scripts, everything they left for later and the exercise left it
 const AFTER_BOOT = textOf(target.__rompPaneSourceOk);
+// the check's property as a script on the page reads it: its attributes, and whether it holds a value or an accessor
+function descriptorSeen() {
+  const d = vm.runInContext("Object.getOwnPropertyDescriptor(window,'__rompPaneSourceOk')", ctx);
+  if (!d) return null;
+  return { writable: 'value' in d ? d.writable : null, configurable: d.configurable, enumerable: d.enumerable,
+           value: 'value' in d ? textOf(d.value) : null, accessor: 'get' in d || 'set' in d };
+}
 const out = { errors: ERRORS, listeners: LISTENERS.map((l) => ({ src: l.src, checkDefined: l.checkDefined })),
-              assigns: ASSIGNED.map(textOf), afterBoot: AFTER_BOOT, late: LATE_RUN, exercise: EXERCISE, onmessage: ONMESSAGE };
+              assigns: ASSIGNED.map(textOf), afterBoot: AFTER_BOOT, late: LATE_RUN, exercise: EXERCISE, onmessage: ONMESSAGE,
+              descriptor: descriptorSeen(),
+              // how often a planted road ran, by the counter a plant bumps (window.__b5reached): a road the lock leaves
+              // nothing to hear on shows it ran here
+              reached: typeof target.__b5reached === 'number' ? target.__b5reached : 0 };
+const REFUSED_SENDERS = Object.keys(SENDERS).filter((k) => k !== 'pane');
 if (MODE === 'reads' || MODE === 'nocheck') {
   // the check missing (held as undefined: a name the context lacks answers with a stub): fail-closed hears nothing
-  if (MODE === 'nocheck') target.__rompPaneSourceOk = undefined;
+  if (MODE === 'nocheck') target.__rompPaneSourceOk = undefined;   // the page defined none (_without_check), so nothing is locked
   out.reads = LISTENERS.map((l) => {
     const r = {};
     Object.keys(SENDERS).forEach((k) => { r[k] = deliver(l, SENDERS[k][0], SENDERS[k][1], { romp: 'none-of-yours' }).reads; });
@@ -703,6 +751,55 @@ if (MODE === 'reads' || MODE === 'nocheck') {
     deliver(notify, senders[k][0], senders[k][1], note);
     out.effects[k] = { toChat: POSTED.filter((p) => p[0] === 'chat').map((p) => p[1]), notes: NOTES.slice() };
   });
+} else if (MODE === 'overwrite') {
+  // after the scripts, what they left for later and the exercise: a script on the page tries to replace the check with
+  // one that admits every sender, in each way a script can. Each attempt starts from the check as the boot left it (one
+  // that replaced it on an unlocked page is undone first; on a locked page there is nothing to undo), then every listener
+  // is handed a message from each refused sender and from a pane, and the check a script reads is compared with the
+  // function the boot left
+  const ADOPTED = target.__rompPaneSourceOk, ORIG = Object.getOwnPropertyDescriptor(target, CHECK);
+  const same = (a, b) => !!a && !!b && ['value', 'get', 'set', 'writable', 'configurable', 'enumerable'].every((k) => a[k] === b[k]);
+  const ANY = 'function(e){return true;}';
+  const ATTEMPTS = {
+    'an assignment on window': "window.__rompPaneSourceOk=" + ANY + ";",
+    'an assignment by a computed name': "window['__romp'+'PaneSourceOk']=" + ANY + ";",
+    'an assignment to the bare global': "__rompPaneSourceOk=" + ANY + ";",
+    'an assignment on self': "self.__rompPaneSourceOk=" + ANY + ";",
+    'an assignment in strict mode': "'use strict';window.__rompPaneSourceOk=" + ANY + ";",
+    'a var declaration': "var __rompPaneSourceOk=" + ANY + ";",
+    'Reflect.set': "Reflect.set(window,'__rompPaneSourceOk'," + ANY + ");",
+    'Object.assign': "Object.assign(window,{__rompPaneSourceOk:" + ANY + "});",
+    'defineProperty with a value': "Object.defineProperty(window,'__rompPaneSourceOk',{value:" + ANY + "});",
+    'defineProperty with a getter': "Object.defineProperty(window,'__rompPaneSourceOk',{get:function(){return " + ANY + ";}});",
+    'a delete, then an assignment': "delete window.__rompPaneSourceOk;window.__rompPaneSourceOk=" + ANY + ";",
+    'an unlock, then an assignment': "Object.defineProperty(window,'__rompPaneSourceOk',{writable:true,configurable:true});" +
+                                     "window.__rompPaneSourceOk=" + ANY + ";",
+  };
+  out.attempts = {};
+  for (const name of Object.keys(ATTEMPTS)) {
+    const now = Object.getOwnPropertyDescriptor(target, CHECK);
+    if (!same(now, ORIG) && (!now || now.configurable)) Object.defineProperty(target, CHECK, ORIG);
+    let threw = null;
+    try { vm.runInContext(ATTEMPTS[name], ctx, { timeout: 2000 }); } catch (x) { threw = String(x && x.message || x).slice(0, 120); }
+    const seen = vm.runInContext('window.__rompPaneSourceOk', ctx);
+    let refused = 0, pane = 0;
+    for (const l of LISTENERS) {
+      for (const k of REFUSED_SENDERS) refused += deliver(l, SENDERS[k][0], SENDERS[k][1], { romp: 'none-of-yours' }).reads;
+      pane += deliver(l, CHAT, ORIGIN, { romp: 'none-of-yours' }).reads;
+    }
+    out.attempts[name] = { threw: threw !== null, kept: seen === ADOPTED, refusedReads: refused, paneReads: pane };
+  }
+} else if (MODE === 'trap') {
+  // the global's define trap, reached from a page's script through vm and driven directly: a define that carries a value
+  // is a write, one that carries an accessor is a write, and one that changes attributes alone writes nothing and leaves
+  // the value in place (vm hands it over with an undefined value; driven directly, it carries none)
+  vm.runInContext("window.__rompPaneSourceOk=function(e){return false;};", ctx);
+  vm.runInContext("Object.defineProperty(window,'__rompPaneSourceOk',{writable:true,enumerable:true});", ctx);
+  Reflect.defineProperty(G, CHECK, { configurable: true });
+  const kept = textOf(target.__rompPaneSourceOk);
+  vm.runInContext("Object.defineProperty(window,'__rompPaneSourceOk',{get:function(){return function(e){return true;};}});", ctx);
+  out.trap = { kept, writes: ASSIGNED.map((v) => (typeof v === 'function' ? textOf(v)
+                                                  : (v && typeof v.get === 'function' ? 'an accessor' : 'another write: ' + String(v)))) };
 }
 out.inEffect = [...IN_EFFECT];
 process.stdout.write('\n' + JSON.stringify(out));
@@ -714,10 +811,29 @@ def _run_landing(mode):
     return _run_scripts(_inline_scripts(km._landing()), mode)
 
 
+def _without(html, text):
+    """`html` with `text`, which it holds once, taken out."""
+    assert html.count(text) == 1, "the page holds it once"
+    return html.replace(text, "", 1)
+
+
+def _without_lock(html):
+    """The shell with the fork's lock line taken out: what the page would be without it."""
+    return _without(html, LOCK + "\n")
+
+
+def _without_check(html):
+    """The shell with the adopted definition and the lock taken out: a page on which no script defines the check."""
+    i = html.index(REGION_HEAD)
+    return _without(html, html[i:html.index(REGION_TAIL, i) + len(REGION_TAIL)] + "\n" + LOCK + "\n")
+
+
 def _run_scripts(bodies, mode):
     """Run `bodies` (a page's inline scripts, in order) in the stand-in browser under `mode`: reads (the exercise, then each
-    listener handed each sender's message), nocheck (the same with the check removed, no exercise), effects (two arms'
-    visible effects, no exercise) or census (the exercise and nothing delivered after it)."""
+    listener handed each sender's message), nocheck (each listener handed each sender's message with the check held as
+    undefined, no exercise; for a page that does not define it), effects (two arms' visible effects, no exercise), census
+    (the exercise and nothing delivered after it), overwrite (the exercise, then each way a script can try to replace the
+    check, and every listener handed each sender's message after each) or trap (the global's define trap alone)."""
     node = shutil.which("node")
     if not node:
         raise unittest.SkipTest("node not installed")
@@ -753,12 +869,13 @@ class ShellListenersExecuted(unittest.TestCase):
     text; and, from each pane, every word a window message listener's text compares a field of with a string literal
     (m.romp==='settings'); in rounds until none is left. So a write of the check in any spelling that lands on the window
     (window[...]=, a bare global, a defineProperty), or a registration through the window's own addEventListener however
-    it is reached, is caught on those roads (test_the_exercise_reaches_a_write_planted_on_each_road). Not run: a road
-    behind a condition the stand-in does not meet (location.protocol === 'https:', a user agent, a stored setting, a key
-    its stand-in event lacks), an arm keyed some other way than such a comparison (a switch, a lookup table), and a
-    registration through another object's method (EventTarget.prototype.addEventListener.call). A write or a
-    registration there is caught only when its text names what it touches: the check's name (NoOtherWriter), or
-    addEventListener (KernelListenerCensus). Under a computed name, no test catches it."""
+    it is reached, is caught on those roads (test_the_exercise_reaches_a_write_planted_on_each_road, run on the shell
+    without its lock, where such a write lands; on the shell as served the lock refuses it). Not run: a road behind a
+    condition the stand-in does not meet (location.protocol === 'https:', a user agent, a stored setting, a key its
+    stand-in event lacks), an arm keyed some other way than such a comparison (a switch, a lookup table), and a
+    registration through another object's method (EventTarget.prototype.addEventListener.call). A registration there is
+    caught only when its text names addEventListener (KernelListenerCensus); under a computed name, no test catches it. A
+    write of the check there is refused by the lock (CheckLocked)."""
 
     REFUSED = ("opener", "sandboxedFrame", "otherOriginFrame", "strayWindow", "shellItself", "dispatch",
                "sourcelessElsewhere", "sourcelessOpaque")
@@ -791,7 +908,8 @@ class ShellListenersExecuted(unittest.TestCase):
         # handed a stand-in event; from a callback they handed a stand-in; in a message listener's arm, reached by a word
         # it compares against, from a pane): the scripts assign the check once, the adopted function, and it is the
         # function in effect at every delivery, so a later wrapper that widens it for some senders cannot stand in for it.
-        # A write behind a condition the stand-in does not meet is not run here (the class docstring's residual)
+        # A write behind a condition the stand-in does not meet is not run here; the lock refuses it (CheckLocked). The
+        # lock's own define carries no new value, so it is no second assignment
         html = km._landing()
         i = html.index(REGION_HEAD)
         region = html[i:html.index(REGION_TAIL, i) + len(REGION_TAIL)]
@@ -821,9 +939,12 @@ class ShellListenersExecuted(unittest.TestCase):
         # the write (window.onmessage=, a computed member, a bare global, a defineProperty), it lands on the global
         self.assertEqual(self.run_["onmessage"], [], "an onmessage handler on the shell's window")
 
-    # A write of the check under a computed name, planted on each road the exercise drives: each is heard, and replaces
-    # the adopted function before the listeners are tested (what the tests above would then red on)
+    # A write of the check under a computed name, planted on each road the exercise drives. On the shell without its lock,
+    # each is heard and replaces the adopted function before the listeners are tested (what the tests above would then
+    # red on), so the exercise reaches every road. On the shell as served, each road runs (the plant's counter says so)
+    # and the lock leaves the adopted function in place (CheckLocked tries every other spelling)
     PLANT_WRITE = "window['__romp'+'PaneSourceOk']=function(e){return !!e;};"
+    PLANT_REACH = "window.__b5reached=(window.__b5reached||0)+1;"
     PLANTS = {
         "a window listener (resize)": "window.addEventListener('resize',function(){WRITE});",
         "a document listener (visibilitychange)": "document.addEventListener('visibilitychange',function(){WRITE});",
@@ -838,15 +959,26 @@ class ShellListenersExecuted(unittest.TestCase):
 
     def test_the_exercise_reaches_a_write_planted_on_each_road(self):
         fn = self.run_["assigns"][0]
-        base = _inline_scripts(km._landing())
+        unlocked = _inline_scripts(_without_lock(km._landing()))
         for road, plant in self.PLANTS.items():
             with self.subTest(road=road):
-                run = _run_scripts(base + [plant.replace("WRITE", self.PLANT_WRITE)], "reads")
+                run = _run_scripts(unlocked + [plant.replace("WRITE", self.PLANT_WRITE)], "reads")
                 self.assertEqual(run["assigns"][0], fn)
                 # heard once per time its road ran (an arm is reached by more than one word, from each pane)
                 self.assertGreaterEqual(len(run["assigns"]), 2, "the planted write was heard")
                 self.assertNotEqual(run["afterBoot"], fn, "and replaced the check before the listeners were tested")
                 self.assertNotEqual(run["inEffect"], [fn], "so a delivery read a check that is not the adopted function")
+
+    def test_with_the_lock_a_write_planted_on_each_road_leaves_the_adopted_function(self):
+        fn = self.run_["assigns"][0]
+        base = _inline_scripts(km._landing())
+        for road, plant in self.PLANTS.items():
+            with self.subTest(road=road):
+                run = _run_scripts(base + [plant.replace("WRITE", self.PLANT_REACH + self.PLANT_WRITE)], "reads")
+                self.assertGreater(run["reached"], 0, "the planted road ran")
+                self.assertEqual(run["assigns"], [fn], "no write but the adopted definition landed")
+                self.assertEqual(run["afterBoot"], fn)
+                self.assertEqual(run["inEffect"], [fn], "every delivery read the adopted function")
 
     def test_a_listener_registered_from_a_later_road_is_counted(self):
         run = _run_scripts(_inline_scripts(km._landing()) + [
@@ -856,7 +988,7 @@ class ShellListenersExecuted(unittest.TestCase):
                          ["unnamed listener: function(e){}"])
 
     def test_without_the_check_no_listener_reads_anything(self):
-        run = _run_landing("nocheck")
+        run = _run_scripts(_inline_scripts(_without_check(km._landing())), "nocheck")
         self.assertEqual(len(run["reads"]), len(LISTENERS))
         for l, reads in zip(run["listeners"], run["reads"]):
             with self.subTest(listener=_name_of(l["src"])):
@@ -923,6 +1055,67 @@ class ShellArmsExecuted(unittest.TestCase):
         for sender in ShellListenersExecuted.REFUSED:
             with self.subTest(sender=sender):
                 self.assertEqual(self.effects[sender]["notes"], [], "no Log line from " + sender)
+
+
+class CheckLocked(unittest.TestCase):
+    """The fork's lock (2026-09-26), the line right after the adopted definition: once the boot script has run, the
+    check's property is read-only and non-configurable and holds the adopted function, so no later script replaces,
+    redefines or deletes it, however it spells the attempt, and every listener still reads the adopted function after
+    each. The lock is outside the adopted region (AdoptedCheck); a fold that takes the project's side of
+    _LANDING_BOOT_JS keeps it. The same attempts on the shell without its lock each replace the check, so the harness
+    can see a replacement when one lands. A script that runs BEFORE the boot script is not refused by the lock: the
+    served shell's two earlier scripts are run here, and the descriptor read after boot would show what they left."""
+
+    ATTEMPTS = ("an assignment on window", "an assignment by a computed name", "an assignment to the bare global",
+                "an assignment on self", "an assignment in strict mode", "a var declaration", "Reflect.set", "Object.assign",
+                "defineProperty with a value", "defineProperty with a getter", "a delete, then an assignment",
+                "an unlock, then an assignment")
+
+    @classmethod
+    def setUpClass(cls):
+        html = km._landing()
+        cls.locked = _run_scripts(_inline_scripts(html), "overwrite")
+        cls.unlocked = _run_scripts(_inline_scripts(_without_lock(html)), "overwrite")
+        i = html.index(REGION_HEAD)
+        cls.fn = html[i:html.index(REGION_TAIL, i) + len(REGION_TAIL)][len("window.__rompPaneSourceOk="):-1]
+
+    def test_after_boot_the_check_is_read_only_non_configurable_and_the_adopted_function(self):
+        self.assertEqual(self.locked["errors"], [], "the shell's scripts ran")
+        self.assertEqual(self.locked["descriptor"], {"writable": False, "configurable": False, "enumerable": True,
+                                                     "value": self.fn, "accessor": False})
+
+    def test_no_attempt_to_replace_the_check_leaves_anything_but_the_adopted_function(self):
+        got = self.locked["attempts"]
+        self.assertEqual(sorted(got), sorted(self.ATTEMPTS), "every attempt ran")
+        for name in self.ATTEMPTS:
+            with self.subTest(attempt=name):
+                self.assertTrue(got[name]["kept"], "the check a script reads is still the adopted function")
+                self.assertEqual(got[name]["refusedReads"], 0, "no listener reads a message from a sender that is not a pane")
+                self.assertGreater(got[name]["paneReads"], 0, "and the listeners still hear their panes")
+                # a browser refuses some of these with a TypeError and the rest without a word; node's vm global drops
+                # a strict-mode write without one, so whether it threw is not read here, only that nothing landed
+        self.assertEqual(self.locked["inEffect"], [self.fn], "every delivery read the adopted function")
+
+    def test_without_the_lock_each_attempt_replaces_the_check(self):
+        # the contrast: the same page less its lock line. Each attempt runs without an error and lands, and the listeners
+        # then read messages from senders the adopted check refuses: so every attempt above is a working replacement,
+        # and a replacement that lands is one these tests see
+        self.assertEqual(self.unlocked["descriptor"], {"writable": True, "configurable": True, "enumerable": True,
+                                                       "value": self.fn, "accessor": False})
+        got = self.unlocked["attempts"]
+        self.assertEqual(sorted(got), sorted(self.ATTEMPTS))
+        for name in self.ATTEMPTS:
+            with self.subTest(attempt=name):
+                self.assertFalse(got[name]["threw"], "nothing refused it")
+                self.assertFalse(got[name]["kept"], "it replaced the check")
+                self.assertGreater(got[name]["refusedReads"], 0, "and a listener read a message the adopted check refuses")
+
+    def test_the_harness_counts_a_define_as_a_write_only_when_it_carries_a_value_or_an_accessor(self):
+        # the lock's define changes attributes alone ({writable:false,configurable:false}): no write, and the check keeps
+        # its value, so a page that locks the check still assigns it once and its listeners still read the adopted
+        # function (ShellListenersExecuted). vm fills a missing value in as undefined before the trap sees it
+        self.assertEqual(_run_scripts([], "trap")["trap"], {"kept": "function(e){return false;}",
+                                                            "writes": ["function(e){return false;}", "an accessor"]})
 
 
 # The adopted check alone, over stand-in windows: the truth table of what it admits.

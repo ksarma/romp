@@ -67586,10 +67586,18 @@ else window.__rompPaneToggle('fleet');});})();
 # listener; each of them reads it FAIL-CLOSED as its first statement (no check, no message), spelled as the
 # project spells it, and tests/test_shell_source_check.py takes the census. The service worker's own channel
 # (_LANDING_REVEAL_JS) is the one exception: no window can post on it.
+# [fork] THE LOCK (2026-09-26): the fourth line, right after the adopted three, is the fork's own, not the project's.
+# It makes the check read-only and non-configurable once it is defined, so no later script (another inline script, a
+# bundle, a callback, a listener's arm) can replace, redefine or delete it, under any spelling: a sloppy-mode write
+# is ignored and a strict-mode one throws, so every listener's read reaches the adopted function. The try/catch keeps
+# the boot running if the property cannot be locked. FOLD NOTE: a fold that takes the project's side of this constant
+# must keep this line, directly after the project's definition. tests/test_shell_source_check.py CheckLocked reads
+# the property's descriptor after boot (writable false, configurable false), and it fails without this line.
 _LANDING_BOOT_JS = """
 window.__rompPaneSourceOk=function(e){try{if(!e||!e.source||e.source===window||e.origin!==location.origin)return false;
 var fs=document.querySelectorAll('iframe');for(var i=0;i<fs.length;i++){if(fs[i].contentWindow===e.source)return fs[i].getAttribute('data-protocol')!=='none';}
 return false;}catch(x){return false;}};
+try{Object.defineProperty(window,'__rompPaneSourceOk',{writable:false,configurable:false});}catch(x){}
 (function(){var boot=document.getElementById('romp-boot');if(!boot)return;var done=false;
 function hide(){if(done)return;done=true;boot.classList.add('gone');
 setTimeout(function(){if(boot.parentNode)boot.parentNode.removeChild(boot);},450);}
