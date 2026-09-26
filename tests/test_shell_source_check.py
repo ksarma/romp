@@ -17,12 +17,22 @@ them reds; recompute the recorded digest from that commit, never from the fork's
 
 NoOtherWriter holds that nothing else names the check: no file in the tree but the kernel, and in the kernel's code
 nothing but the adopted lines and the gates. The rest runs the served landing: the census of every window message
-listener in its inline scripts (addEventListener, and an onmessage handler on the window), and node executing those
-scripts in a stand-in browser, then every callback they leave for later (timers, animation frames, microtasks, load
-listeners), then forging a message from each sender the shell must refuse (a page that opened it, a sandboxed frame,
-a window it does not hold, itself, its own dispatch, a sourceless post with the opaque origin) and from a pane, and
-reading which function the check is when each message is delivered. Synthetic only: no session data, a loopback
-origin.
+listener in its inline scripts (addEventListener, and an onmessage handler on the window), the same census over all of
+kernel.py and every page it serves (KernelListenerCensus), and node executing the scripts in a stand-in browser. The
+run goes through every callback they leave for later (timers, animation frames, idle callbacks, microtasks, load
+listeners) and an exercise: every other listener and handler they register (on the window, the document, a frame or an
+element), handed a stand-in event; every callback they hand to a stand-in (an observer's, a fetch's then); and every word
+a message listener's arms compare against, from each pane. Then it forges a message from each sender the shell must
+refuse (a page that opened it, a sandboxed frame, a window it does not hold, itself, its own dispatch, a sourceless post
+with the opaque origin) and from a pane, and reads which function the check is when each message is delivered. The
+other pages' scripts run through the same exercise for their census (ServedPagesExecuted). Synthetic only: no session
+data, a loopback origin.
+
+What no leg here runs: code behind a condition the stand-in does not meet (a secure-context test, a user agent, a stored
+setting, a key the stand-in event does not carry), an arm keyed other than by comparing a field with a string, and a
+registration through another object's method. A write of the check or a listener registered under a computed name on
+such a road is caught by none of these tests; the text censuses catch only the names they can read. Nor does any test
+here run a ui/ bundle: a bundle's write of the check under a computed name is caught by none of them.
 """
 import hashlib
 import json
@@ -83,7 +93,7 @@ LISTEN_OPEN = "addEventListener('message',function(e){"
 
 # An onmessage handler assigned to the window: window., self. or globalThis. (or a computed ['onmessage'] member of
 # one of them), or a bare onmessage with no receiver. A plain `=` only: == and === compare.
-_ONMESSAGE = re.compile(r"(?:(?<![\w$.])(?:window|self|globalThis)\s*(?:\.\s*onmessage|\[\s*['\"]onmessage['\"]\s*\])"
+_ONMESSAGE = re.compile(r"(?:(?<![\w$.])(?:window|self|globalThis)\s*(?:\.\s*onmessage|\[\s*(['\"`])onmessage\1\s*\])"
                         r"|(?<![\w$.])onmessage)\s*=(?!=)")
 
 
@@ -93,8 +103,25 @@ def _window_onmessage(text):
 
 
 def _inline_scripts(html):
-    """The bodies of the page's inline <script> elements, in page order (a <script src=...> is a bundle, not here)."""
-    return re.findall(r"<script>(.*?)</script>", html, re.S)
+    """The bodies of the page's inline <script> elements, in page order, whatever attributes the tag carries (a
+    <script src=...> is a bundle, not here)."""
+    return re.findall(r"<script(?![^>]*\bsrc\s*=)[^>]*>(.*?)</script>", html, re.S | re.I)
+
+
+def _served_pages():
+    """Every page the kernel serves as a document, by route, and /sw.js (the service worker's script): what a script on
+    romp's origin that the kernel writes can be."""
+    return {"/": km._landing(), "/chat": km._chat_page(), "/feed": km._feed_page(), "/fleet": km._fleet_page(),
+            "/waiting": km._waiting_page(), "/files": km._files_page(), "/settings": km._settings_page(),
+            "/timeline": km._timeline_page(), "the sign-in page": km._TOKEN_LOGIN_HTML,
+            "the too-large page": km._too_large_page("too large", "a.pdf", {}), "/sw.js": km._sw_js()}
+
+
+def _kernel_code():
+    """kernel.py's text less the Python comment lines that describe the served JavaScript (every served line is code)."""
+    with open(os.path.join(os.path.dirname(HERE), "kernel", "kernel.py"), encoding="utf-8") as f:
+        src = f.read()
+    return "\n".join(l for l in src.split("\n") if not l.lstrip().startswith("#"))
 
 
 class AdoptedCheck(unittest.TestCase):
@@ -168,8 +195,10 @@ class NoOtherWriter(unittest.TestCase):
     """Nothing outside the adopted lines and the thirteen gates names the check: no other code in the kernel (the pane
     shim, another page's script, a string it serves), and no file anywhere else in the tree (a ui/ bundle the shell or a
     pane loads, the timeline view). So no code in the tree replaces the shell's check under its name, on its own window
-    or on a pane's window.parent. This census reads text; a replacement the landing makes in any spelling, at load or
-    deferred, is what the executed legs below catch."""
+    or on a pane's window.parent. This census reads text. A replacement the landing makes under a computed name is what
+    the executed legs below catch, on the roads their stand-in drives (ShellListenersExecuted says which), and so is a
+    pane page's inline script's through window.parent (ServedPagesExecuted). One on a road the stand-in does not drive,
+    or one a ui/ bundle makes under a computed name, is caught by no test here."""
 
     def test_no_file_but_the_kernel_names_the_check(self):
         hits, read = _files_naming("__rompPaneSourceOk")
@@ -182,23 +211,19 @@ class NoOtherWriter(unittest.TestCase):
         self.assertEqual(hits, ["kernel/kernel.py"], "a file outside the kernel names the shell's check")
 
     def test_the_kernel_names_it_only_in_the_adopted_lines_and_the_gates(self):
-        with open(os.path.join(os.path.dirname(HERE), "kernel", "kernel.py"), encoding="utf-8") as f:
-            src = f.read()
         # the Python comment lines that describe it aside, every mention is in the served JavaScript
-        code = "\n".join(l for l in src.split("\n") if not l.lstrip().startswith("#"))
+        code = _kernel_code()
         self.assertEqual(code.count(REGION_HEAD), 1, "the adopted definition, once")
         self.assertEqual(code.count(GATE), len(LISTENERS), "each gate, once")
         self.assertEqual(code.count("__rompPaneSourceOk"), 1 + 2 * len(LISTENERS),
                          "the name appears in kernel.py's code only in the adopted definition and the gates")
 
     def test_no_page_but_the_shell_carries_it(self):
-        pages = {"/chat": km._chat_page(), "/feed": km._feed_page(), "/fleet": km._fleet_page(),
-                 "/waiting": km._waiting_page(), "/files": km._files_page(), "/settings": km._settings_page(),
-                 "/timeline": km._timeline_page(), "the sign-in page": km._TOKEN_LOGIN_HTML,
-                 "the too-large page": km._too_large_page("too large", "a.pdf", {})}
+        pages = _served_pages()
+        del pages["/"]
         for name, page in pages.items():
             with self.subTest(page=name):
-                self.assertIn("<", page, "the page was built")
+                self.assertGreater(len(page), 100, "the page was built")
                 self.assertNotIn("__rompPaneSourceOk", page)
         self.assertEqual(km._landing().count("__rompPaneSourceOk"), 1 + 2 * len(LISTENERS))
 
@@ -221,7 +246,7 @@ class ShellListenerCensus(unittest.TestCase):
                 self.assertEqual(head, GATE, "the check, fail-closed, is the listener's first statement")
         # no listener in another spelling slips past the census: every message listener on the page is one of the
         # thirteen above or the service worker's channel
-        every = re.findall(r"addEventListener\(\s*['\"]message['\"]", self.html)
+        every = _MESSAGE_LISTEN.findall(self.html)
         self.assertEqual(len(every), len(LISTENERS) + 1, "the thirteen window listeners and the service worker's")
         self.assertEqual(self.html.count("swc.addEventListener('message',function(ev){"), 1,
                          "the service worker's own channel: exempt, a window cannot post on it")
@@ -232,6 +257,7 @@ class ShellListenerCensus(unittest.TestCase):
 
     def test_the_onmessage_census_reads_each_spelling(self):
         for src in ("window.onmessage=function(e){}", "self.onmessage = f", "globalThis['onmessage']=f", "window [\"onmessage\"] =f",
+                    "window[`onmessage`]=f",
                     ";onmessage=function(e){}", "\n  onmessage = f"):
             with self.subTest(src=src):
                 self.assertEqual(len(_window_onmessage(src)), 1)
@@ -256,31 +282,225 @@ class ShellListenerCensus(unittest.TestCase):
         self.assertNotIn("e.origin!==location.origin)return;", js)
 
 
+# ── every window message listener the kernel serves (2026-09-26) ──
+# The census above reads the served shell. This one reads all of kernel.py and every page it serves, so a listener added
+# to any other page (the chat page's phone script, a small inline script on /feed or /settings, the sign-in page), or a
+# third listener in the pane shim, in any quoting, fails here too. Each window message listener in kernel.py's code
+# opens with one of the heads below, from its receiver through its first statement, and each head occurs the number of
+# times listed. A new listener, or a listed one gone, fails until this table names it, which is where its senders get
+# decided.
+KERNEL_LISTENER_KINDS = {
+    "shell (the adopted source check)": ("window.", "addEventListener('message',function(e){" + GATE, len(LISTENERS)),
+    "pane shim (fromShell; tests/test_pane_shim_return.py)":
+        ("window.", 'addEventListener("message",function(e){if(!fromShell(e))return;', 2),
+    "timeline boot (heardSender; tests/test_timeline_boot_shim.py)":
+        ("window.", 'addEventListener("message",function(e){if(!heardSender(e))return;', 1),
+    "the service worker's channel (exempt: no window posts on it)": ("swc.", "addEventListener('message',function(ev){", 1),
+}
+# What each served page carries, by kind: the shell's listeners and the service worker channel on the shell, the pane
+# shim's two on every pane page, and the timeline boot's beside them on /timeline.
+PAGE_LISTENERS = {
+    "/": {"shell (the adopted source check)": len(LISTENERS),
+          "the service worker's channel (exempt: no window posts on it)": 1},
+    "/timeline": {"pane shim (fromShell; tests/test_pane_shim_return.py)": 2,
+                  "timeline boot (heardSender; tests/test_timeline_boot_shim.py)": 1},
+    "the sign-in page": {}, "the too-large page": {}, "/sw.js": {},
+}
+for _page in ("/chat", "/feed", "/fleet", "/waiting", "/files", "/settings"):
+    PAGE_LISTENERS[_page] = {"pane shim (fromShell; tests/test_pane_shim_return.py)": 2}
+
+# A message listener in any spelling text can show: the method named or reached by a computed member, the event type in
+# any quotes. (A registration that reaches the method with no such text, window['add'+'EventListener'], is the executed
+# legs' to catch: the shell's and every served page's below, and the shim's in tests/test_pane_shim_return.py.)
+_MESSAGE_LISTEN = re.compile(r"(?:(?<![\w$])addEventListener|\[\s*(['\"`])addEventListener\1\s*\])\s*\(\s*(['\"`])message\2")
+# Every addEventListener in the kernel's code, named: each must be a call with a literal event type, so that the census
+# above reads the type (a bind, a call or apply, a comma-operator call, a variable holding the method, or a computed type
+# are the ways around it). Two other shapes stand: a feature test followed at once by the same receiver's literal call
+# (`x.addEventListener)x.addEventListener('load',...)`), and the calls with a computed type below, each over a literal
+# list that holds no "message".
+_ADD_TOKEN = re.compile(r"(?<![\w$])addEventListener(?![\w$])")
+_LITERAL_CALL = re.compile(r"\s*\(\s*(['\"`])[\w:.-]*\1")
+COMPUTED_TYPE_CALLS = {
+    "document.addEventListener(END[k],ended,true)":
+        "var END=['pointerup','touchend','touchcancel','scrollend','dragend','drop','selectionchange','input','focusout'];",
+}
+
+
+def _listener_kind(text, at):
+    """The KERNEL_LISTENER_KINDS name of the message listener whose match starts at `at` in `text`, or None."""
+    for name, (receiver, head, _n) in KERNEL_LISTENER_KINDS.items():
+        if text.startswith(head, at) and text[max(0, at - len(receiver)):at] == receiver:
+            return name
+    return None
+
+
+def _message_listeners(text):
+    """[(kind or None, the call's first 160 characters)] for every message listener `text` spells."""
+    return [(_listener_kind(text, m.start()), text[max(0, m.start() - 8):m.start() + 160])
+            for m in _MESSAGE_LISTEN.finditer(text)]
+
+
+_RECEIVER = re.compile(r"(?<![\w$.])([\w$]+(?:\.[\w$]+)*)\.$")
+
+
+def _feature_test(code, m):
+    """True when the addEventListener token matched by `m` is a feature test followed at once by the same receiver's call
+    with a literal event type: `x.addEventListener)x.addEventListener('load',...)`."""
+    if not code.startswith(")", m.end()):
+        return False
+    r = _RECEIVER.search(code, max(0, m.start() - 200), m.start())
+    if not r:
+        return False
+    call = r.group(1) + ".addEventListener"
+    return code.startswith(call, m.end() + 1) and bool(_LITERAL_CALL.match(code, m.end() + 1 + len(call)))
+
+
+def _loose_add_tokens(code):
+    """Every addEventListener in `code` that is not a call with a literal event type, a feature test ahead of one, or a
+    listed computed-type call, with its surroundings."""
+    loose = []
+    for m in _ADD_TOKEN.finditer(code):
+        if _LITERAL_CALL.match(code, m.end()) or _feature_test(code, m):
+            continue
+        if any(code.startswith(site, m.start() - site.index("addEventListener")) for site in COMPUTED_TYPE_CALLS):
+            continue
+        loose.append(code[max(0, m.start() - 40):m.end() + 40])
+    return loose
+
+
+class KernelListenerCensus(unittest.TestCase):
+    """Every window message listener in kernel.py, and on every page it serves, is one of the listed kinds: the shell's
+    (the adopted check), the pane shim's (fromShell), the timeline boot's (heardSender), and the service worker's
+    channel. No onmessage handler is assigned to a window anywhere in the kernel's code or its pages, and no
+    addEventListener in the kernel's code escapes the census by an alias or a computed event type."""
+
+    def test_every_message_listener_in_the_kernels_code_is_a_listed_kind(self):
+        found = _message_listeners(_kernel_code())
+        unknown = [at for kind, at in found if kind is None]
+        self.assertEqual(unknown, [], "a message listener in kernel.py that KERNEL_LISTENER_KINDS does not list: list its "
+                                      "kind there, which is where its senders are decided")
+        for name, (_receiver, _head, n) in KERNEL_LISTENER_KINDS.items():
+            with self.subTest(kind=name):
+                self.assertEqual(sum(1 for kind, _ in found if kind == name), n, "how many listeners of this kind the kernel has")
+        self.assertEqual(len(found), sum(n for _r, _h, n in KERNEL_LISTENER_KINDS.values()))
+
+    def test_no_onmessage_handler_on_a_window_in_the_kernels_code(self):
+        self.assertEqual(_window_onmessage(_kernel_code()), [], "an onmessage handler assigned to a window in kernel.py")
+
+    def test_every_add_event_listener_in_the_kernels_code_names_its_event_type(self):
+        code = _kernel_code()
+        self.assertEqual(_loose_add_tokens(code), [],
+                         "an addEventListener in kernel.py that is not a call with a literal event type (an alias, a bind, "
+                         "a call or apply, a computed type): the message census cannot read it")
+        for site, defn in COMPUTED_TYPE_CALLS.items():
+            with self.subTest(site=site):
+                self.assertEqual(code.count(site), 1, "the computed-type call, once")
+                self.assertEqual(code.count(defn), 1, "its literal list of event types, once")
+                self.assertNotIn("message", defn)
+                name = defn[len("var "):defn.index("=")]
+                self.assertIsNone(re.search(r"(?<![\w$.])%s\s*(?:\.\s*(?:push|unshift|splice|concat)|\[[^\]]*\]\s*=(?!=))" % name, code),
+                                  "the list is never added to")
+        self.assertGreater(len(_ADD_TOKEN.findall(code)), 150, "the census read the kernel's listeners")
+
+    def test_every_served_page_carries_only_its_listed_listeners(self):
+        pages = _served_pages()
+        self.assertEqual(set(pages), set(PAGE_LISTENERS), "every page the census reads has its expected kinds listed")
+        for name, page in pages.items():
+            with self.subTest(page=name):
+                found = _message_listeners(page)
+                self.assertEqual([at for kind, at in found if kind is None], [], "a message listener of no listed kind")
+                got = {}
+                for kind, _ in found:
+                    got[kind] = got.get(kind, 0) + 1
+                self.assertEqual(got, PAGE_LISTENERS[name])
+                self.assertEqual(_window_onmessage(page), [], "an onmessage handler on the page's window")
+                self.assertIsNone(re.search(r"<[a-z][^>]*\sonmessage\s*=", page, re.I), "an onmessage attribute on an element")
+
+    def test_the_census_reads_each_spelling(self):
+        listener = "function(e){var m=e&&e.data;}"
+        for src in ("window.addEventListener('message'," + listener + ");",
+                    'window.addEventListener("message",' + listener + ");",
+                    "window.addEventListener(`message`," + listener + ");",
+                    "addEventListener ( 'message' ," + listener + ");",
+                    "window['addEventListener']('message'," + listener + ");",
+                    "self [ \"addEventListener\" ] (\"message\"," + listener + ");",
+                    "try{window.addEventListener('message',function(e){if(!fromShell(e))return;});}catch(e){}"):
+            with self.subTest(src=src):
+                self.assertEqual([k for k, _ in _message_listeners(src)], [None], "one listener, of no listed kind")
+        for name, (receiver, head, _n) in KERNEL_LISTENER_KINDS.items():
+            with self.subTest(kind=name):
+                self.assertEqual([k for k, _ in _message_listeners(receiver + head + "});")], [name])
+                self.assertEqual([k for k, _ in _message_listeners("x." + head + "});")], [None], "on another receiver")
+        for src in ("window.addEventListener('resize'," + listener + ");", "var s='messages';", "removeEventListener('message',f)"):
+            with self.subTest(src=src):
+                self.assertEqual(_message_listeners(src), [])
+
+    def test_the_add_event_listener_census_refuses_every_way_around_the_literal(self):
+        for src in ("var add=window.addEventListener;add('message',f);",
+                    "window.addEventListener.bind(window)('message',f);",
+                    "window.addEventListener.call(window,'message',f);",
+                    "(0,window.addEventListener)('message',f);",
+                    "window.addEventListener(TYPES[i],f);",
+                    "if(x.addEventListener)y.addEventListener('load',f);",
+                    "if(x.addEventListener)x.addEventListener(t,f);"):
+            with self.subTest(src=src):
+                self.assertGreaterEqual(len(_loose_add_tokens(src)), 1, "refused")
+        for src in ("window.addEventListener('load',f);", "el.addEventListener( \"click\" ,f);",
+                    "if(swc&&swc.addEventListener)swc.addEventListener('message',f);",
+                    "if(MQ.addEventListener)MQ.addEventListener('change',f);",
+                    "for(var k=0;k<END.length;k++)document.addEventListener(END[k],ended,true);"):
+            with self.subTest(src=src):
+                self.assertEqual(_loose_add_tokens(src), [], "accepted")
+
+
 # A stand-in browser for the shell's inline scripts: node's vm runs them in a context whose global answers every name
 # it does not hold with an inert stub (callable, constructible, every property another stub, 0 as a number), so the
 # scripts boot far enough to register their listeners without a DOM. What the checks read is real: location (the
 # shell's origin), document.querySelectorAll('iframe') (the shell's frames), window.parent/top (the shell is the top
-# window). The harness then hands each registered window message listener a message from each sender and counts how
-# often the listener reads the message's data: a listener that returns before reading it acts on nothing.
+# window). Before any message is tested it runs what the scripts left for later and the exercise (ShellListenersExecuted
+# names the roads). The harness then hands each registered window message listener a message from each sender and counts
+# how often the listener reads the message's data: a listener that returns before reading it acts on nothing.
 _HARNESS = r"""
 'use strict';
 const vm = require('vm');
 const fs = require('fs');
 const SCRIPTS = JSON.parse(fs.readFileSync(process.env.ROMP_TEST_SCRIPTS, 'utf8'));
 const ORIGIN = 'http://127.0.0.1:7777', ELSEWHERE = 'https://elsewhere.example';
+// every other listener and handler the scripts register (on the window, the document, a frame or any element the
+// stand-in hands them: resize, visibilitychange, storage, focus, keydown, click, a frame's load, ...) and every function
+// they hand to a stand-in (an observer's callback, a fetch's then, a stand-in element's forEach): the exercise below runs
+// each once. A window message listener is not here; it is heard by the window's own addEventListener
+const OTHER = [];
+// each once per event type and text: a render that runs again hands over fresh closures of the same code, which ran already
+const OTHER_SEEN = new Set();
+function other(type, f) {
+  if (typeof f !== 'function') return;
+  type = String(type);
+  const key = type + '\u0000' + Function.prototype.toString.call(f);
+  if (OTHER_SEEN.has(key)) return;
+  OTHER_SEEN.add(key);
+  OTHER.push({ type, f });
+}
+function onWrite(k, v) { if (typeof k === 'string' && /^on[a-z]/.test(k)) other(k.slice(2), v); }
+function handedOn(args) { for (const a of args) other('callback', a); }
+const ADD_ON_STUB = function (type, f) { other(type, f); };
 const stubHandler = {
   get(t, k) {
     if (k === Symbol.toPrimitive) return () => 0;
     if (k === Symbol.iterator) return function* () {};
     if (typeof k === 'symbol') return undefined;
     if (k === 'length') return 0;
+    if (k === 'addEventListener') return ADD_ON_STUB;
     return STUB;
   },
-  set() { return true; }, has() { return false; }, deleteProperty() { return true; },
-  apply() { return STUB; }, construct() { return STUB; },
+  set(t, k, v) { onWrite(k, v); return true; }, has() { return false; }, deleteProperty() { return true; },
+  apply(t, self, args) { handedOn(args); return STUB; }, construct(t, args) { handedOn(args); return STUB; },
 };
 const STUB = new Proxy(function () {}, stubHandler);
-function stubbed(o) { return new Proxy(o, { get(t, k) { return (k in t) ? t[k] : stubHandler.get(t, k); } }); }
+function stubbed(o) {
+  return new Proxy(o, { get(t, k) { return (k in t) ? t[k] : stubHandler.get(t, k); },
+                        set(t, k, v) { onWrite(k, v); t[k] = v; return true; } });
+}
 // windows: a pane of the shell (the chat), the Files pane, a sandboxed frame of the shell, a frame of the shell on
 // another origin, a same-origin window the shell does not hold (a popup, a frame nested in a pane), a page on another
 // origin that opened the shell
@@ -289,7 +509,7 @@ function win(name) { return stubbed({ name, postMessage(m) { POSTED.push([name, 
 const CHAT = win('chat'), FILES = win('files'), SANDBOXED = win('sandboxed'), XFRAME = win('xframe'),
       STRAY = win('stray'), OPENER = win('opener');
 function frame(id, w) { return stubbed({ id, contentWindow: w, getAttribute(n) { return n === 'id' ? id : null; },
-                                         addEventListener() {}, removeEventListener() {} }); }
+                                         addEventListener(type, f) { other(type, f); }, removeEventListener() {} }); }
 const FRAMES = [frame('f-chat', CHAT), frame('f-files', FILES), frame('f-url', SANDBOXED), frame('f-x', XFRAME)];
 const BYID = {}; FRAMES.forEach((f) => { BYID[f.id] = f; });
 // what the page leaves for later: timer, animation-frame, idle and microtask callbacks, and the listeners for the page's
@@ -301,7 +521,7 @@ function later(f) { if (typeof f === 'function') LATE.push(f); return LATE.lengt
 const document = stubbed({
   querySelectorAll(sel) { return sel === 'iframe' ? FRAMES.slice() : []; },
   getElementById(id) { return BYID[id] || STUB; },
-  addEventListener(type, f) { if (LATE_EVENTS.has(type)) later(f); },
+  addEventListener(type, f) { if (LATE_EVENTS.has(type)) later(f); else other(type, f); },
   removeEventListener() {},
 });
 const LISTENERS = [];
@@ -319,6 +539,7 @@ function onGlobalWrite(k, v) {
   if (k === CHECK) heard(v);
   if (k === 'onmessage') ONMESSAGE.push(textOf(v));
   if ((k === 'onload' || k === 'onpageshow') && typeof v === 'function') later(v);
+  else if (k !== 'onmessage') onWrite(k, v);
 }
 function textOf(v) { return typeof v === 'function' ? Function.prototype.toString.call(v) : typeof v; }
 const BUILTINS = new Set(['Object', 'Array', 'JSON', 'Math', 'Date', 'String', 'Number', 'Boolean', 'RegExp', 'Error',
@@ -346,6 +567,7 @@ Object.assign(target, {
   addEventListener(type, f) {
     if (type === 'message') LISTENERS.push({ f, src: String(f), checkDefined: typeof target.__rompPaneSourceOk === 'function' });
     else if (LATE_EVENTS.has(type)) later(f);
+    else other(type, f);
   },
   removeEventListener() {},
 });
@@ -360,23 +582,24 @@ SCRIPTS.forEach((body, n) => {
 // the scripts' promise reactions first (a macrotask turn drains the microtask queue the context shares with this one),
 // then the queued callbacks, each handed a stand-in load event
 const LATE_RUN = { queued: 0, ran: 0, errors: 0, rounds: 0 };
-for (let round = 0; round < 6 && (round === 0 || LATE.length); round++) {
-  await new Promise((r) => setImmediate(r));
-  const batch = LATE.splice(0, 5000);
-  if (!batch.length) break;
-  LATE_RUN.rounds++;
-  LATE_RUN.queued += batch.length;
-  for (const f of batch) {
-    target.__b5late = f;
-    LATE_RUN.ran++;
-    try { vm.runInContext("__b5late.call(window,{type:'load',persisted:false,timeStamp:0})", ctx, { timeout: 2000 }); }
-    catch (x) { LATE_RUN.errors++; }
+async function drain() {
+  for (let round = 0; round < 6 && (round === 0 || LATE.length); round++) {
+    await new Promise((r) => setImmediate(r));
+    const batch = LATE.splice(0, 5000);
+    if (!batch.length) break;
+    LATE_RUN.rounds++;
+    LATE_RUN.queued += batch.length;
+    for (const f of batch) {
+      target.__b5late = f;
+      LATE_RUN.ran++;
+      try { vm.runInContext("__b5late.call(window,{type:'load',persisted:false,timeStamp:0})", ctx, { timeout: 2000 }); }
+      catch (x) { LATE_RUN.errors++; }
+    }
   }
+  await new Promise((r) => setImmediate(r));
+  LATE_RUN.left = LATE.length;
 }
-await new Promise((r) => setImmediate(r));
-LATE_RUN.left = LATE.length;
-// the check the listeners will read, as the scripts and everything they left for later left it
-const AFTER_BOOT = textOf(target.__rompPaneSourceOk);
+await drain();
 // the senders: [name, source, origin]
 const SENDERS = {
   opener: [OPENER, ELSEWHERE],             // a page on another origin that opened the dashboard
@@ -399,9 +622,60 @@ function deliver(l, source, origin, data) {
   try { vm.runInContext('__b5f(__b5e)', ctx, { timeout: 2000 }); } catch (x) { threw = String(x && x.message || x).slice(0, 120); }
   return { reads, threw };
 }
+// the words a window message listener's arms compare against: every `.field === 'value'` (or !==, ==, !=) in its text,
+// each handed over alone, with a filler of the fields arms commonly also read, and with the listener's other compared
+// fields as well (the first value of each), so an arm keyed on two fields is reached too
+const FILLER = { on: true, text: 'a line', kind: 'info', pane: 'chat', app: 'chat', tab: 'general', state: 'open', build: 1,
+                 sid: '11111111-2222-3333-4444-555555555555', path: 'notes/a.md', usage: {} };
+function wordsOf(src) {
+  const pairs = [], seen = new Set(), first = {};
+  const re = /\.\s*([A-Za-z_$][\w$]*)\s*[!=]==?\s*(['"])([^'"\\]*)\2/g;
+  let m;
+  while ((m = re.exec(src))) {
+    const key = m[1] + '\u0000' + m[3];
+    if (seen.has(key)) continue;
+    seen.add(key); pairs.push([m[1], m[3]]);
+    if (!(m[1] in first)) first[m[1]] = m[3];
+  }
+  const words = [];
+  for (const [k, v] of pairs) words.push({ [k]: v }, Object.assign({}, FILLER, { [k]: v }), Object.assign({}, FILLER, first, { [k]: v }));
+  return words;
+}
+function standIn(type) {
+  return stubbed({ type, persisted: false, timeStamp: 0, isTrusted: true, key: '', code: '', data: undefined,
+                   detail: undefined, relatedTarget: null, target: STUB, currentTarget: STUB,
+                   preventDefault() {}, stopPropagation() {}, stopImmediatePropagation() {} });
+}
 const MODE = process.env.ROMP_TEST_MODE || 'reads';
+// before any message is tested, what else the page does, once each: every other listener and handler the scripts
+// registered, handed a stand-in event of its type; every function they handed to a stand-in; and every word each window
+// message listener's arms compare against, from each pane; then whatever those left for later. In rounds, since one may
+// register, hand over or queue more (a listener registered here is a listener the census and the reads below count)
+const EXERCISE = { ran: 0, errors: 0, words: 0, rounds: 0, left: 0, types: {} };
+if (MODE === 'reads' || MODE === 'census') {
+  const worded = new Set();
+  for (let round = 0; round < 6; round++) {
+    const batch = OTHER.splice(0, OTHER.length);
+    const fresh = LISTENERS.filter((l) => !worded.has(l));
+    if (!batch.length && !fresh.length) break;
+    EXERCISE.rounds++;
+    for (const o of batch) {
+      target.__b5late = o.f; target.__b5ev = standIn(o.type);
+      EXERCISE.ran++; EXERCISE.types[o.type] = (EXERCISE.types[o.type] || 0) + 1;
+      try { vm.runInContext('__b5late.call(window,__b5ev)', ctx, { timeout: 2000 }); } catch (x) { EXERCISE.errors++; }
+    }
+    for (const l of fresh) {
+      worded.add(l);
+      for (const w of wordsOf(l.src)) for (const p of [CHAT, FILES]) { EXERCISE.words++; deliver(l, p, ORIGIN, w); }
+    }
+    await drain();
+  }
+  EXERCISE.left = OTHER.length + LATE.length + LISTENERS.filter((l) => !worded.has(l)).length;
+}
+// the check the listeners will read, as the scripts, everything they left for later and the exercise left it
+const AFTER_BOOT = textOf(target.__rompPaneSourceOk);
 const out = { errors: ERRORS, listeners: LISTENERS.map((l) => ({ src: l.src, checkDefined: l.checkDefined })),
-              assigns: ASSIGNED.map(textOf), afterBoot: AFTER_BOOT, late: LATE_RUN, onmessage: ONMESSAGE };
+              assigns: ASSIGNED.map(textOf), afterBoot: AFTER_BOOT, late: LATE_RUN, exercise: EXERCISE, onmessage: ONMESSAGE };
 if (MODE === 'reads' || MODE === 'nocheck') {
   // the check missing (held as undefined: a name the context lacks answers with a stub): fail-closed hears nothing
   if (MODE === 'nocheck') target.__rompPaneSourceOk = undefined;
@@ -437,6 +711,13 @@ process.stdout.write('\n' + JSON.stringify(out));
 
 
 def _run_landing(mode):
+    return _run_scripts(_inline_scripts(km._landing()), mode)
+
+
+def _run_scripts(bodies, mode):
+    """Run `bodies` (a page's inline scripts, in order) in the stand-in browser under `mode`: reads (the exercise, then each
+    listener handed each sender's message), nocheck (the same with the check removed, no exercise), effects (two arms'
+    visible effects, no exercise) or census (the exercise and nothing delivered after it)."""
     node = shutil.which("node")
     if not node:
         raise unittest.SkipTest("node not installed")
@@ -444,7 +725,7 @@ def _run_landing(mode):
     try:
         scripts = os.path.join(fx, "scripts.json")
         with open(scripts, "w") as f:
-            json.dump(_inline_scripts(km._landing()), f)
+            json.dump(bodies, f)
         path = os.path.join(fx, "run.js")
         with open(path, "w") as f:
             f.write(_HARNESS)
@@ -463,7 +744,21 @@ def _name_of(src):
 
 
 class ShellListenersExecuted(unittest.TestCase):
-    """The served shell's scripts, run: no listener reads a message from a sender that is not one of its panes."""
+    """The served shell's scripts, run: no listener reads a message from a sender that is not one of its panes.
+
+    The run drives these roads before any message is tested: the scripts themselves; every callback they queue (a timer,
+    an animation frame, an idle callback, a microtask, a load or pageshow listener), each once; every other listener or
+    handler they register on the window, the document, a frame or an element, once per distinct text, with a stand-in
+    event of its type; every function they hand to a stand-in (an observer's callback, a fetch's then), once per distinct
+    text; and, from each pane, every word a window message listener's text compares a field of with a string literal
+    (m.romp==='settings'); in rounds until none is left. So a write of the check in any spelling that lands on the window
+    (window[...]=, a bare global, a defineProperty), or a registration through the window's own addEventListener however
+    it is reached, is caught on those roads (test_the_exercise_reaches_a_write_planted_on_each_road). Not run: a road
+    behind a condition the stand-in does not meet (location.protocol === 'https:', a user agent, a stored setting, a key
+    its stand-in event lacks), an arm keyed some other way than such a comparison (a switch, a lookup table), and a
+    registration through another object's method (EventTarget.prototype.addEventListener.call). A write or a
+    registration there is caught only when its text names what it touches: the check's name (NoOtherWriter), or
+    addEventListener (KernelListenerCensus). Under a computed name, no test catches it."""
 
     REFUSED = ("opener", "sandboxedFrame", "otherOriginFrame", "strayWindow", "shellItself", "dispatch",
                "sourcelessElsewhere", "sourcelessOpaque")
@@ -490,10 +785,13 @@ class ShellListenersExecuted(unittest.TestCase):
                 self.assertGreater(reads["pane"], 0, "%s still hears its panes" % name)
 
     def test_the_check_every_listener_reads_is_the_adopted_function(self):
-        # whatever spelling a second assignment used (window['...']=, a bare global, a defineProperty), and whenever it
-        # ran (at load, or from a timer, a microtask or a load listener the scripts left for later), it lands on the
-        # page's global: the scripts assign the check once, the adopted function, and it is the function in effect at
-        # every delivery, so a later wrapper that widens it for some senders cannot stand in for it
+        # whatever spelling a second assignment used (window['...']=, a bare global, a defineProperty), it lands on the
+        # page's global, if it runs on a road the stand-in drives (at load; from a timer, animation frame, idle callback,
+        # microtask or load listener the scripts left for later; from any other listener or handler they registered,
+        # handed a stand-in event; from a callback they handed a stand-in; in a message listener's arm, reached by a word
+        # it compares against, from a pane): the scripts assign the check once, the adopted function, and it is the
+        # function in effect at every delivery, so a later wrapper that widens it for some senders cannot stand in for it.
+        # A write behind a condition the stand-in does not meet is not run here (the class docstring's residual)
         html = km._landing()
         i = html.index(REGION_HEAD)
         region = html[i:html.index(REGION_TAIL, i) + len(REGION_TAIL)]
@@ -510,10 +808,52 @@ class ShellListenersExecuted(unittest.TestCase):
         self.assertGreater(late["ran"], 0, "the scripts queue callbacks for later, and the harness ran them: %r" % late)
         self.assertEqual(late["left"], 0, "every callback queued, one queued by another included, ran: %r" % late)
 
+    def test_the_run_includes_every_other_listener_handler_callback_and_arm(self):
+        # and before it, the exercise: every other listener and handler the scripts registered, every callback they handed
+        # to a stand-in, and every word a message listener's arms compare against, from each pane, until none was left
+        ex = self.run_["exercise"]
+        self.assertGreater(ex["ran"], 0, "the scripts register listeners and handlers, and the harness ran them: %r" % ex)
+        self.assertGreater(ex["words"], 0, "the listeners' arms were reached from a pane: %r" % ex)
+        self.assertEqual(ex["left"], 0, "every listener, handler, callback and message listener was exercised: %r" % ex)
+
     def test_no_script_assigns_an_onmessage_handler_to_the_window(self):
         # an onmessage handler is a window message listener that addEventListener never sees; however a script spells
         # the write (window.onmessage=, a computed member, a bare global, a defineProperty), it lands on the global
         self.assertEqual(self.run_["onmessage"], [], "an onmessage handler on the shell's window")
+
+    # A write of the check under a computed name, planted on each road the exercise drives: each is heard, and replaces
+    # the adopted function before the listeners are tested (what the tests above would then red on)
+    PLANT_WRITE = "window['__romp'+'PaneSourceOk']=function(e){return !!e;};"
+    PLANTS = {
+        "a window listener (resize)": "window.addEventListener('resize',function(){WRITE});",
+        "a document listener (visibilitychange)": "document.addEventListener('visibilitychange',function(){WRITE});",
+        "an element's listener (click)": "document.getElementById('none').addEventListener('click',function(){WRITE});",
+        "a handler property on the window (onstorage)": "window.onstorage=function(){WRITE};",
+        "a fetch's then": "fetch('/version').then(function(r){WRITE});",
+        "an observer's callback": "new MutationObserver(function(){WRITE});",
+        "a message listener's arm, after the check": "window.addEventListener('message',function(e){" + GATE +
+            "var m=e.data;if(m&&m.romp==='planted'){WRITE}});",
+        "a timer set by a listener": "window.addEventListener('focus',function(){setTimeout(function(){WRITE},0);});",
+    }
+
+    def test_the_exercise_reaches_a_write_planted_on_each_road(self):
+        fn = self.run_["assigns"][0]
+        base = _inline_scripts(km._landing())
+        for road, plant in self.PLANTS.items():
+            with self.subTest(road=road):
+                run = _run_scripts(base + [plant.replace("WRITE", self.PLANT_WRITE)], "reads")
+                self.assertEqual(run["assigns"][0], fn)
+                # heard once per time its road ran (an arm is reached by more than one word, from each pane)
+                self.assertGreaterEqual(len(run["assigns"]), 2, "the planted write was heard")
+                self.assertNotEqual(run["afterBoot"], fn, "and replaced the check before the listeners were tested")
+                self.assertNotEqual(run["inEffect"], [fn], "so a delivery read a check that is not the adopted function")
+
+    def test_a_listener_registered_from_a_later_road_is_counted(self):
+        run = _run_scripts(_inline_scripts(km._landing()) + [
+            "window.addEventListener('resize',function(){window['add'+'EventListener']('message',function(e){});});"], "reads")
+        self.assertEqual(len(run["listeners"]), len(LISTENERS) + 1, "the listener the resize handler registered is counted")
+        self.assertEqual([n for n in (_name_of(l["src"]) for l in run["listeners"]) if n.startswith("unnamed listener")],
+                         ["unnamed listener: function(e){}"])
 
     def test_without_the_check_no_listener_reads_anything(self):
         run = _run_landing("nocheck")
@@ -521,6 +861,46 @@ class ShellListenersExecuted(unittest.TestCase):
         for l, reads in zip(run["listeners"], run["reads"]):
             with self.subTest(listener=_name_of(l["src"])):
                 self.assertEqual(sum(reads.values()), 0, "fail-closed: no check, no message, not even a pane's")
+
+
+class ServedPagesExecuted(unittest.TestCase):
+    """Every other page the kernel serves, its inline scripts run in the same stand-in, the exercise included: the window
+    message listeners each registers, by whatever spelling reaches the window's addEventListener, are its listed kinds
+    (PAGE_LISTENERS); none assigns the window an onmessage handler; and none writes the shell's check, under any name, on
+    its window or its parent (in the stand-in they are one window). The shell's run is ShellListenersExecuted's; /sw.js
+    runs in a worker, where no window posts. The roads run and the residual are ShellListenersExecuted's."""
+
+    # a registered listener's text opens with its kind's head from the function on
+    HEADS = {name: head[head.index(",") + 1:] for name, (receiver, head, _n) in KERNEL_LISTENER_KINDS.items()
+             if receiver == "window."}
+
+    @classmethod
+    def setUpClass(cls):
+        cls.runs = {name: _run_scripts(_inline_scripts(page), "census")
+                    for name, page in _served_pages().items() if name not in ("/", "/sw.js")}
+
+    def test_each_page_registers_only_its_listed_listeners(self):
+        for name, run in self.runs.items():
+            with self.subTest(page=name):
+                got = {}
+                for l in run["listeners"]:
+                    kind = next((k for k, h in self.HEADS.items() if l["src"].startswith(h)), "unlisted: " + l["src"][:160])
+                    got[kind] = got.get(kind, 0) + 1
+                self.assertEqual(got, PAGE_LISTENERS[name], "script errors: %r" % run["errors"])
+                self.assertEqual(run["onmessage"], [], "an onmessage handler on the page's window")
+                # the stand-in's window is its own parent and top, so a write of the shell's check through
+                # window.parent, under any name, lands where the harness hears it
+                self.assertEqual(run["assigns"], [], "a pane page writes the shell's check")
+
+    def test_each_run_went_through_the_page_and_what_it_leaves(self):
+        for name, run in self.runs.items():
+            with self.subTest(page=name):
+                self.assertEqual(run["late"]["left"], 0, "every callback the page queued ran: %r" % run["late"])
+                self.assertEqual(run["exercise"]["left"], 0, "every listener, handler and handed-over callback ran: %r"
+                                 % run["exercise"])
+        for name in ("/chat", "/feed", "/timeline"):
+            with self.subTest(page=name):
+                self.assertGreater(self.runs[name]["exercise"]["ran"], 0, "the pane page's handlers ran")
 
 
 class ShellArmsExecuted(unittest.TestCase):
