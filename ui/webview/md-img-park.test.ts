@@ -12,8 +12,11 @@
 // the fresh budget or clear a newer probe's in-flight mark (a failure counts only for the probe whose token
 // is current); the reconnect-class heal probes every remembered URL, on the page or not (a turn evicted from
 // the rendered window, a closed tab); the chat's post-pass parks a re-rendered img with a remembered URL before the
-// browser fetches it; and the file viewer's own picture, in its picture box, is not the heal's (the viewer asks its address
-// again itself), while a figure of a markdown file the viewer renders parks and heals as any other. The module remembers failed URLs for the page life, so fresh() heals every remembered URL off
+// browser fetches it; and the file viewer's own picture, in its picture box, is not the heal's (the viewer asks an svg
+// picture's address again itself; a raster picture's src is bytes in hand), while a figure of a markdown file the viewer
+// renders parks and heals as any other. A figure an author wraps
+// in markup carrying the class of either box (the viewer's picture box, the chat's preview box) parks and heals too, since the
+// heal knows each box by its data mark, and the preview box's own imgs stay the preview's. The module remembers failed URLs for the page life, so fresh() heals every remembered URL off
 // the DOM through the public reconnect path before each test: every test starts with an empty memory.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
@@ -328,13 +331,26 @@ test("the reconnect-class heal probes a remembered URL whose turn is outside the
   assert.equal(probes.length, 0, "a healed URL is forgotten: the next reconnect has nothing to probe");
 });
 
+/** An element's classes and attribute names, for inside() below. */
+type Up = { cls?: string[]; attrs?: string[] };
+/** The img inside the ancestors given (nearest first), with closest() answering as the DOM's does for the two selector shapes the
+ *  heal asks (a class, `.x`, or an attribute, `[x]`): the img itself first, then each ancestor. Any other shape throws, so a new
+ *  selector in the heal fails here loudly instead of reading as "not inside". */
+function inside(img: FakeEl, ...ups: Up[]): FakeEl {
+  (img as any).closest = (sel: string) => {
+    const c = /^\.([\w-]+)$/.exec(sel), a = /^\[([\w-]+)\]$/.exec(sel);
+    if (!c && !a) throw new Error("the stand-in's closest() reads a class or an attribute selector alone, not: " + sel);
+    const self: Up = { cls: [...img._cls], attrs: Object.keys(img.attrs) };
+    return [self, ...ups].some((u) => (c && (u.cls || []).includes(c[1])) || (a && (u.attrs || []).includes(a[1]))) ? {} : null;
+  };
+  return img;
+}
+
 test("the file viewer's own picture, in its picture box, is not the heal's: its failure parks nothing, and its served URL gets no per-message probe and no reconnect probe, while a figure of a markdown file the viewer renders, in its Rendered body, parks and heals as any markdown image does", async () => {
   const P = await fresh();
-  /** An img inside elements of these classes, as closest() answers for it. */
-  const within = (img: FakeEl, ...classes: string[]): FakeEl => { (img as any).closest = (sel: string) => (classes.some((c) => sel === "." + c) ? {} : null); return img; };
   const PICTURE_URL = servedUrl("topology.svg") + "&v=1757145600000000001";
-  const picture = within(mdImg(PICTURE_URL, "/home/user/notes-api/plots/topology.svg"), "fileview-imgbox", "fileview-body", "fileview");
-  const figure = within(mdImg(servedUrl("latency-hist.png"), "Latency histogram"), "fileview-md", "fileview-body", "fileview");
+  const picture = inside(mdImg(PICTURE_URL, "/home/user/notes-api/plots/topology.svg"), { cls: ["fileview-imgbox"], attrs: [P.VIEWER_PICTURE_MARK] }, { cls: ["fileview-body"] }, { cls: ["fileview"] });   // imgBlock's box: its class and its data mark
+  const figure = inside(mdImg(servedUrl("latency-hist.png"), "Latency histogram"), { cls: ["fileview-md"] }, { cls: ["fileview-body"] }, { cls: ["fileview"] });
   fail(picture); fail(figure);
   assert.equal(picture.getAttribute("src"), PICTURE_URL, "the viewer's picture keeps its src: the heal parks nothing of it");
   assert.equal(picture._cls.has("md-img-failed"), false, "and marks nothing");
@@ -347,6 +363,52 @@ test("the file viewer's own picture, in its picture box, is not the heal's: its 
   assert.equal(figure._cls.has("md-img-failed"), false, "unparked");
   P.refreshSettledPreviews();                            // a reconnect-class event
   assert.deepEqual(probes.slice(1).map((x) => x.src), [], "the reconnect-class heal probes nothing: the figure healed, and the viewer's picture was never the heal's");
+});
+
+test("a figure whose author's markup carries the picture box's class (fileview-imgbox), on a wrapper or on the img itself, in a markdown file the viewer renders and in a chat message, parks and heals as any markdown image does: the heal knows the viewer's picture by its data mark, which the sanitizer strips from an author's markup (md-img-park-browser.test.ts runs the real sanitizer and the real page)", async () => {
+  const P = await fresh();
+  const noteFig = inside(mdImg(servedUrl("wrapped-note.png"), "wrapped in a note"), { cls: ["fileview-imgbox"] }, { cls: ["fileview-md"] }, { cls: ["fileview-body"] }, { cls: ["fileview"] });
+  const chatFig = inside(mdImg(servedUrl("wrapped-chat.png"), "wrapped in a message"), { cls: ["fileview-imgbox"] }, { cls: ["md"] });
+  const own = mdImg(servedUrl("classed.png"), "the img wears the class");
+  own._cls.add("fileview-imgbox");
+  inside(own, { cls: ["md"] });
+  const figs = [noteFig, chatFig, own];
+  for (const f of figs) fail(f);
+  assert.deepEqual(figs.map((f) => f.hasAttribute("src")), [false, false, false], "each is parked: no src, so the browser shows its alt text and fetches nothing");
+  assert.deepEqual(figs.map((f) => f._cls.has("md-img-failed")), [true, true, true], "and marked");
+  assert.deepEqual(figs.map((f) => f.dataset.mdSrc), [servedUrl("wrapped-note.png"), servedUrl("wrapped-chat.png"), servedUrl("classed.png")], "each URL kept for the heal");
+  P.retryFailedPreviews();                               // a kernel message
+  assert.deepEqual(probes.map((x) => x.src), [servedUrl("wrapped-note.png"), servedUrl("wrapped-chat.png"), servedUrl("classed.png")], "one per-message probe for each, off the page");
+  for (const p of probes) (p as any).onload();
+  assert.deepEqual(figs.map((f) => f.src), [servedUrl("wrapped-note.png"), servedUrl("wrapped-chat.png"), servedUrl("classed.png")], "each probe loaded: the picture lands on its img");
+  assert.deepEqual(figs.map((f) => f._cls.has("md-img-failed")), [false, false, false], "unparked");
+  assert.equal(P.VIEWER_PICTURE_MARK, "data-fv-picture", "the mark the heal skips by is a data-* attribute, which the sanitizer strips from an author's markup");
+});
+
+test("a figure whose author's markup carries the chat preview box's class (path-full), on a wrapper or on the img itself, in a markdown file the viewer renders and in a chat message, parks and heals as any markdown image does, while the preview's own imgs inside the box's data mark stay the preview's: its swirl and a picture it shows from fetched bytes, which listen to nothing, neither park nor get a probe (md-img-park-browser.test.ts runs the real sanitizer, the real preview box and the real page)", async () => {
+  const P = await fresh();
+  const noteFig = inside(mdImg(servedUrl("pf-note.png"), "wrapped in a note"), { cls: ["path-full"] }, { cls: ["fileview-md"] }, { cls: ["fileview-body"] }, { cls: ["fileview"] });
+  const chatFig = inside(mdImg(servedUrl("pf-chat.png"), "wrapped in a message"), { cls: ["path-full"] }, { cls: ["md"] });
+  const own = mdImg(servedUrl("pf-classed.png"), "the img wears the class");
+  own._cls.add("path-full");
+  inside(own, { cls: ["md"] });
+  const box: Up = { cls: ["path-full"], attrs: [P.PREVIEW_BOX_MARK] };   // previewFull's box: its class and its data mark
+  const SWIRL = "http://127.0.0.1:1/media/romp-swirl-glyph.svg";           // an address the kernel serves: parked, it would get a probe
+  const HELD = "blob:http://127.0.0.1:1/11111111-2222-4333-8444-000000000009";
+  const swirl = inside(mdImg(SWIRL, "loading preview"), { cls: ["path-full-wait"] }, box, { cls: ["path-thumbs"] }, { cls: ["md"] });
+  const held = inside(mdImg(HELD, "held.png"), box, { cls: ["path-thumbs"] }, { cls: ["md"] });
+  const figs = [noteFig, chatFig, own];
+  for (const f of [...figs, swirl, held]) fail(f);
+  assert.deepEqual(figs.map((f) => f.hasAttribute("src")), [false, false, false], "each figure wearing the class is parked: no src, so the browser shows its alt text and fetches nothing");
+  assert.deepEqual(figs.map((f) => f._cls.has("md-img-failed")), [true, true, true], "and marked");
+  assert.deepEqual([swirl.getAttribute("src"), held.getAttribute("src")], [SWIRL, HELD], "the preview's own swirl and its picture of fetched bytes keep their src: the heal parks nothing of the box");
+  assert.deepEqual([swirl._cls.has("md-img-failed"), held._cls.has("md-img-failed")], [false, false], "and marks nothing");
+  P.retryFailedPreviews();                               // a kernel message
+  assert.deepEqual(probes.map((x) => x.src), [servedUrl("pf-note.png"), servedUrl("pf-chat.png"), servedUrl("pf-classed.png")], "one per-message probe for each figure, and none for the swirl");
+  for (const p of probes) (p as any).onload();
+  assert.deepEqual(figs.map((f) => f.src), [servedUrl("pf-note.png"), servedUrl("pf-chat.png"), servedUrl("pf-classed.png")], "each probe loaded: the picture lands on its img");
+  assert.deepEqual(figs.map((f) => f._cls.has("md-img-failed")), [false, false, false], "unparked");
+  assert.equal(P.PREVIEW_BOX_MARK, "data-preview-full", "the mark the heal knows the preview box by is a data-* attribute, which the sanitizer strips from an author's markup");
 });
 
 test("render.ts installs the listener once, parks known-failed URLs on its OWN markdown output only, and files the page's bundle build once per load", () => {

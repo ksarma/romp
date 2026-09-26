@@ -753,7 +753,7 @@ test("source: the gate runs again at the send, the row is raised where every sta
   assert.match(note, /if \(laterNs\(s\.fileMtimeNs, this\.ctx\.mtimeNs\(\)\)\) return;/, "yields to the file's row");
   assert.match(note, /if \(sameRecords\(seed\.records, pendingRecords\(s\.store\)\)\) return;/, "keyed on the records, not the sidecar's clock");
   assert.match(note, /this\.errors\.set\("edit", \{ text: CHANGES_MOVED_UNDER_EDIT, reload: false \}\);/, "the head's slot, no Reload");
-  const paint = SRC.split("paintAll(): void {")[1].split("\n  }\n")[0];
+  const paint = SRC.split("paintPass(current: boolean): void {")[1].split("\n  }\n")[0];
   assert.match(paint, /if \(this\.changesMovedUnderEdit\) \{ this\.changesMovedUnderEdit = false; if \(this\.errors\.get\("edit"\)\?\.text === CHANGES_MOVED_UNDER_EDIT\) this\.errors\.delete\("edit"\); \}/,
     "the first paint after the edit ends retires the row and the latch");
   const begin = SRC.split("begin: () => {")[1].split("\n      },\n")[0];

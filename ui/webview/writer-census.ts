@@ -16,6 +16,10 @@
  *  changes before the family call is NOT followed: the census counts the caller's literal, and the string written may differ.
  *  Neither shape occurs in render.ts; the pin holds the first, the second is the stated limit.
  *
+ *  The module's second census, cardStateCensus, reads file-comments.ts for every assignment to the Panel's private #cardState and
+ *  every call of its private writer, and lists every identifier spelled eval (the card-state rule, stated in #cardState's doc
+ *  there; its own doc says what it counts and what it lists for the test to hold empty).
+ *
  *  Node-only: the tests import it; the webview bundle never does. */
 import * as ts from "typescript";
 
@@ -121,4 +125,86 @@ export function writerCensus(src: string, table: Readonly<Record<string, number>
 
   failures.sort((a, b) => a.line - b.line || a.call.localeCompare(b.call));
   return { literals: [...literals].sort(), wrappers, failures };
+}
+
+/** A place the card-state census found: the function it sits in, its line, its text, and for a call of the writer the event it names. */
+export type CardSite = { fn: string; line: number; text: string; at?: string };
+/** The card-state census (file-comments.ts: the Panel's private #cardState, whose doc states the rule it keeps). Each site it
+ *  finds is named by the function it sits in: a method's or a function's own name, "constructor", or for a callback its host's
+ *  name ("onRendered's callback", "fcinline's callback").
+ *  It COUNTS: the declarations of #cardState (decls); every assignment to #cardState (writes) and to #replaced, the count of the
+ *  body's changes the rule reads (counts), an assignment being any assignment operator's, a destructuring target's, a for-in or
+ *  for-of head's, or an increment's or a decrement's whose target is the private field; every call of #latchCardState, with the
+ *  event its first argument names (calls); and every call of `callees` (callers).
+ *  It LISTS, for the test to hold empty (fail closed): a mention of #latchCardState that is not a call of it (refs), and every
+ *  identifier spelled eval, however it is written (a unicode escape reads as the name) and wherever it stands, a call's callee or
+ *  not (evals). A direct eval inside the class runs its string as the class's own code, so it can write a private field where
+ *  no syntax shows it; no other road reaches one: a private name is written in no other syntax (no computed key, no
+ *  Object.assign, Reflect or defineProperty, and `delete` of it does not parse), code outside its class cannot name it, and an
+ *  indirect eval, a Function body or a timer's string runs as global code, where the name does not parse. A write through the
+ *  state meets an object frozen at its one assignment, which throws. A private name's element-access spelling (a string key
+ *  "#cardState") reaches a different, public property and is none of these. */
+export function cardStateCensus(src: string, callees: string[] = [], file = "file-comments.ts"): { decls: number; writes: CardSite[]; calls: CardSite[]; refs: CardSite[]; counts: CardSite[]; evals: CardSite[]; callers: Record<string, string[]> } {
+  const sf = ts.createSourceFile(file, src, 99, true);   // 99: the compiler's newest language level (its enum's Latest), so every construct of the file parses; the kind follows the name's .ts
+  const lineOf = (n: ts.Node): number => sf.getLineAndCharacterOfPosition(n.getStart(sf)).line + 1;
+  const shown = (n: ts.Node): string => n.getText(sf).replace(/\s+/g, " ").slice(0, 120);
+  const fnName = (n: ts.Node): string => {
+    for (let x: ts.Node | undefined = n.parent; x; x = x.parent) {
+      if (ts.isConstructorDeclaration(x)) return "constructor";
+      if ((ts.isMethodDeclaration(x) || ts.isFunctionDeclaration(x) || ts.isGetAccessor(x) || ts.isSetAccessor(x)) && x.name) return x.name.getText(sf);
+      if (ts.isArrowFunction(x) || ts.isFunctionExpression(x)) {
+        const p = x.parent;
+        if (ts.isCallExpression(p)) return (ts.isPropertyAccessExpression(p.expression) ? p.expression.name.text : p.expression.getText(sf)) + "'s callback";
+        if (ts.isPropertyAssignment(p)) return p.name.getText(sf) + "'s callback";
+        if (ts.isVariableDeclaration(p) || ts.isPropertyDeclaration(p)) return p.name.getText(sf);
+        return "a callback at line " + lineOf(x);
+      }
+    }
+    return "the module";
+  };
+  /** Whether `e`, through parentheses and type assertions, is `<object>.#name`. */
+  const isPrivate = (e: ts.Node, name: string): boolean => {
+    let x: ts.Node = e;
+    while (ts.isParenthesizedExpression(x) || ts.isAsExpression(x) || ts.isNonNullExpression(x) || ts.isTypeAssertionExpression(x) || ts.isSatisfiesExpression(x)) x = x.expression;
+    return ts.isPropertyAccessExpression(x) && ts.isPrivateIdentifier(x.name) && x.name.text === name;
+  };
+  /** Whether an assignment's target writes #name: the field itself, or a destructuring pattern holding it anywhere. */
+  const targets = (e: ts.Node, name: string): boolean => {
+    if (isPrivate(e, name)) return true;
+    if (!ts.isObjectLiteralExpression(e) && !ts.isArrayLiteralExpression(e)) return false;
+    let hit = false;
+    const walk = (n: ts.Node): void => { if (isPrivate(n, name)) hit = true; ts.forEachChild(n, walk); };
+    walk(e);
+    return hit;
+  };
+  const out = { decls: 0, writes: [] as CardSite[], calls: [] as CardSite[], refs: [] as CardSite[], counts: [] as CardSite[], evals: [] as CardSite[], callers: Object.fromEntries(callees.map((c) => [c, [] as string[]])) as Record<string, string[]> };
+  /** An assignment: the binary expression's operator, its middle child, is one of the assignment operators. */
+  const assigns = (n: ts.BinaryExpression): boolean => { const k = n.getChildAt(1, sf).kind; return k >= ts.SyntaxKind.FirstAssignment && k <= ts.SyntaxKind.LastAssignment; };
+  /** An increment or a decrement: ++ or -- before the operand or after it. */
+  const steps = (n: ts.PrefixUnaryExpression | ts.PostfixUnaryExpression): boolean => { const t = n.getText(sf).replace(/\s+/g, ""); return ts.isPrefixUnaryExpression(n) ? /^(\+\+|--)/.test(t) : /(\+\+|--)$/.test(t); };
+  /** Whether `n` is an assignment whose target is the private field `name`. */
+  const assignmentTo = (n: ts.Node, name: string): boolean =>
+    (ts.isBinaryExpression(n) && assigns(n) && targets(n.left, name))
+    || ((ts.isPrefixUnaryExpression(n) || ts.isPostfixUnaryExpression(n)) && steps(n) && isPrivate(n.operand, name))
+    || ((ts.isForOfStatement(n) || ts.isForInStatement(n)) && targets(n.initializer, name));
+  const site = (n: ts.Node): CardSite => ({ fn: fnName(n), line: lineOf(n), text: shown(ts.isForOfStatement(n) || ts.isForInStatement(n) ? n.initializer : n) });
+  const visit = (n: ts.Node): void => {
+    if ((ts.isPropertyDeclaration(n) || ts.isGetAccessor(n) || ts.isSetAccessor(n) || ts.isMethodDeclaration(n)) && ts.isPrivateIdentifier(n.name) && n.name.text === "#cardState") out.decls++;
+    if (assignmentTo(n, "#cardState")) out.writes.push(site(n));
+    if (assignmentTo(n, "#replaced")) out.counts.push(site(n));
+    if (ts.isIdentifier(n) && n.text === "eval") out.evals.push({ fn: fnName(n), line: lineOf(n), text: shown(n.parent) });
+    if (ts.isCallExpression(n)) {
+      const c = n.expression;
+      const name = ts.isPropertyAccessExpression(c) ? c.name.text : ts.isIdentifier(c) ? c.text : null;
+      if (name !== null && Object.prototype.hasOwnProperty.call(out.callers, name)) out.callers[name].push(fnName(n));
+    }
+    if (ts.isPropertyAccessExpression(n) && ts.isPrivateIdentifier(n.name) && n.name.text === "#latchCardState") {
+      const call = ts.isCallExpression(n.parent) && n.parent.expression === n ? n.parent : null;
+      if (call) { const a = call.arguments[0]; out.calls.push({ fn: fnName(n), line: lineOf(n), text: shown(call), at: a && ts.isStringLiteralLike(a) ? a.text : "(not a literal)" }); }
+      else out.refs.push({ fn: fnName(n), line: lineOf(n), text: shown(n.parent) });
+    }
+    ts.forEachChild(n, visit);
+  };
+  visit(sf);
+  return out;
 }

@@ -1,7 +1,8 @@
 // The Comments panel's third round of review fixes (2026-09-06), driven AS A PANEL over a DOM stand-in: the real
 // module mounted over a body row, its delegate root receiving clicks and keys, the kernel's replies arriving as
-// window messages. Covered: markup the FILE's author wrote never reaches the panel's handlers (the sanitizer keeps
-// data-* attributes, so a rendered markdown span can carry `data-act="fcsendgo"`); the folder label names the path the
+// window messages. Covered: markup the FILE's author wrote never reaches the panel's handlers (the sanitizer strips an
+// author's data-* attributes, md-sanitize.ts, and the panel's own rule refuses a rendered markdown span carrying
+// `data-act="fcsendgo"` as well, handed to it as written here); the folder label names the path the
 // kernel acts on, not the spelling the viewer was opened with (the message preview named it too until the note box
 // replaced it, 2026-09-09); a status asked after a write
 // but answered from a read before it is not applied over the write's reply; Send's turn-on-tracking step as

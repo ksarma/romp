@@ -700,7 +700,7 @@ test("an svg picture's failed load asks its address again: the romp loader takes
   const asks = asksOf(FIG);
   img.dispatchEvent(new Ev("error"));
   assert.ok(body.querySelector(".fileview-load") && !body.querySelector(".fileview-imgbox"), "the romp loader takes the body while the address is asked again");
-  assert.equal(paints, 0, "the loader's paint fires none of the seam's hooks: the panel keeps its layer until the answer paints");
+  assert.equal(paints, 0, "the loader fires no onRendered (it tells onReplaced, the case on onReplaced below): the panel keeps its layer until the answer paints");
   assert.equal(ctx.error(), null, "error() is null through the wait, as over any loader");
   await settle();
   assert.equal(asksOf(FIG) - asks, 1, "one re-ask: the viewer's own fetch of the address");
@@ -1412,6 +1412,239 @@ test("a reload that lands while a press of the Source toggle waits for its bytes
   assert.equal(asksOf(FIG) - asks, 1, "with no fetch but the reload's");
 });
 
+test("a picture still loading when the Source toggle is pressed fires no paint hook at its load: with a reload landing while the Source view waits for its decode, the load of the picture painted before the press runs nothing and the Source view's paint at the decode is the one onRendered, at the landed mtime; with no landing, the same, at the open's mtime; pressed to the Source view and back while the picture still loads, the picture painted on the way back runs onRendered once at its load and the one pressed over runs nothing; with no press, the load runs it once", async (t) => {
+  const realText = Blob.prototype.text;
+  let textGate: Promise<void> | null = null;
+  Blob.prototype.text = function (this: Blob): Promise<string> { const g = textGate; return g ? g.then(() => realText.call(this)) : realText.call(this); };
+  const kept = disk[FIG];
+  t.after(() => { Blob.prototype.text = realText; disk[FIG] = kept; });
+  /** Hold the decodes of the fetched bytes until the returned function runs. */
+  const holdDecode = (): (() => void) => { let r!: () => void; textGate = new Promise<void>((res) => { r = res; }); return () => { textGate = null; r(); }; };
+  const MT7 = "1757145600000000007";
+  const SVG2 = SVG.replace("p95", "p99");
+  const key = (mt: string): string => "&v=" + mt;
+  /** Every onRendered from here on, as the hook reads the view: its mtime, its mode and what the body holds. */
+  const heard = (ctx: FileViewActionCtx, body: El): string[] => {
+    const out: string[] = [];
+    ctx.onRendered(() => {
+      const img = body.querySelector("img.fileview-img");
+      out.push(ctx.mtimeNs() + " " + ctx.mode() + " " + (img ? "picture" + img.src.slice(img.src.indexOf("&v=")) : body.querySelector("code.hljs") ? "source" : "other"));
+    });
+    return out;
+  };
+  // (i) a reload lands while the press waits for its decode (the change card's road: file-view-svg-reask-browser.test.ts runs it
+  // under the real Comments panel, where a paint heard at this load moved the card before the Source view showed the new bytes)
+  {
+    disk[FIG] = { bytes: SVG, type: "image/svg+xml", mtimeNs: MT };
+    const { ctx, body, wrap } = await open(FIG, t);
+    const rendered = heard(ctx, body);
+    const img = body.querySelector("img.fileview-img")!;
+    const decode = holdDecode();
+    sourceBtn(wrap).click();                                // the Source view waits for the decode; the picture, still loading, stays up
+    disk[FIG] = { bytes: SVG2, type: "image/svg+xml", mtimeNs: MT7 };
+    ctx.reload();
+    await settle();
+    assert.equal(ctx.mtimeNs(), MT7, "(i) the reload landed: mtimeNs() the landed mtime");
+    assert.equal(body.querySelector("img.fileview-img"), img, "(i) the body still holds the picture painted before the press");
+    img.dispatchEvent(new Ev("load"));                      // that picture's own request ends
+    assert.deepEqual(rendered, [], "(i) its load fires no paint hook: the view's mtime is the landing's, and the body shows the picture painted before the press");
+    assert.equal(paints, 0, "(i) no paint at all yet");
+    decode();
+    await settle();
+    assert.deepEqual(rendered, [MT7 + " raw source"], "(i) the one paint: the Source view's at the decode, over the landed bytes");
+    assert.equal(ctx.text(), SVG2, "(i) with the landed bytes' XML");
+  }
+  // (ii) no landing: the picture painted before the press loads while the decode is out
+  {
+    disk[FIG] = { bytes: SVG, type: "image/svg+xml", mtimeNs: MT };
+    const { ctx, body, wrap } = await open(FIG, t);
+    const rendered = heard(ctx, body);
+    const img = body.querySelector("img.fileview-img")!;
+    const decode = holdDecode();
+    sourceBtn(wrap).click();
+    img.dispatchEvent(new Ev("load"));
+    assert.deepEqual(rendered, [], "(ii) the load of the picture pressed over fires no paint hook");
+    decode();
+    await settle();
+    assert.deepEqual(rendered, [MT + " raw source"], "(ii) the decode's paint runs onRendered once, the Source view over the open's bytes");
+  }
+  // (iii) to the Source view and back while the picture still loads: the way back paints a new picture, at the same address
+  {
+    disk[FIG] = { bytes: SVG, type: "image/svg+xml", mtimeNs: MT };
+    const { ctx, body, wrap } = await open(FIG, t);
+    const rendered = heard(ctx, body);
+    const img = body.querySelector("img.fileview-img")!;
+    sourceBtn(wrap).click();
+    await settle();
+    assert.deepEqual(rendered, [MT + " raw source"], "(iii) the Source view painted at the decode, the picture still loading");
+    sourceBtn(wrap).click();                                // back to the picture
+    const back = body.querySelector("img.fileview-img")!;
+    assert.ok(back && back !== img && back.src.endsWith(key(MT)), "(iii) the way back paints a new picture at the same address");
+    img.dispatchEvent(new Ev("load"));                      // the request both joined ends: the picture pressed over hears it first
+    back.dispatchEvent(new Ev("load"));
+    assert.deepEqual(rendered, [MT + " raw source", MT + " media picture" + key(MT)], "(iii) the picture shown on the way back runs onRendered once at its load, and the one pressed over nothing");
+    back.dispatchEvent(new Ev("load"));
+    assert.equal(rendered.length, 2, "(iii) once: a second load event on it runs nothing more");
+  }
+  // (iv) no press: the control
+  {
+    disk[FIG] = { bytes: SVG, type: "image/svg+xml", mtimeNs: MT };
+    const { ctx, body } = await open(FIG, t);
+    const rendered = heard(ctx, body);
+    body.querySelector("img.fileview-img")!.dispatchEvent(new Ev("load"));
+    assert.deepEqual(rendered, [MT + " media picture" + key(MT)], "(iv) with no press the picture's load runs onRendered once, over the picture");
+  }
+});
+
+test("a press from the picture back to the Source view while a reload that landed under it still decodes paints no older XML: the press decodes the landed bytes and the Source view paints at that decode, the one onRendered, with the landed XML, also when the two decodes of those bytes finish in the other order; pressed back after the decode, the XML on hand is the landed bytes' and paints at once; a second landing during the wait paints its own XML at its decode; a landing of another type during the wait, or under the Source view, paints its own picture and no XML; a failed reload during the wait paints its pane, and the decode then the landed XML; with no landing, back to the Source view the XML on hand paints at once", async (t) => {
+  const realText = Blob.prototype.text;
+  // while `holding`, every decode of the fetched bytes waits in `pending` until a road releases it, in the order it chooses
+  const pending: Array<() => void> = [];
+  let holding = false;
+  Blob.prototype.text = function (this: Blob): Promise<string> {
+    if (!holding) return realText.call(this);
+    return new Promise<string>((res, rej) => { pending.push(() => { realText.call(this).then(res, rej); }); });
+  };
+  const kept = disk[FIG];
+  t.after(() => { Blob.prototype.text = realText; disk[FIG] = kept; });
+  /** Release the held decodes, one at a time in the order given (indices in the order they were asked; by default that order). */
+  const release = async (order?: number[]): Promise<void> => {
+    holding = false;
+    const run = pending.splice(0);
+    for (const i of order ?? run.map((_, k) => k)) { run[i](); await settle(); }
+  };
+  const MT7 = "1757145600000000007", MT8 = "1757145600000000008";
+  const SVG2 = SVG.replace("p95", "p99"), SVG3 = SVG.replace("p95", "p50");
+  const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47]);
+  const xmlOf = (x: string | null): string => (x === SVG ? "SVG" : x === SVG2 ? "SVG2" : x === SVG3 ? "SVG3" : String(x));
+  /** Every onRendered from here on, as the hook reads the view: its mtime, its mode, and what the body holds (the picture's
+   *  version key, or blob for an object URL; the Source view's XML, by fixture name; a pane). */
+  const heard = (ctx: FileViewActionCtx, body: El): string[] => {
+    const out: string[] = [];
+    ctx.onRendered(() => {
+      const img = body.querySelector("img.fileview-img");
+      const what = body.querySelector(".fileview-err") ? "pane"
+        : img ? "picture " + (img.src.startsWith("blob:") ? "blob" : img.src.slice(img.src.indexOf("&v=") + 3))
+        : body.querySelector("code.hljs") ? "source " + xmlOf(ctx.text()) : "other";
+      out.push(ctx.mtimeNs() + " " + ctx.mode() + " " + what);
+    });
+    return out;
+  };
+  /** The svg open with the Source view up over the open's bytes, then a reload whose new bytes land under it, their decode held. */
+  const underSource = async (road: string): Promise<{ ctx: FileViewActionCtx; body: El; wrap: El; rendered: string[] }> => {
+    const { ctx, body, wrap } = await open(FIG, t);
+    sourceBtn(wrap).click();
+    await settle();
+    assert.equal(ctx.text(), SVG, road + ": the premise: the Source view up over the open's bytes");
+    const rendered = heard(ctx, body);
+    holding = true;
+    disk[FIG] = { bytes: SVG2, type: "image/svg+xml", mtimeNs: MT7 };
+    ctx.reload();
+    await settle();
+    assert.equal(ctx.mtimeNs(), MT7, road + ": the reload landed under the Source view");
+    assert.equal(ctx.text(), SVG, road + ": and its decode is held, the older XML still up");
+    return { ctx, body, wrap, rendered };
+  };
+  {
+    const road = "(i) to the picture and back before the decode";
+    const { ctx, body, wrap, rendered } = await underSource(road);
+    sourceBtn(wrap).click();                                      // to the picture
+    const pic = body.querySelector("img.fileview-img")!;
+    assert.equal(pic && pic.src, "/file?path=" + encodeURIComponent(FIG) + "&sid=" + SID + "&v=" + MT7, road + ": the press to the picture paints the landed bytes' picture, at its /file address");
+    sourceBtn(wrap).click();                                      // back to the Source view, the landed bytes' decode still held
+    assert.deepEqual(rendered, [], road + ": the press back paints no Source view of the older XML");
+    assert.equal(body.querySelector("img.fileview-img"), pic, road + ": the picture stays up while the landed bytes decode");
+    pic.dispatchEvent(new Ev("load"));                            // the picture pressed over loads
+    assert.deepEqual(rendered, [], road + ": and its load runs no hook");
+    await release();
+    assert.deepEqual(rendered, [MT7 + " raw source SVG2"], road + ": after the landing one onRendered, at the decode, with the landed XML");
+    assert.equal(ctx.text(), SVG2, road + ": the Source view shows the landed bytes' XML");
+  }
+  {
+    const road = "(ii) the same, the two decodes of the landed bytes finishing in the other order";
+    const { wrap, rendered } = await underSource(road);
+    sourceBtn(wrap).click(); sourceBtn(wrap).click();
+    assert.equal(pending.length, 2, road + ": two decodes of the landed bytes out, the reload's under the Source view and the press's");
+    await release([1, 0]);                                        // the press's first, then the reload's
+    assert.deepEqual(rendered, [MT7 + " raw source SVG2"], road + ": one paint, the Source view's with the landed XML; the reload's decode, finishing after it, paints nothing more");
+  }
+  {
+    const road = "(iii) to the picture before the decode, and back after it";
+    const { body, wrap, rendered } = await underSource(road);
+    sourceBtn(wrap).click();
+    await release();                                              // the reload's decode ends with the picture up: the XML on hand is the landed bytes'
+    assert.equal(body.querySelector("code.hljs"), null, road + ": the decode paints no Source view over the picture the person went to");
+    sourceBtn(wrap).click();
+    assert.deepEqual(rendered, [MT7 + " raw source SVG2"], road + ": back after the decode, the Source view paints at once, once, with the landed XML");
+  }
+  {
+    const road = "(iv) a second landing during the wait";
+    const { ctx, wrap, rendered } = await underSource(road);
+    sourceBtn(wrap).click(); sourceBtn(wrap).click();
+    disk[FIG] = { bytes: SVG3, type: "image/svg+xml", mtimeNs: MT8 };
+    ctx.reload();
+    await settle();
+    assert.equal(ctx.mtimeNs(), MT8, road + ": the second reload landed");
+    assert.deepEqual(rendered, [], road + ": and painted nothing over the press, nor did the press paint the older XML");
+    await release();
+    assert.deepEqual(rendered, [MT8 + " raw source SVG3"], road + ": the one paint, the Source view's at the second landing's decode, with its XML");
+  }
+  {
+    const road = "(v) a landing of another type during the wait";
+    const { ctx, body, wrap, rendered } = await underSource(road);
+    sourceBtn(wrap).click(); sourceBtn(wrap).click();
+    disk[FIG] = { bytes: PNG, type: "image/png", mtimeNs: MT8 };
+    ctx.reload();
+    await settle();
+    const png = body.querySelector("img.fileview-img");
+    assert.ok(png && png.src.startsWith("blob:"), road + ": it paints its own picture");
+    png!.dispatchEvent(new Ev("load"));
+    await release();
+    assert.deepEqual(rendered, [MT8 + " media picture blob"], road + ": its picture's load is the one paint: the landed svg's decode paints no XML over it");
+    assert.equal(body.querySelector("img.fileview-img"), png, road + ": the picture stands");
+  }
+  {
+    const road = "(vi) a landing of another type under the Source view";
+    const { ctx, body, wrap, rendered } = await underSource(road);
+    disk[FIG] = { bytes: PNG, type: "image/png", mtimeNs: MT8 };
+    ctx.reload();
+    await settle();
+    const png = body.querySelector("img.fileview-img");
+    assert.ok(png && png.src.startsWith("blob:"), road + ": it paints its own picture, not its bytes as XML");
+    png!.dispatchEvent(new Ev("load"));
+    await release();
+    assert.deepEqual(rendered, [MT8 + " media picture blob"], road + ": its picture's load is the one paint: the svg's decode paints no XML over it");
+    assert.equal(ctx.mode(), "media", road + ": mode() the picture's");
+    disk[FIG] = { bytes: SVG3, type: "image/svg+xml", mtimeNs: "1757145600000000009" };
+    ctx.reload();                                                 // an svg lands again: its picture, with the Source view not up
+    await settle();
+    assert.equal(sourceBtn(wrap).getAttribute("aria-pressed"), "false", road + ": the Source toggle reads not pressed over the picture");
+  }
+  {
+    const road = "(vii) a failed reload during the wait";
+    const { ctx, wrap, rendered } = await underSource(road);
+    sourceBtn(wrap).click(); sourceBtn(wrap).click();
+    delete disk[FIG];
+    ctx.reload();
+    await settle();
+    assert.deepEqual(rendered, [MT7 + " media pane"], road + ": the failed reload paints its pane, and the press painted no older XML before it");
+    await release();
+    assert.deepEqual(rendered, [MT7 + " media pane", MT7 + " raw source SVG2"], road + ": the decode then paints the Source view with the landed bytes' XML");
+  }
+  {
+    const road = "(viii) with no landing, to the picture and back";
+    const { ctx, body, wrap } = await open(FIG, t);
+    sourceBtn(wrap).click();
+    await settle();                                               // the Source view's first paint, at its decode
+    const rendered = heard(ctx, body);
+    holding = true;
+    sourceBtn(wrap).click(); sourceBtn(wrap).click();             // to the picture and back: the XML on hand is these bytes'
+    assert.equal(pending.length, 0, road + ": no second decode");
+    assert.deepEqual(rendered, [MT + " raw source SVG"], road + ": the Source view paints at once from the XML on hand");
+    await release();
+  }
+});
+
 test("the seam's onLanded runs at an svg picture's landing, with mtimeNs() the landed mtime and before the picture's load, once per landing; a png's landing runs none", async (t) => {
   const { ctx, body } = await open(FIG, t);
   assert.equal(typeof ctx.onLanded, "function", "the seam carries onLanded");
@@ -1467,6 +1700,52 @@ test("the seam's onLanded also runs at a landing whose bytes go to the Source vi
     assert.equal(paints, p0 + 1, road + ": one paint, at the decode");
     assert.equal(landed.length, 1, road + ": the decode's paint is onRendered's, not onLanded's");
   }
+});
+
+test("the seam's onReplaced (its doc in file-view.ts) runs as the viewer swaps in a picture still loading or the re-ask's loader, before the onRendered that comes later: a reload's picture (and its landing's onLanded after it), the re-ask's romp loader and its answer's picture, a press back to the picture; never at a text view's paint, the Source view's paint, a pane or a press to the Source view whose decode is still out", async (t) => {
+  const { ctx, body, wrap } = await open(FIG, t);
+  assert.equal(typeof ctx.onReplaced, "function", "the seam carries onReplaced");
+  const seen: string[] = [];
+  ctx.onReplaced!(() => { seen.push("replaced " + (body.querySelector("img.fileview-img") ? "picture" : body.querySelector(".fileview-load") ? "loader" : "other")); });
+  ctx.onLanded!(() => { seen.push("landed"); });
+  ctx.onRendered((why) => { seen.push("rendered " + (why || "paint") + (ctx.error() === null ? "" : " pane")); });
+  const MT7 = "1757145600000000007";
+  disk[FIG] = { bytes: SVG, type: "image/svg+xml", mtimeNs: MT7 };
+  ctx.reload();
+  await settle();
+  assert.deepEqual(seen, ["replaced picture", "landed"], "a reload's landing: the landed bytes' picture goes up, onReplaced told at the swap and onLanded after it, no paint yet");
+  body.querySelector("img.fileview-img")!.dispatchEvent(new Ev("load"));
+  assert.deepEqual(seen.slice(2), ["rendered paint"], "its load is the paint");
+  seen.length = 0;
+  body.querySelector("img.fileview-img")!.dispatchEvent(new Ev("error"));
+  assert.deepEqual(seen, ["replaced loader"], "the picture's failure: the re-ask's loader goes up, onReplaced told, no paint");
+  await settle();
+  assert.deepEqual(seen.slice(1), ["replaced picture", "landed"], "the re-ask's answer: its picture goes up, onReplaced told again");
+  seen.length = 0;
+  body.querySelector("img.fileview-img")!.dispatchEvent(new Ev("error"));
+  assert.deepEqual(seen, ["rendered paint pane"], "the answer's picture failing: SVG_PICTURE_FAILED's pane is a paint, with no onReplaced");
+  seen.length = 0;
+  sourceBtn(wrap).click();                                 // to the Source view: its decode is out, the pane stands until it paints
+  assert.deepEqual(seen, [], "a press to the Source view whose decode is still out puts nothing up");
+  await settle();
+  assert.ok(body.querySelector("code.hljs"), "the Source view painted at the decode");
+  assert.deepEqual(seen, ["rendered paint"], "the Source view's paint fires onRendered alone");
+  seen.length = 0;
+  sourceBtn(wrap).click();                                 // back to the picture
+  assert.equal(seen[0], "replaced picture", "a press back to the picture: the picture goes up, onReplaced told first");
+  assert.ok(seen.slice(1).every((x) => x === "rendered paint"), "and the picture's own paint after it (at once when the page holds it): " + JSON.stringify(seen));
+  const text = await open(REPORT, t);
+  const tseen: string[] = [];
+  text.ctx.onReplaced!(() => { tseen.push("replaced"); });
+  text.ctx.onRendered((why) => { tseen.push("rendered " + (why || "paint") + (text.ctx.error() === null ? "" : " pane")); });
+  disk[REPORT] = { bytes: DOC.replace("p95", "p99"), type: "text/plain; charset=utf-8", mtimeNs: MT7 };
+  text.ctx.reload();
+  await settle();
+  text.b.raw.click();
+  delete disk[REPORT];
+  text.ctx.reload();
+  await settle();
+  assert.deepEqual(tseen, ["rendered paint", "rendered paint", "rendered paint pane"], "a text view's landing, a format click and a failed reload's pane each fire onRendered alone");
 });
 
 // ── Slice 3: the media paint, the media element, the rendered figures (plans/file-review.md, Images and PDFs) ──
@@ -1986,13 +2265,14 @@ test("source: the Slice 3 seam members exist with their doc comments; the media 
   assert.match(VIEW, /renderedImages: \(\) => \(ctx\.mode\(\) === "rendered" \? Array\.from\(body\.querySelectorAll\("\.fileview-md img"\)\) as HTMLImageElement\[\] : \[\]\),/);
   // the media arm: build, mount, THEN wait for the picture — so the element is in the DOM when the hook runs
   const mediaBranch = VIEW.split("if (isImage || isPdf) {")[1].split("if (text === null || editing) return;")[0];
-  assert.match(mediaBranch, /const shown = isPdf \? pdfBlock\(objUrl, path\) : imgBlock\(objUrl, path, imgFailed\);\n\s*body\.replaceChildren\(shown\);\n\s*whenShown\(shown, fireRendered\);/);
+  assert.match(mediaBranch, /const shown = isPdf \? pdfBlock\(objUrl, path\) : imgBlock\(objUrl, path, imgFailed\);\n\s*body\.replaceChildren\(shown\);\n\s*fireReplaced\(\);[^\n]*\n(?:\s*\/\/[^\n]*\n)*\s*whenShown\(shown, \(\) => \{ if \(picView === viewSeq\) fireRendered\(\); \}\);/, "the media arm tells onReplaced after the mount and before whenShown (a source pin; executed in this file's case on onReplaced), then arms whenShown, its hooks gated on no press of the Source toggle since the picture's paint: a source pin; executed in this file's case on a picture still loading when the Source toggle is pressed");
   const when = VIEW.split("function whenShown(")[1].split("\n}\n")[0];
   assert.match(when, /const img = shown\.querySelector\("img\.fileview-img"\) as HTMLImageElement \| null;/);
   assert.match(when, /if \(!img \|\| img\.complete\) \{ cb\(\); return; \}/, "a frame, or an already-complete img: at once");
   assert.match(when, /img\.addEventListener\("load", \(\) => \{ if \(img\.isConnected\) cb\(\); \}, \{ once: true \}\);/, "else the load event, once, and only for a picture still in the document");
-  assert.equal((VIEW.match(/fireRendered\(\);/g) || []).length, 8, "the SVG Source view, the text views, the decode-failure pane, the fetch chain's catch (Slice 7 of plans/markdown-viewer.md, item 3: a refused or failed fetch's pane is a paint, on a first open too), the PDF pages path three times (page 1 drawn; every later page; a later page pdf.js refuses, so the overlay armed on its canvas is redrawn) and enterEdit's edit-mode render (the one paint the panel's cards take their edit-mode state from) call fireRendered directly as a paint; the media arm hands it to whenShown (file-comments.test.ts pins the floor); the two reflows of a text view with its text unchanged (a text-size step, the body's width changing) go through fireRenderedKeepingSelection, which fires the hooks with why 'reflow' (below) so the panel re-places its cards and leaves its marks standing, and a standing selection outlives any hook that does re-wrap (file-view-text-size.test.ts, file-view-reflow-browser.test.ts)");
+  assert.equal((VIEW.match(/fireRendered\(\);/g) || []).length, 9, "the nine direct calls of fireRendered, each a paint: the media arm's, inside the callback it hands whenShown and gated on the press count there (executed in this file's case on a picture still loading when the Source toggle is pressed), the SVG Source view, the text views, the decode-failure pane, the fetch chain's catch (Slice 7 of plans/markdown-viewer.md, item 3: a refused or failed fetch's pane is a paint, on a first open too), the PDF pages path three times (page 1 drawn; every later page; a later page pdf.js refuses, so the overlay armed on its canvas is redrawn) and enterEdit's edit-mode render (the one paint the panel's cards take their edit-mode state from) (file-comments.test.ts pins the floor); the PDF paths' kept frame, column and fallback hand fireRendered itself to whenShown; the two reflows of a text view with its text unchanged (a text-size step, the body's width changing) go through fireRenderedKeepingSelection, which fires the hooks with why 'reflow' (below) so the panel re-places its cards and leaves its marks standing, and a standing selection outlives any hook that does re-wrap (file-view-text-size.test.ts, file-view-reflow-browser.test.ts)");
   assert.equal((VIEW.match(/fireRendered\("reflow"\);/g) || []).length, 1, "the reflows' one call, inside fireRenderedKeepingSelection");
+  assert.equal((VIEW.match(/fireReplaced\(\);/g) || []).length, 3, "the seam's onReplaced told at three swaps: the media arm's picture or frame, the re-ask's loader and the PDF pages' loader (onReplaced's doc says which of them paint at once; a source pin only; this file's case on onReplaced executes the first two, and the third, the PDF pages' loader, is pinned here alone)");
   assert.equal((VIEW.match(/fireRenderedKeepingSelection\(\);/g) || []).length, 2, "the two reflow triggers, and nothing else, keep the selection");
   // imgFailed takes the error event since the replaced-picture guard (the case "the picture's error paints nothing once the body no
   // longer holds that picture" above is the executed witness of the guard; this split only finds the function's body)
@@ -2433,6 +2713,147 @@ test("Edit over pending changes: the mount carries the status's records and the 
   assert.equal(posted.filter((x) => x.type === "fileComments" && x.verb === "status").length, statusAsks,
     "no status re-ask after the save: the reply IS the panel's status");
   assert.equal(wrap.querySelector(".fileview-fc button")!.textContent, "Comments · 0", "…and the glance follows the reply (a sidecar, no changes left)");
+});
+
+// ── the Comments panel's change cards over a save through the panel that lands with the editor still up: the viewer's saved()
+// moves mtimeNs() to the saved bytes, which the editor then holds, and tells the seam's onSaved (its doc), which the panel takes
+// as the card-state rule's content paint of those bytes (file-comments.ts, #cardState's doc, event 1). The real viewer and the
+// real panel. ──
+const P95 = DOC.indexOf("p95");
+/** A substitution over "p95" (the change's own text), which keeps its offsets in DOC with lines added after it. */
+const overP95 = (id: string): Hunk => ({ ...hunk(id), curFrom: P95, curTo: P95 + 3, baseFrom: P95, baseTo: P95 + 3 });
+/** A second substitution, over "40%". */
+const over40 = (id: string): Hunk => ({ ...hunk(id), curFrom: DOC.indexOf("40%"), curTo: DOC.indexOf("40%") + 3, baseFrom: DOC.indexOf("40%"), baseTo: DOC.indexOf("40%") + 3, oldText: "30%", newText: "40%" });
+const SAVED_TEXT = DOC + "\nMore.\n";
+const EDIT_CARD = { buttons: ["Accept", "Reject", "Comment on this change"], link: false };
+const NS9 = "1757145600000000009", NS10 = "1757145600000000010", NS11 = "1757145600000000011";
+/** The change card `id` in the open Comments panel: its buttons, and whether its reference links to its mark. */
+const changeCard = (o: Open, id: string): { buttons: string[]; link: boolean } => {
+  const c = o.wrap.querySelector('.fileview-aside .fc-card[data-id="chg:' + id + '"]');
+  assert.ok(c, "the change card of " + id + " is listed");
+  return { buttons: c!.querySelectorAll(".fc-actions button").map((x) => x.textContent), link: c!.querySelector(".fc-ref")!.classes.includes("fc-link") };
+};
+/** REPORT open with `hunks` pending, the Comments panel opened, then the editor up; `id`'s card read at each step, the read
+ *  view's returned with the open viewer. */
+async function editUnderPanel(t: TestContext, hunks: Hunk[], id: string): Promise<{ o: Open; read: { buttons: string[]; link: boolean } }> {
+  const o = await open(REPORT, t, SID, undefined, true);   // the Raw preference: the view Edit leaves as it found it
+  await answerStatus(status(hunks));
+  o.wrap.querySelector(".fileview-fc button")!.click();
+  await answerStatus(status(hunks));                   // the open's own read of the status
+  const read = changeCard(o, id);
+  assert.ok(read.buttons.includes("Comment on this change"), "the read view shows the status's bytes: the card offers Comment on this change");
+  await enterEdit(o);
+  assert.deepEqual(changeCard(o, id), EDIT_CARD, "the editor up: Accept and Reject answer in place, no Reveal or link into the read view it replaced");
+  return { o, read };
+}
+/** The panel closed and opened again, its status read as `s`. */
+async function reopenPanel(o: Open, s: Status): Promise<void> {
+  const btn = o.wrap.querySelector(".fileview-fc button")!;
+  btn.click(); await settle();
+  assert.equal(o.wrap.querySelector(".fileview-aside"), null, "the panel closed");
+  btn.click(); await answerStatus(s);
+}
+
+test("a save whose reply lands with the editor kept up by keystrokes typed above the change while the save was out (file-comments.ts, #cardState's doc, event 1): the substitution's card keeps Comment on this change at the reply, at a render and at a later status for the saved bytes; the composer it opens quotes the saved bytes' span, the text the offsets index, not the buffer's; the editor's exit gives the card the read view gave", async (t) => {
+  const { o, read } = await editUnderPanel(t, [overP95("h1")], "h1");
+  const m = saveTracked(o, SAVED_TEXT);
+  typeInto("Draft. " + SAVED_TEXT);                    // typed above the change while the save is out
+  await saveReply(m.reqId, status([overP95("h1")], { fileMtimeNs: NS9, storeMtimeNs: NS10 }));
+  assert.equal(o.ctx.editing(), true, "the keystrokes keep the editor up");
+  assert.equal(o.ctx.mtimeNs(), NS9, "the viewer's mtime is the saved bytes'");
+  assert.deepEqual(changeCard(o, "h1"), EDIT_CARD, "at the reply the card keeps Comment on this change (#cardState's doc, event 1)");
+  o.wrap.querySelector('.fileview-aside .fc-card[data-id="chg:h1"] .fc-card-head')!.click(); await settle();
+  assert.deepEqual(changeCard(o, "h1"), EDIT_CARD, "a render moves nothing");
+  await reopenPanel(o, status([overP95("h1")], { fileMtimeNs: NS9, storeMtimeNs: NS11 }));
+  assert.deepEqual(changeCard(o, "h1"), EDIT_CARD, "nor does a later status for the saved bytes, the sidecar moved");
+  const aside = o.wrap.querySelector(".fileview-aside")!;
+  aside.querySelector('[data-act="fcchangecomment"][data-id="h1"]')!.click(); await settle();
+  assert.notEqual(o.ctx.text()!.slice(P95, P95 + 3), "p95", "the buffer's text at the change's offsets is other words (control)");
+  assert.equal(aside.querySelector(".fc-composer-ref .fc-quote")!.textContent, "p95", "the composer quotes the change's own text, cut from the saved bytes (#cardState's doc)");
+  assert.equal(aside.querySelector(".fc-composer-ref .fc-tag"), null, "no passage-changed tag");
+  o.b.cancel.click(); await settle();                  // the buffer is dirty: the confirm says yes
+  assert.equal(o.ctx.editing(), false);
+  assert.deepEqual(changeCard(o, "h1"), read, "the exit repaints the saved bytes: the card as the read view gave it before the editor");
+});
+
+test("a save whose reply lands with the editor kept up by a decision clicked in it while the save was out (file-comments.ts, #cardState's doc, event 1): the substitution's card keeps Comment on this change at the reply, at a render and at a later status for the saved bytes", async (t) => {
+  const { o } = await editUnderPanel(t, [overP95("h1")], "h1");
+  const m = saveTracked(o, SAVED_TEXT);
+  decideInEditor("accepted", "h1", "p95", "p99");      // clicked while the save is out: not in this save
+  await saveReply(m.reqId, status([overP95("h1")], { fileMtimeNs: NS9, storeMtimeNs: NS10 }));
+  assert.equal(o.ctx.editing(), true, "the decision keeps the editor up");
+  assert.deepEqual(changeCard(o, "h1"), EDIT_CARD, "at the reply the card keeps Comment on this change (#cardState's doc, event 1)");
+  o.wrap.querySelector('.fileview-aside .fc-card[data-id="chg:h1"] .fc-card-head')!.click(); await settle();
+  assert.deepEqual(changeCard(o, "h1"), EDIT_CARD, "a render moves nothing");
+  await reopenPanel(o, status([overP95("h1")], { fileMtimeNs: NS9, storeMtimeNs: NS11 }));
+  assert.deepEqual(changeCard(o, "h1"), EDIT_CARD, "nor does a later status for the saved bytes, the sidecar moved");
+});
+
+test("a save whose reply lands with the editor kept up by the accept it carried, undone in the editor while the save was out (file-comments.ts, #cardState's doc, event 1): the other substitution's card keeps Comment on this change at the reply, at a render and at a later status for the saved bytes", async (t) => {
+  const { o } = await editUnderPanel(t, [overP95("h1"), over40("h2")], "h2");
+  decideInEditor("accepted", "h1", "p95", "p99");
+  const m = saveTracked(o, SAVED_TEXT);
+  assert.deepEqual(m.args.accepted, [{ id: "h1", oldText: "p95", newText: "p99" }], "the save carries the accept");
+  ed.records = [record("h1"), record("h2")]; ed.decisions = { accepted: [], rejected: [] }; ed.trackOpts!.onDecisions(ed.decisions);   // the accept undone while the save is out
+  await saveReply(m.reqId, status([over40("h2")], { fileMtimeNs: NS9, storeMtimeNs: NS10 }));
+  assert.equal(o.ctx.editing(), true, "the undone accept keeps the editor up");
+  assert.match(errBar(o.body)!.textContent, /had already landed with this save/, "and the bar says the accept landed");
+  assert.deepEqual(changeCard(o, "h2"), EDIT_CARD, "at the reply the card keeps Comment on this change (#cardState's doc, event 1)");
+  o.wrap.querySelector('.fileview-aside .fc-card[data-id="chg:h2"] .fc-card-head')!.click(); await settle();
+  assert.deepEqual(changeCard(o, "h2"), EDIT_CARD, "a render moves nothing");
+  await reopenPanel(o, status([over40("h2")], { fileMtimeNs: NS9, storeMtimeNs: NS11 }));
+  assert.deepEqual(changeCard(o, "h2"), EDIT_CARD, "nor does a later status for the saved bytes, the sidecar moved");
+});
+
+// ── the two roads where a save's onSaved is no event for the change cards (file-comments.ts, #cardState's doc, event 1) ──
+const INTRO = "Intro line.\n";                          // a line above the change: the saved bytes' offsets are the loaded text's plus its length
+/** overP95 in the saved bytes INTRO + DOC, where the same "p95" sits INTRO.length further on. */
+const overP95Saved = (id: string): Hunk => ({ ...overP95(id), curFrom: P95 + INTRO.length, curTo: P95 + INTRO.length + 3, baseFrom: P95 + INTRO.length, baseTo: P95 + INTRO.length + 3 });
+
+test("a save through saveFile (Edit clicked before the panel's first status, so the save does not go through the panel), the first status answered and keystrokes typed while it was out (file-comments.ts, #cardState's doc, event 1): the card keeps Comment on this change at the ack; a status for the saved bytes then takes it away, so no composer can quote the loaded text at the saved bytes' offsets; the editor's exit paints the saved bytes and the card offers it again, quoting them", async (t) => {
+  const o = await open(REPORT, t, SID, undefined, true);
+  await enterEdit(o);                                  // before the panel's first status: nothing rode in, and Save follows the status (none yet)
+  const reqId = save(o, INTRO + DOC);                  // the saveFile frame (save() asserts it went out)
+  assert.equal(lastOf("fileComments", "save"), undefined, "the save did not go through the panel");
+  await answerStatus(status([overP95("h1")]));         // the panel's first status, answered while the save is out
+  o.wrap.querySelector(".fileview-fc button")!.click();
+  await answerStatus(status([overP95("h1")]));         // the open's own read of it
+  const before = changeCard(o, "h1");
+  assert.ok(before.buttons.includes("Comment on this change"), "the premise: with a status for the loaded bytes the card offers Comment on this change");
+  typeInto("Draft. " + INTRO + DOC);                   // typed while the save is out
+  disk[REPORT] = { bytes: INTRO + DOC, type: "text/plain; charset=utf-8", mtimeNs: NS9 };
+  fileSaved(reqId, { mtimeNs: NS9, logged: true }); await settle();
+  assert.equal(o.ctx.editing(), true, "the keystrokes keep the editor up");
+  assert.equal(o.ctx.mtimeNs(), NS9, "the viewer's mtime is the saved bytes'");
+  assert.deepEqual(changeCard(o, "h1"), before, "at the ack the card is as it was (#cardState's doc, event 1)");
+  await answerStatus(status([overP95Saved("h1")], { fileMtimeNs: NS9, storeMtimeNs: NS10 }));   // onSaved's re-read of the status: the saved bytes'
+  assert.deepEqual(changeCard(o, "h1"), { buttons: ["Accept", "Reject"], link: false }, "a status for the saved bytes takes Comment on this change away (#cardState's doc, event 2)");
+  o.b.cancel.click(); await settle();                  // the buffer is dirty: the confirm says yes
+  assert.equal(o.ctx.editing(), false);
+  assert.ok(changeCard(o, "h1").buttons.includes("Comment on this change"), "the exit paints the saved bytes: the card offers Comment on this change again (#cardState's doc, event 1)");
+  const aside = o.wrap.querySelector(".fileview-aside")!;
+  aside.querySelector('[data-act="fcchangecomment"][data-id="h1"]')!.click(); await settle();
+  assert.equal(aside.querySelector(".fc-composer-ref .fc-quote")!.textContent, "p95", "the composer quotes the change's own text, cut from the saved bytes");
+});
+
+test("a late ack over a pane: a save through the panel, Cancel while it was out, a reload landing the saved bytes, a second reload failing to a pane, then the save's reply (file-comments.ts, #cardState's doc, event 1): the card offers no Reveal and no Comment on this change over the pane, at the ack and at a render", async (t) => {
+  const { o } = await editUnderPanel(t, [overP95("h1")], "h1");
+  const m = saveTracked(o, SAVED_TEXT);
+  o.b.cancel.click(); await settle();                  // Cancel while the save is out (the buffer is dirty: the confirm says yes)
+  assert.equal(o.ctx.editing(), false);
+  disk[REPORT] = { bytes: SAVED_TEXT, type: "text/plain; charset=utf-8", mtimeNs: NS9 };
+  o.ctx.reload(); await settle();                      // the saved bytes land
+  assert.equal(o.ctx.mtimeNs(), NS9);
+  delete disk[REPORT];
+  o.ctx.reload(); await settle();                      // a second reload fails to a pane
+  assert.notEqual(o.ctx.error(), null, "the pane stands");
+  assert.equal(o.ctx.mtimeNs(), NS9, "the view's mtime is still the saved bytes'");
+  await saveReply(m.reqId, status([overP95("h1")], { fileMtimeNs: NS9, storeMtimeNs: NS10 }));
+  assert.notEqual(o.ctx.error(), null, "the pane still stands after the ack's re-read");
+  const pane = { buttons: ["Accept", "Reject"], link: false };
+  assert.deepEqual(changeCard(o, "h1"), pane, "at the ack over the pane: no Reveal and no Comment on this change (#cardState's doc, event 1)");
+  o.wrap.querySelector('.fileview-aside .fc-card[data-id="chg:h1"] .fc-card-head')!.click(); await settle();
+  assert.deepEqual(changeCard(o, "h1"), pane, "a render moves nothing");
 });
 
 test("a tracked file with nothing pending, or one with only a sidecar, still saves through the panel with no records; an untracked file saves through saveFile, byte for byte", async (t) => {

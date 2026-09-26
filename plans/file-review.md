@@ -2061,10 +2061,10 @@ below the focus and the comment holds the start: the margin-layout record above)
 is laid at any point, that the comment names the change instead of a passage (the review's second round, 2026-09-10).
 For a spanned change, an insertion or a substitution, the card offers
 Comment on this change only while the view carries the change's text (`spanCarried`: the bytes the view shows are the
-status's, whose offsets place the span (`paintCurrent`: `textCurrent` compares the status's mtime with the mtime of the
-view's last paint while an svg picture's landing waits for its paint, else with the view's mtime); there is a text to
-cut it from (`indexedText`: the view's, or while the editor is up the file as the editor loaded it, never the buffer);
-and the view shows text at all, not the picture of a media file); in flux, a reject's reply landed and its reload not,
+status's, whose offsets place the span; there is a text to cut it from (`indexedText`: the view's, or while the editor is
+up the file as the editor loaded it, never the buffer); and the view shows text at all, not the picture of a media file;
+each as the Comments panel's card-state rule took it at its last event (`#cardState` in file-comments.ts, whose doc
+states the rule)); in flux, a reject's reply landed and its reload not,
 or the poll's reload landed and its status not, the
 card shows Accept and Reject alone, no Comment on this change, and a click that reaches `startChangeComment` anyway
 writes nothing, since the composer over the span would quote other bytes and a comment by id alone would lose the

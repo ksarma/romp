@@ -198,6 +198,11 @@ const DECIDE_TEXTS = new Set([DECIDE_IN_EDITOR, DECIDE_IN_EDITOR_TOUCH]);
  *  land, told only once the reply shows it (CHANGES_MOVED_UNDER_EDIT). Keyed on the request's life, never on a clock; the
  *  viewer refuses in words, in place (its editBlocked idiom), so the reason reaches touch and keyboard users. */
 export const DECISION_IN_FLIGHT = "A change in this file is being accepted or rejected right now. Edit opens as soon as that lands.";
+/** What a click on a change card's link, or on a spanned change's Comment on this change, answers while the body does not show
+ *  the last content paint (notInView; Panel.#cardState's doc). Each control needs the text that paint showed. */
+export const NOT_IN_VIEW_LINK = "This change is not in view right now. Its link works once it is.";
+export const NOT_IN_VIEW_COMMENT = "This change is not in view right now. Comment on this change works once it is.";
+const NOT_IN_VIEW_TEXTS = new Set([NOT_IN_VIEW_LINK, NOT_IN_VIEW_COMMENT]);
 /** The decide-in-editor words for this device, read at each use rather than once: the primary pointer can change (a tablet
  *  docks to a keyboard and trackpad), and a row set under one is retired by text under the other (DECIDE_TEXTS). */
 function decideInEditor(): string { return isCoarsePointer() ? DECIDE_IN_EDITOR_TOUCH : DECIDE_IN_EDITOR; }
@@ -1052,7 +1057,7 @@ function restoreScroll(held: Array<[Element, number]>): void {
 }
 /** The PDF page an element is (Slice 4): the chunk stamps `data-page` (1-based) on each page's canvas and on the page's
  *  shell (div.fileview-pdf-page), and ONLY those two carry a page — an <img> never does, whatever its markup says. The
- *  sanitizer keeps a rendered figure's data-* attributes (owns() relies on that for data-act), so a raw
+ *  sanitizer strips an author's data-* attributes now (md-sanitize.ts: ALLOW_DATA_ATTR false); before it did, a raw
  *  `<img src="figure.png" data-page="2">` a session wrote into markdown reached here as page 2 of a PDF: the composer
  *  named a page, regionTarget dropped the embed's src for kind "pdf", and the host refused the comment for the missing
  *  src (a region on an embedded figure needs it). Null for anything else, and for a carrier without a positive integer. */
@@ -1182,10 +1187,10 @@ function ensureListener(): void {
   // `storage` event, or the gear's same-document signal — repaints this one's marks so its header and its body
   // agree. Installed once here, with the message listener, and routed to the live panel: a listener per panel
   // would outlive the panels (onExternalSettingsChange has no remove).
-  onExternalSettingsChange((s) => { if (live && live.inline !== s.changesInline) { live.inline = s.changesInline; live.paintAll(); } });
+  onExternalSettingsChange((s) => { if (live && live.inline !== s.changesInline) { live.inline = s.changesInline; live.settingsFlipped(); } });
   // the filter (All · Comments · Changes) is kept the same way and reaches the live panel the same way: its own call, since the
   // toggle's line above is pinned word for word (file-comments-inline-toggle.test.ts) and a pick that changes nothing repaints nothing
-  onExternalSettingsChange((s) => { if (live && live.filter !== s.commentsFilter) { live.filter = s.commentsFilter; live.paintAll(); } });
+  onExternalSettingsChange((s) => { if (live && live.filter !== s.commentsFilter) { live.filter = s.commentsFilter; live.settingsFlipped(); } });
 }
 /** The save chord, claimed at the WINDOW in the capture phase while the live panel's box is the key's target: the first
  *  listener a keydown meets, by the DOM's phase order, not by who registered first. In the combined shell, palette-main.ts
@@ -1279,13 +1284,31 @@ const LANDING_BAR = "inset 2px 0 0 var(--accent)";
 // (`[![alt](fig.png)](url)`, which mdBlock renders as <a><img></a>) opened the tab there instead of its card — twice with
 // the panel open, once for the click the layer handed on and once for the browser's own — while the feed and Files
 // panes, which have no such handler, opened the card (the 2026-09-06 review). A registry, not a class name: the
-// sanitizer keeps `class` and `data-*` on the file's own markup, so neither proves the panel made an element (owns).
+// sanitizer keeps an author's `class` on the file's own markup, and while it strips an author's `data-*` (md-sanitize.ts:
+// ALLOW_DATA_ATTR false), the viewer sets data-act on that markup after the sanitize (a path link's, a gated figure's
+// placeholder), so neither proves the panel made an element (owns).
 const PANEL_MARKS = new WeakSet<Element>();
 /** Whether `t`, or an element above it, is a mark some panel painted: a rectangle's chip counts through its rectangle,
  *  a press on the overlay through the overlay. False for the file's own markup, whatever it wears. */
 export function panelMark(t: Element | null): boolean {
   for (let x: Element | null = t; x; x = x.parentElement) if (PANEL_MARKS.has(x)) return true;
   return false;
+}
+/** What the change cards show, as the card-state rule takes it (Panel.#cardState's doc): the facts of the last content paint and
+ *  of the status and gesture since, frozen, so that nothing but the rule's writer changes them. */
+type CardState = Readonly<{
+  mtime: string | null;                   // the last content paint's mtime; null before the first
+  body: number;                           // Panel.#replaced when that paint came (#showsLastPaint compares)
+  text: string | null;                    // that paint's text (a Reveal's line is read over it)
+  shows: boolean;                         // that paint showed text a span is cut from (indexedText), not a picture
+  marks: boolean;                         // the change marks were on: Show changes inline, and the filter not Comments alone
+  current: boolean;                       // the rule's reading of the status at its last event (Panel.#cardState's doc, events 1 and 2)
+  painted: readonly string[];             // the change ids whose marks the body held after the event's pass
+}>;
+/** Whether two statuses are one reading of the file, its sidecar and its config: the three mtimes the host stamps on what it
+ *  read (the card-state rule's event 2, Panel.#cardState's doc). */
+function sameStatus(a: Status | null, b: Status): boolean {
+  return !!a && a.fileMtimeNs === b.fileMtimeNs && a.storeMtimeNs === b.storeMtimeNs && a.configMtimeNs === b.configMtimeNs;
 }
 
 class Panel {
@@ -1309,7 +1332,7 @@ class Panel {
   logOpen = false;
   moreChangesOpen = false;                  // the "… N more changes" fold past GROUP_LIMIT groups — the same rule
   rejectAllConfirm = false;                 // the Reject all confirm row is showing (pane-local, like the folder-off confirm)
-  paintedChanges = new Set<string>();       // the change ids whose marks the current view shows; the rest get Reveal
+  paintedChanges = new Set<string>();       // the change ids whose marks the body holds after the last pass (paintPass, repaintPreselPass); the cards read the copy the card-state rule takes (#cardState)
   landing: HTMLElement | null = null;       // the Raw row the last Reveal cued, when the view showed no mark of ours there (landOn)
   // Show changes inline (the inline-display follow-on, 2026-09-07): whether the read view marks the session's changes
   // in the text — insertions tinted, deletions struck — in both views. Off, the file reads as it is and every change
@@ -1672,12 +1695,18 @@ class Panel {
   changesMovedUnderEdit = false;
   // the sidecar shows pending changes the editor never carried (noteChangesUnreadUnderEdit): the same latch shape
   changesUnreadUnderEdit = false;
-  // the text the status's offsets index while the editor is up: the file as the editor loaded it (begin), or the content of
-  // the last landed save (saveThroughComments), whose reply's hunks index that. text() answers the BUFFER then, which typing
-  // moves under the offsets — grouping the cards over it retitled them with every keystroke's render (indexedText). Null
-  // outside an edit: the view's text is the one.
+  // the text the cards read while the editor is up: the file as the editor loaded it (begin), or the content of the last save
+  // through this panel from that editor (saveThroughComments), whose reply's hunks index that; a save through saveFile gives
+  // it nothing. text() answers the BUFFER then, which typing moves under the offsets: grouping the cards over it retitled
+  // them with every keystroke's render (indexedText). Read only while the editor is up; a pass over the read view nulls it.
   editText: string | null = null;
+  // the fileMtimeNs of the last save through this panel whose content editText took, for the editor that sent it
+  // (saveThroughComments, `mine`). The viewer runs that save's onSaved right after the reply resolves, and one mtime names one
+  // save, so the ack of a save finds its own mtime here only when editText took its content; with the editor up, those are
+  // the bytes the cards read, and onSaved takes them as a content paint (#cardState's doc, event 1).
+  editTextSave: string | null = null;
   decideRows = new Set<string>();           // the slots whose row says to decide in the editor (refuseDecision): retired when the edit ends
+  viewRows = new Set<string>();             // the slots whose row says the change is not in view (notInView): shown only under the card, retired at the next content paint (#latchCardState) or at a status that drops or detaches the change (retireViewRows)
   stopped = new Set<string>();              // poll targets a 413/415 retired
   timer: ReturnType<typeof setInterval> | null = null;
   polling = false;
@@ -1705,11 +1734,263 @@ class Panel {
   // settles it (the review of Slice 7, round 4: the row's Reload over a standing pane re-filed the row off that pane as soon as
   // the status ask landed, the fetch still out, and cleared the deadline with it)
   reloadOut = false;
-  // the view's mtime at its last paint (the onRendered hook, `why` other than "reflow"), or at the mount before any paint: the
-  // mtime of the text the body shows. landedAhead: the seam has reported a landing since that paint (onLanded, an svg picture's
-  // bytes), so mtimeNs() may answer bytes the body does not show yet; the next paint lowers it. Both are read by paintCurrent
-  paintedAt = "";
-  landedAhead = false;
+  /** THE CARD-STATE RULE, stated here once; the other texts point here. The change cards' state (the not shown tag, Reveal and
+   *  its title, Comment on this change, the reference's link to its mark, and the paragraph groups the list sets the cards in,
+   *  which the fold past GROUP_LIMIT counts) is this field, and every render reads it from here: renderChangeCard, spanCarried,
+   *  overlapping, addCrossed, changeView, and the pass's change marks (paintPass hands paintChanges its `current`). It is taken
+   *  only at three events and held between them:
+   *  1. a content paint: the seam's onRendered with error() null; at the mount, a view already showing the file, whose
+   *     content paint came before the panel could hear it (the viewer mounts its actions before its first fetch, so only a
+   *     stand-in seam reaches this); and the seam's onSaved when the saved bytes are the text the cards read: the editor is
+   *     up, the save went through this panel, which gave editText that save's content for the editor that sent it
+   *     (editTextSave names the save), and mtimeNs() answers the saved bytes' mtime, where the viewer moves it for that
+   *     editor, which holds those bytes from then as the file it loaded, with no paint while it stays up (rows
+   *     text-save-typed, text-save-decided and text-save-undone). Any other onSaved is no event: a save through saveFile
+   *     gives editText nothing, so the cards read what they read before it (row text-savefile-typed); and a save whose
+   *     editor is gone by its ack, or was followed by another editor's begin(), leaves the cards to the read view or to that
+   *     editor (file-view-seam.test.ts runs the saveFile road and a late ack over a pane over the real viewer; the seam's
+   *     onSaved doc in file-view.ts says what each route's ack does). For a picture the
+   *     content paint is its load, the only paint that shows its bytes; for the Source view, its decode's paint. A failure
+   *     pane is no content paint. At a content paint the status is read against that paint's mtime: `current` when the
+   *     status's file mtime is that paint's (textCurrent, where an empty mtime on either side reads as the same). The body
+   *     shows the last content paint from that paint until the viewer next puts up something else whose paint has not come
+   *     (what the seam's onReplaced tells with no onRendered after it in the same call: a picture still loading, a landing's,
+   *     the way back's or a press to the picture's; the romp loader of a re-ask; the PDF pages' loader), or a pane (its
+   *     onRendered with error() set); #replaced counts both, and the paint takes the count. A PDF frame the media arm puts
+   *     up, and a picture the page still holds, tell onReplaced and then onRendered in the same call: a content paint that
+   *     takes the count at once (onReplaced's doc in file-view.ts says which swaps tell which). A press to the Source view
+   *     whose decode is still out puts nothing up: the picture stays until the body's next paint (the decode's, unless a
+   *     failed reload's pane or a landing of another type paints first). Every pass the panel runs over the body while it
+   *     shows the last content paint (paintAll's, the composer's repaint) files that paint's change marks as the layout then
+   *     measures them (the trim of collapsed blanks: a font or a figure arriving re-wraps the lines, the composer's target
+   *     pads them), and the cards take that filing; a pass over anything else files nothing for them.
+   *  2. a status that differs from the one showing (sameStatus: its file, sidecar and config mtimes). A status re-read with
+   *     none of them moved, as the panel's open re-reads it, is no event. A status that arrives while the body shows the last
+   *     content paint is read against that paint's mtime (CardState's `mtime`), as at the paint, never against mtimeNs(), which
+   *     may already answer bytes that landed under the view (a reload under the Source view, or one landing while a press to the
+   *     Source view waits for its decode: rows svg-source-landing-status, svg-source-landing-store-status and
+   *     svg-press-landing-status). A status that arrives while the body does not show the last content paint (before the
+   *     first, over a pane, or while something put up since, a picture or a loader, holds the body) reads as not current, with
+   *     no change marked.
+   *  3. the person's own gesture on the panel: Show changes inline and the filter, here or in another viewer. The filter's
+   *     choice of which cards the list shows (Comments alone lists no change card) takes effect at the click whatever the body
+   *     shows, since the list is the filter's own (row text-filter-over-pane). The marks, and the card state they set, take the
+   *     gesture at once while the body shows the last content paint, and otherwise at the next content paint.
+   *  Between these events nothing takes a card's state from mtimeNs(), error(), mode() or a landing. The editor alone is read
+   *  at render: it takes the body only with a content paint (enterEdit's), and a read view's Reveal and link go the moment it
+   *  does, while the list's groups read its text (indexedText: the file as the editor loaded it, or as the last save through
+   *  this panel from that editor wrote it). Keystrokes typed after a save's text was taken are the buffer's, which no card
+   *  reads. After a save through this panel the cards read its saved bytes, which its reply's offsets index, and Comment on
+   *  this change cuts its span from them (row text-save-typed); after a save through saveFile they read what they read before
+   *  it, so a status for the saved bytes reads as not current (event 2: no content paint of those bytes has come) until the
+   *  editor's exit paints them (row text-savefile-typed). The
+   *  fold's own click opens or closes the fold at once over the groups this field holds. While the body does not show the
+   *  last content paint, a card keeps the link and a spanned change's Comment on this change as the rule's last event left
+   *  them, until the next event (a status that differs takes them away then, as in the row text-status-over-pane), and a
+   *  click on either answers that the change is not in view (notInView).
+   *  #latchCardState is the one writer, and the functions of the events above are its only callers;
+   *  file-comments-changes-review2.test.ts pins both by parsing this file, and runs the roads below row by row. Each row names a
+   *  road, the steps at which the change cards moved with the code before this rule (fe43d2c2a) and with it (head), why each
+   *  move the code before made that the rule drops carried no new information (Dropped), and the event that brings each move
+   *  the rule adds (Added). A road's seam events are the viewer's as it is now (the press gate, the Source view's decode and
+   *  onReplaced are file-view-seam.test.ts's and the Chromium file's to pin, and a save's onSaved under the editor
+   *  file-view-seam.test.ts's); a filing the layout moves needs a real layout, so
+   *  those roads run in Chromium instead (md-config-paint-presel-refile-browser.test.ts: the composer's target, and a pass after
+   *  the open once the page's style has laid the lines out).
+   *  ROADS
+   *  text-first-open (a text file's first open, its status in first): fe43d2c2a paint; head paint.
+   *  text-first-open-pane (that open failing to a pane, then painting): fe43d2c2a paint; head paint.
+   *  text-pane-before-panel (a first open's pane, the panel then opened, its status re-read, then the paint): fe43d2c2a paint;
+   *     head paint.
+   *  text-reload-fails (a painted file whose status is current, a reload of the same bytes failing to a pane, then painting
+   *     them): fe43d2c2a pane, paint; head none. Dropped: at the pane, a not shown tag and a Reveal for marks the pane took away,
+   *     with the bytes and the status unchanged; at the paint, the same taken back.
+   *  text-second-pane (the same with a second pane over the first): fe43d2c2a pane, paint; head none. Dropped: at the pane and
+   *     at the paint, as in text-reload-fails.
+   *  text-status-over-pane (a pane, a status for a moved sidecar, then the paint): fe43d2c2a pane, paint; head status, paint.
+   *     Dropped: at the pane, as in text-reload-fails. Added: at the status, which differs and arrives over a pane, so it reads as
+   *     not current: the insertion's and the substitution's cards give up Comment on this change, the link and a line in the
+   *     deletion's Reveal until the paint.
+   *  text-config-status-over-pane (a pane, a status whose config mtime alone moved, then the paint): fe43d2c2a pane, paint; head
+   *     status, paint. Dropped: at the pane, as in text-reload-fails. Added: at the status, as in text-status-over-pane.
+   *  text-reopen-over-pane (a pane, the panel closed and opened, its status re-read unchanged, then the paint): fe43d2c2a pane,
+   *     paint; head none. Dropped: at the pane and at the paint, as in text-reload-fails.
+   *  text-first-panel-open-over-pane (a painted file's pane, the panel's first open over it with its status re-read, then the
+   *     paint): fe43d2c2a paint; head none. Dropped: at the paint, the taking back of a not shown tag and a Reveal the open had
+   *     shown for marks the pane took away.
+   *  text-reread-over-content (the panel closed and opened over the painted file, its status re-read unchanged): fe43d2c2a
+   *     none; head none.
+   *  text-store-status (a status for a moved sidecar over the painted file, its changes the same): fe43d2c2a none; head none.
+   *  text-new-bytes (a status for newer bytes, then their landing): fe43d2c2a status, land; head status, land.
+   *  text-new-bytes-pane-first (a pane, a status for newer bytes, then their landing): fe43d2c2a pane, status, land; head
+   *     status, land. Dropped: at the pane, as in text-reload-fails.
+   *  text-new-bytes-then-pane (a status for newer bytes, their fetch failing to a pane, then a landing): fe43d2c2a status,
+   *     land; head status, land.
+   *  text-inline-over-content (Show changes inline off and on over the painted file): fe43d2c2a inline off, inline on; head
+   *     inline off, inline on.
+   *  text-inline-over-pane (Show changes inline off, a pane, on over the pane, then the paint): fe43d2c2a inline off, inline
+   *     on, paint; head inline off, paint. Dropped: at the inline on, a not shown tag and a Reveal naming a line of a text the
+   *     pane did not show; the paint takes the flip.
+   *  text-inline-before-first-paint (Show changes inline off before a text file's first paint, then the paint): fe43d2c2a
+   *     inline off, paint; head paint. Dropped: at the inline off, the Reveals' titles turned to the marks-off words over a body
+   *     showing no text; the paint takes the flip.
+   *  text-filter-over-content (Comments alone, then All, over the painted file; the change cards leave the list and come back):
+   *     fe43d2c2a comments, all; head comments, all.
+   *  text-filter-over-pane (a pane, then Comments alone and All over it, then the paint): fe43d2c2a pane, comments, all, paint;
+   *     head comments, all. Dropped: at the pane and at the paint, as in text-reload-fails.
+   *  text-edit (the editor taken up, then put down): fe43d2c2a edit, done; head edit, done.
+   *  text-save-leaves (the editor taken up, then a save with nothing typed or clicked while it was out, whose reply puts the
+   *     editor down): fe43d2c2a edit, save; head edit, save.
+   *  text-save-typed (the editor taken up, a save whose reply lands with the editor kept up by keystrokes typed above the
+   *     changes while the save was out, a render, a status for the saved bytes whose sidecar moved, then the editor put down):
+   *     fe43d2c2a edit, save, render, done; head edit, done. Dropped: at the save, Comment on this change taken off the
+   *     insertion's and the substitution's cards, the reply read against the view's mtime before the viewer moved it to the
+   *     saved bytes, which the editor holds and the reply's offsets index; at the render, the same given back, the moved mtime
+   *     read with nothing new.
+   *  text-save-decided (the same with a decision clicked in the editor while the save was out in place of the keystrokes):
+   *     fe43d2c2a edit, save, render, done; head edit, done. Dropped: at the save and at the render, as in text-save-typed.
+   *  text-save-undone (the same with the save carrying the insertion's accept, undone in the editor while the save was out,
+   *     in place of the keystrokes): fe43d2c2a edit, save, render, done; head edit, save, done. Dropped: at the render, as in
+   *     text-save-typed; at the save, where both take the insertion's card away with the reply that no longer lists it,
+   *     fe43d2c2a also took Comment on this change off the substitution's card, as in text-save-typed.
+   *  text-savefile-typed (the editor taken up before the panel's first status, a save through saveFile with keystrokes typed
+   *     above the changes while it was out, that first status answered then, the panel opened with it re-read unchanged, the
+   *     save's ack, a status for the saved bytes, then the editor put down): fe43d2c2a ack, saved status, done; head saved
+   *     status, done. Dropped: at the ack, Comment on this change taken off the insertion's and the substitution's cards, the
+   *     ack's mtime read while the cards read the text the editor loaded, which the status's offsets index. At the saved status
+   *     both move: fe43d2c2a gave it back, reading that status against the moved mtime while the cards still read the loaded
+   *     text, from which its composer cut the saved bytes' offsets; the head takes it off there (event 2).
+   *  svg-landing-then-paint (an svg's picture, a status for newer bytes, their landing, then the picture's load): fe43d2c2a
+   *     status, paint; head status, paint.
+   *  svg-first-open (an svg's first open, its status in first: the landing, then the picture's load): fe43d2c2a none; head
+   *     paint. Added: at the paint, since before the first content paint nothing is current: the insertion's and the
+   *     substitution's Reveals come with the picture, where fe43d2c2a offered them from the mount over a body showing none of the
+   *     file.
+   *  svg-reask-pane (a status for newer bytes, their landing, the picture and its re-ask failing to a pane, then the way back's
+   *     picture): fe43d2c2a status, pane; head status, way back. Dropped: at the pane, a Reveal claimed for landed bytes the pane
+   *     did not show (the pane recorded their mtime as painted). Added: at the way back, that Reveal at the paint that shows those
+   *     bytes.
+   *  svg-loader-status (an svg's picture whose status is current, its load failing so that its address is asked again behind
+   *     the loader, a status for a moved sidecar, the answer's picture, then its load): fe43d2c2a none; head status, load. Added:
+   *     at the status, which differs and arrives while the loader holds the body, so it reads as not current: the insertion's and
+   *     the substitution's Reveals go until a picture shows; at the load, those Reveals back at the paint that shows the bytes.
+   *  svg-wayback-status (an svg's picture whose status is current, its load and its re-ask failing to a pane, a status for a
+   *     moved sidecar, the way back's picture, a second status for a moved sidecar, then its load): fe43d2c2a none; head status,
+   *     load. Added: at the status, as in svg-loader-status but over the pane; at the load, as in svg-loader-status.
+   *  svg-inline-landing-window (an svg's picture, a status for newer bytes, their landing with their picture up and still
+   *     loading, Show changes inline off, then the picture's load): fe43d2c2a status, inline off, load; head status, load.
+   *     Dropped: at the inline off, the Reveals' titles turned to the marks-off words over the landed bytes' picture, which no
+   *     paint has shown yet; the load takes the flip.
+   *  svg-inline-loader (an svg's picture, its load failing so that its address is asked again behind the loader, Show changes
+   *     inline off, the answer's picture, then its load): fe43d2c2a inline off; head load. Dropped: at the inline off, the
+   *     Reveals' titles turned to the marks-off words over the loader. Added: at the load, the paint that takes the flip.
+   *  svg-inline-wayback (an svg's picture, its load and its re-ask failing to a pane, the way back's picture, Show changes
+   *     inline off, then its load): fe43d2c2a inline off; head load. Dropped: at the inline off, as in svg-inline-loader but over
+   *     the way back's picture still loading. Added: at the load, as in svg-inline-loader.
+   *  svg-source-reload-fails (an svg's Source view whose status is current, a reload of the same bytes failing to a pane, then
+   *     the Source view painted again): fe43d2c2a pane, paint; head none. Dropped: at the pane and at the paint, as in
+   *     text-reload-fails.
+   *  svg-press-window (the Source view, a status for newer bytes, their landing under it, a second reload's pane, a press to a
+   *     picture still loading, a render, Show changes inline off and on, then the picture's load): fe43d2c2a status, pane, render,
+   *     inline off, inline on; head status, load. Dropped: at the pane, not shown tags and Reveals for marks the pane took away;
+   *     at the render, at the inline off and at the inline on, states read off the press's picture mode, and a flip, before any
+   *     paint of the landed bytes. Added: at the load, the move at the paint that shows those bytes.
+   *  svg-press-back (the Source view, newer bytes landing under it, a press to the picture and back, then the decode):
+   *     fe43d2c2a status, decode; head status, decode.
+   *  svg-source-landing-status (the Source view marking the changes, newer bytes landing under it with the decode out, their
+   *     status, then the decode): fe43d2c2a status, decode; head status, decode.
+   *  svg-source-landing-store-status (the same with a status for the painted bytes whose sidecar moved in place of theirs):
+   *     fe43d2c2a decode; head decode.
+   *  svg-press-landing-status (an svg's picture, a press to the Source view waiting for its decode, newer bytes landing then,
+   *     their status, then the decode): fe43d2c2a status, decode; head status, decode.
+   *  svg-press-marked (the Source view marking the changes, a press to a picture still loading, a render, then the picture's
+   *     load): fe43d2c2a render, load; head load. Dropped: at the render, Comment on this change gone off the insertion's and the
+   *     substitution's cards and the line out of the deletion's Reveal, read off the press's picture mode before the picture
+   *     loaded.
+   *  svg-press-list (the Source view with a change in more paragraphs than the list shows before its fold, a press to a picture
+   *     still loading, a render, the panel closed and opened with its status re-read unchanged, then the picture's load):
+   *     fe43d2c2a render, reread; head load. Dropped: at the render, the list re-read off the press's picture mode before the
+   *     picture loaded (the fold row and the paragraph titles gone, the two folded cards listed with no Comment on this change),
+   *     Comment on this change taken off the substitutions' cards and the line out of the deletion's Reveal; at the reread, the
+   *     link taken off and a Reveal offered by a pass over that picture before it loaded. Added: at the load, those moves at
+   *     the paint that shows the picture.
+   *  svg-status-in-press-window (the Source view, a press to a picture still loading, a status for a moved sidecar, then the
+   *     picture's load): fe43d2c2a status; head status, load. Added: at the load, since a status arriving while the body shows
+   *     none of its last content paint reads as not current: the insertion's and the substitution's Reveals come with the picture.
+   *  svg-other-type-render (the Source view marking the changes, a landing of another type under it with its picture up and
+   *     still loading, a render, then that picture's load): fe43d2c2a render, load; head load. Dropped: at the render, Comment
+   *     on this change taken off the insertion's and the substitution's cards and the line out of the deletion's Reveal, read
+   *     off the landed picture's mode before it loaded.
+   *  svg-other-type-reopen (the same with the panel closed and opened, its status re-read unchanged, in place of the render):
+   *     fe43d2c2a open, reread; head load. Dropped: at the open, as at the render in svg-other-type-render; at the reread, the
+   *     link taken off and a Reveal offered by a pass over the landed picture before it loaded. Added: at the load, those moves
+   *     at the paint that shows the picture.
+   *  svg-other-type-list (the Source view with a change in more paragraphs than the list shows before its fold, a landing of
+   *     another type under it with its picture up and still loading, a render, the panel closed and opened with its status
+   *     re-read unchanged, then that picture's load): fe43d2c2a render, reread; head load. Dropped: at the render, the list
+   *     re-read off the landed picture's mode before it loaded (the fold row and the paragraph titles gone, the two folded cards
+   *     listed with no Comment on this change), Comment on this change taken off the substitutions' cards and the line out of
+   *     the deletion's Reveal; at the reread, the link taken off and a Reveal offered by a pass over that picture before it
+   *     loaded. Added: at the load, those moves at the paint that shows the picture.
+   *  svg-picture-other-type-render (an svg's picture whose status is current, a landing of another type at newer bytes with its
+   *     picture up and still loading, a render, then that picture's load): fe43d2c2a render; head load. Dropped: at the render,
+   *     the insertion's and the substitution's Reveals taken off, read off the landed mtime before any paint of those bytes.
+   *     Added: at the load, the same move at the paint that shows them, the status not current for them.
+   *  svg-picture-other-type-reopen (the same with the panel closed and opened, its status re-read unchanged, in place of the
+   *     render): fe43d2c2a open; head load. Dropped: at the open, as at the render in svg-picture-other-type-render. Added: at
+   *     the load, as in svg-picture-other-type-render.
+   *  svg-picture-other-type-inline (the same with Show changes inline off in place of the render): fe43d2c2a inline off; head
+   *     load. Dropped: at the inline off, those Reveals taken off as at the render in svg-picture-other-type-render, and the
+   *     deletion's Reveal titled for the marks being off, over the landed picture, which no paint has shown yet. Added: at the
+   *     load, the paint that takes the flip, with the move of svg-picture-other-type-render.
+   *  svg-picture-other-type-pane (the same with that picture's decode-failure pane in place of the render, then bytes of that
+   *     type that decode): fe43d2c2a pane; head load. Dropped: at the pane, those Reveals taken off, the pane recording the
+   *     landed mtime as painted. Added: at the load, as in svg-picture-other-type-render.
+   *  raster-status-first (a raster picture, a status for newer bytes, their landing, the decode-failure pane, the panel
+   *     re-opened, then bytes that decode): fe43d2c2a status, pane; head status, decode. Dropped: at the pane, a Reveal read off
+   *     the landed mtime under a pane showing none of those bytes. Added: at the decode, that Reveal at the paint that shows them.
+   *  raster-poll-order (a raster picture, newer bytes landing, then their status, the decode-failure pane, then bytes that
+   *     decode): fe43d2c2a status; head status, decode. Added: at the decode, since the status arrives while the landed bytes'
+   *     picture, up since the landing, still decodes, so it reads as not current: the insertion's Reveal waits for the paint of
+   *     bytes that decode, where fe43d2c2a read the landed mtime and offered it over the landed bytes' picture and the pane.
+   *  raster-render-in-window (a raster picture, a status for newer bytes, their landing, a render, the decode-failure pane,
+   *     then bytes that decode): fe43d2c2a status, render; head status, decode. Dropped: at the render, a Reveal read off the
+   *     landed mtime before any paint of those bytes. Added: at the decode, that Reveal at their paint.
+   *  raster-landing-status (a raster picture whose status is current, newer bytes landing with their picture up and still
+   *     decoding, a status for the painted bytes whose sidecar moved, the decode-failure pane, then bytes that decode): fe43d2c2a
+   *     status; head status.
+   *  raster-inline-landing-window (a raster picture, a status for newer bytes, their landing with their picture up and still
+   *     decoding, Show changes inline off, then their decode): fe43d2c2a status, inline off; head status, decode. Dropped: at the
+   *     inline off, as in svg-inline-landing-window. Added: at the decode, the paint that takes the flip and the Reveal the status
+   *     withheld, where fe43d2c2a read the landed mtime at the status and offered that Reveal over the landed bytes' picture.
+   *  raster-landing-then-render (a raster picture whose status is current, newer bytes landing with their picture up and still
+   *     decoding, a render, then their decode): fe43d2c2a render; head decode. Dropped: at the render, the insertion's and the
+   *     substitution's Reveals taken off, read off the landed mtime before any paint of those bytes. Added: at the decode, the
+   *     same move at the paint that shows them, the status not current for them.
+   *  raster-landing-then-reopen (the same with the panel closed and opened, its status re-read unchanged, in place of the
+   *     render): fe43d2c2a open; head decode. Dropped: at the open, as at the render in raster-landing-then-render. Added: at
+   *     the decode, as in raster-landing-then-render.
+   *  raster-landing-then-inline (the same with Show changes inline off in place of the render): fe43d2c2a inline off; head
+   *     decode. Dropped: at the inline off, those Reveals taken off as at the render in raster-landing-then-render, and the
+   *     deletion's Reveal titled for the marks being off, over the landed bytes' picture, which no paint has shown yet. Added:
+   *     at the decode, the paint that takes the flip, with the move of raster-landing-then-render.
+   *  raster-landing-then-pane (the same with the decode-failure pane in place of the render, then bytes that decode):
+   *     fe43d2c2a pane; head decode. Dropped: at the pane, those Reveals taken off, read off the landed mtime under a pane
+   *     showing none of those bytes. Added: at the decode, as in raster-landing-then-render.
+   *  svg-landing-then-pane (an svg's picture whose status is current, newer bytes landing with their picture up and still
+   *     loading, that picture and its re-ask failing to a pane, then the way back's picture): fe43d2c2a pane; head way back.
+   *     Dropped: at the pane, the insertion's and the substitution's Reveals taken off, the pane recording the landed mtime as
+   *     painted. Added: at the way back, that move at the paint that shows the landed bytes.
+   *  svg-source-landing-then-pane (the Source view marking the changes, newer bytes landing under it with the decode out, a
+   *     second reload's pane, then the decode): fe43d2c2a pane; head decode. Dropped: at the pane, the link and Comment on this
+   *     change taken off the insertion's and the substitution's cards, and the link and the line taken off the deletion's card
+   *     and its Reveal, the pane recording the landed mtime as painted. Added: at the decode, those moves at the paint that
+   *     shows the landed bytes.
+   *  ROADS END */
+  #cardState: CardState = Object.freeze({ mtime: null, body: 0, text: null, shows: false, marks: this.marksOn(), current: false, painted: Object.freeze([]) });
+  /** What the viewer put up in the body other than a content paint, as the seam's onReplaced and a pane's onRendered tell it
+   *  (#cardState's doc, event 1): counted, so a content paint takes the count (CardState's `body`) and #showsLastPaint compares. */
+  #replaced = 0;
   // ── the margin layout (the build's reading, not a ruling, of the user's 2026-09-07 ask after walking the loop: that
   // comments might move with the window when possible, each trying to stay centered near its place in the text; the
   // build put each card level with its passage instead, and the plan's margin-layout note under Slice 2 records both,
@@ -1972,19 +2253,25 @@ class Panel {
     // plans/markdown-viewer.md, item 3) ends the wait for the bytes at once, in the seam's words, at the head of the pass (paintAll → bytesFailed)
     // ...and every paint other than a reflow is the viewer's answer to whatever the panel asked it to re-fetch (a landing, a failure
     // pane), so the record of a fetch of the panel's being out (reloadOut, reloadView) ends here, before the pass reads it at its head
-    // ...and a paint is what the body shows from then on: its mtime is recorded (paintedAt), and a landing reported ahead of it
-    // has its paint now (landedAhead lowered), before the pass reads either (paintCurrent)
-    this.paintedAt = ctx.mtimeNs();
-    ctx.onRendered((why) => { this.hideFloat(); this.retargetComposer(); if (why === "reflow") { this.trimBlanks(); this.scheduleLayout(); } else { this.reloadOut = false; this.paintedAt = ctx.mtimeNs(); this.landedAhead = false; this.paintAll(); } });
+    // ...and a content paint (error() null) is the card-state rule's event 1, and a failure pane (error() set) none, counted as
+    // something else put up (#cardState's doc)
+    if (ctx.text() !== null || ctx.mediaElement() !== null) this.#latchCardState("paint", false);   // event 1 at the mount (#cardState's doc)
+    ctx.onRendered((why) => { this.hideFloat(); this.retargetComposer(); if (why === "reflow") { this.trimBlanks(); this.scheduleLayout(); } else { this.reloadOut = false; if (ctx.error() === null) this.#latchCardState("paint"); else { this.#replaced++; this.paintAll(); } } });
+    // ...and a picture or a loader the viewer puts up with no paint yet (the seam's onReplaced), counted for the card-state rule
+    // (#cardState's doc, event 1)
+    if (ctx.onReplaced) ctx.onReplaced(() => { this.#replaced++; });
     // ...and the bytes of an svg picture landing (the seam's onLanded). Their paint is the picture's own load, or the Source view's
     // at their decode, and it may come before the landing or after it: a picture the page still holds paints first. The wait for
     // a reload's bytes ends at whichever comes first, here when the status's mtime is the view's (bytesLanded, with the loader in
-    // the head going), while the paint pass, the regions layer's included, waits for that paint and its onRendered. The render
-    // here reads nothing of the paint: until the paint the body shows the text painted before the landing, so the change cards
-    // read the status against that paint's mtime (landedAhead, paintCurrent) and keep their state until the paint moves them
-    if (ctx.onLanded) ctx.onLanded(() => { this.landedAhead = true; if (this.status && this.textCurrent(this.status)) { this.bytesLanded(); this.render(); } });
+    // the head going). The hook runs no paint pass. The pass, the regions layer's included, runs at the events and passes
+    // #cardState's doc names, over the body as it stands. A landing is no event of the card-state rule (#cardState's doc)
+    if (ctx.onLanded) ctx.onLanded(() => { if (this.status && this.textCurrent(this.status)) { this.bytesLanded(); this.render(); } });
     ctx.onSaved((info) => {
       if (this.base) this.base.file = info.mtimeNs;   // the poll must not re-fetch the person's own save
+      // ...and the saved bytes are the text the cards read: this panel's own save, whose content editText took for the editor
+      // still up (editTextSave), with mtimeNs() moved to them (the seam's onSaved doc), the card-state rule's event 1
+      // (#cardState's doc)
+      if (ctx.editing() && this.editTextSave === info.mtimeNs && ctx.mtimeNs() === info.mtimeNs) this.#latchCardState("paint");
       if (this.lastSaveNs === info.mtimeNs) { this.lastSaveNs = null; return; }   // a save through this panel: its reply IS the status (Slice 5)
       if (this.status) void this.refresh();            // the Log gained the edit entry before the reply
     });
@@ -1994,11 +2281,12 @@ class Panel {
     ctx.setTrackedEdit(this.trackedEdit());            // the editor's half of editing over pending changes (Slice 5)
     // every control the panel ever renders hangs off ONE stable root (ui/CLAUDE.md, click-safe): the
     // viewer's body row, which also holds the painted highlights — so a highlight click routes here too.
-    // The same row holds the FILE's rendered markdown, and the sanitizer keeps data-* attributes (DOMPurify's
-    // ALLOW_DATA_ATTR default), so a file's author can write `<span data-act="fcsendgo">` or a
-    // `data-act="fctrackstop"` into prose the session produced: a click there must not send the comments
-    // or turn the guard off for a folder. `own` routes an activation only when the panel MADE the element —
-    // a control in its aside, or a highlight it painted (owns) — never the file's own markup.
+    // The same row holds the FILE's rendered markdown. The sanitizer strips every data-* attribute an author writes
+    // (md-sanitize.ts: ALLOW_DATA_ATTR false), so a `<span data-act="fcsendgo">` or a `data-act="fctrackstop"` in prose
+    // the session produced reaches the page without its data-act; any data-act in that markup is one the viewer set after
+    // the sanitize (a path link's, markPathLink; a gated figure's placeholder, figure-gate.ts). `own` routes an activation
+    // only when the panel MADE the element (a control in its aside, or a highlight it painted: owns), never the file's own
+    // markup, whatever that markup carries, so a click there cannot send the comments or turn the guard off for a folder.
     const row = ctx.body().parentElement || ctx.body();
     delegate(row, {
       ...this.own({
@@ -2016,7 +2304,7 @@ class Panel {
         // a card whose reply is being written stays open: its box stands in the card (placeComposer), and a fold would take the
         // box and the words with it; Save or Cancel frees the head again
         fccard: (x) => { const id = x.dataset.id!; if (!this.openCards.has(id)) this.openCards.add(id); else if (!this.hostsReply(id)) this.openCards.delete(id); this.render(); },
-        fcgoto: (x, ev) => { ev.stopPropagation(); this.goTo(x.dataset.id!); },
+        fcgoto: (x, ev) => { ev.stopPropagation(); this.followLink(x.dataset.id!); },
         fcreveal: (x, ev) => { ev.stopPropagation(); this.reveal(x.dataset.id!); },
         fcreply: (x, ev) => { ev.stopPropagation(); this.startReply(x.dataset.id!); },
         fcresolve: (x, ev) => { ev.stopPropagation(); void this.mutate("resolve", { commentId: x.dataset.id!, on: x.dataset.on === "1" }, "card:" + x.dataset.id!); },
@@ -2155,8 +2443,8 @@ class Panel {
   // ── provenance: which activations are the panel's ──────────────────────────────────────────────
   /** Whether the panel made `x`: a control inside its aside (none before the first open), or a highlight or
    *  picture frame it painted into the body (marks). Anything else under the delegate root is the file's own
-   *  markup, whatever data-act it carries — the sanitizer keeps data-* attributes, and a class name proves
-   *  nothing either. */
+   *  markup, whatever data-act it carries (the sanitizer strips an author's; the viewer sets its own on that markup after
+   *  the sanitize), and a class name proves nothing either. */
   owns(x: Element): boolean {
     return (this.root !== null && this.root.contains(x)) || this.marks.has(x);
   }
@@ -2289,12 +2577,14 @@ class Panel {
    *  reads as older. Both are the poll's to settle: present ↔ absent is a transition it sees. Returns whether it
    *  was applied. */
   applyStatus(s: Reply): boolean {
+    const was = this.status;                           // the status showing, which this one may or may not differ from (sameStatus)
     const suspect = s.reqId < this.appliedReq || s.overlapped === true;
     if (this.status && suspect && !provablyNewer(s, this.status)) return false;
     this.appliedReq = Math.max(this.appliedReq, s.reqId);
     this.status = s;
     this.noteArrivals(s);                              // the entries this status brings that the person has not seen (the arrivals follow-on)
     this.pruneAbout();                                 // the changes the composer's comment is about, as this status holds them (About)
+    this.retireViewRows();                             // a not-in-view row whose change this status drops or detaches goes (notInView)
     this.settleResolveAnsweredConfirm();               // a confirm whose count this status took to zero is over, not parked (the field's comment)
     this.releaseAnswered(s);                           // a todo this status lists, asked after a send stamped it, is open again (answeredTodos)
     this.statusRefusal = null;
@@ -2309,7 +2599,9 @@ class Panel {
     this.noteChangesMovedUnderEdit();                  // every status lands here: the one place that can see the editor's records leave the sidecar
     this.noteChangesUnreadUnderEdit();                 // …or show changes the editor never carried (Edit before the first status)
     this.syncBytes(s);                                 // the view shows the text these hunks index, or is asked to (stands down while the editor holds the body)
-    this.paintAll();                                   // repaints the highlights and renders the panel
+    // repaints the highlights and renders the panel: event 2 of the card-state rule, or a re-read that is none (#cardState's doc)
+    if (!sameStatus(was, s)) this.#latchCardState("status");
+    else this.paintAll();
     return true;
   }
   /** The Resolve answered confirm (decision 46) is over once the status it was asked over leaves nothing for it to do: the
@@ -2318,6 +2610,18 @@ class Panel {
    *  resolving with no gesture behind it (the field's comment). The status that takes the count to zero ends it. */
   private settleResolveAnsweredConfirm(): void {
     if (this.resolveAnsweredConfirm && !answeredComments(this.cards()).length) this.resolveAnsweredConfirm = false;
+  }
+  /** The rows notInView put up whose change can no longer have a link or Comment on this change after the status just applied:
+   *  one the status no longer lists (decided in another client, say) or lists detached (its card offers neither, now or
+   *  later). Each goes at that status, so no row stays saying a change is not in view when its words cannot come true. A card
+   *  the filter or the fold hides keeps its row, hidden with it (strayRows). */
+  private retireViewRows(): void {
+    const held = new Set(this.changeView().cards.filter((x) => !x.detached).map((x) => "change:" + x.id));
+    for (const slot of this.viewRows) {
+      if (held.has(slot)) continue;
+      if (NOT_IN_VIEW_TEXTS.has(this.errors.get(slot)?.text ?? "")) this.errors.delete(slot);
+      this.viewRows.delete(slot);
+    }
   }
   /** The composer's about ids against the status just applied (About's comment): an id the status holds no pending or
    *  detached change for — the two the host accepts (`no-change` otherwise) — leaves the list. The ids were fixed as the
@@ -2796,6 +3100,30 @@ class Panel {
       return null;
     }
   }
+  /** A click on a change card's link, or on a spanned change's Comment on this change, while the body does not show the last
+   *  content paint (#cardState's doc): the row under the card says the change is not in view (NOT_IN_VIEW_LINK,
+   *  NOT_IN_VIEW_COMMENT), as refuseDecision answers a decision, and nothing else happens (no scroll, no switch of view, no
+   *  composer, no request). The delegate's flash has acknowledged the click. The row shows only under its card, never as a
+   *  stray row (strayRows skips it): while the filter or the fold hides the card the row is hidden with it, and it comes back
+   *  with the card unless something has retired it. The next content paint retires it (#latchCardState); so does a status
+   *  after which the change can no longer have a link or Comment on this change, one that drops it or detaches it
+   *  (retireViewRows); and the row's ✕ clears it before either. */
+  private notInView(c: ChangeCard, what: "link" | "comment"): void {
+    const slot = "change:" + c.id;
+    this.errors.set(slot, { text: what === "link" ? NOT_IN_VIEW_LINK : NOT_IN_VIEW_COMMENT, reload: false });
+    this.viewRows.add(slot);
+    this.render();
+  }
+  /** A card's link (fcgoto): goTo, except that a change card's link while the body does not show the last content paint
+   *  (#cardState's doc) does nothing but say so (notInView). */
+  private followLink(key: string): void {
+    if (key.startsWith("chg:") && !this.#showsLastPaint()) {
+      const c = this.changeView().cards.find((x) => x.key === key);
+      if (c) this.notInView(c, "link");
+      return;
+    }
+    this.goTo(key);
+  }
   /** A decision asked for while the editor is up (a card's Accept or Reject, the foot's Accept all or Reject all): the row
    *  under the control that asked says where to decide instead (DECIDE_IN_EDITOR). Nothing is asked of the kernel. */
   private refuseDecision(slot: string): void {
@@ -2905,6 +3233,7 @@ class Panel {
           this.changesMovedUnderEdit = false;          // a new seed, a new latch (a latched row would have refused this save)
           this.changesUnreadUnderEdit = false;
           this.editText = content;                     // the reply's offsets index the text this save wrote (indexedText)
+          this.editTextSave = r.fileMtimeNs;           // ...and it is this save's, which onSaved's latch keys on (#cardState's doc, event 1)
           this.retargetComposer();                     // a passage composer follows its passage into that text, as after a reload
         }
         this.lastSaveNs = r.fileMtimeNs;
@@ -3076,7 +3405,7 @@ class Panel {
    *  read off the seam at the paint, never carried over from the paint that filed it (the review of Slice 7, rounds 1 and 2):
    *  - no failure row stands (its ✕, a wait that took the slot, the deadline row in its place): the record goes with it;
    *  - the view's mtime is not the one the row was filed under: a landing has read the file since (the row's own Reload, the
-   *    disk bar's, the poll's, a save's), whatever the status says of that text (paintChanges reads that, paintCurrent), so the
+   *    disk bar's, the poll's, a save's), whatever the status says of that text (paintChanges reads that, #cardState), so the
    *    row is answered and goes, as bytesLanded takes it when the landing shows the status's text. Before round 2 a landing of
    *    text NEWER than the status's flipped the row to "the view still shows the earlier text" over the new text, until the
    *    status at that mtime landed and bytesLanded took it;
@@ -3088,9 +3417,9 @@ class Panel {
    *    (bytesFailed); the head stands down while the panel's fetch is out now (reloadOut) and the new pane's paint files the row;
    *  - the same mtime and no pane (a content paint of the earlier text: a Raw or Rendered click's renderBody, the editor's entry
    *    and its exit's repaint): the row keeps the seam's words and takes the deadline row's tail, which says what shows now: the
-   *    earlier text, with no change marked on it (paintChanges refuses the status's offsets over it, paintCurrent); its Reload stays.
+   *    earlier text, with no change marked on it (paintChanges refuses the status's offsets over it, #cardState); its Reload stays.
    *  A deadline row is not this row and is left as it is (bytesLate; its tail over a pane is the pre-existing sibling the plan note
-   *  records). No render of its own: paintAll renders at its end. */
+   *  records). No render of its own: the pass's caller renders after it (paintAll, #latchCardState). */
   private syncFailedRow(failed: string | null): void {
     const at = this.failedRow;
     if (!at) return;
@@ -3301,22 +3630,23 @@ class Panel {
    *  text, as a selection of it would open it, with the about option checked for the change (changeIds [id] on save;
    *  the message says "about your change …"). A change with no span in the text (a deletion, whose text is not in the
    *  file; a detached change) takes the comment by id alone, laid at the change's mark while it is pending (markTop).
-   *  The span is cut from the text the change's offsets index (indexedText): the status's text, which while the editor is
-   *  up is the file as the editor loaded it, never the buffer — the buffer moves under the offsets with every unsaved
-   *  keystroke, and a span cut from it quoted and anchored other words (the review, 2026-09-10). And only while the view's
-   *  text IS that text (spanCarried): over other bytes the card offers no Comment on this change for a spanned change
-   *  (renderChangeCard), since the span would name the wrong words and a comment by id alone would lose the passage the
-   *  change has; a deletion's is by id whatever the view shows. */
+   *  The span is cut from the text the change's offsets index (indexedText's doc says which), never the buffer: the buffer
+   *  moves under the offsets with every unsaved keystroke, and a span cut from it quoted and anchored other words (the
+   *  review, 2026-09-10). A spanned change's button is offered as spanCarried reads the card-state rule (renderChangeCard;
+   *  #cardState's doc), a deletion's by id whatever the view shows; a spanned change's click while the body does not show the
+   *  last content paint opens nothing and says so (notInView). */
   startChangeComment(id: string): void {
     const c = this.changeView().cards.find((x) => x.id === id);
     if (!c) return;
     const s = this.status;
     const spanned = !c.detached && c.curTo > c.curFrom;
     if (spanned && !this.spanCarried(c)) return;       // the card offers no button in this state (renderChangeCard); a click that reached here anyway writes nothing
+    const text = this.indexedText();
+    if (spanned && (text === null || !this.#showsLastPaint())) { this.notInView(c, "comment"); return; }   // the body holds no text to cut the span from, or not the last content paint's (#cardState's doc)
     this.openCards.add(c.key);
     this.releaseSavingBox();
     if (spanned) {
-      const src = this.indexedText()!;                 // non-null: spanCarried
+      const src = text!;                               // non-null: the guard above
       const off = s!.bom ? 1 : 0;                       // the host's offsets run one ahead of the view's on a BOM file (viewAt)
       const range = { start: Math.max(0, c.curFrom - off), end: Math.max(0, c.curTo - off) };
       this.composer = { kind: "comment", range, quote: src.slice(range.start, range.end), text: src, refusal: null, about: { ids: [id], on: true, only: false } };
@@ -3329,24 +3659,21 @@ class Panel {
     this.input.focus();
   }
   /** Whether the view carries a spanned change's text where its offsets say (startChangeComment, renderChangeCard): a text to
-   *  cut the span from (indexedText: the view's, or the file as the editor loaded it), the status's — not the bytes of a
-   *  reject's reply before its reload lands, or of the poll's reload before its status (textCurrent; renderChangeCard's
-   *  inFlux, which withholds an unpainted insertion's Reveal on the same ground) — and a view that shows text at all (not
-   *  the picture of a media file). A deletion has no span to carry and never asks. From a landing the seam reports ahead of its
-   *  paint until that paint, the view's text is the one painted before the landing (paintCurrent). */
+   *  cut the span from (indexedText), the one the status's offsets index, and a view that shows text at all (not the picture
+   *  of a media file). A deletion has no span to carry and never asks. Both facts are the card-state rule's, as its last
+   *  event took them (#cardState's doc). */
   private spanCarried(c: ChangeCard): boolean {
     const s = this.status;
-    return !!s && this.paintCurrent(s) && this.indexedText() !== null && this.ctx.mode() !== "media";
+    return !!s && this.#cardState.current && this.#cardState.shows;
   }
   /** The pending changes whose marks a selection's range overlaps (the about follow-on): an insertion's or a
    *  substitution's span sharing any character with the range, a deletion's point strictly inside it (a selection that
    *  ends at the point does not reach across the removed text; the deletions the selection's own range crosses are
-   *  addCrossed's). In text order. The hunks index the status's text, so nothing while the view shows other bytes
-   *  (paintCurrent: the text the body shows, which from a landing the seam reports ahead of its paint until that paint is
-   *  the text painted before the landing); on a BOM file the view's offsets run one behind the host's. */
+   *  addCrossed's). In text order. The hunks index the status's text, so nothing while the view shows other bytes (the
+   *  card-state rule's `current`, #cardState's doc); on a BOM file the view's offsets run one behind the host's. */
   private overlapping(range: SourceRange): string[] {
     const s = this.status;
-    if (!s || !this.paintCurrent(s)) return [];
+    if (!s || !this.#cardState.current) return [];
     const off = s.bom ? 1 : 0;
     const start = range.start + off, end = range.end + off;
     const out: string[] = [];
@@ -3361,10 +3688,10 @@ class Panel {
    *  side of it is trimmed to a range that starts or ends AT the point — by the text alone the selection never reached
    *  across, though the pointer did, and the person was given a passage comment on one letter with no way to name the
    *  change (the review, 2026-09-10, measured in Chromium and Firefox). The same silence as overlapping's while the view
-   *  shows other bytes (paintCurrent). */
+   *  shows other bytes (the card-state rule's `current`, #cardState's doc). */
   private addCrossed(ids: string[], sel: Selection): void {
     const s = this.status;
-    if (!s || !this.paintCurrent(s)) return;
+    if (!s || !this.#cardState.current) return;
     const crossed = this.deletionMarksIn(sel, false);
     if (!crossed.size) return;
     const order = this.hunksInOrder(s).map((h) => String(h.id));
@@ -4107,7 +4434,7 @@ class Panel {
     }
     return this.cardsMemo;
   }
-  /** The change cards, their paragraph groups over the current text, and the fold (GROUP_LIMIT). A card's offsets are the
+  /** The change cards, their paragraph groups over the text the cards hold (#cardState's doc), and the fold (GROUP_LIMIT). A card's offsets are the
    *  host's (ChangeCard.curFrom: the text the host read), and the groups read them over THAT text: on a BOM file the view's
    *  text with the U+FEFF the fetch strips put back ahead of it (the status's `bom`, the rule every other reader of the host's
    *  offsets applies, viewAt; Slice 7 of plans/markdown-viewer.md, item 4, the review's round 1), so a change at a line's
@@ -4116,9 +4443,9 @@ class Panel {
    *  whitespace, and the line count sees no ending in it. Before, the groups read the host's offsets over the view's text,
    *  one behind on a BOM file. */
   changeView(): { cards: ChangeCard[]; groups: ChangeGroup[]; shown: ChangeGroup[]; hidden: ChangeGroup[]; hiddenChanges: number } {
-    const s = this.status;
+    const s = this.status, cs = this.#cardState;
     const cards = s ? changeCards(s.store, s.hunks || [], s.log || [], s.decided) : [];
-    const text = this.ctx.mode() === "media" ? null : this.indexedText();
+    const text = this.ctx.editing() ? this.indexedText() : cs.shows ? cs.text : null;   // the text the last content paint showed, as the card-state rule holds it; the editor's read at render (#cardState's doc)
     const groups = changeGroups(cards, text !== null && s && s.bom ? "\uFEFF" + text : text);   // the host's text: the offsets index it
     return { cards, groups, ...foldGroups(groups, this.moreChangesOpen) };
   }
@@ -4142,7 +4469,7 @@ class Panel {
     if (f === this.filter || !FILTERS.includes(f)) return;
     this.filter = f;
     saveSettings({ commentsFilter: f });
-    this.paintAll();
+    this.#latchCardState("gesture");                   // the card-state rule's event 3 (#cardState's doc)
   }
   /** The cards of the OTHER comments whose highlights cover the mark `x` a click or Enter landed on, opened with it (plans/
    *  markdown-viewer.md Slice 5, item 6). Two comments over one passage nest their marks: the later paint wraps the text where it
@@ -4179,19 +4506,48 @@ class Panel {
   private textCurrent(s: Status, vm = this.ctx.mtimeNs()): boolean {
     return !vm || !s.fileMtimeNs || vm === s.fileMtimeNs;
   }
-  /** textCurrent over the text the body SHOWS: from a landing the seam reports ahead of its paint (onLanded, landedAhead)
-   *  until that paint, mtimeNs() answers the landed bytes while the body still shows what was painted before them (the Source
-   *  view's older XML until the decode, the paint before the picture's load), so the mtime read is that paint's (paintedAt).
-   *  The change cards read this (renderChangeCard's inFlux, spanCarried), so a card keeps its state from the landing to the
-   *  paint and moves at the paint, the event that shows the new bytes (CLAUDE.md: cards move on new information), and so do
-   *  the change marks (paintChanges) and a selection's changes (overlapping, addCrossed): each reads the status's offsets over
-   *  the text the body shows. With no landing since the last paint, or when the paint came first, the two mtimes are one. */
-  private paintCurrent(s: Status): boolean {
-    return this.textCurrent(s, this.landedAhead ? this.paintedAt : this.ctx.mtimeNs());
+  /** THE writer of the card-state rule (#cardState's doc states the rule, its events and its callers): the one assignment of
+   *  #cardState, each call naming its event. The pass runs under the state it takes, the change marks the pass files are kept
+   *  with that state, and the panel renders; `pass` false: the caller has painted and renders itself (the mount over a painted
+   *  view; a pass that filed the marks again, "refile"). A content paint also retires the rows notInView put up. */
+  #latchCardState(at: "paint" | "status" | "gesture" | "refile", pass = true): void {
+    const was = this.#cardState, s = this.status;
+    const over = this.#showsLastPaint();
+    let next: Omit<CardState, "painted">;
+    if (at === "paint") {
+      for (const slot of this.viewRows) if (NOT_IN_VIEW_TEXTS.has(this.errors.get(slot)?.text ?? "")) this.errors.delete(slot);
+      this.viewRows.clear();
+      const mtime = this.ctx.mtimeNs(), mode = this.ctx.mode();
+      next = { mtime, body: this.#replaced, text: this.ctx.text(), shows: this.indexedText() !== null && mode !== "media", marks: this.marksOn(), current: !!s && this.textCurrent(s, mtime) };
+    } else if (at === "status") {
+      next = { ...was, current: over && !!s && this.textCurrent(s, was.mtime!) };
+    } else if (at === "refile") {
+      if (!over) return;                               // event 1's filing (#cardState's doc)
+      next = was;
+    } else if (over) {
+      next = { ...was, marks: this.marksOn() };
+    } else {
+      if (pass) this.paintAll();                       // event 3 over anything else (#cardState's doc)
+      return;
+    }
+    if (pass) this.paintPass(next.current);
+    this.#cardState = Object.freeze({ ...next, painted: Object.freeze(Array.from(this.paintedChanges)) });
+    if (pass) this.render();
   }
-  /** The text the status's offsets and a composer's range index: the view's, or while the editor is up — when text()
-   *  answers the buffer, which every keystroke moves under the offsets — the file as the editor loaded it or as the last
-   *  landed save wrote it (editText). The group titles and the composer's passage-changed tag read this, never the buffer. */
+  /** Whether the body shows the last content paint (#cardState's doc, event 1): a content paint has come, and #replaced has
+   *  counted nothing put up since it. */
+  #showsLastPaint(): boolean {
+    return this.#cardState.mtime !== null && this.#cardState.body === this.#replaced;
+  }
+  /** Whether the change marks are on (#cardState's doc): Show changes inline, and the filter not the comments alone
+   *  (paintChanges paints none under either). */
+  private marksOn(): boolean {
+    return this.inline && this.activeFilter() !== "comments";
+  }
+  /** The text the status's offsets and a composer's range index: the view's, or, while the editor is up (when text() answers
+   *  the buffer, which every keystroke moves under the offsets), the file as the editor loaded it or as the last save through
+   *  this panel from that editor wrote it (editText; a save through saveFile gives it nothing). The group titles and the
+   *  composer's passage-changed tag read this, never the buffer. */
   private indexedText(): string | null {
     return this.ctx.editing() && this.editText !== null ? this.editText : this.ctx.text();
   }
@@ -4201,7 +4557,21 @@ class Panel {
   private toggleInline(): void {
     this.inline = !this.inline;
     saveSettings({ changesInline: this.inline });
-    this.paintAll();
+    this.#latchCardState("gesture");                   // the card-state rule's event 3 (#cardState's doc)
+  }
+  /** Show changes inline or the filter, flipped in another viewer (the settings signal, installed once for the live panel): the
+   *  person's gesture, the card-state rule's event 3 here too (#cardState's doc). */
+  settingsFlipped(): void {
+    this.#latchCardState("gesture");
+  }
+  /** The paint pass under the state the change cards hold, then the panel rendered: every caller but an event of the card-state
+   *  rule, which runs the pass under the state it takes (#latchCardState; #cardState's doc). paintPass takes `current`, whether
+   *  the status's offsets index the text the body shows as that state has it (paintChanges marks nothing otherwise), and
+   *  renders nothing: its caller renders after it. */
+  paintAll(): void {
+    this.paintPass(this.#cardState.current);
+    this.#latchCardState("refile", false);            // event 1's filing (#cardState's doc)
+    this.render();
   }
   /** Paint every open comment's anchor over the current view: located → the ring; quote gone but its
    *  context found → the text-changed ring; neither → card only, marked detached. Detached is a
@@ -4209,8 +4579,8 @@ class Panel {
    *  over the new text, deletions struck at their point in both views (Rendered through the index map; a
    *  deletion the map cannot place is card-only), each mark carrying the change's id and the author's session
    *  colour — or none of them, with Show changes inline off. The composer's pending target is painted last. */
-  paintAll(): void {
-    if (this.ctx.editing()) { this.afterPaint(); this.syncFailedRow(this.ctx.error()); this.render(); return; }   // the editor shows the marks over its own buffer (Slice 5); the cards still render; the offer's record goes with the read view's nodes (afterPaint); a failure row is read against the editor's entry, a content paint of the earlier text (syncFailedRow)
+  private paintPass(current: boolean): void {
+    if (this.ctx.editing()) { this.afterPaint(); this.syncFailedRow(this.ctx.error()); return; }   // the editor shows the marks over its own buffer (Slice 5); the cards still render; the offer's record goes with the read view's nodes (afterPaint); a failure row is read against the editor's entry, a content paint of the earlier text (syncFailedRow)
     this.clearLanding();                               // a paint pass over the read view is new information about its rows: the last Reveal's cue goes with it (landOn)
     // the body shows a failure pane in place of the file (the seam's error(): a reload refused or failed; Slice 7 of
     // plans/markdown-viewer.md, item 3): a wait for that reload's bytes ends here, at the paint that showed the pane, in the
@@ -4262,7 +4632,7 @@ class Panel {
     // still not the status's) gives it the deadline row's tail, true of what shows now
     if (failed === null && this.status && this.textCurrent(this.status)) this.bytesLanded();
     this.syncFailedRow(failed);
-    if (src === null || !root) { this.paintRegions(); this.render(); return; }   // a media body: the overlay is its only paint (paintRegions keeps its own focus)
+    if (src === null || !root) { this.paintRegions(); return; }   // a media body: the overlay is its only paint (paintRegions keeps its own focus)
     const rendered = this.ctx.mode() === "rendered";
     // the pass's Rendered marks, painted with the trim deferred (`trim: false`) and trimmed ONCE after the pass (trimBlanks):
     // the trim measures its marks against the layout, and a measurement after each call's wraps lays the mutated block out
@@ -4323,7 +4693,7 @@ class Panel {
       }
       this.located.set(card.id, { ...loc, painted });
     }
-    this.paintChanges(root, src, rendered, true);
+    this.paintChanges(root, src, rendered, current, true);
     this.paintPresel(root, src, rendered);
     this.trimBlanks();
     // a card whose every mark was a collapsed blank (a passage of one zero-width character) shows nothing: card only, as the
@@ -4336,7 +4706,6 @@ class Panel {
     this.paintRegions();
     if (held) this.refocusMark(held);
     this.afterPaint();
-    this.render();
   }
   /** After the panel's own writes over the body's text (the end of paintAll, of repaintPresel, and paintAll's stand-down while the
    *  editor holds the body), for a selection the float has answered (pendingChange false: the person's own change, its event still to
@@ -4577,11 +4946,11 @@ class Panel {
   /** The change marks, after the comment highlights (D5): stylesFor hands each mark the author's session colour
    *  from the Slice 1 colour map as `--fc-author` (nothing when unknown: the sheet's neutral). Every painted
    *  element is a control (it opens the card) and the panel's own (owns), like a comment highlight. */
-  private paintChanges(root: Element, src: string, rendered: boolean, deferTrim = false): void {
+  private paintChanges(root: Element, src: string, rendered: boolean, current: boolean, deferTrim = false): void {
     const s = this.status;
     if (!this.inline) return;                          // Show changes inline is off: no mark in either view, the cards say everything
     if (this.activeFilter() === "comments") return;    // the filter shows the comments alone: no change mark, the setting above untouched
-    if (!s || !(s.hunks || []).length || !this.paintCurrent(s)) return;   // the status's offsets over the text the body shows (paintCurrent), so from a landing to its paint a repaint marks no text the status does not index: nothing over the older text when the status's bytes landed first, the marks kept over it while the status still indexes it
+    if (!s || !(s.hunks || []).length || !current) return;   // the status's offsets over the text the body shows, as the card-state rule holds it or is taking it (the pass's `current`; #cardState's doc): no mark over text the status does not index
     const store = s.store;
     // The hunks index the string the HOST read, which on a BOM file runs one ahead of the view's text (the host keeps the
     // U+FEFF the fetch strips; the status says which, `bom`), so each is handed to the painters at `curFrom - off`,
@@ -4608,8 +4977,9 @@ class Panel {
     let marks: Element[];
     if (rendered) {
       // the Rendered painter reports ids, not elements, so the marks are told from the file's own markup by what the
-      // paint ADDED: a `data-act="fcchange"` the file's author wrote survives the sanitizer, and swept in it would pass
-      // owns() and act as a control (the delegate root's rule above)
+      // paint ADDED. The sanitizer strips a `data-act="fcchange"` the file's author wrote (md-sanitize.ts: ALLOW_DATA_ATTR
+      // false), so the file's markup carries none; the set taken before the paint is a second guard, so that no element the
+      // paint did not add is swept in to pass owns() and act as a control (the delegate root's rule above)
       const before = new Set(Array.from(root.querySelectorAll('[data-act="fcchange"]')));
       const r = paintChangesRendered(root, src, changes, stylesFor, { trim: !deferTrim });
       for (const id of r.painted) this.paintedChanges.add(id);
@@ -4726,7 +5096,9 @@ class Panel {
    *  4,260 measurements). What the repaint painted again it re-files as the pass does (paintAll's two filings): a highlight whose
    *  every mark the trim removed is filed as not painted, a change whose every mark it removed as not shown, and a change whose
    *  mark stands again as shown; and when a filing moved the cards are rendered HERE, since the callers render the composer alone
-   *  after a passage's Comment and after Cancel (renderFrom) and the cards read the filings at render time (renderChangeCard's tag,
+   *  after a passage's Comment and after Cancel (renderFrom) and every card reads what it shows at render time, the change cards
+   *  reading the filing as the card-state rule takes it (#latchCardState's refile; #cardState's doc, event 1; the readers:
+   *  renderChangeCard's tag,
    *  Reveal and link; renderCard's link and Reveal). The Slice 4 review's round 17 found the tag stale in both directions on a
    *  session's insertion of one soft hyphen, a character the index records and the trim measures, rendered as a hyphen at a line
    *  break and as nothing elsewhere, so the target's padding moving the paragraph's wrap point across it moved the filing at every
@@ -4788,12 +5160,13 @@ class Panel {
         for (const m of out) { (m as HTMLElement).tabIndex = 0; m.setAttribute("role", "button"); (m as HTMLElement).title = like.title; if (like.dataset.new) (m as HTMLElement).dataset.new = like.dataset.new; this.mark(m); }
         for (const m of out) if (!isMark(m)) coverBox(m, a.id);   // a stamped box the repaint returned: its covering set stands, and its front (the re-stamp wrote this comment's id)
       }
-      if (changes) this.paintChanges(root, src, true, true);
+      if (changes) this.paintChanges(root, src, true, this.#cardState.current, true);
       this.paintPresel(root, src, true);
     }
     this.trimBlanks();
     // the re-filing, the pass's (paintAll): a highlight or a change whose every mark the trim removed is filed as not painted or not
-    // shown, a change whose mark stands again as shown; `refiled` when a card's filing moved, since the cards read it at render time
+    // shown, a change whose mark stands again as shown; `refiled` when a card's filing moved, so the cards are rendered below (the
+    // docblock says why; #cardState's doc, event 1)
     let refiled = false;
     for (const a of again) {
       const l = this.located.get(a.id); if (!l) continue;
@@ -4806,7 +5179,7 @@ class Panel {
     }
     if (held) this.refocusMark(held);
     this.paintRegions();                               // the composer's pending region and the re-place cue live on the overlays
-    if (refiled) this.render();                        // a filing moved: the cards say so now, in the same call (the docblock)
+    if (refiled) { this.#latchCardState("refile", false); this.render(); }   // a filing moved: the cards say so now, in the same call (the docblock; #cardState's doc, event 1)
   }
   /** The body was repainted, possibly over NEW text (the poll saw the file move and reloaded it; Reload;
    *  a refresh; a save through the editor): a pending passage follows its passage into that text
@@ -6299,13 +6672,14 @@ class Panel {
    *  refresh removed its card (mutateOnce retries by id, and a change a track-edit coalesced away, or another client
    *  decided, is refused `no-change`), the foot's after a refresh left nothing pending, a comment card inside a closed
    *  fold. Rendered where the section was, so a clicked decision is never silent (CLAUDE.md, fail loudly; the plan:
-   *  a second refusal is surfaced verbatim) and the row's ✕ can clear it. `list` is the section built so far. */
+   *  a second refusal is surfaced verbatim) and the row's ✕ can clear it. `list` is the section built so far. A row saying
+   *  the change is not in view is no stray: it belongs under its card and is hidden with it (notInView). */
   private strayRows(list: HTMLElement, prefixes: string[]): HTMLElement[] {
     const shown = new Set(Array.from(list.querySelectorAll("[data-slot]")).map((n) => (n as HTMLElement).dataset.slot));
     const stray = (slot: string) => prefixes.some((p) => slot === p || slot.startsWith(p)) && !shown.has(slot);
     const out: HTMLElement[] = [];
     for (const slot of this.busy) if (stray(slot)) { const w = this.loader(slot); if (w) { out.push(w); shown.add(slot); } }
-    for (const slot of this.errors.keys()) if (stray(slot)) { const r = this.errRow(slot); if (r) { out.push(r); shown.add(slot); } }
+    for (const slot of this.errors.keys()) if (stray(slot) && !NOT_IN_VIEW_TEXTS.has(this.errors.get(slot)?.text ?? "")) { const r = this.errRow(slot); if (r) { out.push(r); shown.add(slot); } }
     return out;
   }
   private chip(author: string, authorId: string | null): HTMLElement {
@@ -7004,16 +7378,17 @@ class Panel {
     return b;
   }
   // ── the change cards (Slice 2) ─────────────────────────────────────────────────────────────────
-  /** One card per pending change. Collapsed: the author's chip, the one-line reference (a link to its mark
-   *  when the view shows one), the "N comments" tag counting the open comments about the change (a control: its click
+  /** One card per pending change. Collapsed: the author's chip, the one-line reference (a link to its mark while the
+   *  card-state rule has it painted, #cardState's doc), the "N comments" tag counting the open comments about the change (a control: its click
    *  shows the first, showAbout), and the buttons — Accept and Reject are the card's reason to exist, so they never hide
    *  behind the expand. Open: the old and new text. No comment is drawn inside the card (the about follow-on, 2026-09-10:
    *  every comment is its own card, and a comment about this change wears the "about" tag); Comment on this change opens
-   *  the composer over the change's span (startChangeComment) — offered for a spanned change only while the view carries
-   *  its text (spanCarried: not while the bytes are in flux, since a comment then would name the wrong words or lose the
-   *  passage; a deletion's is by id and stands whatever the view shows). Reveal on a deletion (a point in both views,
-   *  which a scroll can miss) and on any change whose mark the view does not show — a refused block, or Show changes
-   *  inline off — so the compact card never dead-ends. While the
+   *  the composer over the change's span (startChangeComment), offered for a spanned change as the card-state rule holds
+   *  the view (spanCarried; #cardState's doc), a deletion's by id and standing whatever the view shows. Reveal on a deletion
+   *  (a point in both views, which a scroll can miss) and on a change the card-state rule holds unmarked while its `current`
+   *  is true (a refused block, or Show changes inline off; #cardState's doc). While that `current` is false, an insertion's or
+   *  a substitution's card offers Accept and Reject and no Reveal, link or Comment on this change, and moves at the rule's
+   *  next event. While the
    *  editor is up (Slice 5) the editor's own marks show every change, deletions included, and the read view Reveal
    *  and the link would scroll is gone, so neither is offered; Accept and Reject stay, and answer with where to
    *  decide (DECIDES).
@@ -7023,16 +7398,13 @@ class Panel {
    *  into a text that no longer holds it. Its texts are one click down, as ever. */
   private renderChangeCard(c: ChangeCard): HTMLElement {
     const isOpen = this.openCards.has(c.key);
+    const cs = this.#cardState;                        // every fact below that moves a change card is the card-state rule's, the editor's read as it says (#cardState's doc)
     const editing = this.ctx.editing();
-    const painted = this.paintedChanges.has(c.id);
-    // the view's bytes are not the status's — a reject's reply landed and its reload has not, or the poll's reload landed
-    // and its status has not — so nothing was painted, and nothing is known yet about what the view will show once the
-    // two agree. Neither the "not shown" tag nor a Reveal is claimed on that: a tag and a button that appear for one
-    // fetch and vanish with it would move on no new information (CLAUDE.md). A deletion's Reveal is constant and stays.
-    // The bytes are the ones the body shows: from a landing the seam reports ahead of its paint until that paint, they are the
-    // text painted before the landing (paintCurrent), so the card keeps its state until the paint and moves then.
+    const painted = cs.painted.includes(c.id);
+    // in flux: the card-state rule's `current` is false (#cardState's doc); renderChangeCard's doc says what the card offers
+    // then. A deletion's Reveal is constant and stays.
     const s = this.status;
-    const inFlux = !!s && !this.paintCurrent(s);
+    const inFlux = !!s && !cs.current;
     const slot = "change:" + c.id;
     const card = el("div", "fc-card fc-change" + (isOpen ? " open" : "") + (c.detached ? " fc-card-detached" : "") + (this.openBodies.has(c.key) ? " fc-more" : ""));   // fc-more: its long parts shown whole (clipCards)
     card.dataset.id = c.key; card.dataset.change = c.id; card.dataset.kind = c.kind;
@@ -7053,12 +7425,12 @@ class Panel {
       ref.tabIndex = 0; ref.setAttribute("role", "button");
     }
     head.appendChild(ref);
-    const src = this.ctx.text();
+    const src = cs.text;
     if (c.detached) {
       const t = el("span", "fc-tag", "detached");
       t.title = "The file no longer holds this text, so the change cannot be accepted or rejected; its record stays with the file's comments";
       head.appendChild(t);
-    } else if (!painted && this.inline && !editing && !inFlux && src !== null && this.ctx.mode() !== "media") {
+    } else if (!painted && cs.marks && !editing && !inFlux && cs.shows) {
       // with the marks off (inline) the view shows no change by choice, and the tag would claim a failing that is none
       const t = el("span", "fc-tag", "not shown");
       t.title = "This view does not show the change; Reveal opens it in Raw";
@@ -7089,8 +7461,7 @@ class Panel {
       if (editing) { ok.classList.add("fileview-btn-blocked"); no.classList.add("fileview-btn-blocked"); }   // real buttons, dimmed: the click answers in place (DECIDES)
       acts.appendChild(ok); acts.appendChild(no);
       // Comment on this change (the about follow-on; before: Reply, a comment bound by the format's own field): for a spanned
-      // change only while the view carries its text (spanCarried) — in flux, the composer over the span would quote other
-      // bytes and one by id alone would lose the passage the change has; it comes back with the bytes, as Reveal does below
+      // change as spanCarried reads the card-state rule (#cardState's doc)
       if (c.curTo === c.curFrom || this.spanCarried(c)) {
         const re = btn("Comment on this change", "fcchangecomment"); re.dataset.id = c.id;
         re.title = "Leave a comment about this change; the message to the session names the change and its text";
@@ -7106,9 +7477,9 @@ class Panel {
           // with Show changes inline off, Raw paints no mark either (paintChanges), so the title promises the place and not
           // a mark — the guide's "opens the Raw view at the change" — and the click cues the row it lands on (landOn), which
           // is what reaches a finger; on, Raw shows every change, a deletion as its point
-          rv.title = this.inline ? "Show the change in the Raw view" + line
+          rv.title = cs.marks ? "Show the change in the Raw view" + line
             : "Open the Raw view at the change" + line + "; the marks are off, so the change is not marked there";
-          if (c.kind === "del" || !inFlux) acts.appendChild(rv);   // inFlux: an unpainted insertion's Reveal waits for the bytes
+          if (c.kind === "del" || !inFlux) acts.appendChild(rv);   // a deletion's Reveal stands; an insertion's or a substitution's waits while the rule's `current` is false (#cardState's doc)
         }
       }
       card.appendChild(acts);

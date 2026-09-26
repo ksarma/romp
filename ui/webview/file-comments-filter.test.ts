@@ -332,7 +332,8 @@ function rows(code: El, src: string): void {
   }));
 }
 const el = (tag: string, ...kids: Array<El | string>): El => { const e = new El(tag); for (const k of kids) e.appendChild(typeof k === "string" ? new Txt(k) : k); return e; };
-/** A file-authored inline element the sanitizer keeps: `<span data-act=… data-id=…>text</span>`. */
+/** A file-authored inline element carrying the panel's attribute names, `<span data-act=… data-id=…>text</span>`, handed to the
+ *  panel as written: the sanitizer strips an author's data-* (md-sanitize.ts), and the panel's own rule (owns) refuses it too. */
 const fileSpan = (act: string, id: string, text: string): El => { const s = el("span", text); s.dataset.act = act; s.dataset.id = id; return s; };
 /** marked's rendering of DOC, built by hand: one element per block, in order, holding the block's text. */
 function renderedDoc(box: El, intro?: El): void {
@@ -906,7 +907,7 @@ test("a reply being written on a comment card that Changes hides: the box return
 
 test("pins: the delegate action, the header's order, the paint guards, the store's key and default, the second listener, the keys", () => {
   assert.match(SRC, /fcfilter: \(x\) => this\.setFilter\(x\.dataset\.key as CommentsFilter\),/, "the filter is one of the panel's own delegated actions (click-safe through the one root)");
-  assert.match(SRC, /private setFilter\(f: CommentsFilter\): void \{\n\s+if \(f === this\.filter \|\| !FILTERS\.includes\(f\)\) return;\n\s+this\.filter = f;\n\s+saveSettings\(\{ commentsFilter: f \}\);\n\s+this\.paintAll\(\);\n\s+\}/, "pick, write the store, repaint — no request; the chosen option changes nothing");
+  assert.match(SRC, /private setFilter\(f: CommentsFilter\): void \{\n\s+if \(f === this\.filter \|\| !FILTERS\.includes\(f\)\) return;\n\s+this\.filter = f;\n\s+saveSettings\(\{ commentsFilter: f \}\);\n\s+this\.#latchCardState\("gesture"\);[^\n]*\n\s+\}/, "pick, write the store and repaint, the card-state rule's event 3 (file-comments.ts, #cardState's doc); no request; the chosen option changes nothing; a source pin only, whose executed witnesses are this file's cases on Comments, Changes and All (each pick repaints the list and the marks), and file-comments-changes-review2.test.ts's roads text-filter-over-content and text-filter-over-pane");
   assert.match(SRC, /activeFilter\(\): CommentsFilter \{\n\s+return filterOffered\(this\.status\) \? this\.filter : "all";/, "the kept choice governs only while there is a card to filter");
   const head = SRC.slice(SRC.indexOf("private renderHead("), SRC.indexOf("private renderComposer("));
   const pos = (s: string) => { const i = head.indexOf(s); assert.ok(i >= 0, s); return i; };
@@ -928,7 +929,7 @@ test("pins: the delegate action, the header's order, the paint guards, the store
   assert.match(SRC, /const KEY_ACTS = new Set\(\["fccard", "fcgoto", "fcopen", "fcchange", "fclogrow", "fcaboutfirst"\]\);/, "the tag takes Enter and Space like the other non-button controls");
   assert.match(SRC, /const t = el\("span", "fc-tag fc-count fc-about-count", c\.comments \+ \(c\.comments === 1 \? " comment" : " comments"\)\);\n\s+t\.dataset\.act = "fcaboutfirst"; t\.dataset\.id = c\.id; t\.tabIndex = 0; t\.setAttribute\("role", "button"\);/, "the tag: the count of open comments about the change, a control");
   assert.match(SRC, /private showAbout\(changeId: string\): void \{\n\s+const first = commentsAbout\(this\.cards\(\), changeId\)\[0\];\n\s+if \(!first\) return;\n\s+if \(this\.activeFilter\(\) === "changes"\) this\.setFilter\("all"\);\n\s+this\.showCard\(first\.id\);/, "its click: All when Changes hides the comment cards, then the first comment about the change");
-  assert.match(SRC, /onExternalSettingsChange\(\(s\) => \{ if \(live && live\.filter !== s\.commentsFilter\) \{ live\.filter = s\.commentsFilter; live\.paintAll\(\); \} \}\);/, "a pick elsewhere reaches the live panel");
+  assert.match(SRC, /onExternalSettingsChange\(\(s\) => \{ if \(live && live\.filter !== s\.commentsFilter\) \{ live\.filter = s\.commentsFilter; live\.settingsFlipped\(\); \} \}\);/, "a pick elsewhere reaches the live panel, the card-state rule's event 3 (file-comments.ts, #cardState's doc); a source pin only, whose executed witness is this file's case on a pick elsewhere re-rendering the live panel");
   assert.match(SRC, /const FILTERS: CommentsFilter\[\] = \["all", "comments", "changes"\];\nconst FILTER_KEYS = new Set\(\["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End"\]\);/);
   assert.match(SRC, /if \(!t \|\| !t\.dataset \|\| t\.dataset\.act !== "fcfilter" \|\| !this\.owns\(t\)\) return;/, "the arrows act for the panel's own buttons only");
   // the kind cue, in both builders
