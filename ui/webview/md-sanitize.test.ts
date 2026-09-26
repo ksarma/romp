@@ -285,14 +285,14 @@ test("setMdSanitizer (the node suites' seam, Slice 7 of plans/markdown-viewer.md
 
 // ── the profile ─────────────────────────────────────────────────────────────────────────────────────
 
-test("the profile: html + svg, data: on img, no data-*, the forbidden tags, prefixed ids and names; input stays for the task checkbox", () => {
+test("the profile: html + svg, data: on img, no data-*, the forbidden tags (the marquee among them, whose own rendering makes a stacking context around what it holds), prefixed ids and names; input stays for the task checkbox", () => {
   assert.deepEqual(MD_PURIFY.USE_PROFILES, { html: true, svg: true });
   assert.deepEqual(MD_PURIFY.ADD_DATA_URI_TAGS, ["img"]);
   assert.equal(MD_PURIFY.ALLOW_DATA_ATTR, false);
   assert.equal(MD_PURIFY.SANITIZE_NAMED_PROPS, true, "an author's id and name are prefixed user-content- (GitHub's rule), never dropped");
   assert.equal(USER_CONTENT_PREFIX, "user-content-", "the prefix DOMPurify writes; the lookups compare against it");
   assert.deepEqual(MD_PURIFY.FORBID_TAGS, [...MD_FORBID_TAGS]);
-  for (const tag of ["style", "dialog", "form", "button", "select", "option", "optgroup", "textarea", "fieldset", "legend", "label", "datalist", "output", "meter", "progress", "map", "area"]) {
+  for (const tag of ["style", "dialog", "form", "button", "select", "option", "optgroup", "textarea", "fieldset", "legend", "label", "datalist", "output", "meter", "progress", "map", "area", "marquee"]) {
     assert.ok(MD_FORBID_TAGS.includes(tag), tag + " is forbidden");
   }
   assert.ok(!MD_FORBID_TAGS.includes("input"), "input is allowed by the profile; sanitizeMd's post-pass keeps only a disabled checkbox");

@@ -52,6 +52,11 @@
 //     prefix rule renames `<map name="nav">` to user-content-nav and leaves `usemap="#nav"` as written, so no
 //     map an author writes could bind to its picture anyway, and an <area> is a link element neither page's
 //     link handling reaches. Dropped, the picture is inert prose.
+//   • no `<marquee>` (FORBID_TAGS): GitHub's allowlist has none, and its own rendering, the browser's shadow box
+//     that moves it, makes it a stacking context around everything it holds with no class or style of the
+//     author's, so the file viewer's picture control inside one stood above nothing outside it (file-view.ts
+//     SHEET_STACK_CLASSES says what the control's z-index keeps). Its text and pictures stay as ordinary content
+//     where it stood (KEEP_CONTENT), unmoving.
 //   • html + svg profiles (KaTeX's stretchy glyphs used to come through here as inline <svg>; a note's own
 //     inline SVG still does), data: URIs on <img> (the CSP allows them; inline transcript images rely on them).
 //
@@ -66,11 +71,12 @@
 import DOMPurify from "dompurify";
 import type { Config, DOMPurify as DOMPurifyInstance, UponSanitizeAttributeHookEvent, UponSanitizeElementHookEvent } from "dompurify";
 
-/** Tags a note may not keep: the style sheet, the dialog, every form-associated element, and the image map. */
+/** Tags a note may not keep: the style sheet, the dialog, every form-associated element, the image map, and the marquee. */
 export const MD_FORBID_TAGS: readonly string[] = [
   "style", "dialog",
   "form", "button", "select", "option", "optgroup", "textarea", "fieldset", "legend", "label", "datalist", "output", "meter", "progress",
   "map", "area",
+  "marquee",
 ];
 
 /** Attributes a note may not keep at all: `background`, a remote fetch on render with no safe value, and `usemap`, the

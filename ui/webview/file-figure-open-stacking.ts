@@ -19,9 +19,14 @@
 //   element, where the span holds the picture above the floor inside the narrow strip, so it wears its control; each element after
 //   the paint holds none of those classes, and the cells read as the table's;
 // - a class the sheets scale under :active (ask-btn), around the picture before the svg: with the mouse held on the control no red
-//   pixel of the shadow shows inside the control's box, and the release opens once.
-// Every scene is red at 0ab74924c in every engine and on both surfaces, where the table's shift was a translate and the page classes
-// stood; which of its cells, and their reads there, are a private witness kept out of the tree.
+//   pixel of the shadow shows inside the control's box, and the release opens once;
+// - an author's marquee around the picture, before the positioned element and before the svg: the sanitizer removes the marquee
+//   and keeps the picture where it stood (md-sanitize.ts MD_FORBID_TAGS), so no marquee stands around the picture after the paint,
+//   and the cells read as the table's;
+// - in each scene with the positioned element, a click on the picture's own body, off its control, where that element takes the
+//   press: it opens nothing, a stated cost (the coordinator's decision 6), green by design, the control opening the picture there.
+// Every scene is red at 0ab74924c in every engine and on both surfaces, where the table's shift was a translate, the page classes
+// stood and the sanitizer kept the marquee; which of its cells, and their reads there, are a private witness kept out of the tree.
 import * as assert from "node:assert/strict";
 import * as zlib from "node:zlib";
 import { openViewer, frames, PARA, REPORT } from "./real-viewer-leg";
@@ -44,6 +49,7 @@ const LIGHTBOX: Around = { key: "lightbox", what: "a remote picture inside an au
 const HELD: Around = { key: "held", what: "a remote picture inside an author's div of meta-held-mark", md: '<div id="wrap" class="meta-held-mark keep">' + PIC + "</div>", wrapper: "wrap", classes: "keep" };
 const RAIL: Around = { key: "rail", what: "a remote picture inside an author's span of path-full-wait inside a div of rail-hit", md: '<div id="wrap" class="rail-hit keep"><span class="path-full-wait">' + PIC + "</span></div>", wrapper: "wrap", classes: "keep" };
 const PRESS: Around = { key: "press", what: "a remote picture inside an author's div of ask-btn", md: '<div id="wrap" class="ask-btn keep">' + PIC + "</div>", wrapper: "wrap", classes: "keep" };
+const MARQUEE: Around = { key: "marquee", what: "a remote picture inside an author's marquee", md: 'A <marquee scrollamount="0">' + PIC + "</marquee> held.", wrapper: null, classes: null };
 
 /** In the viewer's document: the picture, its control, the reading of a scene (`__sread`: the control's box, what a press at its
  *  centre reaches, the table's or the wrapper's state) and `__scentre`, which scrolls the control to the body's middle. */
@@ -66,12 +72,13 @@ const INSTALL = (): void => {
       topTable: !!table && !!table.parentElement && table.parentElement.classList.contains("fileview-md"),
       table: tcs ? [tcs.position, tcs.translate, tcs.transform, tcs.zIndex] : null,
       wrapper: wrap ? wrap.getAttribute("class") : null,
+      marquee: !!img.closest("marquee"),
       later: later ? getComputedStyle(later).position : null,
       cover: (() => { const s = document.getElementById("user-content-cover"); if (!s) return null; const b = s.getBoundingClientRect(); return { x: b.left, y: b.top }; })(),
     };
   };
 };
-type Read = { control: boolean; loaded: boolean; web: boolean; box: { x: number; y: number; w: number; h: number; cx: number; cy: number } | null; hit: string; topTable: boolean; table: string[] | null; wrapper: string | null; later: string | null; cover: { x: number; y: number } | null };
+type Read = { control: boolean; loaded: boolean; web: boolean; box: { x: number; y: number; w: number; h: number; cx: number; cy: number } | null; hit: string; topTable: boolean; table: string[] | null; wrapper: string | null; marquee: boolean; later: string | null; cover: { x: number; y: number } | null };
 
 /** A screenshot's pixels, as [r, g, b] each: the PNG Playwright writes (8 bits a channel, RGB or RGBA, no interlace) read here, in
  *  node, so no page policy on image sources stands between the read and the pixels. */
@@ -161,7 +168,7 @@ export async function stackCells(browser: any, engine: StackEngine, surface: Sta
   const at = engine + ", " + surface + ": ";
   const again = async (page: any): Promise<void> => { await page.evaluate(() => (window as any).__scentre()); await page.mouse.move(2, 690); await frames(page, 3); };
   // the positioned element after the picture: the element's state, the hit at the control's centre, and each gesture on the control
-  for (const s of [TABLE, LIGHTBOX, RAIL]) {
+  for (const s of [TABLE, LIGHTBOX, RAIL, MARQUEE]) {
     await stackScene(browser, engine, surface, doc(s.md, OVERLAY), async (page, opens, read) => {
       const r = await read();
       const rec: Record<string, unknown> = { read: r };
@@ -169,7 +176,8 @@ export async function stackCells(browser: any, engine: StackEngine, surface: Sta
       if (s === TABLE) {
         assert.ok(r.topTable, at + "the picture stands in a top-level table (a precondition)");
         cell(s.what + ", then a positioned element: the table's [position, translate, transform, z-index]", ["relative", "none", "none", "auto"], r.table);
-      } else cell(s.what + ", then a positioned element: the element's classes after the paint", s.classes, r.wrapper);
+      } else if (s === MARQUEE) cell(s.what + ", then a positioned element: the picture inside a marquee after the paint", false, r.marquee);
+      else cell(s.what + ", then a positioned element: the element's classes after the paint", s.classes, r.wrapper);
       cell(s.what + ", then a positioned element: what a press at the control's centre reaches", "the control", r.hit);
       await page.mouse.click(r.box!.cx, r.box!.cy);
       cell(s.what + ", then a positioned element: a click on the control opens", [1, 1], await opens());
@@ -184,11 +192,13 @@ export async function stackCells(browser: any, engine: StackEngine, surface: Sta
         await page.keyboard.press(key);
         cell(s.what + ", then a positioned element: " + (key === " " ? "Space" : key) + " on the control opens", [1, 1], await opens());
       }
-      // the picture's own body under the positioned element (the coordinator's decision 6): recorded, no cell
+      // the picture's own body under the positioned element (the coordinator's decision 6): a stated cost, green by design
       await again(page);
-      const img = await page.evaluate(() => { const b = (window as any).__simg().getBoundingClientRect(); return { x: Math.round(b.left + 40), y: Math.round(b.bottom - 30) }; });
+      const img = await page.evaluate(() => { const b = (window as any).__simg().getBoundingClientRect(); const x = Math.round(b.left + 40), y = Math.round(b.bottom - 30); const e = document.elementFromPoint(x, y), later = document.getElementById("user-content-later"); return { x, y, onLater: !!e && !!later && (e === later || later.contains(e)) }; });
+      assert.ok(img.onLater, at + s.key + ": a press on the picture's own body, off its control, reaches the positioned element (a precondition): " + JSON.stringify(img));
       await page.mouse.click(img.x, img.y);
       rec.pictureBodyClick = await opens();
+      cell(s.what + ", then a positioned element: a click on the picture's own body, which the element takes, opens", [0, 0], rec.pictureBodyClick);
       note("record " + JSON.stringify({ engine, surface, scene: s.key + "+later", ...rec }));
     }, s.wrapper);
   }
@@ -202,7 +212,7 @@ export async function stackCells(browser: any, engine: StackEngine, surface: Sta
     }, s.wrapper);
     return off;
   };
-  for (const s of [TABLE, HELD, PRESS]) {
+  for (const s of [TABLE, HELD, PRESS, MARQUEE]) {
     const off = await place(s);
     await stackScene(browser, engine, surface, doc(s.md, COVER(off[0], off[1])), async (page, opens, read) => {
       const r = await read();
@@ -216,6 +226,7 @@ export async function stackCells(browser: any, engine: StackEngine, surface: Sta
       rec.underHidden = under;
       assert.ok(under[0] >= under[1] * 0.9, at + s.key + ": with the control hidden the shadow fills the inside of its box, so it is placed over the control (a precondition): " + JSON.stringify(under));
       if (s === TABLE) cell(s.what + ", then an svg's shadow over the control: the table's [position, translate, transform, z-index]", ["relative", "none", "none", "auto"], r.table);
+      else if (s === MARQUEE) cell(s.what + ", then an svg's shadow over the control: the picture inside a marquee after the paint", false, r.marquee);
       else cell(s.what + ", then an svg's shadow over the control: the element's classes after the paint", s.classes, r.wrapper);
       if (s === PRESS) {
         cell(s.what + ", then an svg's shadow over the control: the shadow's red pixels inside the control's box at rest", 0, (await redInside(page, r.box!))[0]);

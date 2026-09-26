@@ -4524,7 +4524,7 @@ const SHEET_DIM_CLASSES: ReadonlySet<string> = new Set([
  *  lose every listed class and keep their others. An svg image too, since the fence pass below makes an HTML img of one split across
  *  a fence's lines, and before that pass, since the viewer's own code rows and Copy buttons wear listed classes and are made there;
  *  before the anchors' pass too, which gives a dead link its own fv-dead. Its cost: an author's element of a page class around a
- *  picture loses what that class gave it. The chat's md() does not run it (md-sanitize.ts is unchanged), and an author element laid
+ *  picture loses what that class gave it. The chat's md() does not run it (the pass is the viewer's, not md-sanitize.ts's), and an author element laid
  *  over a figure rather than around it is the one gate's to read: signUncovered refuses a sign where a press would reach such an
  *  element, dropPressThrough takes off the author's markup what would let a press pass through one, and dropStackClasses takes off the
  *  classes that would raise an author element to the control's stacking level and, from a figure's ancestors, the classes that would
@@ -4575,7 +4575,7 @@ function declaredProperty(decl: string): string {
  *  attribute's text with its comments taken out, and the attribute untouched where it holds none). Every element, not a figure's
  *  ancestors alone: an element laid over a picture may stand anywhere in the document, and the property is inherited from any
  *  ancestor of it. Its cost: an author's element of one of these page classes loses what that class gave it, and an inert part of a
- *  note takes presses. The chat's md() does not run it (md-sanitize.ts is unchanged). */
+ *  note takes presses. The chat's md() does not run it (the pass is the viewer's, not md-sanitize.ts's). */
 function dropPressThrough(root: Element): void {
   root.querySelectorAll("[class], [inert], [style]").forEach((e) => {
     const pass = (e.getAttribute("class") || "").split(/\s+/).filter((c) => SHEET_PRESS_THROUGH_CLASSES.has(c));
@@ -4603,8 +4603,10 @@ function dropPressThrough(root: Element): void {
  *  WebKit on the chat modal and the Files pane: with these classes gone, no author-reachable rule leaves an author element at or
  *  above the control), and takes SHEET_CONTEXT_CLASSES, the classes that would make an element around the picture a stacking
  *  context, off each figure and every element above it; and the viewer's own rule for a top-level table shifts it with a position
- *  and a left, which make no stacking context. A stacking context around the picture would hold the control's z-index inside it,
- *  and author paint the hit test does not see could then cover the control. None of this holds for the outbound mark a picture
+ *  and a left, which make no stacking context; and the sanitizer removes an author's marquee, whose own rendering made one around
+ *  what it held with no page class (md-sanitize.ts MD_FORBID_TAGS). A stacking context around the picture would hold the control's
+ *  z-index inside it, and author paint the hit test does not see could then cover the control. None of this holds for the outbound
+ *  mark a picture
  *  with no control wears, which has no stacking level of its own (the file review's round 17, fresh-1 and extra7-1), nor for a
  *  sheet hostSheets does not read (katex's vendored one). Held to the sheets both ways by file-figure-open.test.ts, which derives
  *  the list by this rule, names each class the sheets would raise that the list lacks and each listed class they no longer raise,
@@ -4655,7 +4657,7 @@ const SHEET_CONTEXT_CLASSES: ReadonlySet<string> = new Set([
  *  the document; a figure's ancestors for the second, the dimming drop's scope, since the control stands beside the figure's anchor
  *  and a stacking context holds it only from an element above it (an svg image as dropDimmingClasses reads one, since the fence
  *  pass can make an HTML img of it). Its cost: an author's element of one of these page classes loses the stacking, the shift, the
- *  turn or the press and hover scale that class gave it. The chat's md() does not run it (md-sanitize.ts is unchanged). */
+ *  turn or the press and hover scale that class gave it. The chat's md() does not run it (the pass is the viewer's, not md-sanitize.ts's). */
 function dropStackClasses(root: Element): void {
   root.querySelectorAll("[class]").forEach((e) => {
     const stack = (e.getAttribute("class") || "").split(/\s+/).filter((c) => SHEET_STACK_CLASSES.has(c));

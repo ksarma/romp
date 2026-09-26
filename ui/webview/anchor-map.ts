@@ -1520,7 +1520,7 @@ const FOREIGN = new Set(["SVG", "MATH"]);
  *  these as its own children in its place (TopTag.kids, topTags, since the Slice 5 review's round 6; read as its text before, which
  *  left an element it held unread). Listed here rather than imported: md-sanitize.ts creates the DOMPurify instance at load, which
  *  this module's node tests, run on a DOM stand-in, must not. */
-const UNWRAPPED = new Set(["DIALOG", "FORM", "BUTTON", "SELECT", "OPTION", "OPTGROUP", "TEXTAREA", "FIELDSET", "LEGEND", "LABEL", "DATALIST", "OUTPUT", "METER", "PROGRESS", "MAP", "AREA"]);
+const UNWRAPPED = new Set(["DIALOG", "FORM", "BUTTON", "SELECT", "OPTION", "OPTGROUP", "TEXTAREA", "FIELDSET", "LEGEND", "LABEL", "DATALIST", "OUTPUT", "METER", "PROGRESS", "MAP", "AREA", "MARQUEE"]);
 /** The elements the parser's "generate implied end tags" closes when one stands innermost: at an end tag it honours (`</form>`,
  *  `</div>`, `</button>`), and at the start tags below (startTagCloses). */
 const IMPLIED_END = new Set(["P", "LI", "DD", "DT", "OPTION", "OPTGROUP", "RB", "RP", "RT", "RTC"]);
