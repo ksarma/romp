@@ -141,18 +141,18 @@ function jobs(text) {
  *  its leading whitespace. A quoted scalar or a flow collection that a line of the block begins, the env line among
  *  them, is followed as YAML follows it. Its node begins at the line's key place (after its leading whitespace, any
  *  `- `, `? ` or `: ` indicator, and any tag or anchor) or at its value place (after a plain key's colon and a space, a
- *  tab or the line's end, or after a quoted key closed on the line and its colon, then any tag or anchor), and a quote
- *  anywhere else, inside a plain scalar (`NOTE: a'b`) or in a comment, begins nothing. A line that begins a single- or
- *  double-quoted scalar and does not close it (inside single quotes two single quotes are a quote, and inside double
- *  quotes a backslash escapes the next character) is refused, and so is each later line up to and including the line
- *  that closes it, whatever its indent, a # line, an env line and a key line among them, since YAML reads them as the
- *  value's text (a blank line among them is neither read nor refused). The block goes on after the closing line, as
- *  YAML's does: a key after the value, which YAML keeps in the step's env, is read or refused, and a later line of
- *  eight spaces or fewer ends the block. A line that begins a flow collection ([ or {) is refused, closed on its line
- *  or not, and so is every later line of the step that is not blank: the reader does not follow a collection to its
- *  closing bracket, which can sit on a later line of eight spaces or fewer that YAML reads past, as a quoted scalar's
- *  closing line can. The first test asserts the Browser legs step's refused lines are none and its env the switch
- *  alone. Its table: ENV_ROWS, run by the test after STEPS_ROWS' test. */
+ *  tab or the line's end, or after a quoted key closed on the line and its colon, then any such indicator, tag or
+ *  anchor, as at the key place), and a quote anywhere else, inside a plain scalar (`NOTE: a'b`) or in a comment, begins
+ *  nothing. A line that begins a single- or double-quoted scalar and does not close it (inside single quotes two single
+ *  quotes are a quote, and inside double quotes a backslash escapes the next character) is refused, and so is each
+ *  later line up to and including the line that closes it, whatever its indent, a # line, an env line and a key line
+ *  among them, since YAML reads them as the value's text (a blank line among them is neither read nor refused). The
+ *  block goes on after the closing line, as YAML's does: a key after the value, which YAML keeps in the step's env, is
+ *  read or refused, and a later line of eight spaces or fewer ends the block. A line that begins a flow collection ([
+ *  or {) is refused, closed on its line or not, and so is every later line of the step that is not blank: the reader
+ *  does not follow a collection to its closing bracket, which can sit on a later line of eight spaces or fewer that
+ *  YAML reads past, as a quoted scalar's closing line can. The first test asserts the Browser legs step's refused lines
+ *  are none and its env the switch alone. Its table: ENV_ROWS, run by the test after STEPS_ROWS' test. */
 function steps(job) {
   // the env reader's follower of a quoted scalar or a flow collection that a line begins (its docstring): from index i
   // at a node's place, a key's when key is true and else a value's, with quote the quote a scalar is open under (null at
@@ -328,6 +328,10 @@ const ENV_ROWS = [
   { what: 'a flow collection closed on its line after an anchor, refused with every later line of the step', lines: ['        env:', ENV_ON, '          NOTE: &a {b: 1}', ENV_NO], env: ENV_SW, refused: ['          NOTE: &a {b: 1}', ENV_NO, '        run: x'] },
   { what: 'a quote inside a plain value begins nothing: the value read, and a line of eight spaces after it ends the block', lines: ['        env:', ENV_ON, '          NOTE: a\'b', '        timeout-minutes: 5', ENV_NO], env: { ...ENV_SW, NOTE: 'a\'b' }, refused: [] },
   { what: 'a single-quoted value closed on its line, a quote in the comment after it, read with the comment', lines: ['        env:', ENV_ON, '          NOTE: \'a\' # it\'s', ENV_NO], env: { ...ENV_BOTH, NOTE: '\'a\' # it\'s' }, refused: [] },
+  { what: 'a single-quoted value opened after "? ", refused with its closing line, and NODE_OPTIONS after it read', lines: ['        env:', ENV_ON, '          ? \'a', '        \'', ENV_NO], env: ENV_BOTH, refused: ['          ? \'a', '        \''] },
+  { what: 'a single-quoted value opened after a plain key\'s colon and a space, then ": " at the value place, refused with its closing line, and NODE_OPTIONS after it read', lines: ['        env:', ENV_ON, '          NOTE: : \'a', '        \'', ENV_NO], env: ENV_BOTH, refused: ['          NOTE: : \'a', '        \''] },
+  { what: 'a single-quoted value opened after a plain key\'s colon and a tab, refused with its closing line, and NODE_OPTIONS after it read', lines: ['        env:', ENV_ON, '          NOTE:\t\'a', '        \'', ENV_NO], env: ENV_BOTH, refused: ['          NOTE:\t\'a', '        \''] },
+  { what: 'a # after a space, before a plain key\'s colon, begins a comment, so the quote after that colon begins nothing: the line refused, and NODE_OPTIONS after it read', lines: ['        env:', ENV_ON, '          NOTE #x: \'a', ENV_NO], env: ENV_BOTH, refused: ['          NOTE #x: \'a'] },
 ];
 test('the env reader\'s table: each row\'s env and refused lines read as steps()\' docstring states', () => {
   const wrong = [];
