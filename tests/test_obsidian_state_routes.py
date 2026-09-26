@@ -737,7 +737,8 @@ _PATH_STOPS = frozenset({".stat", "os.stat", "_read_state_json", "json.loads", "
 # json.loads' cls, object_hook, object_pairs_hook, parse_float, parse_int and parse_constant, and any other keyword,
 # which json.loads hands on to cls. A call of one that is handed the path, or anything computed from it (what was read
 # from the file included, on the safe side), takes every keyword value that is not a constant and not a callback
-# _bindings reads (a lambda, or a name bound only to undecorated defs or lambdas of the function's own scope,
+# _bindings reads (a lambda, or a name bound only to undecorated defs or plain `name = lambda ...` assignments of the
+# function's own scope,
 # _callbacks), a ** spread's value included, as a call handed the path, keyed by its spelling (_callee_spelling), which
 # no set holds unless it is a read (`key=str` passes): `key=_poke` is a call of _poke, a decorated def's name a call of
 # that name, `key=functools.partial(_poke, sid)` spells `<Call>`, `key=_poke if sid else str` `<IfExp>`,
@@ -999,7 +1000,8 @@ def _bindings(fn, callbacks=None):
     display element by element (_split), and so is a for target to each element of a displayed iterable
     (`for p, k in ((path, "name"), ...)`).
     A callable a call runs is the function's code too: for every call in `fn`, each argument or keyword value that is
-    a lambda, or a name `callbacks` holds (_callbacks: bound only to undecorated defs or lambdas of `fn`'s own scope;
+    a lambda, or a name `callbacks` holds (_callbacks: bound only to undecorated defs or plain `name = lambda ...`
+    assignments of `fn`'s own scope;
     computed here when not given), has each of its parameters (_callback_params, every kind) paired with each other
     argument, keyword value and receiver of that call, as a default is. So where the call is handed the path the
     callback's parameters carry it, and its body, walked as `fn`'s, has its writes read as `fn`'s:
@@ -1156,7 +1158,8 @@ def _store_flow(fn, modules, helpers=frozenset(), outer=None):
     carries the path, each base and metaclass of such a class, and each decorator of `fn` itself when `fn` is a path
     helper, is handed it by its spelling (_callee_spelling), and one that is a method of a value (`@REG.append`) keeps
     it.
-    A callable a read runs is a call too. A lambda, or a name bound only to undecorated defs or lambdas of `fn`'s own
+    A callable a read runs is a call too. A lambda, or a name bound only to undecorated defs or plain
+    `name = lambda ...` assignments of `fn`'s own
     scope (_callbacks), handed to any call is read as `fn`'s code with its parameters bound from the call's other
     arguments, keyword values and receiver (_bindings). Any other keyword value handed to a call in _CALLBACK_READS
     (sorted, json.loads) that is handed the path, or anything computed from it (what was read from the file included,
@@ -1627,7 +1630,8 @@ class FlagWriterPopulation(unittest.TestCase):
     nested def that builds the path is followed to every call of it, and a closure or a class holding the path goes
     wherever a value goes, handed back, kept or handed to a call, its decorators, bases and metaclass included, since
     each is called with it. A callable a call runs is the function's code too: a lambda, or a name the function binds
-    only to undecorated defs or lambdas of its own scope, handed to a call is read with its parameters bound from the
+    only to undecorated defs or plain `name = lambda ...` assignments of its own scope, handed to a call is read with
+    its parameters bound from the
     call's other arguments (_bindings), so a sorted key that writes the element it is handed reds; and every other
     keyword value handed to sorted or json.loads beside the path, but a constant (a function of the module by name, a
     decorated def by name, a call's result, an if-else, a walrus, a subscript, a ** spread), is a call by its spelling,
@@ -2728,7 +2732,8 @@ class StoreFlowReach(unittest.TestCase):
 
     def test_a_callable_a_read_runs_is_read_or_refused(self):
         """A callable a call runs is the function's code (the reviewer's ruling on round 2 of fork PR #909, extra5-2).
-        A lambda, or a name bound only to undecorated defs or lambdas of the function's own scope, handed to a call is
+        A lambda, or a name bound only to undecorated defs or plain `name = lambda ...` assignments of the function's
+        own scope, handed to a call is
         read with its parameters, of every kind (positional-only, positional, *args, keyword-only, **kwargs), bound
         from the call's other arguments, its keyword values and its receiver (_bindings), so its writes are the
         function's, wherever in the function the call stands, the def or lambda assignment standing in the function's
