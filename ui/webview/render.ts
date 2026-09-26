@@ -2620,7 +2620,12 @@ function renderFilePreview(p: HTMLElement, c: PreviewContent, sid: string | null
 // A previewed document renders on the sanitizer's INERT DOM (DOMPurify's own document, no browsing context) and is
 // stripped of every remote load THERE, before its nodes are adopted into the page: an <img>'s src or srcset, a
 // <picture>'s <source>, a <video>'s poster or src, an <audio>, an SVG <image>, in any spelling the URL parser reads
-// as another origin (file-preview.ts stripRemoteLoads). A file the user did not choose to open must never send a
+// as another origin (file-preview.ts stripRemoteLoads). An inline svg's paint references go too: a url() naming another
+// origin in a fill, stroke, mask, clip-path, filter or marker-* attribute, or in a style declaration, is removed from its
+// element, which stays. A url(#id) and this origin's own stay, and a data: URL only when its type is a raster image,
+// since Firefox loads a data: SVG, XHTML or XML document named that way and the document fetches what its own markup
+// names (paint-refs.ts dropRemoteRefs: sanitizeMd's default pass removes them first, and stripRemoteLoads's paint arm
+// again for whatever tree it is given). A file the user did not choose to open must never send a
 // request elsewhere on a hover, and a strip AFTER innerHTML raced the browser's fetch and lost (the review): the beacon
 // had fired while the user saw alt text. Images load only from this kernel (the /file route, a relative path, a data:
 // URI). The viewer, opened on purpose, keeps its own rules. Not the chat's md(): its PR links and parked-image heal

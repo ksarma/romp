@@ -58276,15 +58276,17 @@ _img_cache = {}                                  # "path:mtime:size" → dataURL
 #      the actual bytes over HTTP (behind _authorize, like everything else) instead of a data-URL round
 #      trip — the browser lazy-loads, caches, and renders a PDF natively in the lightbox iframe. The
 #      allowlist is RENDERABLE media only; anything else 404s and the client shows a plain link. SVG is
-#      served as an image (an <img> never runs its scripts; a tab NAVIGATED to one is a document, which
-#      _media_policy_headers below sandboxes); the files are the user's own, written by their own agents,
-#      on their own machine.
+#      served as an image (an <img> never runs its scripts; a tab NAVIGATED to one gets the image-mode page,
+#      _svg_image_page below, which draws the file as an image, and _media_policy_headers sandboxes the
+#      bytes themselves as a second layer); the files are the user's own, written by their own agents, on
+#      their own machine.
 _PREVIEW_MIME = dict(_IMG_MIME, **{".pdf": "application/pdf"})
 
 
 def _media_policy_headers(mime):
-    """The extra headers a /file SUCCESS carries for its media type: `Content-Security-Policy: sandbox`
-    on image/svg+xml, nothing on anything else.
+    """The extra headers a /file SUCCESS carries for its media type: on image/svg+xml two, one
+    Content-Security-Policy (`sandbox` and four fetch directives in one value) and `Vary: Sec-Fetch-Dest,
+    Accept`; nothing on anything else.
 
     An SVG is the one type on the allowlist that is ALSO a document. Served to an <img> it is a picture
     and its scripts never run; but the own-tab opener (ui/webview/preview.ts openFileTab) hands this route
@@ -58292,15 +58294,68 @@ def _media_policy_headers(mime):
     parses it as a page and runs its inline <script> at the kernel's origin, with the dashboard's session
     cookie attached (the 1204 review, 2026-09-10). nosniff is no help there: the type is declared, and
     image/svg+xml is the scriptable one. `sandbox` closes it: a sandboxed document runs no script and
-    gets an opaque origin, so it can reach nothing of the dashboard's. The <img> path is unaffected (no
-    document is created, so no policy is read), and the chat's thumbnails, the viewer's inline preview
-    and the lightbox keep rendering. Sent on EVERY svg success, all three shapes (HEAD, 206, 200), never
-    gated on _is_navigation: harmless on a fetch or an <img>, and closing the hole must not hinge on
-    Sec-Fetch headers a plain-http dashboard never sends (see _is_navigation). On the 200 it rides
-    BESIDE _send's frame-ancestors policy as a second header of the same name, which a browser enforces
-    in addition; the framing policy itself is untouched. The /remote/<host>/file relay rebuilds every
-    interpretation header from OUR mime (it never mirrors the remote's), so it restates this too."""
-    return {"Content-Security-Policy": "sandbox"} if mime == _IMG_MIME[".svg"] else {}
+    gets an opaque origin, so it can reach nothing of the dashboard's.
+
+    `sandbox` stops scripts, not loads. Under it alone the opened tab fetched every host its markup named
+    (executed in Chromium, 2026-09-23): an <image> href and xlink:href, a CSS @import, a foreignObject
+    <img>, a fill, a mask and a CSS fill paint reference, none of it behind the gear's list of hosts a
+    viewed file's pictures may load from; this change's own probe added an <feImage>, a CSS cursor, a
+    background image, an @font-face source, a stylesheet <link>, a preload, a prefetch, an <iframe> and a
+    <video>. The fetch directives
+    stop those loads. default-src 'none' is the fallback of every fetch directive, so it refuses each load
+    the document would make, to any host and to this kernel too, which serves nothing at a relative path
+    (/file needs its query). Three directives then allow back what an exported figure carries inline:
+    img-src data: blob: (an embedded raster, the <image xlink:href="data:image/png;base64,..."> a plotting
+    library writes), style-src 'unsafe-inline' (a <style> element and style attributes; a stylesheet URL
+    still fails) and font-src data: (an embedded font). default-src 'none' alone is wrong: it refuses the
+    data: raster and the inline styles too, so an exported figure opens blank or unstyled. A reference
+    inside the document (url(#g), href="#id") is no fetch, and no directive touches it. Nothing here
+    governs a link the reader clicks inside the document: that navigates, under _send's Referrer-Policy.
+
+    No fetch directive tells a data: raster from a data: SVG document, and none governs a preconnect. The
+    review of the change that added them measured both through this policy (2026-09-23): in Firefox 153 a
+    fill, mask or filter naming a data: SVG document (img-src data: admits it) loaded that document, which
+    fetched its own @import from another host, and in WebKit 26.5 a foreignObject <link rel=preconnect>
+    opened a TCP connection to its host, as it did under a bare `sandbox`. So a tab no longer gets these
+    bytes as its document. A request that would make them one (a navigation, a frame, an object or an
+    embed: _svg_as_document) gets the image-mode page instead (_svg_image_page), which holds the file in an
+    <img>, and an svg drawn as an image loaded nothing external in Chromium 151, Firefox 153 or WebKit 26.5
+    while it still drew its own data: raster and inline styles. This policy stays on the bytes as a second
+    layer, for a road that still makes them a document: a request whose headers name neither a document
+    destination nor text/html. The three directives that allow content back matter on that road alone,
+    which no road the dashboard builds reaches, so their text is held by tests/test_kernel_preview.py and
+    no browser test draws through them.
+
+    tests/test_svg_tab_policy_browser.py opens such a tab through lab kernels, on this route and on the
+    relay, by a window.open from a kernel-origin page and by a Ctrl click and a middle click on the viewer's
+    path link, in Chromium and, when ROMP_BROWSER_ENGINES names them, in Firefox and WebKit. With the
+    sixteen loads above, three data: paint documents that carry an @import, and preconnect and dns-prefetch
+    links in its markup, no request and no TCP connection reaches another server, and the svg and its data:
+    raster draw. Its control tab, the same markup under a bare `sandbox`, shows which of those loads each
+    engine makes when nothing blocks them: a load an engine did not make there says nothing about that
+    engine, and a name lookup (dns-prefetch) is not visible to the test in any engine.
+
+    One header value, not a second header beside a bare `sandbox`: a browser enforces every policy it
+    receives, each on its own, so a load must pass all of them, and the two shapes block the same loads in
+    any browser that implements CSP. The one value keeps `sandbox` and the fetch directives in one policy,
+    which a layer that keeps only one value of a repeated header (a proxy, or a client's header dict, as
+    this kernel's tests note) cannot split, and it keeps this function's one value per name.
+
+    The <img> path is unaffected (no document is created, so no policy is read), and the chat's
+    thumbnails, the viewer's inline preview and the lightbox keep rendering. Sent on EVERY svg success,
+    all three shapes (HEAD, 206, 200), never gated on the request's headers: harmless on a fetch or an
+    <img>, and the second layer must not hinge on the headers the image-mode decision reads. Vary names
+    those two headers because they choose between the page and these bytes at one URL, so a cache that
+    keeps one answer does not hand it to the other kind of request (the page carries the same Vary). On
+    the 200 the policy rides BESIDE _send's frame-ancestors policy as a second header of the same name,
+    which a browser enforces in addition; the framing policy itself is untouched. The /remote/<host>/file
+    relay rebuilds every interpretation header from OUR mime (it never mirrors the remote's), so it
+    restates both on its three success shapes too."""
+    if mime != _IMG_MIME[".svg"]:
+        return {}
+    return {"Content-Security-Policy": "sandbox; default-src 'none'; img-src data: blob:; "
+                                       "style-src 'unsafe-inline'; font-src data:",
+            "Vary": _SVG_VARY}
 
 
 _MEDIA_MAX_BYTES = 50 * 1024 * 1024              # a plot/report, not a dataset — bigger 413s (fail loudly). A power
@@ -58383,6 +58438,45 @@ def _too_large_page(msg, name, q, route="/file"):
             "a{color:#9cd2ff}</style></head><body><main><p>%s</p>"
             "<p><a href=\"%s\" download=\"%s\">Download %s</a> instead.</p></main></body></html>"
             % (_html_esc(name), _html_esc(msg), _html_esc(href), _html_esc(name), _html_esc(name)))
+
+
+# ---- IMAGE MODE for an svg a tab opens (2026-09-23). A tab, a frame, an object or an embed that loads an svg
+#      /file URL gets a small page that holds the file in an <img> rather than the svg as its document, since an
+#      svg drawn as an image loads nothing external and the policy on the bytes cannot stop every load a document
+#      makes (_media_policy_headers says which). Every other request (the viewer's fetch, an <img>, a HEAD, a
+#      Range retry, curl) keeps the svg bytes. What it costs in the tab: the svg's own links do not follow and
+#      its text does not select, as in any image (scripts were already off under the sandbox).
+_SVG_VARY = "Sec-Fetch-Dest, Accept"             # the two headers _svg_as_document reads, on the page and the bytes
+_DOCUMENT_DESTS = ("document", "iframe", "frame", "object", "embed", "fencedframe")   # a Sec-Fetch-Dest that makes a document
+_SVG_IMAGE_PAGE_POLICY = ("sandbox allow-same-origin; default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; "
+                          "base-uri 'none'; form-action 'none'")
+
+
+def _svg_image_page(name, q, route="/file"):
+    """The image-mode page for an svg a tab opens on `route` (/file, or a federated session's /remote/<host>/file
+    relay): one <img> of the same route for the same path, sid and pin, plus raw=1, built from the parsed query and
+    never carrying a token. raw=1 gives the <img> a URL apart from the tab's, so a cache keyed on the URL alone never
+    answers the one with the other's response (a navigation to the raw=1 URL itself is kept off the image's answer by
+    Vary and no-cache). It is no way around the page: a navigation to a raw=1 URL gets the page too. Static markup,
+    every value escaped, no script.
+
+    Served under _SVG_IMAGE_PAGE_POLICY beside _send's frame-ancestors one: `sandbox allow-same-origin` runs no
+    script (the sandbox allows none, and default-src 'none' refuses every script besides) and keeps the page on
+    this kernel's origin, so its <img> is a same-origin load of this route, authorized as the tab's own navigation
+    was. img-src 'self' admits that <img> and nothing from another host, style-src 'unsafe-inline' the page's one
+    <style>, and base-uri and form-action are closed. The svg is drawn from the top left on white, scaled down to
+    the window's width when it is wider."""
+    iq = {}
+    for k in ("path", "sid", "pin"):
+        v = (q.get(k) or [""])[0]
+        if v:
+            iq[k] = v
+    iq["raw"] = "1"
+    src = route + "?" + urlencode(iq)
+    return ("<!doctype html><html><head><meta charset=\"utf-8\"><title>%s</title>"
+            "<style>html,body{margin:0;background:#ffffff}img{display:block;max-width:100%%;height:auto}</style>"
+            "</head><body><img src=\"%s\" alt=\"%s\"></body></html>"
+            % (_html_esc(name), _html_esc(src), _html_esc(name)))
 
 
 def _is_text_path(fp):
@@ -73201,10 +73295,17 @@ class Handler(BaseHTTPRequestHandler):
         # `/?token=` on its first load (the address scrub in _landing's head script drops it; a pane page
         # opened bare as `/chat?token=` keeps it). same-origin sends the full Referer on requests to this
         # origin and nothing cross-origin (a transcript's <img> from another host, a link out), whatever
-        # the browser's default, on every page the kernel serves: the SECURITY.md claim that a cross-site
-        # page cannot obtain the token then holds by construction. same-origin and not no-referrer: a
-        # same-origin GET carries no Origin header, so the Referer is the one header that names the page
-        # origin behind it to the kernel, and this keeps it.
+        # the browser's default, on every page the kernel serves, with one exception known: an inline svg's
+        # paint reference to another origin. The sanitizer removes those everywhere but the file viewer
+        # (paint-refs.ts), which loads one once it loads the figure (a host on the gear's list, or a click
+        # on the placeholder), and its request can send the page's origin (in Chromium a mask does: its
+        # Referer does not follow this policy). In one recorded run, before the sanitizer removed them from
+        # chat messages, a chat message's fill sent a bare `/chat?token=` page's full URL, token included;
+        # no later run has reproduced it. SECURITY.md states the exception beside its claim that a
+        # cross-site page cannot obtain the token, and tests/test_paint_refs_kernel_pages_browser.py holds
+        # what the viewer's figures send, from a bare page and from the shell's frame. same-origin and not
+        # no-referrer: a same-origin GET carries no Origin header, so the Referer is the one header that
+        # names the page origin behind it to the kernel, and this keeps it.
         self.send_header("Referrer-Policy", "same-origin")
         for k, v in (headers or {}).items():
             self.send_header(k, v)
@@ -73379,6 +73480,12 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(413, _too_large_page(msg, os.path.basename(fp), q), "text/html; charset=utf-8",
                                   cache="no-cache")
             return self._send(413, b"" if head else msg, "text/plain")
+        if not head and mime == _IMG_MIME[".svg"] and self._svg_as_document():
+            # IMAGE MODE (_svg_image_page): a tab, a frame, an object or an embed gets the page that draws this svg
+            # as an image, never the svg as its document; the page's <img> reads the bytes below. Answered before
+            # the stat, since the page carries none of the file's metadata.
+            return self._send(200, _svg_image_page(os.path.basename(given) or "image.svg", q), "text/html; charset=utf-8",
+                              cache="no-cache", headers={"Content-Security-Policy": _SVG_IMAGE_PAGE_POLICY, "Vary": _SVG_VARY})
         # The file's mtime rides every success twice: Last-Modified (the standard form) and
         # X-Romp-Mtime-Ns — NANOSECONDS, the anchor saveFile's conflict floor actually compares,
         # because the HTTP date's whole seconds let an agent write landing in the same second slip
@@ -73395,7 +73502,7 @@ class Handler(BaseHTTPRequestHandler):
             if mime == "application/pdf":                     # the probe agrees with the GET (below) on the tab's name
                 self.send_header("Content-Disposition", _attachment_disposition(os.path.basename(fp), kind="inline"))
             self.send_header("X-Content-Type-Options", "nosniff")   # _send's guarantee, restated on the HEAD path
-            for k, v in _media_policy_headers(mime).items():        # sandbox on an SVG (see _media_policy_headers)
+            for k, v in _media_policy_headers(mime).items():        # the SVG document policy (see _media_policy_headers)
                 self.send_header(k, v)
             self.send_header("Cache-Control", "no-cache")
             if getattr(self, "_cors_origin", None):         # the chat's fetch-HEAD probe rides CORS too
@@ -73425,7 +73532,7 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Content-Length", str(len(raw)))
             self.send_header("Content-Range", "bytes %d-%d/%d" % (rng, size - 1, size))
             self.send_header("X-Content-Type-Options", "nosniff")
-            for k, v in _media_policy_headers(mime).items():        # sandbox on an SVG (see _media_policy_headers)
+            for k, v in _media_policy_headers(mime).items():        # the SVG document policy (see _media_policy_headers)
                 self.send_header(k, v)
             self.send_header("Cache-Control", "no-cache")
             if getattr(self, "_cors_origin", None):
@@ -73454,7 +73561,7 @@ class Handler(BaseHTTPRequestHandler):
                               headers={"Last-Modified": lastmod, "X-Romp-Mtime-Ns": mtime_ns,
                                        "X-Romp-Text-Utf8": u8})
         extra = {"Last-Modified": lastmod, "X-Romp-Mtime-Ns": mtime_ns}
-        extra.update(_media_policy_headers(mime))            # sandbox on an SVG (see _media_policy_headers)
+        extra.update(_media_policy_headers(mime))            # the SVG document policy (see _media_policy_headers)
         if mime == "application/pdf":
             # INLINE, with the file's name (2026-09-06): a PDF opens in its own browser tab now (preview.ts
             # openPdfTab), and the browser titles that tab and names a Save from this header — without it
@@ -73473,10 +73580,23 @@ class Handler(BaseHTTPRequestHandler):
         (review find on #959, 2026-09-07). Without the header the Accept header decides: a navigation or
         an iframe asks for text/html first, a fetch() sends */*. Absent both, "not a navigation" — the
         conservative answer, the plain text the viewer's catch parses."""
+        return self._dest_in(("document", "iframe"))
+
+    def _svg_as_document(self):
+        """Would an svg answer to this request become a DOCUMENT: a tab navigating to it, or a frame, an object or
+        an embed loading it (_DOCUMENT_DESTS)? Then /file and its relay answer with the image-mode page
+        (_svg_image_page). The same two headers as _is_navigation decide, over a wider set of destinations:
+        Sec-Fetch-Dest when the browser sends it, else an Accept that names text/html (a plain-http dashboard
+        sends no Sec-Fetch-* header, and a navigation there asks for text/html first while an image load and a
+        fetch() do not). A request naming neither gets the bytes, which the policy on them still holds."""
+        return self._dest_in(_DOCUMENT_DESTS)
+
+    def _dest_in(self, dests):
+        """The request's Sec-Fetch-Dest is one of `dests`, or, with no Sec-Fetch-Dest, its Accept names text/html."""
         h = getattr(self, "headers", None) or {}
         dest = (h.get("Sec-Fetch-Dest") or "").strip().lower()
         if dest:
-            return dest in ("document", "iframe")
+            return dest in dests
         return "text/html" in (h.get("Accept") or "").lower()
 
     def _file_download(self, fp, head=False):
@@ -78125,15 +78245,24 @@ class Handler(BaseHTTPRequestHandler):
         if not mime:
             return self._send(404, b"" if head else "not found", "text/plain",
                               headers={_FILE_404_REASON_HDR: "unviewable"})
+        # IMAGE MODE on the relay (_svg_image_page), decided here: the remote never sees the browser's Sec-Fetch-Dest
+        # or Accept, so it always answers with the bytes. The page is built NOW, from the browser's own query, before
+        # the remote's token is written into it, and served below only when the remote has the file, so a missing or
+        # refused file still reaches the tab as the remote's prose. The forward stays a GET for that reason, and the
+        # page's <img> then reads the bytes again: two remote reads per tab.
+        img_page = None
+        if not head and mime == _IMG_MIME[".svg"] and self._svg_as_document():
+            img_page = _svg_image_page(os.path.basename(rp) or "image.svg", q, route="/remote/%s/file" % quote(host, safe=""))
         if rtok:
             q["token"] = [rtok]      # the remote's own credential; whatever the browser sent means nothing there
         conn = http.client.HTTPConnection("127.0.0.1", int(port), timeout=15)
         try:
             # The resumable retry's Range rides through (the user 2026-08-16): the SAME suffix form the
             # local route honors, validated here so the relay forwards byte arithmetic and nothing else.
+            # Not for a navigation that gets the image-mode page, which carries no bytes to resume.
             hdrs = {}
             _rng = (getattr(self, "headers", None) or {}).get("Range") or ""
-            if not head and re.match(r"^bytes=\d+-$", _rng):
+            if not head and img_page is None and re.match(r"^bytes=\d+-$", _rng):
                 hdrs["Range"] = _rng
             conn.request("HEAD" if head else "GET", "/file?" + urlencode(q, doseq=True), headers=hdrs)
             resp = conn.getresponse()
@@ -78193,7 +78322,7 @@ class Handler(BaseHTTPRequestHandler):
             if status == 200 and mime == "application/pdf":   # the tab's name — OURS, from the requested path
                 self.send_header("Content-Disposition", _attachment_disposition(os.path.basename(rp), kind="inline"))
             self.send_header("X-Content-Type-Options", "nosniff")   # _send's guarantee, restated on the HEAD path
-            for k, v in _media_policy_headers(mime).items():        # the SVG sandbox, from OUR mime like the type
+            for k, v in _media_policy_headers(mime).items():        # the SVG document policy, from OUR mime like the type
                 self.send_header(k, v)
             self.send_header("Cache-Control", "no-cache")
             if getattr(self, "_cors_origin", None):
@@ -78201,6 +78330,10 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_header("Vary", "Origin")
             self.end_headers()
             return
+        if img_page is not None:
+            # the remote has the file (a 200, or a 206 that no forwarded Range asked for): the tab gets the page
+            return self._send(200, img_page, "text/html; charset=utf-8", cache="no-cache",
+                              headers={"Content-Security-Policy": _SVG_IMAGE_PAGE_POLICY, "Vary": _SVG_VARY})
         if status == 206:
             # A partial reply needs its Content-Range mirrored — but only the exact byte-arithmetic
             # shape (same lying-remote reasoning as the Content-Type above: mirror math, never prose).
@@ -78211,7 +78344,7 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Content-Length", str(len(body)))
             self.send_header("Content-Range", crange)
             self.send_header("X-Content-Type-Options", "nosniff")
-            for k, v in _media_policy_headers(mime).items():        # the SVG sandbox, from OUR mime like the type
+            for k, v in _media_policy_headers(mime).items():        # the SVG document policy, from OUR mime like the type
                 self.send_header(k, v)
             self.send_header("Cache-Control", "no-cache")
             if getattr(self, "_cors_origin", None):
@@ -78225,7 +78358,7 @@ class Handler(BaseHTTPRequestHandler):
         # and the Edit gate ride on them, and deriving them locally would lie about a remote disk.
         mirrored = {k: v for k, v in (("Last-Modified", lastmod), ("X-Romp-Mtime-Ns", r_ns),
                                       ("X-Romp-Text-Utf8", r_u8)) if v}
-        # …and the SVG sandbox is NOT mirrored but derived here from our mime, like the type and the
+        # …and the SVG document policy is NOT mirrored but derived here from our mime, like the type and the
         # disposition: the relay rebuilds every header that tells this browser how to interpret the bytes
         # (_media_policy_headers has the hole), so the local route's policy has to be restated on this arm.
         mirrored.update(_media_policy_headers(mime))

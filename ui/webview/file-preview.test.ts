@@ -116,13 +116,17 @@ test("remoteLoad reads a value the way the browser does: every spelling of anoth
   for (const v of localSets) assert.equal(remoteLoad(v, ORIGIN, BASE, true), false, JSON.stringify(v));
 });
 
-/** A minimal inert element tree: what stripRemoteLoads reads (localName, getAttribute) and does (replaceWith, remove). */
+/** A minimal inert element tree: what stripRemoteLoads reads (localName, getAttribute) and does (replaceWith, remove, and the
+ *  paint arm's removeAttribute and setAttribute: paint-refs.ts dropRemoteRefs). */
 type FakeEl = { localName: string; attrs: Record<string, string>; parent: FakeEl | null; children: (FakeEl | string)[];
-                getAttribute(n: string): string | null; replaceWith(n: unknown): void; remove(): void; ownerDocument: { createTextNode(s: string): string } };
+                getAttribute(n: string): string | null; setAttribute(n: string, v: string): void; removeAttribute(n: string): void;
+                replaceWith(n: unknown): void; remove(): void; ownerDocument: { createTextNode(s: string): string } };
 function fakeEl(localName: string, attrs: Record<string, string> = {}, children: FakeEl[] = []): FakeEl {
   const e: FakeEl = {
     localName, attrs, parent: null, children: [...children],
     getAttribute(n) { return Object.prototype.hasOwnProperty.call(attrs, n) ? attrs[n] : null; },
+    setAttribute(n, v) { attrs[n] = v; },
+    removeAttribute(n) { delete attrs[n]; },
     replaceWith(n) { if (!e.parent) return; const i = e.parent.children.indexOf(e); e.parent.children.splice(i, 1, n as string); e.parent = null; },
     remove() { if (!e.parent) return; const i = e.parent.children.indexOf(e); e.parent.children.splice(i, 1); e.parent = null; },
     ownerDocument: { createTextNode: (s) => s },
@@ -166,6 +170,70 @@ test("stripRemoteLoads on the inert tree: an img becomes its alt text, every oth
     + '<a href="https://remote.invalid/page"><span></span></a>'
     + '<p></p>',
     "the remote img is its alt text (empty alt: nothing), the poster'd video and its source are gone, the remote track is gone from the local video, the svg keeps its local image, a link is not a load");
+});
+
+
+test("stripRemoteLoads's paint arm on the inert tree: a url() to another origin in an svg paint attribute or in a style declaration is removed from the element, which stays; a same-document url(#g), this origin's own and a relative reference stay; the count adds the removals", () => {
+  // guards the strip's contract for the class its element walk never read (the hover card fetched a remote fill during a hover):
+  // before the arm the walk returned 0 here and every reference below stayed
+  const rect = fakeEl("rect", { width: "12", height: "12", fill: "url(https://remote.invalid/p.svg#p)", stroke: "url(#g)" });
+  const masked = fakeEl("rect", { mask: 'image-set("https://remote.invalid/m.png" 1x)', "clip-path": "url(/file?path=p.svg#c)" });
+  const own = fakeEl("rect", { fill: "url(" + ORIGIN + "/file?path=p.svg#p)", "marker-end": "url(//remote.invalid/m.svg#m)" });
+  const styled = fakeEl("rect", { style: "color: red; mask-image: url(https://remote.invalid/mi.png)" });
+  const span = fakeEl("span", { fill: "url(https://remote.invalid/h.svg#p)" });
+  const root = fakeEl("body", {}, [fakeEl("svg", { filter: "url(https://remote.invalid/f.svg#f)" }, [rect, masked, own, styled]), span]);
+  const n = stripRemoteLoads(asRoot(root), ORIGIN, BASE);
+  assert.equal(n, 6, "six removals: the svg's filter, the rect's fill, the mask, the protocol-relative marker-end, the style's mask-image declaration, the span's fill; no element went");
+  assert.equal(serialize(root),
+    '<svg><rect width="12" height="12" stroke="url(#g)"></rect>'
+    + '<rect clip-path="url(/file?path=p.svg#c)"></rect>'
+    + '<rect fill="url(' + ORIGIN + '/file?path=p.svg#p)"></rect>'
+    + '<rect style="color: red"></rect></svg>'
+    + '<span></span>',
+    "the remote fill, mask, marker-end and filter are gone and the elements stay; url(#g), the relative clip-path and this origin's fill stay; the style keeps its colour declaration; an HTML span's fill goes too (the names are read on every element)");
+});
+
+
+test("stripRemoteLoads's paint arm on data: references, with the page's base (the hover card) and with none (the notice card): a raster data: URL stays, a data: SVG, XHTML or XML document and a data: URL with no type go", () => {
+  // guards the data: rule on the strip's own road (paint-refs.ts dataUrlIsRaster through remoteUrlRef): Firefox loads a
+  // document-capable data: reference as a resource document, and its @import fetches another host as the card renders
+  for (const base of [BASE, ""]) {
+    const RASTER_MASK = "url(data:image/png;base64,iVBORw0KGgo=)", RASTER_FILL = 'url("data:image/webp;base64,UklGRg==")';
+    const raster = fakeEl("rect", { mask: RASTER_MASK, fill: RASTER_FILL });
+    const svg = fakeEl("rect", { fill: "url(data:image/svg+xml,%3Csvg%2F%3E#p)", stroke: 'url("data:IMAGE/SVG+XML;base64,PHN2Zy8+#p")' });
+    const xml = fakeEl("rect", { filter: "url(data:application/xhtml+xml,x#f)", "clip-path": "url(data:text/xml,x#c)", mask: "url(data:application/xml,x#m)" });
+    const untyped = fakeEl("rect", { fill: "url(data:,x#p)", width: "4" });
+    const root = fakeEl("body", {}, [fakeEl("svg", {}, [raster, svg, xml, untyped])]);
+    assert.equal(stripRemoteLoads(asRoot(root), ORIGIN, base), 6, JSON.stringify(base) + ": six removals, the two svg, the three xml and the untyped");
+    assert.equal(serialize(root),
+      "<svg><rect mask=" + JSON.stringify(RASTER_MASK) + " fill=" + JSON.stringify(RASTER_FILL) + "></rect>"
+      + "<rect></rect><rect></rect>"
+      + '<rect width="4"></rect></svg>',
+      JSON.stringify(base) + ": the raster mask and fill stay as written, every other data: reference goes, the elements stay");
+  }
+});
+
+
+test("the notice card's strip passes no base (feed.ts noticeBodyNodes), so its paint arm removes a relative and a root-relative same-origin reference and keeps an absolute same-origin one, url(#g) and a raster data: URL: a disclosed residual that fails closed", () => {
+  // guards the statement of a disclosed residual, so it is stated rather than incidental: the notice card hands
+  // stripRemoteLoads an empty base, under which no relative URL resolves, and the paint arm fails closed on what it cannot
+  // resolve. sanitizeMd's own pass resolves against document.baseURI and keeps these references; this strip then removes
+  // them. The same empty base already costs a notice body its relative, same-origin and data: images (the element walk);
+  // passing the page's URL fixes both and is the notice card's own follow-up. When that lands, the call-site assertion
+  // below goes red: retire this test and the residual's line in the ledger entry with it.
+  const rel = fakeEl("rect", { fill: "url(plots/own.svg#p)" });
+  const rootRel = fakeEl("rect", { fill: "url(/plots/own.svg#p)" });
+  const abs = fakeEl("rect", { fill: "url(" + ORIGIN + "/plots/own.svg#p)" });
+  const frag = fakeEl("rect", { fill: "url(#g)" });
+  const data = fakeEl("rect", { fill: "url(data:image/png;base64,iVBORw0KGgo=)" });
+  const root = fakeEl("body", {}, [fakeEl("svg", {}, [rel, rootRel, abs, frag, data])]);
+  assert.equal(stripRemoteLoads(asRoot(root), ORIGIN, ""), 2, "with no base the relative and the root-relative reference cannot resolve and are removed, failing closed");
+  assert.deepEqual([rel, rootRel, abs, frag, data].map((e) => e.getAttribute("fill")),
+    [null, null, "url(" + ORIGIN + "/plots/own.svg#p)", "url(#g)", "url(data:image/png;base64,iVBORw0KGgo=)"],
+    "the absolute same-origin reference, the same-document one and the raster data: URL stay, because none needs a base");
+  const FEED = require("node:fs").readFileSync(require("node:path").resolve(process.cwd(), "..", "ui", "webview", "feed.ts"), "utf8") as string;
+  assert.deepEqual(FEED.match(/^\s*stripRemoteLoads\(.*$/gm), ['    stripRemoteLoads(clean, (typeof window !== "undefined" && window.location ? window.location.origin : ""), "");'],
+    "the notice card's one strip call still passes an empty base: the residual this test states is live (red when the follow-up passes the page's URL: retire this test and the ledger entry's line)");
 });
 
 

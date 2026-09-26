@@ -10,13 +10,35 @@
 // filter primitive before this code runs, so no feImage fetches or gates in the product (measured 2026-09-09 over the
 // real sanitizeMd); file-view-figures-absolute.test.ts pins both the arm and the profile.
 //
-// An inline svg fetches through its PAINT references too (review of Slice 4, round 2: measured over the real Files bundle
-// and as a URL document, no placeholder, no click): `fill`, `stroke`, `filter`, `clip-path`, `mask`, `marker-start`,
-// `marker-mid` and `marker-end` are presentation attributes whose value is CSS, and a `url(https://host/p.svg#p)` in any
-// of them, on the `<svg>` itself or on any element inside it, makes the browser request that document the moment the svg
-// renders (a `<mask>` reads the whole CSS shorthand, so `image-set("https://host/a.png" 1x)` fetches there as well). The
-// sanitizer keeps all eight (DOMPurify's `svg` attribute list) and its URI check passes `url(`, and the colour-only
-// style hook reads the `style` attribute alone. So the gate reads them as fetching attributes of the svg (paintRefs), with
+// An inline svg fetches through its PAINT references too: `fill`, `stroke`, `filter`, `clip-path`, `mask`, `marker-start`,
+// `marker-mid` and `marker-end` are presentation attributes whose value is CSS, and a `url(https://host/p.svg#p)` in one,
+// on the `<svg>` itself or on any element inside it, makes the browser request that document the moment the svg renders,
+// with no placeholder and no click (review of Slice 4, round 2, 2026-09-09, over the real Files bundle and as a URL
+// document; a `<mask>` reads the whole CSS shorthand, so `image-set("https://host/a.png" 1x)` fetches there as well). What
+// was measured per attribute on 2026-09-23 (headless Chromium 151 through Playwright, a server's request log read, nine
+// passes per attribute over three runs and three referrer variants, none, same-origin by meta and same-origin by
+// header): each of the seven other than `filter` fetched a document on another origin in every pass, and `filter`
+// fetched a same-origin document and none on another origin in any pass, nor in two other harnesses run that day; the
+// 2026-09-09 measurement recorded no engine version, and why the two differ is not known. Firefox 153 and WebKit 26.5
+// fetched a document on another origin for none of the eight but `mask`, which they load as a CSS image. `filter` stays
+// in PAINT_ATTRS by rule: all three engines read a url() from it (its
+// computed style carries one), the sanitizer keeps it, and it fetches same-origin. The sanitizer keeps all eight
+// (DOMPurify's `svg` attribute list) and its URI check passes `url(`, and the colour-only style hook reads the `style`
+// attribute alone. Outside the viewer the sanitizer then removes a reference to another origin itself (paint-refs.ts
+// dropRemoteRefs, run by sanitizeMd); the viewer's mdBlock opts out of that pass, because this gate holds the same
+// references behind a click that restores them, and a strip would delete what the click restores. A `data:` paint
+// reference whose media type is not a raster image (paint-refs.ts dataUrlIsRaster) is the exception, and the viewer
+// DROPS it as the chat, the preview and a notice card do, never gates it: in Firefox 153 a paint attribute naming a
+// `data:` SVG, XHTML or XML document with a fragment loads that document, whose own `@import` fetches another host as
+// the file renders, and this gate read `data:` as nobody's host, so a viewed file fetched it with no placeholder
+// (measured 2026-09-24 in Playwright's Firefox 153 on the kernel's /chat page, the viewer scene of
+// tests/test_paint_refs_kernel_pages_browser.py: at b4f9139b8 eleven @imports as the file opened, and one more when a
+// click on a placeholder restored a document the gate had held with its svg's other reference). Gating it instead would
+// be wrong: a placeholder could name only `data:`, and its click would load a document that fetches hosts the label
+// never names (the fork PR review's round-1 ruling, 2026-09-23). So the opt-out keeps references to another origin
+// alone, and sanitizeMd removes the `data:` documents from the viewer's body before this gate reads it (paint-refs.ts
+// dropDataDocuments); a raster `data:` reference stays, local and drawn. So the gate reads the references it holds
+// as fetching attributes of the svg (paintRefs), with cssUrls (paint-refs.ts, the one reader the strip shares),
 // a tokenizer that follows CSS Syntax's: the value preprocessed first (a CRLF pair is one newline, so an escape's one
 // consumed whitespace eats the pair as the browser's does; read raw, `\75&#13;&#10;rl(` in an HTML block fetched on open,
 // review round 3), comments skipped, escapes decoded (`\75 rl(` is `url(` to the browser, and
@@ -32,7 +54,8 @@
 // this document (`loadedHosts`, per document: the chat webview, the feed, the Files pane and each browser tab each
 // remember their own, and a reload or a Rendered/Raw round trip keeps a loaded figure loaded because every paint
 // reads the set). The URL kind adds the document's own host (file-view.ts mdBlock). The chat's own markdown
-// (render.ts md()) is not gated, as the plan scopes the ruling to the viewer.
+// (render.ts md()) is not gated, as the plan scopes the ruling to the viewer; its paint references to another origin are
+// removed by the sanitizer's pass instead (paint-refs.ts), and its other remote figures fetch as they always have.
 //
 // The gate runs on the SANITIZED DOM, after rewriteFigureSrcs, never on marked's HTML: it wraps the media element
 // (an img, a video, an audio, a picture or an inline svg; a `<source>` or a `<track>` is gated through its parent)
@@ -51,6 +74,10 @@
 // sheets alone.
 import { XLINK_NS } from "./md-links";
 import { loadSettings, onExternalSettingsChange } from "./settings";
+import { cssUrls } from "./paint-refs";
+/** The CSS Syntax reader of a paint reference, shared with the sanitizer's strip (paint-refs.ts); re-exported for the node
+ *  tests that read it through this module. */
+export { cssUrls };
 
 export const GATE_CLASS = "fv-gate";
 export const GATE_LABEL_CLASS = "fv-gate-label";
@@ -113,89 +140,6 @@ export function paintRefs(root: ParentNode): FigureRef[] {
 }
 /** Every fetching attribute the gate judges under a media root: figureRefs and, for an svg, paintRefs. */
 export function gateRefs(root: ParentNode): FigureRef[] { return figureRefs(root).concat(paintRefs(root)); }
-
-/** CSS's whitespace: a space, a tab, a newline. After cssPreprocess every newline is one LF; CR and FF stay in the class
- *  so a value that skipped the pass still reads its lone CR or FF as the one newline it is. */
-const CSS_WS = /[ \t\n\r\f]/;
-const CSS_HEX = /[0-9a-fA-F]/;
-/** A name code point: a letter, a digit, `_`, `-`, or any non-ASCII code point. */
-const CSS_NAME = /[A-Za-z0-9_\-\u0080-\uffff]/;
-/** One CSS escape, `i` at the code point after the backslash: the code point it stands for and the index after it. Up to
- *  six hex digits, with one whitespace after them consumed; any other code point stands for itself; a backslash at the
- *  end of the value is U+FFFD. */
-function cssEscape(s: string, i: number): [string, number] {
-  if (i >= s.length) return ["\ufffd", i];
-  if (!CSS_HEX.test(s[i])) return [s[i], i + 1];
-  let j = i;
-  while (j < s.length && j - i < 6 && CSS_HEX.test(s[j])) j++;
-  const cp = parseInt(s.slice(i, j), 16);
-  if (j < s.length && CSS_WS.test(s[j])) j++;
-  return [cp === 0 || cp > 0x10ffff || (cp >= 0xd800 && cp <= 0xdfff) ? "\ufffd" : String.fromCodePoint(cp), j];
-}
-/** CSS Syntax's preprocessing (section 3.3), run on the whole value before anything is tokenized: a CRLF pair, a lone CR
- *  and a FF are each one LF; U+0000 and a lone surrogate are U+FFFD. The tokenizer's "one whitespace after a hex escape"
- *  then eats a CRLF pair whole, as the browser's does, and a string ends at a CR or a FF as it does in the browser. Read
- *  raw, the escape ate the CR and the LF ended the name at `u`, so `\75&#13;&#10;rl(https://host/p.svg#p)` in a note's
- *  HTML block (the HTML parser keeps a character-reference CR LF in an attribute where it folds a literal pair to LF, and
- *  the sanitizer passes the value) kept its fill and fetched the host on open with no placeholder, in both kinds (review
- *  of Slice 4, round 3). The attribute itself stays as written: the browser preprocesses it the same way. Of the three
- *  rules only the newline one can fire on a parsed attribute (the HTML parser has already made U+0000 and a lone
- *  surrogate U+FFFD); the other two keep the reader exact on a value handed over any other way. */
-function cssPreprocess(value: string): string {
-  const newlines = value.replace(/\r\n|[\r\f]/g, "\n");
-  return newlines.replace(/\0|[\ud800-\udbff][\udc00-\udfff]|[\ud800-\udfff]/g, (m) => m.length === 2 ? m : "\ufffd");
-}
-/** Every URL a CSS-valued attribute names, as CSS Syntax's tokenizer reads it, the value preprocessed first (cssPreprocess):
- *  the url tokens (`url(` and an unquoted URL run to the `)` or to whitespace) and every quoted string (the `url("...")`
- *  form, an `image-set("...")` candidate, any other function's argument alike), with comments skipped and escapes decoded
- *  in function names, URLs and strings (so `\75 rl(` is `url(` and `github.com\40 evil.test` is `github.com@evil.test`, as
- *  the browser reads them). Judged on purpose beyond what the browser fetches: a string in a function that takes none, and
- *  a url token the browser refuses (a quote, a paren or inner whitespace before its `)`, read to that point). Gating such a
- *  value costs one click; missing a value the browser reads costs a request (measured 2026-09-09: every spelling above
- *  fetched). */
-export function cssUrls(attrValue: string): string[] {
-  const value = cssPreprocess(attrValue);
-  const out: string[] = [];
-  const n = value.length;
-  let i = 0;
-  while (i < n) {
-    const c = value[i];
-    if (c === "/" && value[i + 1] === "*") { const e = value.indexOf("*/", i + 2); i = e < 0 ? n : e + 2; continue; }
-    if (c === '"' || c === "'") {
-      let str = "";
-      i++;
-      while (i < n && value[i] !== c && value[i] !== "\n") {
-        if (value[i] !== "\\") { str += value[i++]; continue; }
-        if (value[i + 1] === "\n") { i += 2; continue; }        // a backslash before a newline continues the string
-        const [ch, j] = cssEscape(value, i + 1); str += ch; i = j;
-      }
-      if (i < n && value[i] === c) i++;
-      if (str) out.push(str);
-      continue;
-    }
-    if (c === "\\" || CSS_NAME.test(c)) {
-      let name = "";
-      while (i < n && (value[i] === "\\" || CSS_NAME.test(value[i]))) {
-        if (value[i] !== "\\") { name += value[i++]; continue; }
-        const [ch, j] = cssEscape(value, i + 1); name += ch; i = j;
-      }
-      if (value[i] !== "(") continue;
-      i++;                                                        // a function: its arguments run through this loop
-      if (name.toLowerCase() !== "url") continue;
-      while (i < n && CSS_WS.test(value[i])) i++;
-      if (value[i] === '"' || value[i] === "'") continue;         // url("..."): the string arm reads it
-      let url = "";
-      while (i < n && value[i] !== ")" && !CSS_WS.test(value[i]) && value[i] !== '"' && value[i] !== "'" && value[i] !== "(") {
-        if (value[i] !== "\\") { url += value[i++]; continue; }
-        const [ch, j] = cssEscape(value, i + 1); url += ch; i = j;
-      }
-      if (url) out.push(url);
-      continue;
-    }
-    i++;
-  }
-  return out;
-}
 
 // ── srcset ──────────────────────────────────────────────────────────────────────────────────────────
 export type SrcsetCandidate = { url: string; descriptor: string };
@@ -265,8 +209,9 @@ export function refUrls(ref: FigureRef): string[] {
 }
 
 // ── which host a source fetches from ──────────────────────────────────────────────────────────────
-/** The host a source would fetch from when it is not this page's own, else null: `data:` and `blob:` leave the page
- *  for nothing; a relative or same-origin URL (the kernel's /file route and its /remote relay) is the page's own; the
+/** The host a source would fetch from when it is not this page's own, else null: `data:` and `blob:` name no host (a
+ *  `data:` paint reference that could load a document never reaches here: the viewer's sanitize removes it first, see
+ *  the header); a relative or same-origin URL (the kernel's /file route and its /remote relay) is the page's own; the
  *  kernel's base when the page is a webview that reaches it by an absolute URL (`window.__rompKernelBase`) is the
  *  kernel's own. Only http and https count as another host: no other scheme the sanitizer keeps fetches a figure. A
  *  URL the parser refuses is nobody's host, and left alone. */

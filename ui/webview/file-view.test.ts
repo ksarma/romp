@@ -441,7 +441,7 @@ test("Raw ⇄ Rendered exists for markdown ONLY, and nothing reaches innerHTML u
   // inside the call, as the caller's own pass, so they are read from the text as written, before the math fill (md-url-view.test.ts);
   // these two are presence pins; where the figure chain sits relative to the adoption is file-view-seam.test.ts's to check, on
   // comment-stripped code (the round-1 ruling of the fork PR's review: one order pin, the seam's, not an index compare per module)
-  assert.match(VIEW, /const clean = sanitizeMd\(dirty, mintHeadingIds\);/);
+  assert.match(VIEW, /const clean = sanitizeMd\(dirty, mintHeadingIds, \{ remoteRefs: "keep" \}\);/);   // the heading ids as the viewer's own pass, and the paint pass's other-origin half off: the gate judges those references (a data: document is still removed)
   assert.match(VIEW, /box\.replaceChildren\(\.\.\.Array\.from\(clean\.childNodes\)\);/);
   // a note's links open a NEW tab rather than navigating the hosting pane's document away. A file on disk hands its
   // anchors to file-view-links.ts (linkMarkdownAnchors, fork PR #347: a web link stamped, a sibling file opened in
@@ -1326,7 +1326,7 @@ test("source: mdBlock keeps no try, no catch and no fallback; both viewers' rend
   const recipe = VIEW.split("export function viewerHtml(text: string, walk?: (token: Token) => void): string {")[1].split("\n}\n")[0];
   assert.match(recipe, /\n {2}return marked\.parser\(tokens, opts\);$/, "the parser at the recipe's own level");
   assert.doesNotMatch(recipe, /try \{/, "inside no try: a throw from the lexer or the parser propagates to mdBlock and on to the caller");
-  assert.match(mdFn, /\n {2}const clean = sanitizeMd\(dirty, mintHeadingIds\);/, "the sanitize at the function's own level: a throw propagates");
+  assert.match(mdFn, /\n {2}const clean = sanitizeMd\(dirty, mintHeadingIds, \{ remoteRefs: "keep" \}\);/, "the sanitize at the function's own level: a throw propagates");
   assert.match(mdFn, /\n {2}box\.replaceChildren\(\.\.\.Array\.from\(clean\.childNodes\)\);\n/, "the adoption at the function's own level too: a throw from either propagates (a presence pin; its place after the figure chain is file-view-seam.test.ts's to pin)");
   assert.doesNotMatch(mdFn, /\n {2}try \{/, "no try at the function's own level (the fence highlight's and the URL parse's inner ones stand)");
   assert.doesNotMatch(mdFn, /box\.textContent = text;|let rendered|rendered = false|if \(rendered/, "no fallback write and no `rendered` flag: the caller keeps the content, and both link passes run on every render");

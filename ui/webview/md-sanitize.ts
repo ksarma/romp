@@ -52,6 +52,21 @@
 //     prefix rule renames `<map name="nav">` to user-content-nav and leaves `usemap="#nav"` as written, so no
 //     map an author writes could bind to its picture anyway, and an <area> is a link element neither page's
 //     link handling reaches. Dropped, the picture is inert prose.
+//   • an inline svg's paint reference to another origin is removed (paint-refs.ts dropRemoteRefs, a pass over the sanitized
+//     body): `fill`, `stroke`, `mask`, `clip-path`, `filter` and the three `marker-*` attributes hold a CSS value, and a
+//     `url()` in one naming another origin's document makes the browser request it the moment the svg renders, with no
+//     click. DOMPurify keeps all eight (its svg list) and its URI test passes `url(`. The attribute goes and the element
+//     stays; a same-document `url(#id)`, a `data:` URL whose media type is a raster image (paint-refs.ts
+//     DATA_RASTER_TYPES) and the page's own origin (and the kernel's, in an editor webview that reaches it by an absolute
+//     URL) stay; a `data:` URL of any other type goes (a `data:` SVG document named by a paint attribute loads as a
+//     resource document in Firefox and fetches its own `@import` from another host), and so does an unparsable
+//     reference. An `<img>`'s `data:` source is not a paint reference and is untouched. The pass runs by DEFAULT, so a
+//     new caller is covered with nothing to remember; one caller opts out, the file viewer's mdBlock (`remoteRefs:
+//     "keep"`), because the viewer gates the references to another origin on this body before adopting it
+//     (figure-gate.ts: moved aside behind a click that restores them), and a strip here would delete what that click
+//     restores. The opt-out covers those references alone: a `data:` reference whose type is not a raster image is
+//     removed for the viewer too (paint-refs.ts dropDataDocuments), since a placeholder could name only `data:` while its
+//     click loaded a document that fetches hosts the label never names (the fork PR review's round-1 ruling, 2026-09-23).
 //   • html + svg profiles (KaTeX's stretchy glyphs used to come through here as inline <svg>; a note's own
 //     inline SVG still does), data: URIs on <img> (the CSP allows them; inline transcript images rely on them).
 //
@@ -65,6 +80,7 @@
 // nor the library). A renderer romp itself runs never goes through the sanitizer; only what an author wrote does.
 import DOMPurify from "dompurify";
 import type { Config, DOMPurify as DOMPurifyInstance, UponSanitizeAttributeHookEvent, UponSanitizeElementHookEvent } from "dompurify";
+import { dropDataDocuments, dropRemoteRefs } from "./paint-refs";
 
 /** Tags a note may not keep: the style sheet, the dialog, every form-associated element, and the image map. */
 export const MD_FORBID_TAGS: readonly string[] = [
@@ -273,6 +289,22 @@ export function registerMdPostPass(pass: (root: ParentNode) => void): void {
   if (!postPasses.includes(pass)) postPasses.push(pass);
 }
 
+/** The origins a paint reference may name and stay (dropRemoteRefs's `origins`): the page's own, and the kernel's when the
+ *  page is an editor webview, whose own origin is the webview's and which reaches the kernel by the absolute URL the
+ *  extension sets as `window.__rompKernelBase` (figure-gate.ts remoteHost reads it the same way). Empty under node, where
+ *  there is no page. An opaque origin (`null`) is never one: `javascript:` and `about:` URLs have that origin too. */
+export function ownOrigins(): string[] {
+  const out: string[] = [];
+  if (typeof location !== "undefined" && location.origin && location.origin !== "null") out.push(location.origin);
+  const kernel = typeof window !== "undefined" ? (window as unknown as { __rompKernelBase?: unknown }).__rompKernelBase : undefined;
+  if (kernel) {
+    let o = "";
+    try { o = new URL(String(kernel)).origin; } catch { /* not a URL: no kernel origin to add */ }
+    if (o && o !== "null" && !out.includes(o)) out.push(o);
+  }
+  return out;
+}
+
 /** Sanitize marked's HTML under the profile above and return the sanitized <body>: its children are the
  *  nodes to adopt (mdBlock) or its innerHTML the string to set (md, userMd), after any DOM post-pass of
  *  the caller's own (PR links, the viewer's link stamps). The registered passes (the math fill) have run by then.
@@ -283,11 +315,25 @@ export function registerMdPostPass(pass: (root: ParentNode) => void): void {
  *  layout order (a fraction's denominator before its numerator, a U+200B strut), so `# Ratio $\frac{a}{b}$` was
  *  `md-ratio-ba` where GitHub's slug of the text, and the id the Files pane minted before the fill reached its
  *  bundle, is `md-ratio-fracab`, and the note's own `[see](#ratio-fracab)` rendered dead (the Slice 4 review). The
- *  only call into DOMPurify's sanitize in the dashboard's source, through purifier() (the seam above). */
-export function sanitizeMd(dirty: string, own?: (body: HTMLElement) => void): HTMLElement {
+ *  only call into DOMPurify's sanitize in the dashboard's source, through purifier() (the seam above).
+ *  Before `own` and the registered passes, and after the input post-pass, the paint pass removes every url() reference
+ *  to another origin, and every `data:` one whose type is not a raster image, that survived DOMPurify (paint-refs.ts
+ *  dropRemoteRefs, the header's paint bullet; dropDataDocuments, the data: half alone, under "keep"), judged against
+ *  ownOrigins() and resolved against the document's base URI (none under node, where every relative reference counts as
+ *  remote). It runs before the registered passes, so it never reads the math fill's inline styles. `opts.remoteRefs`
+ *  defaults to "drop", so a new caller is covered without asking
+ *  for it; "keep" is for the file viewer's mdBlock alone, which gates the references to another origin on this body before
+ *  adoption (figure-gate.ts) and would lose the click that restores them to a strip here (file-view-seam.test.ts pins the
+ *  one caller, the paint pass's ONE opt-out). "keep" keeps those alone: the data: half of the pass runs for that caller
+ *  too (paint-refs.ts dropDataDocuments), so a `data:` reference whose type is not a raster image is removed from the
+ *  viewer's body as from every other, never handed to the gate. */
+export function sanitizeMd(dirty: string, own?: (body: HTMLElement) => void, opts?: { remoteRefs?: "drop" | "keep" }): HTMLElement {
   installMdSanitizeHooks();
   const clean = purifier().sanitize(dirty, { ...MD_PURIFY, RETURN_DOM: true }) as HTMLElement;   // the sanitized <body>
   keepOnlyInertCheckboxes(clean);
+  const base = typeof document !== "undefined" ? document.baseURI || "" : "";
+  if (opts?.remoteRefs === "keep") dropDataDocuments(clean, base);
+  else dropRemoteRefs(clean, ownOrigins(), base);
   if (own) own(clean);
   for (const pass of postPasses) pass(clean);
   return clean;
