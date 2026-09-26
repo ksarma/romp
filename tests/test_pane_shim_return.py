@@ -52,7 +52,7 @@ var parentLinkVal=undefined;
 // D2: the fake shell's layout probe (window.parent.__rompMobileOn), parentMobileVal its answer; undefined by default so every
 // pre-D2 test runs off a shell that parks nothing
 var parentMobileVal=undefined;
-var window={innerWidth:800,innerHeight:600,
+var window={innerWidth:800,innerHeight:600,opener:null,   // a pane is a frame of the shell: no window opened it, and a browser says so with null
 parent:{postMessage:function(m){parentPosts.push(m);},get __rompLink(){return parentLinkVal===undefined?undefined:function(){return parentLinkVal;};},
 get __rompMobileOn(){return parentMobileVal===undefined?undefined:function(){return parentMobileVal;};}},
 addEventListener:function(t,f){(winL[t]=winL[t]||[]).push(f);},
@@ -1544,12 +1544,15 @@ class ShellWordsFromTheShellOnly(unittest.TestCase):
     # sandboxed frame (origin "null"), a same-origin window that is not the parent (a popup, a sibling pane), this page
     # itself, this page's own dispatch (no source, no origin), the parent speaking from another origin; a sourceless post
     # that names an origin (a frame removed right after it posted can leave its message with no source): another origin,
-    # the opaque origin, and this page's own origin, none of them the shell's window; and the parent with the opaque origin
+    # the opaque origin, and this page's own origin, none of them the shell's window; the parent with the opaque origin;
+    # and the pane's own window.opener as the source, which in a frame is null (the harness's window has opener null, as a
+    # browser's frame does), on this origin and on the opaque one: a check that admitted e.source===window.opener would
+    # admit a sourceless post there
     FOREIGN = r"""
 var OTHER="https://elsewhere.example",FOREIGN={opener:[{},OTHER],sandboxed:[{},"null"],sameOriginStranger:[{},location.origin],
 itself:[window,location.origin],dispatch:[null,""],parentOtherOrigin:[window.parent,OTHER],
 sourcelessOtherOrigin:[null,OTHER],sourcelessOpaque:[null,"null"],sourcelessSameOrigin:[null,location.origin],
-parentOpaque:[window.parent,"null"]};
+parentOpaque:[window.parent,"null"],theOpener:[window.opener,location.origin],theOpenerOpaque:[window.opener,"null"]};
 function fromEach(t,data){Object.keys(FOREIGN).forEach(function(k){fireFrom(FOREIGN[k][0],FOREIGN[k][1],t,data);});}
 """
 
@@ -1602,13 +1605,19 @@ out({onScreen:onScreen===undefined?"unset":onScreen});""")
     # every mention of the name fromShell in code: its one declaration and the two listeners' reads. A second binding (a
     # second function declaration, which replaces the first for the whole scope, a var, let or const, a parameter, a
     # destructured name) or a write to it is a mention of another kind, and so is a mention in a /* */ comment or at the
-    # end of a code line; a line that is a // comment is text, not code
+    # end of a code line; a line that is a // comment is text, not code. The pin reads spellings, so it first decodes
+    # every \uXXXX and \u{...} escape: JavaScript reads an escaped letter in an identifier as the letter, so
+    # `var \u0066romShell=...` binds fromShell a second time. Decoding one inside a string literal can only add a mention
+    # the pin refuses, never hide one. The executed legs above run what the shim does: a widening that lets one of their
+    # senders through fails them however it is spelled
     FROM_SHELL = re.compile(r"(?<![\w$])fromShell(?![\w$])")
+    UNICODE_ESCAPE = re.compile(r"\\u\{([0-9a-fA-F]+)\}|\\u([0-9a-fA-F]{4})")
     FROM_SHELL_DECL = "function fromShell(e){"
     FROM_SHELL_READ = "if(!fromShell(e))return;"
 
     def _from_shell_mentions(self, js):
         """The kind of each mention of fromShell in `js` outside a // comment line, in order: declaration, read, other."""
+        js = self.UNICODE_ESCAPE.sub(lambda m: chr(int(m.group(1) or m.group(2), 16)), js)
         kinds = []
         for m in self.FROM_SHELL.finditer(js):
             line = js[js.rfind("\n", 0, m.start()) + 1:m.start()]
@@ -1635,7 +1644,8 @@ out({onScreen:onScreen===undefined?"unset":onScreen});""")
         self.assertEqual(self._from_shell_mentions(base), ["declaration", "read", "read"])
         for extra in ("function fromShell(e){return true;}", "var fromShell=function(e){return true;};", "fromShell=function(){return true;};",
                       "let fromShell=1;", "function f(fromShell){return fromShell;}", "var {fromShell}=o;", "x(); // fromShell=g",
-                      "/* fromShell */"):
+                      "/* fromShell */", "var \\u0066romShell=function(e){return true;};", "var from\\u{53}hell=function(e){return true;};",
+                      "\\u0066romShell=function(){return true;};"):
             with self.subTest(extra=extra):
                 kinds = self._from_shell_mentions(base + extra + "\n")
                 self.assertNotEqual(kinds, ["declaration", "read", "read"], "refused")
