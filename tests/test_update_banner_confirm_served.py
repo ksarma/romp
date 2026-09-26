@@ -652,13 +652,160 @@ out({ atOnce: atOnce, after: state() });""")
         a = s["atOnce"]
         self.assertEqual(len(a["posts"]), 1, "the confirm posts")
         p = a["posts"][0]
-        self.assertEqual((p["method"], p["body"], p["type"]), ("POST", {"confirmed": True}, "application/json"))
+        self.assertEqual((p["method"], p["body"], p["type"]),
+                         ("POST", {"confirmed": True, "offer": {"kind": "release", "id": "v0.2.0"}}, "application/json"),
+                         "the confirmation, and the offer this banner showed (round 3 of the install-rewrite review, 2026-09-19)")
         self.assertTrue(a["goDisabled"], "acknowledged at once: the Update button comes back disabled under the wait")
         self.assertFalse(a["armed"], "the armed state ends with the click that used it")
         self.assertEqual((a["labelHidden"], a["confirmHidden"], a["cancelHidden"]), (True, True, True))
         self.assertTrue(a["msg"].startswith("Updating romp"))
         self.assertEqual(len(s["after"]["posts"]), 1, "once")
         self.assertEqual(s["after"]["reloads"], 0)
+
+    def test_the_confirm_posts_the_offer_the_banner_showed_for_either_kind_and_either_road(self):
+        # round 3 of the install-rewrite review (2026-09-19, kernel-1): the route does what the banner said, so the
+        # post names the offer. A release from the page load ('release', its tag); main drift from the page load
+        # ('main', its sha, for the pull form and the restart form alike); and the PUSH road, the shell's relay into
+        # __rompUpdateOffer for the kernel's ask-mode push, which carries no drift field and so is a release: on a
+        # non-primary kernel that push over a standing drift is the shape whose click ran the drift converge.
+        s = run_banner("""
+GO.onclick(); await tick(); await tick(); CF.onclick(); await tick(); out(state());""",
+                       check={"tag": "", "drift": "pull", "driftSha": "abcdef01"})
+        self.assertEqual([p["body"] for p in s["posts"]], [{"confirmed": True, "offer": {"kind": "main", "id": "abcdef01"}}], "the pull drift")
+        s = run_banner("""
+GO.onclick(); await tick(); await tick(); CF.onclick(); await tick(); out(state());""",
+                       check={"tag": "", "drift": "restart", "driftSha": "abcdef02"})
+        self.assertEqual([p["body"] for p in s["posts"]], [{"confirmed": True, "offer": {"kind": "main", "id": "abcdef02"}}], "the restart drift")
+        s = run_banner("""
+window.__rompUpdateOffer('v0.1.0', 'v0.3.0', '', 'b1', '', undefined); var pushed = state();
+GO.onclick(); await tick(); await tick(); CF.onclick(); await tick(); out({ pushed: pushed, after: state() });""",
+                       check={"tag": "", "drift": "pull", "driftSha": "abcdef01"})
+        self.assertEqual(s["pushed"]["msg"], "romp v0.3.0 is available \u2014 you are on v0.1.0.",
+                         "the ask-mode push re-renders the release text over the drift the load had offered")
+        self.assertEqual([p["body"] for p in s["after"]["posts"]], [{"confirmed": True, "offer": {"kind": "release", "id": "v0.3.0"}}],
+                         "and the click carries THAT offer, so the kernel cannot converge the drift for it")
+
+    def test_a_refused_stale_offer_re_reads_the_current_offer_and_the_next_confirm_posts_it(self):
+        # round 3 (2026-09-19): the route refuses an offer it no longer makes, naming both, and this window drops the
+        # stale one, keeps the reason in front of the current offer's text and re-reads /update-check, so the next
+        # confirm posts what the kernel offers now; a stale Update left standing would have been refused again
+        s = run_banner("""
+UPDATE_OK = false; UPDATE_TEXT = "the banner offered romp v0.2.0, but this kernel now offers romp v0.3.0; nothing was started. The banner re-reads the offer.";
+GO.onclick(); await tick(); await tick(); CHECK.tag = "v0.3.0"; CF.onclick(); await tick(); await tick(); await tick(); var reoffered = state();
+UPDATE_OK = true; GO.onclick(); await tick(); await tick(); CF.onclick(); await tick(); out({ reoffered: reoffered, after: state() });""")
+        r = s["reoffered"]
+        self.assertEqual(r["checks"], 3, "the load, the arm's re-read, and the re-offer's read")
+        self.assertTrue(r["msg"].startswith("the banner offered romp v0.2.0, but this kernel now offers romp v0.3.0"), r["msg"])
+        self.assertTrue(r["msg"].endswith("romp v0.3.0 is available \u2014 you are on v0.1.0."), "the current offer stands beside the reason: " + r["msg"])
+        self.assertEqual((r["armed"], r["goHidden"], r["goDisabled"], r["notNowHidden"], r["shown"]), (False, False, False, False, True))
+        self.assertEqual([p["body"]["offer"] for p in s["after"]["posts"]],
+                         [{"kind": "release", "id": "v0.2.0"}, {"kind": "release", "id": "v0.3.0"}],
+                         "the second confirm posts the re-read offer, never the stale one")
+        # with nothing offered any more the reason shows alone, with Not now and no Update
+        s = run_banner("""
+UPDATE_OK = false; UPDATE_TEXT = "the banner offered romp v0.2.0, but this kernel now offers main at abcdef01; nothing was started. The banner re-reads the offer.";
+GO.onclick(); await tick(); await tick(); CHECK.tag = ""; CF.onclick(); await tick(); await tick(); await tick(); out(state());""")
+        self.assertTrue(s["msg"].startswith("the banner offered romp v0.2.0"), s["msg"])
+        self.assertEqual((s["goHidden"], s["notNowHidden"], s["shown"], s["armed"]), (True, False, True, False))
+
+    def test_a_window_that_never_made_the_offer_adopts_the_standing_one_when_the_failed_ending_re_shows_update(self):
+        # review round 10 of fork PR #778 (2026-09-20, kernel-1): a window flipped into the update wait without making the
+        # offer (a page loaded or reloaded while an update ran, or one the running push reached before it offered anything)
+        # held no curTag, so when the failed ending re-showed Update its confirm posted {kind:"",id:""} and the route answered
+        # 400 (the click named no offer); that Update could start nothing until the page was reloaded, where before the
+        # confirm step the route derived the action from its own slots. The failed branch now adopts the answer's standing
+        # offer when the window has none, the tag first and else the drift sha (reoffer()'s precedence for the load road),
+        # and a window that made its own offer keeps it (round 7's rule)
+        failed = "CHECK.failed = 'romp is updated on disk but the restart request failed (HTTP 500)';"
+        click = (" var reshown = state(); GO.onclick(); await tick(); await tick(); CF.onclick(); await tick();"
+                 " out({ reshown: reshown, after: state() });")
+        flipped = "window.__rompUpdateOffer('', '', '', 'b1', 'running'); "
+        # the load road: a page loaded while the update ran, whose poll reads the failure with the release still pending
+        s = run_banner(click, check={"state": "running", "failed": "the manager refused the restart", "tag": "v0.2.0"})
+        r = s["reshown"]
+        self.assertTrue(r["msg"].startswith("The update did not finish: the manager refused the restart"), r["msg"])
+        self.assertEqual((r["goHidden"], r["armed"], r["posts"]), (False, False, []), "Update re-shown, nothing posted yet")
+        self.assertEqual([p["body"]["offer"] for p in s["after"]["posts"]], [{"kind": "release", "id": "v0.2.0"}],
+                         "the load road: the window adopts the release the answer still offers")
+        # the push road: a window the running push flipped into the wait before it offered anything
+        s = run_banner(flipped + "CHECK.tag = 'v0.2.0'; " + failed + " await tick(); await tick();" + click, check={"tag": ""})
+        self.assertEqual((s["reshown"]["goHidden"], s["reshown"]["posts"]), (False, []))
+        self.assertEqual([p["body"]["offer"] for p in s["after"]["posts"]], [{"kind": "release", "id": "v0.2.0"}], "the push road: the same")
+        # the drift form: a refused restart request keeps its sha, and the window adopts it as a main offer
+        s = run_banner(flipped + "CHECK.drift = 'restart'; CHECK.driftSha = 'abcdef02'; " + failed + " await tick(); await tick();" + click,
+                       check={"tag": ""})
+        self.assertEqual([p["body"]["offer"] for p in s["after"]["posts"]], [{"kind": "main", "id": "abcdef02"}], "the drift form")
+        # both standing: the release first, as reoffer() ranks them on the load road
+        s = run_banner(flipped + "CHECK.tag = 'v0.2.0'; CHECK.drift = 'restart'; CHECK.driftSha = 'abcdef02'; " + failed
+                       + " await tick(); await tick();" + click, check={"tag": ""})
+        self.assertEqual([p["body"]["offer"] for p in s["after"]["posts"]], [{"kind": "release", "id": "v0.2.0"}],
+                         "a tag beside a drift sha: the release, the load road's precedence")
+        # a window that made its own offer keeps it across the flip and the failure (round 7's rule): its retry posts what it
+        # showed, and a kernel that offers something else answers the designed 409 and this window re-reads
+        s = run_banner(flipped + "CHECK.tag = 'v0.3.0'; " + failed + " await tick(); await tick();" + click)
+        self.assertEqual([p["body"]["offer"] for p in s["after"]["posts"]], [{"kind": "release", "id": "v0.2.0"}],
+                         "the window's own offer stands; the answer's newer tag is not adopted over it")
+        # what the adoption costs, pinned: a retry from the adopted offer whose wait ends updated has a Not now that dismisses
+        # the adopted identifier durably (the updated ending's rule), a write from a window that never made the offer
+        s = run_banner(flipped + "CHECK.tag = 'v0.2.0'; " + failed + " await tick(); await tick(); GO.onclick(); await tick(); await tick();"
+                       " CHECK.failed = ''; CHECK.tag = ''; CHECK.updated = 'v0.2.0'; CF.onclick(); await tick(); await tick(); await tick();"
+                       " var ended = state(); DM.onclick(); out({ ended: ended, after: state() });", check={"tag": ""})
+        self.assertTrue(s["ended"]["msg"].startswith("romp updated to v0.2.0 on disk"), s["ended"]["msg"])
+        self.assertEqual(s["after"]["dismissals"], [{"tag": "v0.2.0"}], "the retry's updated ending: Not now dismisses the adopted identifier")
+
+    def test_an_adopted_identifier_is_dismissed_durably_on_any_later_updated_ending_the_window_reads(self):
+        # review round 11 of fork PR #778 (kernel-1): the adoption's disclosure named the retry's updated ending, but the
+        # window holds the adopted identifier from then on as if it had offered it, so a later running push (another
+        # window's click, a converge: an update this window neither started nor clicked) whose wait ends updated has this
+        # window's Not now post /update-dismiss with the adopted identifier too. Pinned as the wide road the comment now
+        # states: no /update post from this window at the moment of Not now distinguishes it from the retry case above
+        failed = "CHECK.failed = 'romp is updated on disk but the restart request failed (HTTP 500)';"
+        flipped = "window.__rompUpdateOffer('', '', '', 'b1', 'running'); "
+        updated = "CHECK.failed = ''; CHECK.tag = ''; CHECK.updated = 'v0.2.0'; CHECK.why = 'no manager is running this kernel';"
+        s = run_banner(flipped + "CHECK.tag = 'v0.2.0'; " + failed + " await tick(); await tick(); var adopted = state();"
+                       + " window.__rompUpdateOffer('', '', '', 'b1', 'running'); " + updated + " await tick(); await tick(); var ended = state();"
+                       " DM.onclick(); out({ adopted: adopted, ended: ended, after: state() });", check={"tag": ""})
+        a = s["adopted"]
+        self.assertEqual((a["goHidden"], a["posts"], a["dismissals"]), (False, [], []), "Update re-shown over the adopted offer; nothing posted")
+        e = s["ended"]
+        self.assertTrue(e["msg"].startswith("romp updated to v0.2.0 on disk"), e["msg"])
+        self.assertEqual((e["goHidden"], e["notNowHidden"], e["posts"]), (True, False, []),
+                         "the push-fed wait ended updated with no confirm from this window")
+        self.assertEqual(s["after"]["posts"], [], "at the moment of Not now this window has posted no /update: the update was another's")
+        self.assertEqual(s["after"]["dismissals"], [{"tag": "v0.2.0"}],
+                         "the adopted identifier is dismissed durably on an updated ending the window neither started nor clicked")
+        # the drift form of the same road
+        s = run_banner(flipped + "CHECK.drift = 'restart'; CHECK.driftSha = 'abcdef02'; " + failed + " await tick(); await tick();"
+                       " window.__rompUpdateOffer('', '', '', 'b1', 'running'); CHECK.failed = ''; CHECK.drift = ''; CHECK.driftSha = '';"
+                       " CHECK.updated = 'abcdef02'; await tick(); await tick(); DM.onclick(); out(state());", check={"tag": ""})
+        self.assertEqual((s["posts"], s["dismissals"]), ([], [{"tag": "abcdef02"}]), "the adopted drift sha, the same way")
+
+    def test_not_now_after_an_updated_ending_posts_the_identifier_the_window_holds_not_the_one_that_landed(self):
+        # review round 12 of fork PR #778 (kernel-1): the round-11 comment gave the wide clause above a reason, that an offer is
+        # moot once any update lands so the adopted window dismisses as the offering one would, and the reason is false on a road
+        # the clause covers. What the code does: the updated ending leaves curTag alone, and Not now posts curTag, the identifier
+        # this window HOLDS, never read against d.updated, the identifier the ending carries. Where another door's update landed
+        # (a main-drift converge while this window held the release, or the reverse), the identifier dismissed is a standing offer
+        # that did not land, retired durably for every window. Pinned as it stands, for the adopted window and for one that made
+        # its own offer alike, so the comment's account of the write is the executed one; a narrowing (post the landed identifier,
+        # or nothing, when the two differ) reds here and is a behaviour decision for its own change, not taken in a review round
+        failed = "CHECK.failed = 'romp is updated on disk but the restart request failed (HTTP 500)';"
+        flipped = "window.__rompUpdateOffer('', '', '', 'b1', 'running'); "
+        landed = "CHECK.failed = ''; CHECK.tag = ''; CHECK.updated = 'abcdef02'; CHECK.why = 'no manager is running this kernel';"
+        # the adopted window: flipped into the wait with no offer, adopts the release at the failed ending, then reads a later
+        # running push's ending that landed a main commit it neither offered nor clicked
+        s = run_banner(flipped + "CHECK.tag = 'v0.2.0'; " + failed + " await tick(); await tick(); var adopted = state();"
+                       " window.__rompUpdateOffer('', '', '', 'b1', 'running'); " + landed + " await tick(); await tick(); var ended = state();"
+                       " DM.onclick(); out({ adopted: adopted, ended: ended, after: state() });", check={"tag": ""})
+        self.assertEqual((s["adopted"]["goHidden"], s["adopted"]["dismissals"]), (False, []), "Update re-shown over the adopted release")
+        self.assertTrue(s["ended"]["msg"].startswith("romp updated to abcdef02 on disk"), s["ended"]["msg"])
+        self.assertEqual((s["after"]["posts"], s["after"]["dismissals"]), ([], [{"tag": "v0.2.0"}]),
+                         "Not now posts the release this window holds, not the main commit the ending says landed")
+        # a window that made its own offer, no adoption anywhere: the same write, the held release on another door's landing
+        s = run_banner(flipped + landed + " await tick(); await tick(); var ended = state(); DM.onclick(); out({ ended: ended, after: state() });")
+        self.assertTrue(s["ended"]["msg"].startswith("romp updated to abcdef02 on disk"), s["ended"]["msg"])
+        self.assertEqual((s["after"]["posts"], s["after"]["dismissals"]), ([], [{"tag": "v0.2.0"}]),
+                         "the window's own offer, still standing, dismissed durably on a landing it did not make")
 
     def test_a_second_activation_of_the_update_button_never_posts(self):
         # the confirm is a different control, beside the label that took Update's place: whatever
@@ -1017,7 +1164,9 @@ class Wiring(unittest.TestCase):
         order = [html.index(i) for i in ("rup-msg", "rupd-dismiss", "rupd-cancel", "rupd-go", "rupd-armed", "rupd-confirm")]
         self.assertEqual(order, sorted(order), "the plain row reads Not now, Update; the armed row Cancel, label, Restart, in one flow")
         js = km._UPD_JS
-        self.assertIn("body:JSON.stringify({confirmed:true})", js)
+        self.assertIn("body:JSON.stringify({confirmed:true,offer:{kind:curKind,id:curTag}})", js,
+                      "the confirmation and the offer this window shows (round 3 of the install-rewrite review, 2026-09-19)")
+        self.assertIn("curTag=tag;curKind=drift?'main':'release';", js, "the offer's kind is recorded where its identifier is")
         self.assertIn("go.onclick=function(){if(!armed)arm();};", js, "Update only ever arms")
         self.assertIn("cf.onclick=function(e){if(!armed)return;if(e&&e.detail>1)return;", js, "the confirm posts, the click-count guard kept")
         self.assertIn("function noRepeat(e){if(e&&e.repeat&&(e.key==='Enter'||e.key===' '))e.preventDefault();}", js)

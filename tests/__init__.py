@@ -280,6 +280,11 @@ os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XD
 os.environ["ROMP_MANAGER_PORT"] = "1"
 os.environ["ROMP_KERNEL_PORT"] = "1"
 os.environ["ROMP_SERVE_PORT"] = "1"
+# The kernel's registry id, floored to the primary's as conftest.py floors it (round 4 of the install-rewrite review, 2026-09-19):
+# bin/romp-manager hands every kernel ROMP_KERNEL_ID and every session shell inherits it, so a bare unittest run from a shell under
+# a profile kernel read every update test as an aux kernel's (33 reds in tests/test_kernel_update.py) while pytest, floored in
+# conftest.py, was green; the floor went into one twin only. tests/test_state_isolation_order.py pins both.
+os.environ["ROMP_KERNEL_ID"] = "main"
 os.environ["ROMP_CKPT_FIRST_DOC_KB"] = "0"   # the young-session floor off for the fixtures, the twin of conftest.py's line (1721 round two): a
 #                                                bare unittest run gave 113 failures with every checkpoint shape skipped young without it
 

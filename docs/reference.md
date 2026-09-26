@@ -36,7 +36,17 @@ too: the label says so, and does not count them; when the manager does not answe
 kernels may restart too. When no manager started the kernel (a `romp-kernel` started by hand), nothing
 restarts: the first click reads "Update romp on disk now; restart it yourself to run it" with a green
 Update confirm, and the second click converges in place when the change is outside kernel code, else
-lands the kernel code on disk and the banner names `romp up` as the step that runs it. The gear's
+lands the kernel code on disk and the banner names `romp up` as the step that runs it. The release
+self-update runs from the primary kernel only (the manager tells each kernel its registry id in
+`ROMP_KERNEL_ID`; `main` is the primary): its `install.sh` rewrites the login service's unit, and there
+is one unit, the primary's, so a `kernels.json` profile's or a `/ensure` kernel's dashboard answers the
+confirmed click with a line naming the primary, and its automatic mode files one notice per release
+instead of running it. The banner's confirmed click carries the offer the banner showed (a release
+and its tag, or main drift and its sha), and the kernel does that and nothing else: on such a kernel a
+release click is answered with the line naming the primary, a main-drift click converges the drift,
+which is that kernel's own, and a click whose offer is no longer what the kernel offers (a newer
+release found since, main moved on) is refused naming both, nothing started, while the banner re-reads
+the current offer. The gear's
 **Automatic updates** control (under *Updates & debug*) decides what happens: *Check and
 ask* shows the banner, *Install automatically* converges on its own, and *Off* stops both the
 checks and the banners, so a machine whose owner merges to `main` all day hears nothing about it
@@ -1069,7 +1079,10 @@ once.
 
 For `./install.sh`:
 
-- `ROMP_NO_SERVICE=1` skips the login service.
+- `ROMP_NO_SERVICE=1` skips the login service. The closing lines then give the
+  bare dashboard URL and say that `romp url` prints the token (the kernel keeps
+  it in `~/.local/state/romp/serve-token`); no tokened link is printed, since
+  nothing this install started is serving one.
 - `ROMP_NO_EXT=1` skips the VS Code / Cursor extension.
 - `ROMP_NO_SDK=1` skips the Agent SDK venv. Claude Code sessions need it, so
   run `bin/romp-sdk-setup` before starting one. The script installs one
@@ -1189,7 +1202,29 @@ line you added to the unit or the plist by hand; a drop-in survives it (see
 [Two things still need a restart](#two-things-still-need-a-restart)). The
 service unit bakes in whatever is set at install time, so a renumbered port
 that only lives in your shell leaves the supervised manager on the old one, and
-the two collide.
+the two collide. A deploy under a running manager (`./install.sh`, the release
+self-update) rewrites the unit too, through `romp-service rewrite`, but that
+rewrite bakes nothing from the shell that ran it: it keeps the unit's own
+`ExecStart`, `ROMP_DIR`, `PATH`, `service.env` path and instance lines, adds
+none the unit did not carry, refreshes only the release's lines, and refuses
+(exit 5, its own code, naming both values and which of the two fixes applies:
+a shell without the value, or the installed clone) when a compared value
+differs: `ExecStart` and `ROMP_DIR` against the deploying clone, an instance
+variable and (when the deploying shell set it) the `service.env` path against
+the deploying environment; `PATH` is kept and never compared, since every
+shell carries one. What the unit does not
+carry is read as the service reads it, never as the deploying shell resolves
+it: a unit with no `PATH` line gets none, the `service.env` path is compared
+only when the deploying shell set `ROMP_SERVICE_ENV_FILE` or
+`ROMP_SERVICE_ENV` (otherwise the unit's line stands, and a unit with no line
+reads the kernel's default), and the state root the rewrite journals under is
+the file's `ROMP_STATE_DIR` line, else (macOS) the directory of the plist's
+`StandardOutPath`, else the default under `$HOME`. The rule the rewrite's
+readers follow: a form they cannot read whole is refused (exit 5, nothing
+written, the form and the remedy named), and a value they accept is written
+back in a form systemd or launchd reads as the same value; the paragraph on
+the service below says which forms are refused.
+`romp-service install` is the way to change the values the unit bakes in.
 
 ### The manager's control port
 
@@ -1581,9 +1616,168 @@ hand, wait included: `launchctl bootout gui/$(id -u)/com.romp.manager`; then
 `launchctl bootstrap gui/$(id -u)
 ~/Library/LaunchAgents/com.romp.manager.plist`, repeated if it is refused. On
 Linux `romp-service install` rewrites the unit and reloads systemd but leaves a
-running manager as it is, so the restart still follows. The rewrite drops a
+running manager as it is, so the restart still follows. `install.sh` takes the
+same road while the manager runs: `romp-service rewrite`, which rewrites the
+unit (the plist on macOS), reloads systemd on Linux and restarts nothing, and
+its one line names the restart command. (Until 2026-09-18 it skipped the
+service step under a running manager, so a unit change a release carried, the
+`MALLOC_ARENA_MAX=2` line for one, reached such a box only through a drop-in
+added by hand.) The rewrite keeps the unit's own identity, `ExecStart`,
+`ROMP_DIR`, `PATH`, the `service.env` path, the instance `Environment=`
+lines and the state root (the plist's log paths with it), whatever the
+deploying shell carries, and refuses, exit 5, when the two disagree;
+`install.sh` then fails the run and points at the refusal's own lines, which
+name the way through. When systemd reports the service active but no unit is
+at the path `romp-service` writes, the rewrite exits 3 and `install.sh` goes on
+without failing the run and without running `install` (that would boot the
+running manager out): it says the release's unit did not land and that
+`romp-service install` from the owning shell and clone is the route. What
+that install does to the running manager depends on the platform: on macOS
+the `bootout` and `bootstrap` above restart it; on Linux the install writes
+the unit afresh, reloads systemd and runs `systemctl --user enable --now`,
+which starts an inactive unit and leaves a running one as it is, so the
+running manager keeps its old unit until the restart the user runs by hand,
+`systemctl --user restart romp-manager`. The kernel's self-update runs `romp-service rewrite
+--check`, the identity checks alone, BEFORE it fetches the release and moves
+the checkout, so a deploy the rewrite would refuse moves nothing first; its
+detached child is marked (`ROMP_UPDATE_CHILD=1`), and on the install road
+(the manager not running under the service) `romp-service install` from that
+child keeps an installed unit's identity the same way, where a person's
+install bakes what their shell sets, and refuses a disagreement with the same
+code, exit 5, on which `install.sh` says that nothing was written or loaded
+and that the serving manager is untouched, and ends the run with no retry
+line, as it does for the rewrite road's refusal. On macOS the rewrite reads
+the plist through `plutil` when one is present (any XML layout, or binary);
+without it, only the one-line form `romp-service` writes, and a plist in any
+other form (re-saved by `plutil -convert`, PlistBuddy, `defaults write` or
+Xcode) is refused with exit 5 rather than read as a plist with no entries,
+since a reader that cannot parse a file must not report its values as absent;
+`romp-service install` from the owning shell and clone writes it afresh.
+Through `plutil` the reader first learns the tool's line end on a scratch
+plist of its own (a value with no line end of its own and three that end in
+one), checks it on the file (every extract must end as the scratch said, each
+value is read with and without `-n` where the tool honours that switch, and
+each value is echoed through the scratch twice, as it would be written back
+and as the raw bytes read, and must read back as it did on the file), and
+refuses every plist read through a plutil it cannot classify with exit 5 and
+nothing written, naming the two ways out: another plutil in `ROMP_PLUTIL`, or
+`romp-service install` from the owning shell and clone, which reads no plist.
+It reads `<string>` entries alone, the type taken from plutil's own xml1
+rendering of the entry: an entry of another type, or one plutil extracts one
+way and not the other, is the file's form and is refused as such with exit 5
+and nothing written, `romp-service install` the way out, as the one-line
+reader refuses the same file.
+Without `plutil` the reader also refuses romp's own form with any one entry
+it reads split across two lines (`<key>` on one, `<string>` on the next,
+which a text editor does), or with the `ProgramArguments` array not laid out
+one `<string>` a line ending in `up`, naming the entry: a reader that cannot
+read an entry whole must not read it as absent, and the two-marker check
+before 2026-09-19 let a split `PATH` entry drop and a split `StandardOutPath`
+move the log paths to the deploying shell's `$HOME`. Every value the plist
+carries is XML-escaped once on write and decoded once on read, the named
+entities and the numeric character references (`&#38;`, `&#x26;`) alike, so
+a path with `&`, `<`, `>` or `"` compares equal to the shell that installed
+it and is unchanged by any number of rewrites. On Linux the unit FILE is read
+the way systemd reads it, once, as a whole; drop-ins under
+`romp-manager.service.d` are not read, and when any exist the rewrite says so
+on stderr at exit 0, since the identity check and its agree line speak for
+the file alone (a drop-in survives the rewrite byte for byte). A line ends at
+LF or CRLF; a comment (`#` or `;` first) is skipped before the continuation
+test; blanks around the line and the `=` are stripped, systemd's set (space,
+tab, CR), so `Environment = X=y` is a line and a form-feed-indented one is an
+unknown key; only `[Service]` counts; an `Environment=` value is word-split
+and unquoted as systemd.syntax(7) describes (either quote character, the C
+escapes systemd decodes: `\\`, `\"`, `\'`, `\s`, `\n`, `\t`, `\r`, `\a`,
+`\b`, `\f`, `\v`, `\xNN`, `\NNN`, `\uNNNN`, `\UNNNNNNNN`; `%%` a literal
+`%`, and a `%` before anything but a letter, a digit or another `%` the two
+characters, as systemd keeps them), a bare value with whitespace is its first word and the rest dropped as
+systemd drops it, a later assignment of a name replaces an earlier one, and
+an `EnvironmentFile=` path that is not absolute is no file, as systemd reads
+it; the compare reads what systemd hands the manager, so the update child's
+own environment is never refused over the file's spelling. One residual is
+disclosed and left: the `EnvironmentFile=` path is compared against
+`ROMP_SERVICE_ENV_FILE` by place, not by systemd's simplified reading of the
+line, so an override spelled as the simplified path of a place that does not
+exist (the unit reads `EnvironmentFile=-/x//y/env`, the shell sets
+`ROMP_SERVICE_ENV_FILE=/x/y/env`) is refused, exit 5, nothing written,
+`the file reads /x//y/env, this environment names /x/y/env`, though systemd
+reads the same file under either spelling; spell the override as the file
+spells it, or create the place, after which the two resolve to one. A false
+refusal on the safe side: modelling systemd's whole path resolution in the
+reader would risk an error in the direction that writes. A form the reader
+cannot read whole is refused, exit 5, nothing written, with the line, the
+form and the remedy named: a carriage return anywhere but before the LF, or a
+NUL byte (line ends systemd reads and bash's `read` does not, so a CR-only
+unit read as one line); a line ending in a backslash (a continuation), except
+when no text line follows it before a blank line or the file's end (a comment
+line between is skipped, as systemd skips it), where systemd parses the pending
+continuation without the backslash and the reader reads the line the same way;
+a line that is not
+UTF-8 by systemd's rule (the encoding, and no surrogate or noncharacter, which
+systemd refuses the whole file on where iconv passes them), and a section header systemd refuses (`[Instal`,
+`[Service]x`, a quote or a control character in the name), on which systemd
+loads nothing from the file; a specifier (`%h`, `%d` and the like, a `%`
+before a letter or a digit, outside a doubled `%%`; the remedy is the absolute
+path) in a value the writer
+re-encodes, where a `PATH` line is replayed as written and its specifier is
+systemd's to expand; an unbalanced quote or an escape systemd refuses (a `\U`
+escape naming a surrogate or a noncharacter among them; it drops the item and
+the rest of the line, the items before it standing); an eight-bit, `\u`
+surrogate or `\u` noncharacter escape, on either of two surfaces: in an
+`Environment=` value systemd decodes it into raw bytes it then judges as UTF-8
+(an assignment carrying bytes that are not is dropped), a reading this reader
+does not model; in `ExecStart`'s path systemd decodes a `\u` surrogate or
+noncharacter escape into bytes that are not UTF-8 and runs the unit with them,
+and the writer, which writes a path back raw, has no written form that reads
+back to the same bytes (written raw they are a line systemd refuses whole), so
+the remedy is the move to a path without them; a kept value ending in
+a newline, which every read loses through a command substitution; a second
+assignment on a line that assigns a value the rewrite keeps (one assignment a
+line); a second `ExecStart=` or `EnvironmentFile=` line; an `ExecStart` whose
+command carries a prefix character or whose arguments are not `up` alone; and
+a kept line under a section systemd does not read it in. One case is named
+here rather than closed: a unit file with no `ExecStart` line beside a
+drop-in that supplies one without resetting it first; the rewrite writes this
+clone's command into the file, as it does for any file with no line, and
+systemd then refuses the merged unit as having two `ExecStart=` settings.
+Closing it needs the drop-in read, and reading drop-ins through this reader
+would refuse the drop-in that resets `ExecStart` through a shell wrapper,
+which a live box carries. Every value the rewrite or the install
+writes that systemd word-splits, `ExecStart`'s command, `ROMP_DIR`, the
+instance variables and the `service.env` override, goes through one writer:
+a plain value bare, a value with whitespace, a double quote, a single quote,
+a backslash or a `%` in systemd's quoted form (`Environment="KEY=..."`, the
+backslash and the quote escaped, `%` doubled), so systemd reads the value
+whole where a bare one ends at the first space or drops the line at an
+apostrophe; `EnvironmentFile=`'s path has its `%` doubled and nothing else,
+which is how systemd reads that line, and the line keeps its own `-` prefix,
+so a mandatory line stays mandatory. An empty assignment
+(`Environment=CLAUDE_CONFIG_DIR=`, an instance line set to nothing,
+`Environment=PATH=`, an empty `<string></string>` entry) is a value, the
+variable set to the empty string: it is kept as written, never dropped as an
+absent line, and for a compared variable a deploying shell that carries a
+value differs from it and is refused (`PATH` is kept, never compared). An
+`ExecStart` command path with a quote, a backslash or a control character is
+refused on install and on rewrite (exit 5, nothing written), since systemd
+itself refuses such an executable name and the unit would never start; the
+same characters stay accepted in `ROMP_DIR`, the instance variables and the
+`service.env` path. Without `plutil` the reader also refuses an entry it
+reads that is present on more than one line, and a `ProgramArguments` array
+in which `up` is not the single last argument; through `plutil` the array
+must have that shape too, so an array with no `up` is refused rather than
+read as an absent `ExecStart` and re-pointed at the deploying clone. The
+tests parse each written file the way the daemon does. After the reload, on
+the install road
+and the rewrite road alike, `romp-service` reads systemd's
+`NeedDaemonReload` flag back and the `FragmentPath` systemd loads the unit
+from, and says on stderr, at exit 0, when systemd still holds an older
+definition, when it loads the unit from another file than the one just
+written, and when either could not be read. The rewrite drops a
 line added to the unit by hand, as the plist rewrite does; a drop-in survives
-it, so a line of your own belongs in `service.env` or a drop-in.
+it, so a line of your own belongs in `service.env` or a drop-in. A unit or
+plist path that was a symlink is a regular file after either writer,
+`install` or `rewrite`, and the line says so: the file behind the link is not
+written, and its later edits no longer reach the service manager.
 
 ### Stopping the kernel on purpose
 
@@ -1596,7 +1790,7 @@ window too), and Ctrl+C is not
 available to a manager the service runs. `romp down` instead stops the login
 service itself (`systemctl --user stop romp-manager.service`; on macOS
 `launchctl bootout` of the agent), which nothing respawns, and then probes the
-processes themselves rather than trusting the exit code of `romp-service stop`. A manager that dies as soon as it starts is another matter: launchd's `ThrottleInterval` in the agent is 60 seconds, so such a manager is retried once a minute rather than every ten seconds (a manager that ran longer than that before exiting, its own refresh, is respawned at once), and `romp-service status` reads the job's record rather than its mere presence, so it says `loaded but not running` with the last exit code instead of `running`, which is also what `install.sh` keys its skip-the-reinstall shortcut on. One such death has a reading of its own: when the agent's manager exited with code 1, its refusal to start beside a manager already holding the control port, and something answers on that port (the port the agent's manager would bind: `ROMP_MANAGER_PORT` in `service.env`, else the environment's, else 7432), `romp-service install` names the manager already serving, most likely a hand-run `romp up` outside the service, with the two ways out (leave it, and the agent takes over when that manager stops; or stop it and re-run the install), and exits 3; `install.sh` then finishes its run, link and banner included, and exits non-zero at the end. Any other exit code with a manager answering is reported as two facts, the agent's own death and its log first. Under systemd, `Restart=always` keeps the unit's default start limit (five starts within ten seconds and the unit stops), and `systemctl --user status romp-manager.service` tells the two apart.
+processes themselves rather than trusting the exit code of `romp-service stop`. A manager that dies as soon as it starts is another matter: launchd's `ThrottleInterval` in the agent is 60 seconds, so such a manager is retried once a minute rather than every ten seconds (a manager that ran longer than that before exiting, its own refresh, is respawned at once), and `romp-service status` reads the job's record rather than its mere presence, so it says `loaded but not running` with the last exit code instead of `running`, which is also what `install.sh` keys on: `running` takes the `romp-service rewrite` road (the unit rewritten, the manager left as it is), anything else the install. One such death has a reading of its own: when the agent's manager exited with code 1, its refusal to start beside a manager already holding the control port, and something answers on that port (the port the agent's manager would bind: `ROMP_MANAGER_PORT` in `service.env`, else the environment's, else 7432), `romp-service install` names the manager already serving, most likely a hand-run `romp up` outside the service, with the two ways out (leave it, and the agent takes over when that manager stops; or stop it and re-run the install), and exits 3; `install.sh` then finishes its run, link and banner included, and exits non-zero at the end. Any other exit code with a manager answering is reported as two facts, the agent's own death and its log first. Under systemd, `Restart=always` keeps the unit's default start limit (five starts within ten seconds and the unit stops), and `systemctl --user status romp-manager.service` tells the two apart.
 
 Before stopping, `romp down` gives the turns in flight `--wait` seconds
 (default 5, up to 600) to reach a turn boundary. It asks the kernel to quiesce
@@ -5590,7 +5784,11 @@ whatever asks for one: `romp refresh`, `romp down`, the dashboard's restart
 button, the kernel's own update, and the manager before each SIGTERM it sends
 (action `manager-sigterm`, with a `trigger` naming what set it off: `restart`,
 `restart-all`, `refresh` for the stale-manager self-bounce, `cli-down` for a
-stop while `romp down`'s marker is on disk, `stop` for any other). When a
+stop while `romp down`'s marker is on disk, `stop` for any other), and
+`romp-service` when it installs (`service-install`) or rewrites
+(`service-rewrite`) the login service; the rewrite row is attribution of a
+deploy and restarts nothing, so the walk below passes over it like the
+manager's `quiet-window` note, while an install is a real request. When a
 SIGTERM arrives, the kernel reads the last two hundred rows,
 newest first, for a request within the last 90 seconds (20 minutes for a
 request that asked to wait for a quiet window) and no older than its own

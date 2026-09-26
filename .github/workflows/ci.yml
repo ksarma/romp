@@ -334,6 +334,7 @@ jobs:
           # directory was renamed to vscode-extension/.
           cache-dependency-path: vscode-extension/package-lock.json
       - name: Install deps
+        id: deps
         run: npm ci
       - name: Typecheck
         run: npm run typecheck
@@ -413,3 +414,22 @@ jobs:
         run: |
           python -m pip install --upgrade pip pytest pytest-timeout cryptography
           python -m pytest tests/test_*_browser.py tests/test_*_served.py -q -rs -p no:cacheprovider --durations=20 --timeout=600 --timeout-method=thread
+      - name: Anchor slug table against the renderer (docs-anchors-oracle --check)
+        # tests/test_docs_anchors.py holds its slugger to tests/fixtures/docs_anchor_slugs.json, a table
+        # tests/docs-anchors-oracle.py wrote from marked, the extension's renderer. On the Python matrix
+        # runners (no npm ci, so no marked) the table IS the oracle, so a table edited to agree with a
+        # wrong slugger passes the suite there (round 12 fix-up of fork PR #778, executed: a slugger that
+        # strips every underscore, the table rewritten from it, the suite's renderer test green, this
+        # recipe red on 226 rows). This is the one job with node and the extension's marked installed
+        # (npm ci above), so the recipe runs HERE: it renders every corpus heading and battery shape and
+        # exits 1 naming each row the renderer disagrees with, 2 when node or marked is missing, never a
+        # skip. Sub-second (0.15 s at its introduction). Its subject, the committed table against the
+        # renderer, is independent of every test step before it, and the served-page pytest above is
+        # the job's long phase and goes red for reasons of its own, so this runs after a red step too
+        # and one run reports both, as the tree scan does after the history scan: !cancelled() rather
+        # than always(), which would also fire on the job's cancellation, and only when npm ci (id
+        # deps) succeeded, since without marked the recipe can only say to run npm ci.
+        # tests/test_docs_anchors.py reads this step and its condition.
+        if: ${{ !cancelled() && steps.deps.outcome == 'success' }}
+        working-directory: ${{ github.workspace }}
+        run: python tests/docs-anchors-oracle.py --check

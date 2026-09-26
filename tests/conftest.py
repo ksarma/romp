@@ -200,6 +200,14 @@ os.environ["ROMP_MANAGER_PORT"] = "1"
 # starts a kernel of its own passes the port it picked, as the ones that do already do.
 os.environ["ROMP_KERNEL_PORT"] = "1"
 os.environ["ROMP_SERVE_PORT"] = "1"
+# The kernel's registry id, floored to the PRIMARY's (2026-09-18, round 2 of the install-rewrite review): bin/romp-manager
+# hands every kernel it spawns ROMP_KERNEL_ID (specEnv), every session shell under that kernel inherits it, and
+# kernel/kernel.py gates the release self-update on it (_is_primary_kernel: absent or `main` is the primary). A suite run
+# from a shell under a profile kernel therefore read every update test as an aux kernel's: 23 tests in
+# tests/test_kernel_update.py red in that shell, green in CI, which exports no such name. `main` rather than a pop
+# because it is the value the manager hands the primary explicitly; the tests that mean an aux kernel patch the name
+# themselves (mock.patch.dict) and restore the floor. Import-time, and re-asserted per test below with the ports.
+os.environ["ROMP_KERNEL_ID"] = "main"
 
 # No test may read the REAL service.env (2026-09-04; the reason changed on 2026-09-08): the kernel's boot
 # check (kernel/credentials.py) reads the manager env file for retired provider lines, so on a machine whose
@@ -302,6 +310,7 @@ def _dead_manager_port():
     os.environ["ROMP_MANAGER_PORT"] = "1"
     os.environ["ROMP_KERNEL_PORT"] = "1"
     os.environ["ROMP_SERVE_PORT"] = "1"
+    os.environ["ROMP_KERNEL_ID"] = "main"
     yield
 
 
