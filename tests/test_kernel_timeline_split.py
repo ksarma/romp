@@ -54,30 +54,35 @@ class BuildGating(unittest.TestCase):
         # federation.js, which the timeline page loads before this boot (test_browser_owned_order pins the
         # order). Wrapped, the frames the boot dispatches are timed by type like every pane's, so the view's
         # hover/activeChat/revealEvent/models handling is not left inside federation's fed:<type> bracket
-        # (2026-09-06); without a collector the plain listener is registered.
+        # (2026-09-06); without a collector the plain listener is registered. The window listener hands the wrapped
+        # listener only a heard sender's message, so the sender check runs outside the wrapper and a foreign post is
+        # never counted (tests/test_timeline_boot_shim.py TimelineBootSenders runs it, with and without a collector).
         boot = km._TIMELINE_BOOT
-        self.assertIn("var onFrame=function(ev){if(!heardSender(ev))return;var m=ev.data;if(!m||!panel)return;", boot)   # the sender check heads it (tests/test_timeline_boot_shim.py TimelineBootSenders runs it)
+        self.assertIn("var onFrame=function(ev){var m=ev.data;if(!m||!panel)return;", boot)
         self.assertIn('var frameListener=(window.__rompPerf&&window.__rompPerf.wrapFrameHandler)'
                       "?window.__rompPerf.wrapFrameHandler(onFrame):onFrame;", boot)
-        self.assertIn('window.addEventListener("message",frameListener);', boot)
-        self.assertEqual(boot.count('addEventListener("message"'), 1, "one listener, the wrapped one")
+        self.assertIn('window.addEventListener("message",function(e){if(!heardSender(e))return;frameListener(e);});', boot)
+        self.assertEqual(boot.count('addEventListener("message"'), 1, "one listener, the sender check in front of the wrapped one")
 
     def test_the_host_shim_registers_the_same_listener_with_federation_for_direct_delivery(self):
         # federation.js hands its merged data/bars frames to the handlers registered through window.__rompFed.onFrame
         # by direct call, and dispatches them on window only when nothing registered (ui/webview/federation.ts
         # emit): a "message" listener in another JavaScript world that reads event.data forces a structured clone of
-        # the frame on every window dispatch. The boot registers the SAME wrapped listener it puts on window, so a
-        # frame reaches it once, timed the same way; a page without the slot (an older federation.js) is unchanged.
+        # the frame on every window dispatch. The boot registers the wrapped listener the window's sender check calls,
+        # so a frame reaches it once, timed the same way, whichever path carries it; a page without the slot (an older
+        # federation.js) is unchanged.
         boot = km._TIMELINE_BOOT
         self.assertIn("if(window.__rompFed&&window.__rompFed.onFrame)window.__rompFed.onFrame(frameListener);", boot)
-        self.assertLess(boot.index('window.addEventListener("message",frameListener);'),
+        self.assertLess(boot.index('window.addEventListener("message",function(e){if(!heardSender(e))return;frameListener(e);});'),
                         boot.index("window.__rompFed.onFrame(frameListener)"), "window first, the registry after it")
 
     def test_the_host_shim_run_one_wrapped_listener_registered_with_federation_reaches_the_panel(self):
         # The boot RUN (review find, 2026-09-08; moved here from the TypeScript lane, which must not break on a
         # kernel edit): the self-contained IIFE under node's vm with the three window slots it reads stood in.
-        # One window listener, the perf-wrapped one; the registry gets that same function, so a frame arrives
-        # once whichever path carries it; a frame through the registry reaches the connected panel.
+        # One window listener, the sender check in front of the perf-wrapped one; the registry gets the perf-wrapped
+        # function itself, so a frame arrives once, timed, whichever path carries it; a frame through the registry
+        # and this page's own dispatch on window each reach the connected panel once, and a post from a page on
+        # another origin reaches neither the collector nor the panel.
         node = shutil.which("node")
         if not node:
             self.skipTest("node not installed")
@@ -88,21 +93,25 @@ class BuildGating(unittest.TestCase):
             f.write(r"""
 var vm = require("vm"), fs = require("fs");
 var boot = fs.readFileSync(process.argv[2], "utf8");
-var listeners = [], registered = [], updates = [], posted = [], wrapped = new Map();
+var listeners = [], registered = [], updates = [], posted = [], timed = [], wrapped = new Map();
 var win = {
   acquireVsCodeApi: function () { return { postMessage: function (m) { posted.push(m); } }; },
   addEventListener: function (t, h) { if (t === "message") listeners.push(h); },
-  __rompPerf: { wrapFrameHandler: function (h) { var w = function (e) { return h(e); }; wrapped.set(w, h); return w; } },
+  __rompPerf: { wrapFrameHandler: function (h) {
+    var w = function (e) { timed.push(e && e.data && e.data.data); return h(e); }; wrapped.set(w, h); return w; } },
   __rompFed: { onFrame: function (h) { registered.push(h); return function () {}; } },
 };
 win.window = win;
 vm.runInNewContext(boot, { window: win, HTMLElement: { prototype: {} }, document: {}, URL: URL });
 var out = { listeners: listeners.length, wrappedIsListener: wrapped.has(listeners[0]),
-            registeredSame: registered.length === 1 && registered[0] === listeners[0] };
+            registeredWrapped: registered.length === 1 && wrapped.size === 1 && wrapped.has(registered[0]) };
 win.__rompConnectTimeline({ update: function (d) { updates.push(d); } });
 out.posted = posted.map(function (m) { return m.type; });
-registered[0]({ data: { type: "data", data: { lanes: 1 } } });
+registered[0]({ data: { type: "data", data: { via: "registry" } } });
+listeners[0]({ source: null, origin: "", data: { type: "data", data: { via: "dispatch" } } });
+listeners[0]({ source: {}, origin: "https://elsewhere.example", data: { type: "data", data: { via: "another origin" } } });
 out.updates = updates;
+out.timed = timed;
 process.stdout.write(JSON.stringify(out));
 """)
         r = subprocess.run([node, os.path.join(fx, "run.js"), os.path.join(fx, "boot.js")],
@@ -110,10 +119,14 @@ process.stdout.write(JSON.stringify(out));
         self.assertEqual(r.returncode, 0, r.stderr)
         out = json.loads(r.stdout)
         self.assertEqual(out["listeners"], 1, "one window listener")
-        self.assertTrue(out["wrappedIsListener"], "…the wrapped one, so its frames are timed by type")
-        self.assertTrue(out["registeredSame"], "the SAME function is registered with federation: no frame arrives twice")
+        self.assertFalse(out["wrappedIsListener"], "…the sender check, which calls the wrapped listener")
+        self.assertTrue(out["registeredWrapped"], "the wrapped listener is registered with federation: timed on that path too")
         self.assertEqual(out["posted"], ["ready"], "the connect handshake")
-        self.assertEqual(out["updates"], [{"lanes": 1}], "a frame through the registry reached the panel")
+        self.assertEqual(out["updates"], [{"via": "registry"}, {"via": "dispatch"}],
+                         "a frame through the registry and this page's own dispatch reached the panel, once each; a "
+                         "post from a page on another origin did not")
+        self.assertEqual(out["timed"], [{"via": "registry"}, {"via": "dispatch"}],
+                         "the collector timed those two frames and never saw the foreign post")
 
     def test_the_lanes_skeleton_does_not_parse_any_transcript(self):
         # cold-start speed (the user 2026-06-26): a fresh kernel (the refresh button = POST /restart) re-parses

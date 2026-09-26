@@ -51,27 +51,37 @@ class TimelineBootDispatch(unittest.TestCase):
         self.assertEqual(boot.count('else if(m.type==="caps"&&panel.setCaps)panel.setCaps(m);'), 1)
         self.assertEqual(boot.count('else if(m.type==="settingRefused"&&panel.settingRefused)panel.settingRefused(m);'), 1)
         self.assertEqual(boot.count('else if(m.type==="unknownOp"&&panel.unknownOp)panel.unknownOp(m);'), 1)
-        # the fork's registration with federation's frame registry (fed-direct) sits after the chain, once
-        self.assertEqual(boot.count('window.addEventListener("message",frameListener);'), 1)
+        # the fork's registration with federation's frame registry (fed-direct) sits after the chain, once, after the
+        # window listener (the sender check in front of the same listener)
+        self.assertEqual(boot.count('window.addEventListener("message",function(e){if(!heardSender(e))return;frameListener(e);});'), 1)
         self.assertEqual(boot.count('if(window.__rompFed&&window.__rompFed.onFrame)window.__rompFed.onFrame(frameListener);'), 1)
         self.assertLess(boot.index("_openViewsDialog(null);};"), boot.index("__rompFed.onFrame(frameListener)"))
 
 
 # The boot, run in node: stand-ins for the few browser names it touches (HTMLElement for the DOM shims, the host
-# bridge acquireVsCodeApi, the shell as window.parent), a fake panel, and the one window message listener it registers.
+# bridge acquireVsCodeApi, the shell as window.parent, the shell's own parent as window.top), a fake panel, and the one
+# window message listener it registers. ROMP_TEST_OWN is the page's own origin ("-" for a page with no location);
+# ROMP_TEST_PERF=1 publishes a performance collector on window.__rompPerf first, as federation.js does on the kernel's
+# page, in the shape of perf-telemetry.ts's wrapFrameHandler, counting every message it is handed.
 _BOOT_HARNESS = r"""
 'use strict';
 const ORIGIN = 'http://127.0.0.1:7777', OTHER = 'https://elsewhere.example';
-const LISTENERS = [], UPDATES = [];
+const OWN = process.env.ROMP_TEST_OWN;
+const LISTENERS = [], UPDATES = [], COUNTED = [];
 global.HTMLElement = function () {};
 global.window = global;
-const SHELL = { name: 'shell' };
+const GRAND = { name: "the shell's own parent" };
+const SHELL = { name: 'shell', parent: GRAND };
 global.parent = SHELL;
+global.top = GRAND;
 const OPENER = { name: 'a page on another origin that opened /timeline' };
 global.opener = OPENER;
-global.location = { origin: ORIGIN };
+global.location = OWN === '-' ? undefined : { origin: OWN };
 global.acquireVsCodeApi = () => ({ postMessage() {} });
 global.addEventListener = (t, f) => { if (t === 'message') LISTENERS.push(f); };
+if (process.env.ROMP_TEST_PERF === '1') {
+  global.__rompPerf = { wrapFrameHandler: (h) => (e) => { COUNTED.push(e && e.data && e.data.data && e.data.data.from); return h(e); } };
+}
 BOOT
 window.__rompConnectTimeline({ update: (d) => UPDATES.push(d.from) });
 const SENDERS = {
@@ -81,6 +91,7 @@ const SENDERS = {
   embedder: [SHELL, ORIGIN],      // the shell, this frame's parent
   peer: [{}, ORIGIN],             // another window on this origin
   opener: [OPENER, OTHER],        // the page on another origin that opened /timeline: this window's opener
+  top: [GRAND, OTHER],            // the top window, the shell's own parent on another origin: not this frame's parent
   stranger: [{}, OTHER],          // a window on another origin this one does not know
   sandboxed: [{}, 'null'],        // a sandboxed frame
   sandboxedSibling: [{ parent: SHELL }, 'null'],   // a sandboxed frame beside this one in the shell
@@ -96,43 +107,86 @@ Object.keys(SENDERS).forEach((k) => {
   if (SENDERS[k][0] !== undefined) { e.source = SENDERS[k][0]; e.origin = SENDERS[k][1]; }
   LISTENERS.forEach((f) => f(e));
 });
-process.stdout.write(JSON.stringify({ listeners: LISTENERS.length, updates: UPDATES }));
+process.stdout.write(JSON.stringify({ listeners: LISTENERS.length, updates: UPDATES, counted: COUNTED,
+                                      perf: typeof global.__rompPerf === 'object' }));
 """
+_OWN_ORIGIN = "http://127.0.0.1:7777"   # the harness's ORIGIN
+_HEARD = ["dispatch", "fedDirect", "self", "embedder", "peer"]
+_HEARD_NO_PEER = ["dispatch", "fedDirect", "self", "embedder"]
+
+
+def _run_boot(own, perf):
+    node = shutil.which("node")
+    if not node:
+        raise unittest.SkipTest("node not installed")
+    fx = tempfile.mkdtemp()
+    try:
+        path = os.path.join(fx, "boot.js")
+        with open(path, "w") as f:
+            f.write(_BOOT_HARNESS.replace("BOOT", km._TIMELINE_BOOT))
+        r = subprocess.run([node, path], capture_output=True, text=True, timeout=60,
+                           env=dict(os.environ, ROMP_TEST_OWN=own, ROMP_TEST_PERF="1" if perf else "0"))
+    finally:
+        shutil.rmtree(fx, ignore_errors=True)
+    if r.returncode != 0:
+        raise AssertionError("node failed:\n" + r.stderr[-2000:])
+    got = json.loads(r.stdout)
+    if got["perf"] != perf:
+        raise AssertionError("the harness published a collector: %r, asked for %r" % (got["perf"], perf))
+    return got
 
 
 class TimelineBootSenders(unittest.TestCase):
-    """The browser timeline's frame listener acts on a frame only from the senders windowSender hears
+    """The browser timeline's window listener hands a message on only from the senders windowSender hears
     (ui/webview/window-sender.ts): this page's own dispatch, this window, its parent (the shell), a window on this
-    origin (2026-09-25). A frame from any other sender (a page on another origin, a sandboxed frame) is ignored.
+    origin (2026-09-25). A message from any other sender (a page on another origin, the top window above the shell, a
+    sandboxed frame) is dropped there, before the page's performance collector sees it: neither drawn nor counted.
     ui/webview/timeline-boot-senders.test.ts pins the rule to windowSender itself, over a grid of receiving windows,
-    senders and origins; the rows here keep the kernel's own suite red on the widenings that grid names."""
+    senders and origins, with and without a real collector. The rows here hold the same rule in the kernel's own suite
+    over named senders, on a page on a loopback origin, on a page whose own origin is opaque (no window is a peer of it)
+    and on a page with no location; the receivers only that grid holds are VS Code's webview frames, whose parent is
+    the frame itself or deleted."""
 
     def test_a_data_frame_is_drawn_from_every_heard_sender_and_from_no_other(self):
-        node = shutil.which("node")
-        if not node:
-            raise unittest.SkipTest("node not installed")
-        fx = tempfile.mkdtemp()
-        try:
-            path = os.path.join(fx, "boot.js")
-            with open(path, "w") as f:
-                f.write(_BOOT_HARNESS.replace("BOOT", km._TIMELINE_BOOT))
-            r = subprocess.run([node, path], capture_output=True, text=True, timeout=60)
-        finally:
-            shutil.rmtree(fx, ignore_errors=True)
-        self.assertEqual(r.returncode, 0, r.stderr[-2000:])
-        got = json.loads(r.stdout)
+        got = _run_boot(_OWN_ORIGIN, perf=False)
         self.assertEqual(got["listeners"], 1, "the boot registers one window message listener")
-        self.assertEqual(got["updates"], ["dispatch", "fedDirect", "self", "embedder", "peer"],
+        self.assertEqual(got["updates"], _HEARD,
                          "drawn once from each heard sender, never from a page on another origin (the one that opened "
-                         "this page included), a sandboxed frame (beside or inside this one, or gone after it posted), "
-                         "an origin that overlaps this one's text or differs only in its port, or a sourceless post "
-                         "that names another origin")
+                         "this page included), the top window above the shell, a sandboxed frame (beside or inside this "
+                         "one, or gone after it posted), an origin that overlaps this one's text or differs only in its "
+                         "port, or a sourceless post that names another origin")
 
-    def test_source_the_check_heads_the_frame_listener(self):
+    def test_with_the_pages_collector_a_foreign_message_is_neither_drawn_nor_counted(self):
+        # the collector wraps the frame listener; the sender check runs outside it, so the collector counts exactly
+        # the frames the page draws
+        got = _run_boot(_OWN_ORIGIN, perf=True)
+        self.assertEqual(got["listeners"], 1)
+        self.assertEqual(got["updates"], _HEARD)
+        self.assertEqual(got["counted"], _HEARD, "the collector counted only the heard senders' frames")
+
+    def test_on_a_page_whose_own_origin_is_opaque_no_window_is_a_peer(self):
+        # a sandboxed page's origin is "null", and so is every sandboxed frame's: the same text is no shared origin
+        for perf in (False, True):
+            with self.subTest(perf=perf):
+                got = _run_boot("null", perf=perf)
+                self.assertEqual(got["updates"], _HEARD_NO_PEER, "a sandboxed frame (origin \"null\") is no peer")
+                self.assertEqual(got["counted"], _HEARD_NO_PEER if perf else [])
+
+    def test_on_a_page_with_no_location_no_window_is_a_peer(self):
+        for perf in (False, True):
+            with self.subTest(perf=perf):
+                got = _run_boot("-", perf=perf)
+                self.assertEqual(got["updates"], _HEARD_NO_PEER)
+                self.assertEqual(got["counted"], _HEARD_NO_PEER if perf else [])
+
+    def test_source_the_check_heads_the_window_listener_outside_the_collector(self):
         boot = km._TIMELINE_BOOT
-        self.assertIn('var onFrame=function(ev){if(!heardSender(ev))return;var m=ev.data;if(!m||!panel)return;', boot)
+        self.assertIn('window.addEventListener("message",function(e){if(!heardSender(e))return;frameListener(e);});', boot)
         self.assertEqual(boot.count("function heardSender(e){"), 1)
-        self.assertLess(boot.index("function heardSender(e){"), boot.index("var onFrame=function(ev){"))
+        self.assertEqual(boot.count("heardSender("), 2, "defined once, called once: by the window listener")
+        self.assertLess(boot.index("function heardSender(e){"), boot.index('window.addEventListener("message",'))
+        # the registry path takes the listener as it is: only federation.js calls it, with a MessageEvent it built
+        self.assertIn("window.__rompFed.onFrame(frameListener);", boot)
 
 
 if __name__ == "__main__":

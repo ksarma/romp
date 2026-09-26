@@ -322,9 +322,20 @@ test("wrapFrameHandler hands the event through and times by its data", () => {
   const h = harness();
   const p = createPerfTelemetry("waiting", h.deps);
   const seen: any[] = [];
-  const wrapped = p.wrapFrameHandler((e) => { seen.push(e.data); h.clock.t += 2; });
-  wrapped({ data: { type: "feed" } } as MessageEvent);
-  wrapped({ data: { type: "warn", text: "x" } } as MessageEvent);
+  const events: unknown[] = [];
+  const wrapped = p.wrapFrameHandler((e) => { seen.push(e.data); events.push(e); h.clock.t += 2; });
+  // the handler gets the event itself, not a copy of its data: a handler that reads the sender (the chat's head check,
+  // windowSender over e.source and e.origin) must see the post's own sender, and a copy with neither would read as this
+  // document's own dispatch
+  const sender = { name: "a sandboxed frame" };
+  const feed = { data: { type: "feed" }, source: sender, origin: "null" } as unknown as MessageEvent;
+  const warn = { data: { type: "warn", text: "x" } } as MessageEvent;
+  wrapped(feed);
+  wrapped(warn);
+  assert.equal(events.length, 2);
+  assert.ok(events[0] === feed && events[1] === warn, "the handler is handed each event object itself");
+  assert.equal((events[0] as any).source, sender, "...with its source");
+  assert.equal((events[0] as any).origin, "null", "...and its origin");
   assert.deepEqual(seen.map((m) => m.type), ["feed", "warn"]);
   const s: any = p.snapshot();
   assert.equal(s.frames.feed.n, 1);

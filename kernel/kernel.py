@@ -67247,11 +67247,13 @@ if(!P.createDiv)P.createDiv=function(o){return this.createEl('div',o);};
 if(!P.createSpan)P.createSpan=function(o){return this.createEl('span',o);};})();
 (function(){var api=window.acquireVsCodeApi(),panel=null;
 function post(m){api.postMessage(m);}
-// [fork] (2026-09-25) a frame counts only from the senders ui/webview/window-sender.ts's windowSender hears: this page's
-// own dispatch (the shim's and federation.js's frames, a MessageEvent with no source and no origin), this window, its
-// parent (the shell), or a window on this page's origin. Any other sender is foreign and its frame is ignored: a page on
-// another origin that opened this one, a sandboxed frame (origin "null"). tests/test_timeline_boot_shim.py runs it, and
-// ui/webview/timeline-boot-senders.test.ts runs this boot against windowSender itself over every window, sender and origin.
+// [fork] (2026-09-25) a window message counts only from the senders ui/webview/window-sender.ts's windowSender hears: this
+// page's own dispatch (the shim's and federation.js's frames, a MessageEvent with no source and no origin), this window,
+// its parent (the shell), or a window on this page's origin. Any other sender is foreign and its message is dropped at
+// the window listener below, ahead of the performance collector, so it is neither drawn nor counted: a page on another
+// origin that opened this one, a sandboxed frame (origin "null"). tests/test_timeline_boot_shim.py runs it, and
+// ui/webview/timeline-boot-senders.test.ts runs this boot against windowSender itself over every window, sender and
+// origin, with and without a collector.
 function heardSender(e){if(!e)return false;var s=e.source;
 if(s===null||s===undefined){if(e.origin===undefined||e.origin===null||e.origin==="")return true;}
 else{if(s===window)return true;if(window.parent&&window.parent!==window&&s===window.parent)return true;}
@@ -67259,7 +67261,7 @@ var o=window.location&&window.location.origin;return typeof o==="string"&&o!=="n
 // the frame listener, wrapped like every pane's through the page's performance collector when there is one
 // (ui/webview/perf-telemetry.ts, published on window.__rompPerf by federation.js, which loads before this boot),
 // so each frame's handling is timed by type; without a collector the plain listener
-var onFrame=function(ev){if(!heardSender(ev))return;var m=ev.data;if(!m||!panel)return;
+var onFrame=function(ev){var m=ev.data;if(!m||!panel)return;
 if(m.type==="data")panel.update(m.data);
 else if(m.type==="bars"&&panel.applyBars)panel.applyBars(m);
 else if(m.type==="activeChat"&&panel.setActiveChat)panel.setActiveChat(m.activeChat);
@@ -67276,9 +67278,12 @@ else if(m.type==="unknownOp"&&panel.unknownOp)panel.unknownOp(m);
 else if(m.type==="tagEditFailed"&&panel.tagEditFailed)panel.tagEditFailed(m);
 else if(m.type==="openViewsDialog"&&panel._openViewsDialog)panel._openViewsDialog(null);};
 var frameListener=(window.__rompPerf&&window.__rompPerf.wrapFrameHandler)?window.__rompPerf.wrapFrameHandler(onFrame):onFrame;
-window.addEventListener("message",frameListener);
+// [fork] the window path hears every window that can post to this page, so it hands the listener only a heard sender's
+// message, the sender check outside the collector's wrapper, as frame-listener.ts's listenForFrames installs every pane's
+window.addEventListener("message",function(e){if(!heardSender(e))return;frameListener(e);});
 // the merged data/bars frames come by direct call from federation.js once the listener is registered with it (federation.ts
-// onFrame/emit; the pane bundles register through frame-listener.ts) — without the registry the window dispatch carries them
+// onFrame/emit; the pane bundles register through frame-listener.ts) — without the registry the window dispatch carries them.
+// Only federation.js calls that path, with a MessageEvent it built itself, so the registry holds the listener as it is
 if(window.__rompFed&&window.__rompFed.onFrame)window.__rompFed.onFrame(frameListener);
 window.__rompTimelineOpenExternal=function(url){try{var u=new URL(url);if(u.protocol==="vscode:"){var q=u.searchParams;
 post({type:"deepLink",session:q.get("session"),anchor:q.get("anchor")||undefined,anchorT:Number(q.get("anchorT"))||undefined,anchorKind:q.get("anchorKind")||undefined,compose:q.get("compose")==="1"});
