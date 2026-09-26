@@ -88,8 +88,9 @@ This module holds five things, and it never skips: a pin that skips reports gree
    value '#' there, cuts the flag off as a comment). A run text whose every expression is the one shape batch 917's
    evaluator reads (command_on in tests/test_ci_pytest_workers.py, reused: matrix.os compared with one label, choosing
    between two quoted values, the Run pytest step's worker count since #916) is read once for each label the expressions
-   name and once for every other label, each text substituted as that cell's shell reads it (matrix_os_texts; each row
-   names its cell), and a step whose run text holds any other expression and spells pytest anywhere in it, in a comment
+   name and once for every other label, each text substituted as that cell's shell reads it (matrix_os_texts;
+   pytest_invocations' docstring states which rows keep their cell and which, equal in every cell, are kept once with
+   none), and a step whose run text holds any other expression and spells pytest anywhere in it, in a comment
    line or a trailing comment too, is `unparsed`, red until the value moves to an env: key and the run text reads it as
    a shell variable (the allowlist's second verify pass, 2026-09-24: such a step read ok, or listed, while pytest ran
    without the flag; round 5's ruling A, 2026-09-24: a step whose only pytest spelling sat in a comment gave no row, and
@@ -1299,7 +1300,9 @@ def matrix_os_texts(lines):
 
 
 def os_phrase(label):
-    """How a report names the cell a row or a refusal was read for: empty for a run text with no expression."""
+    """How a report names the cell a row or a refusal was read for: empty for a row whose `os` is None, which names no
+    cell: a row read from a run text with no expression, or from one holding an expression batch 917's evaluator does
+    not read (read as written, and unparsed), and a row the same in every cell's text, kept once."""
     if label is None:
         return ""
     if label == OTHER_OS:
@@ -2376,9 +2379,10 @@ def run_pytest_status(src):
     without pipefail, so a pipe's status is its last command's) or a trailing `&`, each of which drops pytest's status.
     Until the ruling nothing held this: with any of those on the step the module read green (the refuter's mutants, 89
     passed). The check reads five parts:
-    1. no if:, continue-on-error: or shell: key on the step; every line at the job's key indent (4) is a key, spelled as
-       YAML_KEY_RE reads one, and an entry of RUN_PYTEST_JOB_KEYS, the job keys this check reads or knows to be inert,
-       each entry with its reason (round 6's ruling A, 2026-09-25); of the keys it reads, an if:, a continue-on-error:
+    1. no if:, continue-on-error: or shell: key on the step; every line at the job's key indent (4), blank lines and
+       comment lines aside, is a key, spelled as YAML_KEY_RE reads one, and an entry of RUN_PYTEST_JOB_KEYS, the job
+       keys this check reads or knows to be inert, each entry with its reason (round 6's ruling A, 2026-09-25); of the
+       keys it reads, an if:, a continue-on-error:
        or a defaults: on the job is refused, and so is every key that is not an entry, by name, among them a
        container:, whose env: and options: set the environment the step runs in, a services: and any key GitHub adds
        later, and a line at that indent it cannot read as a key, such as a quoted key or a merge key; and no defaults:
@@ -3337,13 +3341,16 @@ class PopulationCheckReds(unittest.TestCase):
         control = self._with_shell_job_env(self._with_step_in_shell_job(runner)[0])
         self.assertEqual([verdict(i) for i in self._new(control)], ["ok"])
 
-    def test_a_pytest_step_whose_run_text_holds_an_expression_is_unparsed(self):
+    def test_a_pytest_step_whose_run_text_holds_an_expression_the_evaluator_does_not_read_is_unparsed(self):
         # the allowlist's second verify pass (S08, S09, S10, 2026-09-24): GitHub substitutes a `${{ }}` expression into
         # the run text before the shell reads it, and the parser reads the text as written. `${{ '#' }}` before the flag
         # on either of the file's pytest lines, or a matrix value '#' there, read ok (or listed, on the served step)
         # while pytest got no flag (the pass's substitution by string replacement, then bash with a python shim that
-        # printed its argv). A pytest command in a step whose run text holds `${{`, wherever it sits, is unparsed now;
-        # neither of the file's pytest steps holds one, and each case is in the forms the scan accepts
+        # printed its argv). A pytest command in a step whose run text holds a `${{ }}` expression in a shape batch
+        # 917's evaluator does not read, wherever it sits, is unparsed now (an expression the evaluator reads is read
+        # once per cell: test_an_expression_batch_917s_evaluator_reads_is_read_once_per_cell). The Run pytest step
+        # holds one the evaluator reads, its worker count, beside which S08's plant sits; the served step holds none;
+        # and each case is in the forms the scan accepts
         expr = "${{ '#' }}"
         run_line = [l for l in self.src.splitlines() if l.startswith("        run: python -m pytest -q -n ${{ ")]
         served_line = [l for l in self.src.splitlines() if l.startswith("          python -m pytest tests/test_*_browser.py")]
@@ -4554,11 +4561,13 @@ def _launchers_in(src, filename):
     in a tuple, a walrus or a conditional expression, among others, is called by code the census does not read, and a
     pytest session it starts in this process loads the plugins the outer run excluded. A module that does not parse is
     one unparsed row. A list or tuple on the right of an `in` or `not in` test, or on either side of an `==` or `!=`
-    test, is a value compared, not an argv, and is not read (the landing merge after batch 917 added the second). Not
-    read, stated as the residual (test_each_form_outside_the_read_gives_no_row, and for the modules the prefilter skips
+    test, is not read (the landing merge after batch 917 added the second). Not read, stated as the residual
+    (test_each_form_outside_the_read_gives_no_row, and for the modules the prefilter skips
     test_the_walk_parses_a_module_holding_a_star_import_and_what_it_skips_gives_no_row, hold cases of it, each with no
-    row): an argv assembled one element at a time (append calls); an option element _argv_command does not take apart
-    that does not itself spell pytest and that no element spelling pytest follows, other than a cluster ending in m
+    row): an argv assembled one element at a time (append calls); a list or tuple on either side of an `==` or `!=`
+    test, which the other operand's user-defined __eq__ or __ne__ is handed and may run; an option element _argv_command
+    does not take apart that does not itself spell pytest and that no element spelling pytest follows, other than a
+    cluster ending in m
     right before an element that is not a constant (its docstring); an argv whose pytest follows a wrapper, built away
     from the call that runs it; a command string held in a variable or built with %, + or .format, a `-c` string held in
     a variable among them; any call reached through a name this resolution does not reach and does not refuse, among
@@ -4586,7 +4595,7 @@ def _launchers_in(src, filename):
         return [{"file": base, "line": e.lineno or 1, "func": "<module>", "kind": "module", "argv": [], "flag": False,
                  "unparsed": "the module does not parse under this interpreter (%s), so nothing in it was read" % e.msg}]
     parents = {}
-    compared = set()            # the literals a comparison compares (below): values compared, never an argv
+    compared = set()            # the literals a comparison compares (below), which the census does not read
     # gathered in this walk, not walks of their own (walking every module is most of the census's cost): the imports,
     # the assignments from a name, the global and nonlocal statements, and the header expressions: each expression
     # Python evaluates where a def, lambda or class stands rather than in its body (a decorator, a default, an
@@ -4597,8 +4606,9 @@ def _launchers_in(src, filename):
             parents[child] = parent
         if isinstance(parent, ast.Compare):
             # the right operand of an in or not in test, a set of names, and either operand of an == or != test, a value
-            # the other is compared with: the comparison yields a bool and hands the literal to nothing that runs it
-            # (batch 917's tests/test_ci_pytest_workers.py compares a command's first three words with
+            # the other is compared with; neither is read. An == or != test hands the literal only to the other
+            # operand's __eq__ or __ne__, which a user class can define to run it; that residual is stated in the
+            # docstring (batch 917's tests/test_ci_pytest_workers.py compares a command's first three words with
             # ["python", "-m", "pytest"], which read as an unflagged launcher until the landing merge)
             operands = [parent.left] + parent.comparators
             for k, op in enumerate(parent.ops):
@@ -5229,11 +5239,12 @@ class ChildPytestLaunchers(unittest.TestCase):
         self.assertIn("a constant element named 'pytest' after argv[0]", rows[0]["unparsed"])
         self.assertEqual(_launchers_in('import os\nname = "x"\nok = os.path.basename(name) in ("pytest", "py.test")\nbad = name not in ["pytest", "-q"]\n', "t.py"), [],
                          "the right operand of an in test is a set of names, not an argv")
-        # either side of an == or != test is a value compared (batch 917's tests/test_ci_pytest_workers.py, at the landing
-        # merge); the same literal handed to a call beside it is still read
+        # either side of an == or != test is not read (batch 917's tests/test_ci_pytest_workers.py, at the landing merge;
+        # OUTSIDE_THE_READ holds the residual, a user __eq__ that runs it); the same literal handed to a call beside it is
+        # still read
         self.assertEqual(_launchers_in('import shlex\nok = shlex.split(cmd)[:3] == ["python", "-m", "pytest"]\n'
                                        'bad = ("python", "-m", "pytest") != tuple(argv)\nsame = a == b == ["pytest", "-q"]\n', "t.py"), [],
-                         "an operand of an == or != test is a value compared, not an argv")
+                         "an operand of an == or != test is not read")
         rows = _launchers_in('import subprocess\nok = argv == ["python", "-m", "pytest"] and subprocess.run(["python", "-m", "pytest"])\n', "t.py")
         self.assertEqual([(r["kind"], r["flag"]) for r in rows], [("<interpreter> -m pytest", False)], [_describe_launcher(r) for r in rows])
         rows = _launchers_in('ok = ["python", "-m", "pytest"] < argv\n', "t.py")
@@ -5698,6 +5709,11 @@ class ChildPytestLaunchers(unittest.TestCase):
         ("an option the census does not take apart before -m and a name", 'import subprocess, sys\n'
          'subprocess.run([sys.executable, "-BW", "error", "-m", mod])\n'),
         ("a wrapper-headed argv held in a variable", 'import subprocess\ncmd = ["env", "pytest", "-q"]\nsubprocess.run(cmd)\n'),
+        # an operand of an == or != test is not read (the landing merge after batch 917), and the other operand's
+        # user-defined __eq__ or __ne__ is handed it and may run it, as this __eq__ does (found verifying round 6's
+        # build, 2026-09-26)
+        ("an == operand a user __eq__ runs", 'import subprocess\nclass Runs:\n    def __eq__(self, other):\n'
+         '        return subprocess.run(other).returncode == 0\nok = ["python", "-m", "pytest"] == Runs()\n'),
     )
 
     def test_each_form_outside_the_read_gives_no_row(self):

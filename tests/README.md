@@ -120,7 +120,8 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   `conftest.py`'s `pytest_configure` ignores it by MESSAGE prefix
   (`ignore:can_use_tool will not be invoked:UserWarning`): pytest re-parses the
   entries at every application, and one naming a class it cannot import is dropped
-  with a PytestConfigWarning (every xdist worker until the venv path is inserted; a
+  with a PytestConfigWarning (every xdist worker whose interpreter has no SDK, which
+  on a box is every worker, until the emitting module inserts the venv path; a
   controller whose interpreter has no SDK, which on a box is every controller; and
   the CI steps that install no SDK, today the vscode-extension job's served-page
   pytest step, which loads this conftest; the Python matrix cells' interpreter (the

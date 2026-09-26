@@ -99,8 +99,9 @@ def pytest_configure(config):
     (before this every -n run needed -p no:warnings). Matched on the MESSAGE PREFIX with the base category,
     never on the class: pytest parses each filterwarnings entry every time it applies them (configure,
     collection, each test), and an entry naming a class it cannot import is dropped with a
-    PytestConfigWarning, which is: every xdist worker until the emitting module inserts the venv path; a
-    controller whose interpreter has no SDK, which on a box is every controller; and the CI steps that install
+    PytestConfigWarning, which is: every xdist worker whose interpreter has no SDK, which on a box is every
+    worker, until the emitting module inserts the venv path; a controller whose interpreter has no SDK,
+    which on a box is every controller; and the CI steps that install
     no SDK, today the vscode-extension job's served-page pytest step, which loads this conftest (the Python matrix
     cells' interpreter, the five Linux cells and the two macOS cells on a weekly or dispatch run, imports the class
     since the SDK install step, in the controller and, on the Linux cells' two workers since batch 917, in each
