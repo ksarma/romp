@@ -719,6 +719,9 @@ export async function startPageServer({ dist, python = "python3", log = () => {}
   // ROMP_CLAUDE_BIN resolves to the real CLI, so it is set to a binary that runs nothing rather than removed.
   env.ROMP_SERVICE_ENV_FILE = env.ROMP_SERVICE_ENV = path.join(tmp, "no-service.env");   // never created
   env.ROMP_MODEL_CATALOG = "off";
+  env.ROMP_PRICE_FEED = "off";   // and no fetch of the public price table: the cost view's /analytics build starts one whenever the
+  //   kernel's in-memory price cache is stale, which at boot it always is, and a pane the bench drives can open Token usage;
+  //   the bench runs from a shell, so the runner's floor never reaches this kernel (the review of PR 878, round 2)
   env.ROMP_CLAUDE_BIN = "/bin/false";
   // One more of conftest's floors: a route that constructs the SDK backend decides whether to wrap CLIs in
   // systemd-run scopes (on by default under a supervised kernel, probing the user manager). The retired

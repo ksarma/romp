@@ -377,6 +377,8 @@ def prepare_env(state, claude_dir, private_dir):
         #                                           bin/romp's down path and the extension still default to 7432
         "ROMP_KERNEL_NO_OPEN": "1",
         "ROMP_MODEL_CATALOG": "off",
+        "ROMP_PRICE_FEED": "off",                # and no fetch of the public price table when a driven pane opens Token usage:
+        #                                           the bench imports the kernel from a shell, where the runner's floor never reaches
         "ROMP_CLI_SCOPE": "0",
         "ROMP_CLAUDE_BIN": "/bin/false",
         "ROMP_SERVE_TOKEN": "perf-bench-token-not-for-use",

@@ -2256,9 +2256,19 @@ _ESBUILD_TEXT_READERS = {
     # test_settings_page.py (upstream's, the same pull-in) reads esbuild.js's TEXT to pin the settings page's bundle entry
     # beside the kernel's served script tag: a source pin, no build and no copy
     "test_settings_page.py",
+    # test_security_price_feed.py (the review of PR 878, round 3) reads vscode-extension/install.sh as TEXT and locates its
+    # `node esbuild.js` line to hold the script's order (npm install, the build, the editor-CLI gate, npx) behind
+    # SECURITY.md's install condition, and one pin's message names the extension's test build: a source pin, no build, no copy
+    "test_security_price_feed.py",
 }
 _TREE_COPIERS = {"test_lab_dist.py", "test_github_repo.py",             # test_github_repo copies a repo, never dist
                  "test_perf_bench.py",                                  # upstream's copies kernel/ into a scratch checkout, never dist
+                 # test_price_feed_census.py copies the census script's scanned scope (kernel/, cli/, postal/, bin/, hooks/, ui/,
+                 # vscode-extension/src), the named files (bootstrap.sh, install.sh, vscode-extension/install.sh,
+                 # tools/file-comments-host.mjs and the script's counts, scripts/network-inventory-expected.json) and the script
+                 # into a scratch root to run the script over its mutations, alone or joined into shared runs (the review of
+                 # PR 878, round 2); it never builds and never copies dist
+                 "test_price_feed_census.py",
                  # upstream's copy primitive and its guard (the same entry as above): dist_copy.py IS a copytree over
                  # dist for upstream's own labs, called by none here (_TWIN_CALLERS); test_dist_copy_staging.py copies a
                  # scratch tree to prove the staging names are skipped, never the extension's dist

@@ -168,9 +168,13 @@ def _free_port():
 # GIT_CONFIG_NOSYSTEM, which keep the kernel's boot-time git (the build sha, the release-tag probe) off the
 # developer's git configuration, and the four ROMP_ names of its floor the lab does not set itself:
 # ROMP_SERVICE_ENV_FILE and ROMP_SERVICE_ENV (no real service.env), ROMP_CLAUDE_BIN (no real claude CLI) and
-# ROMP_CLI_SCOPE (no systemd-run). The lab's own names go over those, and a postal bus of its own: ROMP_POSTAL_PORT
-# at a free port with ROMP_POSTAL_PEERS=0 and ROMP_POSTAL_CLIENT_ONLY=1, so the kernel's boot-time ensure starts
-# nothing there (client-only applies in the legacy singleton scheme alone, postal_service.is_client_only).
+# ROMP_CLI_SCOPE (no systemd-run). The lab's own names go over those: its roots and serve seams; the three network
+# switches off (ROMP_MODEL_CATALOG, ROMP_UPDATE_CHECK and ROMP_PRICE_FEED: tests/conftest.py floors the catalog and
+# the price feed in the RUNNER's environment, which a kernel built from names never inherits, so the lab sets both
+# itself, and two served labs open the Token usage view whose build starts the feed fetch); and a postal bus of its
+# own: ROMP_POSTAL_PORT at a free port with ROMP_POSTAL_PEERS=0 and ROMP_POSTAL_CLIENT_ONLY=1, so the kernel's
+# boot-time ensure starts nothing there (client-only applies in the legacy singleton scheme alone,
+# postal_service.is_client_only).
 # The environment the driver hands the kernel it relaunches rides the lab's cfg.json, a file, so it is narrowed once
 # more (relaunch_env) to the ROMP_* and XDG_* names, CLAUDE_CONFIG_DIR, PATH and HOME and the three conftest names:
 # never anything else a lab put in its kernel's environment, such as the probe the served legs plant, and never a
@@ -200,6 +204,12 @@ def kernel_env(lab, claude, dist, port, token, **seams):
                ROMP_MODEL_CATALOG="off",     # hermetic: the T222 catalog fetch must never reach the network
                ROMP_UPDATE_CHECK="off",      # hermetic: the update check reads the release remote's tags over the network, and a
                #   newer release raises the shell's update banner over the page under test (CI, 2026-09-13)
+               ROMP_PRICE_FEED="off",        # hermetic: the cost view's /analytics build starts a GET of the public price list on a
+               #   third party's host whenever the kernel's in-memory price cache is stale, which at boot it always is. The
+               #   served labs that open Token usage (the settings recut and the widget reorder browser tests click #ra-open)
+               #   fetched it on every run, because tests/conftest.py's floor is the runner's and never reaches a kernel built
+               #   from names (2026-09-20). The catalog's spelling, one variable and the value off (kernel.py _price_feed_off);
+               #   tests/test_price_feed_floor.py is the executed proof that off makes the refresh inert
                ROMP_POSTAL_PORT=str(_free_port()), ROMP_POSTAL_PEERS="0", ROMP_POSTAL_CLIENT_ONLY="1",
                ROMP_POSTAL_HERMETIC="1")   # the port above is this run's own: the bus honours it under a test (2026-09-11)
     env.update(seams)
@@ -536,7 +546,7 @@ class RelaunchEnv(unittest.TestCase):
         self.assertNotIn("RUNNER_SECRET_PROBE", names, "the relaunch reads the file: a name outside the list must not be in it")
         self.assertNotIn("ROMP_STATE_DIR", names, "a live kernel's export outranks the XDG root; kernel_env never takes it")
         for name in ("XDG_STATE_HOME", "CLAUDE_CONFIG_DIR", "ROMP_MANAGER_PORT", "ROMP_KERNEL_NO_OPEN", "ROMP_SERVE_TOKEN",
-                     "ROMP_KERNEL_PORT", "ROMP_DIST_DIR", "ROMP_MODEL_CATALOG", "PATH", "HOME"):
+                     "ROMP_KERNEL_PORT", "ROMP_DIST_DIR", "ROMP_MODEL_CATALOG", "ROMP_PRICE_FEED", "PATH", "HOME"):
             self.assertIn(name, names, "the relaunched kernel needs %s" % name)
         self.assertEqual(out["XDG_STATE_HOME"], os.path.join(lab, "xdg"))
         self.assertEqual(out["ROMP_KERNEL_PORT"], "4321")
@@ -567,7 +577,8 @@ class RelaunchEnv(unittest.TestCase):
                          "a ROMP_TESTS_ name is the run's own: the relaunched kernel reads none, the file must not carry one")
         for name in identity:
             self.assertNotIn(name, written, "the runner's %s must never reach the relaunched kernel" % name)
-        for name in ("ROMP_KERNEL_PORT", "ROMP_SERVE_TOKEN", "ROMP_DIST_DIR", "ROMP_MODEL_CATALOG", "ROMP_POSTAL_PORT"):
+        for name in ("ROMP_KERNEL_PORT", "ROMP_SERVE_TOKEN", "ROMP_DIST_DIR", "ROMP_MODEL_CATALOG", "ROMP_PRICE_FEED",
+                     "ROMP_POSTAL_PORT"):
             self.assertIn(name, written, "the lab's own %s still reaches the relaunched kernel" % name)
 
 
@@ -598,6 +609,7 @@ class LabKernelEnv(unittest.TestCase):
     OWN = {"XDG_STATE_HOME": os.path.join(LAB, "xdg"), "CLAUDE_CONFIG_DIR": os.path.join(LAB, "claude"),
            "ROMP_MANAGER_PORT": "1", "ROMP_KERNEL_NO_OPEN": "1", "ROMP_SERVE_TOKEN": "testtok",
            "ROMP_KERNEL_PORT": "4321", "ROMP_DIST_DIR": os.path.join(LAB, "dist"), "ROMP_MODEL_CATALOG": "off", "ROMP_UPDATE_CHECK": "off",
+           "ROMP_PRICE_FEED": "off",
            "ROMP_POSTAL_PEERS": "0", "ROMP_POSTAL_CLIENT_ONLY": "1", "ROMP_POSTAL_HERMETIC": "1"}
     # the port a kernel with no ROMP_POSTAL_PORT of its own dials: the machine's bus, when a session's shell names it
     MACHINE_BUS_PORT = "25302"
@@ -623,6 +635,37 @@ class LabKernelEnv(unittest.TestCase):
         # every ROMP_ name is the lab's own or the run's floor: nothing else of the runner's
         self.assertEqual({k for k in env if k.startswith("ROMP_")} - set(self.OWN) - set(self.FLOOR), {"ROMP_POSTAL_PORT"},
                          "a ROMP_ name of the runner's reached the lab kernel")
+
+    def test_the_lab_kernel_turns_the_price_feed_off_itself_whatever_the_runner_carries(self):
+        # tests/conftest.py floors ROMP_PRICE_FEED=off (and ROMP_MODEL_CATALOG=off) in the RUNNER's environment, and
+        # kernel_env copies KERNEL_ENV_NAMES and the XDG_* names alone, so neither floor reaches a lab kernel from there:
+        # the lab sets both itself, in the catalog's spelling (one variable, the value off; kernel.py _price_feed_off,
+        # read as the first statement of _refresh_remote_prices). Two served labs open Token usage (the settings recut
+        # and the widget reorder browser tests click #ra-open), and the /analytics build behind it starts a GET of the
+        # public price list on a third party's host when the kernel's in-memory cache is stale, which at boot it always
+        # is: without this key their lab kernels fetched it on every run (2026-09-20). tests/test_price_feed_floor.py is
+        # the executed proof that off makes the refresh inert; this pins that the lab kernel is handed it.
+        with mock.patch.dict(os.environ, self.FLOOR):
+            os.environ.pop("ROMP_PRICE_FEED", None)        # a runner outside pytest: no floor of either switch at all
+            os.environ.pop("ROMP_MODEL_CATALOG", None)
+            env = kernel_env(self.LAB, os.path.join(self.LAB, "claude"), os.path.join(self.LAB, "dist"), 4321, "testtok")
+        self.assertEqual(env.get("ROMP_PRICE_FEED"), "off",
+                         "the lab kernel's price feed switch is the lab's own, never the runner's: the served labs that open "
+                         "Token usage fetch the feed without it")
+        self.assertEqual(env.get("ROMP_MODEL_CATALOG"), "off", "beside the catalog's switch, the precedent it copies")
+        # the kernel the driver relaunches reads the lab's cfg.json (relaunch_cfg): it is handed the same switch
+        self.assertEqual(relaunch_env(env).get("ROMP_PRICE_FEED"), "off", "the relaunched lab kernel must not fetch either")
+        # a runner whose shell exports the switch with another value: the lab's own still wins, since a lab kernel is
+        # hermetic by its own environment, never by the developer's
+        with mock.patch.dict(os.environ, dict(self.FLOOR, ROMP_PRICE_FEED="on")):
+            env = kernel_env(self.LAB, os.path.join(self.LAB, "claude"), os.path.join(self.LAB, "dist"), 4321, "testtok")
+        self.assertEqual(env.get("ROMP_PRICE_FEED"), "off", "the runner's value never reaches the lab kernel")
+        # the composition: the name and value handed are the ones the kernel reads (a source pin on kernel.py's
+        # _price_feed_off; the executed proof that this value makes the refresh inert is tests/test_price_feed_floor.py)
+        self.assertIn("def _price_feed_off():", KERNEL_SRC, "the kernel's price feed switch, the read the lab's key is for")
+        body = KERNEL_SRC.split("def _price_feed_off():", 1)[1].split("\ndef ", 1)[0]
+        self.assertIn('os.environ.get("ROMP_PRICE_FEED")', body, "the kernel reads the variable the lab sets")
+        self.assertIn('== "off"', body, "and recognises the value the lab hands it")
 
     def test_the_lab_kernels_postal_bus_is_a_port_of_its_own_and_is_never_started(self):
         env = self._env({**self.FLOOR, "ROMP_POSTAL_PORT": self.MACHINE_BUS_PORT})

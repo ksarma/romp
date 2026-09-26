@@ -28,6 +28,7 @@ var SW = require('./status-widgets.ts');   // the status line's widgets (T409): 
 var TW = require('./tab-widgets.ts');   // the tab-title widgets (T379): the registry the Tab widgets section's rows render from, the strip's own module
 var SC = require('./status-controls.ts');   // the status line's controls (T415 part two): the preview draws them through the line's own renderer, over a demo status
 var LS = require('./landing-settle.ts');   // gestureEvidence: the chat's rule for telling the user's scroll from the browser's own (the section ask ends only on input, T379 follow-up)
+var raAgo = require('./api-health-merge.ts').agoWords;   // the Token usage line's fetch age in words: the one helper the shell's API-health popup uses for its as-of (T316), now under 45 s, then rounded minutes, rounded hours under 24 h, rounded days, so the line says 30 days ago where the popup does (the review of PR 878, round 2: a copy of its own here counted hours without end)
 function kb() { return (typeof window !== 'undefined' && window.__rompKernelBase) || ''; }
 function ku(path) {
   var tok = (typeof window !== 'undefined' && window.__rompKernelToken) || '';
@@ -2132,9 +2133,18 @@ function initGear(post, opts) {
     else { JORDER.forEach(function (k) { var bj = (j.byJudge || {})[k]; if (bj) segs.push({ label: k, color: JCOL[k] || '#888', in: bj.in || 0, out: bj.out || 0, calls: bj.calls || 0, cost: bj.cost || 0 }); });
       Object.keys(j.byJudge || {}).forEach(function (k) { if (JORDER.indexOf(k) < 0 && k !== '?') { var bj = j.byJudge[k]; segs.push({ label: k, color: '#888', in: bj.in || 0, out: bj.out || 0, calls: bj.calls || 0, cost: bj.cost || 0 }); } }); }
     return segs.filter(function (s) { return (s.in + s.out) > 0; }); }
+  // The price-source line's node, under #ra-note. It EXISTS exactly while there is text for it (the payload named a
+  // source): a payload without the block leaves no node behind, empty or hidden, so an older kernel's modal is
+  // byte-for-byte what it was. One node across re-renders (the metric and group buttons re-render in place).
+  var raPrice = null;
+  function raPriceLine(text) {
+    if (!text) { if (raPrice) { raPrice.remove(); raPrice = null; } return; }
+    if (!raPrice) { raPrice = document.createElement('div'); raPrice.id = 'ra-price'; raPrice.className = 'ra-price'; raNote.parentNode.insertBefore(raPrice, raNote.nextSibling); }
+    raPrice.textContent = text;
+  }
   function raRender() {
-    if (raState.loading) { raChart.innerHTML = '<div class=ra-empty>loading…</div>'; raLegend.innerHTML = ''; raNote.textContent = ''; return; }
-    var d = raState.data; if (!d) { raChart.innerHTML = '<div class=ra-empty>no data</div>'; return; }
+    if (raState.loading) { raChart.innerHTML = '<div class=ra-empty>loading…</div>'; raLegend.innerHTML = ''; raNote.textContent = ''; raPriceLine(''); return; }
+    var d = raState.data; if (!d) { raChart.innerHTML = '<div class=ra-empty>no data</div>'; raPriceLine(''); return; }
     var sess = d.sessions || { in: 0, out: 0, cost: 0 };
     // Two session-dollar figures can arrive: `ledger` is the CLI's own per-turn cost as the rail's
     // recorder folded it (spend.json), `cost` is tokens × a price table over the whole period. The CLI's
@@ -2186,9 +2196,12 @@ function initGear(post, opts) {
                              + (ledFrom ? ' from ' + ledFrom + ' (' + fmtUsd(led.usd) + ') plus a token-price estimate for the time before ' + ledFrom + ' (' + fmtUsd(before) + '); recording began partway through that ' + (dayB ? 'day' : 'hour') + ', so turns earlier in it are in neither figure' : '')
                              + (led.keyed ? '; key-billed turns only, login turns left out' : '')
                              + (led.preFix ? '; includes days recorded before the per-turn fix' : '')
-                         : ' · session $ estimated from token prices; fast mode draws more than shown') : ''); }
+                         : ' · session $ estimated from token prices; fast mode draws more than shown') : '');
+    // Where the dollar figures' prices came from, on its own line under the footnote, in both metrics: the payload's
+    // priceFeed block worded by raPriceNote, or no node at all when the payload carries none (an older kernel).
+    raPriceLine(raPriceNote(d.priceFeed)); }
   function raFetch() { raState.loading = true; raRender();
-    fetch(ku('/analytics?window=' + raState.window), { cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (d) { raState.loading = false; raState.data = d; raRender(); }).catch(function () { raState.loading = false; raChart.innerHTML = '<div class=ra-empty>analytics unavailable</div>'; raLegend.innerHTML = ''; raNote.textContent = ''; }); }
+    fetch(ku('/analytics?window=' + raState.window), { cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (d) { raState.loading = false; raState.data = d; raRender(); }).catch(function () { raState.loading = false; raChart.innerHTML = '<div class=ra-empty>analytics unavailable</div>'; raLegend.innerHTML = ''; raNote.textContent = ''; raPriceLine(''); }); }
   if (raOpen) raOpen.onclick = function (e) { e.stopPropagation(); endDrags(); raBack.hidden = false; p.hidden = true; raFetch(); };   // the card hides here too: a drag in flight ends first (the migration read's low 2)
   // the panel's every close returns to the CARD it was opened from (the T409 tidy's read found the gap): a bare hide of the layer
   // left the card hidden too, and with nothing posting settings off the shell kept its transparent full-window frame over the
@@ -2209,4 +2222,97 @@ function initGear(post, opts) {
   document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && raBack && !raBack.hidden) raHide(); });
 }
 
-module.exports = { initGear };
+// The Token usage modal says where its dollar figures' prices came from (the user 2026-09-20, with the feed's off
+// switch): the kernel's /analytics payload carries `priceFeed`, the state of the per-model price table, and this
+// words it in the payload's own terms. Pure: the block in, the line's text out, '' for a payload without the block
+// (an older kernel) or with a `source` this view does not know (absent beats a false statement). The block's shape
+// is the kernel's _price_feed_status: `source` 'feed' (the live table; `ageS` seconds since it landed; `rows` the
+// built-in ids it matched, of the `known` the table holds, so a feed that matched some of them is said to price
+// those and no more, and `matched` above `rows` is rows the feed had for known models that could not be read, said
+// apart from models it never named; `off` and `lastError` say whether the next refresh is refused by the switch or the last one
+// failed, the rows serving either way: the switch stops traffic, not data) or 'defaults' (the built-in defaults)
+// with a `reason`: 'off' (ROMP_PRICE_FEED=off), 'failed' (`lastError`, the kernel's short reason for the failure,
+// never the response body), 'empty' (a landed feed left no usable row: `matched` 0 is a feed naming no known model,
+// above 0 is rows for known models that could not be read), 'inflight' (a fetch is under way and nothing has landed
+// or failed before it: the first open of the modal, whose payload is built before the fetch it starts lands, so the
+// next open shows the feed), 'unfetched' (no attempt yet). Each reason is worded on its own: a fetch in flight is
+// not "nothing fetched yet" (review round 1). The kernel sends 'inflight' only while no fetch has landed or failed,
+// since it ranks a landed or failed result above a flight (tests/test_price_feed_off.py
+// ReattemptKeepsTheEarlierResult), so during a re-attempt the line still words the earlier result. On either source
+// `overrides` counts the rows the user's model-prices.json put in effect, and the line says so: those rows price
+// their models whichever table the line names. On either source too, `unrecognised` is the kernel's boolean for a
+// ROMP_PRICE_FEED value that is neither off nor unset (the review of PR 878: only off turns the feed off, so such a
+// value leaves it on, and until this key it read the same as an unset variable on every surface): the line says
+// so, as one clause last before the override count, naming the variable so the reader knows what to fix and never
+// the value, since the block rides the auth-exempt /version and carries no environment text. On either source too,
+// `overrideRowsRejected` counts the rows of model-prices.json the kernel could not read (the re-ruling of that review,
+// 2026-09-21: such a row is skipped alone and every other row applies, where the round's shape voided every row after
+// it): the line says so last, after the override count, as a count and never the keys (the block rides /version; the
+// kernel's own log names each row once). `overrideFault` is the kernel's class for that file: 'row' when rows were
+// skipped (the count says how many), 'file' when the file could not be read as a JSON object and was ignored, so none
+// of it applies: the line says that in the same slot, as fixed text, never the path or the file's text (the second
+// round of that review: the line worded the skipped rows and not the whole-file fault, so a file discarded whole read
+// as a clean one, the worse fault silent on the surface the user looks at). A block without a newer key (an older
+// kernel) is worded as the older shape. The fetch age is worded by the shell's one age helper (api-health-merge.ts
+// agoWords, bound as raAgo above), so the line and the API-health popup say days past 24 h alike.
+// tests/test_price_feed_vocabulary.py holds these words and the kernel's to one set.
+function raPriceNote(pf) {
+  if (!pf || typeof pf !== 'object') return '';
+  // rows from the user's model-prices.json price their models whichever table the line names, so the count is said
+  // on either source, last (a block without `overrides`, an older kernel, says nothing about the file)
+  var ovr = typeof pf.overrides === 'number' && pf.overrides > 0
+    ? pf.overrides + (pf.overrides === 1 ? ' row' : ' rows') + ' overridden by model-prices.json' : '';
+  // the switch set to a value that is not off (the kernel's `unrecognised`, true only as its boolean; the kernel reads
+  // off and this as exclusive): the feed stays on, and the line says so on either source, naming the variable and
+  // the rule so the reader knows what to change, never the value (a block without the key, an older kernel, says nothing)
+  var unrec = pf.unrecognised === true
+    ? 'ROMP_PRICE_FEED is set to a value that is not off, so the feed stays on (only off turns it off)' : '';
+  // rows of the file the kernel could not read and skipped (the kernel's `overrideRowsRejected`, a number above zero):
+  // said after the override count, which says what the file changed, so the reader knows the rest of the file still
+  // applies and how much of it did not read; a count only, never a key (a block without the key, an older kernel, says nothing)
+  var rej = typeof pf.overrideRowsRejected === 'number' && pf.overrideRowsRejected > 0
+    ? pf.overrideRowsRejected + (pf.overrideRowsRejected === 1 ? ' row' : ' rows') + ' of model-prices.json could not be read and '
+      + (pf.overrideRowsRejected === 1 ? 'was' : 'were') + ' skipped (the rest of the file applies)' : '';
+  // the whole file could not be read as a JSON object and was ignored (the kernel's `overrideFault` 'file'; under 'row'
+  // the count above says what was skipped, and the kernel emits one class or the other): said in the skipped rows' slot,
+  // as fixed text, so a file discarded whole never reads as a clean one; never the path or the file's text (a block
+  // without the key, an older kernel, says nothing)
+  var badFile = pf.overrideFault === 'file'
+    ? 'model-prices.json could not be read as a JSON object and was ignored (none of it applies)' : '';
+  if (pf.source === 'feed') {
+    // fewer matched than the table knows: the rest are priced from the built-in defaults, and the line says so instead
+    // of calling the whole table live (a block without `known`, an older kernel, is the plain line)
+    var partial = typeof pf.rows === 'number' && typeof pf.known === 'number' && pf.rows < pf.known;
+    var line = 'prices: live feed' + (partial ? ' for ' + pf.rows + ' of ' + pf.known + ' models' : '')
+      + (typeof pf.ageS === 'number' ? ', fetched ' + raAgo(pf.ageS) : '');
+    var tails = [];
+    if (partial) tails.push('built-in defaults for the rest');
+    // rows the feed had for known models that did not parse (the kernel's `matched` above `rows`: a schema move at the
+    // feed for those models), told apart from models the feed never named; a block without `matched` claims nothing
+    var unread = typeof pf.matched === 'number' && typeof pf.rows === 'number' && pf.matched > pf.rows ? pf.matched - pf.rows : 0;
+    if (unread) tails.push('the feed\'s rows for ' + unread + ' known model' + (unread === 1 ? '' : 's') + ' could not be read');
+    // the refresh's own state beside the rows it did not or will not replace: the switch outranks a failure it predates
+    if (pf.off === true) tails.push('refresh off (ROMP_PRICE_FEED=off)');
+    else if (pf.lastError) tails.push('the last refresh failed (' + pf.lastError + ')');
+    if (unrec) tails.push(unrec);
+    if (ovr) tails.push(ovr);
+    if (rej) tails.push(rej);
+    if (badFile) tails.push(badFile);
+    return line + (tails.length ? '; ' + tails.join('; ') : '');
+  }
+  if (pf.source !== 'defaults') return '';
+  var why = pf.reason === 'off' ? 'live feed off (ROMP_PRICE_FEED=off)'
+    : pf.reason === 'failed' ? 'the feed could not be fetched' + (pf.lastError ? ' (' + pf.lastError + ')' : '')
+    // a landed feed that left nothing usable: rows that named known models and did not parse are a schema change at
+    // the feed, not a feed that renamed its ids, and the kernel's `matched` tells the two apart
+    : pf.reason === 'empty' ? (typeof pf.matched === 'number' && pf.matched > 0
+      ? 'the feed\'s rows for ' + pf.matched + ' known model' + (pf.matched === 1 ? '' : 's') + ' could not be read'
+      : 'the feed matched no known model')
+    : pf.reason === 'inflight' ? 'the feed was still being fetched when these figures were priced; pick a period to reprice'
+    : pf.reason === 'unfetched' ? 'nothing fetched from the feed yet'
+    : '';
+  return 'prices: built-in defaults' + (why ? '; ' + why : '') + (unrec ? '; ' + unrec : '') + (ovr ? '; ' + ovr : '')
+    + (rej ? '; ' + rej : '') + (badFile ? '; ' + badFile : '');
+}
+
+module.exports = { initGear, raPriceNote };

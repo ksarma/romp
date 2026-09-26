@@ -887,7 +887,10 @@ began partway through its hour or day), so turns earlier in it are in
 neither amount, and the footnote states that too. The estimate stands alone
 only when the ledger has no bucket of the period's kind at all. The estimate
 misses fast mode's premium and any model the table lacks, and it prices
-every session's transcript, login sessions included.
+every session's transcript, login sessions included. A line under the
+footnote says where the table's prices came from: the live price feed, and
+how long ago it was fetched, or the built-in defaults and why; how to stop
+the fetch is under [The price feed](#the-price-feed).
 
 The token count beside the dollars is every kind together: fresh input,
 output, cache writes, and cache reads. Cache reads are most of it: every API
@@ -1119,6 +1122,75 @@ yes. The gear reports a machine that is missing node or the comment tools.
   applies on the judges' next pass with no restart, wins over the variable,
   and follows to every connected machine like the other judge settings; its
   Default option clears the setting back to the variable, else 6.
+
+### The price feed
+
+- `ROMP_PRICE_FEED=off` stops the kernel from fetching model prices. The
+  gear's analytics modal (**Token usage**) prices transcript tokens with a
+  per-model table that ships with romp as built-in defaults; at a build of
+  the Token usage view's payload (`/analytics`), on an open of the view or a
+  period picked in it, when the last fetch attempt is more than six hours
+  old, or there has been none, the kernel fetches the public LiteLLM price
+  list from
+  `raw.githubusercontent.com`, a third-party host, with no credential, and
+  keeps the rows it parsed in memory until the next restart or the next fetch
+  that lands: a landed fetch replaces them with the rows it parsed, even when
+  that is none, and a failed fetch leaves them. Set the variable to `off`
+  where the kernel's service sees it (`service.env`, then a manager restart),
+  and the kernel sends no request to that host. Only `off`, whitespace and
+  case ignored, turns the feed off; any other value, `0`, `false` and `no`
+  included, leaves the feed on, and the kernel says so: one line on its stderr
+  naming the value the first time it would have fetched, and the line under
+  the footnote and `/version`'s `priceFeed` block say the variable is set to a
+  value that is not off (the line carries
+  `; ROMP_PRICE_FEED is set to a value that is not off, so the feed stays on (only off turns it off)`
+  after the source and before the override count, and the block carries the
+  fact as the boolean `unrecognised`; the value itself is in the kernel's log
+  and nowhere else). With the variable set to `off`, the table is the built-in
+  defaults and the modal says so: the line under its footnote reads
+  `prices: built-in defaults; live feed off (ROMP_PRICE_FEED=off)`, `/version`
+  carries a `priceFeed` block that says the same beside `modelCatalog`, and
+  the kernel logs one line, naming the variable, the first time it would have
+  fetched. The spend ceiling's check never fetches: it prices with the rows
+  the modal's last fetch left in memory, else the defaults, with the switch or
+  without it. A rate you want current with the feed off goes in
+  `~/.config/romp/model-prices.json`, a JSON object keyed by model id whose
+  rows carry `in`, `out`, `cache_w` and `cache_r` in dollars per token; a row
+  there replaces that model's row in the feed's table and the defaults alike;
+  a rate the row omits keeps the table's only for an id the table itself names
+  (a built-in id, or one the feed's rows priced), and for any other id (a
+  dated id, a model the table lacks) the omitted rates are zero, not a related
+  model's: the row is matched by its exact id and inherits nothing. The line
+  under the footnote and the `priceFeed` block count the rows the file puts in
+  effect: a row that changes or adds a model's rates counts; a row equal to
+  the table's row for that model does not, so the count says what the file
+  changed, not whether it was read. With one counted row in the file, the line
+  carries `; 1 row overridden by model-prices.json`, whichever table it names,
+  after the source (and after the unrecognised clause when there is one) and
+  before the skipped-rows clause when there is one. A row the kernel cannot
+  read (not an object, a rate that is not a number, or a rate that is not a
+  finite number) is skipped and every other row applies, wherever in the file
+  the bad row sits. A rate whose key is present is accepted in two forms, a
+  JSON number or a plain decimal number in quotes (`"0.5"`, `"3e-06"`: an
+  optional minus, digits, at most one dot with digits after it, an optional
+  exponent, nothing else), and the quoted form is read as the number it
+  spells. Anything else where a rate belongs (a null, a list, an object,
+  `true`, `false` or any other string: `" 0.5"`, `"1_0"`, `"inf"`, `"nan"`,
+  `"1e999"`, `"+0.5"`, `""`) makes that row a skipped row, said like any
+  other, never a rate of zero or one; a file it cannot read or parse as a JSON
+  object is ignored whole. The kernel says so on its stderr the
+  first time the cost view prices with the file in that state (the spend
+  ceiling's check and `/version` price with the same file and write no line):
+  once per kernel life for the file, and once per kernel life for each skipped
+  row, naming the row's key there and nowhere else. Whether or not the view was
+  opened, the `priceFeed` block carries the class as `overrideFault` (`row` or
+  `file`, else null) and the number of skipped rows as `overrideRowsRejected`,
+  never the file's text or its path, and with one skipped row the line under
+  the footnote ends
+  `; 1 row of model-prices.json could not be read and was skipped (the rest of the file applies)`;
+  with the file ignored whole, that last slot carries
+  `; model-prices.json could not be read as a JSON object and was ignored (none of it applies)`
+  instead (the kernel reports one class or the other, never both).
 
 ### Fast mode for the judges
 

@@ -324,7 +324,11 @@ the suite sets for the run's children (`TMPDIR` the tests package's since
 `ROMP_SERVICE_ENV`, `ROMP_CLAUDE_BIN` and `ROMP_CLI_SCOPE`; over those go the
 lab's roots and seams, any seam the lab adds by keyword, and a postal bus of its
 own that is never started (`ROMP_POSTAL_PORT` at a free port,
-`ROMP_POSTAL_PEERS=0`, `ROMP_POSTAL_CLIENT_ONLY=1`). The served labs whose
+`ROMP_POSTAL_PEERS=0`, `ROMP_POSTAL_CLIENT_ONLY=1`), and the three network
+switches off as the lab's own (`ROMP_MODEL_CATALOG`, `ROMP_UPDATE_CHECK`,
+`ROMP_PRICE_FEED`): the runner's floors for the catalog and the price feed
+(`tests/conftest.py`) reach no kernel built from names, and two served labs
+open the Token usage view, whose build starts the price fetch. The served labs whose
 driver kills and relaunches the kernel (`test_ship_reship_served.py`,
 `test_dashboard_reload_served.py`) write the relaunch's command, environment and
 log to the lab's `cfg.json` through `relaunch_cfg`, and the environment in that

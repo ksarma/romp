@@ -333,7 +333,9 @@ os.environ["ROMP_CLAUDE_BIN"] = "/bin/false"
 # setUp to drive the fetch against a local fake server; StalenessEvent and ModelsRoute set it in
 # setUp and pop it in tearDown — leaving it absent for every test after that module in a serial
 # run; hence the per-test re-assert below, on the same reasoning as the manager-port one
-# (tests/test_model_catalog_floor.py pins both). Those pops still win inside their own tests:
+# (tests/test_model_catalog_floor.py pins the re-assert by execution, in one case that pops the switch and
+# runs the fixture itself, so in a serial run and in a pytest-xdist worker alike; tests/test_price_feed_floor.py
+# pins both statements, this line and the fixture, on this file's source). Those pops still win inside their own tests:
 # pytest fills every fixture, autouse included, in the item's setup phase, before runtest hands
 # the case to TestCase.run(), which is what calls setUp.
 os.environ["ROMP_MODEL_CATALOG"] = "off"
@@ -342,6 +344,33 @@ os.environ["ROMP_MODEL_CATALOG"] = "off"
 @pytest.fixture(autouse=True)
 def _no_model_catalog_fetch():
     os.environ["ROMP_MODEL_CATALOG"] = "off"
+    yield
+
+
+# No test kernel may fetch the PRICE FEED either (2026-09-20): the cost view's /analytics build
+# (_token_analytics, the one refresh=True caller of _model_prices) starts a background GET of the
+# public LiteLLM price list on a third party's host whenever the in-memory price cache is older than
+# PRICE_TTL, which at import it always is (there is no cache file). The same DEFENSIVE floor as the
+# catalog's, on the switch the kernel reads with the catalog's spelling (ROMP_PRICE_FEED=off,
+# kernel/kernel.py _price_feed_off, the first statement of _refresh_remote_prices). This floor is the
+# RUNNER's: it reaches the analytics tests (which replace _refresh_remote_prices with a no-op anyway)
+# and the served labs whose kernel env copies os.environ, but a lab kernel built from names
+# (tests/test_ship_reship_served.py kernel_env, an allowlist) never inherits it, and two such labs open
+# the view (the settings recut and the widget reorder browser tests click #ra-open): their kernels
+# fetched the feed on every run until kernel_env set the switch itself, beside the catalog's
+# (2026-09-20, review round 2; LabKernelEnv there pins it). A test kernel serving the view is one
+# request away from a third party on nobody's assertion. Set, not setdefault, for the catalog's reason.
+# The feed's own tests
+# (tests/test_price_feed_off.py) pop the variable in setUp to drive the fetch against a recorder,
+# hence the per-test re-assert below. tests/test_price_feed_floor.py pins the re-assert by execution
+# and BOTH statements, this line and the fixture, on this file's source (a read inside a test body
+# cannot tell them apart: the fixture has already set the value), for this switch and the catalog's.
+os.environ["ROMP_PRICE_FEED"] = "off"
+
+
+@pytest.fixture(autouse=True)
+def _no_price_feed_fetch():
+    os.environ["ROMP_PRICE_FEED"] = "off"
     yield
 
 
