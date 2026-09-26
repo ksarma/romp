@@ -39,23 +39,23 @@
 //     platform (so the post-run read's key, which the script's comment above its awk pass states, is held where the
 //     temporary directory is no link), it
 //     refuses a missing roster file, a stale line, a duplicate, a missing bundle and a malformed line (nine malformed
-//     shapes: six shown with their whitespace as bash's %q spells it, and three non-canonical spellings), each red
-//     naming the line and the remedy; runs the pre-run checks alone under --check (the script's header states how it
-//     reads it), which refuses a stale, a duplicate and a malformed line as the step's run does; hands node every line
-//     of a roster whose last line has no newline; prints "no legs in the roster" and starts no node on an empty roster;
-//     and after node --test reads the reporter's record and derives the property and the reds the script's header
-//     states, each read from the script's stderr in the cases below, within the scope the script's header states,
-//     executed by the foreign-file case below, and passes node's own failure status through. The two remedies that move
-//     a leg off the step, after an unrun leg and after a skip under the switch, take its line out of the roster, each
-//     read from the script's stderr. The reporter itself is executed here over synthetic bundles with a real node
-//     --test (a pass beside a skip, todos, a describe() with a test and without one, a file that registered nothing,
-//     failures inside a todo, a lost browser's failure, a bundle that throws at load, and a name holding a tab and a
-//     newline), and so is the composition: the script with the real node and the real reporter over those bundles as
-//     rostered legs, and over a leg whose test passes and whose error comes after the test ended. After one stub run
+//     shapes: six shown as bash's %q spells them, a source path and five holding whitespace, and three non-canonical
+//     spellings), each red naming the line and the remedy; runs the pre-run checks alone under --check (the script's
+//     header states how it reads it), which refuses a stale, a duplicate and a malformed line as the step's run does;
+//     hands node every line of a roster whose last line has no newline; prints "no legs in the roster" and starts no
+//     node on an empty roster; and after node --test reads the reporter's record and derives the property and the reds
+//     the script's header states, each read from the script's stderr in the cases below, within the scope the script's
+//     header states, executed by the foreign-file case below, and passes node's own failure status through. The two
+//     remedies that move a leg off the step, after an unrun leg and after a skip under the switch, take its line out of
+//     the roster, each read from the script's stderr. The reporter itself is executed here over synthetic bundles with
+//     a real node --test (a pass beside a skip, todos, a describe() with a test and without one, a file that registered
+//     nothing, failures inside a todo, a lost browser's failure, a bundle that throws at load, and a name holding a tab
+//     and a newline), and so is the composition: the script with the real node and the real reporter over those bundles
+//     as rostered legs, and over a leg whose test passes and whose error comes after the test ended. After one stub run
 //     and after the composition's first real-node run, the record file the script handed its reporter (the path the
 //     stub logged, in the fresh TMPDIR the run was given) is gone and that TMPDIR is empty. A roster line holding a
-//     backslash is held by seen_at's rows, and a tree under a directory whose name holds one by the post-run key's
-//     row, each read as the script's comment above seen_at or above its awk pass states;
+//     backslash is held by seen_at's rows, and a tree under a directory whose name holds one by the post-run key's row,
+//     each read as the script's comment above seen_at or above its awk pass states;
 //   - the phrase the script reads a lost browser by is a literal in ui/webview/real-viewer-leg.ts's source, the SHARED
 //     PHRASE between the helper and the script, so a reword on either side is red here rather than a remedy dropped in
 //     silence. That pin reads text and guards the phrase alone: that inBrowser FAILS with it under the switch and skips
@@ -1048,7 +1048,7 @@ test('the script runs the rostered legs through node --test when the roster is w
   assert.equal(oddRun.err, '', 'nothing on stderr for the tree under a directory whose name holds a backslash');
 });
 
-test('the script refuses, naming the line and the remedy, on: a missing roster file, a stale line, a duplicate, a missing bundle, and a malformed line (nine malformed shapes: six shown with their whitespace as bash\'s %q spells it, and three non-canonical spellings, a dot segment, a doubled slash and a dot-dot segment, one of them beside the canonical spelling of the same bundle); every refusal after the roster is read ends with the summary line, and no leg ran; --check refuses a stale line, a duplicate and a malformed line the same way; seen_at\'s rows (the script\'s comment above seen_at states how it compares): a line holding a backslash rostered twice is refused as a duplicate, and beside the line holding two backslashes in its place it is not, in the step\'s run and under --check', (t) => {
+test('the script refuses, naming the line and the remedy, on: a missing roster file, a stale line, a duplicate, a missing bundle, and a malformed line (nine malformed shapes: six shown as bash\'s %q spells them, a source path and five holding whitespace, and three non-canonical spellings, a dot segment, a doubled slash and a dot-dot segment, one of them beside the canonical spelling of the same bundle); every refusal after the roster is read ends with the summary line, and no leg ran; --check refuses a stale line, a duplicate and a malformed line the same way; seen_at\'s rows (the script\'s comment above seen_at states how it compares): a line holding a backslash rostered twice is refused as a duplicate, and beside the line holding two backslashes in its place it is not, in the step\'s run and under --check', (t) => {
   const { run, root, rec, A, B } = syntheticTree(t);
   const C = 'out-tests/ui/webview/c-browser.test.js';
   const SUMMARY = 'ci-browser-legs: the roster is malformed or stale, or a rostered bundle is not built (above); no leg ran';

@@ -90,9 +90,10 @@ source_of() { local rel=${1#out-tests/}; printf '%s/%s.test.ts' "$ROOT" "${rel%.
 # pass here, so it compares canonical paths. Whitespace here, and in the loop's test for a blank or # line, is bash's
 # [[:space:]] in the runner's locale, not the tree test's \s: a no-break space inside a line passes here under C.UTF-8
 # and is refused there, and a line holding a byte-order mark or a no-break space before its # is refused here as
-# malformed and dropped there, a red on one side. The tree test's case "the script refuses" runs the malformed rows (six
-# whitespace shapes and three non-canonical spellings), and its case "the script runs the rostered legs" a bundle
-# straight under out-tests/ and the empty roster's comment line and whitespace-only line, both skipped.
+# malformed and dropped there, a red on one side. The tree test's case "the script refuses" runs the malformed rows (a
+# source path and five whitespace shapes, each shown as bash's %q spells it, and three non-canonical spellings), and its
+# case "the script runs the rostered legs" a bundle straight under out-tests/ and the empty roster's comment line and
+# whitespace-only line, both skipped.
 well_formed() {
   [[ "$1" =~ ^out-tests/[^[:space:]]+\.test\.js$ ]] || return 1
   local seg rest="${1#out-tests/}/"
