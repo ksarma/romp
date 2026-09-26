@@ -8,6 +8,7 @@
 
 load free-port
 load cli-scope-floor
+load stop-then-remove
 
 setup() {
     TEST_DIR="$(mktemp -d)"
@@ -30,8 +31,11 @@ setup() {
 }
 
 teardown() {
-    [[ -n "${MGR_PID:-}" ]] && kill "$MGR_PID" 2>/dev/null || true
-    rm -rf "$TEST_DIR"
+    # MGR_PID is the manager's own node process (env execs it), a child of this shell. On TERM it writes
+    # restart-audit.jsonl under $TEST_DIR/state/romp, stops its one kernel (the fake launcher's sleep,
+    # which writes nothing) and exits once that kernel is gone, so the directory is removed only after
+    # the manager has exited (tests/stop-then-remove.bash says why).
+    stop_then_remove "${MGR_PID:-}" "$TEST_DIR"
 }
 
 @test "manager rejects cross-site Origin, allows no-Origin clients" {
