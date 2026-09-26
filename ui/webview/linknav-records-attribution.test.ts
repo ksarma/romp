@@ -793,9 +793,11 @@ test("the convention: the branch's review has rounds 1 and 2, the file review's 
  *  author markup, each names that round); thirty-nine since the fixes for the file review's round 17, extra9-1, with the coordinator's
  *  decision 4 on it (the comment over the body's width watch, whose observer of the top-level tables writes the width their shift reads,
  *  and the docstring of SHEET_CONTEXT_CLASSES, the classes that would make an element around a picture a stacking context, which
- *  dropStackClasses takes off a figure's ancestors, each names that round).
+ *  dropStackClasses takes off a figure's ancestors, each names that round); forty since the fixes for the file review's round 18,
+ *  extra6-3 (the comment in the figures' observer's callback, which says why its decision runs at the next animation frame, names
+ *  that round).
  *  A property pin: the count is compared to the derived list, whose lines the message prints. */
-const VIEWER_UNITS = 39;
+const VIEWER_UNITS = 40;
 
 test("road 1, every checkout, a rule over the tree: every file git lists at the repo root, tracked or untracked and not ignored, whose text names the file review or carries an id of the author's family, plus the files the branch created, the plan's section, the guide's Links paragraph and the browser plan's pointer; the created files and the three records in full, the rest keyed on the review named, so another review's rounds are left alone; no round outside the convention and no finding of the author's outside a pass; road 2, on the open PR branch where main has moved past its last merge (the merge-base off origin/main and the diff adding this module): every unit the branch added or touched, the working tree against the merge-base", (t) => {
   const reviews = convention();
