@@ -1542,10 +1542,14 @@ class ShellWordsFromTheShellOnly(unittest.TestCase):
 
     # [source, origin] of every sender that is not the shell: a page on another origin that opened this pane page, a
     # sandboxed frame (origin "null"), a same-origin window that is not the parent (a popup, a sibling pane), this page
-    # itself, this page's own dispatch (no source, no origin), and the parent speaking from another origin
+    # itself, this page's own dispatch (no source, no origin), the parent speaking from another origin; a sourceless post
+    # that names an origin (a frame removed right after it posted can leave its message with no source): another origin,
+    # the opaque origin, and this page's own origin, none of them the shell's window; and the parent with the opaque origin
     FOREIGN = r"""
 var OTHER="https://elsewhere.example",FOREIGN={opener:[{},OTHER],sandboxed:[{},"null"],sameOriginStranger:[{},location.origin],
-itself:[window,location.origin],dispatch:[null,""],parentOtherOrigin:[window.parent,OTHER]};
+itself:[window,location.origin],dispatch:[null,""],parentOtherOrigin:[window.parent,OTHER],
+sourcelessOtherOrigin:[null,OTHER],sourcelessOpaque:[null,"null"],sourcelessSameOrigin:[null,location.origin],
+parentOpaque:[window.parent,"null"]};
 function fromEach(t,data){Object.keys(FOREIGN).forEach(function(k){fireFrom(FOREIGN[k][0],FOREIGN[k][1],t,data);});}
 """
 
@@ -1594,6 +1598,47 @@ out({onScreen:onScreen===undefined?"unset":onScreen});""")
     ONMESSAGE = re.compile(r"(?:(?<![\w$.])(?:window|self|globalThis)\s*(?:\.\s*onmessage|\[\s*(['\"`])onmessage\1\s*\])"
                            r"|(?<![\w$.])onmessage)\s*=(?!=)")
     SHELL_HEAD = 'function(e){if(!fromShell(e))return;'
+
+    # every mention of the name fromShell in code: its one declaration and the two listeners' reads. A second binding (a
+    # second function declaration, which replaces the first for the whole scope, a var, let or const, a parameter, a
+    # destructured name) or a write to it is a mention of another kind, and so is a mention in a /* */ comment or at the
+    # end of a code line; a line that is a // comment is text, not code
+    FROM_SHELL = re.compile(r"(?<![\w$])fromShell(?![\w$])")
+    FROM_SHELL_DECL = "function fromShell(e){"
+    FROM_SHELL_READ = "if(!fromShell(e))return;"
+
+    def _from_shell_mentions(self, js):
+        """The kind of each mention of fromShell in `js` outside a // comment line, in order: declaration, read, other."""
+        kinds = []
+        for m in self.FROM_SHELL.finditer(js):
+            line = js[js.rfind("\n", 0, m.start()) + 1:m.start()]
+            if line.lstrip().startswith("//"):
+                continue
+            if js.startswith(self.FROM_SHELL_DECL, m.start() - len("function ")):
+                kinds.append("declaration")
+            elif js.startswith(self.FROM_SHELL_READ, m.start() - len("if(!")):
+                kinds.append("read")
+            else:
+                kinds.append("other: " + js[max(0, m.start() - 40):m.end() + 40])
+        return kinds
+
+    def test_source_from_shell_is_bound_once_and_only_read(self):
+        # the two listeners read the one declaration: nothing in the shim binds the name again or writes it, so no later
+        # code can stand a laxer check in its place, for the shim as four apps build it
+        for app, kw in (("feed", {}), ("chat", {}), ("files", {"no_stale": True}), ("settings", {"no_stale": True})):
+            with self.subTest(app=app):
+                self.assertEqual(self._from_shell_mentions(km._shim(app, 3, **kw)), ["declaration", "read", "read"])
+
+    def test_the_binding_census_reads_what_it_claims(self):
+        base = ("function fromShell(e){return !!e;}\n// fromShell, described in a comment line\n"
+                "a(function(e){if(!fromShell(e))return;});b(function(e){if(!fromShell(e))return;});\n")
+        self.assertEqual(self._from_shell_mentions(base), ["declaration", "read", "read"])
+        for extra in ("function fromShell(e){return true;}", "var fromShell=function(e){return true;};", "fromShell=function(){return true;};",
+                      "let fromShell=1;", "function f(fromShell){return fromShell;}", "var {fromShell}=o;", "x(); // fromShell=g",
+                      "/* fromShell */"):
+            with self.subTest(extra=extra):
+                kinds = self._from_shell_mentions(base + extra + "\n")
+                self.assertNotEqual(kinds, ["declaration", "read", "read"], "refused")
 
     def test_source_both_listeners_open_with_the_shell_check(self):
         js = km._shim("feed", 3)
