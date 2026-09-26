@@ -95,7 +95,14 @@ test("the chat tells the shell its tab on every switch with its announcement num
 });
 
 test("the shell hands the chat's tab to the feed pane, from a child frame of this page only", () => {
-  assert.match(KERNEL, /if\(!m\|\|m\.romp!=='activeTab'\|\|!e\.source\|\|e\.source===window\|\|e\.origin!==location\.origin\)return;/, "a chat column of this page, same origin");
+  // the relay's head as the shell serves it (kernel.py _LANDING_FOCUS_JS): the shell's one source check, read fail-closed
+  // as the first statement, then the activeTab arm, then the post to the feed pane
+  assert.match(KERNEL, /^window\.addEventListener\('message',function\(e\)\{if\(!window\.__rompPaneSourceOk\|\|!window\.__rompPaneSourceOk\(e\)\)return;var m=e&&e\.data;if\(!m\|\|m\.romp!=='activeTab'\)return;\nvar ff=document\.getElementById\('f-feed'\);/m,
+    "a chat column of this page only: the shell's source check opens the listener, ahead of the activeTab arm");
+  // the check it reads (kernel.py _LANDING_BOOT_JS, adopted from the project): same origin, and the sender is one of this
+  // page's own iframes. Pinned here by text; tests/test_shell_source_check.py pins the lines by sha256 and runs them
+  assert.match(KERNEL, /^window\.__rompPaneSourceOk=function\(e\)\{try\{if\(!e\|\|!e\.source\|\|e\.source===window\|\|e\.origin!==location\.origin\)return false;\nvar fs=document\.querySelectorAll\('iframe'\);for\(var i=0;i<fs\.length;i\+\+\)\{if\(fs\[i\]\.contentWindow===e\.source\)/m,
+    "a sender on this page's origin that is a frame of this page, not the shell's own window");
   assert.match(KERNEL, /var ff=document\.getElementById\('f-feed'\);try\{ff&&ff\.contentWindow&&ff\.contentWindow\.postMessage\(\{romp:'activeChat',id:\(typeof m\.id==='string'\?m\.id:null\),nonce:\(typeof m\.nonce==='number'\?m\.nonce:null\),gesture:!!m\.gesture\},'\*'\);\}catch\(x\)\{\}\}\);/,
     "the feed pane gets {romp:'activeChat', id, nonce, gesture}");
   assert.equal((KERNEL.match(/\{romp:'revealCard',itemId:[^}]*,gesture:true\}/g) || []).length, 2, "both revealCard posts (the bell click, the notification tap) carry the reader's gesture (round three)");
