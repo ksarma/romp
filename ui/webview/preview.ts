@@ -60,10 +60,15 @@ export function openFileTab(path: string, sid?: string | null): boolean {
 // LOADING CUE (the user 2026-07-31): a remote image's bytes arrive over the ssh tunnel, so for a
 // beat the message showed only the path text and the picture "popped in" with nothing saying it was
 // on the way. Per the loading-state rule the first thing up is the romp swirl: a mini spinning glyph
-// holds the image's spot until its `load` event lands (event-based; an error still removes the whole
-// box, spinner included — no backstop needed because the cue dies with its box either way). Memoized
-// per URL for this page life: chat re-renders rebuild these elements constantly, and re-flashing a
-// spinner over bytes the browser just painted would itself be flicker — only a URL's FIRST load spins.
+// holds the image's spot until its `load` event lands (event-based; an error hands the box to the retry
+// machinery below, the wait box or the chip, which takes the spinner with the picture, so no backstop is
+// needed). The first attempt's cue is memoized per URL in the set below: chat re-renders rebuild these
+// elements constantly, and re-flashing a spinner over bytes the browser just painted would itself be
+// flicker, so only a URL's first load spins. An address leaves the set when its picture fails to load at
+// the preview's own address (resolvedImg), and a first attempt at it then shows the cue again. The picture
+// resolvedImg puts in the box at the preview's own address keys its cue on the picture itself, not on this
+// set: the swirl stays beside it exactly when it is not complete once its src is set, as the file viewer's
+// loader does, so a re-render after the page has let that picture go shows the cue while it loads again.
 const loadedOnce = new Set<string>();
 
 // A manual retry's swirl stays up at least this long before a failure may swap the chip back in —
@@ -85,6 +90,8 @@ const IMG_MIME: Record<string, string> = {
 // messages constantly, and a resumable fetch bypasses the HTTP cache (no-store) — without this memo
 // every re-render would re-pull the whole image over the very link that struggled to deliver it
 // once. Bounded; the evicted entry's blob is released (an svg's entry holds none).
+// An svg's entry also leaves when its picture fails to load at that address (resolvedImg), so the
+// next attempt runs the managed fetch again, within the budget.
 const resolvedUrls = new Map<string, string>();
 function rememberResolved(url: string, objUrl: string): void {
   resolvedUrls.set(url, objUrl);
@@ -534,11 +541,13 @@ export function previewFull(path: string, sid?: string | null, verified = false,
     // The box's picture at its own address (resolvedImg): a load or error handler of any other <img> returns at once, so one
     // failed request, which the browser reports on every <img> that shares it, spends one attempt.
     let current: HTMLImageElement | null = null;
-    // Set when that picture fails to load, cleared when one loads, at a tap and at a reconnect-class heal: while it is set, a
+    // Set when that picture fails to load, cleared when one loads, at a tap and at a reconnect-class event: while it is set, a
     // managed fetch's progress does not refill the budget, so a picture that keeps failing after a fetch that succeeds settles
-    // on the chip within the budget.
+    // on the chip within the budget. While it is set the box is in flagHeld, which every reconnect-class event drains
+    // (refreshSettledPreviews), whichever road the box is on: waiting for the per-message heal, settled on the chip, or with a
+    // rebuild that event already started.
     let picFailed = false;
-    onReconnect.set(box, () => { picFailed = false; });
+    const clearFlag = (): void => { picFailed = false; flagHeld.delete(box); };
     // The wait box is REUSED across attempts (T291, the user 2026-09-09: two figures on a remote session
     // whose relay was failing re-attempted on every kernel push, and each attempt swapped the box between
     // the one-line "fetching…" and the five-line failure note — the whole transcript above the reader
@@ -667,7 +676,7 @@ export function previewFull(path: string, sid?: string | null, verified = false,
     // every tap READS as a tap even when the click lands mid-attempt and build() no-ops on its
     // `fetching` guard (the buttons-always-acknowledge rule: an unacknowledged tap gets re-tapped)
     const ackTap = (ev: Event) => {
-      picFailed = false;                             // a tap is a person's gesture: with the budget it re-arms, the picture's failure stops holding the refill
+      clearFlag();                                   // a tap is a person's gesture: with the budget it re-arms, the picture's failure stops holding the refill
       const t = ev.currentTarget as HTMLElement | null;
       if (!t) return;
       t.classList.add("path-retry-flash");
@@ -718,12 +727,15 @@ export function previewFull(path: string, sid?: string | null, verified = false,
     };
     // The resolved picture, put in the box. One shown from its fetched bytes (an object URL) replaces the box's contents as
     // the plain <img>. One at the preview's own address (an svg's: the memo holds the address itself) still has to load the
-    // file: any earlier picture leaves the box, the wait element and its one swirl stay, the note is cleared (the fetch's
-    // progress is over), and the <img> waits beside them with path-img-loading until its load, which removes the wait element
-    // and adds the address to loadedOnce. At an address in loadedOnce the <img> goes in with no cue: it shows at once while the
-    // page still holds that picture, and once the page has let it go it loads again with no swirl beside it. Its failure removes
-    // it, drops the memo entry and loadedOnce, sets picFailed, hides an unverified box and takes the first attempt's path, so
-    // the next attempt runs the managed fetch again, within the budget. Only the box's current picture is heard (current).
+    // file: any earlier picture leaves the box, and the cue is keyed on the picture itself, as the file viewer's loader is.
+    // An <img> that is complete once its src is set (the page still holds that picture) goes in with no cue and shows at once.
+    // One that is not keeps the wait element and its one swirl, the note cleared (the fetch's progress is over), and waits
+    // beside them with path-img-loading until its load, which removes the wait element and adds the address to loadedOnce;
+    // while it loads the wait element is out of the failure state, with no retry title, no pointer and no tap handler, since
+    // a tap there would start nothing new (the rebuilt picture joins the request already out). Its failure removes it, drops
+    // the memo entry and loadedOnce, sets picFailed, hides an unverified box and takes the first attempt's path, so the next
+    // attempt runs the managed fetch again, within the budget, and the retrying persona puts the title and the tap back. Only
+    // the box's current picture is heard (current).
     const resolvedImg = (src: string) => {
       if (src !== url) {
         current = null;
@@ -734,16 +746,19 @@ export function previewFull(path: string, sid?: string | null, verified = false,
       for (const old of Array.from(box.children)) if (old.classList.contains("path-full-img")) old.remove();
       const img = mkImg(src);
       current = img;
-      if (loadedOnce.has(url)) box.textContent = "";
+      if (img.complete) box.textContent = "";
       else {
         box.querySelector(".path-full-retry")?.remove();   // a chip a new-evidence heal kept up goes: the swirl holds the spot while the picture loads
-        const { note } = waitBox();
+        const { wait, note } = waitBox();
         setNote(note, "");
+        wait.title = "loading preview…";
+        wait.style.cursor = "";
+        wait.onclick = null;
         img.classList.add("path-img-loading");
       }
       img.onload = () => {
         if (img !== current) return;
-        picFailed = false;
+        clearFlag();
         loadedOnce.add(url);
         img.classList.remove("path-img-loading");
         const wait = box.firstElementChild as HTMLElement | null;
@@ -756,6 +771,7 @@ export function previewFull(path: string, sid?: string | null, verified = false,
         resolvedUrls.delete(url);
         loadedOnce.delete(url);
         picFailed = true;
+        flagHeld.set(box, clearFlag);
         if (!verified) box.style.display = "none";
         failAfterBeat(0);
       };
@@ -763,7 +779,7 @@ export function previewFull(path: string, sid?: string | null, verified = false,
     };
     const build = (bust: boolean) => {
       const done = resolvedUrls.get(url);
-      if (done) {                                    // fully fetched this page-life: resolvedImg puts the picture in the box, an svg's beside the swirl until its load unless loadedOnce holds its address
+      if (done) {                                    // fully fetched this page-life: resolvedImg puts the picture in the box, an svg's beside the swirl until its load unless the page still holds that picture
         box.style.display = "";                      // a hidden unverified sentinel that healed comes back
         resolvedImg(done);
         return;
@@ -793,7 +809,7 @@ export function previewFull(path: string, sid?: string | null, verified = false,
         fetching = false;
         lastErr = "";
         rememberResolved(url, objUrl);
-        if (objUrl !== url) loadedOnce.add(url);     // re-renders skip the cue: an object URL's bytes are in hand (an svg's address joins at its picture's load)
+        if (objUrl !== url) loadedOnce.add(url);     // a later first attempt at this address skips the cue: an object URL's bytes are in hand (an svg's address joins at its picture's load)
         if (!box.isConnected) return;
         box.style.display = "";                      // a hidden unverified sentinel that healed comes back
         resolvedImg(objUrl);
@@ -828,15 +844,21 @@ export function retryFailedPreviews(): void {
 // kernel socket came back) or hostUp (a federated tunnel recovered). Drained only by these events,
 // never by the per-message heal above, so a dead figure costs one fetch per reconnect, not per push.
 const settledPreviews = new Map<HTMLElement, () => void>();
-// The step a reconnect-class heal runs for a box before its rebuild (previewFull sets one per image box): the budget flag
-// clears, so the fetch the heal starts refills the budget on progress as any first fetch does; the way back is new information.
-const onReconnect = new WeakMap<HTMLElement, () => void>();
+// The image boxes whose picture failed at the preview's own address with the budget flag set (previewFull's picFailed), each
+// with the step that clears it. Every reconnect-class event (romp:wsup, hostUp, romp:hostRelayUp: render.ts runs this
+// function on each, and on nothing else) drains it before any rebuild of its own, so the flag clears for every such box: one
+// the event rebuilds from settledPreviews, one waiting in failedPreviews for the next kernel message, and one whose rebuild
+// retryFailedPreviews started on the same event (romp:wsup and hostUp run it first), whose fetch reads the flag only when its
+// transfer ends. The fetch after the event then refills the budget on progress as any first fetch does; the way back is new
+// information. A tap and the picture's load clear the flag too, and take the box out.
+const flagHeld = new Map<HTMLElement, () => void>();
 export function refreshSettledPreviews(): void {
   healMdImgs();                                      // parked markdown images ride the same reconnect-class heal (T291c)
+  for (const [box, clear] of Array.from(flagHeld.entries())) { flagHeld.delete(box); if (box.isConnected) clear(); }
   if (!settledPreviews.size) return;
   for (const [box, rebuild] of Array.from(settledPreviews.entries())) {
     settledPreviews.delete(box);                     // one attempt per registration; re-registers on error
-    if (box.isConnected) { onReconnect.get(box)?.(); rebuild(); }
+    if (box.isConnected) rebuild();
   }
 }
 
@@ -859,6 +881,10 @@ export function refreshSettledPreviews(): void {
 // once more. DOMPurify strips inline handlers
 // (correctly), so the failures are caught by ONE document-level capture listener (error events do not
 // bubble but do capture); previews' own <img>s are skipped: their machinery (budgets, resume, chips) owns those.
+// So is the file viewer's own picture, in its picture box (.fileview-imgbox): the viewer asks its address again and
+// runs its own bounded probes (file-view.ts imgFailed and onKernelMessage), so a heal of it would add a second probe of
+// the address on each of the first three kernel messages (its own budget of three). The figures of a markdown file the
+// viewer renders sit in its Rendered body, outside that box, and park and heal here as any markdown image does.
 const mdImgFailed = new Set<string>();             // URLs that failed this page life: a re-render parks them before any fetch
 const mdImgProbe = new Map<string, number>();      // served URLs with per-message attempts left: the budget rides the URL, not the img
 const mdImgProbing = new Map<string, number>();    // served URLs with a per-message probe in flight, by that probe's token: one at a time per URL
@@ -907,7 +933,9 @@ function probePicture(u: string, onLoad: () => void, onFail: () => void): void {
 /** The same probe for another surface, for an address the kernel serves (servedByKernel) and no other: false, and no probe,
  *  for any other address. The file viewer's way back from its pane over an svg picture sends one per kernel message, as the
  *  parked markdown images' per-message probe does, three in all across the panes their own fetches paint until the viewer
- *  refills its budget (file-view.ts onKernelMessage and fillProbes). */
+ *  refills its budget (file-view.ts onKernelMessage and fillProbes). That count holds in the chat page, where the markdown-image
+ *  heal and both of render.ts's retry drivers (every kernel message, and romp:wsup) run beside the viewer, as measured in the
+ *  chat modal's browser legs: the heal skips the viewer's picture (installMdImgHeal), so the viewer's probe is the only one. */
 export function probeServed(u: string, onLoad: () => void, onFail: () => void): boolean {
   if (!servedByKernel(u)) return false;
   probePicture(u, onLoad, onFail);
@@ -969,6 +997,7 @@ export function installMdImgHeal(): void {
     const src = img.src || "";
     if (!src || src.startsWith("data:")) return;     // a broken data: URI has no server to heal
     if (img.onerror || img.closest(".path-full")) return;   // the preview machinery retries its own
+    if (img.closest(".fileview-imgbox")) return;     // the file viewer's picture: the viewer's own way back retries it
     parkMdImg(img, src);
     if (servedByKernel(src)) {                       // bounded and off the DOM: the caption never moves for it
       if (!mdImgProbe.has(src)) mdImgProbe.set(src, 3);   // the budget rides the URL: a re-rendered turn inherits what is left

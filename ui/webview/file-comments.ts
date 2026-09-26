@@ -2976,7 +2976,7 @@ class Panel {
    *  read off the seam at the paint, never carried over from the paint that filed it (the review of Slice 7, rounds 1 and 2):
    *  - no failure row stands (its ✕, a wait that took the slot, the deadline row in its place): the record goes with it;
    *  - the view's mtime is not the one the row was filed under: a landing has read the file since (the row's own Reload, the
-   *    disk bar's, the poll's, a save's), whatever the status says of that text (paintChanges reads that, textCurrent), so the
+   *    disk bar's, the poll's, a save's), whatever the status says of that text (paintChanges reads that, paintCurrent), so the
    *    row is answered and goes, as bytesLanded takes it when the landing shows the status's text. Before round 2 a landing of
    *    text NEWER than the status's flipped the row to "the view still shows the earlier text" over the new text, until the
    *    status at that mtime landed and bytesLanded took it;
@@ -2988,7 +2988,7 @@ class Panel {
    *    (bytesFailed); the head stands down while the panel's fetch is out now (reloadOut) and the new pane's paint files the row;
    *  - the same mtime and no pane (a content paint of the earlier text: a Raw or Rendered click's renderBody, the editor's entry
    *    and its exit's repaint): the row keeps the seam's words and takes the deadline row's tail, which says what shows now: the
-   *    earlier text, with no change marked on it (paintChanges refuses the status's offsets over it, textCurrent); its Reload stays.
+   *    earlier text, with no change marked on it (paintChanges refuses the status's offsets over it, paintCurrent); its Reload stays.
    *  A deadline row is not this row and is left as it is (bytesLate; its tail over a pane is the pre-existing sibling the plan note
    *  records). No render of its own: paintAll renders at its end. */
   private syncFailedRow(failed: string | null): void {
@@ -3237,10 +3237,11 @@ class Panel {
    *  substitution's span sharing any character with the range, a deletion's point strictly inside it (a selection that
    *  ends at the point does not reach across the removed text; the deletions the selection's own range crosses are
    *  addCrossed's). In text order. The hunks index the status's text, so nothing while the view shows other bytes
-   *  (textCurrent); on a BOM file the view's offsets run one behind the host's. */
+   *  (paintCurrent: the text the body shows, which from a landing the seam reports ahead of its paint until that paint is
+   *  the text painted before the landing); on a BOM file the view's offsets run one behind the host's. */
   private overlapping(range: SourceRange): string[] {
     const s = this.status;
-    if (!s || !this.textCurrent(s)) return [];
+    if (!s || !this.paintCurrent(s)) return [];
     const off = s.bom ? 1 : 0;
     const start = range.start + off, end = range.end + off;
     const out: string[] = [];
@@ -3255,10 +3256,10 @@ class Panel {
    *  side of it is trimmed to a range that starts or ends AT the point — by the text alone the selection never reached
    *  across, though the pointer did, and the person was given a passage comment on one letter with no way to name the
    *  change (the review, 2026-09-10, measured in Chromium and Firefox). The same silence as overlapping's while the view
-   *  shows other bytes. */
+   *  shows other bytes (paintCurrent). */
   private addCrossed(ids: string[], sel: Selection): void {
     const s = this.status;
-    if (!s || !this.textCurrent(s)) return;
+    if (!s || !this.paintCurrent(s)) return;
     const crossed = this.deletionMarksIn(sel, false);
     if (!crossed.size) return;
     const order = this.hunksInOrder(s).map((h) => String(h.id));
@@ -3862,8 +3863,9 @@ class Panel {
    *  until that paint, mtimeNs() answers the landed bytes while the body still shows what was painted before them (the Source
    *  view's older XML until the decode, the paint before the picture's load), so the mtime read is that paint's (paintedAt).
    *  The change cards read this (renderChangeCard's inFlux, spanCarried), so a card keeps its state from the landing to the
-   *  paint and moves at the paint, the event that shows the new bytes (CLAUDE.md: cards move on new information). With no
-   *  landing since the last paint, or when the paint came first, the two mtimes are one. */
+   *  paint and moves at the paint, the event that shows the new bytes (CLAUDE.md: cards move on new information), and so do
+   *  the change marks (paintChanges) and a selection's changes (overlapping, addCrossed): each reads the status's offsets over
+   *  the text the body shows. With no landing since the last paint, or when the paint came first, the two mtimes are one. */
   private paintCurrent(s: Status): boolean {
     return this.textCurrent(s, this.landedAhead ? this.paintedAt : this.ctx.mtimeNs());
   }
@@ -4259,7 +4261,7 @@ class Panel {
     const s = this.status;
     if (!this.inline) return;                          // Show changes inline is off: no mark in either view, the cards say everything
     if (this.activeFilter() === "comments") return;    // the filter shows the comments alone: no change mark, the setting above untouched
-    if (!s || !(s.hunks || []).length || !this.textCurrent(s)) return;
+    if (!s || !(s.hunks || []).length || !this.paintCurrent(s)) return;   // the status's offsets over the text the body shows (paintCurrent), so from a landing to its paint a repaint marks no text the status does not index: nothing over the older text when the status's bytes landed first, the marks kept over it while the status still indexes it
     const store = s.store;
     // The hunks index the string the HOST read, which on a BOM file runs one ahead of the view's text (the host keeps the
     // U+FEFF the fetch strips; the status says which, `bom`), so each is handed to the painters at `curFrom - off`,

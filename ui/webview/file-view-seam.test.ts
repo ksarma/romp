@@ -895,6 +895,103 @@ test("the probes' budget refills at a reload, at the Source toggle and at a land
   }
 });
 
+test("a failed reload's pane, and a failed first open's, try nothing again by themselves, as before for every file type: over a failed reload of an svg shown as a picture, of an svg over the pane a failed picture's re-ask left, of a png and of a text file, kernel messages send no probe and romp:wsup, hostUp and romp:hostRelayUp run no fetch; over a failed first open of an svg, a png and a markdown file, the three events run no fetch", async (t) => {
+  const probes = fakeProbes(t);
+  const ways: Array<[string, () => void]> = [
+    ["romp:wsup", () => win.dispatchEvent(new Event("romp:wsup"))],
+    ["hostUp", () => win.dispatchEvent(new MessageEvent("message", { data: { type: "hostUp", hosts: ["TESTHOST"] } }))],
+    ["romp:hostRelayUp", () => win.dispatchEvent(new CustomEvent("romp:hostRelayUp", { detail: { host: "TESTHOST" } }))],
+  ];
+  const roads: Array<[string, string]> = [["an svg shown as a picture", FIG], ["an svg over the pane a failed picture's re-ask left", FIG], ["a png", PLOT], ["a text file", APP]];
+  for (const [road, p] of roads) {
+    const { ctx, body } = await open(p, t);
+    const img = body.querySelector("img.fileview-img");
+    if (road === "an svg shown as a picture" || road === "a png") img!.dispatchEvent(new Ev("load"));
+    if (road === "an svg over the pane a failed picture's re-ask left") {
+      delete disk[FIG];
+      img!.dispatchEvent(new Ev("error"));
+      await settle();
+      assert.equal(ctx.error(), "no such file: " + FIG, road + ": the premise: the re-ask's pane");
+    }
+    delete disk[p];                                       // the file is gone when the reload reads it
+    ctx.reload();
+    await settle();
+    assert.equal(ctx.error(), "no such file: " + p, road + ": the failed reload's pane, in the kernel's words");
+    const asks = asksOf(p), n = probes.length;
+    kernelMessage(); kernelMessage();                     // before any reconnect-class event: an svg's picture address is the kernel's /file, which a probe would take
+    await settle();
+    assert.equal(probes.length, n, road + ": no kernel message sends a probe over the failed reload's pane");
+    for (const [way, fire] of ways) {
+      fire();
+      await settle();
+      assert.equal(asksOf(p), asks, road + ": " + way + " runs no fetch over the failed reload's pane");
+    }
+  }
+  for (const name of ["gone.svg", "gone.png", "gone.md"]) {
+    const gone = ROOT + "/docs/" + name;
+    const { ctx } = await open(gone, t);
+    assert.equal(ctx.error(), "no such file: " + gone, name + ": the failed first open's pane");
+    const asks = asksOf(gone);
+    for (const [way, fire] of ways) {
+      fire();
+      await settle();
+      assert.equal(asksOf(gone), asks, name + ": " + way + " runs no fetch over a failed first open's pane");
+    }
+  }
+});
+
+test("a probe that settles after its pane gave way to a newer one acts on nothing: a late loaded probe of an earlier pane runs no fetch, and a late failed one leaves the newer pane's probe the one out, so the next kernel message sends none", async (t) => {
+  const probes = fakeProbes(t);
+  for (const late of ["loads", "fails"]) {
+    const { ctx, body } = await open(FIG, t);
+    delete disk[FIG];                                     // the address does not answer the viewer's fetch from here on
+    body.querySelector("img.fileview-img")!.dispatchEvent(new Ev("error"));
+    await settle();
+    assert.equal(ctx.error(), "no such file: " + FIG, late + ": the re-ask's pane (the earlier pane)");
+    const n = probes.length;
+    kernelMessage();
+    assert.equal(probes.length, n + 1, late + ": one probe over the earlier pane");
+    win.dispatchEvent(new Event("romp:wsup"));            // the way back's fetch meets the same failure and paints the newer pane
+    await settle();
+    kernelMessage();
+    assert.equal(probes.length, n + 2, late + ": the newer pane's probe goes out while the earlier one is still out");
+    const asks = asksOf(FIG);
+    if (late === "loads") {
+      probes[n].onload!();                                // the earlier pane's probe loads late
+      await settle();
+      assert.equal(asksOf(FIG), asks, "a late loaded probe of an earlier pane runs no fetch");
+      assert.equal(ctx.error(), "no such file: " + FIG, "and the newer pane stands");
+    } else {
+      probes[n].onerror!();                               // the earlier pane's probe fails late
+      await settle();
+      kernelMessage();
+      assert.equal(probes.length, n + 2, "a late failed probe of an earlier pane leaves the newer pane's probe the one out: the next kernel message sends none");
+      assert.equal(asksOf(FIG), asks, "and no fetch runs");
+    }
+  }
+});
+
+test("the way back's three window listeners (romp:wsup, romp:hostRelayUp and the kernel's messages) leave with the viewer, at a close and at a replacing open: the window's count of each is back where it stood before the open", async (t) => {
+  const kinds = ["romp:wsup", "romp:hostRelayUp", "message"];
+  const live = new Map<string, Set<unknown>>();
+  const add = win.addEventListener, remove = win.removeEventListener;
+  win.addEventListener = function (this: any, type: string, cb: unknown, o?: unknown) { if (!live.has(type)) live.set(type, new Set()); live.get(type)!.add(cb); return add.call(this, type, cb, o); };
+  win.removeEventListener = function (this: any, type: string, cb: unknown, o?: unknown) { live.get(type)?.delete(cb); return remove.call(this, type, cb, o); };
+  t.after(() => { delete win.addEventListener; delete win.removeEventListener; });
+  const count = (): number[] => kinds.map((k) => live.get(k)?.size ?? 0);
+  const fv = await mod();
+  await open(FIG, t);                                     // a first open and close: any listener the page installs once and keeps is in place before the count
+  fv.closeFileView();
+  const start = count();
+  await open(FIG, t);
+  const up = count();
+  assert.deepEqual(up.map((c, i) => c - start[i]), [1, 1, 1], "the open viewer holds one listener of each kind: " + JSON.stringify({ start, up }));
+  await open(PLOT, t);                                    // a replacing open: the first viewer's listeners leave, the second's arrive
+  assert.deepEqual(count(), up, "a replacing open leaves one of each, the new viewer's");
+  fv.closeFileView();
+  assert.deepEqual(count(), start, "the close leaves none of the viewer's: the count is back where it stood");
+});
+
 test("a press of the Source toggle while a fetch that asked the picture's address again is out: its answer, a failure or a landing, paints nothing, so the Source view stands with error() null and mode() the Source view's; back to the picture, it loads afresh at its /file address with no fetch, and its failure asks again; the same over the way back's fetch, and when a press on the toggle parks the failure before its click", async (t) => {
   const realFetch = (globalThis as any).fetch;
   let gate: Promise<void> | null = null;

@@ -19,8 +19,9 @@
 // with no second fetch; and with the Comments panel open the panel's wait for a reload's bytes ends when they land, while
 // the picture's own load, or the Source view's decode of them, is still out, and a change card keeps its state from the
 // landing until that paint (the deadline is faked with the page's clock, so no case waits 15 s). The
-// chat modal's cases run with the page's markdown-image heal installed (preview.ts installMdImgHeal, which also hears the
-// picture's error). After every road the picture's src is its /file address (the relay's for a remote session) and no object
+// chat modal's cases that count probes run with the page's markdown-image heal installed (preview.ts installMdImgHeal, which
+// also hears the picture's error and skips the viewer's picture) and both of render.ts's retry drivers, its romp:wsup line and
+// its retry on every kernel message, so the probes' count of three is measured in the chat page as it runs (the loader's case installs neither). After every road the picture's src is its /file address (the relay's for a remote session) and no object
 // URL is made for the svg. Waits are for the page's own events or the picture's settling, never a timer. Skips LOUDLY without
 // a playwright browser (CI installs none). Synthetic values only: /repo/notes-api paths, the placeholder sid, host TESTHOST.
 import { test } from "node:test";
@@ -53,7 +54,8 @@ type Pic = { mode: PicMode; seq: PicMode[]; reqs: string[]; release: () => void;
  *  loads from the page's memory or asks the network) and `__probesSettled` those that loaded or failed; `__srcSet` records
  *  whether the viewer's picture was complete the moment its src was set; `__picErrs` counts the viewer picture's error events
  *  once each has run its listeners; `__textGate`, a promise, holds a decode of the fetched bytes (the Source view's).
- *  `heal`: the chat page's markdown-image heal and render.ts's romp:wsup drivers, installed before the open. `clock`: the page's
+ *  `heal`: the chat page's markdown-image heal and render.ts's two retry drivers (its romp:wsup line and its per-message retry;
+ *  `__perMessage` counts the latter's runs), installed before the open. `clock`: the page's
  *  clock installed (it flows until a case moves it). */
 async function scene(browser: any, mode: Mode, opts: { heal?: boolean; clock?: boolean; docs?: Record<string, string> } = {}): Promise<{ page: any; errors: string[]; pic: Pic }> {
   let release: () => void = () => {};
@@ -125,6 +127,15 @@ async function scene(browser: any, mode: Mode, opts: { heal?: boolean; clock?: b
       if (heal) {
         w.FV.installMdImgHeal();
         window.addEventListener("romp:wsup", () => { w.FV.retryFailedPreviews(); w.FV.refreshSettledPreviews(); });   // render.ts's romp:wsup line, less the path-image heal
+        // render.ts's per-message driver (its window message handler), less the path-image heal: a copy faithful for the kernel
+        // messages these cases send (type "sessions") and for hostUp, each running the per-message retry, and hostUp the settled drain as well
+        window.addEventListener("message", (e) => {
+          const m = (e as MessageEvent).data;
+          if (!m || m.romp === "link" || m.type === "pipeState") return;
+          w.__perMessage = (w.__perMessage || 0) + 1;
+          w.FV.retryFailedPreviews();
+          if (m.type === "hostUp") w.FV.refreshSettledPreviews();
+        });
       }
     }, [FIG, PNG, !!opts.heal]);
   };
@@ -351,14 +362,16 @@ test("in a browser, the chat modal with the page's heal: an svg whose address se
     assert.equal(s.error, SVG_PICTURE_FAILED, "error() is that sentence");
     assert.equal(s.asks, 2, "one re-ask");
     assert.equal(pic.reqs.length, 2, "two picture requests");
-    // the kernel's messages: one probe per message while none is out, three in all for this pane
+    // the kernel's messages: one probe per message while none is out, three in all for this pane. Each pair is dispatched in one
+    // evaluate, back to back in one task, so no probe can settle between its two messages and the second meets the first's probe
+    // still out; the next pair waits until every probe sent has settled (the page's own count, an event, never a frame count)
     const message = async (): Promise<void> => { await page.evaluate(() => { window.dispatchEvent(new MessageEvent("message", { data: { type: "sessions", sessions: [] } })); }); };
+    const pair = (): Promise<void> => page.evaluate(() => { for (let j = 0; j < 2; j++) window.dispatchEvent(new MessageEvent("message", { data: { type: "sessions", sessions: [] } })); });
     for (let i = 0; i < 5; i++) {
       const n: number = pic.reqs.length;
-      await message();
-      await message();                                   // a second message while the probe is out sends nothing
+      await pair();                                       // the second message of the pair meets the first's probe still out and sends nothing
       for (let k = 0; k < 40 && pic.reqs.length === n && i < 3; k++) await frames(page, 1);   // the probe's request reaching the route
-      await frames(page, 6);                              // its answer and the probe's error event
+      await page.waitForFunction(() => (window as any).__probesSettled === (window as any).__probes, null, { timeout: 10000 });   // its answer and the probe's error event
       if (i < 3) assert.equal(pic.reqs.length, n + 1, "message pair " + (i + 1) + ": one probe");
       else assert.equal(pic.reqs.length, n, "message pair " + (i + 1) + ": the three probes are spent");
     }
@@ -603,6 +616,35 @@ for (const gc of [false, true]) {
       assert.equal(back.width, 200, "and the picture decoded");
       assert.equal(back.asks, wsup.asks + 1, "the loaded probe's fetch");
       onAddress(back, REMOTE, "the way back on a kernel message after romp:wsup refilled the budget");
+      assert.deepEqual(errors, [], "no page errors");
+      await page.close();
+    });
+  });
+}
+
+for (const sid of [REMOTE, SID]) {
+  test("in a browser, " + (sid === REMOTE ? "a remote" : "a local") + " session's svg in the chat modal with the page's heal and both of render.ts's retry drivers (its retry on every kernel message and its romp:wsup line): over the re-ask's pane, the relay's 502 on the picture and on the viewer's fetch, the first three kernel messages send one probe of the picture's address each and the next three none; the markdown-image heal, which hears the picture's error, probes nothing of the viewer's picture, so the viewer's three are the page's", { timeout: 240000 }, async (t) => {
+    await inBrowser(t, async (browser) => {
+      const { page, errors, pic } = await scene(browser, "chat", { heal: true });
+      pic.mode = "502";
+      await page.evaluate((b: string) => { const w = window as any; w.__okAsks = 1; w.__fail = { status: 502, body: b }; }, RELAY_502);
+      await openFig(page, sid);
+      await settled(page);
+      const s = await state(page);
+      assert.equal(s.pane, RELAY_502, "the premise: the re-ask's pane, in the relay's words");
+      const probes = (): Promise<number> => page.evaluate(() => (window as any).__probes);
+      const runs0: number = await page.evaluate(() => (window as any).__perMessage || 0);
+      const per: number[] = [];
+      for (let i = 0; i < 6; i++) {
+        const p0 = await probes();
+        await kernelMessage(page);
+        await quiet(page, s);                             // every probe that message sent has settled
+        per.push((await probes()) - p0);
+      }
+      const runs: number = await page.evaluate(() => (window as any).__perMessage || 0);
+      assert.equal(runs - runs0, 6, "the chat page's per-message retry ran on each of the six kernel messages");
+      assert.deepEqual(per, [1, 1, 1, 0, 0, 0], "probes per kernel message: one on each of the first three, none after, the viewer's budget alone (before: two on each of the first three, the heal's beside the viewer's)");
+      assert.equal((await state(page)).asks, s.asks, "every probe met the relay's 502: no fetch ran");
       assert.deepEqual(errors, [], "no page errors");
       await page.close();
     });

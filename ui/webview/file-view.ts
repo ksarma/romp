@@ -1631,8 +1631,8 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // joins, was out.
   const viewChanged = (): void => { viewSeq++; fillProbes(); picLink = null; shownByReask = false; };
   // The Source view's first paint decodes the fetched bytes (`srcDecode` holds the ones being decoded) and paints at the
-  // decode. A landing while that decode is out hands its own bytes here (fetchFile's landing): the decode of the older bytes
-  // then paints nothing, and the Source view paints at the decode of the landed ones.
+  // decode. An svg landing while that decode is out hands its own bytes here (fetchFile's landing): the decode of the older
+  // bytes then paints nothing, and the Source view paints at the decode of the landed ones.
   const decodeForSource = (b: Blob): void => {
     srcDecode = b;
     void b.text().then((t) => { if (srcDecode !== b) return; srcDecode = null; svgText = t; svgSource = true; renderBody(); takeKeyboard(); });
@@ -3615,7 +3615,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
       return isImage || isPdf ? r.blob() : r.text();
     }).then((t) => land((parked) => {   // parked while a pointer is pressed over the card; the guards re-run at the release
       if (!stands()) return;                                    // closed, replaced or overtaken while it was parked
-      if (!inView()) return;                                    // asked again, and the Source toggle was pressed since: the Source view stands
+      if (!inView()) { rearmDiskBar(my); return; }              // asked again, and the Source toggle was pressed since: the Source view stands, and the changed-on-disk bar, if this fetch took over its Reload, is armed again, since the moved bytes did not land
       if (editing) { refetchAfterEdit = true; return; }         // the editor holds the truth; read again when it ends
       const got = v!;                                           // set with the headers above; a failure never reaches here
       isText = got.isText; notUtf8 = got.notUtf8; mtimeNs = got.mtimeNs; isImage = got.isImage; isPdf = got.isPdf; isSvgImage = got.isSvgImage; textBytes = got.bytes;
@@ -3652,8 +3652,8 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
           return;
         }
         if (isSvgImage && srcDecode !== null) {
-          // A landing while a press of the Source toggle waits for its bytes to decode: the person chose the Source view, so no
-          // picture paints over it. The seam's onLanded runs first, at the landing, as at a picture's landing (the panel's wait
+          // An svg landing while a press of the Source toggle waits for its bytes to decode: the person chose the Source view, so
+          // no picture paints over it. The seam's onLanded runs first, at the landing, as at a picture's landing (the panel's wait
           // for the bytes ends here, not at their decode); then these bytes go to that view, which paints at their decode as
           // the press's would have, and the decode of the older bytes paints nothing (decodeForSource).
           fireLanded();
@@ -3697,7 +3697,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
       if (reopenOutline) openOutline();
     })).catch((err) => land(() => {
       if (!stands()) return;                                    // the same guards as a landing: an older failure, or a gone viewer's, paints over nothing…
-      if (!inView()) return;                                    // …nor over the Source view a press put up while a fetch that asked again was out…
+      if (!inView()) { rearmDiskBar(my); return; }              // …nor over the Source view a press put up while a fetch that asked again was out, the changed-on-disk bar armed again as at a failure…
       if (editing) { refetchAfterEdit = true; return; }         // …and never over the editor's host (the exit re-reads and says why then)
       const why = el("div", "fileview-err");
       const msg = String(err && err.message || err);

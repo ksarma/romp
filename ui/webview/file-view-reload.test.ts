@@ -879,6 +879,71 @@ test("changed on disk: the bar's Reload overtaken by another ask during its flig
   assert.equal(barOf(wrap), null); assert.equal(ctx.mtimeNs(), MT4, "the late answer changes nothing");
 });
 
+/** A body read (Blob) that waits for the test: `ok()` resolves it with the bytes, `fail(why)` rejects it as a network failure would. */
+function heldBody(bytes: string, type: string): { blob: () => Blob; ok: () => void; fail: (why: string) => void } {
+  let ok!: () => void, fail!: (why: string) => void;
+  const read = new Promise<Blob>((res, rej) => { ok = () => res(new Blob([bytes], { type })); fail = (why) => rej(new TypeError(why)); });
+  return { blob: (() => read) as unknown as () => Blob, ok, fail };
+}
+
+test("changed on disk: the bar's Reload overtaken by the svg picture's re-ask (the old picture failed while the Reload was out), with the Source toggle pressed while that re-ask is out, so its answer, a landing or a failure, paints nothing: the bar is armed again, its button reading Reload and enabled (before: disabled at Reloading for the rest of the open), and a click lands the moved file and clears the bar; with no press, the re-ask's landing clears the bar and its failure arms it again, as before", async (t) => {
+  visibleAfter(t);
+  const minted: string[] = [];                               // the type of every object URL made, per road
+  const mint = URL.createObjectURL;
+  URL.createObjectURL = ((b: Blob) => { minted.push(b.type); return mint.call(URL, b); }) as typeof URL.createObjectURL;
+  t.after(() => { URL.createObjectURL = mint; });
+  for (const press of [true, false]) {
+    for (const fails of [false, true]) {
+      const road = (press ? "the Source toggle pressed" : "no press") + ", the re-ask " + (fails ? "failing" : "landing");
+      const { wrap, ctx, body, src } = await open(FIG, t);
+      minted.length = 0;
+      const barGet = heldBody(SVG2, "image/svg+xml");
+      disk[FIG] = { bytes: SVG2, type: "image/svg+xml", mtimeNs: MT2, blob: barGet.blob };   // a session rewrote the figure
+      focusWindow(); await settle();
+      assert.equal(readBar(wrap).text, CHANGED, road + ": the bar is up");
+      const btn = reloadButton(wrap);
+      btn.click(); await settle();                           // the bar's own ask: its GET's body read waits on the test
+      assert.equal(btn.textContent, "Reloading", road + ": the acknowledgement"); assert.equal(btn.disabled, true);
+      const reask = heldBody(SVG2, "image/svg+xml");
+      disk[FIG] = { bytes: SVG2, type: "image/svg+xml", mtimeNs: MT2, blob: reask.blob };
+      img(body)!.dispatchEvent(new Ev("error"));             // the old picture's own request fails: its address is asked again, a newer fetch
+      await settle();
+      assert.ok(body.querySelector(".fileview-load"), road + ": the re-ask's loader: that fetch is out");
+      if (press) {
+        src.click(); await settle();                         // the Source view of the bytes in hand paints at their decode
+        assert.equal(ctx.mode(), "raw", road + ": the Source view is up");
+      }
+      if (fails) reask.fail("network gone"); else reask.ok();
+      await settle();
+      if (press) {
+        assert.equal(ctx.mode(), "raw", road + ": the re-ask's answer painted nothing: the Source view stands");
+        assert.equal(ctx.mtimeNs(), MT, road + ": and the moved bytes did not land");
+        const b = readBar(wrap);
+        assert.equal(b.text, CHANGED, road + ": the bar stands, since the moved file is not what shows");
+        assert.equal(b.button, "Reload", road + ": its button reads Reload (before the fix: Reloading)");
+        assert.equal(b.disabled, false, road + ": and is enabled: the bar is no dead end");
+        disk[FIG] = { bytes: SVG2, type: "image/svg+xml", mtimeNs: MT2 };
+        reloadButton(wrap).click(); await settle();
+        assert.equal(barOf(wrap), null, road + ": a click lands the moved file and its own ask clears the bar");
+        assert.equal(ctx.mtimeNs(), MT2, road + ": at the moved mtime");
+        src.click(); await settle();                         // back to the picture: the landed bytes' address, no object URL
+        assert.equal(img(body)!.src, figAt(MT2), road + ": back to the picture, at its /file address keyed on the moved mtime");
+        assert.deepEqual(minted, [], road + ": no object URL was made for the svg");
+      } else if (fails) {
+        assert.equal(ctx.error(), "network gone", road + ": the re-ask's failure pane");
+        const b = readBar(wrap);
+        assert.equal(b.button, "Reload", road + ": the bar's button armed again, as at any failure of its ask"); assert.equal(b.disabled, false);
+      } else {
+        assert.equal(barOf(wrap), null, road + ": the re-ask's landing brought the moved file: the bar goes");
+        assert.equal(ctx.mtimeNs(), MT2, road + ": at the moved mtime");
+      }
+      const before = readBar(wrap), mt = ctx.mtimeNs();
+      barGet.ok(); await settle();                           // the overtaken GET answers late: it reads nothing and never lands
+      assert.deepEqual(readBar(wrap), before, road + ": the overtaken answer changes nothing"); assert.equal(ctx.mtimeNs(), mt);
+    }
+  }
+});
+
 // ── the stand-in's projection (ui/test-dom-shim.ts): a node inspects as its primitives, never as the tree ─────────────
 test("a stand-in node enumerates its primitives alone, so a failing assertion's dump shows neither parentNode nor childNodes", () => {
   const root = new El("div"); root.className = "row";

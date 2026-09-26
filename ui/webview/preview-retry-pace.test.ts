@@ -18,6 +18,9 @@ const SID = "TESTHOST:11111111-2222-4333-8444-000000000291";
 const PATH = "/home/user/notes-api/plots/latency.png";
 
 // ── a minimal DOM: what previewFull touches, nothing more ──────────────────────────────────────────────────
+/** The pictures the page still holds, by address: a picture at one of them is complete once its src is set, as the browser
+ *  has a picture it holds (loads() adds one; a case drops one, as a garbage collection may let the page's picture go). */
+const held = new Set<string>();
 class FakeEl {
   tag: string; attrs: Record<string, string> = {};
   children!: FakeEl[]; parent!: FakeEl | null;   // both edges are defined in the constructor, non-enumerable (ui/test-dom-shim.ts hideEdges):
@@ -31,6 +34,7 @@ class FakeEl {
     Object.defineProperty(this, "parent", { value: null, writable: true, enumerable: false, configurable: true });
     hideEdges(this);   // attrs, style, _cls, listeners and the onclick-style nulls hide too; a later `img.onerror = fn` keeps the attribute
   }
+  get complete(): boolean { return this.tag === "img" && held.has(this.src); }
   get className(): string { return [...this._cls].join(" "); }
   set className(v: string) { this._cls = new Set(v.split(/\s+/).filter(Boolean)); }
   get classList() { const s = this._cls; return { add: (...c: string[]) => c.forEach((x) => s.add(x)), remove: (...c: string[]) => c.forEach((x) => s.delete(x)), contains: (c: string) => s.has(c), toggle: (c: string, on?: boolean) => { if (on === undefined) on = !s.has(c); on ? s.add(c) : s.delete(c); return on; } }; }
@@ -208,6 +212,10 @@ const WAITING = "span.path-full(span.path-full-wait(img.path-load-spin(),span.pa
 const spins = (n: FakeEl): number => n.children.reduce((k, c) => k + (c._cls.has("path-load-spin") ? 1 : 0) + spins(c), 0);
 /** The pictures in a box. */
 const pictures = (box: FakeEl): number => box.children.filter((c) => c._cls.has("path-full-img")).length;
+/** A picture's load: the page holds it from here on, so a later picture at its address is complete once its src is set. */
+const loads = (img: FakeEl): void => { held.add(img.src); img.onload(); };
+/** A picture's failure to load: the page does not hold its address (it asked the network, and the request failed). */
+const fails = (img: FakeEl): void => { held.delete(img.src); img.onerror(); };
 /** The attempts a box has left, read as the fetches its per-message heals make until the chip when each answers a real verdict
  *  (a 404, which spends one attempt and refills nothing): the attempts left, plus the one that settles the chip. */
 async function untilChip(P: any, box: FakeEl): Promise<number> {
@@ -226,7 +234,7 @@ async function rerendered(file: string): Promise<FakeEl> {
   return box;
 }
 
-test("an svg after a retry: the resumed fetch keeps its error words and its progress, then the picture loads from the /file address the first attempt used, beside the swirl and with no progress in the note until its load; a re-render shows the same address with no fetch, and with no cue after the load", async () => {
+test("an svg after a retry: the resumed fetch keeps its error words and its progress, then the picture loads from the /file address the first attempt used, beside the swirl and with no progress in the note until its load; a re-render shows the same address with no fetch, and with no cue once the picture has loaded and the page holds it", async () => {
   stubBlobs();
   fetchCalls = 0;
   const file = "/home/user/notes-api/plots/diagram.svg";
@@ -256,13 +264,35 @@ test("an svg after a retry: the resumed fetch keeps its error words and its prog
   const early = await rerendered(file);
   assert.equal(early.bones(), WAITING, "a re-render before the picture has loaded waits the same way");
   assert.equal(shownImg(early)?.src, addressOf(file), "at the same address");
-  shownImg(early)!.onload();
+  loads(shownImg(early)!);
   assert.equal(early.bones(), "span.path-full(img.path-full-img())", "the picture's load: the wait element goes and the picture shows alone");
   const again = await rerendered(file);
-  assert.equal(again.bones(), "span.path-full(img.path-full-img())", "a re-render of a picture that has loaded puts it in the box with no cue (loadedOnce holds its address)");
+  assert.equal(again.bones(), "span.path-full(img.path-full-img())", "a re-render of a picture that has loaded puts it in the box with no cue (the page still holds it: complete once its src is set)");
   assert.equal(shownImg(again)?.src, addressOf(file), "the re-render's picture: the same address");
   assert.equal(fetchCalls, 2, "and no fetch for either re-render");
   assert.equal(blobs, minted0, "no object URL was made for the svg on any of these roads");
+});
+
+test("a re-render keys its cue on the picture itself: while the page holds the loaded picture, the re-render's is complete once its src is set and goes in with no cue; once the page has let it go (as a garbage collection may), the re-render's picture is not complete and waits beside the one swirl until its load, which leaves it alone in the box; no re-render makes a managed fetch", async () => {
+  stubBlobs();
+  fetchCalls = 0;
+  const file = "/home/user/notes-api/plots/queue-depth.svg";
+  const { P, box } = await armedBox(file);
+  fetchAnswer = streams([3]);
+  P.retryFailedPreviews();
+  await sleep(40);
+  loads(shownImg(box)!);                                  // the picture loaded: the page holds it
+  const kept = await rerendered(file);
+  assert.equal(kept.bones(), "span.path-full(img.path-full-img())", "while the page holds the picture, the re-render's is complete once its src is set: no cue");
+  held.delete(addressOf(file));                           // the page let the picture go
+  const later = await rerendered(file);
+  assert.equal(later.bones(), WAITING, "once the page has let the picture go, the re-render's picture is not complete once its src is set: it waits beside the swirl");
+  assert.equal(spins(later), 1, "one swirl");
+  assert.equal(later.querySelector("path-load-note")!.textContent, "", "the note carries nothing while the picture loads");
+  assert.equal(shownImg(later)?.src, addressOf(file), "at its /file address");
+  loads(shownImg(later)!);
+  assert.equal(later.bones(), "span.path-full(img.path-full-img())", "its load leaves the picture alone in the box");
+  assert.equal(fetchCalls, 1, "the one managed fetch: the re-renders load from the memo's address");
 });
 
 test("a png after a retry shows from the object URL of its fetched bytes, and so does its re-render, each the plain <img> (the control for the svg case above)", async () => {
@@ -316,8 +346,9 @@ test("an svg picture whose load fails after the resumed fetch: no broken picture
   assert.equal(retried!.src, addressOf(file), "at the same address");
   assert.equal(typeof retried!.onerror, "function", "the new picture carries its failure handler, as the first one does");
   waits.push(waitOf());
-  // every fetch succeeds and every picture fails, over twenty kernel messages: a fetch that ends in a picture's failure does not
-  // refill the budget, so the attempts run out, the settled chip's heal makes its one attempt, and the box settles
+  // every fetch succeeds and every picture fails, over the twenty kernel messages of this loop (22 in all, with the two above): a
+  // fetch that ends in a picture's failure does not refill the budget, so the attempts run out, the settled chip's heal makes its one
+  // attempt, and the box settles
   retried!.onerror();
   await sleep(10);
   const roads: string[] = [];
@@ -330,7 +361,7 @@ test("an svg picture whose load fails after the resumed fetch: no broken picture
   assert.ok(roads.length > 0 && roads.every((u) => u === addressOf(file)), "every picture the heals built is the /file address: " + roads.join(" | "));
   assert.deepEqual(waits, Array(6).fill(WAITING + ", swirls 1"), "each of the six pictures loads beside the one swirl, the settled chip's heal included, whose chip gives way to the swirl while its picture loads: " + waits.join(" | "));
   assert.equal(blobs, minted0, "and no object URL was made for the svg");
-  assert.equal(fetchCalls, 6, "six managed fetches over twenty messages, the bound the budget of three gives: the first, whose progress refilled the budget before any picture had failed; three budgeted attempts; and the settled chip's one new-evidence heal with the attempt it leaves");
+  assert.equal(fetchCalls, 6, "six managed fetches over 22 kernel messages, one on each of the first six, the bound the budget of three gives: the first, whose progress refilled the budget before any picture had failed; three budgeted attempts; and the settled chip's one new-evidence heal with the attempt it leaves");
   assert.match(box.shape(), /span\.path-full-retry\[\]\{"⚠ still unavailable . tap to retry"\}/, "the chip, once the attempts are spent");
   const settled = box.shape();
   for (let i = 0; i < 30; i++) P.retryFailedPreviews();
@@ -339,7 +370,7 @@ test("an svg picture whose load fails after the resumed fetch: no broken picture
   assert.equal(fetchCalls, 6, "and no further fetch");
 });
 
-test("a picture that has loaded, put in the box again with no cue by a re-render, then fails to load: its failure takes the address out of loadedOnce with its memo entry, so the next attempt runs the managed fetch and its picture waits beside the one swirl", async () => {
+test("a picture shown at once by a re-render (the page still held it), then failing to load (the page had let it go and its request failed): its failure drops the memo entry and takes the address out of loadedOnce, so a re-render's first attempt at the address shows its cue again, and the next attempt runs the managed fetch, whose picture, which the page no longer holds, waits beside the one swirl", async () => {
   stubBlobs();
   fetchCalls = 0;
   const file = "/home/user/notes-api/plots/ingest-rate.svg";
@@ -348,16 +379,22 @@ test("a picture that has loaded, put in the box again with no cue by a re-render
   P.retryFailedPreviews();
   await sleep(40);
   assert.equal(typeof shownImg(box)?.onload, "function", "the picture at the preview's own address carries its load handler");
-  shownImg(box)!.onload();                                // the picture loaded: its address joined loadedOnce
+  loads(shownImg(box)!);                                  // the picture loaded: the page holds it, and its address joined loadedOnce
   const again = await rerendered(file);
-  assert.equal(again.bones(), "span.path-full(img.path-full-img())", "a re-render puts the loaded picture in the box with no cue (loadedOnce holds its address)");
+  assert.equal(again.bones(), "span.path-full(img.path-full-img())", "a re-render puts the loaded picture in the box with no cue (the page still holds it: complete once its src is set)");
   const calls = fetchCalls;
-  shownImg(again)!.onerror();                             // the re-render's picture fails to load
+  fails(shownImg(again)!);                                // the page let the picture go, and the re-render's picture fails to load
   await sleep(10);
+  // a re-render's first attempt at the address (the memo entry is gone, so it is the plain <img> road): the first attempt's cue
+  const first = P.previewFull(file, SID, true) as unknown as FakeEl;
+  minted.push(first);
+  assert.equal(spins(first), 1, "a re-render's first attempt shows the cue again: the failure took the address out of loadedOnce");
+  assert.equal(fetchCalls, calls, "the first attempt's plain <img> makes no managed fetch");
+  first.isConnected = false;                              // that turn is re-rendered again: its box leaves the document
   P.retryFailedPreviews();
   await sleep(40);
   assert.equal(fetchCalls, calls + 1, "the next attempt runs the managed fetch: the memo entry went with the picture's failure");
-  assert.equal(again.bones(), WAITING, "and its picture waits beside the swirl: the failure took the address out of loadedOnce, so the picture is not shown as one that has loaded");
+  assert.equal(again.bones(), WAITING, "and its picture waits beside the swirl: the page no longer holds it, so it is not complete once its src is set");
   assert.equal(spins(again), 1, "one swirl");
   assert.equal(shownImg(again)?.src, addressOf(file), "at its /file address");
 });
@@ -500,11 +537,15 @@ test("after two builds within one load's life, the replaced picture's failure ch
     P.retryFailedPreviews();
     await sleep(40);
     const img1 = shownImg(box)!;
+    const wait = box.firstElementChild!;
     P.refreshSettledPreviews();
     await sleep(10);
     const img2 = shownImg(box)!;
     assert.equal(img1.src, addressOf(file), file + ": the chip's heal lands the picture at its /file address");
     assert.equal(img2?.src, addressOf(file), file + ": and the reconnect heal's picture, from the memo, is the same address");
+    assert.equal(box.firstElementChild, wait, file + ": the box keeps its wait element across the build from the memo");
+    assert.equal(spins(box), 1, file + ": one swirl");
+    assert.equal(wait.onclick, null, file + ": and while the picture loads the wait element carries no tap handler");
     return { P, box, img1, img2 };
   };
   const absorbed = async (file: string, two: boolean, both: boolean): Promise<number> => {
@@ -550,38 +591,42 @@ test("after two builds within one load's life, the replaced picture's failure ch
   await sleep(10);
   assert.equal(shownImg(box), img2, "the replaced picture's failure leaves the current picture in the box");
   assert.equal(box.shape(), before, "and changes nothing else (no failure counted, no attempt spent)");
+  // the replaced picture's load changes nothing either: while the current picture still loads, the wait element and its one swirl
+  // stay beside it; and after the current picture failed, the box keeps the failure's wait element and its words
+  const loading = await twoPictures("/home/user/notes-api/plots/drain-rate.svg");
+  const whileLoading = loading.box.shape();
+  loading.img1.onload();
+  assert.equal(loading.box.shape(), whileLoading, "the replaced picture's load while the current picture loads: the wait element and the swirl stay, the current picture still hidden (path-img-loading)");
+  assert.equal(spins(loading.box), 1, "one swirl beside the loading picture");
+  const failed = await twoPictures("/home/user/notes-api/plots/drain-lag.svg");
+  failed.img2.onerror();
+  await sleep(10);
+  const afterFailure = failed.box.shape();
+  assert.match(afterFailure, /span\.path-load-note\[\]\{"[^"]+"\}/, "the premise: the current picture failed, and the wait element carries the failure's words");
+  failed.img1.onload();
+  assert.equal(failed.box.shape(), afterFailure, "the replaced picture's load after the current picture failed: the box keeps its wait element and its words (nothing a stale load may take away)");
+  assert.equal(typeof failed.box.firstElementChild?.onclick, "function", "and the wait element's tap");
 });
 
-test("a tap on the swirl while the picture loads builds it again in the same wait element: one picture and one swirl in the box, and a failed request both pictures share spends one attempt", async () => {
+test("while the picture loads beside the swirl after its fetch, the wait element is out of the failure state: no retry title, no pointer cursor and no tap handler, so nothing offers a tap that would start nothing new; the picture's failure puts the retrying persona back, its title, pointer and tap", async () => {
   stubBlobs();
-  const run = async (file: string, tap: boolean): Promise<number> => {
-    const { P, box } = await armedBox(file);
-    fetchAnswer = streams([3]);
-    P.retryFailedPreviews();
-    await sleep(40);
-    const img1 = shownImg(box)!;
-    const wait = box.firstElementChild!;
-    assert.ok(wait._cls.has("path-full-wait") && typeof wait.onclick === "function", file + ": the wait element keeps the failure's tap handler while the picture loads");
-    const pics = [img1];
-    if (tap) {
-      wait.onclick({ stopPropagation() {}, currentTarget: wait });
-      await sleep(10);
-      const img2 = shownImg(box)!;
-      assert.ok(img2 && img2 !== img1, file + ": the tap built the picture again");
-      assert.equal(img2.src, addressOf(file), file + ": at its /file address");
-      assert.equal(box.firstElementChild, wait, file + ": the box keeps its wait element across the attempt from the memo");
-      assert.equal(pictures(box), 1, file + ": one picture in the box, the earlier one gone from it");
-      assert.equal(spins(box), 1, file + ": and one swirl");
-      pics.push(img2);
-    }
-    for (const p of pics) p.onerror();
-    await sleep(10);
-    assert.equal(pictures(box), 0, file + ": the failed picture left the box");
-    return untilChip(P, box);
-  };
-  const control = await run("/home/user/notes-api/plots/retries.svg", false);
-  const tapped = await run("/home/user/notes-api/plots/timeouts.svg", true);
-  assert.equal(tapped, control, "the shared failure spent one attempt of the budget the tap re-armed, leaving what one picture's failure leaves: " + tapped + " fetches to the chip against " + control);
+  const file = "/home/user/notes-api/plots/retries.svg";
+  const { P, box } = await armedBox(file);
+  const wait = box.firstElementChild!;
+  assert.ok(wait._cls.has("path-full-wait") && /tap to retry now/.test(wait.title) && wait.style.cursor === "pointer" && typeof wait.onclick === "function", "the premise: after the first attempt's failure the wait element is the retrying swirl, titled, pointer and tap");
+  fetchAnswer = streams([3]);
+  P.retryFailedPreviews();
+  await sleep(40);
+  assert.equal(box.bones(), WAITING, "the picture loads beside the one swirl");
+  assert.equal(box.firstElementChild, wait, "in the same wait element");
+  assert.doesNotMatch(wait.title, /retry/, "no retry wording in its title while the picture loads; got " + JSON.stringify(wait.title));
+  assert.equal(wait.title, "loading preview…", "its title says the picture is loading, as the first attempt's cue does");
+  assert.equal(wait.style.cursor || "", "", "no pointer cursor");
+  assert.equal(wait.onclick, null, "and no tap handler");
+  shownImg(box)!.onerror();
+  await sleep(10);
+  const back = box.firstElementChild!;
+  assert.ok(back._cls.has("path-full-wait") && /tap to retry now/.test(back.title) && back.style.cursor === "pointer" && typeof back.onclick === "function", "the picture failed: the retrying swirl again, titled, pointer and tap");
 });
 
 test("a tap on the chip a failing svg picture settled on shows the swirl: the tap runs the managed fetch, in the loading persona", async () => {
@@ -605,7 +650,7 @@ test("a tap on the chip a failing svg picture settled on shows the swirl: the ta
   assert.equal(fetchCalls, before + 1, "the tap ran the managed fetch");
 });
 
-test("a tap, and a reconnect-class heal, clear the budget flag a picture's failure set: after either, fetches that make progress refill the budget again, as before the picture failed; with neither, the flag holds the refill and the box settles on the chip", async () => {
+test("a tap, and every reconnect-class event, clear the budget flag a picture's failure set: after a tap, after the heal of a settled box, and after romp:wsup, hostUp or romp:hostRelayUp over a box still retrying after its picture failed, each driven as render.ts drives it, fetches that make progress refill the budget again, as before the picture failed; with neither, the flag holds the refill and the box settles on the chip", async () => {
   stubBlobs();
   // a link that cuts every transfer: the first answer brings 1000 of 6000 bytes, each resumed one 500 more, then the stream ends
   const flaky = () => { let first = true; return () => { const size = first ? 1000 : 500; const answer = first
@@ -645,6 +690,21 @@ test("a tap, and a reconnect-class heal, clear the budget flag a picture's failu
   healed.P.refreshSettledPreviews();
   await sleep(460);
   assert.equal(await settles(healed.P, healed.box), false, "after a reconnect-class heal: each cut attempt made progress and refilled the budget, so no chip");
+  // a box still in the retrying persona after its picture failed (registered for the per-message heal, not settled): each
+  // reconnect-class event as render.ts drives it; romp:wsup and hostUp rebuild the box through the per-message retry first
+  const events: Array<[string, (P: any) => void]> = [
+    ["romp:wsup", (P) => { P.retryFailedPreviews(); P.refreshSettledPreviews(); }],   // render.ts's romp:wsup line
+    ["hostUp", (P) => { P.retryFailedPreviews(); P.refreshSettledPreviews(); }],      // render.ts's message handler: the retry on every message, then hostUp's settled drain
+    ["romp:hostRelayUp", (P) => { P.refreshSettledPreviews(); }],                    // render.ts's romp:hostRelayUp listener: the settled drain alone
+  ];
+  for (const [name, drive] of events) {
+    const retrying = await failedPicture("/home/user/notes-api/plots/wal-" + name.replace(/\W/g, "") + ".svg");
+    assert.ok(!retrying.box.querySelector("path-full-retry") && /tap to retry now/.test(retrying.box.firstElementChild!.title), name + ": the premise: the box retries (the swirl, not the chip) after its picture failed");
+    fetchAnswer = flaky();
+    drive(retrying.P);
+    await sleep(460);
+    assert.equal(await settles(retrying.P, retrying.box), false, name + " over a box still retrying after its picture failed: the event cleared the flag, so each cut attempt made progress and refilled the budget, and no chip");
+  }
 });
 
 test("the source keeps the two rules where the behaviour lives", () => {
