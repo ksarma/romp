@@ -8721,8 +8721,11 @@ re-open the 761 by 76 picture's paint-time control left at its load, the picture
 file-view-figure-floor-browser.test.ts); and the floor is read
 again at each change of the figure's own laid-out box (`watchFigureBoxes`: one ResizeObserver per open over the
 figures of the Rendered box, armed at each text paint through the seam's onRendered, the first paint's included
-(nothing is observed at the open: the body is empty then), and dropped with the viewer, running the same decision for the figure whose box changed; a report of 0 by 0
-runs no decision, a rule over the report whatever produced it: a 0 by 0 report decides nothing, and the figure is decided
+(nothing is observed at the open: the body is empty then), and dropped with the viewer, running the same decision for the
+figure whose box changed, at the next animation frame and never inside the observers' delivery, where a decision that dressed
+a small picture in a top-level table grew the table after the tables' observer had been handed its old size and WebKit raised a
+loop of undelivered notifications (the file review's round 18, extra6-3), a figure with no box at the frame passed over as at
+the report; a report of 0 by 0 runs no decision, a rule over the report whatever produced it: a 0 by 0 report decides nothing, and the figure is decided
 by its load or its error, by the gate's restore or by its next report with a box (the file review's round 4, regression-3:
 the reason before it named two roads to such a report as the only ones, and a loaded figure the author gave no box was a
 third); the viewer's hide and a gated placeholder's img until its click are transient reports, on both of which the show
@@ -8901,11 +8904,15 @@ bypassed: no request reaches a host the gate still holds. The build's record her
 the contract said the same; the claim was false, and the follow-on is a privacy surface, landing on the owner's word, given on 2026-09-22
 (open point 11: all three gestures kept, the outbound case made visible before it happens). The verifications: `git diff --stat $(git merge-base origin/main HEAD) HEAD -- kernel/` is empty and
 `git diff --name-only $(git merge-base origin/main HEAD) HEAD` lists files under ui, docs, plans, tools,
-upstream or tests, and SECURITY.md, alone (64 files, the ledger entry's where line; run 2026-09-26 at the head that carries the
-marquee forbid's records from the fixes for the file review's round 18, tests-1 with regression-1 and regression-2, where the
-merge-base is fa3ef54b5, the fork's main the
-branch merged after the painted-contrast ask of 2026-09-23, its tip the merge of the fork's batch PR 907, and the listing is the
-branch's whole delta over it; the run at the head that carries the fixes for the file review's round 17, tests-1 with
+upstream or tests, and SECURITY.md, alone (70 files, the ledger entry's where line; run 2026-09-26 at the head that carries the
+bench's variants from the fixes for the file review's round 18, regression-3, where the merge-base is fa3ef54b5, the fork's main
+the branch merged after the painted-contrast ask of 2026-09-23, its tip the merge of the fork's batch PR 907, and the listing is
+the branch's whole delta over it; the run at the head that carries the marquee forbid's records from that round's fixes,
+tests-1 with regression-1 and regression-2, from the merge-base fa3ef54b5, listed 64, before
+tools/viewer-resize-variants/css-table-plain.css, tools/viewer-resize-variants/stub-widthro.js,
+tools/viewer-resize-variants/stub-widthro-bodyw.js, tools/viewer-resize-variants/stub-allro.js,
+tools/viewer-resize-variants/stub-bodyw.js and tools/viewer-resize-variants/README.md joined the delta; the run at the head that
+carries the fixes for the file review's round 17, tests-1 with
 regression-1 and extra9-1, and the sanitizer's removal of an author's marquee, from the merge-base fa3ef54b5, listed 60, before
 SECURITY.md, ui/webview/md-config-block-boxes.test.ts, ui/webview/anchor-map-wrappers.test.ts and
 ui/webview/anchor-map-pairing-r6.test.ts joined the delta; the run at the head before that removal, from the merge-base fa3ef54b5, listed 58, before
@@ -8985,13 +8992,15 @@ ui/webview/file-view-place-blocks.test.ts stands in for with a fixture box) and,
 phone's pages and a hybrid page, and in Firefox, on the hybrid page, the clicks of the mouse after a drag of a picture and after a
 drag in another pane, and Firefox's chord, on a plain page too,
 each engine launched through real-viewer-leg.ts's inBrowser with the engine named; the cells are ui/webview/file-figure-open-taps.ts's,
-a module of the cells alone that the Chromium leg runs too, so one set reads all three engines; and a case of WebKit's alone that
-reads the window errors of the Files pane as its Comments aside opens beside a document of top-level tables) and, since the fixes
+a module of the cells alone that the Chromium leg runs too, so one set reads all three engines; and two cases of WebKit's alone that read window errors, the Files
+pane's as its Comments aside opens beside a document of top-level tables, and the chat modal's, the Files pane's and the feed
+modal's as remote pictures in top-level tables load, one of them under the floor, 24 opens a surface, the file review's round
+18, extra6-3) and, since the fixes
 for that round's extra9-1 (with the coordinator's decision 4), ui/webview/file-figure-open-stacking.ts (the one gate's stacking
 cells, a module of the cells alone that the same two legs run in the three engines, on the chat modal and the Files pane: a remote
 picture in a top-level table, inside author elements of page classes that would make a stacking context around it and inside an
-author's marquee, each followed by a positioned author element or by an svg whose shadow is placed over the control, and a click
-on the picture's own body under the positioned element, a stated cost). The review's round 1 added two modules outside those two stems:
+author's marquee, each followed by a positioned author element or by an svg whose shadow is placed over the control, and a click on the
+picture's own body under the positioned element, a stated cost). The review's round 1 added two modules outside those two stems:
 ui/webview/file-view-figure-shapes.test.ts (the source pins for L3's round-1 rules: figureTarget's web test before
 the model's join, the one decision's order in figureWantsControl (the state, the floor, the target, any link above),
 the measure's reads, the bare

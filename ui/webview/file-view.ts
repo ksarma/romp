@@ -783,7 +783,10 @@ export type FileViewRenderWhy = "paint" | "reflow";
 // stamp, which the body's report runs as well, writes each table's own width with its cap, read after every cap is written, so
 // the shift a new width asks for lands in the layout the new width makes and the tables' observer, delivered after the body's in
 // the same round, finds the width already written (with the width left to that later delivery, WebKit raised a window error, a
-// loop of undelivered notifications, at a pane's width change).
+// loop of undelivered notifications, at a pane's width change). Both write the same measure, the table's offsetWidth, so that
+// delivery for a table the stamp just wrote leaves the value as the stamp wrote it (the file review's round 18, fresh-1: the
+// observer had written the border box's fractional inline size, a second write of a different string after every stamp, which
+// for some widths moved the table by a pixel before the frame painted).
 // Absent ResizeObserver (a stand-in, an old engine) nothing is written and the fallbacks hold. One watch at a time: the next
 // open, or the close, drops the last, both observers with it. An optional `onWidth` runs after each changed report of the
 // body's width with the new width: the local viewer's reflow, which re-places the comments panel's cards once per animation
@@ -813,10 +816,7 @@ function watchBodyWidth(body: HTMLElement, onWidth?: (width: number) => void): (
       if (onWidth) onWidth(w);
     });
     tables = new ResizeObserver((entries) => {
-      for (const e of entries) {
-        const box = e.borderBoxSize && e.borderBoxSize[0];
-        (e.target as HTMLElement).style.setProperty("--fv-table-w", (box ? box.inlineSize : (e.target as HTMLElement).offsetWidth) + "px");
-      }
+      for (const e of entries) (e.target as HTMLElement).style.setProperty("--fv-table-w", (e.target as HTMLElement).offsetWidth + "px");   // the stamp's measure
     });
     const own = tables;
     ro.observe(body);
@@ -6043,8 +6043,10 @@ function armFigureControls(body: HTMLElement, filePath: string): () => void {
  *  it back, whatever reflowed it (the pane dragged, the Comments aside opened or closed, the window resized, a text-size step
  *  re-measuring the 80ch column at a constant body width), with no call from any road (the file review's round 2: a call from
  *  the width watch's repaint ran on one road of two and missed the text-size step). The observer's first report describes each
- *  figure's box at observe(), the decision the paint took over a box not yet laid out, run again over the laid-out one; a report
- *  of 0 by 0 runs no decision: the skip is a rule over the report, whatever produced it. A 0 by 0 report decides nothing, and the
+ *  figure's box at observe(), the decision the paint took over a box not yet laid out, run again over the laid-out one. A report's
+ *  decision runs at the next animation frame, over the figures reported with a box since the last one, never inside the observers'
+ *  delivery, where a decision that dresses a figure grew a top-level table the tables' observer had been handed at its old size
+ *  (the file review's round 18, extra6-3; the comment in the callback says how); a report of 0 by 0 runs no decision: the skip is a rule over the report, whatever produced it. A 0 by 0 report decides nothing, and the
  *  figure is decided by its load or its error (armFigureControls), by the gate's restore, or by its next report with a box (the
  *  file review's round 4, regression-3: the reason before it named two roads to such a report as the only ones, and a loaded
  *  figure the author gave no box was a third). Two reports are transient, the viewer's hide (display:none on the pane or its
@@ -6073,6 +6075,8 @@ function armFigureControls(body: HTMLElement, filePath: string): () => void {
  *  (a stand-in outside a browser), where nothing reflows and the paint's decision stands. */
 function watchFigureBoxes(body: HTMLElement, filePath: string, onRendered: (cb: (why?: FileViewRenderWhy) => void) => void): (() => void) | null {
   if (typeof ResizeObserver !== "function") return null;
+  const due = new Set<Element>();                      // the figures reported with a box since the last frame's decision
+  let frame = 0;                                       // the pending animation frame's handle, 0 when none is pending
   const ro = new ResizeObserver((entries) => {
     for (const e of entries) {
       // A 0 by 0 report is skipped: a 0 by 0 report decides nothing, whatever produced it; the figure is decided by its load or
@@ -6092,16 +6096,35 @@ function watchFigureBoxes(body: HTMLElement, filePath: string, onRendered: (cb: 
       // the figure again (the docstring
       // above; the file review's round 4, ui-1).
       if (e.contentRect.width === 0 || e.contentRect.height === 0) continue;
-      const img = e.target;
-      if (img.isConnected && figureState(img) !== "standin") decideFigureControl(img, filePath);
+      due.add(e.target);
     }
+    // The decision runs at the next animation frame, a layout event and never a timer, not inside this delivery: a decision that
+    // dresses a figure with the outbound mark gives it a margin, which grows a top-level table holding it, and the tables' observer
+    // (watchBodyWidth) was handed that table's old size in the same delivery, so the table's new size was skipped and WebKit raised a
+    // window error, a loop of undelivered notifications, as a small picture in a table loaded beside others (the file review's round
+    // 18, extra6-3). At the frame the table's new size is the first report of that frame's delivery.
+    if (due.size && !frame) frame = requestAnimationFrame(decideDue);
   });
-  const rearm = (): void => { ro.disconnect(); body.querySelectorAll(".fileview-md img").forEach((img) => { ro.observe(img); }); };
+  // The frame's decision over the figures reported since the last one: a figure the paint replaced (no longer connected) or a
+  // stand-in is passed over, as at the report, and so is a figure with no box at the frame (the viewer's hide came between the report
+  // and the frame; the show reports the box again), so a skip the report makes holds at the decision too.
+  const decideDue = (): void => {
+    frame = 0;
+    const figs = Array.from(due);
+    due.clear();
+    for (const img of figs) {
+      if (!img.isConnected || figureState(img) === "standin") continue;
+      const r = img.getBoundingClientRect();
+      if (r.width === 0 || r.height === 0) continue;
+      decideFigureControl(img, filePath);
+    }
+  };
+  const rearm = (): void => { ro.disconnect(); due.clear(); body.querySelectorAll(".fileview-md img").forEach((img) => { ro.observe(img); }); };
   onRendered((why) => { if (why !== "reflow") rearm(); });
   // No arm here: the open runs this before its first paint, so an arm at this point observed nothing (the file review's round 3,
   // tests-4: measured in Chromium at the fix over the fresh open, the replace, Back, Forward and a reopen after a close, the body
   // holding no `.fileview-md img` on any of the five, the loader alone), and the first paint's arm follows.
-  return () => { ro.disconnect(); };
+  return () => { ro.disconnect(); due.clear(); if (frame) cancelAnimationFrame(frame); frame = 0; };
 }
 
 /** A pixel-sized `<video>` keeps the shape its `width` and `height` attributes give it, capped or not. The viewer's sheets

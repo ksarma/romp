@@ -217,9 +217,10 @@ test("composerWindow, executed: own composer → the same-origin shell's chat pa
 // first report, the body's content width on EACH TOP-LEVEL TABLE (never a nested one, never the prose) after one, the same
 // width on the fresh tables a paint brings (the returned stamp: mdBlock rebuilds the root and no report follows a paint), each
 // table's own width written by the stamp with its cap, read once every cap is written, a repeated width no write, the tables'
-// observer watching exactly the top-level tables of the root last stamped and writing each one's border-box width on it as its
-// report comes, one watch at a time with both observers dropped, and no watch at all without ResizeObserver.
-test("watchBodyWidth, executed: --fv-body-w lands on each top-level table after a report and, through the stamp, on a fresh root's tables, the stamp writing each one's own width as --fv-table-w with its cap, read once every cap is written; a nested table and the prose get nothing; a repeated width writes nothing; the tables' observer watches the stamped root's top-level tables alone and writes each one's border-box width as --fv-table-w; the next watch and the drop disconnect both observers; no ResizeObserver, no writes", () => {
+// observer watching exactly the top-level tables of the root last stamped and writing each one's offsetWidth on it as its report
+// comes, the stamp's measure, so its delivery for a table the stamp just wrote leaves the width as the stamp wrote it, one watch at a
+// time with both observers dropped, and no watch at all without ResizeObserver.
+test("watchBodyWidth, executed: --fv-body-w lands on each top-level table after a report and, through the stamp, on a fresh root's tables, the stamp writing each one's own width as --fv-table-w with its cap, read once every cap is written; a nested table and the prose get nothing; a repeated width writes nothing; the tables' observer watches the stamped root's top-level tables alone and writes each one's offsetWidth as --fv-table-w, the stamp's measure, so a stamp followed by the observer's delivery for the same box leaves the width unchanged (the file review's round 18, fresh-1); the next watch and the drop disconnect both observers; no ResizeObserver, no writes", () => {
   const head = "function watchBodyWidth(body: HTMLElement, onWidth?: (width: number) => void): () => void {";   // the seam's reflow hangs on onWidth (undefined here: the stamp alone runs)
   const at = VIEW.indexOf("let dropWidthWatch: () => void = ");
   const end = VIEW.indexOf("\n}\n", VIEW.indexOf(head, at)) + 3;
@@ -277,12 +278,18 @@ test("watchBodyWidth, executed: --fv-body-w lands on each top-level table after 
   assert.equal(w(root.nested), "", "a table inside a paragraph is not the document's own: it keeps the prose width");
   assert.equal(w(root.p), "", "the prose is never written to (the property is non-inherited; a write there would reach nothing anyway)");
   assert.deepEqual(tableObs.targets, [root.t1, root.t2], "after the report the tables' observer watches the two top-level tables and neither the nested table nor the prose");
-  // the tables' reports: each table's own border-box width on it, the inline size of its border box, and its offsetWidth where the
-  // entry carries no border-box size (an engine before that field)
+  // the tables' reports: each table's own width on it as offsetWidth reads it, the measure the stamp writes, whatever border-box size
+  // the entry carries, so a stamp followed by the observer's delivery for the same box leaves --fv-table-w unchanged (the file
+  // review's round 18, fresh-1: the observer wrote the border box's fractional inline size, a second, different write after every
+  // stamp, which for some widths moved the table by a pixel)
+  sized(root, root.t1, 1000, []);
+  const stamped = tw(root.t1);
+  tableObs.cb([{ target: root.t1, borderBoxSize: [{ inlineSize: 1000.296875 }] }]);
+  assert.equal(tw(root.t1), stamped, "a stamp, then the observer's delivery for the same box, its border box fractional, leaves --fv-table-w as the stamp wrote it (" + stamped + ")");
   sized(root, root.t2, 611, []);
-  tableObs.cb([{ target: root.t1, borderBoxSize: [{ inlineSize: 1234.5 }] }, { target: root.t2 }]);
-  assert.equal(tw(root.t1), "1234.5px", "a table's report writes its border-box inline size as --fv-table-w");
-  assert.equal(tw(root.t2), "611px", "an entry with no border-box size reads the table's offsetWidth");
+  tableObs.cb([{ target: root.t2, borderBoxSize: [{ inlineSize: 611.25 }] }, { target: root.t1 }]);
+  assert.equal(tw(root.t2), "611px", "a table whose width moved: its report writes its offsetWidth, not the border box's inline size");
+  assert.equal(tw(root.t1), "1000px", "an entry with no border-box size reads the table's offsetWidth too");
   assert.equal(tw(root.nested) + tw(root.p) + tw(root.md) + tw(body), "", "nothing else carries the table's width");
   // a paint: mdBlock rebuilt the root, no report follows; renderBody's stamp writes the width last reported on the fresh tables
   const old = root;

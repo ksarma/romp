@@ -174,11 +174,21 @@ test("the one decision: figureWantsControl reads the figure's state by one rule 
     'if (typeof ResizeObserver !== "function") return null;',
     "const ro = new ResizeObserver((entries) => {",
     "if (e.contentRect.width === 0 || e.contentRect.height === 0) continue;",
-    'if (img.isConnected && figureState(img) !== "standin") decideFigureControl(img, filePath);',
+    "due.add(e.target);",
+    "if (due.size && !frame) frame = requestAnimationFrame(decideDue);",
+    'if (!img.isConnected || figureState(img) === "standin") continue;',
+    "if (r.width === 0 || r.height === 0) continue;",
+    "decideFigureControl(img, filePath);",
     'body.querySelectorAll(".fileview-md img").forEach((img) => { ro.observe(img); });',
     'onRendered((why) => { if (why !== "reflow") rearm(); });',
-    "return () => { ro.disconnect(); };",
-  ], "watchFigureBoxes: the guard, the observer over the figures, the 0 by 0 report skipped before the decision, the arm at each paint, the drop");
+    "return () => { ro.disconnect(); due.clear(); if (frame) cancelAnimationFrame(frame); frame = 0; };",
+  ], "watchFigureBoxes: the guard, the observer over the figures, the 0 by 0 report skipped before the figure is marked due, the decision at the next animation frame over the figures due, a figure with no box at the frame passed over, the arm at each paint, the drop with the pending frame cancelled");
+  // no decision inside the observers' delivery (the file review's round 18, extra6-3): a decision there dressed a small picture in a
+  // top-level table with the mark's margin, growing the table after the tables' observer had been handed its old size, and WebKit
+  // raised a loop of undelivered notifications; a sentence pin on where the call stands, whose property
+  // file-figure-open-engines-browser.test.ts's WebKit case of pictures in top-level tables executes (red at ef686b029)
+  const delivery = between(watch, "const ro = new ResizeObserver((entries) => {", "\n  });\n");
+  assert.doesNotMatch(delivery, /decideFigureControl\(/, "the observers' delivery marks figures due and decides none");
   // no standalone arm between the paint's arm and the drop (the file review's round 3, tests-4): the open runs this before its
   // first paint, over an empty body, so a `rearm();` there observed nothing on any road (measured in Chromium over the fresh open,
   // the replace, Back, Forward and a reopen); the mark is anchored to the whole line, since a bare "rearm();" was satisfied by the

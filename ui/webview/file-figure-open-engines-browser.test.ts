@@ -7,12 +7,13 @@
 // author's marquee, each scene red at 0ab74924c, its header naming each cell. The tap cells: WebKit runs them on a phone's pages and
 // on a hybrid page (hasTouch with a mouse), on the chat modal and the Files pane, and Firefox on the hybrid page alone, since
 // Playwright's Firefox takes no isMobile, the clicks after a drag of a picture and after a drag in another pane, and Firefox's chord,
-// on a plain page too. One more case, WebKit's alone, reads the
-// window errors of the Files pane as its Comments aside opens beside a document of top-level tables (the table's own width written
-// with its cap: file-view.ts watchBodyWidth). The WebKit engine is Playwright's on Linux, under touch emulation for the cells on a
-// phone's pages and on the hybrid page and for the stacking cells, a stand-in for WebKitGTK, and presumably WPE, on a touchscreen,
-// and with no touchscreen for the plain page's cells and the window-error case (the file review's round 18, tests-3); no cell
-// claims iOS Safari or the iPhone, a cell
+// on a plain page too. Two more cases, WebKit's alone, read window errors: the Files pane's as its Comments aside opens beside a
+// document of top-level tables (the table's own width written with its cap: file-view.ts watchBodyWidth), and the chat modal's, the
+// Files pane's and the feed modal's as remote pictures in top-level tables load, one of them under the floor (the figures' decision
+// at the next animation frame: file-view.ts watchFigureBoxes; the file review's round 18, extra6-3). The WebKit engine is
+// Playwright's on Linux, under touch emulation for the cells on a phone's pages and on the hybrid page and for the stacking cells, a
+// stand-in for WebKitGTK, and presumably WPE, on a touchscreen, and with no touchscreen for the plain page's cells and the
+// window-error cases (the file review's round 18, tests-3); no cell claims iOS Safari or the iPhone, a cell
 // run under a phone's pages included (WebKit's iOS source gives an iPhone tap's click the touch's own pointerId, read and not run on
 // a device). In that WebKit a tap's click carries pointerId 1 of type mouse while its press carried the touch's, each tap cell
 // asserting that shape as its precondition, and the click finds its press in the gate's one-click slot, as it does in every engine,
@@ -112,4 +113,58 @@ test("in WebKit (Playwright's, on Linux), the Files pane at 1400 by 800 over a d
   if (!ran) return;   // no browser: inBrowser skipped the case loudly
   t.diagnostic("record " + JSON.stringify(seen));
   assert.deepEqual(seen, [[], [], []], "the window errors each open raised as the aside opened, one list an open (a property pin over the page's error events)");
+});
+
+// The pictures in top-level tables loading (the file review's round 18, extra6-3). A remote picture under the 48 px floor inside a
+// top-level table, loading beside several others, can be reported by the figures' ResizeObserver before its load event, and that
+// report's decision dresses it with the outbound mark, whose margin grows the table inside the same delivery of the observers, the
+// tables' observer having been handed the table's old size; WebKit then raised a window error, a loop of undelivered notifications.
+// The figures' decision now runs at the next animation frame (file-view.ts watchFigureBoxes), so the table's new size is the next
+// frame's first report. Each open loads every picture of the document through the gate on the chat modal, the Files pane and the
+// feed modal, 24 opens a surface; red at ef686b029, where some opens on each surface raised it (the counts are the checklist's), and
+// green at 0ab74924c by design, which had no tables' observer. The finding's first probe, wide pictures in the tables, is green at
+// both heads: the trigger needs the small picture, decided at its report before its load.
+const FIGS: Record<string, [number, number]> = { "/t1.svg": [300, 200], "/t2.svg": [20, 20], "/t3.svg": [640, 120], "/n1.svg": [40, 40] };
+const fig = (name: string): string => '<img src="' + WEB + "/" + name + '.svg" alt="' + name + '">';
+const FULL = ["# Figures", "", PARA(1), "",
+  "<details><summary>The first fold</summary>", "", "![d1](" + WEB + "/d1.svg)", "", "</details>", "", PARA(2), "",
+  "<details open><summary>The second fold</summary>", "", "![d2](" + WEB + "/d2.svg)", "", "</details>", "", PARA(3), "",
+  "<details><summary>The third fold</summary>", "", PARA(4), "", "</details>", "", PARA(5), "",
+  "<table><tr><td>" + fig("t1") + "</td><td>words beside the first picture</td></tr></table>", "", PARA(6), "",
+  "<table><caption>A caption</caption><tr><td>" + fig("t2") + "</td><td>words beside the small picture</td></tr></table>", "", PARA(7), "",
+  "<table><thead><tr><th>A head</th></tr></thead><tbody><tr><td>" + fig("t3") + "</td></tr></tbody></table>", "", PARA(8), "",
+  "<div><table><tr><td>" + fig("n1") + "</td><td>a table inside a div</td></tr></table></div>", "", PARA(9), "",
+  "> ![q1](" + WEB + "/q1.svg) quoted", "", "- ![l1](" + WEB + "/l1.svg) listed", "- the second item", "", PARA(10), "",
+  "<figure>" + fig("f1") + "<figcaption>A figure's caption</figcaption></figure>", "", "<picture>" + fig("p1") + "</picture>", "", PARA(11), ""].join("\n");
+test("in WebKit (Playwright's, on Linux), the chat modal, the Files pane and the feed modal at 900 by 700 over a document of remote pictures in top-level tables and beside them, one of 20 by 20 in a table, 24 opens a surface, every picture loaded through the gate: no open raises a window error, a loop of the ResizeObservers' notifications among them (the file review's round 18, extra6-3: red at ef686b029, whose figures' decision ran inside the observers' delivery; green at 0ab74924c by design)", { timeout: 900000 }, async (t) => {
+  const seen: Record<string, string[][]> = {};
+  let ran = false;
+  await inBrowser(t, async (browser) => {
+    ran = true;
+    for (const surface of ["chat", "pane", "feed"] as const) {
+      seen[surface] = [];
+      for (let rep = 0; rep < 24; rep++) {
+        const before = async (pg: any): Promise<void> => {
+          await pg.context().route((u: URL) => u.href.startsWith(WEB + "/"), async (route: any) => {
+            const [w, h] = FIGS[new URL(route.request().url()).pathname] || [300, 160];
+            return route.fulfill({ status: 200, contentType: "image/svg+xml", body: '<svg xmlns="http://www.w3.org/2000/svg" width="' + w + '" height="' + h + '"><rect width="' + w + '" height="' + h + '" fill="#6a3d9a"/></svg>' });
+          });
+        };
+        const { page, errors } = await openViewer(browser, surface, 900, 700, { docs: { [REPORT]: FULL }, before });
+        try {
+          for (let i = 0; i < 20 && await page.evaluate(() => !!document.querySelector('.fileview-md [data-act="fv-load"]')); i++) { await page.evaluate(() => { (document.querySelector('.fileview-md [data-act="fv-load"]') as HTMLElement).click(); }); await frames(page, 3); }
+          await page.waitForFunction(() => Array.from(document.querySelectorAll(".fileview-md img")).length >= 10 && Array.from(document.querySelectorAll(".fileview-md img")).every((i) => (i as HTMLImageElement).complete && (i as HTMLImageElement).naturalWidth > 0), null, { timeout: 15000 });
+          await frames(page, 8);
+          const small = await page.evaluate(() => { const i = document.querySelector('.fileview-md img[alt="t2"]') as HTMLImageElement | null; const tb = i && i.closest("table"); return !!i && !!tb && tb.parentElement!.classList.contains("fileview-md") && i.hasAttribute("data-fv-figweb"); });
+          assert.ok(small, surface + ": the 20 by 20 picture stands in a top-level table and wears the outbound mark (a precondition)");
+          seen[surface].push(errors.slice());
+        } finally { await page.close(); }
+      }
+    }
+  }, { engine: "webkit" });
+  if (!ran) return;   // no browser: inBrowser skipped the case loudly
+  const errored = Object.fromEntries(Object.entries(seen).map(([s, e]) => [s, e.filter((x) => x.length > 0).length]));
+  t.diagnostic("record " + JSON.stringify({ errored, errors: [...new Set(Object.values(seen).flat(2))] }));
+  assert.deepEqual(Object.values(seen).map((e) => e.length), [24, 24, 24], "24 opens a surface ran (a precondition)");
+  assert.deepEqual(errored, { chat: 0, pane: 0, feed: 0 }, "the opens on each surface that raised a window error (a property pin over the page's error events)");
 });

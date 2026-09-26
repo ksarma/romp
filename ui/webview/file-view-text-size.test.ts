@@ -969,8 +969,10 @@ type Case = { name: string; html: string; width: number; measure: string; steps:
 type Rows = Record<string, { rows: Array<{ step: Step; got: any }>; errors: string[] }>;
 /** A step, and the body's content width written on each top-level table the way the viewer's width observer writes it
  *  (file-view.ts watchBodyWidth: --fv-body-w on the tables themselves, after every paint and every width change), then
- *  each such table's own border-box width as --fv-table-w, read after the cap has taken, the way the same watch's observer
- *  of the tables writes it; the page here carries no script, so the prep stands in for both observers. */
+ *  each such table's own border-box width as --fv-table-w, read after the cap has taken, as the same watch writes it at its stamp
+ *  and from its observer of the tables, which write that width's whole pixels (offsetWidth) where this prep writes the unrounded
+ *  read, so the prep's shift can stand a pixel from the viewer's; the page here carries no script, so the prep stands in for both
+ *  observers. */
 const step = (n: number) => `(() => { document.getElementById("root").dataset.fvText = "${n}"; const w = document.getElementById("body").clientWidth + "px"; const ts = Array.from(document.querySelectorAll("#md > table")); for (const t of ts) t.style.setProperty("--fv-body-w", w); for (const t of ts) t.style.setProperty("--fv-table-w", t.getBoundingClientRect().width + "px"); })()`;
 function cases(): Case[] {
   const out: Case[] = [];

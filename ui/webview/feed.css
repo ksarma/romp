@@ -2193,9 +2193,10 @@ a.fileview-gh-note { border-style: dashed; }
    each top-level table and registered non-inherited above. A table no wider than the column sits at the column's left
    edge with the prose, as on GitHub; one wider than the column grows out of it EVENLY, into both gutters, until it meets
    the body's inset: a position and a left move it left by half of what it exceeds the column by (a left's percentage is
-   of the column, the table's containing block, and --fv-table-w is the table's own border-box width, which the same
-   watch writes on each top-level table from an observer of its own, registered non-inherited above; min() holds a
-   narrower table still; the shift is rounded to whole pixels, as the measure is). The shift is no translate, which made
+   of the column, the table's containing block, and --fv-table-w is the table's own border-box width in whole pixels, its
+   offsetWidth, which the same watch writes on each top-level table at its stamp and from an observer of its own, the one
+   measure in both, registered non-inherited above; min() holds a narrower table still; the shift is rounded to whole
+   pixels, as the measure is). The shift is no translate, which made
    every top-level table a stacking context: a position with no z-index makes none, so a picture control inside the table
    keeps its own z-index in the root's stacking context (the file review's round 17, the coordinator's decision 4).
    Scrollable overflow is computed from the shifted box, so the table never makes the body scroll sideways; contain:
