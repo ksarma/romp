@@ -4679,8 +4679,9 @@ def _in_the_tree(name, root, file_names, literals):
 
 
 def _files_outside_the_tree(text, in_tree):
-    """Every file name text carries (a name ending in one of the extensions _RECORD_FILE_NAME lists, read whole with
-    any dot inside it; a path or a glob) that in_tree refuses, each once, sorted."""
+    """Every file name text carries, as _RECORD_FILE_NAME reads it (a run of the pattern's characters that ends in one
+    of the extensions it lists, read whole with any dot inside it; a path or a glob), that in_tree refuses, each once,
+    sorted."""
     return sorted({m.group(0) for m in _RECORD_FILE_NAME.finditer(text) if not in_tree(m.group(0))})
 
 
@@ -4696,32 +4697,51 @@ class TheRecordsNameInRepoPins(unittest.TestCase):
     for every rule the helpers above state and every extension the file pattern lists. That covers each stop of
     _history_clause, each history word read as a whole word, and each population a helper reads (the helper plants,
     test_the_scans_helpers_read_the_populations_they_state_by_name, run _defined_test_names, _is_test_module and
-    _tree_file_names over a scratch directory). Over the two real homes, dropping the ~ or the $ from the home-path test
-    changes nothing the scan returns, as measured at this head: no file or directory under the root has a name that
-    begins with either, so no path, glob or bare name read against the tree finds one; and no string constant of
-    kernel/ or postal/ is, or ends after a slash in, a file name that begins with either, so the constant branch finds
-    none (some constants begin with one, a home path the product reads among them, but none is such a name). The plant
-    a home-named directory under the root, over a scratch root, pins both.
+    _tree_file_names over a scratch directory, and the file plants hand _product_literals two sources, each holding a
+    constant a plant reads). The constants of kernel/ and of postal/ that THE LIMITS name are pinned by
+    test_the_writer_docstring_and_the_ledger_name_no_file_outside_the_tree: for each of the two directories apart, every
+    file name that one of its string constants is or ends in after a slash reads as in the tree, leaving out a glob, a
+    name that begins with ~ or $, and a name a file in the tree carries, so that constants read from one directory alone
+    turn it red. Over the two real homes, dropping the ~ or the $ from the home-path test changes nothing the scan
+    returns, as measured at this head: no file or directory under the root has a name that begins with either, so no
+    path, glob or bare name read against the tree finds one; and no string constant of kernel/ or postal/ is, or ends
+    after a slash in, a file name that begins with either, so the constant branch finds none (some constants begin with
+    one, a home path the product reads among them, but none is such a name). The plant a home-named directory under the
+    root, over a scratch root, pins both.
     THE LIMITS: the history rule reads the words renamed, split or named ... until and a current test name in the
     clause, not whether the pointer names the right successor, which a reader checks against the commit it cites. The
     file scan reads names with one of the extensions its pattern lists, so a record named without one, or with another
-    (the plant an extension the pattern does not list), is not seen. The tree is the files on disk under the root, so
-    an untracked file there counts on the machine that holds it and not in CI's checkout (the plant a path under the
-    root, over a scratch root that is no git checkout). A name the tree also carries reads as in the tree even when the
-    record means a notes-directory file of that name, since a text scan cannot tell the two apart: a bare name that a
-    file in the tree carries outside dot directories, node_modules and __pycache__ (the plant a bare name a file in the
-    tree carries) or that a string constant of kernel/ or postal/ is or ends in after a slash (the plants a state file
-    the product writes and a state file the product names by a path), and a path or glob from the root that matches a
-    file under it, a dot directory's file included (the plants a glob over the tree and a dot directory's file by its
-    path from the root). On the restricted side, where the two homes name no such file: a path is read from the
-    repository root, so a tree file named by its path from a subdirectory reads as outside the tree (the plant a tree
-    path from a subdirectory); a path with a .. step reads as outside the tree, even one that stays under the root, so
-    that no path climbs out of the root to a file beside it (the plants a path that climbs out of the root, over a
-    scratch root with a notes directory beside it, and a .. step that stays under the root); a bare name that only a
-    file under a dot directory, node_modules or __pycache__ carries reads as outside the tree, though its path from the
-    root reads as in it (the plant a bare name only a dot directory's file carries, a .github workflow's); and a runtime
-    file that no such string constant names (one named only in a docstring or comment, only outside kernel/ and
-    postal/, or only by another language) reads as outside the tree."""
+    and no listed one before it (the plant an extension the pattern does not list), is not seen. The pattern reads a
+    name as a run of letters, digits and _ . * ~ / $ -, up to the last listed extension in the run that no letter, digit
+    or underscore follows, so a name that holds any other character (a space, a plus) is read from after that character,
+    and a name with more after a listed extension is read up to that extension (the plant a name read in part, over a
+    scratch root). The tree is the files on disk under the root, so an untracked file there counts on the machine that
+    holds it and not in CI's checkout (the plant a path under the root, over a scratch root that is no git checkout). A
+    name the tree also carries reads as in the tree even when the record means a notes-directory file of that name,
+    since a text scan cannot tell the two apart: a bare name that a file in the tree carries outside dot directories,
+    node_modules and __pycache__ (the plant a bare name a file in the tree carries) or that a string constant of kernel/
+    or postal/ is or ends in after a slash (the plants a state file the product writes and a state file the product
+    names by a path), and a path or glob from the root that matches a file under it, a dot directory's file included
+    (the plants a glob over the tree and a dot directory's file by its path from the root). So does a notes file whose
+    name the pattern reads in part, when the part it reads is in the tree (the plant a name read in part). On the
+    restricted side, where the two homes name no such file: a tree file whose name the pattern reads in part reads as
+    outside the tree unless the part it reads is in it (the same plant); a path is read from the repository root, so a
+    tree file named by its path from a subdirectory reads as outside the tree (the plant a tree path from a
+    subdirectory), and a bare glob is read from the root too, so one that matches only a subdirectory's file reads as
+    outside the tree, though that file's bare name and its glob from the root read as in it (the plant a bare glob that
+    matches only a subdirectory's file); a path with a .. step reads as outside the tree, even one that stays under the
+    root, so that no path climbs out of the root to a file beside it (the plants a path that climbs out of the root,
+    over a scratch root with a notes directory beside it, and a .. step that stays under the root), while a .. inside a
+    name is no step (the plant a .. inside a name is no step); a home or absolute path reads as outside the tree,
+    whatever it names (the plants a home path, an absolute path and a home-named directory under the root); a directory
+    is no file, so a path or glob that matches only a directory, or a bare name that only a directory carries, reads as
+    outside the tree (the plants a path naming a directory and a bare name only a directory carries); a bare name that
+    only a file under a dot directory, node_modules or __pycache__ carries reads as outside the tree, though its path
+    from the root reads as in it (the plant a bare name only a dot directory's file carries, a .github workflow's); and
+    a runtime file reads as in the tree only by a bare name that such a string constant is or ends in after a slash, so
+    one named by a path or a glob reads as outside the tree, even by the path a constant spells (the plant a runtime
+    file a constant names, named by a path or a glob), and so does one that no such string constant names (one named
+    only in a docstring or comment, only outside kernel/ and postal/, or only by another language)."""
 
     maxDiff = None                                  # a refusal lists every name it refuses
 
@@ -4744,6 +4764,15 @@ class TheRecordsNameInRepoPins(unittest.TestCase):
         literals = _product_literals([p.read_text(encoding="utf-8") for p in sorted(Path(_REPO, "kernel").glob("*.py"))
                                       + sorted(Path(_REPO, "postal").glob("*.py"))])
         names = _tree_file_names(_REPO)
+        for part in ("kernel", "postal"):       # the constants of each directory reach the file scan
+            with self.subTest(constants=part):
+                sources = [p.read_text(encoding="utf-8") for p in sorted(Path(_REPO, part).glob("*.py"))]
+                own = {s.rsplit("/", 1)[-1] for s in _product_literals(sources)}
+                own = sorted(n for n in own if _RECORD_FILE_NAME.fullmatch(n) and "*" not in n
+                             and not n.startswith(("~", "$")) and n not in names)
+                self.assertTrue(own, "the string constants of %s/ name a runtime file no tree file carries" % part)
+                self.assertEqual([n for n in own if not _in_the_tree(n, _REPO, names, literals)], [],
+                                 "a runtime file a string constant of %s/ names reads as in the tree" % part)
         homes = (("_remote_sids_document's docstring", pm._remote_sids_document.__doc__),
                  ("the ledger entry", Path(_LEDGER_ENTRY).read_text(encoding="utf-8")))
         for home, text in homes:
@@ -4762,6 +4791,8 @@ class TheRecordsNameInRepoPins(unittest.TestCase):
         cases = [
             ("a name with no pointer", "The witness test_gone.", ["test_gone"]),
             ("a test_ inside a longer identifier is no test name", "_is_test_gone and my_test_gone.", []),
+            ("a test_ inside a longer identifier annotates nothing",
+             "my_test_now (the witness named test_gone until then).", ["test_gone"]),
             ("a pointer to the current name", "The witness test_gone (renamed at the fifth commit to test_now).", []),
             ("a pointer to a name no test carries", "The witness test_gone (renamed at the fifth commit to test_mid).",
              ["test_gone", "test_mid"]),
@@ -4771,6 +4802,8 @@ class TheRecordsNameInRepoPins(unittest.TestCase):
              "test_gone and test_old (renamed at the fifth commit to test_now).", ["test_gone"]),
             ("the reverse form inside a parenthetical", "The witness (test_now, named test_gone until then).", []),
             ("a parenthetical annotating the current name", "test_now (its faces; named test_gone until round 6).", []),
+            ("a name at a line's end annotates the parenthetical on the next line",
+             "test_now\n    (the witness named test_gone until then).", []),
             ("a split into the names before it", "test_now and test_now_too (the fifth commit's test_gone, split in two).",
              []),
             ("a split naming no current test", "the fifth commit's test_gone (split in two).", ["test_gone"]),
@@ -4782,6 +4815,8 @@ class TheRecordsNameInRepoPins(unittest.TestCase):
              ["test_gone"]),
             ("no pointer across a docstring's quotes after the name",
              'test_gone """ (renamed at the fifth commit to test_now).', ["test_gone"]),
+            ("an annotated name is not read across a blank line",
+             "test_now\n\n(the witness named test_gone until then).", ["test_gone"]),
             ("no pointer across a comma", "test_gone, and the fold (renamed at the fifth commit to test_now).",
              ["test_gone"]),
             ("no pointer across a semicolon", "test_gone; the fold (renamed at the fifth commit to test_now).",
@@ -4790,9 +4825,12 @@ class TheRecordsNameInRepoPins(unittest.TestCase):
              ["test_gone"]),
             ("no pointer across a sentence end",
              "The witness test_gone. The fold (renamed at the fifth commit to test_now) holds.", ["test_gone"]),
+            ("no pointer across a sentence end at a line's end",
+             "The witness test_gone.\nThe fold (renamed at the fifth commit to test_now) holds.", ["test_gone"]),
             ("a dot inside a file name is no sentence end",
              "test_gone of notes_api.py (renamed at the fifth commit to test_now).", []),
             ("named with no until is no history word", "test_now (the witness named test_gone).", ["test_gone"]),
+            ("named ... until across a line break", "test_now (the witness named test_gone\nuntil then).", []),
             ("until with no named is no history word", "test_gone (kept until test_now landed).", ["test_gone"]),
             ("a word that only contains a history word is none",
              "test_now (test_gone: unsplit, splitting, unrenamed, renamedly, unnamed until, namedly until, named "
@@ -4805,6 +4843,8 @@ class TheRecordsNameInRepoPins(unittest.TestCase):
              "(renamed at the fifth commit to test_now) and test_gone.", ["test_gone"]),
             ("a module and a module glob", "tests/test_mod.py and tests/test_mo*.py", []),
             ("a glob that matches no module", "tests/test_zz*.py", ["test_zz"]),
+            ("a star after a later name is not this name's", "tests/test_mo.py and tests/test_zz*.py",
+             ["test_mo", "test_zz"]),
         ]
         for label, text, want in cases:
             with self.subTest(plant=label):
@@ -4814,13 +4854,15 @@ class TheRecordsNameInRepoPins(unittest.TestCase):
                                            is_module), ([(2, "test_gone")], [(3, "test_old")]))
 
     def test_the_file_scan_refuses_a_notes_directory_record_by_name(self):
-        literals = _product_literals(['"""Rotates STATE/r4-x-module-doc.log"""\n'
+        literals = _product_literals(['"""Rotates STATE/r4-x-module-doc.log"""\n'      # two sources, a plant's in each
                                       'def write():\n    """Appends its line to STATE/probe-recur-summary.log"""\n'
                                       '    return STATE / "notes-api-state.json"\n'
-                                      'FLAGS = "postal/notes-api-flags.json"\n'
                                       'BLOB = b"notes-api-blob.json"\n'
                                       'class Writer:\n    """Appends to STATE/r4-x-class-doc.log"""\n'
-                                      'async def awrite():\n    """Appends to STATE/r4-x-async-doc.log"""\n'])
+                                      'async def awrite():\n    """Appends to STATE/r4-x-async-doc.log"""\n',
+                                      'FLAGS = "postal/notes-api-flags.json"\n'
+                                      'def late():\n    x = 1\n    "notes-api-late.json"\n    return x\n'
+                                      'def first():\n    return "notes-api-first.json"\n'])
         names = _tree_file_names(_REPO)
         exts = ("bats", "css", "csv", "html", "js", "json", "jsonl", "log", "md", "mjs", "out", "py", "sh", "toml",
                 "ts", "txt", "yaml", "yml")
@@ -4833,8 +4875,12 @@ class TheRecordsNameInRepoPins(unittest.TestCase):
              ["r4-x-probe-summary.log"]),
             ("a bare glob over the tree's root", "READ*.md", []),
             ("a state file the product names by a path", "notes-api-flags.json", []),
+            ("a runtime file a constant names, named by a path or a glob",
+             "postal/notes-api-flags.json and notes-api-*.json", ["notes-api-*.json", "postal/notes-api-flags.json"]),
             ("a tree path from a subdirectory", "ci/tier_policy.py and scripts/ci/tier_policy.py",
              ["ci/tier_policy.py"]),
+            ("a bare glob that matches only a subdirectory's file",
+             "tier_policy*.py, tier_policy.py and scripts/ci/tier_policy*.py", ["tier_policy*.py"]),
             ("a notes-directory log", "its log r4-x-probe-summary.log", ["r4-x-probe-summary.log"]),
             ("a notes-directory log glob", "its logs r4-x-probe-*-py312.log", ["r4-x-probe-*-py312.log"]),
             ("a notes-directory tool", "its tool r4-x-tools/add_road.py", ["r4-x-tools/add_road.py"]),
@@ -4844,6 +4890,7 @@ class TheRecordsNameInRepoPins(unittest.TestCase):
             ("a glob over the tree", "tests/test_postal*.py", []),
             ("a glob over nothing in the tree", "tests/test_zz_none*.py", ["tests/test_zz_none*.py"]),
             ("a bare name a file in the tree carries", "kernel.py and postal_service.py", []),
+            ("a bare name that only ends a tree file's name", "ernel.py and ervice.py", ["ernel.py", "ervice.py"]),
             ("a state file the product writes", "notes-api-state.json", []),
             ("a constant ending in the name without a slash", "api-state.json", ["api-state.json"]),
             ("a bytes constant is no string constant", "notes-api-blob.json", ["notes-api-blob.json"]),
@@ -4851,6 +4898,8 @@ class TheRecordsNameInRepoPins(unittest.TestCase):
             ("a name only a module docstring mentions", "r4-x-module-doc.log", ["r4-x-module-doc.log"]),
             ("a name only a class docstring mentions", "r4-x-class-doc.log", ["r4-x-class-doc.log"]),
             ("a name only an async function's docstring mentions", "r4-x-async-doc.log", ["r4-x-async-doc.log"]),
+            ("a string statement after a body's first is no docstring", "notes-api-late.json", []),
+            ("a constant a body's first statement returns is no docstring", "notes-api-first.json", []),
             ("a bare name only a dot directory's file carries", "tier-policy.yml", ["tier-policy.yml"]),
             ("a dot directory's file by its path from the root", ".github/workflows/tier-policy.yml", []),
             ("a .. step that stays under the root", "tests/../kernel/kernel.py", ["tests/../kernel/kernel.py"]),
@@ -4862,7 +4911,7 @@ class TheRecordsNameInRepoPins(unittest.TestCase):
         with tempfile.TemporaryDirectory() as scratch:      # a scratch root with a notes directory beside it
             root = os.path.join(scratch, "root")
             for rel in ("../notes-demo/r4-x-probe-summary.log", "kernel/k.py", "~/notes/x.py", "$HOME/y.log",
-                        "sub/cache.json/h.txt"):
+                        "sub/cache.json/h.txt", "r4..x.json", "kernel/x..y.py", "docs/a+b.md", "docs/c.md.orig"):
                 path = os.path.normpath(os.path.join(root, rel))
                 os.makedirs(os.path.dirname(path), exist_ok=True)
                 Path(path).write_text("x\n", encoding="utf-8")
@@ -4874,6 +4923,9 @@ class TheRecordsNameInRepoPins(unittest.TestCase):
                 ("a path under the root", "kernel/k.py", []),
                 ("a home-named directory under the root", "~/notes/x.py and $HOME/y.log", ["$HOME/y.log", "~/notes/x.py"]),
                 ("a path naming a directory", "sub/cache.json and sub/*.json", ["sub/*.json", "sub/cache.json"]),
+                ("a bare name only a directory carries", "cache.json", ["cache.json"]),
+                ("a .. inside a name is no step", "r4..x.json and kernel/x..y.py", []),
+                ("a name read in part", "docs/a+b.md, docs/c.md.orig, r4-x+k.py and k.py.orig", ["b.md", "docs/c.md"]),
             ]
             for label, text, want in under:
                 with self.subTest(plant=label, root="a scratch root"):
@@ -4888,10 +4940,14 @@ class TheRecordsNameInRepoPins(unittest.TestCase):
         defines = "def %s():\n    pass\n"        # filled in at run time, so this module's own text defines none of them
         with tempfile.TemporaryDirectory() as scratch:
             files = {
-                "tests/test_kept.py": defines % "test_now" + "# test_gone was this test's name before the fifth commit\n",
+                "tests/test_kept.py": (defines % "test_now"
+                                       + "# test_gone was this test's name before the fifth commit\n"
+                                       "# a word that ends in def is none: redef test_redef\n"),
                 "tests/sub/test_deep.py": defines % "test_deep",
                 "tests/test_notes.txt": defines % "test_txt",
+                "tests/test_notes.py.txt": defines % "test_pytxt",
                 "tests/test_bare": defines % "test_bare",
+                "tests/test_happy": defines % "test_nopy",
                 "tests/test_dir.py/keep.txt": "",
                 "tests/.hidden/test_hidden.py": defines % "test_hidden",
                 "tests/node_modules/test_nm.py": defines % "test_nm",
@@ -4908,11 +4964,13 @@ class TheRecordsNameInRepoPins(unittest.TestCase):
             with self.subTest(helper="_defined_test_names"):
                 self.assertEqual(_defined_test_names(tests), {"test_now", "test_deep"},
                                  "a def test_ name in a Python file, a subdirectory's included, and no other: not a name "
-                                 "a file only mentions, a def in a file that is not Python, or one under a dot directory, "
-                                 "node_modules or __pycache__")
+                                 "a file only mentions (after a word that ends in def included), a def in a file that "
+                                 "is not Python (one whose name holds .py but ends otherwise, or ends in py with no "
+                                 "dot, included), or one under a dot directory, node_modules or __pycache__")
             modules = [
                 ("a module", "test_kept", False, True),
                 ("a module glob", "test_ke", True, True),
+                ("a module glob over the whole name", "test_kept", True, True),
                 ("a glob over nothing", "test_zz", True, False),
                 ("a glob over a file that is not Python", "test_notes", True, False),
                 ("a file with no .py", "test_bare", False, False),
