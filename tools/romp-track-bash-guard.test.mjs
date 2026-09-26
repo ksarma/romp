@@ -224,8 +224,10 @@ const programsNamed = (cmd, table = NAMED_PROBE) => Object.keys(table).filter((p
 // a -c text has that text read). Where the text rebinds a
 // name the reader cannot know, the row is NOT RUN with that reason, its hook verdict still asserted, never measured and never red: a name so
 // bound, or a table's key, spelled with an expansion (an alias's name that is one variable's expansion binds that variable's value only where
-// the variable has exactly one write before the alias, a literal assignment `n=c` or a read of it from a literal here-string `read n <<< c`,
-// the write and the alias at top level, and the text names no IFS); a PATH set wholly to an expansion or holding an expansion entry other
+// the text spells the variable once before the alias, that spelling a literal assignment `n=c` or a read of it from a literal here-string
+// `read n <<< c`, it and the alias at top level, the text naming no IFS, and, since the sixty-second commit, the variable no parameter a
+// shell sets itself or treats as special (THE SHELLS' PARAMETERS); a write that never spells the name is not seen, in the class below); a
+// PATH set wholly to an expansion or holding an expansion entry other
 // than the PATH it replaces (`<lit>:$PATH` and `$PATH:<lit>` are known); an alias of an alias beyond one level (an alias whose value is the
 // word `alias` defines aliases, and the words after its name bind as alias's do; one whose value runs alias with words of its own is no
 // such level); a zsh module outside the table; a handler for every name not found; and a global alias's name where a command stands. Where the rows run a program that was absent on purpose where their evidence
@@ -250,7 +252,10 @@ const programsNamed = (cmd, table = NAMED_PROBE) => Object.keys(table).filter((p
 // count, as the filter at the walk's end does); the command behind a wrapper's path set aside on a count that takes in a whole spelling at
 // a place the first walk does not read, since a whole spelling counts wherever it stands (the sixtieth commit, on the reviewer's
 // re-verifier: `eval "/usr/bin/env $x"; /usr/bin/env q780-no-such-program ../base/report.md report.md` is measured); a global alias's
-// value, which runs wherever its name stands; and a
+// value, which runs wherever its name stands; a write to the variable an alias's name expands that never spells the variable's name
+// (`n=q780-no-such-program`, then `export "$(printf '\156')=zz"` before `alias $n=cp`), which the first reading of THE REBOUND NAMES does
+// not see, so the alias binds the value of the one spelling it reads (the sixty-second commit, on the reviewer's ruling B: its test pins
+// that witness as measured and, as its control, the same text whose second write spells the name, NOT RUN); and a
 // program a shell reaches by a road the list above does not follow (a script file's own lines, a `(( ))` or `$((` body read as
 // commands, an array's elements, a pattern a `case` or zsh's `for NAME (..)` holds). A miss there runs the leg. Where the leg asserts that
 // a shell writes, the absent program then reds it by name on that machine (no shell writes), never a false pass; where the leg asserts
@@ -274,7 +279,12 @@ const SHELL_OWN = new Set(['!', '{', '}', '[[', ']]', '((', '))', 'if', 'then', 
 // command, `assign` the NAME=VALUE words it takes (`any`: every word holding `=`, as env takes one, `BASH_FUNC_c%%=..` among them, since
 // the fifty-second commit, whose execve record found env's command unread past such a word), `text` the options whose next word is a
 // command line it runs, `query` an option under which it runs nothing, `sub` a subcommand word first, `own` a shell's own word (no program
-// looked up)
+// looked up). `time` is own only to bash and zsh, and only where it heads a command: dash has no such word and runs /usr/bin/time, and
+// bash runs it too after an assignment or a pipe, and bash and zsh after a wrapper, so the walk reads `time` as a program except at a
+// segment's head, after no pipe, in a text only bash or zsh reads (THE TIME WORD, at readSegment; the sixty-second commit, on the reviewer's
+// execution checker, whose record showed dash running /usr/bin/time in six committed commands while this comment called time a shell's own
+// word; zsh reads it as its own after an assignment or a pipe as well, where the walk reads a program, the stricter side). numactl joined
+// with the sixty-second commit, so this table holds every wrapper of the hook's PREFIXES but builtin (a shell's own word here, SHELL_OWN)
 const WRAPPERS = {
   exec: { own: true, arg: ['-a'] }, command: { own: true, query: /^-[a-zA-Z]*[vV]/ }, time: { own: true, arg: ['-f', '-o', '--format', '--output'] },
   noglob: { own: true }, nocorrect: { own: true }, '-': { own: true }, coproc: { own: true }, repeat: { own: true, operands: 1 },
@@ -283,6 +293,7 @@ const WRAPPERS = {
   nice: { arg: ['-n', '--adjustment'] }, timeout: { arg: ['-s', '--signal', '-k', '--kill-after'], operands: 1 },
   stdbuf: { arg: ['-i', '-o', '-e', '--input', '--output', '--error'] }, ionice: { arg: ['-c', '--class', '-n', '--classdata', '-p', '--pid', '-P', '--pgid', '-u', '--uid'] },
   chrt: { operands: 1 }, taskset: { operands: 1 }, chroot: { arg: ['--userspec', '--groups'], operands: 1 },
+  numactl: { arg: ['-i', '--interleave', '-p', '--preferred', '-P', '--preferred-many', '-C', '--physcpubind', '-N', '--cpunodebind', '-m', '--membind'] },
   xargs: { arg: ['-a', '--arg-file', '-d', '--delimiter', '-E', '-I', '-L', '-n', '--max-args', '-P', '--max-procs', '-s', '--max-chars', '--process-slot-var'] },
   sudo: { arg: ['-u', '--user', '-g', '--group', '-C', '--close-from', '-D', '--chdir', '-h', '--host', '-p', '--prompt', '-R', '--chroot', '-T', '--command-timeout', '-U', '--other-user', '-r', '--role', '-t', '--type'], assign: true },
   doas: { arg: ['-u', '-C'] },
@@ -346,10 +357,12 @@ const definedNames = (text) => new Set([
 // derivation does not read, allow (the fifty-eighth commit cut this text's claim for every value, on the reviewer's verifier: `alias
 // c="q780-no-such-program $x"`, then c, is measured). Four readings go exactly as far as the
 // ruling at 01:00Z and no further:
-//   an alias whose name is one variable's expansion (`alias $n=cp`) binds that variable's value where the variable has exactly one write before
-//   the alias, the text naming the variable nowhere else before the alias and naming no IFS, the write and the alias each standing at top
-//   level (topLevelSegments: in no subshell, brace group, conditional or loop, run in sequence), and that write is a literal assignment
-//   (`n=c`) or a read of that one name from a literal here-string (`read n <<< c`);
+//   an alias whose name is one variable's expansion (`alias $n=cp`) binds that variable's value where the text spells the variable once
+//   before the alias and names no IFS, that spelling and the alias each standing at top level (topLevelSegments: in no subshell, brace
+//   group, conditional or loop, run in sequence), that spelling is a literal assignment (`n=c`) or a read of that one name from a literal
+//   here-string (`read n <<< c`), and, since the sixty-second commit (the reviewer's ruling B), the variable is no parameter of THE SHELLS'
+//   PARAMETERS (`alias $RANDOM=cp` goes to `unknowable`); a write that never spells the name is not seen (the header's class of what the
+//   derivation does not read);
 //   a PATH the text sets is known where each entry is a literal directory or the PATH it replaces (`<lit>:$PATH`, `$PATH:<lit>`) and at least
 //   one entry is a literal directory: the inherited PATH plus literal directories;
 //   an alias whose value is the word `alias` (a trailing blank aside) makes its name define aliases, one level: the words after that name bind
@@ -357,7 +370,8 @@ const definedNames = (text) => new Set([
 //   runs such a name, and one such a name defines to run alias, are chains the reader does not follow;
 //   a global alias's value is never read as a command line, and its name binds no name.
 // `unknowable` holds each rebinding whose names the reader cannot know: an alias's, a hashed, an autoloaded or an enabled name, or a table's
-// key, spelled with an expansion the first reading does not follow; a PATH the second does not know; a chain the third does not follow; a
+// key, spelled with an expansion the first reading does not follow (an alias's name that expands a parameter of THE SHELLS' PARAMETERS
+// among them); a PATH the second does not know; a chain the third does not follow; a
 // zsh module outside the table; a handler for every name not found. programsInvoked adds a global alias's name standing where a command
 // stands. namedPresent makes such a row NOT RUN with that reason, its hook verdict asserted before its legs, never measured and never red, and
 // the walk still reads as a program every name it reaches that the text does not rebind (the ruling at 01:00Z, item 1).
@@ -366,6 +380,26 @@ const ZSH_MODULE_BUILTINS = {
   'zsh/system': ['syserror', 'sysread', 'syswrite', 'sysopen', 'sysseek', 'zsystem'],
   'zsh/mapfile': [],
 };
+// THE SHELLS' PARAMETERS (round 8 of fork PR #780 review, sixty-second commit; the reviewer's ruling B): the parameters a shell sets itself or
+// treats as special, whose value a literal assignment in the text does not fix (bash and zsh bind no `c` for `RANDOM=c; alias $RANDOM=cp`;
+// dash does), so an alias whose name expands one of them goes to `unknowable` (THE REBOUND NAMES). Derived by execution: each list is the
+// output of the command beside it, run on this box (bash 5.2.21 gives 44 names under `-c`, 43 when the same text is fed on its standard input;
+// zsh 5.9 gives 73 under plain `zsh -f` with no module named, 111 with zsh/parameter, zsh/datetime, zsh/system and zsh/mapfile loaded, 118
+// with those and zsh/zleparameter, zsh/terminfo, zsh/termcap, zsh/sched and zsh/watch, and 125 with those nine and zsh/curses and
+// zsh/langinfo, the two other modules of its build that add one, which is the command here). The union is read, the stricter side: a name
+// listed that a shell does not set only sends a row NOT RUN. The sixty-second commit's test re-derives the bash list on every runner and the
+// zsh list where zsh is present, each contained in its table.
+const SHELL_PARAMETERS = {
+  bash: {
+    argv: ['env', '-i', 'PATH=/usr/bin:/bin', 'bash', '--norc', '--noprofile', '-c', 'compgen -v'],
+    names: ['BASH', 'BASHOPTS', 'BASHPID', 'BASH_ALIASES', 'BASH_ARGC', 'BASH_ARGV', 'BASH_ARGV0', 'BASH_CMDS', 'BASH_COMMAND', 'BASH_EXECUTION_STRING', 'BASH_LINENO', 'BASH_LOADABLES_PATH', 'BASH_SOURCE', 'BASH_SUBSHELL', 'BASH_VERSINFO', 'BASH_VERSION', 'COMP_WORDBREAKS', 'DIRSTACK', 'EPOCHREALTIME', 'EPOCHSECONDS', 'EUID', 'GROUPS', 'HISTCMD', 'HOSTNAME', 'HOSTTYPE', 'IFS', 'LINENO', 'MACHTYPE', 'OPTERR', 'OPTIND', 'OSTYPE', 'PATH', 'PPID', 'PS4', 'PWD', 'RANDOM', 'SECONDS', 'SHELL', 'SHELLOPTS', 'SHLVL', 'SRANDOM', 'TERM', 'UID', '_'],
+  },
+  zsh: {
+    argv: ['zsh', '-f', '-c', 'zmodload zsh/parameter zsh/datetime zsh/system zsh/mapfile zsh/zleparameter zsh/terminfo zsh/termcap zsh/sched zsh/watch zsh/curses zsh/langinfo; print -l ${(k)parameters[(R)*special*]}'],
+    names: ['!', '#', '$', '*', '-', '0', '?', '@', 'ARGC', 'CDPATH', 'COLUMNS', 'EGID', 'EPOCHREALTIME', 'EPOCHSECONDS', 'EUID', 'FIGNORE', 'FPATH', 'FUNCNEST', 'GID', 'HISTCHARS', 'HISTCMD', 'HISTSIZE', 'HOME', 'IFS', 'KEYBOARD_HACK', 'LANG', 'LINENO', 'LINES', 'MAILPATH', 'MANPATH', 'MODULE_PATH', 'NULLCMD', 'OPTARG', 'OPTIND', 'PATH', 'PPID', 'PROMPT', 'PROMPT2', 'PROMPT3', 'PROMPT4', 'PS1', 'PS2', 'PS3', 'PS4', 'PSVAR', 'RANDOM', 'READNULLCMD', 'SAVEHIST', 'SECONDS', 'SHLVL', 'SPROMPT', 'TRY_BLOCK_ERROR', 'TRY_BLOCK_INTERRUPT', 'TTYIDLE', 'UID', 'USERNAME', 'WATCH', 'WORDCHARS', 'ZCURSES_COLORS', 'ZCURSES_COLOR_PAIRS', 'ZSH_EVAL_CONTEXT', 'ZSH_SUBSHELL', '_', 'aliases', 'argv', 'builtins', 'cdpath', 'commands', 'dirstack', 'dis_aliases', 'dis_builtins', 'dis_functions', 'dis_functions_source', 'dis_galiases', 'dis_patchars', 'dis_reswords', 'dis_saliases', 'epochtime', 'errnos', 'fignore', 'fpath', 'funcfiletrace', 'funcsourcetrace', 'funcstack', 'functions', 'functions_source', 'functrace', 'galiases', 'histchars', 'history', 'historywords', 'jobdirs', 'jobstates', 'jobtexts', 'keymaps', 'langinfo', 'mailpath', 'manpath', 'mapfile', 'module_path', 'modules', 'nameddirs', 'options', 'parameters', 'patchars', 'path', 'pipestatus', 'prompt', 'psvar', 'reswords', 'saliases', 'status', 'sysparams', 'termcap', 'terminfo', 'userdirs', 'usergroups', 'watch', 'widgets', 'zcurses_attrs', 'zcurses_colors', 'zcurses_keycodes', 'zcurses_windows', 'zsh_eval_context', 'zsh_scheduled_events'],
+  },
+};
+const SHELL_PARAMETER_NAMES = new Set(Object.values(SHELL_PARAMETERS).flatMap((s) => s.names));
 const EXPANDS = /[$`]/;
 const VALUE_NAME = /^[^\s/=$`'"\\;&|<>(){}*?[\]~#!]+$/;   // a literal value that stands for itself as a command's name
 const escapeRe = (t) => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -408,10 +442,12 @@ const topLevelSegments = (segs) => {
   }
   return out;
 };
+// an alias's name that is one variable's expansion, `$n` or `${n}`: the variable is the first or the second group
+const ALIAS_VARIABLE = /^\$(?:([A-Za-z_][A-Za-z0-9_]*)|\{([A-Za-z_][A-Za-z0-9_]*)\})$/;
 // the name `alias $n=cp` binds, where the alias keyword stands at `at` and `name` is one variable's expansion: that variable's value, under the
 // first reading above, else null
 const aliasVariable = (text, at, name) => {
-  const m = name.match(/^\$(?:([A-Za-z_][A-Za-z0-9_]*)|\{([A-Za-z_][A-Za-z0-9_]*)\})$/);
+  const m = name.match(ALIAS_VARIABLE);
   if (!m || /(?<![A-Za-z0-9_])IFS(?![A-Za-z0-9_])/.test(text)) return null;
   const v = m[1] || m[2];
   let segs;
@@ -453,6 +489,8 @@ const reboundNamesOf = (text) => {
       if (eq <= 0) continue;   // `alias c` prints c's alias: it binds nothing
       let name = w.slice(0, eq);
       if (EXPANDS.test(name)) {
+        const param = name.match(ALIAS_VARIABLE);
+        if (!via && param && SHELL_PARAMETER_NAMES.has(param[1] || param[2])) { unknowable.push(`${head} ${w}: an alias whose name expands a parameter a shell sets itself or treats as special (THE SHELLS' PARAMETERS)`); continue; }   // the round-8 closure (ruling B)
         const value = via ? null : aliasVariable(text, at, name);
         if (value === null) { unknowable.push(`${head} ${w}: an alias whose name is an expansion the reader does not follow`); continue; }
         name = value;
@@ -573,6 +611,14 @@ const programsInvoked = (cmd, { collect = null, unknown = null } = {}) => {
   let records = [];   // collect's records of the walk under way
   let cannotKnow = [];   // unknown's, of the walk under way (a global alias's name where a command stands)
   const cannot = (why) => { if (!cannotKnow.includes(why)) cannotKnow.push(why); };
+  // THE TIME WORD (the sixty-second commit; the reviewer's execution checker, round 8 of fork PR #780): `time` is bash's and zsh's own word
+  // where it heads a command, and dash has none (WRAPPERS' comment). `dashReads` holds whether a shell with no such word may read the text
+  // under way: the row's own text, which every leg's dash runs; the text a shell other than bash or zsh runs; the text env -S, flock -c, su,
+  // runuser or script run, through a program or the account's shell; and a text eval, trap, alias, emulate -c or mapfile -C runs, as the
+  // text around it. readSegment reads `time` as a program there, and after an assignment, a pipe or a wrapper, where bash runs /usr/bin/time
+  let dashReads = true;
+  const TIME_WORD_SHELL = /^(?:r?bash|r?zsh\d*)$/;   // the shells measured reading `time` as their own word (WRAPPERS' comment)
+  const readAs = (reads, fn) => { const outer = dashReads; dashReads = reads; try { fn(); } finally { dashReads = outer; } };
   // how often the text spells a path WHOLE (the fifty-seventh commit; the reviewer's verifier on the fifty-sixth, which found a count of every
   // substring setting `./tool` aside beside a made `./tool.bak`): a spelling ends a shell word on each side (the text's edge, a blank, an
   // operator, a quote or a backtick, and before it an assignment's `=` too), so a longer path it starts or ends (`./tool.bak`, `x./tool`) is none
@@ -657,12 +703,13 @@ const programsInvoked = (cmd, { collect = null, unknown = null } = {}) => {
   const readSegment = (seg, feeder, depth, cond = false) => {
     const words = seg.words;
     let i = 0;
+    let head = !seg.exec;   // THE TIME WORD: no assignment or wrapper before the word under way (a find -exec's words run as a program)
     for (let steps = 0; i < words.length && steps < 32; steps++) {
       const w = words[i];
       const word = w.text;
       if (!w.literal || word === '' || word.includes('\u0000') || /^~/.test(w.raw || '')) { unread(words, i, cond, false); return; }   // an expansion in the program's place (a tilde's HOME among them), or in an assignment's word (THE NON-LITERAL WORDS): not derived
       if (/\s/.test(word)) { unread(words, i, cond, false); return; }   // a command word holding a blank (`"$(echo 'cp a b')"`): a name no machine's PATH or filesystem ships; an assignment's word holding one stops the walk too (THE NON-LITERAL WORDS)
-      if (ASSIGNMENT.test(word)) { i++; continue; }
+      if (ASSIGNMENT.test(word)) { head = false; i++; continue; }
       if (['!', '{', '}', 'if', 'then', 'elif', 'else', 'fi', 'while', 'until', 'do', 'done', 'end'].includes(word)) { i++; continue; }
       if (['for', 'foreach', 'select', 'case', '[[', '((', 'function'].includes(word)) return;
       if (!word.includes('/') && rebinding.globals.has(word)) { cannot(`${word}: a global alias's name where a command stands`); unread(words, i, cond, true); return; }   // what runs there the reader cannot know (THE REBOUND NAMES)
@@ -672,7 +719,8 @@ const programsInvoked = (cmd, { collect = null, unknown = null } = {}) => {
       if (stops && word.includes('/') && Object.hasOwn(WRAPPERS, base) && stops.has(word)) { note(word, cond); return; }   // a wrapper's path the filter sets aside (THE WRAPPER'S PATH: a copy the text makes under a wrapper's name among them): no wrapper of this machine's
       const spec = Object.hasOwn(WRAPPERS, base) ? WRAPPERS[base] : null;
       if (spec) {
-        if (!spec.own || word.includes('/')) note(word, cond);
+        if (!spec.own || word.includes('/') || (base === 'time' && (dashReads || feeder || !head))) note(word, cond);   // THE TIME WORD
+        head = false;
         i++;
         if (spec.sub) i++;
         if (base === 'coproc' && i + 1 < words.length && ['{', '('].includes(words[i + 1].text)) i++;   // coproc NAME { .. }
@@ -681,7 +729,7 @@ const programsInvoked = (cmd, { collect = null, unknown = null } = {}) => {
           const t = words[i].text;
           if (t === '--') { i++; break; }
           if (spec.query && spec.query.test(t)) return;
-          if (spec.text && spec.text.includes(t)) { if (words[i + 1]) readText(words[i + 1].text, depth + 1, cond); i += 2; continue; }
+          if (spec.text && spec.text.includes(t)) { if (words[i + 1]) readAs(true, () => readText(words[i + 1].text, depth + 1, cond)); i += 2; continue; }
           if (spec.arg && spec.arg.includes(t)) { i += 2; continue; }
           if (t === '-' || /^-./.test(t)) { i++; continue; }
           if ((spec.assign || spec.own) && (spec.assign === 'any' ? t.includes('=') : ASSIGNMENT.test(t))) { i++; continue; }
@@ -700,18 +748,20 @@ const programsInvoked = (cmd, { collect = null, unknown = null } = {}) => {
         // and no operand, or has -s; else it runs only where the script reads it (`echo '..' | bash -c "$(awk 1)"`, whose zsh leg feeds
         // awk nothing): `collect`'s conditional mark
         const fedCond = cond || (rest.some((r) => !/^[-+]/.test(r.text)) && !rest.some((r) => /^-[A-Za-z]*s/.test(r.text) && !r.text.startsWith('--')));
-        for (const r of rest) if (r.literal && SCRIPT_TEXT.test(r.text)) readText(r.text, depth + 1, cond);
-        for (const h of seg.heredocs) readText(h, depth + 1, fedCond);
-        if (feeder) for (const t of printedBy(feeder)) readText(t, depth + 1, fedCond);
-        for (const s of seg.subs) for (const inner of lexOf(s).segments) for (const t of printedBy(inner)) readText(t, depth + 1, fedCond);
+        readAs(!TIME_WORD_SHELL.test(base), () => {   // THE TIME WORD: the texts this shell runs
+          for (const r of rest) if (r.literal && SCRIPT_TEXT.test(r.text)) readText(r.text, depth + 1, cond);
+          for (const h of seg.heredocs) readText(h, depth + 1, fedCond);
+          if (feeder) for (const t of printedBy(feeder)) readText(t, depth + 1, fedCond);
+          for (const s of seg.subs) for (const inner of lexOf(s).segments) for (const t of printedBy(inner)) readText(t, depth + 1, fedCond);
+        });
       } else if (base === 'find') {
-        for (let j = 0; j < rest.length; j++) if (['-exec', '-execdir', '-ok', '-okdir'].includes(rest[j].text)) { const end = rest.findIndex((x, n) => n > j && (x.text === ';' || x.text === '+')); readSegment({ words: rest.slice(j + 1, end < 0 ? rest.length : end), heredocs: [], subs: [] }, null, depth + 1, true); }
+        for (let j = 0; j < rest.length; j++) if (['-exec', '-execdir', '-ok', '-okdir'].includes(rest[j].text)) { const end = rest.findIndex((x, n) => n > j && (x.text === ';' || x.text === '+')); readSegment({ words: rest.slice(j + 1, end < 0 ? rest.length : end), heredocs: [], subs: [], exec: true }, null, depth + 1, true); }
       } else if (base === 'capsh') {
         const dd = rest.findIndex((x) => x.text === '--');
         if (dd >= 0) readSegment({ words: [{ text: '/bin/bash', literal: true, raw: '/bin/bash' }, ...rest.slice(dd + 1)], heredocs: [], subs: [] }, null, depth + 1, cond);
       } else if (base === 'su' || base === 'runuser' || base === 'script') {
         const c = rest.findIndex((x) => x.text === '-c' || x.text === '--command');
-        if (c >= 0 && rest[c + 1]) readText(rest[c + 1].text, depth + 1, cond);
+        if (c >= 0 && rest[c + 1]) readAs(true, () => readText(rest[c + 1].text, depth + 1, cond));
       }
       return;
     }
@@ -742,6 +792,7 @@ const programsInvoked = (cmd, { collect = null, unknown = null } = {}) => {
     stops = at;
     records = [];
     cannotKnow = [];
+    dashReads = true;
     readText(cmd, 0);
     return new Set(found.filter((p) => p.includes('/') && mentions(p) > (asProgram.get(p) || 0)));
   };
@@ -16623,7 +16674,7 @@ test("round 7 of fork PR #780 review, fifty-third commit, THE LOOKUP ROADS (the 
   for (const r of ran) console.log(`# THE LOOKUP ROADS: ${r.road}: carried by ${r.derived.join(', ')} (${r.visible} calls) in ${r.searchers.join(', ')}; found missing over the leg's own trace${r.roads.length ? `; road ${r.roads.join('; ')}` : ''}`);
   console.log(`# THE LOOKUP ROADS: ${ran.length} of ${rows.length} roads planted, the calls carrying a plant ${[...new Set(ran.flatMap((r) => r.derived))].sort().join(', ')}, each among LOOKUP_CALLS (${LOOKUP_CALLS.join(', ')}); without ${sole[0].derived[0]}, ${dropped.length} roads' plants unseen; searched with no PATH: ${searchDirs.join(':')}; the programs the lookups ran in: ${[...searchers].sort().join(', ')}; ${probes.size} probes a lookup makes: ${[...probes].sort().join('; ')}; ${roads.size} roads for the census`);
 });
-test("round 7 of fork PR #780 review, fifty-second commit, THE WRITE'S PLACE (the reviewer's ruling at 12:24Z, condition (2), ruling E narrowed): the three matrices with `needs` placed, in this process, every row and program their `needs` leave out, each by its runs: kept where a shell the runner has wrote, gated where none wrote and the program was handed a text; the split is printed with its rows; and with the zsh family as the absent set, the gate does not run exactly the rows whose `needs` list zsh and the rows placed inside zsh, each of the latter with its own line naming zsh (runs last: it reads what the matrices derived)", () => {
+test("round 7 of fork PR #780 review, fifty-second commit, THE WRITE'S PLACE (the reviewer's ruling at 12:24Z, condition (2), ruling E narrowed): the three matrices with `needs` placed, in this process, every row and program their `needs` leave out, each by its runs: kept where a shell the runner has wrote, gated where none wrote and the program was handed a text; since the sixty-second commit each placement also agrees with the fixture's pinned writers, read in the bash, zsh and dash columns only (kept: a pinned writer among the shells but the program; gated: none), so a recorder that marks a write where no shell wrote reds; the split is printed with its rows; and with the zsh family as the absent set, the gate does not run exactly the rows whose `needs` list zsh and the rows placed inside zsh, each of the latter with its own line naming zsh (runs last: it reads what the matrices derived)", () => {
   const MATRICES = [['the piped-script matrix', pipedScriptMatrixRows(), PIPED_SCRIPT_MATRIX_PIN], ['the stdin-script matrix', stdinScriptMatrixRows(), STDIN_SCRIPT_MATRIX_PIN], ['the heredoc-body matrix', heredocBodyMatrixRows(), HEREDOC_BODY_MATRIX_PIN]];
   assert.deepEqual(MATRICES.map(([label]) => label).filter((label) => !WRITE_PLACES.has(label)), [], 'the three matrices ran in this process and placed their rows (this pin reads what they derived: run the whole file)');
   const bad = [];
@@ -16637,13 +16688,20 @@ test("round 7 of fork PR #780 review, fifty-second commit, THE WRITE'S PLACE (th
         const wrote = pl.shells.filter((sh) => pl.by[sh].wrote);
         const handed = pl.shells.filter((sh) => pl.by[sh].handed);
         if (pl.place === 'kept' ? !wrote.length : pl.place === 'gated' ? pl.shells.length > 0 && (wrote.length > 0 || !handed.length) : true) bad.push(`${label}'s ${id}: ${pl.program} placed ${pl.place} while its runs in ${pl.shells.join(', ')} show writers [${wrote.join(', ')}] and a text handed in [${handed.join(', ')}]`);
+        // round 8's tests-1 (the sixty-second commit): the placement against the fixture's pinned writers as well as the recorder's own record,
+        // so a recorder that marks a write where no shell wrote reds here. A program `needs` leaves out is one whose hiding changed no writer,
+        // so the pinned writers are the writers without it: a kept placement needs one among the shells but the program, a gated one none. The
+        // mask holds the bash, zsh and dash columns only (SHELL_ORDER), so a kept row whose only other writer were sh or ksh would red (none is)
+        const mask = Object.hasOwn(pin.pin, id) ? pin.pin[id].split(':')[1] : null;
+        const pinned = mask === null ? [] : SHELL_ORDER.filter((sh, k) => sh !== pl.program && mask[k] !== '-');
+        if (mask === null || (pl.place === 'kept' ? !pinned.length : pl.place === 'gated' ? pinned.length > 0 : false)) bad.push(`${label}'s ${id}: ${pl.program} placed ${pl.place} while its pinned writers (bash, zsh, dash) are ${mask === null ? 'not pinned' : mask}`);
         split[pl.program] = split[pl.program] || {};
         split[pl.program][label] = split[pl.program][label] || { gated: [], kept: [] };
         split[pl.program][label][pl.place === 'kept' ? 'kept' : 'gated'].push(id);
       }
     }
   }
-  assert.deepEqual(bad, [], 'each placement is what its runs showed');
+  assert.deepEqual(bad, [], "each placement is what its runs showed and agrees with the fixture's pinned writers (the mask check reads the bash, zsh and dash columns only)");
   for (const [program, byLabel] of Object.entries(split)) {
     const all = Object.values(byLabel);
     console.log(`# THE WRITE'S PLACE, ${program}: ${all.reduce((n, s) => n + s.gated.length, 0)} gated, ${all.reduce((n, s) => n + s.kept.length, 0)} kept`);
@@ -16689,7 +16747,7 @@ const gateLines = (cmd, what = `synthetic: ${cmd}`, table = { ...NAMED_PROBE }, 
 // the line the real check gives each program this machine lacks
 const missingLines = (...programs) => programs.flatMap((p) => { const r = presenceOf(p, { absent: NO_ABSENT_SET }); return r.ok ? [] : [`NOT RUN: real ${p} ${r.why}`]; });
 const cannotKnow = (...why) => `NOT RUN: the command rebinds a name the reader cannot know (${why.join('; ')})`;
-test("round 7 of fork PR #780 review, fifty-sixth commit, THE RECORDED ABSENCES turn at the gate (the reviewer's condition at 00:29Z on the inverted gate): each recorded row the legs gated here, with a stub of one recorded program planted where the row finds it (on its PATH for a name, under its cwd for a relative path), is NOT RUN with the reason that its evidence was measured without that program, never measured; with its recorded programs absent and every other program it runs present, it is measured; a recorded program at an absolute path, which this box cannot plant, turns by the real check (runs last: it reads the rows the legs gated)", () => {
+test("round 7 of fork PR #780 review, fifty-sixth commit, THE RECORDED ABSENCES turn at the gate (the reviewer's condition at 00:29Z on the inverted gate): each recorded row the legs gated here, with a stub of one recorded program planted where the row finds it (on its PATH for a name, under its cwd for a relative path), is NOT RUN with the reason that its evidence was measured without that program, never measured; with its recorded programs absent and every other program it runs present, it is measured; since the sixty-second commit, each recorded row's command with a truly missing program appended on a new line, its recorded programs absent, is NOT RUN with exactly one line naming the missing program, so a gate that exempts the programs a recorded row runs but its record does not hold reds on every recorded row; a recorded program at an absolute path, which this box cannot plant, turns by the real check (runs last: it reads the rows the legs gated)", () => {
   assert.ok(GATED_ROWS.size > 0, 'the legs above gated rows in this process (run the whole file)');
   const rowOf = new Map([...GATED_ROWS].map(([cmd, what]) => [gatedRowId(what), [cmd, what]]));
   assert.deepEqual(Object.keys(RECORDED_ABSENT).filter((id) => !rowOf.has(id)), [], 'every recorded row was gated here');
@@ -16698,13 +16756,14 @@ test("round 7 of fork PR #780 review, fifty-sixth commit, THE RECORDED ABSENCES 
     const stub = (file) => { fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, '#!/bin/sh\nexit 0\n', { mode: 0o755 }); };
     let k = 0;
     // a world per call: `bin` the only PATH the gate reads, `cwd` the row's cwd, its parent standing for the project (`../base/..` resolves there)
-    const gate = (cmd, what, programs, plant) => {
+    // `missing`, when given, is a program the command runs that no stub stands for (the sixty-second commit's appended plant)
+    const gate = (cmd, what, programs, plant, missing = null) => {
       const root = path.join(dir, `w${k++}`);
       const bin = path.join(root, 'bin');
       const cwd = path.join(root, 'project', 'cwd');
       fs.mkdirSync(bin, { recursive: true });
       fs.mkdirSync(cwd, { recursive: true });
-      const others = [...new Set([...programsNamed(cmd, NAMED_PROBE), ...programsInvoked(cmd)])].filter((p) => !programs.includes(p));
+      const others = [...new Set([...programsNamed(cmd, NAMED_PROBE), ...programsInvoked(cmd)])].filter((p) => !programs.includes(p) && p !== missing);
       for (const p of others) if (!p.includes('/')) stub(path.join(bin, p)); else if (!path.isAbsolute(p)) stub(path.resolve(cwd, p));
       if (plant !== null) stub(plant.includes('/') ? path.resolve(cwd, plant) : path.join(bin, plant));
       const [ok, lines] = gateLines(cmd, what, { ...NAMED_PROBE }, { PATH: bin, cwd });
@@ -16731,8 +16790,14 @@ test("round 7 of fork PR #780 review, fifty-sixth commit, THE RECORDED ABSENCES 
         want.push([id, `${p} planted`, false, pexpect]);
         planted.push(`${id} ${p}`);
       }
+      // round 8's extra8-4 (the sixty-second commit; the ratification condition at 00:29Z, its clause that a different truly missing
+      // program on the same row still reds): the row's command with a missing program the record does not hold appended on a new line
+      const appended = `${cmd}\n${Q780_MISSING} ../base/report.md report.md`;
+      const [aok, alines, aexpect] = gate(appended, what, programs, null, Q780_MISSING);
+      got.push([id, 'a missing program appended', aok, alines, alines.filter((l) => l.includes(Q780_MISSING)).length]);
+      want.push([id, 'a missing program appended', false, [...aexpect, `NOT RUN: real ${Q780_MISSING} is not on this runner`].sort(), 1]);
     }
-    assert.deepEqual(got, want, 'a recorded program planted where the row finds it makes the row NOT RUN with the recorded reason, and with its recorded programs absent the row is measured');
+    assert.deepEqual(got, want, 'a recorded program planted where the row finds it makes the row NOT RUN with the recorded reason, with its recorded programs absent the row is measured, and a missing program appended to it is NOT RUN with exactly one line naming it');
     assert.deepEqual(['S22-ctl-hash-p-glued-no-name foo', 'P5-ctl-head-literal-unknown-cmd frobnicate', 'S21-slash-rel-set ./set', 'S21-ctl-slash-alias c'].filter((x) => !planted.includes(x)), [], `the plants reach names and relative paths: ${planted.join(', ')}`);
     console.log(`# THE RECORDED ABSENCES at the gate: ${Object.keys(RECORDED_ABSENT).length} recorded rows measured with their recorded programs absent; ${planted.length} plants, each NOT RUN: ${planted.join(', ')}`);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
@@ -16759,12 +16824,13 @@ test("round 7 of fork PR #780 review, fifty-sixth commit, A BOUND NAME beside a 
   }
   assert.deepEqual(got, want, 'each missing program beside a bound name is NOT RUN by name, and the binding alone runs');
 });
-test("round 7 of fork PR #780 review, fifty-sixth commit, THE REBOUND NAMES (the reviewer's rulings at 00:32Z and 01:00Z): a text that rebinds names sets aside only the names it rebinds (the walk not stepping past them, THE STATED LIMIT at the fifty-seventh commit's test), so a different missing name beside each rebinding form is NOT RUN by name; a rebinding the reader cannot know makes the row NOT RUN with that reason, never measured and never every name set aside (an unknowable alias name beside a missing program); an alias name that is one variable's expansion is followed where that variable has one literal write, `n=c` or `read n <<< c`, at top level before the alias (AL-name-var and AL-name-read-var measured), and a second, a conditional, a later or a non-literal write, or one in a subshell, a group, a loop or a function, goes NOT RUN; a PATH of literal directories and the PATH it replaces is known, one with any other expansion is not; an alias of an alias is followed one level; `aliases[` binds as `functions[` does; a global alias's value is never read as a command line and its name where a command stands goes NOT RUN; a zsh module outside the measured table, a handler for every name not found and a hashed name that is an expansion go NOT RUN; and the table's builtins are zsh's own, by execution where zsh is here", () => {
+test("round 7 of fork PR #780 review, fifty-sixth commit, THE REBOUND NAMES (the reviewer's rulings at 00:32Z and 01:00Z): a text that rebinds names sets aside only the names it rebinds (the walk not stepping past them, THE STATED LIMIT at the fifty-seventh commit's test), so a different missing name beside each rebinding form is NOT RUN by name; a rebinding the reader cannot know makes the row NOT RUN with that reason, never measured and never every name set aside (an unknowable alias name beside a missing program); an alias name that is one variable's expansion is followed where the text spells that variable once before the alias, in a literal write, `n=c` or `read n <<< c`, at top level (AL-name-var and AL-name-read-var measured), and the variable is no parameter a shell sets itself or treats as special (since the sixty-second commit an alias of `$RANDOM` or `${RANDOM}` goes NOT RUN with that reason, beside the missing program it would have bound); a second spelling of the variable, a conditional, a later or a non-literal write, or one in a subshell, a group, a loop or a function, goes NOT RUN (a write that never spells the name is not seen: the stated limit, at the sixty-second commit's test); a PATH of literal directories and the PATH it replaces is known, one with any other expansion is not; an alias of an alias is followed one level; `aliases[` binds as `functions[` does; a global alias's value is never read as a command line and its name where a command stands goes NOT RUN; a zsh module outside the measured table, a handler for every name not found and a hashed name that is an expansion go NOT RUN; since the sixty-second commit, one plant per rebinding form (a `commands[` and a `functions[` entry, zsh's `hash NAME=PATH`, `path=(..)`, `path+=(..)`, `path[1]=..`, `PATH+=:..`, a suffix alias, and a zmodload of each module in the table), each beside a missing program that is NOT RUN by name, and each red under a mutant that sets every bare name aside where its form appears; and the table's builtins are zsh's own, by execution where zsh is here", () => {
   const M = Q780_MISSING;
   const RUN = '../base/report.md report.md';
   const MISS = `NOT RUN: real ${M} is not on this runner`;
   const FOLLOW = 'alias $n=cp: an alias whose name is an expansion the reader does not follow';
   const unfollowed = (label, cmd) => [label, cmd, false, [cannotKnow(FOLLOW), ...missingLines('c')]];
+  const SPECIAL = "an alias whose name expands a parameter a shell sets itself or treats as special (THE SHELLS' PARAMETERS)";
   const cases = [
     // the ruling at 01:00Z, item 1: an unknowable rebinding beside a truly missing program
     ['an unknowable alias name beside a missing program', `alias $n=cp\n${M} ${RUN}`, false, [cannotKnow(FOLLOW), MISS]],
@@ -16785,6 +16851,11 @@ test("round 7 of fork PR #780 review, fifty-sixth commit, THE REBOUND NAMES (the
     unfollowed('a read of an expansion', `read n <<< $m\nalias $n=cp\nc ${RUN}`),
     unfollowed('a text naming IFS', `IFS=:\nn=c\nalias $n=cp\nc ${RUN}`),
     unfollowed('the alias under a condition', `n=c\nif true; then alias $n=cp; fi\nc ${RUN}`),
+    // round 8's ruling B (the sixty-second commit): an alias whose name expands a parameter a shell sets itself or treats as special (THE
+    // SHELLS' PARAMETERS), whose literal write bash and zsh do not keep, goes NOT RUN with that reason, and the missing program its write names
+    // is read
+    ['an alias of $RANDOM beside the missing program its write names', `shopt -s expand_aliases\nRANDOM=${M}\nalias $RANDOM=cp\n${M} ${RUN}`, false, [cannotKnow(`alias $RANDOM=cp: ${SPECIAL}`), MISS]],
+    ['an alias of ${RANDOM} beside the missing program its write names', `shopt -s expand_aliases\nRANDOM=${M}\nalias \${RANDOM}=cp\n${M} ${RUN}`, false, [cannotKnow(`alias \${RANDOM}=cp: ${SPECIAL}`), MISS]],
     // item 3: PATH
     ['a missing name after <lit>:$PATH', `PATH=../scratch:$PATH; ${M} ${RUN}`, false, [MISS]],
     ['a missing name after $PATH:<lit>', `PATH=$PATH:../scratch; ${M} ${RUN}`, false, [MISS]],
@@ -16805,6 +16876,18 @@ test("round 7 of fork PR #780 review, fifty-sixth commit, THE REBOUND NAMES (the
     // the other rebindings the reader cannot know
     ['a zsh module outside the table', `zmodload zsh/q780none\n${M} ${RUN}`, false, [cannotKnow('zmodload zsh/q780none: a module whose builtins are not in ZSH_MODULE_BUILTINS'), MISS]],
     ['a missing name beside a zsh module in the table', `zmodload zsh/files\n${M} ${RUN}`, false, [MISS]],
+    // round 8's extra5-4 (the sixty-second commit): one plant per rebinding form, each red under a mutant that sets every bare name aside
+    // where its own form appears
+    ['a missing name beside a commands entry', `commands[c]=/usr/bin/cp\n${M} ${RUN}`, false, [MISS]],
+    ['a missing name beside a functions entry', `functions[c]='cp "$@"'\n${M} ${RUN}`, false, [MISS]],
+    ["a missing name beside zsh's hash NAME=PATH", `hash c=/usr/bin/cp\n${M} ${RUN}`, false, [MISS]],
+    ['a missing name beside path=(..)', `path=(../scratch $path)\n${M} ${RUN}`, false, [MISS]],
+    ['a missing name beside path+=(..)', `path+=(../scratch)\n${M} ${RUN}`, false, [MISS]],
+    ['a missing name beside path[1]=..', `path[1]=../scratch\n${M} ${RUN}`, false, [MISS]],
+    ['a missing name beside PATH+=:..', `PATH+=:../scratch\n${M} ${RUN}`, false, [MISS]],
+    ['a missing name beside a suffix alias', `alias -s md='cp ../base/report.md'\n${M} ${RUN}`, false, [MISS]],
+    ['a missing name beside zsh/system, a module in the table', `zmodload zsh/system\n${M} ${RUN}`, false, [MISS]],
+    ['a missing name beside zsh/mapfile, a module in the table', `zmodload zsh/mapfile\n${M} ${RUN}`, false, [MISS]],
     ['a handler for every name not found', `command_not_found_handler() { :; }\n${M} ${RUN}`, false, [cannotKnow('command_not_found_handle(r): a handler for every name not found'), MISS]],
     ['a hashed name that is an expansion', `hash -p /usr/bin/cp $h\n${M} ${RUN}`, false, [cannotKnow('hash $h: a hashed name that is an expansion'), MISS]],
     ['an autoloaded name that is an expansion', `autoload $f\n${M} ${RUN}`, false, [cannotKnow('autoload $f: an autoloaded name that is an expansion'), MISS]],
@@ -16853,7 +16936,7 @@ test("round 7 of fork PR #780 review, fifty-sixth commit, A MADE PATH beside a m
 // commit denied: the texts are cut to that, and THE STATED LIMIT's witnesses are pinned below as measured, so a change that reads past such
 // a name reds here and its sentence in the header changes with it. (As the fifty-seventh commit wrote it, this sentence said the same of a
 // shell's path the text makes, where the walk reads on; the fifty-eighth commit cut that, below.)
-test("round 7 of fork PR #780 review, fifty-seventh commit, A MADE PATH is spelled whole (the reviewer's verifier on the fifty-sixth; the condition at 00:29Z): a path counts as named elsewhere only where the text spells it as a word of its own, so a truly missing path beside a made path whose spelling it starts (`./tool` beside `./tool.bak`, `../scratch/c` beside `../scratch/c2`), one that starts a later operand, and a wrapper-named path beside a made longer one are each NOT RUN by name, while a made path spelled whole, glued to a redirection or quoted, is still set aside", () => {
+test("round 7 of fork PR #780 review, fifty-seventh commit, A MADE PATH is spelled whole (the reviewer's verifier on the fifty-sixth; the condition at 00:29Z): a path counts as named elsewhere only where the text spells it as a word of its own, so a truly missing path beside a made path whose spelling it starts or ends (`./tool` beside `./tool.bak` or `x./tool`, `../scratch/c` beside `../scratch/c2`, `/nonexistent/q780/tool` beside `/tmp/q780x/nonexistent/q780/tool`; the two it ends since the sixty-second commit, each red under a mutant that drops the count's left edge), one that starts a later operand, and a wrapper-named path beside a made longer one are each NOT RUN by name, while a made path spelled whole, glued to a redirection or quoted, is still set aside", () => {
   const RUN = '../base/report.md report.md';
   const M = Q780_MISSING;
   const dir = outsideDir();
@@ -16863,6 +16946,9 @@ test("round 7 of fork PR #780 review, fifty-seventh commit, A MADE PATH is spell
     const cases = [
       ['a made ./tool.bak beside a missing ./tool', `cp /usr/bin/cp ./tool.bak; ./tool ${RUN}`, false, [`NOT RUN: real ./tool ${BY_PATH_WHY}`]],
       ['a made ../scratch/c2 beside a missing ../scratch/c', `cp /usr/bin/cp ../scratch/c2; ../scratch/c ${RUN}`, false, [`NOT RUN: real ../scratch/c ${BY_PATH_WHY}`]],
+      // round 8's extra5-5 (the sixty-second commit): a made path whose spelling the missing one ends, relative and absolute
+      ['a made x./tool beside a missing ./tool, a path whose spelling it ends', 'cp /usr/bin/cp x./tool; ./tool x', false, [`NOT RUN: real ./tool ${BY_PATH_WHY}`]],
+      ['a made /tmp/q780x/nonexistent/q780/tool beside a missing /nonexistent/q780/tool', 'cp /usr/bin/cp /tmp/q780x/nonexistent/q780/tool; /nonexistent/q780/tool x', false, [`NOT RUN: real /nonexistent/q780/tool ${BY_PATH_WHY}`]],
       ['a missing path that starts a later operand', '/nonexistent/q780/tool x; cp a /nonexistent/q780/tool.bak', false, [`NOT RUN: real /nonexistent/q780/tool ${BY_PATH_WHY}`]],
       ['a missing wrapper-named path beside a made longer one', `cp /usr/bin/env ../scratch/env2; ../scratch/env ${M} ${RUN}`, false, [`NOT RUN: real ../scratch/env ${BY_PATH_WHY}`, `NOT RUN: real ${M} is not on this runner`]],
       ['a made ./tool spelled whole', `cp /usr/bin/cp ./tool; ./tool ${RUN}`, true, []],
@@ -17033,4 +17119,110 @@ test("round 7 of fork PR #780 review, fifty-ninth commit, THE NON-LITERAL WORDS 
   ];
   const got = cases.map(([label, cmd]) => [label, ...gateLines(cmd)]);
   assert.deepEqual(got, cases.map(([label, , ok, lines]) => [label, ok, [...lines].sort()]), 'each witness of the non-literal words is measured, and each control is NOT RUN');
+});
+
+// ── round 8 of fork PR #780 review, sixty-second commit (2026-09-26): THE SHELLS' PARAMETERS, the narrowings' plants, THE TIME WORD ────────
+//
+// The reviewer's rulings on round 8, sections B and D, under the loop stop at 17:18Z, and the reviewer's decisions 5, 6, 8 and 11. B: item
+// 2's reader followed a parameter a shell sets itself (`RANDOM=c; alias $RANDOM=cp`, where bash and zsh bind no `c`), so an alias whose name
+// expands such a parameter now goes to `unknowable`, the parameters derived by execution (THE SHELLS' PARAMETERS, at ZSH_MODULE_BUILTINS),
+// and a write the reader cannot see, one that never spells the name, is a stated limit pinned below. D: four pins had no plant (THE WRITE'S
+// PLACE against the fixture's masks, THE REBOUND NAMES per form, A MADE PATH's left edge, THE RECORDED ABSENCES with a missing program
+// appended); each plant is in its pin. And WRAPPERS gains numactl, so it holds every wrapper of the hook's PREFIXES but builtin, and the
+// walk reads `time` as a program wherever a shell runs /usr/bin/time, dash in the six committed commands (THE TIME WORD, at programsInvoked).
+test("round 8 of fork PR #780 review, sixty-second commit, THE SHELLS' PARAMETERS and THE STATED LIMIT's unseen write (the reviewer's ruling B and decisions 5 and 6): the bash list of THE SHELLS' PARAMETERS is re-derived by its own command on every runner and the zsh list by its own command where zsh is present (NOT RUN elsewhere), each contained in its table; and a write to the variable an alias's name expands that never spells the variable's name (`export \"$(printf '\\156')=zz\"`) is not seen, so that witness is measured, while the same text whose second write spells the name is NOT RUN (a change that sees such a write reds here, and the header's sentence changes with it)", () => {
+  const RUN = '../base/report.md report.md';
+  const M = Q780_MISSING;
+  const MISS = `NOT RUN: real ${M} is not on this runner`;
+  // the bash command clears the environment before it starts bash, which THE CLEARED ENVIRONMENT refuses unless the leg lists it: this bash
+  // reads no startup file of the account's (--norc shuts the socket road, --noprofile the login one, and env -i leaves no BASH_ENV)
+  const spawn = guardedSpawn(SHELL_PROBE, _spawnSync, new Map([...CLEARED_LEGS, ['env -i PATH=/usr/bin:/bin bash --norc --noprofile -c', null]]));
+  const listed = (argv, sh = argv[0]) => {
+    const r = spawn(sh, argv.slice(1), { encoding: 'utf8', timeout: 20000 });
+    assert.equal(r.status, 0, `${argv.join(' ')} ran (${r.error ? r.error.message : String(r.stderr).slice(0, 200)})`);
+    const names = String(r.stdout).split('\n').filter(Boolean);
+    assert.ok(names.includes('RANDOM') && names.includes('SECONDS'), `${argv.join(' ')} lists the parameters (RANDOM and SECONDS among them): ${names.length} names`);
+    return names;
+  };
+  // the bash half, on every runner
+  const bash = listed(SHELL_PARAMETERS.bash.argv);
+  assert.deepEqual(bash.filter((n) => !SHELL_PARAMETERS.bash.names.includes(n)), [], `every parameter \`${SHELL_PARAMETERS.bash.argv.join(' ')}\` lists here is in THE SHELLS' PARAMETERS' bash table`);
+  console.log(`# THE SHELLS' PARAMETERS: bash lists ${bash.length} here, the table ${SHELL_PARAMETERS.bash.names.length}; the union read ${SHELL_PARAMETER_NAMES.size}`);
+  // the zsh half, where zsh is present
+  for (const sh of shellsFor(['zsh'], "THE SHELLS' PARAMETERS: the zsh table against zsh's own list")) {
+    const zsh = listed(SHELL_PARAMETERS.zsh.argv, sh);
+    assert.deepEqual(zsh.filter((n) => !SHELL_PARAMETERS.zsh.names.includes(n)), [], `every parameter \`${SHELL_PARAMETERS.zsh.argv.join(' ')}\` lists here is in THE SHELLS' PARAMETERS' zsh table`);
+    console.log(`# THE SHELLS' PARAMETERS: zsh (${sh}) lists ${zsh.length} here with the table's modules, the table ${SHELL_PARAMETERS.zsh.names.length}`);
+  }
+  // the stated limit: a write that never spells the name is not seen
+  const cases = [
+    ['a write that never spells the name', `n=${M}\nexport "$(printf '\\156')=zz"\nalias $n=cp\n${M} ${RUN}`, true, []],
+    ['the control: a second write that spells the name', `n=${M}\nexport n=zz\nalias $n=cp\n${M} ${RUN}`, false, [cannotKnow('alias $n=cp: an alias whose name is an expansion the reader does not follow'), MISS]],
+  ];
+  const got = cases.map(([label, cmd]) => [label, ...gateLines(cmd)]);
+  assert.deepEqual(got, cases.map(([label, , ok, lines]) => [label, ok, [...lines].sort()]), 'the witness of the unseen write is measured, and its control is NOT RUN');
+});
+test("round 8 of fork PR #780 review, sixty-second commit, THE TIME WORD and numactl (the reviewer's decisions 8 and 11(1)): WRAPPERS holds every wrapper of the hook's PREFIXES but builtin, numactl among them, so a missing program behind numactl is NOT RUN by name; and `time` is read as a program wherever a shell runs /usr/bin/time: in a text dash may read (the row's own, a text sh runs, what env -S, flock -c, su, runuser or script run), and after an assignment, a pipe or a wrapper, and in a find -exec; it is read as a shell's own word only at a segment's head, after no pipe, in a text only bash or zsh runs (a change to either reading reds here)", () => {
+  const RUN = '../base/report.md report.md';
+  const M = Q780_MISSING;
+  const MISS = `NOT RUN: real ${M} is not on this runner`;
+  // numactl: a missing program behind it is NOT RUN by name
+  const numa = [
+    ['a missing program behind numactl, its option glued', `numactl --physcpubind=0 ${M} ${RUN}`],
+    ['a missing program behind numactl, its option apart', `numactl -C 0 ${M} ${RUN}`],
+  ];
+  const ngot = numa.map(([label, cmd]) => [label, ...gateLines(cmd)]);
+  assert.deepEqual(ngot, numa.map(([label]) => [label, false, [...missingLines('numactl'), MISS].sort()]), 'a missing program behind numactl is NOT RUN by name');
+  // the hook's wrappers, read from its source (the pin guards that WRAPPERS keeps up with PREFIXES; the plant above is what shows numactl read)
+  const hook = fs.readFileSync(HOOK, 'utf8');
+  const setOf = (name) => { const m = hook.match(new RegExp(`^const ${name} = new Set\\(\\[([^\\]]*)\\]`, 'm')); assert.ok(m, `the hook declares ${name} as a Set of literals`); return [...m[1].matchAll(/'([^']*)'/g)].map((x) => x[1]); };
+  assert.ok(/^const PREFIXES = new Set\(\[[^\]]*\.\.\.ZSH_MODIFIERS\]\);$/m.test(hook), "the hook's PREFIXES spreads ZSH_MODIFIERS");
+  const prefixes = [...setOf('PREFIXES'), ...setOf('ZSH_MODIFIERS')];
+  assert.ok(prefixes.includes('numactl') && prefixes.includes('env') && prefixes.length > 10, `the hook's PREFIXES read: ${prefixes.join(' ')}`);
+  assert.deepEqual(prefixes.filter((w) => !Object.hasOwn(WRAPPERS, w)).sort(), ['builtin'], "every wrapper of the hook's PREFIXES is one the walk steps past (WRAPPERS), but builtin, a shell's own word here (SHELL_OWN)");
+  // THE TIME WORD: [label, command, whether the walk reads `time` as a program]
+  const shapes = [
+    ['the row\'s own text, which dash reads', `time cp ${RUN}`, true],
+    ['in a subshell of the row\'s own text', `(time cp ${RUN})`, true],
+    ['a text sh runs', `sh -c 'time cp ${RUN}'`, true],
+    ['a text dash is fed', `echo 'time cp ${RUN}' | dash`, true],
+    ['a text bash runs, at its head', `bash -c 'time cp ${RUN}'`, false],
+    ['a text zsh runs, at its head', `zsh -c 'time cp ${RUN}'`, false],
+    ['a text bash is fed, at its head', `echo 'time cp ${RUN}' | bash`, false],
+    ['after `!` in a text bash runs', `bash -c '! time cp ${RUN}'`, false],
+    ['in an eval text bash runs', `bash -c "eval 'time cp ${RUN}'"`, false],
+    ['after an assignment in a text bash runs', `bash -c 'X=1 time cp ${RUN}'`, true],
+    ['after a pipe in a text bash runs', `bash -c 'true | time cp ${RUN}'`, true],
+    ['after a wrapper in a text bash runs', `bash -c 'nice time cp ${RUN}'`, true],
+    ['after an own wrapper in a text bash runs', `bash -c 'exec time cp ${RUN}'`, true],
+    ["in env -S's text inside bash", `bash -c "env -S 'time cp ${RUN}'"`, true],
+    ["in su -c's text inside bash", `bash -c "su -c 'time cp ${RUN}'"`, true],
+    ["in a find -exec inside bash", `bash -c 'find . -exec time cp ${RUN} +'`, true],
+  ];
+  assert.deepEqual(shapes.map(([label, cmd]) => [label, programsInvoked(cmd).includes('time')]), shapes.map(([label, , reads]) => [label, reads]), '`time` is read as a program exactly where a shell runs /usr/bin/time, and as its own word at the head of a text bash or zsh runs');
+});
+test("round 8 of fork PR #780 review, sixty-second commit, THE TIME WORD on the committed rows (the reviewer's decision 11(1), on the execution checker's record of dash running /usr/bin/time): the six committed commands whose dash leg runs /usr/bin/time, as the legs gated them in this process (seven rows: R6W-RT-time-echo-producer runs R6W-N-time-echo-closer's command, which the legs gated under the first), each read `time` as a program, so where no `time` is on the PATH the gate makes each NOT RUN with one line naming time, and with a `time` on the PATH each is measured (runs last: it reads the rows the legs gated)", () => {
+  assert.ok(GATED_ROWS.size > 0, 'the legs above gated rows in this process (run the whole file)');
+  const rowOf = new Map([...GATED_ROWS].map(([cmd, what]) => [gatedRowId(what), [cmd, what]]));
+  // one row per command: GATED_ROWS holds a command under the first row that gated it, and R6W-RT-time-echo-producer runs R6W-N-time-echo-closer's
+  const ids = ['R6W-N-time-echo-closer', 'S8-wp-time', 'S8-wp-time-p', 'S19-set-wrap-time', 'P5-time-head-unread-set', 'W-time-nad'];
+  assert.deepEqual(ids.filter((id) => !rowOf.has(id)), [], 'each row was gated here');
+  assert.equal(new Set(ids.map((id) => rowOf.get(id)[0])).size, 6, 'the six rows run six commands');
+  const dir = outsideDir();
+  try {
+    const stub = (file) => { fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, '#!/bin/sh\nexit 0\n', { mode: 0o755 }); };
+    let k = 0;
+    // a world per call: `bin` the only PATH the gate reads, a stub there of every program the command runs by name, `time` only when asked
+    const gate = (cmd, what, withTime) => {
+      const bin = path.join(dir, `w${k}`, 'bin');
+      const cwd = path.join(dir, `w${k++}`, 'project', 'cwd');
+      fs.mkdirSync(bin, { recursive: true });
+      fs.mkdirSync(cwd, { recursive: true });
+      for (const p of new Set([...programsNamed(cmd, NAMED_PROBE), ...programsInvoked(cmd)])) if (!p.includes('/') && (p !== 'time' || withTime)) stub(path.join(bin, p));
+      return gateLines(cmd, what, { ...NAMED_PROBE }, { PATH: bin, cwd });
+    };
+    const got = ids.map((id) => { const [cmd, what] = rowOf.get(id); return [id, programsInvoked(cmd).includes('time'), gate(cmd, what, false), gate(cmd, what, true)]; });
+    assert.deepEqual(got, ids.map((id) => [id, true, [false, ['NOT RUN: real time is not on this runner']], [true, []]]), 'each committed row whose dash leg runs /usr/bin/time reads it as a program: NOT RUN naming time where no time is on the PATH, measured where one is');
+    console.log(`# THE TIME WORD on the committed rows: ${ids.length} commands, each NOT RUN naming time with no time on its PATH and measured with one: ${ids.join(', ')}`);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
