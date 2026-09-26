@@ -852,12 +852,16 @@ def wait_for_census(before, timeout=5.0):
 # necessarily the one that started the thread; the thread's target and stack say where it came from.
 # THE CAP, 10 s, from the census of 2026-09-26 on the fork's main (the full suite on 3.12 at -n 2, twice, and at -n 4;
 # every third module serially on 3.12 and on 3.14t with the GIL off). No non-daemon thread but pytest-timeout's timer was
-# alive at any session end, so no exit latency could be measured there; the tests' own joins of threads they had stopped
-# measured it instead: at most 2.98 s for a non-daemon thread and 5.03 s for any thread (the product's 5 s wait for a
-# session host's hello). The cap is about twice the longer figure and exactly twice tests/test_thread_stop_census.py's
-# BOUND_S (5 s, the longest wait that census reads as bounded). A run that leaves no thread pays nothing, since a join
+# alive at any session end, so no exit latency could be measured there. The tests' own joins measured it instead: the
+# longest time from a stop to a thread's end was 5.03 s, a daemon thread's end under the product's 5 s wait for a session
+# host's hello. The longest join of a non-daemon thread, 2.98 s, was not an exit: it was a concurrency test's hammer
+# threads joined as they finished their work, so it bounds no exit latency. The cap is about twice 5.03 s and exactly
+# twice tests/test_thread_stop_census.py's BOUND_S (5 s, the longest wait that census reads as bounded). A run that leaves no thread pays nothing, since a join
 # returns the moment its thread ends; a run that leaks one pays the cap once per process, then fails. A last test whose
 # own teardown fails skips the check (the runner's teardown raised first), in a run that is red already.
+# NOT CHECKED: a thread started after the last test's teardown, in a pytest_sessionfinish or pytest_unconfigure hook or
+# an atexit handler, since the check has run by then. None starts one today: the hooks and atexit handlers in tests/
+# only remove directories.
 # An idle ThreadPoolExecutor worker, from a pool left without shutdown, fails the guard too: it is a non-daemon thread
 # that no join ends. The interpreter wakes such workers at exit, so serially it would not have hung the run; failing on
 # it is the stricter reading. None is left on main.
