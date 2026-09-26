@@ -216,6 +216,19 @@ class CookieOpensPageAndStaticOnly(_Server):
         # the cookie still passes the Origin gate; an in-browser page on another origin is refused
         self.assertEqual(self._status("/chat", cookie=SESS, origin="http://evil.example"), 403)
 
+    def test_a_session_cookie_whose_tag_does_not_match_opens_no_page_and_no_static_read(self):
+        # _session_ok checks the session id's tag: a cookie under this kernel's name whose tag this kernel did
+        # not mint opens neither class. / is not a refusal to read here (a refused / serves the sign-in page with
+        # 200), so it is checked for being that page and not the shell.
+        forged = SESS.partition(".")[0] + ".not-this-kernels-tag"
+        self.assertFalse(km._session_ok(forged), "sanity: the forged id does not validate")
+        self.assertEqual(self._status("/chat", cookie=forged), 403, "a forged tag opens no page")
+        self.assertEqual(self._status("/sw.js", cookie=forged), 403, "a forged tag opens no static read")
+        status, body, _ = self._req("/", cookie=forged)
+        text = body.decode("utf-8", "replace")
+        self.assertEqual(status, 200)
+        self.assertTrue(text == km._TOKEN_LOGIN_HTML, "a forged tag on / gets the sign-in page, not the shell")
+
 
 class CookiePlusKey(_Server):
     def test_cookie_plus_key_opens_the_full_class(self):
@@ -397,10 +410,19 @@ class ReauthSignalOnAStaleKey(_Server):
         self.assertIsNone(headers.get("X-Romp-Reauth"), "no session, so nothing to re-sign-in")
 
     def test_the_page_key_script_drops_the_key_and_hops_on_the_marker(self):
+        # A source pin on the re-sign-in branch's own text: the slice from the marker's test to the end of the
+        # fetch wrapper's response handler, so the storage probe's removeItem and the no-key branch's hop, which
+        # sit outside it, cannot satisfy it. What it guards is that the branch still drops this kernel's key and
+        # sends the top frame to /login; the executed checks of that behaviour are the served browser scenes:
+        # tests/test_file_caps_browser.py (topKeyDropped, paneKeyDropped: a stale key refused in the top frame
+        # and in a pane) and tests/test_page_key_dashboard_browser.py (keyDropped: a stale dashboard tab).
         js = km._PAGE_KEY_JS
-        self.assertIn("X-Romp-Reauth", js, "the script reads the marker off the fetch response")
-        self.assertIn("removeItem", js, "it drops the stale key")
-        self.assertIn("/login", js, "and hops to /login")
+        start = js.index("X-Romp-Reauth")
+        branch = js[start:js.index("}catch(e){}return r;", start)]
+        where = ("the re-sign-in branch of _PAGE_KEY_JS; executed by test_file_caps_browser (topKeyDropped, "
+                 "paneKeyDropped) and test_page_key_dashboard_browser (keyDropped)")
+        self.assertIn("removeItem(KN)", branch, "the branch drops this kernel's key: " + where)
+        self.assertIn("t.location.replace('/login')", branch, "the branch sends the top frame to /login: " + where)
 
 
 class PageKeyScriptInPageDocumentsOnly(_Server):
@@ -695,6 +717,23 @@ class LoginHandoff(_Server):
         self.assertEqual(self._set_cookies(headers), [], "a fetch with the token sets no cookie")
         self.assertNotIn("romp.pageKey", body.decode("utf-8", "replace"))
 
+    def test_a_token_on_a_page_route_signs_in_a_navigation_alone(self):
+        # On a page route the token authorizes whatever loads it, but only a navigation (_is_navigation) signs
+        # the browser in: a fetch of / or /chat carrying ?token= (Accept */*, no Sec-Fetch-Dest), and a load
+        # whose Sec-Fetch-Dest names no document, get the page with no cookie and no seed.
+        for path in ("/", "/chat"):
+            for what, kw in (("a fetch", {"accept": "*/*"}),
+                             ("a load that is not a document", {"accept": "text/html", "sec_fetch": "empty"})):
+                status, body, headers = self._req(path + "?token=" + TOK, **kw)
+                text = body.decode("utf-8", "replace")
+                self.assertEqual(status, 200, "%s of %s is authorized by the token" % (what, path))
+                self.assertIn("__rompPageKey", text, "%s of %s gets the page" % (what, path))
+                self.assertEqual(self._set_cookies(headers), [], "%s of %s sets no cookie" % (what, path))
+                self.assertNotIn(SEED_SET, text, "%s of %s carries no seed" % (what, path))
+            status, body, headers = self._req(path + "?token=" + TOK, accept="text/html", sec_fetch="document")
+            self.assertTrue(km._session_ok(self._session_cookie_value(headers) or ""), "a navigation to %s signs in" % path)
+            self.assertIn(SEED_SET, body.decode("utf-8", "replace"), "and seeds the key")
+
     def test_a_signed_in_browser_keeps_its_session_on_a_second_login(self):
         status, _, headers = self._req("/?token=" + TOK, cookie=SESS, accept="text/html", sec_fetch="document")
         self.assertEqual(status, 200)
@@ -814,7 +853,7 @@ class LegacyCookieClearedBesideASession(_Server):
     SIGNED_IN = {"a page navigation": 200, "a sign-in navigation": 200, "a page fetch": 200, "a static read": 200,
                  "a data read with the key": 200, "a data read without the key": 403, "a file load on its cap": 200,
                  "a file probe on its cap": 200, "a POST with the key": 404, "a preflight": 204,
-                 "the sign-in page": 200, "the health probe": 200, "a socket upgrade": 101,
+                 "the sign-in page": 200, "the health probe": 200, "a push ack": 400, "a socket upgrade": 101,
                  "a relayed socket upgrade": 101}
 
     def _clears(self, set_cookies):
@@ -879,6 +918,7 @@ class LegacyCookieClearedBesideASession(_Server):
         http("a preflight", "/sessions", method="OPTIONS", origin=self.origin, key=KEY)
         http("the sign-in page", "/login")
         http("the health probe", "/healthz")
+        http("a push ack", "/push/ack", method="POST")     # served before the gate, on its push id alone
         status, sc = self._upgrade("/ws?k=" + KEY, cookies)
         out.append(("a socket upgrade", status, self._clears(sc)))
         status, sc = self._relay_upgrade(cookies)
@@ -897,7 +937,7 @@ class LegacyCookieClearedBesideASession(_Server):
         for what, cookies in (("no session cookie", "romp_token=%s" % TOK),
                               ("a session cookie whose tag does not match", "%s=%s; romp_token=%s" % (CN, self.FORGED, TOK))):
             got = self._answers(cookies, sign_ins=False)
-            self.assertEqual(len(got), 12)
+            self.assertEqual(len(got), 13)
             self.assertEqual([(k, s, c) for k, s, c in got if c], [],
                              "%s: the old cookie is kept: (kind, status, clears) of the responses that clear it" % what)
 
@@ -1014,6 +1054,20 @@ class NoPageDataInlined(_Server):
         swtext = sw.decode("utf-8", "replace")
         self.assertNotIn("caches.", swtext, "the service worker caches nothing (no page data cached)")
         self.assertNotIn("cache.addAll", swtext)
+
+    def test_a_query_naming_the_planted_session_changes_no_cookie_only_body(self):
+        # The page and static renderers read no request input: every page route, and /sw.js, answers the
+        # session cookie alone with the same bytes whether or not the query names the planted session under
+        # the keys the dashboard's own addresses use (sid=, active=, panes=). A renderer that began to read
+        # the query and inline what it names would pass the census above, which requests every route bare.
+        query = "?" + "&".join("%s=%s" % (k, self.PLANT_SID) for k in ("sid", "active", "panes"))
+        for path in self._pages() + list(km._STATIC_EXACT):
+            bare_status, bare, _ = self._req(path, cookie=SESS)
+            status, named, headers = self._req(path + query, cookie=SESS)
+            self.assertEqual((bare_status, status), (200, 200), "the cookie alone serves %s both ways" % path)
+            self.assertTrue(named == bare, "%s answers a query naming a session with the bare bytes (%d and %d bytes)"
+                            % (path, len(named), len(bare)))
+            self.assertEqual(self._set_cookies(headers), [], "%s with the query sets no cookie" % path)
 
     def test_the_page_key_is_in_the_sign_in_response_alone_and_once(self):
         for path in self._pages():
