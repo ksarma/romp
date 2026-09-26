@@ -437,16 +437,41 @@ const stripWs = (s: string): string => s.replace(/\s+/g, "");
  *  note's: the fence's Copy button (code-block.ts), a formula KaTeX rendered (math.ts), a footnote's back link and the
  *  front matter's fold label (md-config.ts), a gated figure's placeholder (figure-gate.ts), and the label the viewer parks
  *  beside a figure that failed to load (file-view.ts, Slice 7: `span.fv-figerr`, the img's next sibling, its text naming
- *  the source). These six are in anchor-map.ts's CONTROL_CLASSES, which every text walk there skips (isControl). That list also holds the fill's two
+ *  the source), and the figure's "Open the picture" control (file-view.ts, the link-navigation follow-on's L3: `button.fv-figopen`,
+ *  the img's next sibling, a glyph with no text). These seven are in anchor-map.ts's CONTROL_CLASSES, which every text walk there skips (isControl). That list also holds the fill's two
  *  fallback shapes (`katex-error`, `md-math-src`: the TeX shown as text), which are NOT skipped here on purpose: the
  *  map's tokens make a formula a zero-text hole, but an html block's fallback can only come from a placeholder the
- *  author typed, whose TeX the parse of the block's source reads too, so the texts agree and the pairing holds. */
-const CONTROL_CLASSES = ["code-copy", "katex", "md-fnback", "md-frontmatter-head", "fv-gate", "fv-figerr"];
+ *  author typed, whose TeX the parse of the block's source reads too, so the texts agree and the pairing holds. The last
+ *  two, a figure's companions, stand at a level BESIDE a block's element without being it or holding it, and are left out
+ *  of the structural read too (blockElementsOf), as the map's pairing leaves them out (isFigureCompanion); the other five
+ *  are a block's element (a gated figure's placeholder, at the top level), or stand inside one (the fence's Copy button in
+ *  its pre, a formula in its paragraph or its display block, a footnote's back link in its definition's item, the front
+ *  matter's fold label among its details' rows), never beside one at a level the read walks, and stay in the read (the
+ *  file review's round 8, correctness-1: counted as a box of the
+ *  level, a top-level control's bottom above the edge sent the search past the figure to the paragraph after it). The
+ *  control's entry here is inert while the control has no text node of its own (noteText reads nothing from a glyph,
+ *  listed or not; its title and aria-label are attributes): md-config-figure-gate-place.test.ts's labelled scene is what
+ *  reds on its removal, and the class's structural exclusion is FIGURE_COMPANION_CLASSES', driven by
+ *  file-view-place-blocks.test.ts's top-level figure (the same round, extra9-1 and extra8-3). */
+const CONTROL_CLASSES = ["code-copy", "katex", "md-fnback", "md-frontmatter-head", "fv-gate", "fv-figerr", "fv-figopen"];
 const isControl = (n: Node): boolean => {
   if (n.nodeType !== 1 || typeof (n as Element).getAttribute !== "function") return false;
   const c = " " + ((n as Element).getAttribute("class") || "") + " ";
   return CONTROL_CLASSES.some((cls) => c.indexOf(" " + cls + " ") >= 0);
 };
+/** A figure's two companions (anchor-map.ts isFigureCompanion: the failed figure's label and the "Open the picture" control),
+ *  the controls that stand at the top level BESIDE a block's element without being it or holding it; the structural read
+ *  passes them over as the map's pairing does (holdsContent), so the search over a level's boxes never lands on one. The
+ *  pair alone, not every control: a gated figure's placeholder (`fv-gate`) IS its block's element at the top level, and
+ *  filtered out it would leave the block no element in the level (md-config-figure-gate-place.test.ts's bare-line scene). */
+const FIGURE_COMPANION_CLASSES = ["fv-figerr", "fv-figopen"];
+const isFigureCompanion = (n: Node): boolean => {
+  if (n.nodeType !== 1 || typeof (n as Element).getAttribute !== "function") return false;
+  const c = " " + ((n as Element).getAttribute("class") || "") + " ";
+  return FIGURE_COMPANION_CLASSES.some((cls) => c.indexOf(" " + cls + " ") >= 0);
+};
+/** The element children the structural read walks: a level's elements with a figure's companions left out. */
+const blockElementsOf = (n: Node): Element[] => elementsOf(n).filter((c) => !isFigureCompanion(c));
 /** A rendered node's text as the anchor map reads it: its text nodes' data with the viewer's controls skipped, the node
  *  itself when it is one (a bare `<img>` line on a gated host renders as the placeholder alone). textContent read the
  *  controls' labels too, so an html block holding a gated picture read "Image from host. Click to load." against a parse
@@ -855,7 +880,7 @@ export function readPlace(body: HTMLElement, source: string): Place | null {
   const md = body.querySelector(".fileview-md");
   if (md) {
     const carry: Carry = { pic: null, lead: null };
-    const found = readRendered(md, source, spans, elementsOf(md), edge, atTop, carry);
+    const found = readRendered(md, source, spans, blockElementsOf(md), edge, atTop, carry);
     if (found && carry.pic) found.pic = carry.pic;
     if (found && carry.lead) found.lead = carry.lead;
     return found === undefined ? null : found;
@@ -988,7 +1013,7 @@ function readRendered(md: Element, source: string, spans: SourceRange[], kids: E
         }
         continue;
       }
-      const inner = readRendered(md, source, spans, elementsOf(kids[i]), edge, atTop, carry);
+      const inner = readRendered(md, source, spans, blockElementsOf(kids[i]), edge, atTop, carry);
       if (inner !== undefined) return inner;
       continue;   // nothing nested in the wrapper ends below the edge with a layout (a closed details' content, boxOf): the element after it
     }

@@ -138,6 +138,7 @@
      These neutral tokens are for the chrome that frames them (header, detail box,
      day rules, toggle buttons). */
   --card-border: rgba(255, 255, 255, 0.10);
+  --outbound-line: #8a8a8a;   /* the viewer's outbound dress line, mirrored byte-equal from styles.css (4.83:1 on --bg; theme-parity.test.ts holds the pair) */
   --detail-bg: rgba(255, 255, 255, 0.05);
 
   /* Relevance category colors — single source, the CLASSIC identity-palette hexes
@@ -177,6 +178,7 @@ body.theme-light {
   --btn-pad-sm: 1px 8px; --btn-pad-md: 3px 10px; --btn-pad-lg: 5px 13px;   /* geometry, theme-invariant */
   --btn-fs-sm: 0.72em; --btn-fs-md: 0.82em;
   --card-border: rgba(0, 0, 0, 0.10);
+  --outbound-line: #6b645a;   /* mirrored from styles.css (4.90:1 on the page) */
   --detail-bg: rgba(0, 0, 0, 0.04);
   --rel-done: #3E7D0E;       /* the light ok-green (matches --green) */
   --rel-decision: #1478B8;   /* the classic blue, darkened to read on cream */
@@ -1656,8 +1658,11 @@ a.fileview-gh-note { border-style: dashed; }
    short note 5px off the card's centre, a picture too, a PDF frame and the editor 10px short of the body's edge (15 on the
    feed's platform scrollbar); the observer's width is the content box the column is measured in, scrollbar or none (review
    round 2). file-view-scrollbar-browser.test.ts launches Chromium with the scrollbar visible (the other legs run under
-   playwright's --hide-scrollbars) and measures the cap, and that nothing is reserved on a body that does not scroll. */
+   playwright's --hide-scrollbars) and measures the cap, and that nothing is reserved on a body that does not scroll. The
+   same observer's watch writes --fv-table-w on each top-level table, the table's own border-box width, for its shift into
+   the gutters (.fileview-md > table, below), registered non-inherited for the same reason. */
 @property --fv-body-w { syntax: "*"; inherits: false; }
+@property --fv-table-w { syntax: "*"; inherits: false; }
 .fileview-body { flex: 1 1 auto; min-height: 0; overflow: auto; }
 /* the body is a Tab stop and takes the keyboard after the open's first paint (file-view.ts takeKeyboard; Slice 6 of
    plans/markdown-viewer.md): no ring for the focus a paint gave it (a frame around the whole scroll box on every open would
@@ -1948,6 +1953,175 @@ a.fileview-gh-note { border-style: dashed; }
    wash, beside the gate's line (the block's .fileview-md ink is outranked by this rule). Byte-equal in both sheets
    (fileview-parity.test.ts). */
 .fileview-md .fv-figerr { display: inline-flex; align-items: center; justify-content: center; box-sizing: border-box; max-width: 100%; margin: 0 0.3em; padding: 0.5em 0.8em; border: 1px dashed var(--box-border); border-radius: 6px; background: var(--overlay-05); color: var(--warn); font-size: 0.86em; line-height: 1.3; text-align: center; vertical-align: middle; overflow-wrap: anywhere; }
+/* "Open the picture" on every figure of a rendered file (plans/markdown-viewer.md, "Follow-on: Link navigation", L3; file-view.ts
+   decideFigureControl): a glyph button of the bar's family (.fileview-btn.fileview-icon, 14px glyph, 3px padding, 1px border:
+   22px square), the img's next sibling (after its <picture>, the regions layer's wrap or a link holding the figure alone), laid
+   over the figure's top corner on the side where its line ends, the top-right in left-to-right text and the top-left in
+   right-to-left text, with no wrapper and no measuring: an inline-flex box aligned to the line's top, its margin box zero wide
+   (a margin of -28px at the line's start and 6px at its end around the 22px, logical margins, so the box follows the text's
+   direction), so the flow around the figure is as the browser laid it, and the 6px relative offset down is the inset from the
+   top edge (the -28 and the 6 give the inset from the side the line ends on; with the physical left and right margins, in a
+   right-to-left block the control stood beside the picture's left edge, 6px outside it, and on the chat and the feed at a width
+   of 360px 6 of its 22px lay outside the viewer's body and were clipped: the file review's round 15, ui-2). Positioned, so it paints and is hit above the regions layer's overlay (position: absolute with no z-index, earlier in
+   the tree) while the Comments panel is open; the page's background under the glyph, since it stands on a picture, and the
+   family's hover wash over that background. Transparent at rest and revealed by the pointer over the figure (the sibling before
+   it: `:hover +`), by the pointer over itself and by a keyboard focus (.code-copy's reveal), the web control by any focus (below); a
+   touch device with no hover, or any device with a coarse pointer beside a hovering one, keeps it visible (.code-copy's and the
+   section snapshot action's precedents); every reveal is under `screen`, so a print, where hover is none, shows none of it and the
+   print block needs no line for it. A figure floated by its align attribute stacks sideways: the control floats with it, a left
+   float's at the figure's top-right corner as before, a right float's at its top-LEFT corner (a later right float sits left of
+   the earlier one, and the far edge cannot be reached without the figure's width), in either direction of text: both float
+   rules carry physical margins of their own, since an author's align is physical, and a left float that took the logical
+   margins stood off its corner in a right-to-left block. A picture from the web (file-view.ts
+   dressFigureControl, keyed on the figure's target: `fv-figopen-web` beside the class, the outbound glyph and words naming the host)
+   wears the border dashed, the gate's dress for a figure from another host, so the control that leaves the page reads apart from
+   the one that opens a file before any gesture; no accent: the accent is highlight chrome, and a kind's mark wears it only where
+   ui/CLAUDE.md names an exception. A picture from the web that wears no control (a loaded picture under the floor, FIGOPEN_MIN_PX)
+   carries the dashed dress itself, an outline keyed on the mark the decision sets (`img[data-fv-figweb]`, file-view.ts dressFigureMark),
+   on hover, and at rest on a device with no hover, where its tooltip cannot show (the file review's round 12, fresh-1); an outline and
+   not a border, since a border on the img widens its box, and in the outbound dress's own token (var(--outbound-line), declared in both
+   theme blocks: a grey clearing 3:1 over the page in each theme, theme-parity.test.ts holds the pair, where the button family's rest
+   hairline, var(--card-border) at 10 percent, read at 1.35:1 dark and 1.25:1 light, a faint ring under the floor on a 20 px badge; the file review's
+   round 13, ui-1 with extra6-1), the one the control's dashed border wears at rest (`:not(:hover)`, so the family's accent hover border
+   still wins on the control), so the two dresses are one colour. Under that outline stands a ring of the page's own ground, a
+   box-shadow of var(--bg) 3px wide, so both sides of every dash and the gaps between them read var(--bg) whatever the page paints
+   behind the picture: without it the line read against that paint, and inside a ==highlight== the dark theme's dashes stood at
+   2.40:1 against its tint, while a table header, an even row or a callout fell under 3:1 on a VS Code editor ground inside the bound
+   stated below. 3px is the least width that covers both sides, the 1px offset, the 1px line and the pixel outside it (at 2px the
+   line's outer side kept the tint). A box-shadow takes no layout and paints with the picture in tree order, so a bare ring covered its
+   width of whatever stood before the picture on its line, and text painted after the picture paints over the ring, where the dash's
+   outer side reads it. A margin at rest under `screen` on every pointer (a margin keyed on hover moved the picture from under a
+   pointer at its edge, and the hover toggled frame by frame) keeps the ring off neighbouring ink at the picture's own text size,
+   each axis the least that does, measured by screenshot pixels on the chat modal, the feed and the Files pane, at rest under touch,
+   on the touchscreen laptop and on hover on a fine pointer, and on the chat modal at a device scale of 2, in both themes (the file
+   review's round 14, correctness-2 with extra5-1 and extra5-2; the two margin rulings of 2026-09-24). Across the line 3px plus 0.3em
+   of the picture's own text size,
+   7.485px at the viewer's default size: the ring's 3px and the ink an italic or bold italic f paints past its own box toward the
+   picture, 4px at the default size and more as the text grows, so the margin grows with the text and clears that f, set in the
+   picture's own text size, at every text size from 100% to 200% and in a level-1 and a level-2 heading (at a fixed 7px an italic f
+   lost ink to the ring in both headings and at a text size of 115% and above; at 6px it lost ink at the default size; at the ring's
+   width an upright f and a slash lost theirs, and the text a note callout wraps beside a left-floated picture put its first glyph in
+   the ring's outer pixel, where the dash's outer side read 2.06:1 dark on the Files pane). The em is the picture's own, so a picture
+   set in smaller text than an italic or bold italic f glued before it gets less margin than that f reaches: with the picture inside
+   <small>, <sub> or <sup>, inside two nested <small>, or in text at 0.8em or 0.7em of the f's, the ring covers up to 4 pixels of that
+   f's ink in one read (at a device scale of 1 or 2, counted in device pixels; inside one <small>, <sub> or <sup>, up to 2), read the same way at every
+   text size from 100% to 200% with the line moved by each eighth of a pixel, and every dash still reads 4.83:1 dark and 4.90:1 light
+   on both sides, since the f paints before the picture and the ring over it (file-figure-open-browser.test.ts holds one such picture,
+   in two nested <small>, to that bound, SMALLER_BOUND). Below 0.7em of the f's the ring covers more, a residual disclosed and
+   measured (the file review's round 15, extra5-3): Chromium sets no floor on a nested <small>'s text size, which falls by 1.2 a
+   level (3.6e-7px a hundred deep at 200%, 1.8e-7px at 100%), so the margin across the line falls to the ring's own 3px, and there
+   the ring covers the most of that f, the most of all with the picture lowered by a <sub>. Over 24,576 reads by screenshot pixels
+   (the Files pane and the chat modal under touch, at device scales of 1 and 2, in both themes, at every text size from 100% to 200%
+   with the line moved by each eighth of a pixel; <small> nested 3 to 16, 20, 30, 40, 60 and 100 deep, <sub> and <sup> inside the
+   deepest, a <font> of size 1, 2 or 3, whose size does not follow the viewer's text size, with <sub> and <sup> inside it) the worst
+   read with the f in the paragraph's own text was a bold italic f before a picture in a <sub> inside a hundred nested <small> at
+   200%: 30 pixels at a device scale of 1 and 102 device pixels at 2, sampled maxima that move with the subpixel position. A larger
+   f covers more: over 39,936 more reads in the same configurations with the whole line inside a level-1 to level-6 heading, a
+   <font> of size 4 to 7 or one to three nested <big>, the worst read was 40 pixels at a device scale of 1 (an italic f in a
+   level-2 heading at 150%, a bold italic one in a <big> or a level-3 heading too) and 135 device pixels at 2 (a bold italic f in a
+   <big> before a picture in a <sup> at 200%), every dash still at 4.83:1 dark and 4.90:1 light and no ink covered past the margin
+   box. Those pictures are 20 by 20, and the count stops growing near an f of 33px since the ring reaches no higher than the
+   picture's top; a picture under the floor on its width alone can be any height, and beside a taller one the count grows with the
+   f without a bound (204 pixels at a device scale of 1 and 753 device pixels at 2 for a bold italic f of 185px in ten nested <big>
+   at 200% beside a picture 20 by 200), no figure bounding it; with the picture in two nested <small>, the ring covered at most 4
+   pixels at a device scale of 1 and 5 device pixels at 2 in that larger-f sweep and beside pictures up to 400 tall with an f up to
+   185px (file-figure-open-browser.test.ts holds the paragraph's scene within 1 and 30 pixels at a device scale of 1, FLOOR_BOUND,
+   the heading's within 1 and 40, FLOOR_LARGE_BOUND, and the <big>'s within 1 and 135 device pixels at a device scale of 2,
+   FLOOR_D2_BOUND). Up and down 3px, the
+   ring's width, so the ring stands inside the picture's margin
+   box on every side, which the picture's own line holds, and reaches no other line: at 2px it covered the bottom row of a key (kbd)
+   on the line above, whose box reaches its line's edge, and painted the page's ground over the tint of the highlight, table row or
+   callout the picture stands in one pixel past the margin box (a row 26px wide below a 20px picture, and above it too in a table row
+   or a callout); at 1px it also covered the bottom of an inline code span's box on the line above; with none, a descender. So a line
+   holding such a picture stands up to 6px taller, and at the default size the picture sits 7.485px along its line and the text after
+   it 14.97px. Both at-rest rules key on `(hover: none)` OR `(any-pointer: coarse)`,
+   `screen` written on both queries (css-rules' underScreen reads a list member by member): `hover` describes the PRIMARY pointer, and a
+   touchscreen laptop's is a hovering trackpad, so neither dress stood there at rest while a finger's tap opened the tab (the section
+   snapshot action's precedent; the file review's round 13, extra7-2). The web control rests at FULL opacity where a local one keeps
+   0.8, as the section snapshot action stands at full where hover is none or any pointer is coarse: at 0.8 the picture under the control
+   showed through its background and its line alike, so the line's painted ratio followed the picture (read by pixels over the leg's
+   #333 picture, 2.46:1 on a VS Code editor ground of #404040). At 1 its own background, var(--bg), is the ground its dashes read
+   against, on the line's inner side and in every gap between them, over any picture; over a picture the line's outer side is the
+   author's pixels, which no colour of the dress can clear for every picture, so the dress is held to the ground the sheet controls.
+   Any focus reveals the web control (`:focus` beside the family's `:focus-visible` in the reveal rule, for the web control alone,
+   since a local one opens this viewer): a keyboard focus, and one a script gives it with no ring, so a focus on it is never
+   unpainted; no mouse press focuses it (file-view.ts, the body's mousedown listener), and Enter or Space opens it only while it is
+   in view (controlInView), where a focus left by a click stood unpainted once the pointer left and a later key opened the tab with
+   nothing shown (the file review's round 14, ui-1 with extra9-1); since the file review's round 16, extra5-1, every gesture on a
+   picture from the web opens the tab only while its sign, this control or the mark, is in view and uncovered at the gesture's
+   start (file-view.ts signShown). Under a keyboard focus its focus ring stands 2px off its border
+   (the focus rule below): drawn where the browser draws it, the ring covered the border row and the row inside it, so no pixel of
+   the dashed line showed, and at 1px off it still covered the border row. The button family's press cue, a scale to 0.96, is off on
+   the web control alone (the press rule below):
+   the release that opens the tab comes while the button is held, so the pressed state is one a gesture opens the tab from, and under
+   the cue the 1px line spread over two pixel rows, its modal colour at 1.59:1 dark and 1.39:1 light against the control's own ground;
+   held, the control paints as it does unheld: the family's accent border under the pointer, and the token's line under a Space press
+   from a keyboard focus. The browser's tap highlight is off on the web control and on the mark (the tap rule below): a finger's tap
+   that opens the tab paints pressed frames of its own, the control matching :active for up to about 170 ms after it, and in them the
+   browser painted its default highlight over the control, on a phone a translucent blue (rgba(51, 181, 229, 0.4)) that took the line
+   as low as 2.22:1 dark and 2.41:1 light against the control's own ground in a screencast of every frame (the leg's pin, which reads
+   a frame about every 33 ms, sampled 2.578:1 and 2.531:1), a pressed state a gesture opens the tab from; with the highlight off those
+   frames are the sheets' own transition from the rest dress to the hover dress, at 4.20:1 dark and 3.79:1 light at their lowest in
+   that screencast (5.35:1 and 3.79:1 in the pin's samples). The browser highlights only an element that shows a hand cursor, and nothing from the mark up to the root shows one, so the
+   mark paints no highlight with the rule or without it and wears it so that a pointer cursor given it later brings none (the
+   tap-highlight ruling of 2026-09-24). A dead link (a.fv-dead) holding the dress, the web control after a captioned picture or the mark on a picture
+   under the floor, dims by colour and not by opacity, under `screen`, so a print keeps the opacity: the anchor's opacity 0.7 dimmed
+   everything inside it, the dress included (by pixels over the leg's picture, 2.47:1 dark and 2.40:1 light for the control at rest, at
+   its own 0.8 times the anchor's 0.7, and 2.82:1 light at the anchor's 0.7 alone for the mark and for the control the pointer reveals),
+   while an href-less dead link (a host with a port, a refused scheme, an empty target) owns no click, so a tap, a click and Enter open
+   the tab from inside it (file-view.ts FIGURE_LINK_SET); a dead section link keeps its href, owns its click and holds no dress inside
+   it. Its picture stands at full ink with the dress, the words that take the link's colour are dimmed by it, and a child the sheet
+   colours itself, bold words or inline code, keeps its own ink; its dotted underline, help cursor and title still say it is dead, and a
+   dead link with no dress keeps the opacity, pixel for pixel. So every state from which a gesture opens the tab, inside a dead link
+   too, the press held and each frame of a finger's tap, paints the dress at 3:1 or better in both themes: the token's line at the token's own ratio (4.83:1 dark,
+   4.90:1 light), the mark's outline in each of its states and the web control's border at rest, revealed by the pointer over its
+   picture, under any focus and under a Space press from it, and the family's accent border at 7.87:1 dark and 3.79:1 light against its
+   hover wash, the web control's under the pointer and in a pointer press, read by pixels in file-figure-open-browser.test.ts
+   (paintedRatio) and, but for the press, composed from the declared opacities in theme-parity.test.ts (a scale is not an opacity); in
+   VS Code, whose editor ground the dark theme's --bg follows, the token's states clear 3:1 on a neutral editor ground up to #404040
+   (3.00:1) and fall under at #414141 (2.96:1), and on a light one from #efefef (3.00:1), while the accent, the button family's colour
+   and not the editor's, reads 1.35:1 under the dark theme on a light editor ground, as every accent hover there does. All of it the
+   painted-contrast ask of 2026-09-23, the press rule on the maintainer's ruling within it. An author's class on the figure or above it
+   dims none of this: every class these sheets dim is taken off the author's markup on each figure of a file and on every element
+   above it before the dress is laid (file-view.ts dropDimmingClasses over SHEET_DIM_CLASSES, the list held to these sheets both ways
+   in file-figure-open.test.ts; the file review's round 16, extra5-2: an author's span of tag-chip-off, 0.45, painted the dress at
+   2.00:1 dark and 1.86:1 light while a tap opened the tab). An author's element laid over the figure, not above it, is the one gate's
+   to read: it refuses a gesture while an element a press would reach covers the sign (file-view.ts signUncovered), and the viewer
+   takes off every element of a file's author markup what would let a press pass through it, a class these sheets set pointer-events
+   on at any value but auto (file-view.ts dropPressThrough over SHEET_PRESS_THROUGH_CLASSES, the list held to these sheets both ways in
+   file-figure-open.test.ts), the inert attribute and a pointer-events declaration of its style, so a press there reaches it
+   (the file review's round 16, extra5-1: an author's div of locate-toast, fixed, opaque and letting a press through, painted over the
+   control while a gesture opened the tab). A page class can also leave an author's element at or above the control in stacking
+   order, or make an element around the picture a stacking context that holds the control's z-index inside it: the viewer takes
+   off every element of a file's author markup the classes these sheets give a z-index at or above the control's, and off each
+   figure and every element above it the classes these sheets would make a stacking context there (file-view.ts dropStackClasses
+   over SHEET_STACK_CLASSES and SHEET_CONTEXT_CLASSES, each list held to these sheets both ways in file-figure-open.test.ts), and
+   a top-level table's shift into the gutters is a position and a left, which make no stacking context, and the shared sanitizer
+   removes an author's marquee (md-sanitize.ts MD_FORBID_TAGS), whose own rendering made one around what it held in Chromium and
+   Firefox (in WebKit it makes none, and its own scroll and clip carried the control outside the page), so, where no stacking
+   context stands around the picture, the control's z-index 1 keeps it above author content at z-index auto or 0 (the file
+   review's round 16, extra5-1; its round 17, extra9-1, and the coordinator's decision 4; its round 18, extra7-1 and extra7-2).
+   The outbound mark of a picture with no control has no stacking level of its own, and none of that
+   holds for it (the file review's round 17, fresh-1 and extra7-1). An author's
+   own link still opens its address with no dress, as it did
+   before this follow-on. Byte-equal in both sheets
+   (fileview-parity.test.ts); laid out in file-figure-open-browser.test.ts. */
+.fileview-md .fv-figopen { position: relative; z-index: 1; vertical-align: top; margin: 0; margin-inline: -28px 6px; top: 6px; padding: 3px; background: var(--bg); opacity: 0; }
+.fileview-md .fv-figopen:hover { background: var(--bg) linear-gradient(var(--accent-wash), var(--accent-wash)); }
+.fileview-md .fv-figopen-left { float: left; margin: 0 6px 0 -28px; }
+.fileview-md .fv-figopen-right { float: right; margin: 0 -28px 0 6px; }
+.fileview-md .fv-figopen-web { border-style: dashed; }
+.fileview-md .fv-figopen-web:not(:hover) { border-color: var(--outbound-line); }
+@media screen { .fileview-md :hover + .fv-figopen, .fileview-md .fv-figopen:hover, .fileview-md .fv-figopen:focus-visible, .fileview-md .fv-figopen-web:focus { opacity: 1; } }
+@media screen and (hover: none), screen and (any-pointer: coarse) { .fileview-md .fv-figopen { opacity: 0.8; } }   /* touch, and a coarse pointer beside a hovering one (a touchscreen laptop): no hover state to reveal it, so keep it visible; never print */
+@media screen and (hover: none), screen and (any-pointer: coarse) { .fileview-md .fv-figopen-web { opacity: 1; } }   /* the web control at rest at full, where a local one keeps 0.8: at 0.8 the picture under it showed through its dashed line (the comment above); never print */
+@media screen { .fileview-md .fv-figopen-web:focus-visible { outline-offset: 2px; } }   /* the focus ring 2px off the web control's border, so its dashed line shows under a keyboard focus (the comment above) */
+@media screen { .fileview-md .fv-figopen-web:active { transform: none; } }   /* the press cue off on the web control alone: the release that opens the tab comes while it is held, so the pressed paint is held to 3:1 too (the comment above) */
+@media screen { .fileview-md .fv-figopen-web, .fileview-md img[data-fv-figweb] { -webkit-tap-highlight-color: transparent; } }   /* no browser tap highlight on the web control or the mark: a phone's painted over the control in the tap's pressed frames and took its line under 3:1 (the comment above) */
+@media screen { .fileview-md img[data-fv-figweb] { margin: 3px calc(3px + 0.3em); } }   /* 3px up and down, the ring's width, and 3px plus 0.3em across the line, 7.485px at the default text size, each axis the least that keeps the ring below off neighbouring ink at the picture's own text size (the comment above, which states the bound where the picture is in smaller text than an italic or bold italic f glued before it); at rest on every pointer, never keyed on hover, never print */
+@media screen { .fileview-md img[data-fv-figweb]:hover { outline: 1px dashed var(--outbound-line); outline-offset: 1px; box-shadow: 0 0 0 3px var(--bg); } }
+@media screen and (hover: none), screen and (any-pointer: coarse) { .fileview-md img[data-fv-figweb] { outline: 1px dashed var(--outbound-line); outline-offset: 1px; box-shadow: 0 0 0 3px var(--bg); } }   /* touch, and a coarse pointer beside a hovering one: a picture under the floor has no control and its tooltip never shows to a finger, so the mark stands at rest; never print */
+@media screen { .fileview-md a.fv-dead:has(.fv-figopen-web), .fileview-md a.fv-dead:has(img[data-fv-figweb]) { opacity: 1; color: color-mix(in srgb, currentColor 70%, transparent); } }   /* a dead link holding the outbound dress dims by colour, not by opacity, which dimmed the dress inside it (the comment above); print keeps the opacity */
 .fileview-md :not(pre) > code {
   font-family: var(--mono, ui-monospace, monospace); font-size: 0.92em;
   color: var(--code-fg, #e1c08d); background: var(--code-bg, rgba(217, 119, 87, 0.10));
@@ -2018,20 +2192,23 @@ a.fileview-gh-note { border-style: dashed; }
    --fv-body-w is the body's content width as its ResizeObserver reports it (file-view.ts watchBodyWidth), written on
    each top-level table and registered non-inherited above. A table no wider than the column sits at the column's left
    edge with the prose, as on GitHub; one wider than the column grows out of it EVENLY, into both gutters, until it meets
-   the body's inset: the translate moves it left by half of what it exceeds the column by (a percentage in translate is
-   of the table's own width; half the body less the root's inline padding is half the column, the padding rounded down
-   here as the root rounds it, and the observer's width is the content box the root's 100% is, so the two agree to the
-   pixel; min() holds a narrower table still; the shift is rounded to whole pixels, as the measure is). Scrollable overflow
-   is computed from the transformed box, so the shifted table never makes the body scroll sideways; contain: layout on the
-   root is for anything else wider than the column (a fixed-width svg, an iframe), which it turns into ink overflow the
-   body cannot scroll to. Before the observer's first report, or with no ResizeObserver, the property is unset and both
-   declarations read the same stand-in, 100% plus the inset the cap takes back: the cap is then the column, and in the
-   translate, where 100% is the table's own width, the padding term is under 19px for any table the column holds and
-   rounds down to its 18px floor, so the shift is exactly none. border-collapse is inherited by the anonymous table box the
-   block wraps, so the cell borders still collapse. file-view-typescale-browser.test.ts lays out a narrow, a wide and a
-   wider-than-the-pane table at 380, 900 and 1400px, the Comments aside open and closed. */
+   the body's inset: a position and a left move it left by half of what it exceeds the column by (a left's percentage is
+   of the column, the table's containing block, and --fv-table-w is the table's own border-box width in whole pixels, its
+   offsetWidth, which the same watch writes on each top-level table at its stamp and from an observer of its own, the one
+   measure in both, registered non-inherited above; min() holds a narrower table still; the shift is rounded to whole
+   pixels, as the measure is). The shift is no translate, which made
+   every top-level table a stacking context: a position with no z-index makes none, so a picture control inside the table
+   keeps its own z-index in the root's stacking context (the file review's round 17, the coordinator's decision 4).
+   Scrollable overflow is computed from the shifted box, so the table never makes the body scroll sideways; contain:
+   layout on the root is for anything else wider than the column (a fixed-width svg, an iframe), which it turns into ink
+   overflow the body cannot scroll to. Before the observers' first reports, or with no ResizeObserver, both properties are
+   unset: the cap reads 100% plus the inset it takes back, so it is the column, and the shift reads the column as the
+   table's width, so it is exactly none. border-collapse is inherited by the anonymous table box the block wraps, so the
+   cell borders still collapse. file-view-typescale-browser.test.ts lays out a narrow, a wide and a wider-than-the-pane
+   table at 380, 900 and 1400px, the Comments aside open and closed, and file-figure-open-stacking.ts's cells read that a
+   top-level table is no stacking context in Chromium, Firefox and WebKit. */
 .fileview-md table { border-collapse: collapse; margin: 0.6em 0; display: block; width: max-content; max-width: 100%; overflow-x: auto; overflow-wrap: normal; }
-.fileview-md > table { max-width: calc(var(--fv-body-w, calc(100% + 36px)) - 36px); translate: min(0px, round(calc(var(--fv-body-w, calc(100% + 36px)) / 2 - max(18px, round(down, (var(--fv-body-w, calc(100% + 36px)) - 80ch) / 2, 1px)) - 50%), 1px)); }
+.fileview-md > table { max-width: calc(var(--fv-body-w, calc(100% + 36px)) - 36px); position: relative; left: min(0px, round(calc((100% - var(--fv-table-w, 100%)) / 2), 1px)); }
 .fileview-md th, .fileview-md td { border: 1px solid var(--box-border); padding: 4px 10px; text-align: left; }
 .fileview-md th { font-weight: 600; background: var(--overlay-05); }
 .fileview-md tbody tr:nth-child(even) { background: var(--overlay-05); }
@@ -2781,11 +2958,14 @@ body.filebrowse-open { overflow: hidden; }
    was about). The change marks print in black with no wash (a black underline under an insertion, a black struck label, the
    Raw view's author chip black in a black ring): a reader who printed with changes shown gets a redline, and Show changes
    inline is the way to print without them. A table of the page's own keeps the screen's room on paper, the body less the
-   root's inset, and the screen's shift into both gutters: the cqi cap and the translate are restated here, since a
+   root's inset, and the screen's shift into both gutters: the cqi cap and the shift are restated here, since a
    `max-width: 100%` on the print table would cap a direct child at the column and squeeze a table the paper has room for (A4
    landscape: 761 of 1123px, every cell broken mid-word); the body is made a size container here (the screen's body is none,
    its rule says why), so 100cqi is the body's width, and no script runs at print layout, so a unit the sheet resolves is the
-   one that holds there (review round 2; file-view-print-inks-browser.test.ts measures these). The Slice 4 constructs are named
+   one that holds there (review round 2; file-view-print-inks-browser.test.ts measures these). So the print shift is a
+   translate of half the table's own width, with the screen's left taken back to auto, since --fv-table-w is the width the
+   screen's observer read; the translate makes the table a stacking context on paper alone, where no gesture reaches it and
+   no control prints. The Slice 4 constructs are named
    here too: their rules are two classes deep and outranked the one-class ink rule and the border list, so a footnote definition,
    the front matter's label and YAML and a gated figure's placeholder printed in the dim grey (2.8:1 on white in the default theme)
    and their rails and boxes, and every callout's rail, kept the screen tokens (a note's accent at 1.6:1, the hairline white on
@@ -2838,7 +3018,7 @@ body.filebrowse-open { overflow: hidden; }
   .fileview-md pre code .cl::before, .fileview-body .fv-cl::before, .fileview-gutter { opacity: 1; }
   .fileview-gutter { background: none; border-color: black; }
   .fileview-md table { display: table; width: max-content; overflow: visible; overflow-wrap: anywhere; }
-  .fileview-md > table { max-width: calc(100cqi - 36px); translate: min(0px, round(calc(50cqi - max(18px, round(down, (100cqi - 80ch) / 2, 1px)) - 50%), 1px)); }
+  .fileview-md > table { max-width: calc(100cqi - 36px); translate: min(0px, round(calc(50cqi - max(18px, round(down, (100cqi - 80ch) / 2, 1px)) - 50%), 1px)); left: auto; }
   .fileview-md .katex-display { overflow: visible; }
   .fileview-md > .katex-display { width: max-content; min-width: 100%; max-width: calc(100cqi - 36px); translate: min(0px, round(calc(50cqi - max(18px, round(down, (100cqi - 80ch) / 2, 1px)) - 50%), 1px)); }
   .fileview-body .fc-hl, .fileview-body .fc-hl-context, .fileview-body .fc-presel { background: none; box-shadow: none; outline: none; }

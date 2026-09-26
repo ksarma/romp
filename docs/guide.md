@@ -528,7 +528,69 @@ addresses and paths found in the text wear a dotted underline that
 turns solid under the pointer; a Markdown link that names a file keeps the
 ordinary link look. Selecting text across a link, and commenting on a line that
 holds one, work as before, and a drag that starts or ends on a link selects
-rather than opens.
+rather than opens. The viewer keeps a trail of the files you reach through the links
+inside a file and of the pictures you open from its figures. Two arrow buttons appear at
+the left of its title bar once there is a file to step back or forward to (after you follow
+a link or open a picture; there are none before that): **Back** returns you to the file you
+came from, and **Forward** to the file you came back from, each at the place and in the view you
+left it (while you are not editing the file and no text box
+holds the keyboard, Cmd+[ and Cmd+] on a Mac do the same, and so do Alt+Left and Alt+Right
+on a Files or chat page open in a browser tab of its own; in the dashboard those two keys
+move the keyboard between the panes); a file opened from the chat, from a listing or from
+the Files pane's **Recent** list starts the trail over, and closing the viewer ends it, as
+does, in the chat, following a link to a page on the dashboard's own web address that ends
+in .md or .markdown: the page opens in the viewer in the file's place as a web document
+rather than a file of the session, and the trail ends there (in the Files pane such a link
+opens a tab, as any web address does, and the trail stands). A
+picture in a rendered file that comes from a file or a web address has an
+**Open the picture** button at its top-right corner (the top-left in right-to-left text,
+and on a picture floated to one side, the top corner away from that side), shown while
+the pointer is over the picture or the button, while a focus you reached from the keyboard
+is on the button, under any focus for a picture from the web, and at all times on a phone
+or tablet and on a laptop with a touchscreen, that opens the picture on its own in the
+viewer, with Back returning you to the file at that place (where the button is not shown
+at all times, a Cmd-click on a local picture's button, a Ctrl-click on Windows and Linux,
+or a press dragged off it leaves the button focused but hidden until you press a key, so
+Enter then opens the picture in the viewer with nothing shown first); a plain click on the picture does the same while the Comments panel is
+closed (with the panel open, a click offers a comment as before, and so does a Cmd-click
+on the picture on a mouse or trackpad, and a drag draws a rectangle unless it starts on
+the button, which takes the press), a Cmd-click (Ctrl on Windows and Linux) on the picture
+while the panel is closed, or on the button at any time, opens the picture in a browser
+tab, and a picture from the web opens its address in a new tab, as a link to that site
+does, but only while its button, or on a small picture its dashed border, is on the screen
+with nothing over it that would take a click: a click, a tap, Enter or Space while it is off
+the screen or covered
+(by the list of headings the **Outline** button opens, the menu of the text size
+buttons, or something the file itself lays over the picture, say) opens nothing and
+scrolls it into view,
+and the next one opens once it shows (a button partly on the screen counts as shown), and
+the button and the picture both show that before the click: the button's
+tooltip says it opens a new tab at the address's host, its border is dashed and its glyph
+is an arrow leaving a box, and the picture's own tooltip shows the address's origin (its
+scheme, host and port, never its path, query or fragment), on a line after the author's
+title when there is one; when the address has an @ anywhere after its scheme, so that it may
+carry a sign-in, both tooltips say the address is withheld and show none of it, even for a
+harmless name such as a@2x.png; a
+click on a picture in a fold's title line (a `<details>` block's summary) opens or closes
+the fold and opens nothing, with or without Cmd, and a picture from the web there shows
+no address in its tooltip, while its button, where it has one, still opens it; a figure
+waiting behind its host's box gets its button once it has loaded, as does
+one still on its way (a click on it before then opens nothing), and once the browser has
+answered for a picture, four kinds have none: a picture that failed to load, which opens
+nothing either; a `data:` picture, whose bytes are written into the file itself and which
+does not open; a picture smaller than 48 pixels on either side (a badge, an inline icon),
+which the button would cover, and which a plain click still opens when neither a link nor
+a fold's title line holds it, though no key opens it, since the button is the keyboard's
+only way to a picture, and a picture that shrinks below 48 pixels as the pane narrows
+loses its button and that way with it (a small picture from the web outside such a line has the
+dashed border itself, on a mouse or trackpad while the
+pointer is over it, and at all times on a phone or tablet and on a laptop with a
+touchscreen, since a finger gets no tooltip); and a picture inside a link that holds more
+than the picture (a caption beside
+it), where a click follows the link (a link with no address left, or an anchor that only
+marks a place, is not a link a click can follow, so a picture inside it keeps its button
+and its tooltip, and a plain click opens it), while a picture that is all its link holds
+keeps its button beside the link.
 
 **Text size and width.** The **A−** and **A+** buttons in the viewer's title bar make
 the text of any text file smaller or larger in fixed steps from 70% to 200%: a markdown
@@ -621,7 +683,8 @@ heading in the file still lands on it, and a link to an element's own `id` or `<
 on it under the prefix. A link in the file is handled by its target, not by the element that
 carries it, a link drawn inside an inline SVG included: a web address opens a tab, a file
 target opens the file in the viewer, and a section link scrolls to it. An image map (`<map>`,
-`usemap`) is dropped. An HTML comment is dropped and the text around it is kept. An HTML
+`usemap`) is dropped. A `<marquee>` is removed, and its text and pictures stay where it stood,
+not moving. An HTML comment is dropped and the text around it is kept. An HTML
 `<title>` is dropped with its text, since a browser shows one nowhere outside the page's head;
 the `<title>` of an inline `svg`, the drawing's tooltip, stays. The same rules apply to the
 HTML in a chat message, where a link to an element's own `id` or `<a name>` lands on it under
@@ -714,7 +777,9 @@ viewer paints the rectangle on the picture. Drawing a rectangle needs a mouse or
 on a phone, comment on the file as a whole instead.
 A figure that cannot be loaded, because its file is missing or is not an image, shows a line
 where the picture would be: **Image failed to load**, then the figure's path as written in the
-file, and its alt text when it has one.
+file (for a web address, only its origin: its scheme, host and port; for a source with an @
+that may be a sign-in, **address withheld because it appears to carry a sign-in** in its
+place), and its alt text when it has one.
 A picture opened as a file of its own whose bytes will not decode, because it is still being
 written or was cut short, shows a line in its place (**this image failed to decode: it may be
 mid-write or truncated**), then the file's path, and **Download**, which saves the file to your

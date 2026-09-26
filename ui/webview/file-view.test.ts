@@ -211,12 +211,16 @@ test("composerWindow, executed: own composer → the same-origin shell's chat pa
 // composerWindow lift above; a hand copy would drift), run over a fake ResizeObserver and stand-in nodes whose edges hide
 // through the shared shim's hideEdges (the ratchet in ui/test-dom-shim.test.ts: a fake's enumerable children edge is the
 // shape a failing assertion's dump walks). Both sheets'
-// `.fileview-md > table` read --fv-body-w for a top-level table's cap and its shift into the gutters; what the function
-// promises them is run here: nothing before the first report, the body's content width on EACH TOP-LEVEL TABLE (never a
-// nested one, never the prose) after one, the same width on the fresh tables a paint brings (the returned stamp: mdBlock
-// rebuilds the root and no report follows a paint), a repeated width no write, one watch at a time, and no watch at all
-// without ResizeObserver.
-test("watchBodyWidth, executed: --fv-body-w lands on each top-level table after a report and, through the stamp, on a fresh root's tables; a nested table and the prose get nothing; a repeated width writes nothing; the next watch and the drop disconnect; no ResizeObserver, no writes", () => {
+// `.fileview-md > table` read --fv-body-w for a top-level table's cap and --fv-table-w, the table's own width, for its shift
+// into the gutters (a left over the column, since the file review's round 17, the coordinator's decision 4: the translate it
+// replaced made every top-level table a stacking context); what the function promises them is run here: nothing before the
+// first report, the body's content width on EACH TOP-LEVEL TABLE (never a nested one, never the prose) after one, the same
+// width on the fresh tables a paint brings (the returned stamp: mdBlock rebuilds the root and no report follows a paint), each
+// table's own width written by the stamp with its cap, read once every cap is written, a repeated width no write, the tables'
+// observer watching exactly the top-level tables of the root last stamped and writing each one's offsetWidth on it as its report
+// comes, the stamp's measure, so its delivery for a table the stamp just wrote leaves the width as the stamp wrote it, one watch at a
+// time with both observers dropped, and no watch at all without ResizeObserver.
+test("watchBodyWidth, executed: --fv-body-w lands on each top-level table after a report and, through the stamp, on a fresh root's tables, the stamp writing each one's own width as --fv-table-w with its cap, read once every cap is written; a nested table and the prose get nothing; a repeated width writes nothing; the tables' observer watches the stamped root's top-level tables alone and writes each one's offsetWidth as --fv-table-w, the stamp's measure, so a stamp followed by the observer's delivery for the same box leaves the width unchanged (the file review's round 18, fresh-1); the next watch and the drop disconnect both observers; no ResizeObserver, no writes", () => {
   const head = "function watchBodyWidth(body: HTMLElement, onWidth?: (width: number) => void): () => void {";   // the seam's reflow hangs on onWidth (undefined here: the stamp alone runs)
   const at = VIEW.indexOf("let dropWidthWatch: () => void = ");
   const end = VIEW.indexOf("\n}\n", VIEW.indexOf(head, at)) + 3;
@@ -225,70 +229,107 @@ test("watchBodyWidth, executed: --fv-body-w lands on each top-level table after 
     .replace(/: \(\) => void/g, "")                                    // the let's type and the function's return type
     .replace("(body: HTMLElement, onWidth?: (width: number) => void)", "(body, onWidth)")
     .replace("const stamp = (): void =>", "const stamp = () =>")
+    .replace("let tables: ResizeObserver | null = null;", "let tables = null;")
     .replace(/ as HTMLElement\)/g, ")");
-  assert.doesNotMatch(js, /HTMLElement|: void/, "every annotation the lift knows is gone (a new one needs its strip here)");
-  type Node = { tagName: string; className: string; children: Node[]; clientWidth: number; writes: number; style: { setProperty(k: string, v: string): void; getPropertyValue(k: string): string }; querySelector(sel: string): Node | null };
+  assert.doesNotMatch(js, /HTMLElement|ResizeObserver \||: void/, "every annotation the lift knows is gone (a new one needs its strip here)");
+  type Node = { tagName: string; className: string; children: Node[]; clientWidth: number; offsetWidth: number; writes: number; style: { setProperty(k: string, v: string): void; getPropertyValue(k: string): string }; querySelector(sel: string): Node | null };
   const node = (tagName: string, className = "", children: Node[] = []): Node => {
     const props = new Map<string, string>();
-    const n: Node = { tagName, className, children, clientWidth: 0, writes: 0,
+    const n: Node = { tagName, className, children, clientWidth: 0, offsetWidth: 0, writes: 0,
       style: { setProperty: (k, v) => { props.set(k, v); n.writes++; }, getPropertyValue: (k) => props.get(k) ?? "" },
       querySelector: (sel) => { const walk = (m: Node): Node | null => { for (const c of m.children) { if (c.className === sel.slice(1)) return c; const d = walk(c); if (d) return d; } return null; }; return walk(n); } };
     return hideEdges(n);   // the shared rule (ui/test-dom-shim.ts): children, style and querySelector hide, so a failing dump names the node's primitives alone
   };
-  type Rec = { cb: (entries: Array<{ contentRect: { width: number } }>) => void; targets: unknown[]; live: boolean };
+  type Entry = { contentRect?: { width: number }; target?: Node; borderBoxSize?: Array<{ inlineSize: number }> };
+  type Rec = { cb: (entries: Entry[]) => void; targets: unknown[]; disconnects: number };
   const observers: Rec[] = [];
   class FakeResizeObserver {
     private rec: Rec;
-    constructor(cb: Rec["cb"]) { this.rec = { cb, targets: [], live: true }; observers.push(this.rec); }
+    constructor(cb: Rec["cb"]) { this.rec = { cb, targets: [], disconnects: 0 }; observers.push(this.rec); }
     observe(t: unknown): void { this.rec.targets.push(t); }
-    disconnect(): void { this.rec.live = false; }
+    disconnect(): void { this.rec.targets = []; this.rec.disconnects++; }   // a real observer's disconnect ends every observation and leaves it free to observe again
   }
-  const report = (entries: Array<{ contentRect: { width: number } }>) => { const live = observers.filter((o) => o.live); assert.equal(live.length, 1, "one live observer"); live[0].cb(entries); };
+  const watching = (t: unknown): Rec[] => observers.filter((o) => o.targets.includes(t));
+  const report = (body: Node, entries: Entry[]) => { const w = watching(body); assert.equal(w.length, 1, "one observer watches the body"); w[0].cb(entries); };
   const run = new Function("ResizeObserver", js + "\nreturn { watchBodyWidth, drop: () => dropWidthWatch() };") as (ro: unknown) => { watchBodyWidth: (body: Node) => () => void; drop: () => void };
   /** A rendered root as mdBlock leaves it: prose, a table inside a paragraph (as inside a quote or a list item), two top-level tables. */
   const fresh = () => { const nested = node("TABLE"); const p = node("P", "", [nested]); const t1 = node("TABLE"); const t2 = node("TABLE"); return { md: node("DIV", "fileview-md", [p, t1, t2]), p, nested, t1, t2 }; };
+  /** A table whose own width, read, is `px` and records whether both top-level tables of `r` held their cap at that read. */
+  const sized = (r: ReturnType<typeof fresh>, t: Node, px: number, capped: boolean[]): void => { Object.defineProperty(t, "offsetWidth", { get: () => { capped.push(w(r.t1) !== "" && w(r.t2) !== ""); return px; }, configurable: true }); };
   const w = (n: Node) => n.style.getPropertyValue("--fv-body-w");
+  const tw = (n: Node) => n.style.getPropertyValue("--fv-table-w");
   const lib = run(FakeResizeObserver);
   let root = fresh();
   const body = node("DIV", "fileview-body", [root.md]);
   const stamp = lib.watchBodyWidth(body);
-  assert.equal(observers.length, 1); assert.deepEqual(observers[0].targets, [body], "the body is what the observer watches");
+  assert.equal(observers.length, 2, "two observers: the body's and the tables'");
+  const [bodyObs, tableObs] = observers;
+  assert.deepEqual(bodyObs.targets, [body], "the body is what the first observer watches");
+  assert.deepEqual(tableObs.targets, [], "the tables' observer watches nothing before the first report");
   stamp();
   assert.equal(w(root.t1) + w(root.t2), "", "before the first report nothing is written: the sheet's fallback holds (the cap is the column)");
-  report([{ contentRect: { width: 900 } }]);
+  assert.deepEqual(tableObs.targets, [], "...and the tables' observer still watches nothing (the shift's fallback holds: none)");
+  const capped: boolean[] = [];
+  sized(root, root.t1, 1000, capped); sized(root, root.t2, 480, capped);
+  report(body, [{ contentRect: { width: 900 } }]);
   assert.equal(w(root.t1), "900px"); assert.equal(w(root.t2), "900px");
+  assert.deepEqual([tw(root.t1), tw(root.t2)], ["1000px", "480px"], "the stamp writes each top-level table's own width with its cap, so the shift a new width asks for lands in the layout that width makes, never left to the tables' observer (WebKit raised a loop of undelivered notifications while it waited for that later delivery)");
+  assert.deepEqual(capped, [true, true], "each table's width is read once every cap is written, [both capped at each read]");
   assert.equal(w(root.nested), "", "a table inside a paragraph is not the document's own: it keeps the prose width");
   assert.equal(w(root.p), "", "the prose is never written to (the property is non-inherited; a write there would reach nothing anyway)");
+  assert.deepEqual(tableObs.targets, [root.t1, root.t2], "after the report the tables' observer watches the two top-level tables and neither the nested table nor the prose");
+  // the tables' reports: each table's own width on it as offsetWidth reads it, the measure the stamp writes, whatever border-box size
+  // the entry carries, so a stamp followed by the observer's delivery for the same box leaves --fv-table-w unchanged (the file
+  // review's round 18, fresh-1: the observer wrote the border box's fractional inline size, a second, different write after every
+  // stamp, which for some widths moved the table by a pixel)
+  sized(root, root.t1, 1000, []);
+  const stamped = tw(root.t1);
+  tableObs.cb([{ target: root.t1, borderBoxSize: [{ inlineSize: 1000.296875 }] }]);
+  assert.equal(tw(root.t1), stamped, "a stamp, then the observer's delivery for the same box, its border box fractional, leaves --fv-table-w as the stamp wrote it (" + stamped + ")");
+  sized(root, root.t2, 611, []);
+  tableObs.cb([{ target: root.t2, borderBoxSize: [{ inlineSize: 611.25 }] }, { target: root.t1 }]);
+  assert.equal(tw(root.t2), "611px", "a table whose width moved: its report writes its offsetWidth, not the border box's inline size");
+  assert.equal(tw(root.t1), "1000px", "an entry with no border-box size reads the table's offsetWidth too");
+  assert.equal(tw(root.nested) + tw(root.p) + tw(root.md) + tw(body), "", "nothing else carries the table's width");
   // a paint: mdBlock rebuilt the root, no report follows; renderBody's stamp writes the width last reported on the fresh tables
+  const old = root;
   root = fresh(); body.children = [root.md];
   assert.equal(w(root.t1), "", "a fresh root starts unset");
   stamp();
   assert.equal(w(root.t1), "900px"); assert.equal(w(root.t2), "900px"); assert.equal(w(root.nested), "");
+  assert.deepEqual(tableObs.targets, [root.t1, root.t2], "the stamp hands the fresh root's top-level tables to the tables' observer in place of the last root's (" + JSON.stringify(tableObs.targets.map((x) => x === old.t1 || x === old.t2 ? "old" : "fresh")) + ")");
   // a report of the width already held is a no-op: a root rebuilt between the two reports is not touched by it
   root = fresh(); body.children = [root.md];
-  report([{ contentRect: { width: 900 } }]);
+  report(body, [{ contentRect: { width: 900 } }]);
   assert.equal(w(root.t1), "", "a repeated width writes nothing");
-  report([{ contentRect: { width: 700 } }]);
+  report(body, [{ contentRect: { width: 700 } }]);
   assert.equal(w(root.t1), "700px"); assert.equal(w(root.t2), "700px");
-  assert.equal(root.t1.writes, 1, "one write per change");
+  assert.equal(root.t1.writes, 2, "one write of the cap and one of the table's own width per change");
+  assert.deepEqual(tableObs.targets, [root.t1, root.t2], "a changed width's stamp hands the tables' observer the root it stamped");
   // the last of a callback's entries is the newest; a callback with no entry reads the body itself
-  report([{ contentRect: { width: 300 } }, { contentRect: { width: 800 } }]);
+  report(body, [{ contentRect: { width: 300 } }, { contentRect: { width: 800 } }]);
   assert.equal(w(root.t1), "800px", "the last of the entries is the width kept");
-  body.clientWidth = 640; report([]);
+  body.clientWidth = 640; report(body, []);
   assert.equal(w(root.t1), "640px", "a callback with no entry reads the body's clientWidth");
-  // one watch at a time: the next open's watch drops the last, and the close drops the watch up
+  // a Raw paint: no Rendered root, so the stamp writes nothing and the tables' observer lets the last root's tables go
+  body.children = [];
+  stamp();
+  assert.deepEqual(tableObs.targets, [], "after a paint with no Rendered root (the Raw view) the tables' observer watches nothing");
+  // one watch at a time: the next open's watch drops the last, both its observers, and the close drops the watch up
   const body2 = node("DIV", "fileview-body", []);
+  const bodyDrops = bodyObs.disconnects, tableDrops = tableObs.disconnects;
   lib.watchBodyWidth(body2);
-  assert.equal(observers[0].live, false, "the second watch disconnects the first observer");
-  assert.equal(observers.length, 2); assert.deepEqual(observers[1].targets, [body2]);
+  assert.ok(bodyObs.disconnects === bodyDrops + 1 && bodyObs.targets.length === 0, "the second watch disconnects the first body observer");
+  assert.ok(tableObs.disconnects === tableDrops + 1 && tableObs.targets.length === 0, "...and the first tables' observer");
+  assert.equal(observers.length, 4); assert.deepEqual(observers[2].targets, [body2]);
   lib.drop();
-  assert.equal(observers[1].live, false, "the drop disconnects");
+  assert.ok(observers[2].disconnects === 1 && observers[3].disconnects === 1, "the drop disconnects both observers");
   assert.doesNotThrow(() => lib.drop(), "a second drop is nothing to do");
   // no ResizeObserver (a stand-in, an old engine): no observer, and the stamp writes nothing
   const bare = run(undefined);
   root = fresh(); const body3 = node("DIV", "fileview-body", [root.md]);
   bare.watchBodyWidth(body3)();
-  assert.equal(observers.length, 2, "no observer was made"); assert.equal(w(root.t1) + w(root.t2), "", "nothing written: the sheet's fallback holds");
+  assert.equal(observers.length, 4, "no observer was made"); assert.equal(w(root.t1) + w(root.t2) + tw(root.t1) + tw(root.t2), "", "nothing written: the sheet's fallbacks hold");
 });
 
 test("the width watch is wired: each viewer opens one on the body it builds, each rendered paint stamps the fresh root's tables, and the close drops it", () => {
@@ -1156,7 +1197,7 @@ test("source: where an open lands (Slice 6 of plans/markdown-viewer.md, item 4):
     "validated at the receiver: the message crossed a frame boundary");
   const openFn = VIEW.split("export function openFileView")[1].split("function offersDownload")[0];
   assert.match(openFn, /const at: At \| null = opts\?\.at \?\? null;/);
-  assert.match(openFn, /openLinkedFile\(p, sid \|\| null, ln > 0 \? \{ line: ln \} : x\.dataset\.frag \? \{ heading: x\.dataset\.frag \} : null\);/, "the body's delegate: data-line as { line }, data-frag as { heading }, a bare path as null");
+  assert.match(openFn, /openFromViewer\("push", p, sid \|\| null, ln > 0 \? \{ line: ln \} : x\.dataset\.frag \? \{ heading: x\.dataset\.frag \} : null\);/, "the body's delegate: data-line as { line }, data-frag as { heading }, a bare path as null (through the trail's door, openFromViewer, since the link-navigation follow-on)");
   assert.match(openFn, /let pendingOffset: number \| null = at !== null && "offset" in at && at\.offset >= 0 \? Math\.floor\(at\.offset\) : null;/);
   assert.match(openFn, /renderBody\(\);\n(?:\s*\/\/[^\n]*\n)*\s*if \(notUtf8 && !latin1LineStands\(\)\) noteBar\(LATIN1_NOTICE\);\n\s*landTarget\(\);/, "the landing spends the target and takes the keyboard through one gate over a body with a box (review round 5); the Latin-1 line's raise stands between the paint and the spend (Slice 7, item 5), guarded by the standing line (the review's round 1)");
   assert.match(openFn, /const landTarget = \(\): void => \{\n\s*if \(unmeasurable\(\)\) return;\n\s*if \(pendingLine !== null\) \{ const n = pendingLine; pendingLine = null; scrollToLine\(n\); \}\n\s*if \(pendingOffset !== null\) \{ const n = pendingOffset; pendingOffset = null; requestAnimationFrame\(\(\) => \{ if \(wrap\.isConnected\) scrollToSourceOffset\(n\); \}\); \}\n\s*if \(pendingHeading !== null && \(!isMd \|\| fmt\.md === "rendered"\)\) spendHeading\(\);\n\s*keyboardOnLanding\(\);\n\s*\};/,
@@ -1172,7 +1213,7 @@ test("source: where an open lands (Slice 6 of plans/markdown-viewer.md, item 4):
 });
 
 test("source: changed on disk (Slice 6 of plans/markdown-viewer.md, item 5): the probe's HEAD through the panel's two readings, its listeners on the window's focus and the document's visibilitychange, registered as probeLive and dropped by both exits and the URL view's replace; the bar's words and its Reload through fetchFile; a landing settles the bar and the failure landing re-arms its own button; no timer anywhere in it", () => {
-  assert.match(VIEW, /import \{ headVerdict, mtimeMoved, ABSENT \} from "\.\/file-comments-model";/, "the panel's pure readings, imported as they are (not the poll, not its stopped set), and its token for a 404 (the bar's deletion words; the PR review's round 1)");
+  assert.match(VIEW, /import \{ headVerdict, mtimeMoved, ABSENT, figurePath \} from "\.\/file-comments-model";/, "the panel's pure readings, imported as they are (not the poll, not its stopped set), its token for a 404 (the bar's deletion words; the PR review's round 1), and since the link-navigation follow-on's L3 its figure join");
   assert.match(VIEW, /export const CHANGED_ON_DISK = "Changed on disk\.";/, "the bar's words (C4)");
   assert.match(VIEW, /let probeLive: \(\(\) => void\) \| null = null;\nfunction dropProbe\(\): void \{\n\s*if \(probeLive\) \{ const f = probeLive; probeLive = null; f\(\); \}\n\}/, "one live probe, the onKey idiom");
   const openFn = VIEW.split("export function openFileView")[1].split("function offersDownload")[0];
@@ -1204,7 +1245,7 @@ test("source: changed on disk (Slice 6 of plans/markdown-viewer.md, item 5): the
   assert.match(VIEW, /export const REASON_HEADER = "X-Romp-Reason";\nexport const REASON_MISSING = "missing";/, "the kernel's one-word cause: the header, and the one value that means gone");
   assert.match(probe, /raiseDiskBar\(words\); \};/, "the release's raise carries them");
   assert.match(VIEW, /export const DELETED_ON_DISK = "Deleted on disk\.";/, "the deletion's words, the manager's");
-  assert.match(VIEW, /import \{ headVerdict, mtimeMoved, ABSENT \} from "\.\/file-comments-model";/, "the model's own token for a 404, not a string of the viewer's");
+  assert.match(VIEW, /import \{ headVerdict, mtimeMoved, ABSENT, figurePath \} from "\.\/file-comments-model";/, "the model's own token for a 404, not a string of the viewer's");
   assert.match(openFn, /else if \(diskBar && diskBar\.under === mtimeNs && mtimeNs\) raiseDiskBar\(diskBar\.words\);/, "the editor's exit re-raises the bar with the words it had");
   assert.match(probe, /re\.type = "button"; re\.textContent = "Reload";/);
   assert.match(probe, /re\.disabled = true; re\.textContent = "Reloading";[^\n]*\n\s*fetchFile\(\);\n\s*diskBar\.asked = fetchSeq;/, "acknowledged at the click; the reload is fetchFile, which keeps the place; its landing is remembered");
@@ -1448,7 +1489,8 @@ test("openFileView answers false when the dirty-edit guard keeps the previous vi
     let asked = 0;
     const document = { getElementById: (id: string) => (viewerUp && id === "romp-fileview" ? {} : null) };
     const closeGuard = guard ? () => { asked++; return guard(); } : null;
-    const out = (new Function("document", "closeGuard", "return (function () {" + head + " return { through: true, guard: closeGuard }; })();") as
+    // the head also takes the trail's tag (file-trail.ts; `const how = trailNext; trailNext = null;`), module state the slice cannot see: declared here
+    const out = (new Function("document", "closeGuard", "return (function () { let trailNext = null;" + head + " return { through: true, guard: closeGuard }; })();") as
       (d: unknown, g: unknown) => false | { through: true; guard: unknown })(document, closeGuard);
     return { out, asked };
   };

@@ -130,7 +130,7 @@ function parseHTML(doc: FakeDocument, html: string): FakeNode[] {
  *  other forbidden tag is unwrapped with its content kept (a `<form>`, a `<button>`, a `<label>`), and an `<input>` that is not a
  *  checkbox goes (keepOnlyInertCheckboxes). */
 const DROP_WITH_TEXT = new Set(["STYLE", "SCRIPT"]);
-const UNWRAP = new Set(["FORM", "BUTTON", "SELECT", "OPTION", "OPTGROUP", "TEXTAREA", "FIELDSET", "LEGEND", "LABEL", "DATALIST", "OUTPUT", "METER", "PROGRESS", "DIALOG", "MAP", "AREA"]);
+const UNWRAP = new Set(["FORM", "BUTTON", "SELECT", "OPTION", "OPTGROUP", "TEXTAREA", "FIELDSET", "LEGEND", "LABEL", "DATALIST", "OUTPUT", "METER", "PROGRESS", "DIALOG", "MAP", "AREA", "MARQUEE"]);
 function standInSanitize(root: FakeElement): void {
   for (const c of root.childNodes.slice()) {
     if (c.nodeType !== 1) continue;
@@ -242,6 +242,12 @@ test("an element the sanitizer unwraps inside an open wrapper (`<button>`, `<for
     ["a button holding a badge before a details with a summary", four(`<div><button>${IMG}</button><details><summary>S</summary>`, "</details></div>"), ["DIV", "DETAILS"]],
     ["a select with two options before the inner div (two text kids)", four("<div><select><option>One</option><option>Two</option></select><div>", "</div></div>"), ["DIV", "DIV"]],
     ["a textarea before the inner div (its content stays as text, references decoded)", four("<div><textarea>typed words &amp; more</textarea><div>", "</div></div>"), ["DIV", "DIV"]],
+    // a marquee holding a badge picture or a `<b>` before the depth-1 wrapper, which the sanitizer removes with its content kept where
+    // it stood, reads the same (the file review's round 18, tests-1 with regression-1: the anchor map's mirror unwraps a marquee as the
+    // sanitizer does, and this suite's stand-in had kept it, so no test read the mirror; red with MARQUEE dropped from the anchor map's
+    // UNWRAPPED, where a selection in the nested paragraph was refused as not matching the file)
+    ["a marquee holding a badge picture (the README header shape)", four(`<div align="center"><marquee>${IMG}</marquee><div>`, "</div></div>"), ["DIV", "DIV"]],
+    ["a marquee holding a b", four("<div><marquee><b>x</b></marquee><div>", "</div></div>"), ["DIV", "DIV"]],
     ["a kept element kid (a control)", four('<div align="center"><div>Lead</div><div>', "</div></div>"), ["DIV", "DIV"]],
     ["a text-only unwrapped kid (a control)", four("<div><form>words.</form><div>", "</div></div>"), ["DIV", "DIV"]],
   ];

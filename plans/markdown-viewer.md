@@ -880,7 +880,11 @@ build's. Where the code as built departs from the text, why, and which test hold
    and sits at the column's left edge with the prose, as on GitHub, and a wider one is moved left by half of what it
    exceeds the column by, so it grows out of the column evenly into both gutters until it meets the body's inset, and
    scrolls in its own box past that. The table's layout box stays where the layout put it, so the body never scrolls
-   sideways (`contain: layout` on the root). Before the observer's first report, or without one, both declarations
+   sideways (`contain: layout` on the root). (Since the link-navigation follow-on, the file review's round 17 and the
+   coordinator's decision 4 on it, the shift is a position and a left, `left: min(0px, round(calc((100% - var(--fv-table-w,
+   100%)) / 2), 1px))`, a left's percentage being of the column, with the table's own border-box width written on it as
+   `--fv-table-w` by the same watch's observer of the top-level tables: a translate made every top-level table a stacking
+   context. The layout is the same, and file-view-typescale-browser.test.ts holds it; see L3.) Before the observer's first report, or without one, both declarations
    read the same stand-in, 100% plus the inset the cap takes back: the cap is then the column and the shift exactly
    none (the padding term rounds down to its 18px floor for any table the column holds), so the table sits at the
    column's left edge, as it does in a browser without `round()`. `display: grid` on the table, the other way to
@@ -5454,12 +5458,30 @@ why, and the test that holds it:
    absolute URL, never the figure as written: `resolveFigureRefs` rewrites every relative src and srcset candidate of
    a URL document to an absolute URL against the document and stamps neither `data-fv-src` nor `data-fv-srcset` (the
    src stamp is the panel's pairing key and a URL document has no panel), so `pictureDest` falls to the rewritten src
-   and the srcset walk names the rewritten candidate; a document at a test origin's `/notes/doc.md` holding
-   `![u](figs/u-missing.png)` wears the label with that origin's `/notes/figs/u-missing.png` in full, and only a
-   candidate written absolute reads as the author wrote it (the review's round 2 corrected this clause, which had
-   counted a URL document's candidates among those left as written). A `data:` source is cut to its head through the
+   and the srcset walk names the rewritten candidate, which the label shows as its origin alone since the follow-on's
+   origin cut (below): a document at a test origin's `/notes/doc.md` holding `![u](figs/u-missing.png)` wears the
+   label with that origin alone, where it wore the origin's `/notes/figs/u-missing.png` in full, the document's origin
+   standing for every relative figure (the cut's stated cost), and only a candidate written absolute names an origin
+   of its own (the review's round 2 corrected this clause, which had counted a URL document's candidates among those
+   left as written). A `data:` source is cut to its head through the
    comma with an ellipsis (`shownSource`; the first forty characters when there is no comma): a broken inline image's
    label printed the whole encoded payload, 1518 px tall at 380 px, two screens of base64 where the note should go on.
+   Since the link-navigation follow-on, `shownSource` sends a source with any other scheme, or a protocol-relative
+   one, through `shownAddress`, the address the web picture's title shows: a source that parses is resolved against
+   the document and shown as its origin alone, the scheme, the host and the port, never a path, a query, a fragment or
+   a userinfo, and one the URL parser refuses (an out-of-range port) is cut at its authority, so a path parameter or
+   an opaque token segment in the path prints nowhere either (the follow-on's L3 records the finding). Before any of
+   that, a source that appears to carry a sign-in (`figureSourceCredentialed`, the one rule the picture's title, the
+   web control's words and this label all read: an at sign, ASCII or a lookalike, after its percent-escapes are
+   decoded, at most eight passes, a text still changing after them read as a sign-in (the follow-on's L3), anywhere after a
+   scheme other than `data:` or after a leading run of two or
+   more slashes or backslashes, in a `data:` source's printed head, or after a colon in a source with neither) shows
+   `FIGURE_ADDRESS_WITHHELD` in its place, which replaced the disclosed residual of two credential spellings the
+   parser reads with no sign-in part (L3 again). Its cost is stated: every address with an at sign after its scheme
+   is withheld, a harmless `https://cdn/img/a@2x.png` among them, and so is a source whose escapes nest past the eight
+   passes, wherever its address shows. The scheme is read
+   as the parser reads it, URL parsing normalises the spelling, and a workspace path still prints as written.
+   Chromium never requests a source with a sign-in part, so its label was where such a credential showed.
    One label per img, found by the mark and never by the class (the figure gate's rule: an author can type the class):
    a second `error`, the chat page's heal retrying, rewrites the one label's text; the img's `load` removes it. The
    img keeps every attribute and its place, `img.onerror` is never set (the heal skips an img with one), the insertion
@@ -7893,33 +7915,72 @@ stripped and that carries an author's `id` with no residue of the link stays exe
 
 **The re-parse population.** The rule needs every write that re-parses or re-serializes markup after the adoption
 enumerated, a different grep from the walk of attribute writes. The verbs are the HTML-parsing entry points an element
-or a document offers (innerHTML and outerHTML writes, insertAdjacentHTML, createContextualFragment, DOMParser,
-document.write; setHTMLUnsafe and parseHTMLUnsafe, which the installed DOM typings, lib.dom.d.ts, carry; setHTML, the
-Sanitizer API's, which they do not yet), insertAdjacentElement, and a template element, whose content is parsed markup.
-Derived 2026-09-20 at the moved head over comment-stripped code by `grep -nE
-'innerHTML\s*[+]?=|outerHTML\s*=|insertAdjacentHTML|createContextualFragment|DOMParser|document\.write\b|insertAdjacentElement|\bsetHTML\w*\s*\(|parseHTMLUnsafe|createElement\(\s*[^)]*template|\bel\(\s*[^)]*template'`
-over mdBlock's region after the adoption line and over every module a pass in that region reaches (the identifiers
-called there, `keepVideoShape`, `linkHref`, `resolveDocRelative`, `linkMarkdownAnchors` and `linkifyFileText`, resolved
-through file-view.ts's imports to md-links.ts and file-view-links.ts, then each module's `./` imports transitively:
-file-view-links.ts, link-opener.ts, math.ts, md-block-start.ts, md-config.ts, md-links.ts, md-sanitize.ts,
-path-links.ts, url-links.ts): no site. The first spelling of that command lacked setHTML, setHTMLUnsafe and
-parseHTMLUnsafe and matched the double-quoted createElement alone; the fork PR review's verification named the gap, and
-no code line of any ui/webview module matches those three verbs (the same pattern over every comment-stripped module,
-2026-09-20), so the widening is durability. The two sites the grep finds on the road at all are now before the adoption:
-mdBlock's `codeEl.innerHTML = hljs.highlight(raw, { language: lang }).value` (escaped text; hljs creates spans and
-nothing that fetches) and code-block.ts's `code.innerHTML = wrapLinesHtml(code.innerHTML)` (wrapCodeLines, the fence
-pass's re-parse), both inside the fence pass over `clean`. The passes after the adoption write a video's style, a list
-item's class, anchors' attributes (class, title, data-*, target, rel, tabindex, role, an href set, resolved or removed)
-and new anchors and spans in place of the prose's and the code blocks' text nodes (`tn.replaceWith(frag)` over text
-nodes and elements created by `document.createElement`, path-links.ts and url-links.ts), and none re-parses. The same
-grep over the whole of file-view.ts finds twelve sites: eleven outside mdBlock, all the viewer's own constant markup
-(the tray's icon constants, the loading glyph, codeBlock's numbered rows over escaped or hljs text), and the twelfth the
-highlight's write inside the fence pass, judged above; reader-place.ts's two DOMParser reads parse the note's source
-into a document of their own that is read, never adopted. file-view-seam.test.ts derives the callee list (every bare
-call in the region, with no method call on an imported binding and no namespace or default import from `./` in
-file-view.ts or a reached module, so a pass in either form is red there rather than hidden from the list), the module
-set, the two judged sites and the whole file's count of twelve from the code and pins them (its test "no re-parse after
-the adoption"), so a new such site anywhere in file-view.ts, or a new callee or import, is red there until it is judged.
+or a document offers (innerHTML and outerHTML, matched bare, so a read or a write under any spelling;
+insertAdjacentHTML, createContextualFragment, DOMParser, document.write; setHTMLUnsafe and parseHTMLUnsafe, which the
+installed DOM typings, lib.dom.d.ts, carry; setHTML, the Sanitizer API's, which they do not yet), insertAdjacentElement,
+and a template element, whose content is parsed markup. Derived 2026-09-21, at the head of the file review's landing
+round's fixes, and again by the author's closing pass after the file review's landing round, which widened the seam
+test's RE_PARSE to this command's template alternatives (it had matched a name under a quote alone; the same lines at
+that head), over comment-stripped code by `grep -nE
+'\b(?:innerHTML|outerHTML)\b|insertAdjacentHTML|createContextualFragment|DOMParser|document\.write\b|insertAdjacentElement|\bsetHTML\w*\s*\(|parseHTMLUnsafe|createElement\(\s*[^)]*template|\bel\(\s*[^)]*template'`
+over mdBlock's region after the adoption line and over every module a pass in that region reaches, walked in three
+steps: the identifiers called there (`keepVideoShape`, `linkHref`, `resolveDocRelative`, `linkMarkdownAnchors`,
+`addFigureControls` and `linkifyFileText`; `addFigureControls` is the trail and figure-control follow-on's pass), each
+resolved through file-view.ts's imports to md-links.ts or file-view-links.ts or to a local function; the local functions
+those reach, transitively over bare calls (the figure control's decision among them), and every imported function a
+reached local calls, resolved the same way (`parseSrcset` from figure-gate.ts, `figurePath` from
+file-comments-model.ts and `pictureDest` from file-comments.ts, the figure controls' reads, filled here from the seam
+test's IMPORTED_CALLEES; until the landing round the walk followed a reached local's local calls alone, so those three
+modules sat outside the judged set while this paragraph stated a conclusion over a set it had not walked, and a live
+re-parse write planted in any of them left the seam test green); then every
+module those name in an import the compiler parses (an import declaration under any clause, an export with a
+specifier, an import-equals, and a require() or import() of a string literal), transitively, under any quote and any
+line break, a type-only import and a path outside ui/webview included, a specifier that is not a string literal
+refused with its line, so file-view.ts itself re-enters through file-comments.ts's type import of the
+viewer's action type and brings every module it imports along: forty-six modules
+(../../vendor/track-changents/engine.js, actions.ts, anchor-map.ts, backend-names.ts, capped-read.ts, card-layout.ts,
+code-block.ts, commands.ts, comments.ts, ctx-color.ts, docreview.ts, fence-source.ts, figure-gate.ts,
+file-comments-model.ts, file-comments-regions.ts, file-comments.ts, file-trail.ts, file-view-links.ts, file-view.ts,
+gesture-clock.js, host-prefix.ts, icons.ts, keybindings.ts, link-opener.ts, math.ts, md-block-start.ts, md-config.ts,
+md-links.ts, md-literal-tags.ts, md-sanitize.ts, media.ts, path-links.ts, pdf-cap.ts, pick-held.ts, pinch.ts,
+preview.ts, reader-place.ts, region-geometry.ts, session-badge.ts, settings.ts, status-widgets.ts, tab-state.ts,
+tab-widgets.ts, url-links.ts, viewer-grammars.ts, widget-prefs.ts). The npm packages those modules import (marked,
+DOMPurify, KaTeX, and highlight.js's core with its grammars) are named there and not read: their code is not the
+viewer's, the sanitizer's and the highlighter's parses run before the adoption over `clean`, and a write a package makes
+onto an element handed to it is its caller's site. The grep finds twenty-six matching lines in seven of those modules,
+each judged in the seam test with its reason and none a re-parse under the Rendered box after the adoption:
+file-view.ts's, counted below; every other reached module's judged in the seam test, each site with its line and its
+reason (JUDGED_SITES, per module), the breakdown stated there and not here, so a site that moves between two modules
+moves one record and no restated count. The first spelling of that command lacked setHTML, setHTMLUnsafe and parseHTMLUnsafe and
+matched the double-quoted createElement alone; the fork PR review's verification named the gap, and no code line of any
+ui/webview module matches those three verbs (the same pattern over every comment-stripped module, 2026-09-20), so the
+widening is durability. The sites the grep finds on the road: before the adoption, mdBlock's `codeEl.innerHTML =
+hljs.highlight(raw, { language: lang }).value` (escaped text; hljs creates spans and nothing that fetches) and
+code-block.ts's wrapCodeLines, both inside the fence pass over `clean`, and after it figureControlGlyph's write of the
+control's glyph onto a holder that enters no document, judged with the passes below; the seam test pins each by
+execution (the one write in mdBlock before the adoption, the one in a reached local, and code-block.ts's line in
+JUDGED_SITES). The passes after the adoption
+write a video's style, a list item's class, anchors' attributes (class, title, data-*, target, rel, tabindex, role, an
+href set, resolved or removed), new anchors and spans in place of the prose's and the code blocks' text nodes
+(`tn.replaceWith(frag)` over text nodes and elements created by `document.createElement`, path-links.ts and
+url-links.ts), and the figure controls, each a clone of a glyph parsed once onto a holder that enters no document (the
+one such line a reached local holds, file-view.ts's figureControlGlyph), and none re-parses under the box. The same grep
+over the whole of file-view.ts finds fourteen sites, the count file-view-seam.test.ts asserts and this paragraph's pin
+reads from that assertion: thirteen outside mdBlock, all the viewer's own constant markup (the tray's icon constants,
+the bar's Back and Forward arrows, the figure control's glyph parsed once onto a holder that enters no document and
+cloned into each control, the loading glyph, codeBlock's numbered rows over escaped or hljs text), and the one inside it
+the highlight's write in the fence pass, judged above. file-view-seam.test.ts derives the callee list (every bare call
+in the region, with no method call on an imported binding, a require-bound one, gclock, included, in the region or in
+a reached local, so a pass in that form is red there rather than hidden from the list), the reached locals, the
+imported callees, the module set, the package list and the import forms the resolver follows (synthetic modules
+holding each form, the spellings the regex resolver once dropped among them, and a specifier that is not a string
+literal asserted to refuse), the judged sites per module and the
+whole file's count from the code and pins them (its test "no re-parse after the adoption"), so a new such site anywhere
+in file-view.ts or in a reached module, or a new callee or import, is red there until it is judged;
+tools/markdown-viewer-plan-gate-adopt.test.mjs holds this paragraph whole and fills its derived figures (the callees,
+the imported callees and their modules' count, the module count and list, the two sums, the whole file's count) from
+that test's pinned literals, never from a copy, and refuses a per-module count or a count of the imported callees'
+modules typed into this paragraph beside them.
 
 **The namespace table.** One probe in the three engines, 2026-09-20 (the real sanitizeMd and wrapLinesHtml from the
 bundle, a live-document div's innerHTML set to the split, the figure server's log read after three sentinel round
@@ -8021,10 +8082,12 @@ the run form left it green with the held-whole paragraph pin red, as the same-co
 round-2 review (its pins-2 and pins-3), a `#` comment in the job's header naming the browser cache green (10 of 10,
 where the pin before it read the raw block and was red, 9 of 10), and a restore step for that cache before the Test
 step red on the property (9 of 10); after that ruling, the job key renamed alone green (10 of 10) and a Chromium
-install moved before the Test step red on the property (9 of 10). Five modules read comment-stripped code (`grep -l
+install moved before the Test step red on the property (9 of 10). Six modules read comment-stripped code (`grep -l
 'from "../test-code-only"' ui/webview/*.test.ts`: file-view-seam.test.ts, md-url-view.test.ts,
-md-sanitize-viewer-links.test.ts, code-block.test.ts and file-view-links.test.ts, the last two since the fence-pass
-pins were re-aimed at the pass's place; the round-2 review's regression-2 found this record and the stripper's header
+md-sanitize-viewer-links.test.ts, code-block.test.ts, file-view-links.test.ts and file-figure-open.test.ts, the
+fourth and fifth since the fence-pass pins were re-aimed at the pass's place and the sixth since
+the file review's round 13 (extra7-1: its count of figureLinkOf's calls read the raw text, which a comment naming
+the call satisfied); the fork PR review's round 2 (its regression-2) found this record and the stripper's header
 naming three, and the plan pin now derives the list from the tree and holds both to it), and outside the first three
 no test of this branch compares where the chain or the fence pass sits relative to the adoption: code-block.test.ts
 reads the fence pass's own shape on the stripped code, file-view-links.test.ts holds an index compare of the fence
@@ -8109,3 +8172,1263 @@ npm test; the plan pin reads this paragraph and the job together, so taking that
 above to the pin's other sentence, which says the legs run there (CI_RUN in that module, beside CI_SKIP, the sentence
 above), and the pin then holds the job to an install of Firefox and WebKit before its Test step instead of to none;
 the pin does not fight the remedy, it names the sentence to change.
+
+## Follow-on: Link navigation (2026-09-19)
+
+The user asked (2026-09-19) for a way back after following a link inside a file: a link to another file opened its
+target in place of the file being read, and returning to that file meant finding it again, in the Files pane's Recent
+list or by hand, with no Back anywhere. The viewer project above is complete; this follow-on gives the viewer a
+navigation trail of its own and lands as one PR at the feature tier, on branch `filereview-linknav`, cut from
+34142c262, the fork's main at the time, and, since the PR's file review found the remote picture's tab a new
+credentialed request (L3, L6), on the owner's word as a privacy surface whatever the tier. The branch's adversarial
+review before the PR ran two rounds, named below as the review's round 1 and round 2; the maintainer session's review
+of the PR (2026-09-20) is named the file review. Its contract is kept outside the repo; this section records what was built,
+with the build's deliberate departures from that contract recorded as the decisions, and what is left for the owner to
+rule on. The file review's rounds are numbered by the maintainer, and a record names one by its number: the file review's rounds 1,
+2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17 and 18 are the rounds the convention enumerates, this list the one home of the enumeration
+(ui/webview/linknav-records-attribution.test.ts reads its allowed set from this list and faults a numbered round the list
+lacks, so a round the maintainer rules next is added here first, and with it the ids its fixlist filed, in the roster
+paragraph after this one; the fixlists and rulings themselves are kept outside the repo in the maintainer's notes). The
+maintainer's painted-contrast ask of 2026-09-23, found while staging the head that carried the fixes for the file review's
+round 13, is not one of those rounds and carries no number: a record names it as the painted-contrast ask of 2026-09-23. In that numbering rounds 1 to 6 are the delta rounds, each reading what changed since the round before
+(the records here cite rounds 1 to 5 among them); round 7 read the whole PR at one head before landing and is also named the
+file review's landing round, its fixlist carrying its own ids (fresh-N, rules-N, regression-N, tests-N and extra-N with a
+digit before the hyphen), none of the author's family; round 8 read the whole PR again at the head that carried the fixes
+for round 7 and the author's verification of them, the landing round's second read, and its fixlist shares several ids with
+round 7's (fresh-1, fresh-2, tests-1, tests-2, regression-1, extra6-1, extra7-1, extra8-1, extra8-2 and extra8-3
+stand in both), and ids recur across the fixlists of every round (the roster in the paragraph after this one), so a record
+cites a finding of the file review by the round whose fixlist filed it, whatever the round, never as the landing round's alone
+and never by the round that read its fix (the file review's round 11, fresh-1: the fixes for round 10 had cited that round's
+findings under round 11, the round that read them, and the fixes for round 9 had cited round 9's under round 10, thirty-four
+and twenty-three sites); round 9 is the round after the second read, which reads the fixes for round 8, round 10 the round
+after that, which reads the fixes for round 9, and round 11 the round after that, which reads the fixes for round 10 and the
+whole PR at one head. The commits' subjects from the file review's round 9 on, and the author's closing pass after each of
+those rounds, sit on the other axis, named by the round that reads the fixes they carry, one higher than the round whose
+fixlist holds the findings they fix, and stand as pushed. The author's own verification after a round's fixes, by a verifier of the
+author's, is named the author's closing pass after that round, never a round of either review, and its findings carry the
+ids behaviour-N, records-N, coverage-N, guards-N, attribution-and-gates-N, reader-N, tree-N and mechanism-N, which no fixlist of the file
+review holds; the passes after the file review's rounds 7 and 8 kept their ids (census-N, and records-N of the family
+above) in their commits and in the notes outside the repo, and the records here name each of those passes by the round it
+followed. A record naming a
+round names the review it belongs to first (ui/webview/linknav-records-attribution.test.ts holds this, in every checkout,
+over every unit of the files the branch created and over every unit in the tree that names the file review, names the
+author's closing pass, or carries an id of the author's family, a phrase outside the created files judged where the review
+named nearest before it is the file review or the author's pass; the file review's round 5, extra5-2: the sentence had claimed every record the branch wrote,
+which held only on a road that read the diff, and that road runs in no CI checkout).
+
+The file review's fixlists by round, the ids each filed, as the maintainer's notes hold them (the roster
+ui/webview/linknav-records-attribution.test.ts reads beside the enumeration above, so a record citing a finding under a round
+whose fixlist did not file its id is faulted in every checkout, the fault naming the site and the rounds that filed the id;
+an id two fixlists share is told from its namesake by content alone, which no pin reads, so a census against the fixlists is
+the check for those; and a round the maintainer rules next joins here with its ids, a roster that skips an enumerated round
+or names one outside the enumeration failing the module's parse; the file review's round 11, fresh-1: fifty-seven sites had
+cited findings under the round that read their fixes with the module green, thirty-seven of them naming an id the labelled
+round never filed): round 1 filed correctness-1, correctness-2, tests-1, regression-1, ui-1, extra5-1, extra7-1, extra7-2,
+extra8-1, extra8-2, extra8-3, tests-2, extra6-1, rules-1, fresh-2, regression-2, regression-3, fresh-1, ui-2 and extra5-2;
+round 2 filed correctness-1, tests-1, regression-1, regression-3, ui-1, ui-4, extra6-1, extra8-4, fresh-2, correctness-2,
+regression-2, ui-2, extra8-3, tests-2, extra7-1, tests-3, extra5-3, extra5-4, extra8-1, extra8-2, fresh-3, ui-3, extra5-1,
+extra5-2 and fresh-1; round 3 filed correctness-1, tests-1, regression-2, extra8-1, tests-2, tests-3, tests-4, rules-1,
+regression-1, ui-1, regression-3 and extra8-2; round 4 filed correctness-1, correctness-3, correctness-4, rules-1, extra7-1,
+extra7-3, correctness-2, regression-3, ui-1, extra7-2, tests-1, regression-2, extra6-1, tests-2, tests-4, extra8-1,
+regression-1, extra8-2, ui-2, extra5-1, extra8-3 and tests-3; round 5 filed correctness-1, correctness-2, correctness-7,
+tests-2, tests-3, tests-4, extra6-1, extra6-3, extra7-1, extra7-2, correctness-3, correctness-4, correctness-5,
+correctness-6, tests-1, tests-6, tests-7, tests-5, regression-1, regression-2, extra5-1, extra6-2, extra8-4, rules-1,
+extra5-2, regression-3, regression-4 and extra5-3; round 6 filed none; round 7 filed tests-1, tests-3, rules-1, regression-1,
+regression-2, extra6-1, extra8-1, extra8-4, fresh-2, tests-2, rules-2, extra8-3, extra7-1, extra8-2 and fresh-1; round 8
+filed correctness-1, correctness-2, tests-1, regression-1, extra5-1, extra7-1, extra7-2, tests-2, extra5-2, extra6-1,
+extra6-2, extra8-1, extra8-2, extra10-2, fresh-2, extra6-3, extra8-3, extra9-1, extra10-1, fresh-1 and fresh-4; round 9 filed
+correctness-1, tests-1, ui-1, tests-2, extra6-1, rules-1, rules-2, regression-1, extra6-2, regression-2, ui-2, extra8-1,
+extra8-2, extra9-1, extra9-2, extra9-3 and fresh-1; round 10 filed correctness-1, regression-5, correctness-2, extra7-2,
+correctness-3, tests-4, extra6-1, extra6-2, extra6-3, extra7-1, correctness-4, correctness-5, tests-1, tests-2, rules-3,
+regression-1, regression-2, regression-3, extra5-1, extra5-2, extra5-4, extra5-5, extra5-6, extra5-7, extra8-4, extra8-5,
+tests-3, regression-6, regression-7, extra5-3, extra8-1, extra8-2, extra7-3, regression-4, ui-1 and extra8-3; round 11 filed
+correctness-1, regression-1, kernel-1, extra6-1, extra7-1, extra7-2, tests-1, tests-2, ui-1, extra8-1, ui-2, extra8-2,
+fresh-1, fresh-3, fresh-2 and fresh-4; round 12 filed correctness-1, ui-1, extra6-2, fresh-1, correctness-2, tests-3,
+regression-1, extra6-1, extra9-1, extra9-2, tests-1, fresh-2, tests-2, kernel-1, extra8-1, extra7-1, extra7-2, extra8-2 and
+extra10-1; round 13 filed ui-1, extra6-1, extra9-1, extra9-2, extra9-3, correctness-1, kernel-1, kernel-2, kernel-3, extra8-1,
+extra8-2, tests-1, extra7-1, rules-1, regression-1, regression-2, extra7-2, extra6-2, extra6-3, extra9-5, extra9-4 and fresh-1;
+round 14 filed correctness-1, regression-3, extra5-3, extra9-1, fresh-1, correctness-2, ui-1, extra5-1, extra5-2, tests-1,
+extra6-3, tests-2, extra7-3, rules-1, extra8-1, extra8-2, regression-1, extra7-2, fresh-2, regression-2, extra6-1, extra6-2,
+extra7-1, extra7-4, extra9-2, extra9-3 and extra9-4;
+round 15 filed correctness-1, tests-3, tests-4, extra5-1, extra6-2, extra9-2, extra9-3, tests-1, tests-2, extra6-1, ui-1,
+fresh-1, ui-2, extra5-3, extra6-3, extra7-1, extra7-2, extra7-3, extra8-1, extra8-2, extra8-3, extra9-1, extra9-4, extra9-5,
+extra9-6 and extra5-2;
+round 16 filed correctness-1, tests-1, tests-2, regression-1, regression-2, ui-2, extra5-1, fresh-1, ui-1, extra7-2, extra5-2,
+extra6-1, extra7-1, extra9-1, extra9-2, extra9-3, extra9-4, extra9-5, extra9-6, extra7-3, extra7-4, extra8-1, extra8-2,
+extra8-3, extra8-4 and fresh-2;
+round 17 filed tests-1, tests-2, tests-3, regression-1, extra7-1, extra9-1, tests-4, extra6-1, extra6-2, extra9-3, extra6-3,
+extra8-1, extra8-2, extra8-3, extra9-2, fresh-1 and extra9-4;
+round 18 filed correctness-1, tests-2, extra5-1, extra5-2, extra6-1, extra6-3, extra7-5, extra8-2, fresh-1, tests-1,
+regression-1, tests-3, regression-2, regression-3, extra6-2, extra7-1, extra7-2, extra7-4, extra8-1, extra8-3, extra8-4,
+extra9-1, extra9-2, extra9-3, extra9-4, rules-1, extra7-3 and extra9-5.
+
+**What existed.** A link in a rendered file to another file (`[x](other.md)`, `other.md:7`, `other.md#section`, a
+picture or PDF path, a wikilink, an embed chip) opened that file in the SAME viewer card: re-opening replaced whatever
+was up and never stacked (openFileView's replace path, the body delegate's openpath arm, openLink). The first file's
+reading place was already written by runLeave (RememberedPlace: the reader's place in the text, the view it was read
+in, the scrollTop and the open folds, keyed by path plus session, in a page-life map and on the Files pane's Recent row
+in localStorage; Slice 6) and re-seated on a targetless reopen (pendingPlace); an open with a line or heading target
+ignores the memory. No navigation stack, no Back or Forward, and no history API use anywhere in the webview: the
+browser's Back, Alt+Left and a back-swipe acted on the shell page, and the one "Back" was the Files pane's "‹ Files"
+link, which closes the viewer to the listing. A plain click on an embedded figure (`![](fig.png)`) did nothing; with the
+Comments panel open in Rendered mode it offered a comment (file-comments.ts onImageClick) and a drag drew a region
+(file-comments-regions.ts). A picture opened on its own (imgBlock) has no zoom.
+
+**Decisions.**
+
+L1. **A trail.** `ui/webview/file-trail.ts` holds the trail as a plain state, `{ back, current, forward }` of entries
+`{ path, sid, view }`, pure functions over it (`trailRoot`, `trailPush`, `trailBack`, `trailForward`, `trailSetView`,
+`trailEnd`, `trailBackTarget`, `trailForwardTarget`) and the one live instance (`liveTrail`, `setTrail`), beside the
+viewer's other page-life memory (file-view.ts `rememberedPlaces`). How openFileView tells an open from INSIDE the viewer
+from one from OUTSIDE, with no flag every caller must remember: the viewer's own opens go through one door,
+`openFromViewer` in file-view.ts, which sets a module-level tag (`trailNext`: push, back, forward or reload) and calls
+`openLinkedFile` as the body's delegate always has (the host's opener, files.ts `openHere`, or the default open; both
+reach `openFileView` in the same call, which reads and clears the tag at its top, before its close guard, and the door
+clears it again in a `finally`). No other caller sets the tag, so an untagged open is from outside by construction: the
+Files pane's rows and its Recent list, the file browser's rows, a chat path pill (render.ts openPath), a Waiting pane
+link (waiting.ts), the shell's relay. The tag decides the move (`moveTrail`, run in the replace path after `runLeave`
+has written the leaving file's place): a push puts the shown file behind the opened one and clears the list ahead; an
+untagged open roots a new trail at the file; the conflict bar's Reload file tags itself reload and moves nothing. The
+body delegate's path links are the pushes: a Markdown link to a file, a bare path in the text, a `:line` or `#section`
+target to another file, a wikilink (md-config.ts renders `[[Note]]` as an anchor to `Note.md` beside the note, which
+linkMarkdownAnchors marks as a path link), and L3's figure open. A target inside the shown file (`report.md:40`
+followed from report.md) replaces the card and pushes nothing: the trail's entries are files, and a jump inside one is
+no step between files (the contract's pushes were to another file; a duplicate entry would have made Back re-open the
+same file at the same place). A section link of the same document scrolls and pushes nothing (the delegate's fragment
+arm opens no file). A web address opens a tab and pushes nothing (its anchor arm). The entry's `view` is the view the
+reader left the file in, read at the move off the RememberedPlace `runLeave` has just written, by the file's key
+(`placeKey`), at every move, a reload included; a picture or a PDF writes no place and records none. Closing the viewer
+ENDS the trail (closeFileView, once its guard has passed): the person left the review, and a reopen of the same file
+from Recent starts a new one. The alternative, keeping the trail for the page's life so that such a reopen finds its
+Back again, was not taken: a Back reaching into a review the reader had closed would move the card on nothing they did
+since. A URL document replacing the viewer (openUrlView) ends the trail the same way, its entries being files; the
+contract named no such case. Held by file-trail.test.ts (the pure cases, the three wiring pins, and the conflict bar's
+Reload file driven in Chromium at the module's end: a link push, Edit, a change, a Save refused as changed on disk,
+Reload file, the fresh card's Back still titled with the report's name, then Back to the report with the reloaded file
+ahead) and file-trail-browser.test.ts (the Files page: a link followed, a Recent row and the relay rooting the trail,
+the section link, the web address, the same-file target, the close, and since the file review's round 9 (ui-2) the
+same-origin .md URL followed by a plain click, which on the Files page opens a tab and leaves the trail standing, that
+page's document having no opener that takes such a page in place; the chat modal: the default opener; and the chat page
+under its document-level opener, over the chat's own bundle and skeleton: the same URL followed by a plain click inside a
+file reached over the trail, the URL view replacing the viewer in place and the trail ending, with no tab, no window.open
+and no navigation of the page). The replace itself, under the chat's document-level opener (render.ts, the one caller of
+openUrlView), is held by file-trail.test.ts's wiring pin, the trail's end after openUrlView's guard, and driven in Chromium
+by file-trail-browser.test.ts's case 9, launched through the shared helper (the file review's round 10, tests-3: the road
+the guide's trail sentence leads with had been driven by no leg in the tree, its named witness that wiring pin, which holds
+the trail's end inside openUrlView and not that a link inside the shown file reaches it; for round 10 it had been driven
+once in a scratch copy, a file reached over the trail linking a .md page at the page's own origin, the click replacing the
+viewer with the URL view, no tab, the trail empty and the bar without the pair, in a harness with a private launcher that
+this follow-on's convention pin refuses in a module it touches, so the case was recorded and not landed; the guide's trail
+sentence names the road and its boundary since round 9, ui-2).
+
+L2. **Back and Forward.** Two glyph buttons in the icon family (icons.ts `ICON_BACK`, `ICON_FORWARD`: an arrow left and
+an arrow right), the bar's first group (`.fileview-group.fileview-nav`), before the pane's "‹ Files" link, which keeps
+its meaning, closing the viewer to the listing beneath it (file-view.test.ts pins it unchanged). The title and the
+aria-label name the target ("Back to report.md", `navTitle`); with nothing that way the word stands alone and the button
+wears `aria-disabled`, the text-size ends' precedent (never `disabled`, so a focused button keeps the keyboard; the
+sheets' one disabled dress applies, no new rule). Built once per open from the trail as the open left it and never
+rebuilt: every step is an open that builds a new bar. A press re-opens the entry through `openFromViewer` with NO target
+(`at` null), so the remembered place re-seats the file where it was left (pendingPlace), and the entry's recorded view
+is the view for that open (this open's `fmt.md` copy, unsaved, as a line target's Raw is); the replace in the same tick
+is the acknowledgement. The chords: Alt+Left and Alt+Right, and on a Mac Cmd+[ and Cmd+] as well (`navChord`, pure over
+the event's fields), through ONE document keydown listener in the capture phase, installed per open and removed through
+the viewer's close hooks by both exits; it stands down when the key was already prevented, when a text field holds the
+keyboard (`isTypingTarget`: a text input, a textarea, a select, a contenteditable), while the editor is open (`editing`,
+whatever holds the keyboard then), and when no viewer is up, and otherwise takes the browser's default (its history
+step, which would leave the page under an open viewer) whether or not the trail has a step that way (the contract asked
+for the chords while the viewer is open; a chord with no step that way is taken too, so a chord outside a text field,
+with the editor closed, never navigates the page away). The stand-downs are the exception, and the record names it
+rather than reading as an absolute: with a text field focused (the comments composer, a search field, the plain-textarea
+editor) or while the editor is open and a bar button holds the focus (Save, Cancel), Alt+Left reaches the browser
+unprevented and is its Back on Linux, so the page under the open viewer leaves and an unsaved edit goes with it (no
+beforeunload guard exists in the webview or the shell); the review's probe verified this on 2026-09-19 with a real key
+into headed Chromium and Firefox under a virtual display (Windows binds the same key to Back and was not run; on a Mac,
+Alt+Left in a field is the caret's word step, and Cmd+[ under the same stand-down was not run, open point 6). CodeMirror
+itself, focused, binds Alt+Left to a cursor motion (its default keymap) and kept the key at every caret position tried.
+The browser legs cannot show that half: a synthetic key from Playwright does not run the browser's Back accelerator (the
+probe saw the page stay with no viewer up), so file-trail-browser.test.ts asserts that the chord is not the trail's with
+a field focused and that the default is taken with the keyboard on the body, and no test drives the leave. Whether the
+listener should take the default in the stand-down cases too, stepping nothing, is the owner's (open point 9). Inside
+the dashboard shell a second stand-down applies: the shell's pane-focus script (kernel.py `_LANDING_FOCUS_JS`) wires a
+capture-phase keydown listener on every pane document as the pane loads, ahead of the listener a later open adds, and
+takes Alt+Left and Alt+Right on a non-editable target as the move between panes (preventDefault, so `onNavKey` sees a
+prevented key and returns), so in a shell pane (the Files pane, a chat pane's modal) the arrow chords move the pane
+focus and the trail's are Cmd+[ and Cmd+] on a Mac and the two buttons everywhere; on the standalone Files and chat
+pages, which the browser legs drive, all four chords step the trail. Read from the listeners' order, not driven (open
+point 10). The Recent list keeps its meaning: a Back or Forward open in the Files pane records the file as any open
+there does (openHere), moving its row up. The GROUP is HIDDEN when neither direction has a target (`nav.hidden`, set
+before the group is appended, which the sheets take out of the flow with its gap, styles.css `.fileview-group[hidden]`):
+on an open with no step either way, the ordinary open from outside, the bar rows no pair; once a step exists one way the
+group shows whole and the button without a target wears `aria-disabled` alone, so the two glyphs keep their places from
+one step of a trail to the next. The ground, re-decided in the file review's round 2 (extra8-2): the round-1 record kept
+the pair dimmed, the contract's shape, on the claim that the file review's round-1 refuters had found no rule in ui/CLAUDE.md or in
+the code that hides a control with nothing to do, and that claim was false. T367 (the user 2026-09-12; file-view.ts's
+GitHub-link section, styles.css's `.fileview-gh` comment) is that rule for this bar, with a worked precedent: the greyed
+GitHub link and its caption were removed rather than dimmed from a file outside a repository, the unit hidden and out of
+the row's flow; the clause the round-1 record cited, that a GROUP whose children are all hidden hides (the view group's
+sync), is the same decision's second clause and not the whole rule. The dimmed dress is the bar's other precedent, older
+than T367 (the text-size ends and the Save in flight, styles.css's one disabled rule, `.fileview-btn:disabled,
+.fileview-btn[aria-disabled="true"]`, whose text entered the sheet on 2026-09-07, where T367 entered file-view.ts on
+2026-09-12, both by `git log -S`), and the two tell apart by whether the control can become live during this open: an
+end of the text-size table does at the next press the other way, a Save in flight can once the save has answered, while
+a Back with no target cannot until a link is followed, which builds a new bar, so a pair with nothing either way is not rowed.
+What the hide buys, measured by the round-1 refuters in Chromium: about 74 px of a 359 px bar at a 380 px viewport, at
+the cost of the file name moving 74 px on the first link follow of every trail, a shift the bar built once per open
+otherwise avoids. The contract's L2 clause (aria-disabled alone when empty) is corrected to this with the reason; the
+pins that held the dimmed pair (file-trail.test.ts, tools/markdown-viewer-plan-linknav-review.test.mjs) hold the hide,
+and file-trail-browser.test.ts and file-view-text-size.test.ts's bar case read the hidden group's attribute and its
+empty client rects off the bar on a fresh open, then the group showing after a link is followed, Back live and Forward
+dimmed. Whether the contract's dimmed pair should come back instead is the owner's (open point 13). Held by file-trail.test.ts (the titles, the chord table, the bar and listener
+pins) and file-trail-browser.test.ts (Back at the block, the scrollTop and the view; Forward; the chords with and
+without a text field and under a prevented key; the default taken with and without a target).
+
+L3. **A figure opens in detail.** Every picture a rendered file embeds (`![]()`, an `<img>`, an image wikilink embed),
+with the exceptions this decision names (a picture with nothing to open, a gated placeholder until its load, a figure
+under the size floor, a figure inside a link holding more than it), wears an "Open the picture" control (file-view.ts
+`decideFigureControl`, the one place a control is added or removed, over the verdict `figureWantsControl`): a glyph
+button of the bar's family (icons.ts `ICON_EXPAND`, two arrows out of opposite
+corners, for a picture from the file tree, and `ICON_OUTBOUND`, an arrow leaving a box, for a picture from the web, whose
+control names the host in its title and aria-label and wears `fv-figopen-web` beside the class below, the sheets' dashed
+rule for an open that leaves for another host, the picture's own title carrying the address after an author's title
+(its origin alone through `shownAddress`, since the fixes for the file review's round 15, extra9-2, and the withheld
+address, `FIGURE_ADDRESS_WITHHELD`, in the title and in the control's words, `FIGURE_OPEN_WEB_WITHHELD`, when the source
+appears to carry a sign-in, `figureSourceCredentialed`, since the fixes for the same round's correctness-1, whose docstring
+in file-view.ts is the at-sign rule's one home: the rule, its cost and its two stated boundaries stand there, and the rule
+replaced the disclosed residual of two credential spellings the parser reads with no sign-in part, withdrawn at the file
+review's round 15; the cost, in this record's words: every address with an at sign anywhere after its scheme is withheld
+wherever it would show, a harmless `https://cdn/img/a@2x.png`, a profile path such as
+`https://social.example/@api/avatar.png`, a relative `a@2x.png` on a URL document and a workspace file name with a colon
+before an at sign among them, and so is a source whose escapes nest past the decode's eight passes (the file review's round
+16, regression-2), an address missing from a tooltip or a label, with no privacy or activation effect; the file review's
+round 16, extra7-2: Slice 7's two pointers to this record found neither the rule nor its cost here), the
+dress re-decided with the control (`dressFigureControl`; the file review's round 11, ui-1 with extra8-1: a remote and a
+local picture had presented one surface before the click); `button.fileview-btn.fileview-icon.fv-figopen`, the words in its
+title and aria-label, found by its mark
+`data-fv-figopen` and never by its class), in the tab order as any button is. Whether the control stands is decided
+from the figure AS IT IS NOW, by that one function, and decided again at every event that changes what it reads: the
+paint (mdBlock, `addFigureControls`), the picture's load and its error (`armFigureControls`) and each change of the
+figure's own laid-out box (`watchFigureBoxes`: one ResizeObserver per open over the figures of the Rendered box,
+armed at each text paint through the seam's onRendered, the first paint's included, which hears every reflow of the
+figure whatever moved it, the body's width or a text-size step; the file review's round 2, below); the verdict reads the figure's state off the element (`figureState`: `complete` and
+`naturalWidth`, the browser's own record: fetching, loaded, failed, or a stand-in outside a browser, which carries no
+`complete` and is decided from its source alone), and a figure still fetching, or one that failed, gets none. The file
+review found five findings with that one cause, the control decided once at the paint from what was known then, and
+they were fixed as one re-decision rather than five patches: the floor read once at the load (below), a failed 0 by 0
+figure's control laid over the link before it, a fetching `<picture>`'s control and plain click opening the fallback
+src, and a control never re-judged against a `data:` candidate the browser then chose. It is the img's SIBLING, inserted right
+after `figureAnchor`'s climb (the img, its `<picture>`, the regions layer's wrap, a link holding the figure alone),
+never a wrapper: the panel pairs pictures by img order and `data-fv-src`, the regions layer wraps THE img, the
+reader's place and the anchor map read the flow as the browser laid it, and a wrapper standing in the author's flow
+changed a figure's own layout (the regions layer's 2026-09-06 review). The sheets lay it over the figure's top corner
+on the side where its line ends from that place with no measuring (`.fileview-md .fv-figopen`: the family's inline-flex
+box aligned to the line's top, a zero-width margin box of a 28px negative margin at the line's start and a 6px margin at
+its end around the 22px glyph, logical margins, so it stands over the top-right corner in left-to-right text and the
+top-left in right-to-left text, where the physical margins had put it 6px outside the picture's left edge (the file
+review's round 15, ui-2), and a 6px relative offset down), positioned so it paints and is hit above the layer's overlay while the panel is open;
+transparent at rest, revealed by the pointer over the figure or over itself and by a keyboard focus (the web control by any
+focus), kept visible on a device with no hover and on one where any pointer is a finger (`any-pointer: coarse`: a touchscreen laptop's primary pointer
+hovers, so `(hover: none)` alone dressed nothing there; the file review's round 13, extra7-2), every rule naming its class that
+reveals it under `screen`, so a print shows none of it and the
+print block carries no line for it (the set the two homes close is over the rules whose selector names the class, read
+as parsed rules with their enclosing at-rules, in every sheet a page of either host loads, a population derived from the
+page assembly and never typed or listed, the kernel's page functions' linked bundles, live-read sheets and inlined
+constants, the style blocks the helpers they call write into their HTML at serve time (the pane spinner's, carrying
+_LOADER_CSS, on the chat, feed, sessions and waiting pages, followed one level since the fixes for the file review's
+round 11, extra6-1 with extra7-1, kernel-1 and tests-1: the block had been outside the read and excused as one added after
+serving) and the extension's webview links, the chat's and the feed's sheets carrying the dress and every other sheet no
+rule naming the class; outside it, bounds the homes state and do not read: a rule whose selector would match the element
+without naming the class, katex's vendored sheet that both dress sheets import, the rules a template writes into its own
+page (the settings page's transparent background, the too-large notice's body rule, the extension's zoom rule), and the
+style element a script creates after the page is served (palette.ts's and shortcuts-modal.ts's elements, the timeline
+view's own, the shim's notices' cssText); the print block is pinned whole, and the in-flight print follow-on adds
+lines inside it). A figure the author
+floated with `align` stacks sideways: the control floats with it, a left float's at the top-right corner as before, a
+right float's at the top-LEFT corner (`fv-figopen-left`, `fv-figopen-right`: a later right float sits left of the
+earlier one, and the far edge cannot be reached without the figure's width), in either direction of text, each float rule
+carrying physical margins of its own since an author's align is physical. The text walks skip it as a control
+(anchor-map.ts and reader-place.ts CONTROL_CLASSES); the Rendered pairing leaves it out of the top-level nodes beside
+an html-block figure as it leaves the failed figure's label (anchor-map.ts `isFigureCompanion`, the predicate Slice 7
+recorded as `isFigureLabel`); the label goes after
+the control when both stand (`figureLabelAfter`). What it opens (`figureTarget`): a remote picture (an http or https
+source, a protocol-relative one) in a tab, never the viewer, the web test run FIRST, before the model's join, since
+`figurePath` reads a protocol-relative source as an absolute path of the disk (read after the join, a `//host/pic.svg`
+source opened the viewer on the kernel's /file route at that path, a 404 and a bogus entry on the trail; the review's
+round 1); else the file named by the candidate the browser chose for the figure, as the author wrote it (`chosenSource`,
+the review's round 2: `currentSrc`, when it is set and is not the img's own src, matched against the srcset carriers, a
+`<picture>`'s sources then the img, and named by the authored spelling rewriteFigureSrcs kept beside the rewritten
+candidates; else the src by pictureDest's rule, the browser having chosen the src itself or the figure carrying no other
+candidate; a figure still fetching has NO target (`figureState`, read first in `figureTarget`: `complete` false), so its
+control waits for the load and its plain click opens nothing, since currentSrc is empty while the source is on the wire
+and chosenSource read that as the src (the file review: the control the paint added, and the plain click, on a
+`<picture>` or a srcset figure still fetching opened the fallback the browser never asked for and put that file on the
+trail), nor has a figure that FAILED (the same read: `complete` true and `naturalWidth` 0), so no gesture opens it (the
+file review's round 2, below); the two are the refused states of ONE rule, a target only for a state with a picture to
+name (`figureHasPicture`: `loaded`, the browser having answered with a picture, or a stand-in outside a browser, the
+node suites' DOM, decided from its source), the rule `figureWantsControl` withholds the control on too, so a state
+`figureState` gains later is refused by both readers with no edit to either (before the file review's round 3 each
+reader named the two states it refused, a list a new value passes; a guard refuses on its safe side for any value it
+does not know; the pin that holds the refused states' literals absent reads every string literal of file-view.ts as the
+compiler reads it, in either quote, a template span or an escaped spelling alike, and a regular expression literal by its
+text (ui/webview/source-units.ts, the reader ui/webview/linknav-records-attribution.test.ts shares; before the file review's
+round 4, regression-2 with extra6-1, three copies of the pin matched the double-quoted spelling alone and a single-quoted
+comparison passed them all while their messages claimed no member's literal stood anywhere), but the type line's and
+`figureState`'s; the pin reads whole values equal to a member, so a reader that uses the word as an identifier key (a
+lookup table `{ failed: true }`), assembles it at run time (a join, a substitution template; a chain of literals joined by
+`+` is read as the value it computes), tests a prefix or a substring of it or compares case-folded
+stands outside the pin, which its message says and its boundary test pins by execution (the author's closing pass after
+the file review's round 4, guards-1 with records-11: the pin's comment had claimed any spelling; the identifier form is
+left unread on purpose, since file-view.ts names a save hook `failed`, which a key reader would red at rest or force a
+rename of product code for a pin); and the pin is file-wide on purpose, so a literal `"failed"` or `"fetching"` for anything
+else in the module must be spelled another way, which the author's closing pass after the file review's round 3 recorded,
+records-3, while prose may quote the word, since a comment is no literal); the target is read
+again at the click; the failed figure's label, `failedSource`,
+delegates to it, and when the candidate names nothing and the img has no src, reads the chat page's heal record of the
+address it parked (`data-md-src`, preview.ts parkMdImg), never for the open (the file review's round 15, fresh-1: the heal
+parks a failed img before the viewer's listener runs, and the label had read "the source is empty"), and never a record equal to
+the address an empty source resolves to (`absUrl("")`, the base without its fragment), which the label reads as an empty
+destination (the file review's round 16, correctness-1: the heal parks an empty or blank src too, recording that address, and
+the label had named the page's own origin; the cost, a figure whose source is the page's own address reads as empty on the
+chat modal); read from the src alone, the control opened the fallback src a `<picture>` or a srcset figure had
+skipped), joined by the model's `figurePath` (file-comments-model.ts, the join rewriteFigureSrcs fetched through, so the
+picture opened is the one shown and its request is the paint's), through the figure's own door,
+`openFigureInViewer` (openFileView itself with the trail tag set to push and cleared in a `finally`, as
+`openFromViewer` sets and clears it, and not the host's opener that door calls), so the shown file goes onto the trail
+and Back returns to it at the figure's place, and the picture takes NO Recent row: in the Files pane the host's opener
+(files.ts openHere) records every file it opens, and eight figures opened from one report evicted every other file's
+row and the reading place stored on it (the file review; the list holds eight). The default taken: a picture reached
+from its report is a step inside that report's reading and no file the reader chose from the pane, so the report's row
+stands and Back reaches the report through the trail, while a Back or Forward open keeps taking its row (L2); whether a
+picture opened from a figure should take a row instead is the owner's (open point 12). Nothing for a `data:` URL
+(inline bytes a tab will not show) or a figure with no source, which get no control. The tab is the one request this
+follow-on adds (the file review's HIGH 1; L6): a plain click on a LOADED remote picture, its control, and a
+Cmd/Ctrl-click on it, three gestures through one arm, all call `openUrlTab` (`window.open(href, "_blank",
+"noopener,noreferrer")` in the web dashboard; the function's other arm, the host's openExternal, is the VS Code
+webview's, and the clause below holds in either arm; each only while the picture's sign, its control or on a picture
+that wears none its mark, is in view and uncovered at the gesture's start, and otherwise it opens nothing and brings
+the sign into view, the one gate below (the file review's round 16, extra5-1); the control by a click or by Enter or
+Space, the plain click on the picture with the Comments panel closed, and the Cmd/Ctrl-click where the press
+reaches it, the panel closed or the pointer coarse, since with the panel open a plain click on the picture is the
+panel's comment offer (on a coarse pointer the press reaches the figure listener, which stands down, asideOpen) and on
+a fine pointer the layer's overlay takes a click on the picture, modified or not, and offers a comment, and neither
+click on a picture inside a fold's own summary, whose click toggles the fold (figureFoldOf); the file review's round
+14, extra8-1: this clause had conditioned the plain click as the modified one), a top-level navigation to the
+picture's address: a second,
+differently kinded, credentialed request to a host the page had requested the image from, since a figure opens a tab
+only once LOADED, and the page's image request to that host preceded its load (answered by the host, or by the
+browser's cache from an earlier answer). "Requested", not "fetched": before the round-2 fix `figureTarget` refused the
+fetching state alone, so a FAILED remote figure kept its target and its plain click opened the tab with no image
+answered, a first contact where the image request never left the machine (a content blocker on the dashboard) or the
+host answered 404, and the file review's round 2 (extra5-4) found the clause false there; a failed figure now opens
+nothing on any gesture, so the clause holds for every figure that can open a tab. The modified click opens the
+picture's own address and never the kernel's /file URL, since openFigure's web arm runs before its /file-tab branch
+(extra5-3: the record had named two gestures and given the modified click the /file URL). Before this follow-on only
+an author's link opened such a tab. The gate is not bypassed: no request reaches a host the gate still holds
+(file-view-figure-chosen-browser.test.ts, at a context-level route with the real window.open, the route and the page's
+fetch wrapper installed BEFORE the report opens so the open's own window is watched, extra7-1: none while gated and
+none at the open, one image request per remote figure at the gate's lift (the `<picture>`'s source, and the failed
+img's src, answered 404), one document request per tab from each of the three gestures, none from the failed figure's
+clicks, never the src's address, and nothing to any other host through window.fetch, read off a never-drained list the
+wrapper keeps, tests-2). What rides, measured in the tree by that leg in Chromium (tests-3, fresh-3) with three cookies
+seated on the host before the open, SameSite=Lax, SameSite=Strict and SameSite=None with Secure: each image request
+carried the None cookie alone, and each tab's document request the Lax and the None cookie, never the Strict one. So
+what is new is the request's kind and the Lax class it brings, and not credentials on an image request as such, which
+the None class rides in Chromium; the table is Chromium's alone (fresh-3's refuter saw Firefox carry the None cookie on
+the image request too and WebKit drop it there, a difference between engines the leg does not measure). The records
+pass's earlier measurement (2026-09-20, a real HTTP server's log, a scratch leg kept outside the repo beside the
+contract with its record, Lax and Strict seated): the image request came with no cookie and with the page's origin as
+referer, `http://notes-api.test/` and nothing of the page's path (`sec-fetch-dest: image`, `sec-fetch-site: cross-site`;
+the origin alone is established by a second real-server probe of 2026-09-20 from a page at `/some/dir/page.html?tab=chat`,
+its record beside the first's, since the first probe's page sat at the origin root, where the page's address and the
+origin are one string and the record could not tell them apart, and the sentence written from it had claimed the page's
+address, which the file review's round 3 found the record could not show; Chromium's default
+`strict-origin-when-cross-origin` sends the origin on a cross-origin request; the kernel-served dashboard sends
+`Referrer-Policy: same-origin`, kernel.py, so there the image request names no referer), and each tab's document request
+(`sec-fetch-dest: document`, `sec-fetch-mode: navigate`) came with the Lax cookie, without the Strict one, and with no
+referer, in both probes (the tab is opened by `window.open(href, "_blank", "noopener,noreferrer")`, `openUrlTab` in
+file-view.ts, and `noreferrer` sends none; the policy alone would have sent the origin on the cross-origin navigation as
+it did on the image request, so the record rules the policy out as the cause, which the author's closing pass after the file review's round 3 (behaviour-1) found the
+earlier sentence had named). So the follow-on is a privacy surface and lands on the owner's word whatever its tier, with the two roads
+priced in open point 11. A gated
+placeholder (figure-gate.ts) gets none until its figure is loaded: `armFigureControls`, one capture-phase pair of `load`
+and `error` listeners on the body per open beside the labels', runs the decision at the load and at the error (the
+placeholder's click, a settings change restoring it, the chat page's heal landing a retry). A URL document (openUrlView) gets none: its
+figures are the web's. Two more shapes get none, the review's round 1 (a control the sheets' fixed margins laid over a
+figure's neighbours took the clicks meant for them, itself transparent): a figure under 48 CSS px on either side
+(`FIGOPEN_MIN_PX`: the control's 22px box, its 6px inset and as much figure again; a badge, an inline icon, whose
+plain click still opens them where no link holds them, a local one in this viewer and one from the web in a tab only while its
+mark is in view and uncovered, which a pointer's click on the picture meets, while no key opens them, since the control is the
+keyboard's one route to a figure, and a figure a reflow narrows under the floor loses its control and that route with it (the
+file review's round 16, ui-2: the limit had been stated nowhere), and a picture from the web among them wears the control's dashed dress
+itself, an outline the sheets key on the mark the decision sets right after the title (`data-fv-figweb`, `dressFigureMark`), on
+hover on a fine pointer and at rest where hover is none or any pointer is coarse, in the outbound dress's own token, `--outbound-line`,
+the one the control's dashed border wears at rest (the file review's round 13, ui-1 with extra6-1), over a ring of the page's own ground
+under the outline, a box-shadow of `var(--bg)` 3px wide, so both sides of every dash and the gaps between them read that ground
+whatever the page paints behind the picture (inside a ==highlight== the dark theme's dashes had read 2.40:1 against its tint, and a
+table header, an even row or a callout fell under 3:1 on a VS Code editor ground inside the stated bound), with a margin at rest
+under screen on every pointer, 3px up and down and 3px plus 0.3em across the line, each axis the least, by screenshot pixels, that
+keeps the ring off neighbouring ink at the picture's own text size (across the line the ring's 3px and the reach of an italic or
+bold italic f past its own box
+toward the picture, 4px at the default text size and more as the text grows, so the margin is 7.485px at the default size and grows
+with the text, in a heading and at every text size, for an f set in the picture's own text size; the em is the picture's, so a
+picture in smaller text than an italic or bold italic f glued before it, inside `<small>`, `<sub>` or `<sup>`, inside two nested
+`<small>` or in text at 0.8em or 0.7em of the f's, gets less margin than that f reaches and the ring covers up to 4 pixels of the f's
+ink in one read (at a device scale of 1 or 2, counted in device pixels; inside one `<small>`, `<sub>` or `<sup>`, up to 2), at every text size from
+100% to 200% with the line moved by each eighth of a pixel, every dash still at 4.83:1 dark and 4.90:1 light, since the f paints
+before the picture and the ring over it; below 0.7em of the f's the ring covers more, a residual disclosed and measured (the file
+review's round 15, extra5-3): Chromium sets no floor on a nested `<small>`'s text size, so the margin across the line falls to the
+ring's own 3px, and over 24,576 reads by screenshot pixels (the Files pane and the chat modal under touch, device scales 1 and 2,
+both themes, 100% to 200% with the line moved by each eighth of a pixel, `<small>` nested 3 to 16, 20, 30, 40, 60 and 100 deep,
+`<sub>` and `<sup>` inside the deepest, and a `<font>` of size 1, 2 or 3 with `<sub>` and `<sup>` inside it) the worst read was a bold italic f before
+a picture in a `<sub>` inside a hundred nested `<small>` at 200%, 30 pixels at a device scale of 1 and 102 device pixels at 2,
+sampled maxima, every dash still at 4.83:1 dark and 4.90:1 light (the open leg's FLOOR_BOUND holds that scene within 1 and 30
+pixels at a device scale of 1), and with the f larger than the paragraph's text, over 39,936 more reads with the line inside a
+heading, a `<font>` of size 4 to 7 or nested `<big>`, 40 pixels at a device scale of 1 and 135 device pixels at 2 (FLOOR_LARGE_BOUND
+and FLOOR_D2_BOUND hold those scenes), those pictures 20 by 20, and beside a taller picture, since one under the floor on its width
+alone can be any height, the count grows with the f without a bound (204 pixels and 753 device pixels for an f of 185px beside a
+picture 20 by 200), and with the picture in two nested `<small>` the ring covered at most 4 pixels at a device scale of 1 and 5
+device pixels at 2 in that larger-f sweep and beside pictures up to 400 tall with an f up to 185px (the file review's round 16,
+extra8-4); up and down the ring's width, so the ring stands inside the picture's margin box, where at 2px it covered the bottom row of a key on the line above), a line holding such a
+picture up to 6px taller and the text after it 14.97px along at the default size (the file review's round 14, correctness-2 with
+extra5-1 and extra5-2, the margin measured per axis on the two margin rulings of 2026-09-24; the open leg's neighbour pin reads runs
+of f, heading runs, a callout's float and an italic run glued to a picture in two nested `<small>`, held to that bound, at the
+default text size and at 150%, and the floor's scene held within 1 and 30 pixels there and at 200%, and the larger f's within 1 and 40, and its line pin, at a device scale of 2, a code span and keys on the line above and three tinted
+grounds), so a tap's open is shown before it
+happens where the title is no surface; the file review's round 12, fresh-1; the web control rests at full opacity where the at-rest rule
+stands, a local one at 0.8, any focus reveals it, a keyboard's or one a script gives it with no ring, no mouse press of any button
+focuses it (the press cancelled in the body's mousedown listener) and Enter or Space opens it only while it is in view at the key,
+its box intersecting the viewport and the scrollport of every ancestor whose overflow on that axis is not visible, then, walked up
+through the same-origin frames that host the viewer as the dashboard does, each parent's viewport and the scrollports of the frame's
+ancestors there, and last the visual viewport of the topmost window reached, so a control a pinch zoom leaves off the screen is out
+of view; a parent of another origin, VS Code's webview host among them, ends the walk with the reads made so far and is no out, and
+any other read that fails answers out (`controlInView`), since
+a focus a click or a press dragged off it left stood unpainted on a fine pointer once the pointer left and a later Enter or Space
+opened the tab again with nothing shown (the file review's round 14, ui-1 with extra9-1; the visual viewport and the frame walk since
+the file review's round 15, extra5-2, where a keyboard focus off a zoomed screen opened the tab); an ancestor on which overflow
+clips nothing is passed over whatever its overflow reads, display: contents, which generates no box, and a display overflow does
+not apply to, since it applies to block, flex and grid containers alone: inline, ruby and ruby-text, and a table's row, row group,
+header group, footer group, column and column group (an inline or ruby box reads a client size of 0 by 0 and a table row its own
+height beside a cell spanning the rows below, and read as a clip the dashboard's pane wrapper, display: contents in its narrow and
+touch layout, put every web control of the chat column and the Files pane out of view, and an author's inline span, ruby, ruby text
+or table row of a page class with overflow hidden kept the picture inside it from opening on any gesture; the file review's round
+16, regression-1 with the coordinator's decision 1, which passes over every ancestor on which overflow clips nothing); and every read is in the window's pixels, an ancestor's and a frame element's border and client
+size, which are in the element's own CSS pixels, scaled by its zoom (`cssScale`), since under VS Code's body zoom they were read
+unscaled against a scaled box, so at 1.25 a control wholly visible in the body's bottom band or at its right edge read out and at
+0.8 one past a scrollport's edge, clipped, read in (the file review's round 16, fresh-1); a transform is not read, since a scale or
+a turn changes a box and not its zoom, so under one on a scrollport or above it the read errs both ways: a clip read too large counts
+a hidden sign in, which the hit test at the gesture's start refuses, since no press reaches a clipped sign, and one read too small
+refuses a sign on the screen, a stated limit (a table inside a page class's quarter turn opened on no gesture, measured in Chromium);
+a zoomed same-origin parent would need the box moved into it scaled too, which the walk does not do, and no page of either host zooms
+one; and no figure with a target stands under a CSS zoom today, since VS Code's zoomed webviews load no remote picture and have no
+/file route for a local one, so the open leg's zoom cells hold the geometry on a harness page (the browser's own zoom scales the
+whole page, the box and the client size alike); since the file review's round 16,
+extra5-1, that read is one gate for every gesture on a picture from the web, a tap, a plain click and a Cmd/Ctrl-click on the
+picture, the control's click, and Enter or Space on it, since a tap or a click on the visible part of a loaded web picture had
+opened the tab with its control off the screen and nothing shown, on every device: the tab opens only while the picture's sign
+(`figureSign`: its web control, or on a picture that wears none its mark) is in view by that read and uncovered, the element at the
+centre and at the four quarter points of its in-view part being the sign or inside it (`signUncovered`, which reads the element a
+press there would reach, so it sees the Outline popover, the text-size flyout and an author's element laid over the figure, since the
+viewer takes off every element of a file's author markup what would let a press pass through it, the classes the sheets set
+pointer-events on at any value but auto, the inert attribute and a pointer-events declaration of its style (`dropPressThrough` over
+`SHEET_PRESS_THROUGH_CLASSES`, held to the sheets both ways by file-figure-open.test.ts; the file review's round 16, extra5-1: an
+author's div of locate-toast, fixed, opaque and letting a press through, painted over the control while a gesture opened the tab, and
+elementsFromPoint skips such an element as elementFromPoint does, measured in Chromium, Firefox and WebKit); author content the hit test
+does not see stays below the control, whose z-index keeps it on top where no stacking context stands around the picture, the viewer
+having taken off the classes the sheets would raise it to the control's stacking level and, from a figure's ancestors, the classes that
+would make one a stacking context around it, a top-level table's shift into the gutters being a position and a left, which make no
+stacking context, and the sanitizer removing an author's marquee, whose own rendering made one around what it held in Chromium and
+Firefox, while in WebKit it makes none and its own scroll and clip carried the control outside the page (`dropStackClasses`, below,
+and md-sanitize.ts's forbidden tags; the file review's round 17, extra9-1, and the coordinator's decision 4 on it; its round 18,
+extra7-2), the outbound
+mark of a picture with no control excepted, which has no stacking level of its own, a stated boundary (its round 17, extra7-1); a same-origin parent's own
+chrome over the frame is not read), read at the gesture's start, at the press in the window's capture phase, before the popover's own capture listener closes it,
+and at the first keydown (repeat false) of Enter or Space, the press's verdict taken by its click: a click by a pointer reads the
+record under its own pointerId or, with none, the press a one-click slot took at the last pointerup, the slot emptied by any
+pointerdown, pointercancel or keydown, by the mousedown below and by the click that takes it and never by time, a key's or a
+script's click reads neither and is read at the click, and a primary press ends every earlier record whatever its pointer type, a record ends at its own
+pointerup, which hands it to the slot, and every record ends at a dragstart and at a mousedown with no pointerdown of a mouse or a
+pen before it, which takes no verdict, since WebKit's drag of a picture ends with no pointerup and no pointercancel, and WebKit sends
+the mouse's next press after a press whose pointerup never came, a drag in another pane among them, as a mousedown with no
+pointerdown, and that mousedown empties the slot too unless it is the compatibility mousedown of the one-finger tap whose pointerup
+filled the slot (in the three engines measured a click after its press's pointerup finds that press in the slot,
+whatever pointerId it carries: Chromium's tap click carries the touch's own pointerId and Firefox's its press's, while in WebKit
+under Playwright's touch emulation on Linux, a stand-in for WebKitGTK on a touchscreen, a tap's click carries pointerId 1 of type
+mouse where its press carried the touch's; iOS WebKit's source gives an iPhone tap's click the touch's own pointerId, read and not
+run on a device; the slot's clears but that mousedown's are defensive, the slot refilled at every pointerup, read by no key's or
+script's click and emptied by that mousedown before a click whose press the viewer's window did not hear; that mousedown's clear of
+the slot is pinned: before it, a tap on another document's element over the picture that went away during the press, whose
+compatibility mousedown and click alone reach the viewer's window, took the slot a right click, a middle click or a two-finger touch
+had filled and opened the tab with the sign covered or out of view at the tap's start, measured in the three engines in the
+dashboard's shape, the viewer's page in a same-origin frame, and its residual, a one-finger touch of the viewer's window that ends in
+a pointerup with no click, then such a tap, is reached by no touch measured; the
+primary press's clear's cost on a device with a mouse and a touchscreen: a contact held on a picture while a primary press of the other pointer type
+lands elsewhere loses its record, so its click opens nothing and reveals; the cost of ending the records, measured in WebKit: after
+a drag anywhere in the page, another pane's included, the mouse's next click on a web picture opens nothing and reveals its sign,
+whatever covers or shows it, a right click before that drag included, and the click after it opens, and where a press's pointerup
+never comes the mouse's next click is refused the same way, while Chromium and Firefox end such a drag with a pointercancel and
+carry no cost; the file review's round 17, tests-1 with regression-1, and its round 18, extra5-1, extra5-2 and correctness-1, with
+the coordinator's decisions on them and the closing check after those fixes);
+a refused gesture opens nothing and scrolls the sign into view (`revealSign`, block and inline "nearest", the same-origin frames and
+a pinch zoom's visual viewport included), moving no focus, so the next gesture opens; where the reveal cannot put the sign on the
+screen the gate stays closed, stated limits measured in Chromium: the chat page's modal framed by the dashboard under a pinch zoom of
+the top page (the viewer's card is fixed in its frame, and scrollIntoView from it pans no visual viewport of the top page, while
+the viewer as the top page and the Files pane's frame pan), until the reader pans by hand; the drops narrow the cost the file review's
+round 16 disclosed for an author's element of a page class laid over the figure (extra5-1) and do not close it: an element that a class
+`dropStackClasses` takes off had placed over the figure no longer covers the control, and one that a page class the viewer keeps
+positions over a picture that wears the control rests below the control, whose z-index keeps it on top, so the control opens the
+picture on every gesture while a click on the picture's own body lands on that element and opens nothing, the same inside what was a
+stacking context around the picture (its round 17, extra9-2, a shape the context drop, a top-level table's position and left, and the
+sanitizer's removal of an author's marquee close),
+and one that a kept page class positions over a picture that wears the mark still keeps that picture from opening, since the mark has
+no stacking level of its own and no button for a key to reach (its round 17, fresh-1); a refused key closes the viewer's own text-size
+flyout as well, which no other key but Escape closes, so the next key opens where the flyout had covered the control; the later events of one gesture take its
+verdict by their own fields and never by time, a click whose detail is above 1 after a refused click of its run, a held key's
+repeats after a refused keydown, and Space's release, which also reads the control in view at the release; out of view a Space
+presses nothing and does not scroll the body by a page, its only scroll the reveal's; a local picture is not gated; the cost: a tap
+or a click on a web picture whose sign is off the screen or covered scrolls it into view and opens nothing, and the next one opens,
+and a sign partly in view counts as in view, its focus ring stands 2px off its border so the dashed line shows under a keyboard
+focus, the button family's press cue is off on it since the release that opens the tab comes while it is held (under the cue the line spread over two
+pixel rows, a modal 1.59:1 dark and 1.39:1 light), the browser's tap highlight is off on it and on the mark, since in the pressed frames of
+a finger's tap, while the control matches :active, a phone's default highlight took the line as low as 2.22:1 dark and 2.41:1 light in a screencast of every frame, 2.578:1 and 2.531:1 in the frames the leg samples (the
+mark takes none, nothing from it up to the root showing a hand cursor; the tap-highlight ruling of 2026-09-24), and a dead link holding either dress dims by colour and not by opacity, its words
+that take the link's colour dimmed and a child the sheet colours itself keeping its own ink, since an href-less dead link owns no click
+and a tap, a click or Enter opens the tab from inside it, so every state a gesture opens the tab from, the press held and each frame of a finger's tap included, paints
+the dress at 3:1 or better in both themes, the token's line at the token's own ratio (4.83:1 dark, 4.90:1 light), the mark's outline in
+each of its states and the web control's border at rest, revealed by the pointer over its picture, under any focus and under a Space
+press from it, and the family's accent border at 7.87:1 dark and 3.79:1 light against its hover wash, the web control's under the
+pointer and in a pointer press on a fine pointer, under touch emulation and on the trackpad, read by pixels and, but for the press,
+composed from the declared opacities, and the
+token's states clear 3:1 in VS Code on a neutral editor ground up to #404040 and on a light one from #efefef, the family's accent hover
+border held on each theme's own ground, and an author's class on the figure or above it dims none of it, since the viewer takes every
+class the sheets dim off the author's markup there before the dress is laid (`dropDimmingClasses` over `SHEET_DIM_CLASSES`, held to
+the sheets both ways by file-figure-open.test.ts; the file review's round 16, extra5-2: an author's span of tag-chip-off, 0.45, had
+painted the dress at 2.00:1 dark and 1.86:1 light while a tap opened the tab), while an author's element laid over the figure is the
+one gate's to read, which refuses a sign where a press would reach such an element, the viewer taking off it what would let a press
+pass through it (`dropPressThrough`) and the classes the sheets would raise it to the control's stacking level, and off a figure's
+ancestors the classes that would make one a stacking context around it, a top-level table's shift into the gutters being a position
+and a left, not a translate, since a translate made every top-level table a stacking context, and the sanitizer removing an author's
+marquee, whose own rendering made one around what it held in Chromium and Firefox (in WebKit it makes none, and its own scroll and
+clip carried the control outside the page), so author content the hit test does not see stays below the control where no stacking
+context stands around the picture (`dropStackClasses` over `SHEET_STACK_CLASSES` and `SHEET_CONTEXT_CLASSES`, each held to the
+sheets both ways by file-figure-open.test.ts, and md-sanitize.ts's forbidden tags; the file review's round 16, extra5-1, its round
+17, extra9-1, with the coordinator's decision 4 on it, and its round 18, extra7-1 and extra7-2; the context drop's cost, as the
+dimming drop states its own: an author element of a listed class around a picture loses what that class gave it, its layout
+included, and an element of the classes picker-error and show loses show and stands at picker-error's display none, the picture
+inside it hidden, which fails closed, its round 18, extra6-1 and extra7-5), and an author's own link opens its address with no dress, as before this follow-on; the painted-contrast ask of 2026-09-23, the press cue on the maintainer's ruling within it,
+where at 0.8 the control read 2.46:1 by pixels on a
+VS Code editor ground of #404040 and, at 0.8 x 0.7 inside a captioned dead link, 2.47:1 dark and 2.40:1 light), measured in its own
+CSS pixels from the loaded picture's laid-out box while it is in the document (the box divided by the picture's zoom, so a body zoom
+does not move the floor: at 1.25 a 40 CSS px picture had measured 50 and got a control, and at 0.8 a 48 and a 50 had measured 38.4
+and 40 and got none; and rounded to 1/16 of a pixel, since the layout's grid of 1/64 of a layout pixel, the device scale times the
+CSS zoom, falls between CSS pixels wherever that product is not 1, which the browser's own zoom on the web dashboard reaches: at
+80%, 90% and 110% a picture laid out at 48 CSS px had measured just under 48 and worn the mark; the verdict on a picture laid out
+within 1/32 of a pixel under the floor depends on the zoom; a transform on the picture or above it is not taken off, so a scaled
+picture is measured at its scaled size; not offsetWidth, which rounds a picture laid out at 47.6 px to 48; the file review's round
+16, fresh-1), else
+its own size (`figureBox`, `figureTooSmall`; a loaded figure alone has a box to measure, `figureState`), read wherever the
+decision runs: in a browser a picture the browser is still fetching at the paint (mdBlock, `addFigureControls`) gets none
+then, and its load or its error (`armFigureControls`) runs the decision with the picture's size known; a picture the
+browser already holds (the report re-opened: Back, Forward, a second open after a close; no request leaves for it) is
+complete at the paint and is decided then, from its natural size, since mdBlock's box is not in the document yet, and its
+load event, which fires all the same, decides it again over the laid-out box (the file review's closing check: at a 381 px
+re-open the 761 by 76 picture's paint-time control left at its load, the picture laid out 324 by 32; at 900 it stood;
+file-view-figure-floor-browser.test.ts); and the floor is read
+again at each change of the figure's own laid-out box (`watchFigureBoxes`: one ResizeObserver per open over the
+figures of the Rendered box, armed at each text paint through the seam's onRendered, the first paint's included
+(nothing is observed at the open: the body is empty then), and dropped with the viewer, running the same decision for the
+figure whose box changed, at the next animation frame and never inside the observers' delivery, where a decision that dressed
+a small picture in a top-level table grew the table after the tables' observer had been handed its old size and WebKit raised a
+loop of undelivered notifications (the file review's round 18, extra6-3), a figure with no box at the frame passed over as at
+the report; a report of 0 by 0 runs no decision, a rule over the report whatever produced it: a 0 by 0 report decides nothing, and the figure is decided
+by its load or its error, by the gate's restore or by its next report with a box (the file review's round 4, regression-3:
+the reason before it named two roads to such a report as the only ones, and a loaded figure the author gave no box was a
+third); the viewer's hide and a gated placeholder's img until its click are transient reports, on both of which the show
+or the restore reports the real box, which is decided, while a decision over the hide's report would take a standing
+control off a figure that is merely hidden and the show would put it back, a remove and an add the reader never sees
+(found before the file review's round 3: decided over it, `figureBox` then fell back to the picture's own size and a
+figure hidden under the floor at its real width gained a control while hidden and lost it at the show); the final report
+is a LOADED figure whose real box is 0 by 0, an author's `<img hidden>` or `<img width="0">`, both kept by the sanitizer,
+which reports 0 by 0 for as long as it stands and gets no control by the floor and not by the skip, which decides
+nothing: `figureBox` reads the laid-out box of a figure in the
+document as it is, 0 by 0 included, and falls back to the picture's own size only for a figure not in the document
+(mdBlock's box at the paint), so such a figure's load decides it under the floor (the file review's round 3,
+correctness-1: the fallback ran for any zero-sided rect, the hidden picture was measured over the floor at its own size,
+and its control lay 28 px into the words before it, where it took the click meant for them and opened the picture the
+author hid; the same read makes a load while the viewer is hidden a decision over 0 by 0, so a standing control leaves
+at that load and the show's report of the real box brings it back, where before the control stood through the hidden
+load; the floor leg drives both authored shapes beside prose, the click on the words, and the hidden load); the
+residual the skip leaves, a figure hidden after its load by any road but the viewer's own keeping a standing control
+until its next report with a box, has one road in the product, a `<details>` folded by the reader (an expanded callout,
+`> [!note]+`, renders as a `<details open>`), on which the control is harmless by a mechanism that is not the skip: the fold reports nothing, so
+nothing reaches the observer while the callout is folded, the control is folded with the figure and stands over no prose,
+and the first report with a box after the reopen decides the figure again (the file review's round 4, ui-1, measured in
+the three engines from plain authored markdown: folded, the figure kept its box and its control, both out of the
+pointer's reach; reopened at the width it folded at, no report and the control stood; reopened after a narrowing, the
+report removed the control under the floor; the record before it said the product had no such road, reached only by an
+injected stylesheet), so a road added later that hides a figure and reports for it decides the figure itself or lifts
+the skip for it (recorded, not built against); the watch
+is armed at each text paint and not before the first, since the body is empty when the open sets it up (the file review's
+round 3, tests-4: an arm there observed nothing on any road, measured in Chromium over the fresh open, the replace, Back,
+Forward and a reopen, and was removed), which is the
+reflow itself whatever caused it: the pane dragged, the Comments aside opened or closed, the window resized, or a
+text-size step (A-, A+, Ctrl/Cmd + wheel), which re-measures the 80ch column at a constant body width and so reflows
+every column-capped figure with no width report; so a figure the column narrows under the floor loses its control and
+one it widens past gets it back (the file review's measurement at an earlier head: read once at the load, a 761 by 76
+figure narrowed to 323 by 32 kept its control, which hung over the figure and took the click meant for the prose,
+where the note reopened at that width had none; and its round 2, correctness-1 with four findings of the same cause:
+decided again from the width watch's repaint alone, the one road the round-1 fix wired, a band a text-size step had
+narrowed under the floor kept its control and one the step widened past never gained it, so the event is the figure's
+reflow and not one of its causes; a value measured once against a condition that can change is re-read on the event
+that changes it); a control removed while it holds the keyboard hands it to the viewer's body first
+(`removeFigureControl`, through a per-open register of the body's takeKeyboard, since the decision is module-level and
+the hand-over is the open's: the file review's round 2, ui-4, where the removal dropped the focus to the document's
+body and PageDown, the arrows and End scrolled nothing until a click); a picture that failed to load gets none and
+opens nothing on any gesture (`figureTarget` refuses the failed state as it refuses the fetching one, the verdict the
+control is withheld on, so the two readers of "is there something to open" agree: the file review's round 2,
+regression-3 with extra5-4, where the target refused the fetching state alone, so a plain click on a failed local
+figure opened the missing path in the viewer and pushed it onto the trail, and one on a failed remote figure opened a
+tab at a host whose image request had answered 404; and with an empty alt no box: at the head before the one decision
+a 0 by 0 failed figure wore a control laid 28 px to its left, over the link before it, which took the click meant for
+that link, the file review; a failed figure with a non-empty alt has the alt text's box, which the state leg clicks),
+and a figure at the
+floor (48 by 48) keeps its control inside its own box; and a figure inside a link that holds more than it
+(`[![alt](fig.png) caption](other.md)`, an author's `<a>` with a caption beside the img; `linkAbove`: a link of the
+click's own set, `figureLinkOf` over `FIGURE_LINK_SET`, above `figureAnchor`'s climb, which stops under a link holding
+text beside the figure: an anchor with an href, a URL link, a section link or a path link, the links whose click owns
+the figure inside them, ONE exported predicate read by the click listener's yield, by `dressFigureTitle` and by
+`linkAbove`; a dead link, an anchor the sanitizer or the viewer stripped of its href, and an author's named target with
+no href, `<a id="fig1">`, are not in the set, no click of theirs owns the figure, and a captioned picture inside one
+keeps its control, after the picture inside the anchor, and its title, the file review's round 12, correctness-1 with
+ui-1: read as ANY anchor since its round 2, the control and the title were withheld from a shape whose plain click
+still opened a remote picture's tab, nothing on the surface saying so), since
+a button inside a link is the link's click too (one click opened the link's target AND the picture, and put an entry
+on the trail the reader never asked for); a figure alone in a link keeps its control, after the link. The clicks (the
+body's second click listener, beside the links', since file-view-links.test.ts pins the first listener's text and
+order and the two act on disjoint targets): a plain click on the control or on the bare figure opens it as above; a
+Cmd/Ctrl-click on a LOCAL picture, where the press reaches the picture (the Comments panel closed, or the pointer
+coarse: with the panel open on a fine pointer the layer's overlay below takes the press, modified or not, and offers a
+comment, while the control opens at any time; the file review's round 8, fresh-1), opens the kernel's /file URL
+in a tab, as a PDF's modified click does (`openFileTab`; a blocked popup falls through to the viewer), and stops
+before the row as a link's modified click does; the figure's own click
+yields to a figure inside a link (the author's link, through the links listener; and an anchor with an href that listener
+leaves to the browser, a web address of the markdown, which carries no class: the browser's own open of the address,
+never the picture beside it, the review's round 1; a captioned picture inside a dead link or a named target, an anchor
+with no href, keeps its control, after the picture inside the anchor, and its plain click opens the picture, that anchor
+being none of the links the listener yields to, file-view-figure-shapes-browser.test.ts's dead shape, and the guide's
+shape sentence says so), to a picture
+inside a summary that toggles a fold (`figureFoldOf`: a details element's own first summary child, `closest('summary')`
+bounded to the Rendered box, a sibling of `FIGURE_LINK_SET` and not a member, read by the listener, by `dressFigureTitle`
+and by `dressFigureMark` and not by `linkAbove`, so the picture keeps its control, whose click opens it and toggles nothing,
+a button inside a summary toggling nothing in Chromium; the fold takes the click, plain or modified, and a remote picture
+there wears no address line and no mark; a summary outside a details toggles nothing and a picture inside one opens as
+anywhere else; the file review's round 14, fresh-1: the listener read no summary, so one click toggled the fold and opened
+the picture, a remote picture's tab or a local picture's open in the viewer in place of the report), to a picture
+the panel framed (`panelMark`: the card's), to the
+open Comments panel (a plain click is the panel's comment offer, `onImageClick`, and a drag its region; the layer's
+overlay takes the press on a fine pointer, and on a coarse one the click reaches the listener and stands down; one
+loss stands here, the file review's ui-2, recorded and not built against: a drag that BEGINS inside the control's 22 px
+square at the figure's corner draws no region and offers nothing, since the control paints and is hit above the
+overlay and takes the press, on a fine pointer alone, while a drag that starts elsewhere and crosses or ends on the
+square is unaffected; a stand-down would have the control capture the pointer, read the layer's dragIsClick threshold
+on move and hand the gesture to the overlay through a synthetic pointerdown, a coupling between the control and the
+layer, open point 5; the guide's figure sentence names the square) and to
+a drag that selected and ended on the picture (`selectionOpenIn`). The listener also stands down on a click another
+listener already answered (`ev.defaultPrevented`, its first line): the gate listener, first on the body, prevents
+default as it restores a placeholder's img, and a click dispatched on that img (a display:none element no pointer
+reaches; a synthetic case from a read-only pre-drive, not a measured one) arrived at this listener with the img
+restored, was read as a bare figure, and opened its target. Held by file-figure-open.test.ts (the source pins:
+the one decision, the target, the two insertion points, the click routing, the walks, the sheets) and
+file-figure-open-browser.test.ts (Chromium: the controls on a synthetic report, the hover reveal and the corner in
+both float cases, Tab and Enter, the place kept across the open and Back, the plain click with the panel closed, the
+modified click's tab, the linked figure, the gated remote figure, the inline data picture, print media, no hover, and
+with the panel open the comment offer, the region drag and the control's own click on a fine pointer, and on a coarse
+one the tap standing down to the offer, the modified click's tab and the control's open, and a picture inside a fold's
+own summary, whose plain click and Ctrl-click toggle the fold and open nothing), and, for the round-1 rules,
+file-view-figure-shapes.test.ts (the source pins: the web test before the join; the one decision: the state, the
+floor, the target and any link above in figureWantsControl's order, decideFigureControl's add or remove against the
+control standing, the measure's reads, linkAbove over the click's own link set (figureLinkOf), the load, the error and the figures' own ResizeObserver
+running it and the width watch's repaint running none, removeFigureControl's order, figureTarget's refusal of both
+states, and both sheets' comment naming decideFigureControl; the click's yield to an anchor with an href) and
+file-view-figure-shapes-browser.test.ts (Chromium: twelve shapes on one report, a captioned picture inside a dead link
+among them, which wear a control and where it
+stands, the badge's face and the prose before the icon under the pointer, the plain click on the captioned links, on
+the badge and on the two web links, the control of the figure alone in a web link, the protocol-relative figure's
+tab from its control and from its click, and the dead link's plain click opening the picture), file-view-figure-floor-browser.test.ts (Chromium: the 761 by 76 figure's
+control leaving as the viewport or the Comments aside narrows the column under the floor and returning as it widens,
+a page opened at the narrow width with none, a click dispatched on a gated placeholder's img opening nothing
+while a real click on the restored figure's control opens its tab, the held picture's re-open, and, since the file
+review's round 2, a 1300 by 110 band at a 1200 px modal losing its control at three A- presses (70%, the band's height
+under 48 px with the body's width unmoved) and getting it back at three A+, the same by Ctrl + wheel, a control
+removed while it holds the keyboard handing it to the viewer's body, PageDown then scrolling the report, and, since
+before the file review's round 3, the viewer hidden by display:none at 381 px gaining no control while hidden and the
+control following the real box at the show, and, the file review's round 3, a loaded `<img hidden>` and a loaded
+`<img width="0">` beside prose getting no control at their load and none at a reflow while the wide figure beside them
+wears its, a click on the words before each opening nothing, and a picture re-fetched while the card is hidden losing
+its control at that load and getting it back at the show), and, for the chosen candidate,
+file-view-figure-chosen.test.ts (the source
+pins: chosenSource's body, figureTarget's read of it first, failedSource's delegation and the two callers) and
+file-view-figure-chosen-browser.test.ts (Chromium: a `<picture>`, a srcset img and a gated remote `<picture>` open the
+candidate shown, through the paint's URL, and the remote figures' requests at a context-level route with the real
+window.open, installed with the page's fetch wrapper before the open: none while gated and none at the open, one image
+request per remote figure at the gate's lift, one document request per tab from the loaded picture's control, its
+plain click and its Ctrl-click, none from the failed remote figure's plain click or Ctrl-click, nothing to any other
+host through window.fetch, and the Cookie header of each request with Lax, Strict and None seated), and, for the one
+decision, file-view-figure-state-browser.test.ts (Chromium: a failed figure, a
+fetching `<picture>` and a srcset figure whose chosen candidate is a `data:` URI, each without a control, the link
+beside the failed figure taking the click, the fetching figure's plain click opening nothing and its load bringing the
+control that opens the source's file, and a failed local figure with a box, a non-empty alt laid out as text, whose
+plain click and Ctrl-click open nothing with the trail unmoved) and, for the door, file-view-figure-recent-browser.test.ts (Chromium over the
+real Files page: no Recent row for the picture opened from the control or from the plain click, Back to the report at
+the reader's block, a Forward step onto the picture minting its row and Back moving the report's over it, and a
+link's open still taking its row).
+
+L4. **The picture view reached from a report.** The control's open is the ordinary open of the picture's path
+(openFileView through openFromViewer), so the card shows the picture as `imgBlock` shows any picture, the bar names it
+(`.fileview-base`), and Back is enabled with the report's name in its title ("Back to report.md"), L1's push. No zoom
+control in this slice: a Fit / 1:1 toggle on the picture view is recorded as a follow-on for the owner (open point 2).
+Held by file-figure-open-browser.test.ts (the bar's name and the Back title after Enter on the control).
+
+L5. **Browser history: not integrated.** The trail is the viewer's own: no pushState, no hashchange, no history API
+call in file-trail.ts or file-view.ts. A pushState per step would put entries on the joint session history that outlive
+the viewer, so the browser's Back after the viewer closes would step through closed files or leave the page, and the
+Files pane is an iframe of the dashboard, whose entries join the shell page's history; popping the entries at the close,
+and telling the pane's steps from the shell's, is a design of its own. Recorded as a follow-on for the owner with that
+trade-off (open point 1); meanwhile the chords take the browser's step while the viewer is up, outside L2's
+stand-downs (L2).
+
+L6. **No kernel change, no new route; one new kind of request leaves the machine.** No kernel change and no new
+route: a Back or Forward open fetches the file through the same `/file` route the link's open used, a figure's open in
+the viewer fetches the picture through it as the report's paint did, and the trail lives in the page. One request is
+new (the file review's HIGH 1): a plain click on a loaded remote picture, its Open the picture control, and a
+Cmd/Ctrl-click on it (each only while the picture's sign, its control or on a picture that wears none its mark, is in view
+and uncovered at the gesture's start, and otherwise it opens nothing and brings the sign into view, and the next opens, a sign
+partly in view counting as in view (the file review's round 16, extra5-1); the control by a click or by Enter or Space, the plain click on the
+picture with the Comments panel closed, and the Cmd/Ctrl-click where the press reaches it, the panel closed or the pointer
+coarse, neither click on a picture inside a fold's own summary, whose click toggles the fold; L3, the file review's round
+14, extra8-1, and its round 9, regression-1, which found this home and open
+point 11 without the condition round 8's fresh-1 put in every other) open a top-level tab at the picture's address (L3,
+`openUrlTab`), a second, differently kinded,
+credentialed request: a request of type document to a host the page had requested the image from, carrying cookie
+classes the image request did not (measured in Chromium by file-view-figure-chosen-browser.test.ts: the Lax and the
+None cookie on the tab's document request, the None cookie alone on the image request, the Strict one on neither);
+before this follow-on only an author's link opened such a tab. A failed figure opens nothing on any gesture (L3, the
+file review's round 2), so the image request has always been made before the tab is asked for; the round-1 wording,
+a host the page had already fetched the image from, was false for a failed remote figure (extra5-4). The gate is not
+bypassed: no request reaches a host the gate still holds. The build's record here claimed that nothing leaves the machine that did not before, and the PR body and
+the contract said the same; the claim was false, and the follow-on is a privacy surface, landing on the owner's word, given on 2026-09-22
+(open point 11: all three gestures kept, the outbound case made visible before it happens). The verifications: `git diff --stat $(git merge-base origin/main HEAD) HEAD -- kernel/` is empty and
+`git diff --name-only $(git merge-base origin/main HEAD) HEAD` lists files under ui, docs, plans, tools,
+upstream or tests, and SECURITY.md, alone (70 files, the ledger entry's where line; run 2026-09-26 at the head that carries the
+fixes for the file review's round 18 and the merge of the fork's main after them, where the merge-base is 4a50a9b71, the fork's
+main the branch merged after those fixes, its tip the merge of the fork's batch PR 917, and the listing is the branch's whole
+delta over it; the run at the head that carries the bench's variants from those fixes, regression-3, from the merge-base
+fa3ef54b5, the fork's main the branch merged after the painted-contrast ask of 2026-09-23, its tip the merge of the fork's batch
+PR 907, listed the same 70; the run at the head that carries the marquee forbid's records from that round's fixes,
+tests-1 with regression-1 and regression-2, from the merge-base fa3ef54b5, listed 64, before
+tools/viewer-resize-variants/css-table-plain.css, tools/viewer-resize-variants/stub-widthro.js,
+tools/viewer-resize-variants/stub-widthro-bodyw.js, tools/viewer-resize-variants/stub-allro.js,
+tools/viewer-resize-variants/stub-bodyw.js and tools/viewer-resize-variants/README.md joined the delta; the run at the head that
+carries the fixes for the file review's round 17, tests-1 with
+regression-1 and extra9-1, and the sanitizer's removal of an author's marquee, from the merge-base fa3ef54b5, listed 60, before
+SECURITY.md, ui/webview/md-config-block-boxes.test.ts, ui/webview/anchor-map-wrappers.test.ts and
+ui/webview/anchor-map-pairing-r6.test.ts joined the delta; the run at the head before that removal, from the merge-base fa3ef54b5, listed 58, before
+ui/webview/md-sanitize.ts and its node suite ui/webview/md-sanitize.test.ts, modules of main, joined the delta; the run at the
+head that carries the fixes for that round's tests-1 with regression-1, from the
+merge-base fa3ef54b5, listed 57, before ui/webview/file-figure-open-stacking.ts, the one gate's stacking cells, joined the delta;
+the run at the head that carries the fixes ruled in the file review's round 16, the author's closing
+pass over them and the re-aimed containment test of the sanitizer's browser leg, from the merge-base fa3ef54b5, listed 55, before
+ui/webview/file-figure-open-taps.ts and ui/webview/file-figure-open-engines-browser.test.ts, the one gate's tap cells, joined the
+delta; the run at the head before that test was re-aimed, from the merge-base fa3ef54b5, listed 54, before
+ui/webview/md-sanitize-browser.test.ts, a module of main whose containment test the drop of the stacking page classes re-aimed,
+joined the delta; the run at the head that carries the fixes ruled in the file review's round 16, from the
+merge-base fa3ef54b5, listed 53, before ui/webview/file-view-decisions.test.ts, a module of main whose pin that pass re-aimed,
+joined the delta; the run at the head that carries the fixes ruled in the file review's round 15, from the
+merge-base fa3ef54b5, listed the same 53; the run at the head that carries the fixes ruled in the file review's round 14, from the
+merge-base fa3ef54b5, listed the same 53; the run at the head that carries the entries two of main's censuses owe this follow-on's modules,
+after the merge of the fork's main, from the merge-base fa3ef54b5, listed the same 53; the run at the head that carries that ask and the merge of the fork's main after it, from the
+merge-base fa3ef54b5, listed 51, before ui/webview/compact-seam-exec.test.ts and ui/webview/spacer-measure.test.ts, two censuses
+that batch PR brought, joined the delta in those entries (the class mutators with no constant class gained the figure control's
+two, the modules no page bundle loads the three readers this follow-on's tests import, and the writes of a view property the
+trail's two); the run at the head
+that carries the fixes ruled in the file review's round 13 and the merge of the fork's main after them, from the merge-base
+6cf6839ba, the fork's main the branch merged after those fixes, its tip the merge of the fork's batch PR 906, listed the same 51; under ui the listing lies in ui/webview but for ui/test-code-only.ts, the comment stripper, which the case fixes brought
+into the delta (its header's reader roster names file-figure-open.test.ts as its sixth reader; the file review's round 13,
+extra7-1), so the run at the head that carries the dress fixes alone among them, from the merge-base de06b8718, the fork's main the
+branch merged before the file review's round 13, listed 50; the run at the
+head
+that carries the fixes ruled in the file review's round 12, from the merge-base de06b8718, the fork's main the branch merged before the file
+review's round 13, listed 48, before
+ui/webview/theme-parity.test.ts and
+ui/webview/real-viewer-leg.ts joined the delta in those dress fixes (the outbound line's contrast pair, and the launch options the
+open leg's hybrid twin hands the shared launcher); the run at the head that carries the fixes ruled in
+the file review's round 11, from the merge-base 4ae3b6659, the fork's main the branch merged for the file review's round 12,
+listed the same 48; the run at the head that carries the fixes ruled in the file review's round 10, from the merge-base
+53f9f4aa3, the fork's main the branch merged for the file review's round 11, listed the same 48; the run at the head that
+carries the author's closing pass after the
+file review's round 10, from the merge-base 65f1895f6, the fork's main the branch merged for the file review's round 10,
+listed 45, before ui/webview/host-sheets.mjs, ui/webview/host-sheets.d.mts
+and ui/webview/file-view-outline.test.ts joined the delta in those fixes (the file review's round 10, correctness-1 with
+regression-5 and correctness-5: every sheet a page of either host loads, derived from the page assembly, and the Outline
+button's census over them); the run at the head that carries the
+fixes for the file review's round 8, where the merge-base was 5e5ee79ed, the fork's main merged into the branch before
+landing, listed 43, before ui/webview/css-rules.mjs and ui/webview/css-rules.d.mts, the rule reader the closed set over the
+control's sheet rules stands on, joined the delta in the fixes for the file review's round 9 (under tools/ there; the
+author's closing pass after the file review's round 10 moved the pair under ui/, the tree the bundles read, since a ui
+test may not import from tools/, hooks/ or tests/, which tests/test_lab_dist.py's derivation pin holds); the run at 7f8684caf, the
+head the file review's round 8 took, one commit after the merge of 5e5ee79ed, listed 42 from that merge-base, before ui/webview/file-view-place-blocks.test.ts joined the
+delta in the round's fixes; the run at the head before that merge listed the same 42 from 01434a45b, the fork's main
+the branch had merged for the file review's round 5; the run at the head after that earlier merge, for the file review's
+round 5, listed 40, before the landing round's executed test re-aimed two more standing suites; the two earlier runs, at
+the commit that built the one reader for the file review's round 4 and at the head that closed the author's closing
+pass after the file review's round 4, listed 38 from the older merge-base they shared, before the merge made main's
+tools/markdown-viewer-plan-gate-adopt.test.mjs a file the branch edits;
+tools/markdown-viewer-plan-linknav.test.mjs runs both behind the two-part gate the Tests paragraph names, the merge-base
+not `origin/main` itself and the diff since it adding the module, reads the count off this sentence where they run, and
+otherwise says which part held them, or holds the prose alone without the ref; the Tests paragraph says where that is).
+The build's record ran both against 34142c262, the branch point, and the merge of main into the branch
+(f694e5974) made that commit an ancestor of main, so at the merged head the same stat named four kernel files and the
+same list reached kernel/ and vscode-extension/ (the file review, fresh-1): a verification is derived from the
+merge-base with main, never from a fixed sha a merge can move behind. The files under tests are
+tests/test_guide_files_failures.py, re-aimed in the review's round 1, and
+tests/test_guide_trail_chords_and_figure_button.py, added in its round 2, both named in the Tests paragraph below.
+
+**Tests.** `ls ui/webview/file-trail*.test.ts ui/webview/file-figure-open*.test.ts` lists the follow-on's five
+modules: ui/webview/file-trail.test.ts (the pure functions, the chord table, the titles, and the wiring pinned at
+source: the one tag, both exits, the reload, the bar and the listener), ui/webview/file-trail-browser.test.ts
+(Chromium over the real Files page and a chat-modal page: the contract's cases 1 to 5 and 7, and the Files page's
+boundary of the road L1 names beyond the contract, the same-origin .md URL opening a tab there; the replace under the
+chat's opener is a source pin in the tree, L1 says where),
+ui/webview/file-figure-open.test.ts (L3's source pins), ui/webview/file-figure-open-browser.test.ts (Chromium over
+the real chat modal: case 6 and L4; since the author's closing pass after the file review's round 8,
+a top-level html-block figure wearing the production control with the reader partway into it, the control's box
+measured at 22px at the figure's top, the Raw switch landing on the img's own row and Rendered putting the figure back,
+the structural read's exclusion of the control in the real layout, which the node scene in
+ui/webview/file-view-place-blocks.test.ts stands in for with a fixture box) and, since the fixes for the file review's round 17
+(tests-1 with regression-1), ui/webview/file-figure-open-engines-browser.test.ts (the one gate's tap cells in WebKit, on a
+phone's pages and a hybrid page, and in Firefox, on the hybrid page, the clicks of the mouse after a drag of a picture and after a
+drag in another pane, and Firefox's chord, on a plain page too, and, since the closing check after the fixes for the file review's
+round 18, a tap on another document's element over the control in the dashboard's shape, the viewer's page in a same-origin frame
+of a top page, on the hybrid page,
+each engine launched through real-viewer-leg.ts's inBrowser with the engine named; the cells are ui/webview/file-figure-open-taps.ts's,
+a module of the cells alone that the Chromium leg runs too, so one set reads all three engines; and two cases of WebKit's alone that read window errors, the Files
+pane's as its Comments aside opens beside a document of top-level tables, and the chat modal's, the Files pane's and the feed
+modal's as remote pictures in top-level tables load, one of them under the floor, 24 opens a surface, the file review's round
+18, extra6-3) and, since the fixes
+for that round's extra9-1 (with the coordinator's decision 4), ui/webview/file-figure-open-stacking.ts (the one gate's stacking
+cells, a module of the cells alone that the same two legs run in the three engines, on the chat modal and the Files pane: a remote
+picture in a top-level table, inside author elements of page classes that would make a stacking context around it and inside an
+author's marquee, each followed by a positioned author element or by an svg whose shadow is placed over the control, and a click on the
+picture's own body under the positioned element, a stated cost; both cell modules count a gesture's opens by the gate's own
+window.open calls, recorded in the page as each is made, each call's popup and document request awaited with a bound that
+fails loudly, so a late popup lands in its own cell, and each scene's end holds the popups and requests seen equal to the calls,
+so a stray open made or delivered before that end reads the record is charged to its scene, while a call a timer makes after it
+goes unseen, since the page closes, the file review's round 18, extra6-2). The review's round 1 added two modules outside those two stems:
+ui/webview/file-view-figure-shapes.test.ts (the source pins for L3's round-1 rules: figureTarget's web test before
+the model's join, the one decision's order in figureWantsControl (the state, the floor, the target, any link above),
+the measure's reads, the bare
+figure's yield to an anchor with an href) and ui/webview/file-view-figure-shapes-browser.test.ts (Chromium over the
+real chat modal: twelve figure shapes on one report, which wear a control and where it stands, the badge's face and
+the prose before the icon under the pointer, the plain click on the captioned links, the badge and the web links,
+the protocol-relative figure's tab, and the dead link's plain click opening the picture); its round 2 added tests/test_guide_trail_chords_and_figure_button.py (the
+guide's two sentences, pinned flattened, held to the lines that make them true: the dashboard shell's ownership of
+Alt+Left and Alt+Right to the shell script's listener, onNavKey's stand-downs and navChord's two chord families; the
+pictures without the button to the floor's constant, a census of figureWantsControl's refusal arms (an arm added or
+removed fails there until the guide's sentence is read again; re-aimed in the file review's round 2 for the failed
+picture, which the button and the click refuse on one verdict) and the click listener, and the guide's figure sentence
+to the tools pin's copy of it, byte for byte; and, since the file review's round 4, extra8-3, the hide of the Back and
+Forward pair, `nav.hidden` in openFileView, asserted in one test with the guide's condition clause and the browser plan's
+"(the pair hidden until then)", the two sentences that claim it, and with the tools pins that quote them, so a revert of
+the hide along open point 13's road fails there naming the two sentences, rather than a longer list in that point), and,
+for figureTarget's read of the candidate the browser chose, ui/webview/file-view-figure-chosen.test.ts (the source pins:
+chosenSource's body, figureTarget's order, failedSource's delegation and the two callers) and
+ui/webview/file-view-figure-chosen-browser.test.ts (Chromium over the real chat modal: a `<picture>`, a srcset img and a
+gated remote `<picture>` open the candidate shown through the paint's URL; since the file review, the remote figures'
+request census at a context-level route with the real window.open, and since its round 2 the route and the fetch
+wrapper installed before the open, the never-drained list of foreign fetch calls, the Cookie header of each request
+with three classes seated, the loaded picture's Ctrl-click and the failed remote figure's clicks). The floor's re-read
+at each reflow of the figure and the click listener's stand-down on an answered click added
+ui/webview/file-view-figure-floor-browser.test.ts (Chromium over the real chat modal: the 761 by 76 figure's control
+leaving as the viewport narrows the column under the floor and returning as it widens, the same across the Comments
+aside opening and closing, a page opened at the narrow width with none, a click dispatched on a gated
+placeholder's img opening nothing while a real click on the restored figure's control opens its tab, and, since the
+file review's round 2, the text-size step by the buttons and by Ctrl + wheel taking a band's control away under the
+floor and giving it back at a constant body width, the keyboard handed to the viewer's body when the control
+holding it is removed, and, since before its round 3, the hidden viewer's 0 by 0 report adding no control while hidden,
+the control following the real box at the show, and, since its round 3, the two authored boxless figures and the load
+while hidden) and re-aimed
+ui/webview/file-view-figure-shapes.test.ts (the re-read's pins: watchFigureBoxes's body, its 0 by 0 skip with its narrowed
+reason and its arming at the paints alone, figureBox's read of the laid-out box as it is for a figure in the document,
+the repaint deciding no figure and the width-only re-read gone from the source, removeFigureControl's order, the one rule
+figureTarget and figureWantsControl refuse on, figureHasPicture, over FigureState's four values, with each refused
+member's literal derived and pinned absent from every other string literal of the file, read as the compiler reads them
+through ui/webview/source-units.ts, and both sheets' comment
+naming decideFigureControl)
+and ui/webview/file-figure-open.test.ts (the stand-down as the listener's first line).
+The file review (2026-09-20; the control decided from the figure's current state by one function, and the figure's own
+door into the viewer) added ui/webview/file-view-figure-state-browser.test.ts (Chromium over the real chat modal: a failed figure, a
+fetching `<picture>` and a srcset figure whose chosen candidate is a `data:` URI, each without a control, the link beside the
+failed figure taking the click, the fetching figure's plain click opening nothing and its load bringing the control that
+opens the source's file, and since its round 2 a failed local figure with a box whose plain click and Ctrl-click open
+nothing) and ui/webview/file-view-figure-recent-browser.test.ts (Chromium over the real Files page: a picture
+opened from a figure, by the control and by the plain click, takes no Recent row while Back returns to the report at the
+reader's block, a Forward step onto the picture mints its row, and a link's open still takes its row).
+The browser legs named here skip at launch in the Test step of the job that gates a landing, which runs before that job
+installs Chromium (the gate-before-adoption section's Tests paragraph states that job's shape and
+tools/markdown-viewer-plan-gate-adopt.test.mjs holds it), so none of their browser scenarios runs where landing is gated
+(a source pin in a leg runs there without a browser); what gates the
+follow-on there is its source pins, the node modules beside each leg in that Test step (their node cases; a browser
+scenario inside a node module, ui/webview/file-view-text-size.test.ts's bar case and ui/webview/file-trail.test.ts's
+Reload case, skips there as the legs do), and the pytest modules it added
+or re-aimed, tests/test_guide_trail_chords_and_figure_button.py and tests/test_guide_files_failures.py, in the pytest job,
+and the road that runs the legs with a browser where landing is gated is the shared roster of browser legs,
+vscode-extension/ci-browser-legs.txt, one compiled bundle path per line, read by a step of that job after its Chromium
+install, a change of its own that this branch does not carry, so this follow-on's legs join the roster once both are in
+the tree, all but ui/webview/file-figure-open-engines-browser.test.ts, which launches WebKit and Firefox and so stays off the
+roster, since the roster's job installs Chromium alone; tools/markdown-viewer-plan-linknav.test.mjs derives the legs BY NAME, the modules under ui/webview whose file name
+carries the suffix -browser before .test.ts and whose own text names this follow-on, a name and not the property that makes a module a browser leg
+(that property, a call of the shared launcher's inBrowser through any binding or a playwright package named, is what the
+census of browser legs PR 887 brings reads off each module's tree with the compiler,
+vscode-extension/scripts/browser-legs-census.mjs executed by the census test beside it under ui/webview in the
+vscode-extension job, and that census is the one definition of a browser leg once it lands: the compiler is installed
+in that job alone, and a spelling read in the Shell job would be a second definition; the modules of this follow-on's
+diff that the property reaches and the name does not, which this pin therefore holds to nothing, are
+ui/webview/file-trail.test.ts, whose Reload case launches through the shared helper, and
+ui/webview/file-view-text-size.test.ts, whose bar case launches through a harness of its own; the file review's round
+9, extra6-1 and extra6-2: the disclosure had said the legs were derived from the tree as the browser modules naming
+the follow-on, which was the name's set and not the property's), holds each to a launch through real-viewer-leg.ts's
+inBrowser, the shared helper a roster's switch reaches, and to no stand-down of its own (a skip or a todo, which defeats
+that switch as a private launch does; the file review's round 9, tests-2), the stand-down read as nine spellings of the
+leg's own comment-stripped source and not as the property of standing itself down, the regex and the count built from
+one named list with one entry per spelling (a skip or todo call on the test context, on test or on it, through a
+property, through an optional chain or through a bracketed literal, the option with its value written out under a bare
+or a quoted key, the option under a computed string-literal key, the option assigned onto an options object through a
+bracketed literal or through a dot before the object is handed to the test, a skip or todo standing between braces,
+whether the shorthand option or the destructuring that takes the method off the context, and the bare call of it; the
+file review's round 10, extra6-2 with extra6-1, correctness-3 and tests-4: the quoted key and the assigned and computed
+forms had passed the read while each stands a leg down with its body never run, and the count had been typed in every
+home, derived in none, and had counted the two brace forms as two where one arm reads both), so its
+green says that no leg carries one of the nine and not that no leg stands itself down: a conditional call is within that
+read, since the spelling stands whatever the condition, and outside it is a stand-down that never spells skip or todo in
+the leg's own source (a computed member name, a value built from parts, an options object built elsewhere), a class no
+read of spellings closes, the method bound to a name of its own and called by that name among it (the unbound alias
+throws under node:test and fails the leg loudly, and the family is live through .bind(t) or an aliased test.skip, each
+skipping with the body never run and passing the pin; the file review's round 10, extra6-3), every form named here
+planted in the pin's own cases; what refuses that class is execution and not a read of the source: the step PR 887
+brings to that job, directly after its Chromium install, runs the rostered legs with a browser and reads the run's
+record, and a test skipped there is red naming the test, its reason and the switch's state, whatever spelled the skip,
+its census named above reading a leg's skip or todo from the compiler's tree beside it, so until that step is in the
+tree the interim here is this stated scope and not a wider regex (the maintainer's reading of the author's closing pass
+after the file review's round 10: both halves of the guard were keyed on spellings, and a reader who saw its green took
+no leg to stand down privately), and reads
+the tree for the roster, its exclusions file (vscode-extension/ci-browser-legs-excluded.txt),
+that step in the vscode-extension job and the switch (ROMP_BROWSER_LEGS_REQUIRE, reached by inBrowser through
+ui/webview/browser-legs-require.ts): where the tree carries none of the four it holds this sentence, where it carries all
+four it holds every leg to a roster line outside the exclusions, the leg that launches WebKit and Firefox to an exclusions
+line and no roster line (the module's own model of the convention, which PR 887's section on who owes what at the landing
+revises), and the roster's own tree test to exist, and a tree with
+some of the four it refuses, naming them (the file review's round 8, extra8-2: the legs were the feature's evidence and none of them ran where
+landing is gated, the gating run's log showing every browser scenario of theirs as SKIP). Twenty-six standing suites were re-aimed, not undone:
+ui/webview/file-view-text-size.test.ts (its real-module bar leg at 380, 420, 480 and 600 px in the chat and feed modals
+reads the group hidden on a fresh open and, once a link is followed, measures the two glyphs among the actions, case 8), ui/webview/file-view.test.ts and ui/webview/file-view-links.test.ts
+(the delegate's open through openFromViewer; the model import), ui/webview/file-view-figure-error.test.ts and
+ui/webview/file-view-figure-error-browser.test.ts (the label readers step past the control),
+ui/webview/fileview-parity.test.ts (the control's rules byte-equal in both sheets, and in the file review's round 10,
+correctness-5, the Outline button's census on parsed rules over every sheet a page of either host loads) and
+ui/webview/file-view-outline.test.ts (the same census, in the file review's round 10, correctness-5),
+ui/webview/theme-parity.test.ts (the outbound line's pair, --outbound-line over --bg at 3 to 1 in both themes of both sheets, and
+feed's evaluated count moved with it, in the file review's round 13, ui-1 with extra6-1; and beside the pair, since the painted-contrast
+ask of 2026-09-23, a test of the dress as painted, every state a gesture opens the tab from composed from the opacities the sheets declare
+over the worst picture and on the VS Code editor grounds either side of the stated bound, whose executed twin is the open leg's
+paintedRatio, the dress read off screenshots of the real page under touch emulation, on a touchscreen laptop and on a fine pointer),
+ui/webview/anchor-map-fallback-markup.test.ts (the stand-in's control list), and in the review
+ui/webview/file-view-notice.test.ts (its Escape cases run every keydown handler an open registers in the document's
+order, the capture phase first, since the trail's listener is an open's newest registration, and the close hooks'
+removal carries the capture flag its add did), ui/webview/md-url-view.test.ts (the local-file mode's sibling link opens
+through openFromViewer with a push, and the door's shape: the tag set, the host's opener called, the tag cleared in a
+finally) and tests/test_guide_files_failures.py (re-aimed twice: first to hold both walks' control lists' seventh entry,
+fv-figopen, the figure's other text-free neighbour, then in the file review's round 8, correctness-1, to name the
+executed cases of the control's exclusion in that pin's place, since a pin on a list's membership stayed green while the
+structural read ignored both lists and Python cannot execute readPlace), and in the sweep after the review ui/webview/pdf-new-tab.test.ts (its count
+of the gesture reads inside openFileView, which held the links' two, counts the links' two and the figure's four as two
+regions and the stretches before, between and after them as none, so a read anywhere else in the function, its own
+open's, still fails), and at the merge of the fork's main and in the file review's landing round
+ui/webview/file-view-seam.test.ts (its re-parse census: the callee list gained addFigureControls, this follow-on's pass,
+with the local functions it reaches, and since the landing round the walk follows a reached local's imported callees and
+every import form transitively, judging the sites it finds per module, with the whole file's count in its one home, and since the
+fixes for the file review's round 16 its inertness premise names the file kind's three drops, dropDimmingClasses, dropPressThrough and
+dropStackClasses, among the calls the sanitizer's body reaches before the adoption) and
+tools/markdown-viewer-plan-gate-adopt.test.mjs (main's pin of the "Fix: the gate before adoption (2026-09-20)" section: its
+held copy of that section's re-parse paragraph, re-derived, with the derived figures filled from the seam test's pins), and
+in the landing round ui/webview/anchor-map.test.ts (the control at the box's top level is no block's node, executed beside
+the failed figure's label's case: the img's html block owns its img alone, or the panel's wrap, the control answers no
+block, the paragraph after pairs and paints, and beside prose the caption maps; and, extra9-1, the caption beside a control
+carrying a text node of its own maps and paints, the executed case of anchor-map.ts's fv-figopen entry, which a glyph-only
+control cannot red on), ui/webview/md-config-figure-gate-place.test.ts (readPlace over a loaded figure wearing the control,
+inside the block's paragraph and beside its text; and, extra9-1, wearing a control that carries a text node of its own, the
+executed case of reader-place.ts's fv-figopen entry) and, correctness-1, ui/webview/file-view-place-blocks.test.ts (readPlace
+over a top-level html-block figure wearing the control reads the figure at the figure's box, at the root's level and nested in
+an html wrapper, and over a right-floated figure wearing the failed figure's label at its top, the pair's other member: the consumer of the structural read's element lists, driven where a pin on the two control lists' contents
+stayed green while the structural read read neither, since the control stood in the text read's list alone and a top-level
+control's box, ending above the edge, sent the level's search past the figure to the paragraph after it; the structural read
+now leaves a figure's two companions out by the pair predicate the map's pairing uses, blockElementsOf with isFigureCompanion,
+and not the text read's wider isControl, since a gated figure's top-level placeholder IS its block's element), and after the
+merge of the fork's main at fa3ef54b5, whose batch PR 907 brought them, ui/webview/compact-seam-exec.test.ts (its closed
+multiset of the class mutators whose class is no constant of the source names the figure control's two: decideFigureControl's
+classList.add, the control's float side read off the figure's align, and dressFigureControl's classList.toggle, the web class
+declared by a concatenation the census's constant reader does not fold, and since the fixes for the file review's round 16,
+extra5-2, dropDimmingClasses's classList.remove, the classes the sheets dim read at run time off an author's markup around a
+figure, and since its extra5-1, dropPressThrough's, the classes that let a press pass through read the same way off every author
+element, and dropStackClasses's two, the classes the sheets would raise to the control's stacking level read the same way and,
+since the fixes for the file review's round 17, extra9-1, the classes that would make an element around a picture a stacking
+context read off a figure's ancestors) and ui/webview/spacer-measure.test.ts (its roster of
+the modules under ui/webview that no page bundle loads names css-rules.mjs, host-sheets.mjs and source-units.ts, the readers
+this follow-on's tests import, and since the fixes for the file review's round 17, tests-1 with regression-1,
+file-figure-open-taps.ts, the one gate's tap cells the two open legs run, and since that round's extra9-1
+file-figure-open-stacking.ts, its stacking cells the same two legs run, and its closed multiset of the writes of a view property names the trail's two, trailSetView's
+and moveTrail's, each kept in the page's trail state and never posted), and since the fixes for the file review's round 16,
+extra5-2, ui/webview/file-view-decisions.test.ts (its pin on the word the viewer no longer uses for the editor's decisions lets
+the one quoted page class inside SHEET_DIM_CLASSES's literal through by value, since the list holds another page's tree-node
+class as the sheets spell it), and since the drop of the stacking page classes, for the file review's round 16, extra5-1,
+ui/webview/md-sanitize-browser.test.ts (its layout-containment test's author element of a fixed page class, .cite-preview,
+loses the class, so the test reads the class gone and the element in the note's flow, inside the note's box and scrolling with
+it, reads the class's fixed position on an element of the page's own, and keeps the fixed box put into the note after render as
+the box whose containment it measures, read again where the body scrolled to, since no page class the viewer keeps on a file
+document's author markup makes an element fixed, which the test reads at run time over every sheet a page of either host loads;
+the leg launches through real-viewer-leg.ts's inBrowser, as this follow-on's legs do), and since the sanitizer's removal of an
+author's marquee, ui/webview/md-sanitize.test.ts (the profile's list of forbidden tags holds the marquee, whose own rendering
+makes a stacking context around what it holds with no class or style of the author's in Chromium and Firefox, while in WebKit it
+makes none and its own scroll and clip carried the control outside the page; the guide's pin reads the marquee's sentence, the
+file review's round 18, regression-2), and since the marquee forbid's records, for the file review's round 18,
+ui/webview/anchor-map-wrappers.test.ts and ui/webview/anchor-map-pairing-r6.test.ts (their stand-in sanitizer unwraps a marquee
+as the sanitizer and the anchor map's mirror do, and the unwrapped-kid test gains a marquee holding a badge picture and one
+holding a b before the depth-1 wrapper, red with the mirror dropped, tests-1 with regression-1) and
+ui/webview/md-config-block-boxes.test.ts (the marquee joins the forbid list's inline-block group in its docstring, and its probe
+of the tags a note keeps inline drops it, regression-2). The guide's Links in a file paragraph gained two sentences, the trail's and
+the figure control's, its paragraph on a file's own HTML one on the marquee's removal (the file review's round 18,
+regression-2), and the browser plan's navigation-stack section (plans/file-browser.md) a pointer sentence.
+tools/markdown-viewer-plan-linknav.test.mjs holds this section to the tree: the section is present once after "## Out of
+scope" and carries the ask, what existed, the six decisions, the tests and the open points in that order; the trail
+module exists with the functions L1 names and the viewer calls it where L1 and L2 say; the words quoted here and in the
+guide are the sources' literals; the sheets carry L3's rules under `screen` in both sheets and the print block names the
+control nowhere; no history API call stands in the trail or the viewer; L6's two verifications are run from the
+merge-base with `origin/main` behind a two-part gate read off git, the merge-base not `origin/main` itself and the
+diff since it adding the module (the file review's round 4, extra8-1: the kernel stat empty, every changed file under
+the six directories, and the count L6 gives the listing's, on the open PR branch in a clone where `origin/main` has
+moved past the branch's last merge of it; on main, on a batch head cut from main's tip, on this branch right after
+merging `origin/main` and on any later branch once the follow-on has landed the checks stand down and the diagnostic
+names the part of the gate that held them, and without the ref the prose alone holds; a batch head that main has moved
+under passes both parts and fails the count on the other PRs' files, the gate's residual, disclosed in both modules and
+here and not closed, a third part named for the maintainer in the PR body: the author's closing pass after the file
+review's round 4, attribution-and-gates-2 with records-2; the gate is a pure function over git's answers, pinned in all
+four cells, the module's own path asserted to exist in the tree, and the running shape and the three hold-offs run
+against a temp repo shaped as the open PR branch, in this module and in the attribution module alike: the file review's
+round 5, tests-7, since a hold-off is a pass and a misspelt path would have held the checks off for good behind a green
+diagnostic); the guide's two sentences are whole and the old
+wording is gone; the browser plan's pointer stands in its navigation-stack section; and the module list is two-way
+(every module the listing above produces is named here and the count in that sentence is the listing's, read from the
+sentence; every test module under ui/webview, tools or tests whose own text names this follow-on is named here; the
+re-aimed sentence's count is the number of pre-existing test modules the diff since the merge-base with `origin/main`
+modifies, read from the sentence and compared, with each of them named in that sentence, behind the same two-part gate as
+L6's verifications, since a module's own text need not name this follow-on for the branch to have changed it, which is
+why the text-keyed rule alone let the count stand short by two (the file review's round 7, tests-3); every
+module named here exists, this one included). The four checks keyed on the diff since the merge-base with
+`origin/main` (L6's kernel stat and listing, one check with two claims; the re-aimed count's comparison with the
+delta; the browser legs' comparison with the delta; and the attribution module's second road, below; the re-aimed
+count's list-vs-count half is not among them and runs in every checkout) run in no checkout that gates landing, and in
+none after the merge: the fork's CI checks the pull request out at depth 1 in the
+jobs that run `node --test tools/*.test.mjs` and `npm test` (no `origin/main` there, so the gate's first part holds them
+off; only the secrets job fetches history, and tools/markdown-viewer-plan-linknav.test.mjs holds those two jobs to a
+checkout with no `fetch-depth: 0`, so a change there names this sentence), and once the follow-on has landed every later
+branch's diff since its merge-base adds that branch's files and not these modules, so the guard that lands is the
+attribution module's first road, the rule over the tree, and every claim about the delta, L6's two, the re-aimed
+count's comparison and the browser legs' comparison, holds by the prose alone, re-derived by hand at the merged head (the file review's round 5, extra5-1 with tests-1, correctness-4 and extra5-3: this
+page had stated the gate and the stand-down apart and never composed them, so a reader was never told what the enduring
+guard is). tools/markdown-viewer-plan-linknav-review.test.mjs holds the review's
+corrections to this record: L3 names the floor by the source's constant and the number the source gives it, its two
+exclusions with their functions, the web test's place before the join and the click's yield to an anchor with an href,
+the floor's re-read at each reflow of the figure by its function and the click's stand-down on an answered
+click, both carried by the source, the decision at the load and the error in place of the paint's add and the load's
+drop, linkAbove over the click's own link set, the tab's document request from the three gestures with the claim's three clauses in
+L3 and in L6, the cookie classes the leg measures, the failed figure opening nothing, the hidden group and the drag
+that starts on the control, each carried by the source or by a leg; L3 and this paragraph name the two shapes modules and the floor module, which
+exist; L6 names tests among the directories and the two files
+under it, which this paragraph names too, and derives its verifications from the merge-base.
+tools/markdown-viewer-plan-gate-adopt.test.mjs, the pin of the "Fix: the gate before adoption (2026-09-20)" section
+above, names this follow-on for one fact about its own section, that it follows "## Out of scope" and is not held to be
+the plan's last because this section lands at the same place, and holds that section's re-parse paragraph whole, which
+since the merge of the fork's main records this follow-on's two sites in file-view.ts (the bar's trail arrows and the
+figure control's glyph) within the whole file's count, and since the file review's landing round the census widened
+through this follow-on's pass, addFigureControls, with the modules it reaches and the sites judged there, the derived
+figures filled from file-view-seam.test.ts's pins.
+ui/webview/linknav-records-attribution.test.ts holds the rounds every record of this follow-on names to the convention in
+this section's opening paragraph (the file review's round 3, tests-2, re-ruled onto the structural rule in its round 4,
+rules-1, after a pin keyed on one string missed the misattribution in the commits that built it: a round belongs to the
+review named nearest before it in its unit of text and is one the convention enumerates for that review; a pass of the
+author's has no rounds; an id of the author's family stands only where the review named nearest before it is the author's
+pass; a round with no review named fails; and, since the fixes for the file review's round 11, fresh-1, a finding cited under a
+round of the file review is one that round's fixlist filed, held to the roster the opening paragraph's companion carries, while
+an id two fixlists share is told apart by content, which no pin reads), reading in every checkout, as a rule over the tree, every file git lists at the repo root, tracked or untracked
+and not ignored, whose text names the file review, names the author's closing pass, or carries an id of the author's
+family, together with the files the branch created (an existence roster, each judged in full, every unit of it) and this
+section, the guide's paragraph and
+the browser plan's pointer (judged in full), a phrase outside those judged only where the review named nearest before it
+is the file review or the author's pass, so another review's round in the shared file-view.ts, or in a file another PR
+brought in, is left alone and counted in the diagnostic (the file review's round 5, extra5-1 with tests-1, and
+regression-2: the first road had read a roster of eighteen files, checked against the diff only by the second road, which
+runs in no CI job, and had judged file-view.ts's units naming any review's round against this follow-on's enumeration; the
+key is the words "file review", the feature's name as well as this review's, so a record of another review that calls
+itself the file review, or a sentence about the file-review feature followed by a round, is judged against this
+enumeration and reds the module until that review takes a qualified name or the key is extended, no such unit standing at
+the swept head, and outside the created files a round naming no review is counted and not faulted, the diagnostic printing
+where it stands; the author's closing pass after the file review's round 5, tree-2 and reader-6),
+a new uncommitted file among the population (correctness-5 with tests-6: the second road's diff lists tracked paths
+alone, so a phrase planted in a new file was a false green), and the count of this follow-on's units in file-view.ts held
+equal to the derived count at the swept head (correctness-6 with tests-5 and extra8-4: a floor of ten had stood against
+fourteen); and, kept and disclosed above (it runs in no CI job and in none after the merge), every unit the branch added
+or touched since the merge-base behind the same two-part gate (the merge-base not `origin/main` itself and the diff
+adding the module; the file review's round 4, extra8-1: before the gate the roster equality would have failed every later
+branch in the repo once the follow-on landed, and a gate on the module's presence alone would have passed a batch head),
+the diff's added files printed beside the created files there for a human to compare. It and ui/webview/file-view-figure-shapes.test.ts read TS and JS through
+ui/webview/source-units.ts, the compiler's parser (comments as text with wrapped lines joined; each string the program
+sees as one value as one unit with that value, in either quote, escapes resolved, a `+` chain of literals folded into the
+value it computes and a template's spans joined with each hole kept as its source text, so a phrase split across tokens
+is judged whole; a join, a concat and a hole's run-time value outside the read, which the reader's header lists), Markdown
+as paragraphs and Python as paragraphs with its string literals cooked as Python cooks them and adjacent literals glued,
+the file's suffix picking the reader and a suffix the reader has no rule for refused naming the file rather than read as
+prose (the file review's round 5, correctness-7 with tests-4 and extra7-2: .tsx, .jsx and .cts had fallen through to the
+prose arm with no word to the caller; the tree road's diagnostic lists the suffixes it read),
+every unit charging a phrase to its source line through a starts map built from source positions (the file review's
+round 5, correctness-2 with extra6-1 and tests-2, extra6-3, and correctness-1 with tests-3 and extra7-1: the reader had
+emitted one unit per literal token, so a phrase split across a `+`, a hole, Python's adjacent literals or an f-string
+field sat in no unit; had built the starts map from the cooked text's newlines, charging an escaped-newline literal's
+fault to lines past it, which an added-line filter then dropped; and had dropped every backslash of a Python escape, so
+`\n` read as the letter n): the one reader for both pins, since the file review's round 4 ruled that a guard against a form is
+keyed on the property or parses, and that three guards keyed on three spellings are fixed as one mechanism. The author's
+closing pass after the file review's round 4 stated each pin's boundary in its message and pinned it by execution (guards-1
+with records-11: the refused-state pin reads whole literal values and regular expressions, not an identifier key, a word
+assembled at run time, a prefix or a case-folded test; guards-2 with attribution-and-gates-3: the attribution pin reads a round as
+`round` or `rounds` followed by digits, a comma list or a `to` range after `rounds` as the set, and no ordinal, spelled-out
+or abbreviated form, and an id as the family word, a hyphen and digits), had the attribution pin's second road diff the
+working tree against the merge-base so an uncommitted planted phrase is charged like a committed one (guards-3), charged a
+fault in this section to its plan line rather than a section-relative one (attribution-and-gates-4), and widened its first
+road's read of file-view.ts to the units carrying an id of the author's family beside those naming the file review (the
+same closing pass, records-1); since the tree rule of the file review's round 5 that read is keyed on the review named, so
+a pass misnamed as a round beside its id is judged there where the pass is named nearest before the round, while a round
+beside an id with no review named, or the branch's review named with a round over 2 beside an id, is counted and left
+alone in that shared file, judged in full only inside the created files and the three records (the author's closing pass
+after the file review's round 5, tree-1, correcting the earlier form of this sentence, which said every such comment is
+judged in every checkout). The census
+those two pins grew out of, every line the branch added since the merge-base 3711863c9 that names a review, run for the
+file review's round 3, tests-2, with the corrections it produced: the commit that recorded it said 173 lines over 19
+files at this head, and 173 is the count at that commit's parent, 677b0e1c8; at the commit's own head, 2a35d92c9, the same
+definition gives 178 lines over the same 19 files, the five more being the lines that commit itself added, each naming
+its review rightly (the file review's round 4, tests-4; both counts re-derived on 2026-09-20 by the census script kept
+beside the contract, run in a detached copy at each of the two heads; the commit's message stands as pushed, since
+amending it would move every later commit).
+tests/test_file_view_bar_browser.py, the served bar pins, read the groups
+inside `.fileview-acts`, and the nav group stands outside it, in the bar itself, before the path; run as a single module
+at the records commit, green (`pytest tests/test_file_view_bar_browser.py`, a run that needs the extension deps and a
+Playwright browser).
+
+**Open points for the owner.**
+
+1. Browser history. The trail is the viewer's own (L5). Integrating it (a pushState per step, popped at the close, the
+   Files pane's iframe told from the shell) would give the browser's Back and a back-swipe the trail's meaning, and
+   Alt+Left too outside the dashboard, whose shell takes the key first (open point 10); the cost is entries that
+   outlive the viewer and a design for the pane's frame. A ruling on whether to design it.
+2. A Fit / 1:1 toggle on the picture view (L4): a picture reached from a report shows as imgBlock shows any picture,
+   shrunk to the card, with no zoom.
+3. The trail across a close (L1). Closing the viewer ends it; the alternative keeps it for the page's life so a reopen
+   of the same file from Recent finds its Back again. The choice is a ruling; the code's end is one line in
+   closeFileView.
+4. An outside open of the file already shown roots the trail (a chat pill for the file the viewer shows drops its
+   Back), the contract's literal rule; widening L1's same-file keep to untagged opens is a ruling.
+5. With the Comments panel open, a region drag cannot START inside the control's 22px square at the figure's corner
+   (the control is hit above the overlay); a drag that starts elsewhere and crosses or ends on it is unaffected, and
+   the loss is a fine pointer's alone (no overlay and no drag on a coarse one). Recorded in L3 and in the guide's
+   figure sentence (the file review's ui-2); the stand-down, the control handing a press that becomes a drag to the
+   layer at its dragIsClick threshold, was not built: it needs a pointer-capture transfer between the control and the
+   layer. Whether to build it or to leave the record as it stands is a ruling.
+6. Not measured here. Only Chromium (Playwright, Linux) measured the layout, the click routing and the chords; Cmd+[
+   and Cmd+] are held by the pure chord table alone, and Cmd-click was exercised as Ctrl-click; the embed chip
+   (`![[Note]]`) the contract lists among the pushes was not driven, the wikilink (`[[Note]]`) was; the Waiting pane's
+   links and the file browser's rows are outside by construction (no tag) and were not driven, the Files pane's relay
+   and Recent rows were; desktop Firefox and Safari were not run.
+7. Discoverability. On a device whose primary pointer hovers and none of whose pointers is coarse, the control is
+   transparent at rest: the pointer over the picture or the button shows it, a focus reached from the keyboard shows it,
+   and the web control shows under any focus, while a Cmd/Ctrl-click or a press dragged off a local button leaves that
+   button focused but hidden until a key is pressed, so the next Enter opens its picture with nothing shown first. A
+   phone, a tablet or a touchscreen laptop keeps the control visible at rest. The plain click on the picture is the other
+   door, for a picture from the web only while its control or mark is in view and uncovered (L3; otherwise a click opens
+   nothing and brings it into view, and the next opens, and a sign partly in view counts as in view), and the guide says so.
+   Whether the control should show at rest is a ruling (the file review's round 16, ui-1: this point had said that on any
+   hover-capable device the control was transparent until the pointer or a focus, false for the focused local button and
+   for a touchscreen laptop, whose primary pointer hovers).
+8. The plan's two follow-on sections. The print follow-on (branch filereview-print, in flight) appends its section at
+   the same place, after "## Out of scope", and its pin requires its section to be the plan's last; this section's pin
+   requires only that it follows "## Out of scope", so when both land this section goes before the print one.
+9. The chords' stand-downs (L2). With a text field focused, or the editor open and the focus on a bar button, Alt+Left
+   is the browser's Back on Linux (verified) and, by the same accelerator, Windows, and leaves the page under the open
+   viewer, an unsaved edit with it. Whether `onNavKey` should take the default there too and step nothing (the viewer up
+   and the caret outside the editor's own field; CodeMirror keeps its own Alt+Left), or a beforeunload guard should hold
+   a dirty editor, is a ruling: the first trades a field's own Alt+Left (the caret's word step on a Mac) for the page's
+   safety.
+10. The chords inside the dashboard shell (L2). The shell's pane-focus script takes Alt+Left and Alt+Right first on
+    every pane document as the move between panes, so in a shell pane the arrow chords never reach the trail and only
+    the Mac's Cmd+[ and Cmd+] and the buttons step it; read from the listeners' order, not driven. Whether the shell
+    should yield the arrows to a pane whose document has a viewer up (`#romp-fileview`), or the trail's arrow chords
+    should be other keys, is a ruling; the guide's trail sentence states the exception (the review's round 2, held by
+    tests/test_guide_trail_chords_and_figure_button.py to the shell script's lines).
+11. The remote picture's tab (L3, L6; the file review's HIGH 1). Decided by the owner on 2026-09-22, who kept all three
+    gestures and asked that the outbound case be made visible before it happens; both roads stay priced here, and (b) is
+    the road not taken (the file review's round 11, ui-2 with extra8-2: the point had stood as a two-road offer after the
+    decision). (a) as built, the road taken: a plain click on a loaded remote picture, its control, and a Cmd/Ctrl-click on
+    it (each only while the picture's sign, its control or on a picture that wears none its mark, is in view and uncovered
+    at the gesture's start, and otherwise it opens nothing and brings the sign into view, and the next opens, a sign partly
+    in view counting as in view (the file review's round 16, extra5-1); the control by a click or by Enter or Space,
+    the plain click on the picture with the Comments panel closed, and the Cmd/Ctrl-click where the press reaches it, the
+    panel closed or the pointer coarse, neither click on a picture inside a fold's own summary, whose click toggles the
+    fold; L3)
+    open a top-level tab at the picture's address, a document request to a host the page had requested the image from that carries cookie
+    classes the image request did not (L3's table), where before the follow-on only an author's link did; one gesture
+    opens every picture, remote or local, and the tab is observed as a request by
+    file-view-figure-chosen-browser.test.ts from each of the three gestures, and since the fixes for the file review's
+    round 11 (ui-1 with extra8-1) the surface says where the open goes before the click: for a web target the control's
+    title, aria-label, class and glyph name the outbound open and its host, and the picture's own title carries the
+    address's origin, an author's title kept before it, or the withheld address when the source appears to carry a
+    sign-in (L3), and since the fixes for the file review's round 12 (fresh-1) a web picture
+    that wears no control, one under the floor, wears the dashed dress itself, an outline keyed on the mark `data-fv-figweb`
+    that `dressFigureMark` sets right after the title, on hover on a fine pointer and at rest where hover is none or any pointer
+    is coarse (L3); (b) the narrow road, not taken: the tab for the
+    explicit control and for a Cmd/Ctrl-click where the press reaches the picture alone, a bare plain click on a remote
+    picture doing nothing, as before the follow-on. The narrow road keeps the request: the control and the modified click still open the same
+    credentialed tab (the file review's round 2, extra5-3), so it changes which gesture makes it and not what leaves;
+    the cost is one gesture meaning two things by where the picture comes from, and the change is a flag on
+    openFigure's call from the control's branch that the web arm reads beside `wantsOwnTab`, with the plain-click case
+    of three browser legs re-aimed (file-view-figure-chosen-browser.test.ts's plain-click tab,
+    file-view-figure-shapes-browser.test.ts's protocol-relative figure, file-figure-open-browser.test.ts's remote
+    picture) and the guide's "a picture from the web opens its address in a new tab" narrowed to the button and the
+    modified click. A failed remote figure opens no tab on either road (L3). The reviewer's reading
+    (romp-manager, 2026-09-20), recorded before the decision: the explicit control is an unambiguous gesture and a
+    plain click on a picture is not, so a plain click opening a credentialed third-party tab is the surprising one; the
+    visibility built here answers it without dropping the gesture. The landing is the owner's whatever the tier, and the
+    word was given on 2026-09-22.
+12. A picture opened from a figure takes no Recent row (L3): the default taken, so the report's row stands and Back
+    reaches the report through the trail. With one exception, L2's rule, stated here because the default is ruled on
+    here (the file review's round 2, extra8-1): a Back or Forward open is the pane's own (openFromViewer through the
+    host's opener, files.ts openHere), so a Forward step onto the picture puts its row at the head of Recent, and the
+    next Back moves the report's row back over it; file-view-figure-recent-browser.test.ts drives
+    the composition (the figure's open, Back, Forward, Back). The eviction the default guards against cannot return
+    through it: a picture opened from a figure is a leaf of the trail (the picture view has no link to follow), so it
+    stands ahead only until the next push, which clears the list ahead. The alternative, a row for the picture as for
+    any file the pane's opener opens, is the host's opener in place of the figure's door (openFromViewer's push in
+    openFigure, the trail kept, the row minted by files.ts openHere); a ruling, and
+    file-view-figure-recent-browser.test.ts inverts with it. Closing the exception instead, no row on a Forward step
+    to a figure-reached picture, is not a one-line change: TrailEntry carries no field that tells a figure-opened entry
+    from a link-opened one, and routing the step through openFigureInViewer would push, clearing the list ahead.
+13. The Back and Forward pair hidden on an open with no step either way (L2): the file review's ruling (round 1,
+    ui-1; re-decided in round 2 on T367, extra8-2), built in the round-2 fixes against the contract's L2 clause, which
+    had the pair dimmed, and the contract corrected with it. The hide reclaims about 74 px of a 359 px bar at a 380 px
+    viewport and moves the file name 74 px on the first link follow of every trail (the file review's measurement).
+    If the contract's dimmed pair is wanted back: the one `nav.hidden` line in openFileView goes, and the pins and legs
+    L2 names invert (file-trail.test.ts, tools/markdown-viewer-plan-linknav-review.test.mjs,
+    file-trail-browser.test.ts, file-view-text-size.test.ts's bar case).

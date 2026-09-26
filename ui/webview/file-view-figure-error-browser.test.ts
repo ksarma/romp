@@ -16,11 +16,12 @@
 // twin), and a dispatched romp:wsup probes each parked URL off the DOM through a detached Image; the probes fail again, no
 // error reaches an img on the page, and the three labels stand unchanged, never rewritten or doubled. Every wait is for the
 // figures' own settling (`complete`), the probes' own events or the panel's paint, never a timer.
-// Skips LOUDLY without a playwright browser (CI installs none), as the other legs do. Before item 2: no label anywhere (red at
+// Skips LOUDLY without a playwright browser (in CI the Test step runs before the job's Chromium install, so the leg skips there; the launch is real-viewer-leg.ts's inBrowser, the shared helper), as the other legs do. Before item 2: no label anywhere (red at
 // the first label assertion over a git archive of the base, whose real-viewer-leg has no `serve` hook either). Synthetic
 // values only: an invented report, /repo/notes-api paths, the placeholder sid.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
+import * as http from "node:http";
 import { inBrowser, openViewer, openPanel, frames, topBlock, putAtTop, PARA, ROOT, REPORT, type Mode, type Served } from "./real-viewer-leg";
 
 const FIGS = ROOT + "/docs/figs/";
@@ -45,12 +46,15 @@ const COMMENTS = [{ id: T0 + "-1", author: "you", ts: T0, body: "Note on the fig
 
 type Fig = { dest: string | null; alt: string | null; complete: boolean; natural: number; label: string | null; labelClass: string | null; display: string | null; border: string | null; width: number; parent: string; hasOnerror: boolean };
 /** Every figure of the Rendered box in order, with the label standing after it (or after the regions layer's wrap around it) when one
- *  does; `parent` is the block the author put the figure in, read through the layer's wrap when the panel has wrapped it. */
+ *  does, read past the figure's "Open the picture" control when that stands at the anchor's side (the link-navigation follow-on's L3:
+ *  a local figure wears one, and the viewer's figureLabelAfter reads past it the same way); `parent` is the block the author put the
+ *  figure in, read through the layer's wrap when the panel has wrapped it. */
 const figures = (page: any): Promise<{ figs: Fig[]; labels: number }> => page.evaluate(() => {
   const md = document.querySelector(".fileview-md") as HTMLElement;
   const figs = (Array.from(md.querySelectorAll("img")) as HTMLImageElement[]).map((i) => {
     const anchor = i.parentElement && i.parentElement.classList.contains("fc-imgwrap") ? i.parentElement : i;
-    const n = anchor.nextSibling as Element | null;
+    let n = anchor.nextSibling as Element | null;
+    if (n && n.nodeType === 1 && n.hasAttribute("data-fv-figopen")) n = n.nextSibling as Element | null;
     const lab = n && n.nodeType === 1 && n.hasAttribute("data-fv-figerr") ? n as HTMLElement : null;
     const cs = lab ? getComputedStyle(lab) : null;
     return { dest: i.getAttribute("data-fv-src"), alt: i.getAttribute("alt"), complete: i.complete, natural: i.naturalWidth, label: lab ? lab.textContent : null, labelClass: lab ? lab.className : null,
@@ -129,7 +133,7 @@ test("in a browser: a missing figure and a text file named as a figure each wear
           return {
             imgs: imgs.length, wraps: wraps.length, wrapped: imgs.every((i) => !!i.parentElement && i.parentElement.classList.contains("fc-imgwrap")),
             labels: md.querySelectorAll("[data-fv-figerr]").length,
-            afterWrap: imgs.filter((_, k) => k !== 2).every((i) => { const n = i.parentElement!.nextSibling as Element | null; return !!n && n.nodeType === 1 && n.hasAttribute("data-fv-figerr"); }),
+            afterWrap: imgs.filter((_, k) => k !== 2).every((i) => { let n = i.parentElement!.nextSibling as Element | null; if (n && n.nodeType === 1 && n.hasAttribute("data-fv-figopen")) n = n.nextSibling as Element | null; return !!n && n.nodeType === 1 && n.hasAttribute("data-fv-figerr"); }),   // past the figure's Open control, which stands right after the wrap
             inWrap: wraps.some((w) => w.querySelector("[data-fv-figerr]")),
             markText: mark ? mark.textContent : null, markWidth: mark ? mark.getBoundingClientRect().width : 0,
           };
@@ -256,7 +260,8 @@ const figures2 = (page: any): Promise<{ figs: Fig2[]; labels: number }> => page.
   const out = (Array.from(md.querySelectorAll("img")) as HTMLImageElement[]).map((i) => {
     let anchor: Element = i;
     for (let p = anchor.parentElement; p && (p.localName === "picture" || p.classList.contains("fc-imgwrap") || (p.localName === "a" && p.children.length === 1)); p = anchor.parentElement) anchor = p;
-    const n = anchor.nextSibling as Element | null;
+    let n = anchor.nextSibling as Element | null;
+    if (n && n.nodeType === 1 && n.hasAttribute("data-fv-figopen")) n = n.nextSibling as Element | null;   // past the figure's Open control (L3)
     const lab = n && n.nodeType === 1 && n.hasAttribute("data-fv-figerr") ? n as HTMLElement : null;
     const cs = lab ? getComputedStyle(lab) : null; const r = lab ? lab.getBoundingClientRect() : null;
     return { alt: i.getAttribute("alt"), asked: leaf(i.currentSrc || ""), natural: i.naturalWidth, label: lab ? lab.textContent : null, labelParent: lab ? lab.parentElement!.localName : null,
@@ -293,4 +298,188 @@ test("in a browser (the Slice 7 review's round 1): a <picture>'s label names the
     assert.deepEqual(errors, [], "no uncaught page error");
     await page.close();
   });
+});
+
+// ── a credential in the label's words, and in a loaded picture's title (the file review's round 14, correctness-1 with extra5-3) ─
+// Chromium never requests a source carrying a user:pass@, an ftp: source or one the URL parser refuses, so each fails and its
+// label is where such a source would show; before the round-14 fix the label printed every source but a data: one as written,
+// and a loaded picture's title kept its query and fragment. A second local http server on another port stands for the remote
+// hosts: the page reaches it as http://example.test, https://example.test and https://bucket.example.test through a context
+// route that relays the bytes (file-figure-open-browser.test.ts's shape), answering /ok.svg with a picture and every other path
+// with a 404, and the hosts are on figureHosts before the open, so no figure is gated. CI skips this leg (the Test step runs
+// before the job's Chromium install), so file-view-figure-error.test.ts holds the rule on the label builder and through the
+// listener over the stand-in, which CI runs. Every planted value is assembled at run time: no credential-shaped literal here.
+/** The remote server: every request logged by its path, /ok.svg a 300 by 200 picture, anything else a 404. */
+function remoteServer(log: string[]): Promise<{ port: number; close: () => Promise<void> }> {
+  return new Promise((resolve) => {
+    const s = http.createServer((req, res) => {
+      log.push((req.method || "") + " " + (req.url || ""));
+      if ((req.url || "").split("?")[0] === "/ok.svg") { res.writeHead(200, { "Content-Type": "image/svg+xml" }); res.end('<svg xmlns="http://www.w3.org/2000/svg" width="300" height="200"><rect width="300" height="200" fill="#333"/></svg>'); return; }
+      res.writeHead(404, { "Content-Type": "text/plain" }); res.end("not found");
+    });
+    s.listen(0, "127.0.0.1", () => { const a = s.address() as { port: number }; resolve({ port: a.port, close: () => new Promise((r) => s.close(() => r())) }); });
+  });
+}
+/** The remote server's answer for `p`, read over loopback from node (the relay's other half). */
+const fromRemote = (port: number, p: string): Promise<{ status: number; type: string; body: string }> => new Promise((resolve, reject) => {
+  http.get({ host: "127.0.0.1", port, path: p }, (res) => { let b = ""; res.on("data", (c) => { b += c; }); res.on("end", () => resolve({ status: res.statusCode || 0, type: String(res.headers["content-type"] || ""), body: b })); }).on("error", reject);
+});
+
+test("in a browser: a failed figure's label never prints a path, a userinfo, a query or a fragment for a source with a scheme other than data:, or a protocol-relative one: a source with a sign-in part (an http userinfo, a userinfo plus a query, a protocol-relative one in HTML and in markdown, a srcset candidate the browser chose, an ftp source, an out-of-range port, a tab inside the scheme, a refused source whose password holds a / or a ?) shows the withheld address and no part of itself (the file review's round 15, correctness-1), and any other (a query token, an S3 presigned pair, a fragment's access token, an out-of-range port with a query alone) its origin alone, a refused one cut at its authority (the same round's extra9-2); a loaded picture's title shows its origin alone, and a data: head and a workspace path print as they did (a property pin over the page, red at the head the round read, where each label printed its path and the title kept its path)", { timeout: 300000 }, async (t) => {
+  const TOK = "tok" + "en", UI = "u" + "ser" + ":" + "p" + "w" + String(4 * 4) + "@";
+  const V = (k: string): string => k + "TOK" + String(k.length * 37);
+  const S3C = "AKID" + "EXAMPLE" + "%2F20260923%2Fus-east-1%2Fs3%2Faws4_request", S3S = "abc" + "def0123456789" + "fedcba";
+  const W = "address withheld because it appears to carry a sign-in";   // the words in a withheld address's place (file-view.ts FIGURE_ADDRESS_WITHHELD), a literal so the expected text never moves with the product
+  /** [case, the paragraph's figure, the label's words (null for the loaded picture, which wears none)] */
+  const cases: Array<[string, string, string | null]> = [
+    ["an http userinfo", '<img src="http://' + UI + 'example.test/a.svg" alt="">', W],
+    ["an https query token", '<img src="https://example.test/b.svg?' + TOK + "=" + V("QB") + '" alt="">', "https://example.test"],
+    ["an S3 presigned pair", '<img src="https://bucket.example.test/fig.png?X-Amz-Algorithm=AWS4-HMAC-SHA256&amp;X-Amz-Credential=' + S3C + "&amp;X-Amz-Signature=" + S3S + '" alt="">', "https://bucket.example.test"],
+    ["a fragment's access token", '<img src="http://example.test/f.svg#access_' + "token=" + V("FR") + '" alt="">', "http://example.test"],
+    ["a userinfo plus a query", '<img src="http://' + UI + "example.test/c.svg?" + TOK + "=" + V("UQ") + '" alt="">', W],
+    ["a protocol-relative userinfo plus a query", '<img src="//' + UI + "example.test/r.svg?" + TOK + "=" + V("PR") + '" alt="">', W],
+    ["a srcset 1x candidate with a userinfo plus a query", '<img src="figs/fallback.png" srcset="http://' + UI + "example.test/s.svg?" + TOK + "=" + V("SS") + ' 1x" alt="">', W],
+    ["an ftp userinfo plus a query", '<img src="ftp://' + UI + "example.test/g.svg?" + TOK + "=" + V("FT") + '" alt="">', W],
+    ["an out-of-range port with a userinfo plus a query", '<img src="http://' + UI + "example.test:99999/u.svg?" + TOK + "=" + V("UP") + '" alt="">', W],
+    ["an out-of-range port with a query alone, cut at its authority", '<img src="http://example.test:99999/v.svg?' + TOK + "=" + V("UV") + '" alt="">', "http://example.test:99999"],
+    ["a markdown protocol-relative userinfo plus a query", "![](//" + UI + "example.test/m.svg?" + TOK + "=" + V("MD") + ")", W],
+    ["a tab inside the scheme", '<img src="ht&#9;tp://' + UI + "example.test/t.svg?" + TOK + "=" + V("TB") + '" alt="">', W],
+    ["a refused source whose password holds a /", '<img src="http://u' + "ser:p/" + V("SL") + '@example.test/x1.png" alt="">', W],
+    ["a refused source whose password holds a ?", '<img src="http://u' + "ser:p?" + V("QM") + '@example.test/x2.png" alt="">', W],
+    ["a loaded picture whose address carries a query and a fragment", '<img src="https://example.test/ok.svg?' + TOK + "=" + V("LQ") + "#access_" + "token=" + V("LF") + '" alt="loaded">', null],
+    ["a control, a data: source", '<img src="data:image/png;base64,' + "A".repeat(40) + '" alt="">', "data:image/png;base64,…"],
+    ["a control, a workspace path with a query-looking tail", "![](figs/q.png?x=1)", "figs/q.png?x=1"],
+  ];
+  const planted = ["user:", "pw16", S3C, S3S, "X-Amz-", "access_", "?" + TOK, ...["QB", "FR", "UQ", "PR", "SS", "FT", "UP", "UV", "MD", "TB", "SL", "QM", "LQ", "LF"].map(V)];
+  const note = "# Report\n\n" + cases.map(([n, h], i) => "Case " + i + " (" + n + "): " + h + " end.").join("\n\n") + "\n";
+  const served: string[] = [];
+  const remote = await remoteServer(served);
+  try {
+    await inBrowser(t, async (browser) => {
+      const before = async (pg: any): Promise<void> => {
+        await pg.context().route((u: URL) => u.hostname === "example.test" || u.hostname === "bucket.example.test", async (route: any) => {
+          const a = await fromRemote(remote.port, new URL(route.request().url()).pathname);
+          return route.fulfill({ status: a.status, contentType: a.type, body: a.body });
+        });
+        await pg.evaluate(() => { localStorage.setItem("romp:settings", JSON.stringify({ figureHosts: ["example.test", "bucket.example.test"] })); });   // no figure gated: each is fetched, or refused by the browser, at the paint
+      };
+      const { page, errors } = await openViewer(browser, "pane", 900, 700, { docs: { [REPORT]: note }, serve, before });
+      await page.waitForFunction((n: number) => { const imgs = Array.from(document.querySelectorAll(".fileview-md img")) as HTMLImageElement[]; return imgs.length === n && imgs.every((i) => i.complete); }, cases.length, { timeout: 15000 });
+      await frames(page, 3);
+      const rows: Array<{ label: string | null; title: string | null; natural: number; visible: string }> = await page.evaluate(() => (Array.from(document.querySelectorAll(".fileview-md > p")) as HTMLElement[]).filter((p) => /^Case \d+/.test(p.textContent || "")).map((p) => {
+        const i = p.querySelector("img") as HTMLImageElement | null;
+        const lab = p.querySelector("[data-fv-figerr]") as HTMLElement | null;
+        return { label: lab ? lab.textContent : null, title: i ? i.getAttribute("title") : null, natural: i ? i.naturalWidth : -1, visible: p.innerText || "" };
+      }));
+      t.diagnostic("remote requests " + JSON.stringify(served));
+      assert.equal(rows.length, cases.length, "one paragraph per case");
+      assert.deepEqual(rows.map((r) => r.label), cases.map(([, , w]) => (w === null ? null : FAILED + " " + w)),
+        "each failed figure's label: the withheld address for a source with a sign-in part, the origin alone for the rest (a refused one cut at its authority), the data: head and the workspace path as they were, and the loaded picture none (a property pin over the label's text)");
+      const loaded = rows[cases.length - 3];
+      assert.ok(loaded.natural > 0, "the loaded case decoded, relayed from the remote server: " + JSON.stringify(served));
+      assert.equal(loaded.title, "Opens in a new tab: https://example.test", "the loaded picture's title is its origin alone: no path, no query, no fragment (a property pin over the title attribute)");
+      const leaks: string[] = [];
+      rows.forEach((r, k) => { for (const x of planted) for (const [where, text] of [["label", r.label], ["title", r.title], ["visible text", r.visible]] as const) if ((text || "").includes(x)) leaks.push(cases[k][0] + ": the " + where + " carries " + JSON.stringify(x)); });
+      assert.deepEqual(leaks, [], "no planted value in a label, a title or a paragraph's visible text (a property pin)");
+      assert.deepEqual(errors, [], "no uncaught page error");
+      await page.close();
+    });
+  } finally { await remote.close(); }
+});
+
+// ── the chat modal's heal and the label (the file review's round 15, fresh-1) ───────────────────────────────────────────────
+// On the chat modal the page's heal (preview.ts installMdImgHeal, a capture listener on the document) parks a failed img before
+// the viewer's listener on the body reads it: the resolved src goes into data-md-src and the src leaves. Before the fix the label
+// of every failed web picture whose address was its own src read "the source is empty"; failedSource now reads the heal's record
+// when the candidate names nothing and the img has no src. The cells: a plain web source, a query-bearing one and a standard
+// userinfo one (red before the fix by "the source is empty"; after it the origin for the first two and the withheld address for
+// the third); a same-scheme source written without slashes on the http page and on a page opened at https://notes-api.test
+// (openViewer's origin), which the heal records resolved against that base (red before the fix by the missing withheld wording, as
+// nothing of the address printed there); and, as controls green before the fix and after it, a srcset candidate and a
+// <picture> source from the web, whose label names the candidate's origin once the browser has chosen again after the heal
+// removed the src (each img's error events counted, and the label read after its last one). Four empty destinations join them
+// (the file review's round 16, correctness-1): `![diagram]()`, `<img src="">` and `<img src="   ">` on the http page and the first on
+// the https one. The heal parks each as it parks any failed img, recording img.src, which for an empty or blank src is the page's
+// base address, and the label read that record as the page's own origin; failedSource now leaves a record equal to that address
+// unread, so the label says the source is empty (red at the head that round read, the web cells its controls). Every planted value
+// is assembled at run time.
+test("in a browser, the chat modal with the page's heal: a failed web picture whose address is its own src is labelled from the heal's record, its origin alone or the withheld address, never 'the source is empty', a same-scheme source written without slashes withheld on an http and on an https base, and a srcset and a <picture> source from the web still named by the candidate's origin after the browser chooses again (the file review's round 15, fresh-1: the heal parked the img before the viewer read it); and an empty markdown destination, an empty src and a blank src, which the heal parks recording the page's base address, say 'the source is empty' and name no origin, on the http page and on the https one (the file review's round 16, correctness-1: red at the head that round read by the page's origin in each; the web cells are its controls, green there by design) (a property pin over the label's text)", { timeout: 120000 }, async (t) => {
+  const TOK = "tok" + "en", UI = "u" + "ser" + ":" + "p" + "w" + String(4 * 4) + "@";
+  const V = (k: string): string => k + "TOK" + String(k.length * 37);
+  const W = "address withheld because it appears to carry a sign-in";   // FIGURE_ADDRESS_WITHHELD as a literal, so the expected text never moves with the product
+  const EMPTY = "the source is empty (diagram)";   // FIGURE_NO_SOURCE and the alt, a literal for the same reason
+  /** [cell, the paragraph's figure, the page's origin ("http" or "https"), the label's words, whether the cell is a control] */
+  const cells: Array<[string, string, "http" | "https", string, boolean]> = [
+    ["a plain web source", '<img src="https://example.test/missing.svg" alt="">', "http", "https://example.test", false],
+    ["a query-bearing web source", '<img src="https://example.test/q.svg?' + TOK + "=" + V("HQ") + '" alt="">', "http", "https://example.test", false],
+    ["a standard userinfo", '<img src="http://' + UI + 'example.test/u.svg" alt="">', "http", W, false],
+    ["http: written without slashes on the http page", '<img src="http:' + UI + 'example.test/h.png" alt="">', "http", W, false],
+    ["https: written without slashes on a page at https://notes-api.test", '<img src="https:' + UI + 'example.test/s.png" alt="">', "https", W, false],
+    ["a srcset candidate from the web (a control)", '<img src="figs/fallback.png" srcset="https://example.test/ss.svg 1x" alt="">', "http", "https://example.test", true],
+    ["a <picture> source from the web (a control)", '<picture><source srcset="https://example.test/pic.svg"><img src="figs/fallback2.png" alt=""></picture>', "http", "https://example.test", true],
+    // the empty destinations (the file review's round 16, correctness-1): the heal parks them too, recording img.src, the page's base
+    // address for an empty or blank src, and the label says the source is empty, as it did before the heal's record was read
+    ["an empty markdown destination on the http page", "![diagram]()", "http", EMPTY, false],
+    ["an empty src on the http page", '<img src="" alt="diagram">', "http", EMPTY, false],
+    ["a blank src on the http page", '<img src="   " alt="diagram">', "http", EMPTY, false],
+    ["an empty markdown destination on a page at https://notes-api.test", "![diagram]()", "https", EMPTY, false],
+  ];
+  const planted = ["user:", "pw16", "?" + TOK, V("HQ")];
+  const served: string[] = [];
+  const remote = await remoteServer(served);
+  const seen: Array<[string, string | null]> = [];   // [cell, label] for every cell that is not a control, both pages, asserted once after both
+  let ran = false;
+  try {
+    await inBrowser(t, async (browser) => {
+      ran = true;
+      for (const scheme of ["http", "https"] as const) {
+        const mine = cells.filter(([, , s]) => s === scheme);
+        const note = "# Report\n\n" + mine.map(([n, h], i) => "Case " + i + " (" + n + "): " + h + " end.").join("\n\n") + "\n";
+        const before = async (pg: any): Promise<void> => {
+          await pg.context().route((u: URL) => u.hostname === "example.test", async (route: any) => {
+            const a = await fromRemote(remote.port, new URL(route.request().url()).pathname);
+            return route.fulfill({ status: a.status, contentType: a.type, body: a.body });
+          });
+          await pg.evaluate(() => {
+            const w = window as any;
+            localStorage.setItem("romp:settings", JSON.stringify({ figureHosts: ["example.test"] }));   // no figure gated: each is fetched at the paint
+            w.__errs = new Map();   // each img's error events, counted on the document before the heal's listener runs
+            document.addEventListener("error", (e) => { const i = e.target as Element | null; if (i && i.nodeType === 1 && i.tagName === "IMG") w.__errs.set(i, (w.__errs.get(i) || 0) + 1); }, true);
+            w.FV.installMdImgHeal();   // render.ts installs it once at load, before any turn paints
+          });
+        };
+        const { page, errors } = await openViewer(browser, "chat", 900, 700, { docs: { [REPORT]: note }, serve, before, origin: scheme + "://notes-api.test" });
+        try {
+          assert.equal(await page.evaluate(() => document.baseURI), scheme + "://notes-api.test/", "the page's base is " + scheme + "://notes-api.test/");
+          // every img has failed and been parked, and a srcset or <picture> img has had its second error, the browser's choice after the heal removed its src
+          const wants = mine.map(([, h]) => (/srcset=/.test(h) ? 2 : 1));
+          await page.waitForFunction((w: number[]) => { const imgs = Array.from(document.querySelectorAll(".fileview-md img")); const m = (window as any).__errs as Map<Element, number>; return imgs.length === w.length && imgs.every((i, k) => (m.get(i) || 0) >= w[k] && i.classList.contains("md-img-failed")); }, wants, { timeout: 15000 });
+          await frames(page, 3);
+          const rows: Array<{ label: string | null; errs: number; parked: boolean; src: boolean; mdSrc: string | null; visible: string }> = await page.evaluate(() => (Array.from(document.querySelectorAll(".fileview-md > p")) as HTMLElement[]).filter((p) => /^Case \d+/.test(p.textContent || "")).map((p) => {
+            const i = p.querySelector("img") as HTMLImageElement;
+            const lab = p.querySelector("[data-fv-figerr]") as HTMLElement | null;
+            return { label: lab ? lab.textContent : null, errs: ((window as any).__errs as Map<Element, number>).get(i) || 0, parked: i.classList.contains("md-img-failed"), src: i.hasAttribute("src"), mdSrc: i.getAttribute("data-md-src"), visible: p.innerText || "" };
+          }));
+          t.diagnostic(scheme + " page: " + JSON.stringify(rows.map((r, k) => ({ cell: mine[k][0], label: r.label, errs: r.errs, parked: r.parked, src: r.src, mdSrcHost: r.mdSrc ? new URL(r.mdSrc).host : null }))));
+          assert.equal(rows.length, mine.length, "one paragraph per cell");
+          // the precondition: the heal parked each failed img (no src, md-img-failed, the resolved address in data-md-src)
+          assert.deepEqual(rows.map((r) => [r.parked, r.src, !!r.mdSrc]), mine.map(() => [true, false, true]), "the heal parked every failed figure before the label was read");
+          // every label of a cell that is not a control, kept for the one assertion after both pages, so a red shows each page's cells
+          rows.forEach((r, k) => { if (!mine[k][4]) seen.push([mine[k][0], r.label]); });
+          // the controls, green before the fix by design: the label names the candidate the browser chose, from its origin on (the path
+          // after it printed before the origin cut), never the fallback src and never the empty source
+          for (const [k, r] of rows.entries()) if (mine[k][4]) assert.ok((r.label || "").startsWith(FAILED + " " + mine[k][3]) && !/fallback|the source is empty/.test(r.label || ""), mine[k][0] + ": after its " + r.errs + " error events the label names the candidate's origin, not the fallback src or the empty source: " + JSON.stringify(r.label));
+          const leaks: string[] = [];
+          rows.forEach((r, k) => { for (const x of planted) for (const [where, text] of [["label", r.label], ["visible text", r.visible]] as const) if ((text || "").includes(x)) leaks.push(mine[k][0] + ": the " + where + " carries " + JSON.stringify(x)); });
+          assert.deepEqual(leaks, [], "no planted value in a label or a paragraph's visible text (a property pin)");
+          assert.deepEqual(errors, [], "no uncaught page error");
+        } finally { await page.close(); }
+      }
+    });
+    if (!ran) return;   // no browser: inBrowser skipped the case loudly
+    // FAILS BEFORE the fix: the five cells that are not controls read FIGURE_FAILED + " the source is empty"; and at the head the file
+    // review's round 16 read, the four empty destinations read FIGURE_FAILED + " http://notes-api.test (diagram)", or https on the https
+    // page, the page's own origin (correctness-1)
+    assert.deepEqual(seen, (["http", "https"] as const).flatMap((sc) => cells.filter(([, , s, , control]) => s === sc && !control).map(([name, , , w]): [string, string] => [name, FAILED + " " + w])), "each label names the heal's record as any address is named, the origin alone or the withheld address, and an empty destination's says the source is empty, [cell, label] on both pages (a property pin over the label's text)");
+  } finally { await remote.close(); }
 });

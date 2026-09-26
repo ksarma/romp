@@ -21,6 +21,8 @@ import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { cssRules, renderRule } from "./css-rules.mjs";
+import { hostSheets } from "./host-sheets.mjs";
 
 const read = (f: string) => fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", f), "utf8");
 const CHAT = read("styles.css");
@@ -90,6 +92,30 @@ const RULES = [
   ".md mark.md-mark, .fileview-md mark.md-mark {", ".md .fv-wikilink, .fileview-md .fv-wikilink {", ".fileview-md a.fv-embed {",
   ".fileview-md .fv-gate {", ".fileview-md .fv-gate:hover, .fileview-md .fv-gate:focus-visible {", '.fileview-md .fv-gate[data-act="fv-load"] > :not([data-fv-label]) {',
   ".fileview-md .fv-figerr {",   // the label after a figure that failed (Slice 7 of plans/markdown-viewer.md, item 2): the gate's dress in the error dress's ink; its print line is in the block pinned whole below
+  // the figure's "Open the picture" control (the link-navigation follow-on's L3): its place over the corner, its hover wash, the two
+  // float twins, the web dress (the file review's round 11, ui-1 with extra8-1: a head listed here is the property that both sheets
+  // hold the rule byte for byte, and a rule in one sheet only reds), and the two one-line screen blocks that reveal it (read whole
+  // from the line's start to the first close brace)
+  ".fileview-md .fv-figopen {", ".fileview-md .fv-figopen:hover {", ".fileview-md .fv-figopen-left {", ".fileview-md .fv-figopen-right {", ".fileview-md .fv-figopen-web {",
+  ".fileview-md .fv-figopen-web:not(:hover) {",   // the web dress's rest colour, the outbound dress's own token, a head held byte for byte like the rest of this list (the file review's round 13, ui-1 with extra6-1)
+  // the reveal's list carries `.fv-figopen-web:focus`, any focus on the web control (the file review's round 14, ui-1 with extra9-1)
+  "@media screen { .fileview-md :hover + .fv-figopen, .fileview-md .fv-figopen:hover, .fileview-md .fv-figopen:focus-visible, .fileview-md .fv-figopen-web:focus {",
+  "@media screen and (hover: none), screen and (any-pointer: coarse) { .fileview-md .fv-figopen {",
+  // the picture's own outbound mark for a web picture with no control (the file review's round 12, fresh-1): the two one-line screen
+  // blocks keyed on the img's attribute, byte-equal in both sheets (file-figure-open.test.ts derives the set by the attribute)
+  "@media screen { .fileview-md img[data-fv-figweb]:hover {", "@media screen and (hover: none), screen and (any-pointer: coarse) { .fileview-md img[data-fv-figweb] {",
+  // the margin at rest on every pointer, 3px up and down and 3px plus 0.3em across the line, so the ring of var(--bg) the two rules
+  // above carry under the outline covers no neighbouring ink at the picture's own text size, and where the picture is in smaller
+  // text than an italic or bold italic f glued before it, covers that f's ink only within the bound the sheets' comment states (the
+  // file review's round 14, correctness-2 with extra5-1 and extra5-2, the margin measured per axis on the two margin rulings of
+  // 2026-09-24), held byte for byte too
+  "@media screen { .fileview-md img[data-fv-figweb] {",
+  // the web control's full opacity at rest, its focus ring off its border, its press cue off, and the dead link holding the dress,
+  // dimming by colour (the painted-contrast ask of 2026-09-23): four more one-line screen blocks held byte for byte
+  "@media screen and (hover: none), screen and (any-pointer: coarse) { .fileview-md .fv-figopen-web {", "@media screen { .fileview-md .fv-figopen-web:focus-visible {",
+  "@media screen { .fileview-md .fv-figopen-web:active {",
+  "@media screen { .fileview-md .fv-figopen-web, .fileview-md img[data-fv-figweb] {",   // the browser's tap highlight off on the web control and the mark, a one-line screen block held byte for byte (the tap-highlight ruling of 2026-09-24)
+  "@media screen { .fileview-md a.fv-dead:has(.fv-figopen-web), .fileview-md a.fv-dead:has(img[data-fv-figweb]) {",
   ".fileview-cm {", ".fileview-cm .cm-editor {", ".fileview-editor {",
   ".fileview-dir-link {", ".fileview-dir-link:hover {",
   // links inside a shown file (file-view-links.ts): the light dress on a URL anchor and a path link, and the Markdown link that names a file
@@ -159,12 +185,18 @@ test("the viewer's shared chrome and the document's type scale exist in BOTH she
 // The Outline button's open state (Slice 6 of plans/markdown-viewer.md, item 2) is the bar's selected dress, .fileview-btn.on,
 // which file-view.ts toggles beside aria-expanded, and no rule of the button's own: the build's
 // `.fileview-outline-btn[aria-expanded="true"]` rule was a near-twin of that dress without its 600 weight and its hover
-// inversion, so an open Outline computed unlike the pressed Rendered toggle beside it (the PR review's round 1). Heads are
+// inversion, so an open Outline computed unlike the pressed Rendered toggle beside it (the PR review's round 1). The census is
+// over parsed RULES through ui/webview/css-rules.mjs, each with the at-rules enclosing it, in every sheet a page of either host
+// loads (ui/webview/host-sheets.mjs, derived from the page assembly), so a rule indented inside an at-rule block or written
+// in the Files page's own sheet is in it (the file review's round 10, correctness-5: heads had been read at a line start over
+// the pair alone, so the twin indented inside `@media screen` passed, and a rule of the button's own in files-pane.css dresses
+// the button on that page as one in styles.css does); the dress it wears instead is read off the pair, where it is written. Heads are
 // read at a line start, as rulesOf reads them. Red over a git archive of 3e433ceee: one such head in each sheet.
-test("the Outline button wears the bar's selected dress and has no rule of its own: no head in either sheet names .fileview-outline-btn or aria-expanded", () => {
-  const heads = (css: string): string[] => css.split("\n").filter((l) => /^[.#:@a-zA-Z[][^{]*\{/.test(l)).map((l) => l.slice(0, l.indexOf("{")).trim());
+test("the Outline button wears the bar's selected dress and has no rule of its own: no rule in any sheet a page of either host loads names .fileview-outline-btn or aria-expanded, however the sheet writes it", () => {
+  for (const { name, css } of hostSheets(path.resolve(process.cwd(), ".."))) {
+    assert.deepEqual(cssRules(css).filter((r) => /\.fileview-outline-btn|aria-expanded/.test(r.selector)).map(renderRule), [], name + ": a rule of the button's own, however the sheet writes it (read as a parsed rule with its enclosing at-rules, not as a head at a line start)");
+  }
   for (const [sheet, css] of [["styles.css", CHAT], ["feed.css", FEED]] as const) {
-    assert.deepEqual(heads(css).filter((h) => h.includes(".fileview-outline-btn") || h.includes("aria-expanded")), [], sheet + ": a rule of the button's own");
     // the dress it wears instead, present (rulesOf fails on an absent head) and carrying what the twin lacked
     assert.match(rulesOf(css, ".fileview-btn.on {")[0], /font-weight: 600;/, sheet + ": the selected dress carries the weight");
     assert.match(rulesOf(css, ".fileview-btn.on:hover {")[0], /background: var\(--accent\); color: var\(--accent-fg\);/, sheet + ": ...and the hover inversion");

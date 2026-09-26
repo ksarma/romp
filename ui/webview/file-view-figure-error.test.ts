@@ -316,8 +316,13 @@ const txt = (s: string): Txt => new Txt(s);
 const block = (tag: string, ...kids: Array<El | Txt>): El => { const e = new El(tag); e.append(...kids); return e; };
 /** Every label under `root`, by the MARK (contract C2: the label is found by `[data-fv-figerr]`, never by its class). */
 const labels = (root: El): El[] => root.querySelectorAll("[data-fv-figerr]");
-/** The label right after `n`: its next sibling when that carries the mark, else null. */
-const labelAfter = (n: El): El | null => { const s = n.nextSibling; return s instanceof El && s.hasAttribute("data-fv-figerr") ? s : null; };
+/** The label right after `n`: its next sibling when that carries the mark, else null. Since the link-navigation follow-on's L3 a
+ *  figure may wear its "Open the picture" control as that sibling (file-view.ts decideFigureControl: in a browser a LOADED figure's,
+ *  added at its load; in this suite's DOM every figure is a stand-in, which the paint decides from its source and the load and
+ *  error listeners leave as the paint decided it, so a figure laid by hand after the paint has none), and a label after such a
+ *  figure stands after the control (figureLabelAfter): the read steps past a sibling carrying the control's mark, as the viewer's
+ *  own lookup does. */
+const labelAfter = (n: El): El | null => { let s = n.nextSibling; if (s instanceof El && s.hasAttribute("data-fv-figopen")) s = s.nextSibling; return s instanceof El && s.hasAttribute("data-fv-figerr") ? s : null; };
 const fire = (n: El, type: "error" | "load"): void => { n.dispatchEvent(new Ev(type)); };
 /** The body's capture listeners of `type` (the viewer's error and load listeners are armed there, once per open). */
 const captures = (body: El, type: string): number => body.listeners.filter((l) => l.type === type && l.capture).length;
@@ -468,11 +473,11 @@ test("a heading holding a failed figure keeps an Outline row reading the alt alo
   outline!.click();
 });
 
-test("the listeners: two capture listeners on the body per open (error and load), armed once at the open and not per paint, so after a Rendered/Raw round trip an error in the NEW box still gets its label; none on the document; both gone after the close (the file-view-outline.test.ts closers idiom)", async (t) => {
+test("the listeners: the labels' two capture listeners on the body per open (error and load), beside the figure control's pair since the link-navigation follow-on (armFigureControls: load and error), armed once at the open and not per paint, so after a Rendered/Raw round trip an error in the NEW box still gets its label; none on the document; all gone after the close (the file-view-outline.test.ts closers idiom)", async (t) => {
   const docBefore = doc.listeners.filter((l) => l.type === "error" || l.type === "load").length;
   const o = await open(t);
   const { fv, body, rendered, raw } = o;
-  assert.equal(captures(body, "error"), 1, "one capture-phase error listener on the body (the viewer's; nothing else listens for error there)");
+  assert.equal(captures(body, "error"), 2, "two capture-phase error listeners on the body: the labels' and the figure control's (armFigureControls decides the control at a load and at an error; nothing else listens for error there)");
   // the Comments panel arms capture-phase load listeners of its own on the same body (file-comments.ts: the float's hide, the
   // layout's retrim), so the viewer's twin is counted among them and shown by what it does: a load removes a label
   const loadsAtOpen = captures(body, "load");
@@ -484,7 +489,7 @@ test("the listeners: two capture listeners on the body per open (error and load)
   assert.equal(o.ctx.mode(), "rendered", "and back");
   const md2 = body.querySelector(".fileview-md")!;
   assert.ok(md2 && md2 !== o.md, "a new Rendered box after the round trip");
-  assert.equal(captures(body, "error"), 1, "still the one listener: installed per open, not per paint");
+  assert.equal(captures(body, "error"), 2, "still the two listeners: installed per open, not per paint");
   assert.equal(captures(body, "load"), loadsAtOpen, "no load listener added by the paints either");
   const late = img({ src: fileSrc("figs/late.png"), "data-fv-src": "figs/late.png", alt: "late" });
   const stays = img({ src: fileSrc("figs/stays.png"), "data-fv-src": "figs/stays.png", alt: "stays" });
@@ -498,7 +503,7 @@ test("the listeners: two capture listeners on the body per open (error and load)
   assert.ok(kept, "a label standing at the close");
   fv.closeFileView();
   assert.equal(doc.getElementById("romp-fileview"), null, "the viewer is closed");
-  assert.equal(captures(body, "error"), 0, "the close dropped the error listener (ctx.onClose)");
+  assert.equal(captures(body, "error"), 0, "the close dropped both error listeners (ctx.onClose)");
   assert.ok(captures(body, "load") < loadsAtOpen, "…and the load twin (the count fell; the panel's own body listeners are the panel's to drop, and the check below is the viewer's)");
   assert.equal(doc.listeners.filter((l) => l.type === "error" || l.type === "load").length, docBefore, "the document's listeners are as before the open");
   // the dropped listeners hear nothing: an error on a figure of the old body adds no label, and a load removes none
@@ -510,7 +515,7 @@ test("the listeners: two capture listeners on the body per open (error and load)
   assert.equal(labelAfter(stays), kept, "no listener, the standing label is not removed");
 });
 
-test("the URL viewer arms the same two listeners on its body: a figure of a URL document that fails wears the label naming its src (a URL document's figures carry no data-fv-src), and the close drops them", async (t) => {
+test("the URL viewer arms the same two listeners on its body: a figure of a URL document that fails wears the label naming its src, resolved against the document, as its origin alone (a URL document's figures carry no data-fv-src; the origin since the file review's round 15, extra9-2), and the close drops them", async (t) => {
   const fv = await mod();
   urls[NOTE_URL] = "# Note\n\nSee ![p95](figs/p95.png) here.\n";
   fv.openUrlView(NOTE_URL);
@@ -526,7 +531,7 @@ test("the URL viewer arms the same two listeners on its body: a figure of a URL 
   const fig = img({ src: "http://notes-api.test/notes/figs/p95.png", alt: "p95" });   // resolveDocRelative made it absolute; no data-fv-src for a URL document
   md.appendChild(block("p", txt("See "), fig, txt(" here.")));
   fire(fig, "error");
-  assert.equal(labelAfter(fig)!.textContent, fv.FIGURE_FAILED + " http://notes-api.test/notes/figs/p95.png (p95)", "the label names the src the figure carries");
+  assert.equal(labelAfter(fig)!.textContent, fv.FIGURE_FAILED + " http://notes-api.test (p95)", "the label names the src the figure carries, as its origin alone: on a URL document a relative figure's failed label names the document's origin, resolveFigureRefs having resolved it against the document, the rule's stated cost (an absolute figure's names its own origin)");
   fire(fig, "load");
   assert.equal(labelAfter(fig), null);
   fv.closeFileView();
@@ -557,11 +562,11 @@ test("the label names the candidate the browser asked for (the Slice 7 review's 
   fire(dense, "error");
   assert.equal(labelAfter(dense)!.textContent, fv.FIGURE_FAILED + " figs/missing-1x.png (dense)", "the img's own candidate, by its authored spelling");
   // candidates left as written (a remote host's absolute ones; a URL document's relative candidates are rewritten to absolute URLs with no data-fv-srcset, so its label names the resolved URL): no data-fv-srcset, the candidate named as it stands in srcset
-  const remote = img({ src: "https://cdn.example/plot.png", alt: "remote", srcset: "https://cdn.example/plot-2x.png 2x" });
-  (remote as any).currentSrc = "https://cdn.example/plot-2x.png";
+  const remote = img({ src: "https://cdn.example/plot.png", alt: "remote", srcset: "https://cdn-2x.example/plot-2x.png 2x" });
+  (remote as any).currentSrc = "https://cdn-2x.example/plot-2x.png";
   md.appendChild(block("p", remote));
   fire(remote, "error");
-  assert.equal(labelAfter(remote)!.textContent, fv.FIGURE_FAILED + " https://cdn.example/plot-2x.png (remote)");
+  assert.equal(labelAfter(remote)!.textContent, fv.FIGURE_FAILED + " https://cdn-2x.example (remote)", "the chosen candidate's origin, on a host of its own so the label still says which candidate was chosen now that it prints the origin alone (the file review's round 15, extra9-2)");
   // the browser chose the img's own src (a light-scheme page under a dark-only source): pictureDest's rule, as before
   const own = img({ src: fileSrc("figs/plot.png"), "data-fv-src": "figs/plot.png", alt: "own" });
   (own as any).currentSrc = fileSrc("figs/plot.png");
@@ -706,6 +711,159 @@ test("two failing figures under one wrapper (the Slice 7 review's closing pass):
   assert.equal(md.querySelectorAll("[data-fv-figerr]").length, 3, "both of the link's labels gone; the three standing labels are the earlier pairs' still-failing imgs' (p1's, w1's and q2's)");
 });
 
+// ── a credential in the label's words (the file review's round 14, correctness-1 with extra5-3; its round 15, correctness-1
+// with extra9-2) ──────────────────────────────────────────────────────────────────────────────────────────────────────────
+// The label never prints a path, a userinfo, a query or a fragment for a source with a scheme other than data:, or a
+// protocol-relative one: a source that parses is resolved against the document and printed as its origin alone (shownAddress),
+// one the parser refuses is cut at its authority, and a workspace path prints as written. Before any of that, a source that
+// appears to carry a sign-in (figureSourceCredentialed: an at sign after its scheme or its leading run, after its
+// percent-escapes are decoded) prints FIGURE_ADDRESS_WITHHELD and no part of its address, a refused address with an @ in its
+// path among them, which the file review's round 14 cut had printed with a wrong host; that is the rule's stated cost, not a secret kept.
+// Chromium never requests a source with a sign-in part, so the picture fails and its label is where such a source would show.
+// CI runs this module (the Test step of the vscode-extension job) and skips the Chromium leg, so the rule is executed here
+// twice: on the label builder itself (shownSource, form a) and through the real error listener over the stand-in (form b).
+// file-view-figure-error-browser.test.ts holds cases of both kinds in Chromium, and file-view-outline.test.ts holds the table
+// of sign-in spellings over the paint. Every planted value is assembled at run time: no credential-shaped literal stands here.
+const L_TOK = "tok" + "en", L_US = "u" + "ser", L_PW = "p" + "w" + String(4 * 4);
+const L_V = (k: string): string => k + "TOK" + String(k.length * 37);
+const L_S3_CRED = "AKID" + "EXAMPLE" + "/20260923/us-east-1/s3/aws4_request", L_S3_SIG = "abc" + "def0123456789" + "fedcba";
+const L_UI = L_US + ":" + L_PW + "@";
+const L_BASE = "http://notes-api.test/";   // the dashboard's own address, as document.baseURI reads there (the stand-in's document has none)
+/** The words in a withheld address's place, as the ruling's wording reads (a literal: the expected text never moves with the product). */
+const L_WITHHELD = "address withheld because it appears to carry a sign-in";
+/** [case, source, the label's source with no base (the stand-in), the label's source against the dashboard's base] */
+const L_CASES: Array<[string, string, string, string]> = [
+  ["an http userinfo", "http://" + L_UI + "example.test/a.svg", L_WITHHELD, L_WITHHELD],
+  ["an https query token", "https://example.test/b.svg?" + L_TOK + "=" + L_V("QB"), "https://example.test", "https://example.test"],
+  ["an S3 presigned pair", "https://bucket.example.test/fig.png?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=" + encodeURIComponent(L_S3_CRED) + "&X-Amz-Signature=" + L_S3_SIG, "https://bucket.example.test", "https://bucket.example.test"],
+  ["a fragment access_token", "http://example.test/f.svg#access_" + "token=" + L_V("FR"), "http://example.test", "http://example.test"],
+  ["a userinfo plus a query", "http://" + L_UI + "example.test/c.svg?" + L_TOK + "=" + L_V("UQ"), L_WITHHELD, L_WITHHELD],
+  ["a protocol-relative userinfo plus a query", "//" + L_UI + "example.test/r.svg?" + L_TOK + "=" + L_V("PR"), L_WITHHELD, L_WITHHELD],
+  ["a protocol-relative query token, which the stand-in's parser refuses with no base", "//example.test/r.svg?" + L_TOK + "=" + L_V("PQ"), "//example.test", "http://example.test"],
+  ["an ftp userinfo plus a query", "ftp://" + L_UI + "example.test/g.svg?" + L_TOK + "=" + L_V("FT"), L_WITHHELD, L_WITHHELD],
+  ["an unparsable port with a userinfo plus a query", "http://" + L_UI + "example.test:99999/u.svg?" + L_TOK + "=" + L_V("UP"), L_WITHHELD, L_WITHHELD],
+  ["an unparsable port with a query, cut at its authority", "http://example.test:99999/v.svg?" + L_TOK + "=" + L_V("UV"), "http://example.test:99999", "http://example.test:99999"],
+  ["a file: query and fragment, which has no host", "file:///srv/x.png?" + L_TOK + "=" + L_V("FQ") + "#frag", "file:", "file:"],
+  ["a file: userinfo, which the parser refuses", "file://" + L_UI + "host.test/x.png?" + L_TOK + "=" + L_V("FU"), L_WITHHELD, L_WITHHELD],
+  ["an s3: source, which has no host", "s3:bucket/" + L_V("SK") + "/key.png", "s3:", "s3:"],
+  ["a blob: address's inner userinfo, query and fragment", "blob:http://" + L_UI + "example.test/0000-1111?" + L_TOK + "=" + L_V("BL") + "#frag", L_WITHHELD, L_WITHHELD],
+  ["a blob: address's inner query and fragment, shown as blob: and the origin it wraps", "blob:http://example.test/0000-1111?" + L_TOK + "=" + L_V("BQ") + "#frag", "blob:http://example.test", "blob:http://example.test"],
+  ["an upper-case spelling", "HTTPS://" + L_UI.toUpperCase() + "Example.TEST/Up.svg?" + L_TOK + "=" + L_V("UC"), L_WITHHELD, L_WITHHELD],
+  ["an upper-case spelling with no sign-in part", "HTTPS://Example.TEST/Uq.svg?" + L_TOK + "=" + L_V("UN"), "https://example.test", "https://example.test"],
+  ["a leading space", " http://" + L_UI + "example.test/w.svg?" + L_TOK + "=" + L_V("WS"), L_WITHHELD, L_WITHHELD],
+  ["a tab inside the scheme", "ht\ttp://" + L_UI + "example.test/t.svg?" + L_TOK + "=" + L_V("TB"), L_WITHHELD, L_WITHHELD],
+  ["a refused source whose password holds a /", "http://" + L_US + ":p/" + L_V("SL") + "@example.test/x.png", L_WITHHELD, L_WITHHELD],
+  ["a refused source whose password holds a ?", "http://" + L_US + ":p?" + L_V("QM") + "@example.test/x.png", L_WITHHELD, L_WITHHELD],
+  ["a refused source whose password holds a #", "http://" + L_US + ":p#" + L_V("HM") + "@example.test/x.png", L_WITHHELD, L_WITHHELD],
+  ["the rule's cost: a refused source with an @ in its path is withheld (the file review's round 14 cut printed a wrong host there)", "http://example.test:99999/a@2x.png?" + L_TOK + "=" + L_V("AT"), L_WITHHELD, L_WITHHELD],
+  ["a path parameter carrying a session", "https://example.test/img/a.png;jsessionid=" + L_V("JS"), "https://example.test", "https://example.test"],
+  ["an opaque token segment in the path", "https://example.test/s/" + L_V("SEG") + "/a.png", "https://example.test", "https://example.test"],
+  ["a plain https source, its origin alone", "https://cdn.example/plot.png", "https://cdn.example", "https://cdn.example"],
+];
+const L_PLANTED = [L_US + ":", L_US.toUpperCase() + ":", L_PW, L_PW.toUpperCase(), L_S3_CRED, encodeURIComponent(L_S3_CRED), L_S3_SIG, "X-Amz-", "access_", "?", "#", ";", "/fig.png", "/plot.png", "2x.png",
+  ...["QB", "FR", "UQ", "PR", "PQ", "FT", "UP", "UV", "FQ", "FU", "SK", "BL", "BQ", "UC", "UN", "WS", "TB", "SL", "QM", "HM", "AT", "JS", "SEG", "SS", "VB", "VN"].map(L_V)];
+/** The controls: a source the rules leave as it was, printed as at the head the round read (green there by design). */
+const L_CONTROLS: Array<[string, string, string]> = [
+  ["a data: source keeps its head", "data:image/png;base64,iVBORw0KGgo" + "A".repeat(300), "data:image/png;base64,…"],
+  ["an inline svg whose CSS holds an @media after the comma keeps its head (the sign-in rule reads a data: source's printed head alone)", "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg'><style>" + "@" + "media (min-width:1px){rect{fill:red}}</style><rect width='4' height='4'/></svg>", "data:image/svg+xml;utf8,…"],
+  ["a workspace path with a query-looking tail, as written", "figs/a.png?x=1#y", "figs/a.png?x=1#y"],
+  ["a workspace path with an @, as written (no colon before it: outside the sign-in rule)", "figs/a@2x.png", "figs/a@2x.png"],
+];
+
+test("the label builder itself (shownSource, a pure function over strings; form a): a source that appears to carry a sign-in prints the withheld address and no part of itself, whatever its form (a userinfo, a password holding a /, a ? or a #, a refused port, a file:, a blob: or a tab-split scheme), and so does a refused source with an @ in its path, the rule's cost; any other source with a scheme other than data:, or a protocol-relative one, prints its origin alone, resolved against the base when one is given (the dashboard's address, a VS Code webview's), cut at its authority when the parser refuses it, the scheme alone when it has no host, blob: and the wrapped origin for a blob: address, so no path, path parameter, token segment, query or fragment prints; the controls print as they did (a property pin over the returned strings, red at the head the round read, where the label printed the path and a sign-in spelling the parser reads with no sign-in part)", async () => {
+  const fv = await mod();
+  assert.equal(typeof fv.shownSource, "function", "shownSource is exported, so this unit calls the label builder directly (a sentence pin on the export; the assertions below hold the property)");
+  const out: string[] = [];
+  for (const [name, src, nobase, based] of L_CASES) {
+    const a = fv.shownSource(src), b = fv.shownSource(src, L_BASE);
+    out.push(a, b);
+    assert.equal(a, nobase, name + ", with no base (the stand-in's document has none): a property pin over the returned string");
+    assert.equal(b, based, name + ", against the dashboard's base: a property pin over the returned string");
+  }
+  const webview = fv.shownSource("//" + L_UI + "example.test/r.svg?" + L_TOK + "=" + L_V("VB"), "vscode-webview://abc123/index.html?id=x");
+  const webviewPlain = fv.shownSource("//example.test/r.svg?" + L_TOK + "=" + L_V("VN"), "vscode-webview://abc123/index.html?id=x");
+  out.push(webview, webviewPlain);
+  assert.equal(webview, L_WITHHELD, "a protocol-relative source with a sign-in part against a VS Code webview's base is withheld: a property pin");
+  assert.equal(webviewPlain, "vscode-webview://example.test", "a protocol-relative source against a VS Code webview's base takes the webview's scheme and prints its origin alone: a property pin");
+  for (const s of out) for (const x of L_PLANTED) assert.ok(!s.includes(x), "no planted value in a label's source (a property pin): " + JSON.stringify(x) + " in " + JSON.stringify(s));
+  for (const [name, src, want] of L_CONTROLS) {
+    assert.equal(fv.shownSource(src), want, name + ", with no base: a control, green at the head the round read by design (the rules leave it as it was)");
+    assert.equal(fv.shownSource(src, L_BASE), want, name + ", against the dashboard's base: the same control");
+  }
+});
+
+test("the label through the real error listener over the stand-in (form b): every source of the cases above, laid in the Rendered box and failed with its error event, wears a label naming it as form a does, the withheld address for a source that appears to carry a sign-in and the origin alone for the rest, and so does a srcset candidate the browser chose (currentSrc) carrying a userinfo and a query token behind a harmless workspace src; the controls' labels read as they did (a property pin over the label's text, red at the head the round read, where the label printed the path and a sign-in spelling the parser reads with no sign-in part)", async (t) => {
+  const { md, fv } = await open(t);
+  const words: string[] = [];
+  for (const [name, src, nobase] of L_CASES) {
+    const i = img({ src, alt: "" });
+    md.appendChild(block("p", i)); fire(i, "error");
+    const l = labelAfter(i);
+    words.push(l ? l.textContent : "");
+    assert.equal(l ? l.textContent : null, fv.FIGURE_FAILED + " " + nobase, name + ": the label's words (a property pin over the label's text)");
+  }
+  const cand = "http://" + L_UI + "example.test/s.svg?" + L_TOK + "=" + L_V("SS");
+  const ss = img({ src: fileSrc("figs/fallback.png"), "data-fv-src": "figs/fallback.png", alt: "", srcset: cand + " 2x" });
+  (ss as any).currentSrc = cand;   // the candidate the browser chose and asked for (the stand-in fetches nothing)
+  md.appendChild(block("p", ss)); fire(ss, "error");
+  const sl = labelAfter(ss);
+  words.push(sl ? sl.textContent : "");
+  assert.equal(sl ? sl.textContent : null, fv.FIGURE_FAILED + " " + L_WITHHELD, "the srcset candidate failedSource returns is withheld the same way (a property pin over the label's text)");
+  for (const s of words) for (const x of L_PLANTED) assert.ok(!s.includes(x), "no planted value in a label (a property pin): " + JSON.stringify(x) + " in " + JSON.stringify(s));
+  for (const [name, src, want] of L_CONTROLS) {
+    const i = img({ src, alt: "" });
+    if (!/^[a-z][a-z0-9+.-]*:/i.test(src)) { i.setAttribute("data-fv-src", src); i.setAttribute("src", fileSrc(src)); }   // a workspace path, as rewriteFigureSrcs leaves it
+    md.appendChild(block("p", i)); fire(i, "error");
+    const l = labelAfter(i);
+    assert.equal(l ? l.textContent : null, fv.FIGURE_FAILED + " " + want, name + ": a control, green at the head the round read by design (the rules leave it as it was)");
+  }
+});
+
+test("the label of a figure the chat page's heal parked (the file review's round 15, fresh-1): on the chat modal the page's heal (preview.ts installMdImgHeal, a capture listener on the document, so it runs before the viewer's on the body) parks a failed img before the viewer reads it, its resolved src moved into data-md-src and the src removed, so the label read 'the source is empty'; the viewer's error listener over the stand-in, fired on a parked img, names the heal's record as it names any address, the origin alone for a plain and a query-bearing address and the withheld address for a standard userinfo and for a same-scheme source written without slashes, recorded resolved against an https base; a control: a parked local figure names its workspace path (data-fv-src, pictureDest's rule); and the heal's parking of an empty destination, which records img.src, the document's base address for an empty or blank src, says 'the source is empty' and names no origin, on a base of its own and on its fragment twin, a page address and base carrying #only=web with the record without it, as img.src drops a fragment (the file review's round 16, correctness-1: red at the head that round read, where both labels named the page's origin, and the twin red under a comparison with document.URL) (a property pin over the label's text through the real listener; CI runs it, as it skips the browser leg's chat cells)", async (t) => {
+  const { md, fv } = await open(t);
+  /** [cell, the heal's record (data-md-src, the img's resolved src as parkMdImg stores it), the words after FIGURE_FAILED] */
+  const PARKED: Array<[string, string, string]> = [
+    ["a plain web address", "https://example.test/missing.svg", "https://example.test"],
+    ["a query-bearing web address", "https://example.test/q.svg?" + L_TOK + "=" + L_V("HQ"), "https://example.test"],
+    ["a standard userinfo", "http://" + L_UI + "example.test/u.svg", L_WITHHELD],
+    ["a same-scheme source written without slashes, as the heal records it resolved against an https base", "https://notes-api.test/" + L_UI + "example.test/a.png", L_WITHHELD],
+  ];
+  const got: string[] = [];
+  for (const [name, rec, want] of PARKED) {
+    const i = img({ alt: "", class: "md-img-failed", "data-md-src": rec });   // parked: no src attribute, the address in data-md-src (preview.ts parkMdImg)
+    md.appendChild(block("p", i)); fire(i, "error");
+    const l = labelAfter(i);
+    got.push(l ? l.textContent : "");
+    // FAILS BEFORE the fix (failedSource delegating alone): each reads FIGURE_FAILED + " the source is empty"
+    assert.equal(l ? l.textContent : null, fv.FIGURE_FAILED + " " + want, name + ": the label names the heal's record as it names any address (a property pin over the label's text)");
+  }
+  for (const s of got) for (const x of L_PLANTED) assert.ok(!s.includes(x), "no planted value in a label (a property pin): " + JSON.stringify(x) + " in " + JSON.stringify(s));
+  // a control, green before the fix by design: a parked local figure keeps pictureDest's rule
+  const local = img({ alt: "", class: "md-img-failed", "data-fv-src": "figs/p95.png", "data-md-src": "http://notes-api.test" + fileSrc("figs/p95.png") });
+  md.appendChild(block("p", local)); fire(local, "error");
+  assert.equal(labelAfter(local) ? labelAfter(local)!.textContent : null, fv.FIGURE_FAILED + " figs/p95.png", "a parked local figure: its workspace path, data-fv-src (a control)");
+  // the heal's shape for an empty destination (the file review's round 16, correctness-1): the heal parks an img whose src is empty or
+  // blank as it parks any failed img, recording img.src, which for such a src is the document's base address without its fragment. The
+  // stand-in document has no base and no address, so each cell gives it the dashboard's own: the base itself, and its fragment twin, the
+  // page's address and base carrying #only=web while the record, as img.src reads it, carries none
+  const EMPTY: Array<[string, string, string]> = [
+    ["an empty destination parked against the dashboard's base", L_BASE, L_BASE],
+    ["its fragment twin: the page's address and base carrying #only=web, the record without it", L_BASE + "#only=web", L_BASE],
+  ];
+  t.after(() => { delete (doc as any).baseURI; delete (doc as any).URL; });
+  const empty: Array<[string, string | null]> = [];
+  for (const [name, at, rec] of EMPTY) {
+    (doc as any).baseURI = at; (doc as any).URL = at;   // the page's own address, as document.baseURI and document.URL read there
+    const i = img({ alt: "diagram", class: "md-img-failed", "data-md-src": rec });   // parked: no src attribute, the base address in data-md-src
+    md.appendChild(block("p", i)); fire(i, "error");
+    empty.push([name, labelAfter(i) ? labelAfter(i)!.textContent : null]);
+  }
+  delete (doc as any).baseURI; delete (doc as any).URL;
+  // FAILS BEFORE the fix (the file review's round 16, correctness-1): each reads FIGURE_FAILED + " http://notes-api.test (diagram)", the
+  // page's own origin; the twin alone fails under a comparison with document.URL, which keeps the fragment
+  assert.deepEqual(empty, EMPTY.map(([name]) => [name, fv.FIGURE_FAILED + " the source is empty (diagram)"]), "each parked empty destination's label says the source is empty and names no origin, [cell, label] (a property pin over the label's text)");
+});
+
 // ── source pins: what the node cases cannot execute here (the browser leg executes the rest) ──────────────────────────
 test("source: armFigureLabels is armed in both viewers and dropped with each (ctx.onClose in the local one, closeHooks in the URL one); it arms exactly two capture listeners, error and load, removes both, and never assigns img.onerror; the label is span.fv-figerr with the mark data-fv-figerr; its text is FIGURE_FAILED, a space, pictureDest's answer and the alt in parentheses (contract C2); FIGURE_FAILED's text is contract C5's; headingWords skips the mark's element after its img line", () => {
   assert.match(VIEW, /\n  ctx\.onClose\(armFigureLabels\(body\)\);\n/, "the local viewer: armed once at the open beside the re-seat's listener and dropped by onClose");
@@ -722,18 +880,29 @@ test("source: armFigureLabels is armed in both viewers and dropped with each (ct
   assert.match(VIEW, /\nconst FIGERR_MARK = "data-fv-figerr";\n/, "the mark");
   assert.match(VIEW, /\nconst FIGERR_CLASS = "fv-figerr";\n/, "the class, for the sheets alone");
   assert.match(arm, /const label = el\("span", FIGERR_CLASS\);\n\s*label\.setAttribute\(FIGERR_MARK, ""\);/, "the label is a span wearing the class and the mark");
-  assert.match(VIEW, /function figureLabelAfter\(anchor: Element\): Element \| null \{\n\s*const n = anchor\.nextSibling;\n\s*return n && n\.nodeType === 1 && \(n as Element\)\.hasAttribute\(FIGERR_MARK\) \? n as Element : null;/, "found by the mark on the anchor's next sibling, never by the class");
+  assert.match(VIEW, /function figureLabelAfter\(anchor: Element\): Element \| null \{\n\s*const n = \(figureControlAfter\(anchor\) \|\| anchor\)\.nextSibling;\n\s*return n && n\.nodeType === 1 && \(n as Element\)\.hasAttribute\(FIGERR_MARK\) \? n as Element : null;/, "found by the mark on the next sibling of the anchor, or of the figure's Open control when one stands at the anchor's side (the link-navigation follow-on's L3), never by the class");
+  assert.match(arm, /parent\.insertBefore\(label, \(figureControlAfter\(anchor\) \|\| anchor\)\.nextSibling\);/, "inserted where figureLabelAfter reads it back: after the control when one stands");
   assert.match(VIEW, /const src = failedSource\(img\);\n\s*return FIGURE_FAILED \+ " " \+ \(src \? shownSource\(src\) : FIGURE_NO_SOURCE\) \+ \(alt \? " \(" \+ alt \+ "\)" : ""\);/, "the text (contract C2, the review's round 1 and its round 2): FIGURE_FAILED, a space, the source the browser asked for (failedSource) as the label shows it (shownSource) or FIGURE_NO_SOURCE when the figure names none (an empty destination), the alt in parentheses when not empty");
   // the review's round 1: the source is the candidate the browser asked for, read off currentSrc and matched against the srcset carriers
   // by the authored candidates rewriteFigureSrcs keeps in data-fv-srcset; the img's own src, or no currentSrc, keeps pictureDest's rule
   assert.match(VIEW, /\nconst FV_SRCSET = "data-fv-srcset";\n/, "the authored candidates' attribute");
   assert.match(VIEW, /if \(changed\) \{ el\.setAttribute\(FV_SRCSET, ref\.value\); el\.setAttribute\("srcset", serializeSrcset\(cands\)\); \}[^\n]*\n\s*else el\.removeAttribute\(FV_SRCSET\);/, "rewriteFigureSrcs keeps the authored srcset beside its rewrite, for the img's and a source's alike, and clears a stale one");
-  const fs = VIEW.slice(VIEW.indexOf("function failedSource(img: Element): string | null {"), VIEW.indexOf("function shownSource(src: string): string {"));
+  const fsAt = VIEW.indexOf("function failedSource(img: Element): string | null {"), fsEnd = VIEW.indexOf("export function shownSource(");
+  assert.ok(fsAt > 0 && fsEnd > fsAt, "the region from failedSource runs to shownSource's signature, found after it (a sentence pin on the two markers: a missing end would widen the region to the file's end)");
+  const fs = VIEW.slice(fsAt, fsEnd);
   assert.match(fs, /const cur = \(img as HTMLImageElement\)\.currentSrc \|\| "";\n\s*if \(!cur \|\| cur === absUrl\(img\.getAttribute\("src"\) \|\| ""\)\) return pictureDest\(img\);/, "the img's own src, or nothing to read: pictureDest's rule");
   assert.match(fs, /const picture = img\.closest\("picture"\);\n\s*const carriers: Element\[\] = picture \? \[\.\.\.Array\.from\(picture\.querySelectorAll\("source"\)\), img\] : \[img\];/, "the carriers: the picture's sources, then the img");
   assert.match(fs, /const was = c\.hasAttribute\(FV_SRCSET\) \? parseSrcset\(c\.getAttribute\(FV_SRCSET\) \|\| ""\) : now;\n\s*for \(let i = 0; i < now\.length; i\+\+\) if \(absUrl\(now\[i\]\.url\) === cur\) return \(was\[i\] \?\? now\[i\]\)\.url;/, "the candidate matched by its resolved URL, named by its authored spelling");
   assert.doesNotMatch(fs, /fetch\(|new Image\(|\.src = /, "no second request");
-  assert.match(VIEW, /function shownSource\(src: string\): string \{\n\s*if \(!\/\^data:\/i\.test\(src\)\) return src;\n\s*const comma = src\.indexOf\(","\);\n\s*return \(comma >= 0 \? src\.slice\(0, comma \+ 1\) : src\.slice\(0, 40\)\) \+ "\u2026";\n\}/, "a data: source cut to its head with an ellipsis; anything else as written");
+  assert.ok(VIEW.includes([
+    "export function shownSource(src: string, base: string | undefined = typeof document !== \"undefined\" ? document.baseURI : undefined): string {",
+    "  const read = src.replace(/[\\t\\n\\r]/g, \"\").replace(/^[\\u0000-\\u0020]+/, \"\");",
+    "  if (figureSourceCredentialed(src)) return FIGURE_ADDRESS_WITHHELD;",
+    "  if (/^data:/i.test(read)) { const comma = read.indexOf(\",\"); return (comma >= 0 ? read.slice(0, comma + 1) : read.slice(0, 40)) + \"\u2026\"; }",
+    "  if (/^[a-z][a-z0-9+.-]*:/i.test(read) || read.startsWith(\"//\")) return shownAddress(read, base);",
+    "  return src;",
+    "}",
+  ].join("\n")), "shownSource's body as written (a sentence pin on the spelling; the two executed cases above, form a over the returned strings and form b through the error listener, hold the property, and file-view-outline.test.ts's sign-in table holds the rule over the paint): the source read as the URL parser reads it (tab and line breaks removed, leading control characters and spaces trimmed), a source that appears to carry a sign-in withheld first by the one rule every surface reads (figureSourceCredentialed; the file review's round 15, correctness-1), a data: source cut to its head with an ellipsis, a source with a scheme or a leading // shown by shownAddress against the base, the document's own address by default, anything else as written");
   assert.match(VIEW, /function linkAround\(p: Element, a: Element\): boolean \{\n\s*return p\.localName === "a" && p\.children\.length === 1 && p\.children\[0\] === a && \(p\.textContent \|\| ""\)\.trim\(\) === "";\n\}/, "a link holding the figure alone is climbed (figureAnchor), so the label is not a click target that follows the link");
   assert.match(VIEW, /p\.localName === "picture" \|\| p\.classList\.contains\("fc-imgwrap"\) \|\| linkAround\(p, a\)/, "…beside the picture and the wrap");
   assert.match(VIEW, /p && oneImg\(p\) && \(p\.localName === "picture" \|\| p\.classList\.contains\("fc-imgwrap"\) \|\| linkAround\(p, a\)\)/, "a wrapper is climbed only when it holds exactly one img (the review's closing pass): two imgs an author puts in one picture or one wrap each keep a label of their own");

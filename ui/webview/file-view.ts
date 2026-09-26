@@ -23,19 +23,20 @@ import { literalizeUnclosedTags } from "./md-literal-tags";   // an inline start
 import { gateRemoteFigures, gateOf, loadGatedHost, figureRefs, parseSrcset, serializeSrcset, GATE_ACT } from "./figure-gate";   // decision 8: a figure on an unlisted host loads on a click (figure-gate.ts)
 import { hostOf, bareId, hostNameNodes } from "./host-prefix";
 import { fileUrl } from "./preview";
-import { ICON_DOWNLOAD, ICON_COPY, ICON_EDIT, ICON_ZOOM, ICON_CHECK, ICON_CROSS } from "./icons";   // the bar's glyphs (T367)
+import { ICON_DOWNLOAD, ICON_COPY, ICON_EDIT, ICON_ZOOM, ICON_CHECK, ICON_CROSS, ICON_BACK, ICON_FORWARD, ICON_EXPAND, ICON_OUTBOUND } from "./icons";   // the bar's glyphs (T367); the trail's two arrows (L2); the figure control's arrows out of the corners (L3), and its outbound glyph for a picture from the web (the file review's round 11, ui-1)
 import { openPdfTab, wantsOwnTab } from "./preview";   // a PDF's own tab, and the gesture that asks for it
 import { openFileTab, canPreview } from "./preview";   // any file's own tab, for the links inside a shown file, and the web-vs-webview test
-import { headVerdict, mtimeMoved, ABSENT } from "./file-comments-model";   // the panel's reading of a HEAD /file answer, shared by the changed-on-disk probe (Slice 6, item 5); ABSENT: a 404, the bar's deletion words
+import { headVerdict, mtimeMoved, ABSENT, figurePath } from "./file-comments-model";   // the panel's reading of a HEAD /file answer, shared by the changed-on-disk probe (Slice 6, item 5); ABSENT: a 404, the bar's deletion words; figurePath: where a figure's source points on the session's disk, the join the poll's HEAD and rewriteFigureSrcs agree on (file-comments-model-figures.test.ts), read by the figure's "Open the picture" (L3)
 import { kernelUrl } from "./media";
 import { quoteSrcLabel } from "./docreview";
 import { fileCommentsAction, panelMark } from "./file-comments";
-import { pictureDest } from "./file-comments";       // the authored source a failed figure's label names (armFigureLabels): the panel's own rule, not a second reading of data-fv-src
+import { pictureDest } from "./file-comments";       // the authored source of a figure's own src (chosenSource, read by the failed figure's label and by the figure's open when the browser chose the src): the panel's own rule, not a second reading of data-fv-src
 import { readPlace, seatPlaceOutcome, followPlace, blockHolding, blockIndexAt, type Place } from "./reader-place";   // the reader's place across a paint (Slice 2 of plans/markdown-viewer.md); blockHolding: the block an open's `{ offset }` names, blockIndexAt: the block a remembered place's span starts, followPlace: the last measured place into the text a reload landed under a boxless body (Slice 6)
 import { sourceBlockSpans, renderedBlockElements } from "./anchor-map";   // the block table and its elements, for an open's `{ offset }` in the Rendered view (Slice 6 of plans/markdown-viewer.md)
 import { rawRowForOffset } from "./anchor-map";   // the verified Raw row map, for scrollToOffset (Slice 7 of plans/markdown-viewer.md, item 7): the row whose source span holds an offset, following whatever split the rows were built on
 import { linkifyFileText, linkMarkdownAnchors, viewerWalkTokens, fragmentTarget, URL_LINK_CLASS, FRAG_LINK_CLASS } from "./file-view-links";
 import { selectionOpenIn } from "./path-links";
+import { liveTrail, setTrail, trailRoot, trailPush, trailBack, trailForward, trailSetView, trailEnd, trailBackTarget, trailForwardTarget, navTitle, navChord, type TrailEntry, type TrailView } from "./file-trail";   // the navigation trail behind Back and Forward (plans/markdown-viewer.md, "Follow-on: Link navigation")
 import { PDF_MAX_BYTES, pdfCapMessage } from "./pdf-cap";   // the pages cap, pure (Slice 4); never the chunk itself
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const gclock = require("./gesture-clock.js");   // the gesture clock every settings post stamps through
@@ -586,6 +587,8 @@ export function placeKey(path: string, sid: string | null | undefined): string {
 // (the chat's body after a plain click) yields as the document's body does. Frames the read cannot see (another origin, a
 // host with no top) or a read that throws take the keyboard as before.
 const NON_TEXT_INPUTS = new Set(["button", "checkbox", "radio", "submit", "reset", "file", "range", "color", "image", "hidden"]);
+// the platform, for the trail's Cmd+[ and Cmd+] (navChord): the spelling render.ts and file-comments.ts read it by
+const IS_MAC = typeof navigator !== "undefined" && /Mac|iP(?:hone|ad|od)/.test(navigator.platform || "");
 function isTypingTarget(a: Element): boolean {
   if (a.localName === "textarea" || a.localName === "select") return true;   // type-ahead in a dropdown is typing too (render.ts's isTypingTarget reads the same; the review's round 3)
   if (a.localName === "input") return !NON_TEXT_INPUTS.has((a.getAttribute("type") || "text").toLowerCase());
@@ -648,6 +651,62 @@ function ringWithNoHolder(): boolean {
 // target rides as `at` (the link's data-line as `{ line }`, its data-frag as `{ heading }`; null for a bare path).
 let openLinkedFile: (path: string, sid: string | null, at: At | null) => void =
   (path, sid, at) => { openFileView(path, sid, { at }); };
+// ── the navigation trail (file-trail.ts; plans/markdown-viewer.md, "Follow-on: Link navigation", L1) ──────────────
+// How openFileView tells an open from INSIDE the viewer (a link in the shown file, Back, Forward) from one from OUTSIDE
+// (the Files pane's rows and Recent list, a chat path pill, a Waiting pane link, the shell's relay): the viewer's own
+// openers go through ONE door, openFromViewer, which sets `trailNext` and then calls openLinkedFile as the delegate always
+// has (the host's opener, files.ts openHere, or the default above, either of which reaches openFileView in the same call);
+// openFileView reads the tag and clears it at its top. Two direct opens inside this module set the tag themselves and
+// no other caller does, so an untagged open is outside by construction and no caller has to remember a flag: the
+// conflict bar's Reload file tags itself "reload" so the trail stands through it, and the figure's open
+// (openFigureInViewer, below) tags itself "push". file-trail.test.ts counts the openFileView calls and the tag's
+// assignments in this file by name, so a new site fails until its author says which side of the door it is on.
+type TrailHow = "push" | "back" | "forward" | "reload";
+let trailNext: TrailHow | null = null;
+function openFromViewer(how: TrailHow, path: string, sid: string | null, at: At | null): void {
+  trailNext = how;
+  try { openLinkedFile(path, sid, at); } finally { trailNext = null; }
+}
+/** The figure's open in THIS viewer (openFigure, L3 of the link-navigation follow-on): openFileView itself, not the host's
+ *  opener the door above calls, with the tag set and cleared as the door sets and clears it, so the open is the trail's push
+ *  (Back returns to the report at the figure's place) and the picture enters no Recent list. The host's opener (files.ts
+ *  openHere) records every file it opens as recent, and in the Files pane every figure opened from a report took a row
+ *  from a file the reader had read: eight figures opened in one report evicted every other file's row and the reading place
+ *  stored on it (the file review; the list holds eight). A picture reached from its report is a step inside that
+ *  report's reading and no file the reader chose from the pane, so it takes no row; the report's own row stands, and Back
+ *  reaches the report through the trail. The default the record names as the one taken. No place rides: a picture has none
+ *  (its leave writes nothing), and a picture with a row of its own is opened from that row, through the host. */
+function openFigureInViewer(path: string, sid: string | null): void {
+  trailNext = "push";
+  try { openFileView(path, sid, { at: null }); } finally { trailNext = null; }
+}
+/** The trail's move for the open of `path` under `how`, run after runLeave wrote the leaving file's place: the shown
+ *  file's entry first records the view it was left in (that place's `view`, read back by the file's key; none for a
+ *  picture or a PDF, whose leave writes no place), then the tag decides. `push`: the shown file goes behind and the
+ *  steps ahead are dropped, unless the target IS the shown file (a `report.md:40` link inside report.md, a same-file
+ *  heading target), which is a jump inside the file and no step between files, so the trail stands. `back` and
+ *  `forward`: the step, when the trail's target is the file being opened (the buttons and the chords pass the entry's own
+ *  path, so it always is; a mismatch, or no entry there, falls to a root rather than desynchronising). `reload`: stands.
+ *  null (outside): a new trail rooted at the file. Returns the view the opened file's entry recorded, for Back and
+ *  Forward to open it in (L2); null for every other move: the saved preference rules. */
+function moveTrail(how: TrailHow | null, path: string, sid: string | null): TrailView | null {
+  let s = liveTrail();
+  const cur = s.current;
+  if (cur) s = trailSetView(s, rememberedPlaces.get(placeKey(cur.path, cur.sid))?.view ?? null);
+  const entry: TrailEntry = { path, sid, view: null };
+  switch (how) {
+    case "reload": setTrail(s); return null;
+    case "push":
+      if (cur && placeKey(cur.path, cur.sid) === placeKey(path, sid)) { setTrail(s); return null; }
+      setTrail(trailPush(s, entry)); return null;
+    case "back": case "forward": {
+      const next = how === "back" ? trailBack(s) : trailForward(s);
+      if (next === s || !next.current || next.current.path !== path || next.current.sid !== sid) { setTrail(trailRoot(entry)); return null; }
+      setTrail(next); return next.current.view;
+    }
+    default: setTrail(trailRoot(entry)); return null;
+  }
+}
 let saveSeq = 0;
 let editHooks: { reqId: number; logWarning: string | null; saved: (mtimeNs: string, logged: boolean) => void; failed: (err: string, code?: string) => void } | null = null;
 // Set by the open viewer: returns false to VETO a close (an editor holding unsaved changes asks
@@ -712,22 +771,41 @@ export type FileViewRenderWhy = "paint" | "reflow";
 // says how). The value is the body's content width as its ResizeObserver reports it (the layout's own event, never a
 // timer; a scrollbar's width is taken), written on EACH TOP-LEVEL TABLE rather than on the body it describes: the property
 // is registered non-inherited (`@property --fv-body-w { inherits: false }`), so a write restyles the tables alone and not
-// every node under the body, as a write to an inherited property on the body would. mdBlock rebuilds the root on every
-// paint and no report follows a paint, so renderBody stamps the fresh tables itself (the returned function)
-// with the width last reported; before the first report the property is unset and the sheet's fallback holds (the cap is
-// the column). Absent ResizeObserver (a stand-in, an old engine) nothing is written and the fallback holds. One watch at a
-// time: the next open, or the close, drops the last. An optional `onWidth` runs after each changed report with the new
-// width: the local viewer's reflow, which re-places the comments panel's cards once per animation frame, hangs on it; the
-// URL viewer passes none.
+// every node under the body, as a write to an inherited property on the body would. The same rule shifts such a table by
+// half of what it exceeds the column by with a position and a left, not a translate, so no top-level table is a stacking
+// context around a picture control inside it (the file review's round 17, the coordinator's decision 4); a left's percentage
+// is of the column, not of the table, so each top-level table's own border-box width reaches the rule as --fv-table-w,
+// registered non-inherited too, from a second ResizeObserver over the tables (their own event: a pane's width, a text size,
+// a picture loading in a cell each moves it, and none is a paint). mdBlock rebuilds
+// the root on every paint and no report follows a paint, so renderBody stamps the fresh tables itself (the returned
+// function) with the body's width last reported and hands them to the tables' observer in place of the last root's; before
+// the first report both properties are unset and the sheet's fallbacks hold (the cap is the column and the shift none). The
+// stamp, which the body's report runs as well, writes each table's own width with its cap, read after every cap is written, so
+// the shift a new width asks for lands in the layout the new width makes and the tables' observer, delivered after the body's in
+// the same round, finds the width already written (with the width left to that later delivery, WebKit raised a window error, a
+// loop of undelivered notifications, at a pane's width change). Both write the same measure, the table's offsetWidth, so that
+// delivery for a table the stamp just wrote leaves the value as the stamp wrote it (the file review's round 18, fresh-1: the
+// observer had written the border box's fractional inline size, a second write of a different string after every stamp, which
+// for some widths moved the table by a pixel before the frame painted).
+// Absent ResizeObserver (a stand-in, an old engine) nothing is written and the fallbacks hold. One watch at a time: the next
+// open, or the close, drops the last, both observers with it. An optional `onWidth` runs after each changed report of the
+// body's width with the new width: the local viewer's reflow, which re-places the comments panel's cards once per animation
+// frame, hangs on it; the URL viewer passes none.
 let dropWidthWatch: () => void = () => { /* no watch up */ };
 function watchBodyWidth(body: HTMLElement, onWidth?: (width: number) => void): () => void {
   dropWidthWatch();
   let width = -1;                                      // the body's content width as last reported, -1 before the first report
+  let tables: ResizeObserver | null = null;            // the tables' observer: each top-level table's own width, for its shift
   const stamp = (): void => {
     if (width < 0) return;
+    if (tables) tables.disconnect();                   // the last root's tables are gone (a Raw paint has none) or these same ones, observed again below
     const md = body.querySelector(".fileview-md");
     if (!md) return;
-    for (const n of Array.from(md.children)) if (n.tagName === "TABLE") (n as HTMLElement).style.setProperty("--fv-body-w", width + "px");
+    const top = Array.from(md.children).filter((n) => n.tagName === "TABLE");
+    for (const n of top) (n as HTMLElement).style.setProperty("--fv-body-w", width + "px");
+    const widths = top.map((n) => (n as HTMLElement).offsetWidth);   // each table's own width, read once every cap is written
+    top.forEach((n, i) => (n as HTMLElement).style.setProperty("--fv-table-w", widths[i] + "px"));
+    if (tables) for (const n of top) tables.observe(n);
   };
   if (typeof ResizeObserver === "function") {
     const ro = new ResizeObserver((entries) => {
@@ -737,8 +815,12 @@ function watchBodyWidth(body: HTMLElement, onWidth?: (width: number) => void): (
       stamp();
       if (onWidth) onWidth(w);
     });
+    tables = new ResizeObserver((entries) => {
+      for (const e of entries) (e.target as HTMLElement).style.setProperty("--fv-table-w", (e.target as HTMLElement).offsetWidth + "px");   // the stamp's measure
+    });
+    const own = tables;
     ro.observe(body);
-    dropWidthWatch = () => { ro.disconnect(); dropWidthWatch = () => { /* dropped */ }; };
+    dropWidthWatch = () => { ro.disconnect(); own.disconnect(); dropWidthWatch = () => { /* dropped */ }; };
   }
   return stamp;
 }
@@ -1044,6 +1126,7 @@ export function closeFileView(): void {
   runLeave();                                          // the reader's place, remembered for the next open of the path (RememberedPlace, above), read while the body stands
   editHooks = null;
   gitHooks = null;                                     // a reply landing after the close decorates nothing
+  setTrail(trailEnd());                                // the trail ends with the review (file-trail.ts, L1): a reopen from Recent starts a new one
   dropOnKey();                                         // the closing viewer's handler leaves with it
   dropProbe();                                         // …and its changed-on-disk probe (the window and document listeners)
   if (zoomOpen) { zoomOpen.close(); zoomOpen = null; }   // the text-size flyout's reference leaves with the viewer (review: a keyboard close kept it, and the next viewer's first Escape was swallowed)
@@ -1090,6 +1173,7 @@ export function openFileClick(ev: MouseEvent | KeyboardEvent | null | undefined,
  *  Files pane's Recent entry, plans/markdown-viewer.md Slice 6, item 3), seated on the first text paint; the viewer's
  *  own memory of the path is read too, and the later of the two wins. An `at` lands where it points and ignores both. */
 export function openFileView(path: string, sid?: string | null, opts?: { todoId?: string | null; at?: At | null; place?: RememberedPlace | null }): boolean {
+  const how = trailNext; trailNext = null;             // the trail's word on this open (openFromViewer, openFigureInViewer and the conflict Reload set it; every other caller leaves it null: an open from outside), taken before the guard so a vetoed open leaves no stale tag
   // The replace path bypasses closeFileView, so it needs the same dirty ask: opening file B over an
   // edited-but-unsaved file A must not silently eat A's buffer.
   if (document.getElementById("romp-fileview") && closeGuard && !closeGuard()) return false;
@@ -1099,6 +1183,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   runLeave();                                          // …and the same leave write: the old file's place, before its body goes
   editHooks = null;
   gitHooks = null;                                     // the replace path skips closeFileView — same drop
+  const trailView = moveTrail(how, path, sid ?? null); // the trail's step, after that leave write (the leaving entry records the view the place was read in); the view to open in for a Back or Forward, else null
   dropOnKey();                                         // …and the same for the old viewer's Escape handler
   dropProbe();                                         // …and its changed-on-disk probe: the new open arms its own
   runCloseHooks();                                     // …and the old viewer's panel hooks
@@ -1126,6 +1211,32 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   document.body.classList.add("fileview-open");
 
   const bar = el("div", "fileview-bar");
+  // ── Back and Forward (plans/markdown-viewer.md, "Follow-on: Link navigation", L2) ── the trail's two steps as glyph
+  // buttons in the icon family, the bar's first group: an arrow left and an arrow right, the words in the title and
+  // aria-label with the target's file name ("Back to report.md"), and the word alone with aria-disabled when the trail
+  // has nothing that way (the bar's precedent, the text-size ends: never `disabled`, so a focused button keeps the
+  // keyboard); the GROUP hidden when the trail has nothing EITHER way, the ordinary open from outside (T367, the user
+  // 2026-09-12: a control with nothing to do is not rowed, as the greyed GitHub link was removed rather than dimmed; the
+  // file review's round 2, extra8-2, which found the rule the round-1 record said did not exist). Built once per open from
+  // the trail as this open left it (moveTrail ran above), never rebuilt: every step
+  // is an open that builds a new bar, so the state cannot go stale. The click's acknowledgement is the replace itself,
+  // in the same tick; a step re-opens its entry through openFromViewer with NO target, so the remembered place re-seats
+  // the file where it was left (pendingPlace) and the entry's recorded view is the view for that open (trailView).
+  const trailNow = liveTrail();
+  const nav = el("span", "fileview-group fileview-nav");
+  const navBtn = (dir: "back" | "forward"): HTMLButtonElement => {
+    const target = dir === "back" ? trailBackTarget(trailNow) : trailForwardTarget(trailNow);
+    const b = el("button", "fileview-btn fileview-icon fileview-nav-" + dir) as HTMLButtonElement;
+    b.type = "button"; b.innerHTML = dir === "back" ? ICON_BACK : ICON_FORWARD; b.dataset.icon = "1";
+    const words = navTitle(dir, target);
+    b.title = words; b.setAttribute("aria-label", words);
+    if (!target) b.setAttribute("aria-disabled", "true");
+    b.addEventListener("click", () => { if (target) openFromViewer(dir, target.path, target.sid, null); });
+    return b;
+  };
+  nav.appendChild(navBtn("back")); nav.appendChild(navBtn("forward"));
+  nav.hidden = !trailBackTarget(trailNow) && !trailForwardTarget(trailNow);   // nothing to step to either way: the group is out of the row and takes no gap (the sheets' .fileview-group[hidden]), the rule T367 set for the bar with the greyed GitHub link; with a target one way the group shows and the other button wears aria-disabled alone
+  bar.appendChild(nav);
   // BACK to the listing (the user 2026-08-24): a file opened FROM the browser overlays it with the
   // listing intact beneath (the one-directional stack above) — closing just the viewer IS the back.
   // The button renders only when a listing is actually underneath; a viewer opened from a path link
@@ -1180,6 +1291,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // re-rendered by kernel pushes — the viewer is a static overlay — so direct listeners are click-safe
   // here, same as Copy path below.
   const fmt = loadFmt();
+  if (trailView !== null) fmt.md = trailView;   // a Back or Forward opens the file in the view its entry recorded, for THIS open (this copy; nothing saves it, as a line target's Raw is unsaved)
   let text: string | null = null;             // set once the fetch lands; earlier clicks just save the pref
   let renderFell: string | null = null;       // the message of the throw the last text paint fell on (renderBody's catch: the RENDER_FELL line over Raw rows); null once a paint stands, so mode() answers "raw" over those rows and "rendered" again after the Rendered click's retry
   let viewError: string | null = null;        // the seam's error(): the words of the pane the body shows in place of the file, set where the two panes paint (the fetch chain's catch, imgFailed) and cleared where content paints (the text paint once its swap stands, the media arm, the editor's entry); never read off the body (plans/markdown-viewer.md Slice 7, item 3)
@@ -1708,6 +1820,8 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     const opts: FocusOptions & { focusVisible: boolean } = { preventScroll: true, focusVisible: ring ?? (a === null || a === document.body ? ringWithNoHolder() : ringOf(a)) };
     try { body.focus(opts); } finally { takingKeyboard = false; }
   };
+  keyboardTakers.set(body, takeKeyboard);   // for a figure control removed while it holds the keyboard (removeFigureControl, module level): this open's hand-over, found through the control's body
+  closeHooks.push(() => { keyboardTakers.delete(body); });
   // The ring after a key (the review's round 4). Chromium keeps the verdict a focus call named for the life of that focus, so a
   // body handed the keyboard without the ring (a pointer open, a mouse click on a toggle or a text-size step) showed none after
   // any number of keys, where the heuristic gives a mouse-focused element the ring on its first key. The body's own keydown
@@ -2086,6 +2200,15 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // A figure of the Rendered box that fails to load says so beside itself (armFigureLabels, module level): the body's `error`
   // and `load` capture listeners, armed once per open like the re-seat's above and never per paint, dropped with the viewer.
   ctx.onClose(armFigureLabels(body));
+  // A figure whose load comes later than its paint gets its "Open the picture" control then (L3; armFigureControls: a gated
+  // placeholder restored, the chat page's heal landing a retry): the body's `load` capture listener, armed once per open like
+  // the labels' and dropped with the viewer.
+  ctx.onClose(armFigureControls(body, path));
+  // Every figure's own laid-out box watched (watchFigureBoxes: one ResizeObserver per open, armed at each text paint through
+  // the seam's onRendered, the first paint's included; the body is empty here), so the control is decided again at every reflow
+  // of the figure, the body's width and a text-size step alike; null outside a browser, where nothing reflows.
+  const figureWatch = watchFigureBoxes(body, path, ctx.onRendered);
+  if (figureWatch) ctx.onClose(figureWatch);
   // The write, at the moments the reader leaves the file (runLeave: closeFileView and both replace paths; the window's
   // pagehide listener in initFileView runs it too): the place as the body stands, read once here and never per frame (the Slice 5 review's cost
   // lesson), at this file's mtime and scrollTop, with the Rendered view's open folds by ordinal, into the module's map and the
@@ -2159,7 +2282,11 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // the size at observe(), not a change. The repaint is ONE per animation frame: the reports are folded into the
   // next frame (requestAnimationFrame, the frame's own event) and the frame repaints only if the width it finds
   // differs from the one last painted over, so a burst of reports (several observers' entries, a width that
-  // moved and came back, the body growing taller as a figure loaded) costs one pass or none. The panel answers a
+  // moved and came back, the body growing taller as a figure loaded) costs one pass or none. The figures' "Open the picture"
+  // controls are NOT decided here: each figure's own ResizeObserver (watchFigureBoxes, set up above and armed at each text paint
+  // through the seam's onRendered, the first paint's included; nothing is observed at the open, the body being empty then)
+  // hears the reflow this report causes as it hears a text-size step's, which moves the column and not the body (the file
+  // review's round 2: a call here ran on one road of the two). The panel answers a
   // reflow by re-placing its cards and nothing more (file-comments.ts): until 2026-09-09 it ran its whole paint
   // pass here, unwrapping and re-wrapping every highlight and rebuilding the cards, once per frame of a pane drag,
   // and at a big reviewed file (15,000 lines, hundreds of comments and changes) that pass took seconds a frame and
@@ -2601,7 +2728,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
       if (openFileTab(p, sid || null)) return;                   // its own tab; a blocked popup falls through to the viewer
     }
     const ln = Number(x.dataset.line);
-    openLinkedFile(p, sid || null, ln > 0 ? { line: ln } : x.dataset.frag ? { heading: x.dataset.frag } : null);
+    openFromViewer("push", p, sid || null, ln > 0 ? { line: ln } : x.dataset.frag ? { heading: x.dataset.frag } : null);   // an open from inside the viewer: the shown file goes onto the trail (moveTrail)
   };
   // A gated figure's placeholder (figure-gate.ts; decision 8 of plans/markdown-viewer.md): the click loads every figure
   // of that host in the document and remembers the host for the page. Read here, on the stable body, since every paint
@@ -2629,6 +2756,18 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // copy of the hosting page at `/files#id`, and a section of the shown file has no tab of its own (the 2026-09-07
   // review, round 3).
   body.addEventListener("mousedown", (ev) => {
+    // A press of any mouse button on a web picture's control is cancelled, so no press focuses it (the file review's round 14,
+    // ui-1 with extra9-1): a press's default is what moves the keyboard focus onto a button, so the focus stays where it was, the
+    // viewer's body or nothing, and the click still opens the tab. A focus a press left on the control outlived the click,
+    // unpainted on a fine pointer once the pointer left, and a later Enter or Space opened the credentialed tab again with
+    // nothing shown first; a press dragged off the control and released, which opens nothing, left the same focus, and so did a
+    // right or a middle press. The context menu and the auxclick still come. Chromium keeps :active through a held press it
+    // cancelled, so the held control paints its pressed dress (file-figure-open-browser.test.ts, pressedLegible); Firefox sets
+    // no :active once the press is cancelled, so there the held control paints as on hover (not measured here: the pressed dress
+    // is read in Chromium alone, and no Firefox or WebKit cell reads it). The web control alone: a local one opens this viewer,
+    // and a press focuses it as before.
+    const c = figureControlOf(ev.target as Element | null, body);
+    if (c && c.classList.contains(FIGOPEN_WEB_CLASS)) { ev.preventDefault(); return; }
     const x = ev.button === 1 ? linkOf(ev.target as Element | null) : null;
     if (x && x.dataset.act === "openpath") ev.preventDefault();
   });
@@ -2637,6 +2776,231 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     const x = linkOf(ev.target as Element | null);
     if (x && (x.dataset.act === "openpath" || x.classList.contains(FRAG_LINK_CLASS))) openLink(x, ev);
   });
+  // ── the one gate between a gesture and a web picture's tab (the file review's round 16, extra5-1) ── A tap, a click, a
+  // Cmd/Ctrl-click, Enter or Space on a picture from the web opens its tab only while the picture's outbound sign (figureSign: its
+  // web control, or on a picture that wears none its mark) is in view and uncovered (signShown), read at the gesture's start;
+  // otherwise the gesture opens nothing and reveals the sign (revealSign: a scroll, never a focus), so the next gesture opens;
+  // a sign partly in view counts as in view. Before it, a tap or a click on the visible part of a loaded web picture opened the tab while its control stood off the
+  // screen, with nothing shown, on every device. A pointer's or a finger's press is read here, in the window's capture phase,
+  // before any listener of the page runs: the Outline popover closes itself in its own capture listener on the document, so a
+  // read on the body came after that close and saw the sign uncovered, and a click on the picture under the popover opened the
+  // tab; the text-size flyout closes later, at the document's mousedown. How a click finds its press, keyed on seven events of
+  // the window's capture phase and never on time (the file review's round 17, tests-1 with regression-1; its round 18, extra5-1,
+  // extra5-2 and correctness-1, with the coordinator's decisions on them and the closing check after those fixes):
+  // - a pointerdown records the press's verdict under its pointerId, a primary one first ending every earlier record whatever its
+  //   pointer type, since a new primary contact means every earlier one has ended. A record ends at its own pointerup, which hands
+  //   it to the slot, and at its own pointercancel (a swipe that scrolls, and in Chromium and Firefox the picture's own drag); a
+  //   dragstart ends every record, since WebKit's drag of the picture sends no pointerup and no pointercancel; and a mousedown with
+  //   no pointerdown of a mouse or a pen before it ends every record and takes no verdict, and it empties the slot unless it is the
+  //   compatibility mousedown of the one-finger tap whose pointerup filled the slot (the slot's rule, below). A mouse's press and a
+  //   pen's send their own mousedown after their pointerdown and before their pointerup, and a tap's compatibility mousedown comes
+  //   after its pointerup, so such a mousedown is a tap's, a chorded button's, WebKit's next press of the mouse after a press whose
+  //   pointerup never came (a drag in another pane, whose dragstart this window never hears: the dashboard's panes are same-origin
+  //   frames, and WebKit keeps the button's pressed state across them; and presumably a native context menu or a middle press's
+  //   autoscroll, not measured), or a tap on another document's element over the picture that went away during the press (a top
+  //   page's menu item, backdrop or hover tooltip over the viewer's frame), whose press and release that document heard and whose
+  //   compatibility mousedown and click land in this window with no pointerdown or pointerup of theirs. Ending a record or emptying
+  //   the slot can only refuse a click, never open one. The dragstart's clear and the
+  //   pointerup's end of its own record are defensive once the mousedown's clear stands: the mouse's next press after a lost pointerup
+  //   reaches this window as a mousedown with no pointerdown, or with a pointerdown, and either ends the record, so dropping either
+  //   alone changes no gesture a test drives, while dropping the mousedown's clear alone lets a press whose pointerup never came hand
+  //   its record to the next click's pointerup, which its node guard reds. The cost, measured in WebKit
+  //   (Playwright's, on Linux: a mouse drag of a web picture, and a drag in a same-origin frame standing in for another pane): after
+  //   a drag anywhere in the page, another pane's included, the mouse's next click on a web picture opens nothing and reveals its
+  //   sign, whatever covers or shows it, a right click before that drag included, and the click after it opens; where a press's
+  //   pointerup never comes, the mouse's next click is refused the same way; a first press elsewhere costs nothing. Chromium and
+  //   Firefox end such a drag with a pointercancel and send the next press's pointerdown, so they carry no cost. The cost of the
+  //   primary clear, on a device with a mouse and a touchscreen: a contact held on a picture while a primary press of the other
+  //   pointer type lands elsewhere loses its record, a mouse held while a finger presses or a finger held while the mouse presses,
+  //   so its click opens nothing and reveals;
+  // - a pointerup fills the one-click slot with the record under its own pointerId, or with nothing when that pointer recorded
+  //   none; any pointerdown, pointercancel or keydown empties the slot, and so does a mousedown with no pointerdown of a mouse or a
+  //   pen before it, unless the pointerup that filled the slot was a one-finger tap's (a primary touch, the only contact since its
+  //   own pointerdown) and this is the first mousedown since, that tap's compatibility mousedown; the first click after it takes it,
+  //   whatever the click lands on, so one slot serves one click, the click of the gesture whose pointerup filled it, and a click
+  //   whose press and release this window never heard finds the slot empty, whatever pointerup with no click after it (a right or a
+  //   middle click, a two-finger touch) had filled it; the boundary and capture events a browser sends between a pointerup and its
+  //   click (lostpointercapture, pointerout) leave it alone;
+  // - a click by a pointer (trusted, and its pointerId other than -1, or none with a detail above 0) reads the record under its own
+  //   pointerId, which stands only until that pointer's pointerup, and with none the press the slot handed it; that press must be
+  //   this picture's, its verdict shown, and the sign in view again at the click (controlInView), and with neither the click opens
+  //   nothing and reveals;
+  // - a click by no pointer, a key's (pointerId -1, detail 0) or a script's (untrusted), reads no record and no slot: it is read at
+  //   the click by signShown, a key's after the key gate has let its press through.
+  // The engines measured: Chromium gives a tap's click the touch's own pointerId, Firefox its press's (0, for a mouse and a touch
+  // alike), and WebKit under Playwright's touch emulation on Linux (a stand-in for WebKitGTK, and presumably WPE, on a
+  // touchscreen) pointerId 1 of type mouse while its press carried the touch's. A click after its press's pointerup finds that
+  // press in the slot in each of them, whatever pointerId it carries, and so does an iPhone tap's click, which WebKit's iOS source
+  // gives the touch's own pointerId, read and not run on a device. The arm for a click with no pointerId serves an engine whose
+  // click is a plain MouseEvent, which finds its press in the slot too; no engine measured sends one (every engine's click carries a
+  // pointerId, a key's -1), so that arm is pinned over the stand-in alone (the file review's round 18, tests-2). The mousedown's
+  // clear of the slot is not defensive: before it, after a pointerup of this window with no click after it, on a picture and begun
+  // with its sign shown, a tap on another document's element over the picture took that slot at its click and opened the tab with
+  // the sign covered, or out of view, at the tap's start, in Chromium, Firefox and WebKit (the closing check after the fixes for the
+  // file review's round 18; the other-document cells and their node guard, red at 0f998a3b9, whose mousedown left the slot alone);
+  // and its exception for the one-finger tap's own mousedown is what lets a tap's click find its press (the guard's one-finger taps,
+  // red under a gate that empties the slot at every such mousedown). The tap's flag (tapDue) stands from a primary touch's pointerup,
+  // that touch the only contact since its own pointerdown, until the next mousedown, pointerdown or pointercancel: its clears at a
+  // pointerdown and at a pointercancel are defensive, since each of those empties the slot and the next pointerup sets the flag
+  // again, while its test of a primary contact and its clear at the tap's own mousedown are pinned over the stand-in alone (the
+  // guard's rows of a contact that is not primary, whose primary contact pressed another document, and of a tap whose click never
+  // came after its compatibility mousedown, each then another document's tap; no browser cell drives either order). Its residual: a one-finger touch of this window that ends in a
+  // pointerup with no compatibility mousedown and no click, then such a tap on another document's element, would find that touch's
+  // press in the slot; no touch measured ends so (a swipe ends in a pointercancel, and in Chromium a touch held 1.2 s clicks), and
+  // the viewer's own document cancels a touch only on the comment float, which holds no picture. The slot's four other clears (a
+  // pointerdown's, a pointercancel's, a keydown's and the taking click's) are defensive: the slot is refilled at every pointerup,
+  // the click of a press this window heard follows that press's own pointerup, the mousedown's clear empties it before a click whose
+  // press this window did not hear, and a key's or a script's click never reads the slot, so dropping any one of the four alone
+  // changes no gesture a test drives; the press cells (a press with no click, then a key's click or a script's) are red
+  // under a gate that lets a key's or a script's click read the slot with the keydown's clear dropped. One physical gesture's later
+  // events are closed by their own fields and never by time: a click whose detail is above 1, following a refused click of its run
+  // (the second click of a double click, and in Chromium the second tap of a double tap, whose click carries detail 2), opens
+  // nothing, since the first click's reveal put the sign on the screen between the two; in Firefox and WebKit each tap's click
+  // carries detail 1, so a second tap is read at its own start and opens once the first tap's reveal has shown the sign; a held
+  // key's repeats and Space's release are the key gate's.
+  type FigurePress = { img: Element; ok: boolean };
+  const presses = new Map<number, FigurePress>();        // the press records, by pointerId, each until its pointerup or its pointercancel, a primary press, a dragstart or a mousedown no mouse's or pen's pointerdown came before
+  let slot: FigurePress | null = null;                   // the one-click slot: the record of the last pointerup, until a pointerdown, a pointercancel, a keydown, a mousedown no mouse's or pen's pointerdown came before (but a one-finger tap's own) or the click that takes it
+  let slotted: FigurePress | null = null;                // what the current click took from the slot at the window, read by webGestureShown
+  let mouseDownDue = false;                               // a mouse's or a pen's pointerdown came and its own mousedown has not, until that mousedown, its pointerup or its pointercancel
+  let tapDue = false;                                     // the slot was filled at a one-finger tap's pointerup and that tap's compatibility mousedown has not come, until that mousedown or the next pointerdown or pointercancel
+  let touchDowns = 0;                                     // the touch contacts since the last primary touch's pointerdown, that one counted
+  let refusedRun = false;                                 // the last click on a web figure in the current run of clicks was refused
+  const onFigurePress = (ev: PointerEvent): void => {
+    slot = null;
+    tapDue = false;
+    mouseDownDue = ev.pointerType !== "touch";            // a mouse's and a pen's press send their own mousedown before their pointerup; a tap's comes after its pointerup
+    if (ev.pointerType === "touch") touchDowns = ev.isPrimary ? 1 : touchDowns + 1;
+    if (ev.isPrimary) presses.clear();                    // a primary press: every earlier contact has ended, whatever its pointer type
+    const t = ev.target as Element | null;
+    const control = figureControlOf(t, body);
+    const img = control ? figureOfControl(control) : bareFigureOf(t, body);
+    const sign = img ? figureSign(img) : null;
+    if (img && sign) presses.set(ev.pointerId, { img, ok: signShown(sign) });
+  };
+  const onFigureMouseDown = (): void => {                 // ends records and empties the slot, but for a one-finger tap's own: it takes no verdict
+    if (mouseDownDue) { mouseDownDue = false; return; }   // the mousedown of the mouse's or the pen's press just recorded
+    presses.clear();                                      // a mousedown no mouse's or pen's pointerdown came before: every record ends
+    if (!tapDue) slot = null;                             // and the slot too, unless this is the compatibility mousedown of the one-finger tap whose pointerup filled it
+    tapDue = false;
+  };
+  const onFigureUp = (ev: PointerEvent): void => { slot = presses.get(ev.pointerId) ?? null; presses.delete(ev.pointerId); mouseDownDue = false; tapDue = ev.pointerType === "touch" && ev.isPrimary && touchDowns === 1; };   // the record ends at its own pointerup, handed to the slot
+  const onFigureCancel = (ev: PointerEvent): void => { presses.delete(ev.pointerId); slot = null; mouseDownDue = false; tapDue = false; };
+  const onFigureKey = (): void => { slot = null; };
+  const onFigureDragStart = (): void => { presses.clear(); };   // a drag ends every record: WebKit's drag of the picture sends no pointerup and no pointercancel, and no click follows a drag
+  const onClickRun = (ev: MouseEvent): void => { slotted = slot; slot = null; if (ev.detail === 1) refusedRun = false; };   // the click takes the slot, and a click of detail 1 begins a new run
+  const gateListeners: Array<[string, (ev: any) => void]> = [["pointerdown", onFigurePress], ["mousedown", onFigureMouseDown], ["pointerup", onFigureUp], ["pointercancel", onFigureCancel], ["keydown", onFigureKey], ["dragstart", onFigureDragStart], ["click", onClickRun]];
+  for (const [type, cb] of gateListeners) window.addEventListener(type, cb, true);
+  closeHooks.push(() => { for (const [type, cb] of gateListeners) window.removeEventListener(type, cb, true); });   // every window listener of the gate goes with the viewer, the capture flag its add carried
+  /** The gate's verdict at a click that would open a web picture's tab, the refusal's reveal made here: a click by a pointer takes
+   *  the press the recorder above matched to it (the record under its own pointerId while it stands, until that pointer's pointerup,
+   *  else the slot's), a click by no pointer is read at the click by signShown, and a later click of a refused run opens nothing. */
+  const webGestureShown = (img: Element, ev: MouseEvent): boolean => {
+    const sign = figureSign(img);
+    const pid = (ev as PointerEvent).pointerId;
+    const byPointer = ev.isTrusted && (typeof pid === "number" ? pid !== -1 : ev.detail > 0);
+    const own = typeof pid === "number" ? presses.get(pid) : undefined;
+    const press = byPointer ? own ?? slotted ?? undefined : undefined;   // a pointer's click: its own record, else the press the slot handed it; a key's or a script's click reads neither
+    slotted = null;
+    if (typeof pid === "number") presses.delete(pid);
+    if (ev.detail === 1) refusedRun = false;              // a new run (onClickRun hears it first on the window; read here too, whatever ran before)
+    if (ev.detail > 1 && refusedRun) return false;       // a later click of a refused run: the same gesture, which opens nothing and reveals nothing more
+    const ok = !!sign && (byPointer ? !!press && press.img === img && press.ok && controlInView(sign) : signShown(sign));
+    if (!ok) { if (ev.detail > 0) refusedRun = true; if (sign) revealSign(sign); }
+    return ok;
+  };
+  // ── a figure opens in detail (L3 of the link-navigation follow-on; the section before keepVideoShape) ── in a listener of
+  // its own beside the links': the two act on disjoint targets (a link and what it holds; a bare figure and its control), so
+  // neither reads the other's verdict. The gesture is the links' (wantsOwnTab): a plain click opens the picture in this
+  // viewer through openFigureInViewer, so the shown file goes onto the trail and Back returns to it at the figure's place (the
+  // replace's runLeave writes the reader's place as for any link) and the picture enters no Recent list; a Cmd/Ctrl-click, where
+  // the press reaches the picture (the Comments panel closed, or the pointer coarse: with the panel open on a fine pointer the
+  // regions layer's overlay takes the press, modified or not, and offers a comment, while the control opens at any time), opens
+  // the kernel's /file URL in a tab, as a PDF's modified click does (openFileTab; a blocked popup falls through to the viewer),
+  // and stops before the row, as a link's modified click does. A remote picture (an http source) opens in a tab and never in
+  // the viewer: the control, and the plain click and the Cmd/Ctrl-click where the press reaches the picture, all hand its own
+  // address to openUrlTab (the file review's round 2, extra5-3: the record had named the first two gestures alone; its round 8,
+  // fresh-1: the two clicks had stood with no condition while the open panel's overlay takes them on a fine pointer), and each
+  // of them, the key's click on the control among them, only through the one gate above: while the picture's sign is in view and
+  // uncovered at the gesture's start, and otherwise it opens nothing and reveals the sign, so the next one opens, a sign partly in
+  // view counting as in view (the file review's round 16, extra5-1).
+  // A local picture is not gated. A failed figure opens nothing on any gesture (figureTarget).
+  // The control's click is the figure's own wherever it stands (and it never stands inside a link whose click is the link's:
+  // decideFigureControl puts it after a link holding the figure alone and adds none inside a link of FIGURE_LINK_SET holding
+  // more, linkAbove). The figure's own click yields where another gesture owns it: a figure inside a link of FIGURE_LINK_SET
+  // (figureLinkOf from the img: a URL, section or path link, which the links listener follows, and an anchor with an href that
+  // listener leaves to the browser, a web address of the markdown; a dead link with its href removed and an author's named
+  // anchor are not in the set, no listener and no browser acts on them, and the click stays the figure's, so the title
+  // dressFigureTitle reads from the same predicate stands on the picture, the file review's round 12, correctness-1 with ui-1),
+  // a picture inside a summary that toggles a fold (figureFoldOf: a details element's own first summary child, a sibling of
+  // FIGURE_LINK_SET that dressFigureTitle and dressFigureMark read too and linkAbove does not, so a control stays on the picture
+  // and opens it, a button inside a summary toggling nothing; the browser toggles the fold on the click, plain or modified, and
+  // the click is the fold's alone, the file review's round 14, fresh-1: one click toggled the fold and opened the picture, a
+  // remote picture's tab or a local picture's open in place of the report; a summary outside a details toggles nothing, and a
+  // picture inside one opens as anywhere else),
+  // a picture the panel framed (panelMark: the card's, through the row's delegate), the Comments panel open (asideOpen: a plain
+  // click is the panel's comment offer, onImageClick, and a drag its region; the regions layer's overlay takes the press on a
+  // fine pointer, and on a coarse one the click reaches here and stands down), a drag that selected and ended on the picture
+  // (selectionOpenIn, the links' rule). A plain click is not stopped, as a link's is not.
+  const openFigure = (img: Element, ev: MouseEvent): void => {
+    const target = figureTarget(img, path);
+    if (!target) return;
+    if (wantsOwnTab(ev)) ev.stopPropagation();                                    // a modified click is the figure's alone: the row's delegate never sees it
+    if (target.kind === "web") { if (webGestureShown(img, ev)) openUrlTab(target.href); return; }   // a remote picture: a tab, never the viewer, and only through the one gate
+    if (wantsOwnTab(ev) && openFileTab(target.path, sid || null)) return;      // its own tab off the /file route; a blocked popup falls through to the viewer
+    openFigureInViewer(target.path, sid || null);                                // the picture in this viewer: the shown file goes onto the trail (moveTrail) and the picture enters no Recent list
+  };
+  body.addEventListener("click", (ev) => {
+    // a click another listener already answered stands down here: the gate listener, first on this body, prevents default as
+    // it restores a placeholder's img, and a click dispatched on that img (a display:none element no pointer can reach) then
+    // arrived here with the img restored, was read as a bare figure, and opened its target; one click, one answer
+    if (ev.defaultPrevented) return;
+    const t = ev.target as Element | null;
+    const control = figureControlOf(t, body);
+    if (control) { const img = figureOfControl(control); if (img) openFigure(img, ev); return; }
+    const img = bareFigureOf(t, body);
+    if (!img || figureLinkOf(img)) return;                       // a figure inside a link whose click is the link's (FIGURE_LINK_SET, the one predicate the title and the control read too): the links listener's own three, and a web anchor of the markdown (`[![alt](src)](https://...)`: linkMarkdownAnchors gives it target and rel and no class), the browser's own open of the author's link, never the picture beside it
+    if (figureFoldOf(img)) return;                                // a figure inside a summary whose click toggles a fold, plain or modified: the fold's click alone (figureFoldOf, which the title and the mark read too and the control does not)
+    if (panelMark(t) && !wantsOwnTab(ev)) return;
+    if (asideOpen && !wantsOwnTab(ev)) return;
+    if (selectionOpenIn(box)) return;
+    openFigure(img, ev);
+  });
+  // Enter or Space on a web picture's control opens the tab only while the control is shown at the press (the file review's
+  // round 14, ui-1 with extra9-1): out of view the key's default, the click, is cancelled, so a keyboard focus left on the
+  // control with the control scrolled out of view, by the body or by a table that scrolls on its own, or left off the screen
+  // by a pinch zoom of the viewer's page or of a same-origin page framing it, as the dashboard frames it (the file review's
+  // round 15, extra5-2), opens nothing while nothing is shown. Since the file review's round 16, extra5-1, the key is the one
+  // gate's too: its press is read at its first keydown (repeat false) by signShown, in view and uncovered, the verdict kept for
+  // that press, and a refused press opens nothing and reveals the control (revealSign; the keyboard already holds it), closing the
+  // viewer's own text-size flyout too if it is open, since no other key but Escape closes it and it can stand over the control (the
+  // file review's round 16, extra5-1: a second Enter under it was refused as the first was), so the next press opens; a control
+  // partly in view counts as in view. A held key's repeats read that verdict: after a refused keydown, or with no first keydown seen on the
+  // control, a repeat is cancelled too, so it neither clicks nor presses the control; after a shown one, a repeat is read in view
+  // at its own event, as before. Space clicks a button on its keyup, which is cancelled when its press was refused and otherwise
+  // read in view at the release, so a Space pressed in view and released out of view opens nothing; no repeat clears a refusal,
+  // and the keyup ends the press. Never a time: the events' own repeat field and the keyup. Out of view a Space presses nothing
+  // and does not scroll the body by a page: its only scroll is the reveal's, which brings the control into view, while every
+  // other key, PageDown and Tab among them, works as ever. The web control alone, as in the mousedown listener above.
+  const keyPress = new Map<string, boolean>();           // per key, whether its press's first keydown on a web control found the control shown
+  const keyOnHiddenWebControl = (ev: KeyboardEvent): void => {
+    if (ev.key !== "Enter" && ev.key !== " ") return;
+    const c = figureControlOf(ev.target as Element | null, body);
+    const web = !!c && c.classList.contains(FIGOPEN_WEB_CLASS);
+    if (ev.type === "keyup") {
+      const shown = keyPress.get(ev.key);
+      keyPress.delete(ev.key);                            // the release ends the press
+      if (ev.key === " " && web && (shown !== true || !controlInView(c!))) ev.preventDefault();
+      return;
+    }
+    if (!web) { if (!ev.repeat) keyPress.delete(ev.key); return; }
+    if (ev.repeat) { if (keyPress.get(ev.key) !== true || !controlInView(c!)) ev.preventDefault(); return; }
+    const shown = signShown(c!);
+    keyPress.set(ev.key, shown);
+    if (!shown) { ev.preventDefault(); if (zoomOpen) zoomOpen.close(); revealSign(c!); }   // the viewer's own text-size flyout is closed too, so the next press finds the control uncovered where the flyout was over it
+  };
+  body.addEventListener("keydown", keyOnHiddenWebControl);
+  body.addEventListener("keyup", keyOnHiddenWebControl);
 
   // ── edit mode (the raw-mode slice) ── a plain textarea holding the raw bytes: an embedded editor
   // is a different project, and a textarea that keeps your changes beats a half-editor. The kernel's
@@ -3016,7 +3380,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
         re.addEventListener("click", () => {
           if (!confirmDiscard()) return;
           dirty = false;                      // confirmed once — the replace guard must not ask twice
-          openFileView(path, sid, opts);      // the same provenance (todoId) — a reload is still that open
+          trailNext = "reload"; openFileView(path, sid, opts);      // the same provenance (todoId): a reload is still that open, and the same entry of the trail (moveTrail)
         });
         bar2.appendChild(re);
       }
@@ -3158,6 +3522,27 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   };
   document.addEventListener("keydown", onKey);
   onKeyLive = onKey;
+  // ── the trail's chords (L2) ── Alt+Left and Alt+Right, and on a Mac Cmd+[ and Cmd+] as well (navChord), step the trail
+  // while this viewer is up. One document listener in the CAPTURE phase, so it runs before the page's own handlers and
+  // the browser's default (its history step, which would leave the page under an open viewer) is taken whether or not
+  // the trail has a step that way; it stands down when another listener already took the key (defaultPrevented), when
+  // a text field or the editor holds the keyboard (the caret's own word step on a Mac), and when no viewer is up. A
+  // step is the button's own open (openFromViewer with no target). Installed with the viewer and removed by BOTH exits
+  // through the close hooks (runCloseHooks: closeFileView, a replace-open, the URL viewer's replace), as onKey is by
+  // dropOnKey, so a replaced viewer's chord never opens from a trail it no longer shows.
+  const onNavKey = (e: KeyboardEvent) => {
+    if (e.defaultPrevented || !document.getElementById("romp-fileview")) return;
+    const dir = navChord(e, IS_MAC);
+    if (dir === null) return;
+    const a = document.activeElement;
+    if (a && a !== document.body && isTypingTarget(a)) return;
+    if (editing) return;
+    e.preventDefault();
+    const target = dir === "back" ? trailBackTarget(liveTrail()) : trailForwardTarget(liveTrail());
+    if (target) openFromViewer(dir, target.path, target.sid, null);
+  };
+  document.addEventListener("keydown", onNavKey, true);
+  closeHooks.push(() => document.removeEventListener("keydown", onNavKey, true));
 
   // ── changed on disk (plans/markdown-viewer.md Slice 6, item 5) ── With the Comments panel closed nothing watched the
   // file: a session's write went unnoticed until something else reloaded it. A `focus` on this window and a
@@ -3612,6 +3997,7 @@ export function openUrlView(href: string): void {
   runLeave();                                          // a file viewer's place is remembered when a URL replaces it (RememberedPlace)
   editHooks = null;
   gitHooks = null;
+  setTrail(trailEnd());                                // the trail's entries are files; a URL document replacing the viewer ends it as a close does (file-trail.ts, L1)
   dropProbe();                                         // …and the old viewer's changed-on-disk probe (a URL view has no mtime to watch)
   dropOnKey();                                         // …and the old viewer's Escape handler (one live handler at a time)
   runCloseHooks();                                     // …and the old viewer's panel hooks
@@ -4139,6 +4525,203 @@ export function viewerHtml(text: string, walk?: (token: Token) => void): string 
   if (walk) marked.walkTokens(tokens, walk);
   return marked.parser(tokens, opts);
 }
+/** The classes the page's sheets dim, every one (the file review's round 16, extra5-2): each class a rule of a sheet some page of
+ *  either host loads (ui/webview/host-sheets.mjs hostSheets) names where that rule sets an opacity under 1, a visibility other than
+ *  visible, a filter or a clip-path other than none, or an animation whose keyframes set one of those, taken from the rule's subject
+ *  (the classes of its last compound outside :not() and :has(), or, where that names none, the classes of its other compounds) and,
+ *  where the subject names only classes the figure control wears, from its other compounds as well (`.fileview-md .fv-figopen`), so
+ *  a later rule that dims the control under a class of its own puts that class here. The sanitizer keeps an author's class, no rule
+ *  of a sheet can undo an ancestor's opacity, and an author's span of one of these around a picture dimmed its outbound dress, the web
+ *  control or the mark, under the 3:1 the sheets state (tag-chip-off at 0.45: 2.00:1 dark and 1.86:1 light, by pixels) while a tap
+ *  still opened the tab; so dropDimmingClasses takes them off the markup around every figure of a file document. Held to the sheets
+ *  both ways by file-figure-open.test.ts, which derives the list by this rule and names each class the sheets dim that the list lacks
+ *  and each listed class they no longer dim, so a rule added or removed under a class moves the list in the same change. The rule
+ *  over-counts on the safe side: an opacity it cannot read as a number (a var(), a calc()) counts as under 1, and a rule on a
+ *  pseudo-element counts for its element's class. */
+const SHEET_DIM_CLASSES: ReadonlySet<string> = new Set([
+  "agent-gist-meta", "agent-steps-note", "armed", "ask-btn-primary", "ask-pair-a", "bg-await-note", "bg-caret", "bg-stop",
+  "branch-chip", "busy", "chip", "chip-interrupting", "chip-nav", "cl", "cleared", "cmd-row", "cmt-attach", "cmt-err",
+  "cmt-mail", "cmt-max", "cmt-note", "cmt-quote", "cmt-relayed-note", "cmt-send", "cmt-tick", "cmt-x", "code-copy",
+  "col-dragging", "compacting-bar-fill", "composer-note-hint", "composer-ship-dots", "ctx-bar", "ctx-caret", "ctx-clicked",
+  "ctx-icon", "ctx-item", "ctx-item-body", "ctx-item-sub", "ctx-scan", "cv", "day-divider", "diff-code", "diff-ctx", "diff-gut",
+  "diff-hunk", "disabled", "dismissing", "done", "dragging", "echo-bubble", "emoji-cats", "emoji-cell", "emoji-none",
+  "emoji-sec-h", "emoji-title", "encrypted", "expanded", "fade", "fask-awaiting-swirl", "fask-awaiting-why", "fask-bellbtn",
+  "fask-bg-body", "fask-distill", "fask-interrupting", "fask-nbody", "fask-nfile", "fask-nprod", "fask-origin-absorbed",
+  "fask-retrying", "fask-stall-body", "fask-subparked", "fask-waiton-dur", "fb-crumb-sep", "fb-crumb-up", "fc-card-detached",
+  "fcheck", "fdismiss", "feed-col", "feed-col-count", "feed-empty", "feed-sess-head", "feed-toast", "file-uri-link",
+  "fileview-btn", "fileview-btn-blocked", "fileview-busy", "fileview-dot", "fileview-gutter", "fileview-md", "fitem", "fl-empty",
+  "fl-hover-sub", "fl-mail-off", "fl-prov", "fl-sesslabel", "fl-wordmark", "fnact", "fname", "forced", "fq", "fq-arrow",
+  "freeze-badge", "fretry", "freviewed", "fs-hint", "fs-recent-head", "fs-title", "fsum-stale", "ftree-act-btn", "ftree-node",
+  "fv-cl", "fv-dead", "fv-figopen", "fv-wikilink", "fx-body", "glyph", "gone", "host-off", "host-prefix", "idle", "img-caption",
+  "img-pending", "jl-sess", "jl-switch", "jl-text", "jl-unknown", "ledger-tnode", "loading", "locate-toast", "machine", "mcount",
+  "mcp-act", "mention-more", "meta-caret", "meta-dots", "meta-item-sub", "meta-label", "mrow", "msg-del", "msg-edit", "msg-fork",
+  "msg-restorefiles", "nm", "none", "notice-act", "notice-caret", "notice-sub", "off", "on", "opening", "opening-line-dots",
+  "pane-gone", "path-full-retry", "path-load-note", "pending", "ph", "picker-action", "picker-be-opt", "picker-browse",
+  "picker-dir", "picker-lifted", "rail-day", "rail-sticky", "repeat", "resolved", "rewound", "rl-dots", "romp-acted",
+  "romp-bubble", "romp-tl-tip", "rs-dragging", "rs-fastin", "rs-jrow", "rs-login-rm", "rs-off", "rs-pane-gone", "rs-row",
+  "rs-stale-toast", "rs-widget", "rs-widget-demo", "scroll-mark", "sel", "send-held", "sending", "sess-exit", "slash-arg",
+  "slash-key-hint", "sn-applying", "sn-known", "sn-trust", "snap-act", "snap-count", "snap-note", "snap-sess", "st-cleared",
+  "tab", "tab-close", "tab-closed", "tab-compacting-fill", "tab-dot", "tab-group-count", "tab-group-head", "tab-label",
+  "tag-chip-off", "tg-child", "tg-last", "thinking", "tool-fold-toggle", "toolgroup-caret", "turn", "turn-elapsed",
+  "turn-toolgroup", "tx-gap-glyph", "tx-starting-swirl", "typing", "undelivered-bubble", "undo-dots", "user-bubble",
+  "user-img-path", "ut-file", "ut-link", "warn-toast", "wt-empty", "wt-file", "wt-link", "wt-notice", "wt-sess"
+]);
+/** A file document's figures with the dimming classes (SHEET_DIM_CLASSES) taken off the author's markup around them: on the
+ *  sanitizer's body, before any pass of the viewer's own, each img and each svg image, and every element above it up to the body,
+ *  lose every listed class and keep their others. An svg image too, since the fence pass below makes an HTML img of one split across
+ *  a fence's lines, and before that pass, since the viewer's own code rows and Copy buttons wear listed classes and are made there;
+ *  before the anchors' pass too, which gives a dead link its own fv-dead. Its cost: an author's element of a page class around a
+ *  picture loses what that class gave it. The chat's md() does not run it (the pass is the viewer's, not md-sanitize.ts's), and an author element laid
+ *  over a figure rather than around it is the one gate's to read: signUncovered refuses a sign where a press would reach such an
+ *  element, dropPressThrough takes off the author's markup what would let a press pass through one, and dropStackClasses takes off the
+ *  classes that would raise an author element to the control's stacking level and, from a figure's ancestors, the classes that would
+ *  make one a stacking context around it (SHEET_STACK_CLASSES's docstring says what then holds, and where it does not). */
+function dropDimmingClasses(root: Element): void {
+  root.querySelectorAll("img, image").forEach((fig) => {
+    for (let e: Element | null = fig; e && e !== root; e = e.parentElement) {
+      const dim = (e.getAttribute("class") || "").split(/\s+/).filter((c) => SHEET_DIM_CLASSES.has(c));
+      if (dim.length) e.classList.remove(...dim);
+    }
+  });
+}
+/** The classes the page's sheets let a press pass through, every one (the file review's round 16, extra5-1, the covered sign): each
+ *  class a rule of a sheet some page of either host loads (ui/webview/host-sheets.mjs hostSheets) names where that rule sets
+ *  pointer-events to any value but auto, or an animation whose keyframes do, taken from the rule's subject as SHEET_DIM_CLASSES's
+ *  are (the classes of its last compound outside :not() and :has(), or, where that names none, the classes of its other compounds,
+ *  since the property is inherited and `.x span` lets a press pass through a span inside an x); a rule on a pseudo-element counts
+ *  for its element's class. The hit test at a gesture's start (elementFromPoint, signUncovered) does not see an element such a rule
+ *  reaches, and neither does elementsFromPoint (measured in Chromium, Firefox and WebKit), so an author's element of one of these
+ *  laid over a picture (locate-toast: fixed, opaque, pointer-events none) painted over the web control while the gate read the
+ *  control uncovered and the tab opened; so dropPressThrough takes them off every element of a file document's author markup. Held
+ *  to the sheets both ways by file-figure-open.test.ts, which derives the list by this rule, names each class the sheets let a press
+ *  pass through that the list lacks and each listed class they no longer do, and names each rule that sets the property with no class
+ *  to take and no id in its subject: an author's id is prefixed user-content-, so a rule keyed on an id reaches no author element,
+ *  while one keyed on an element or an attribute alone would reach one, and no drop of a class undoes it. */
+const SHEET_PRESS_THROUGH_CLASSES: ReadonlySet<string> = new Set([
+  "chat-theme-yatharth", "cmt-outline", "cmt-rail", "dismissing", "drop-over", "emoji-cat", "emoji-cats", "emoji-cell", "expanded",
+  "fc-overlay-off", "fc-region-chip", "feed-sess-head", "feed-toast", "fitem", "fitem-absorbing", "fitem-flying", "fsm-chips",
+  "glow-ruler", "gone", "locate-toast", "off", "rail-band", "rail-day", "rail-sticky", "romp-tl-tip", "rs-jrow", "rs-off", "rs-row",
+  "rs-sub", "scroll-marks", "sending", "sess-exit", "tab-group-break", "tab-row-line", "tab-row-sentinel", "tab-tip", "tg-child",
+  "tg-last", "think-clamp", "turn-toolgroup", "tx-gap", "tx-loading-anchor", "tx-spacer"
+]);
+/** The property a declaration of a style attribute's text names, read as CSS reads it: comments already taken out by the caller,
+ *  each escape in the name resolved (a backslash and up to six hex digits with one optional space after, or a backslash and any
+ *  other character), trimmed and lower-cased; empty for a declaration with no colon. */
+function declaredProperty(decl: string): string {
+  const at = decl.indexOf(":");
+  if (at < 0) return "";
+  return decl.slice(0, at).replace(/\\([0-9a-fA-F]{1,6})[ \t\n\r\f]?|\\([^\n\r\f0-9a-fA-F])/g, (_, hex: string | undefined, ch: string | undefined) => (hex ? String.fromCodePoint(Math.min(parseInt(hex, 16), 0x10ffff)) : ch || "")).trim().toLowerCase();
+}
+/** A file document's author markup with what lets a press pass through an element taken off it (the file review's round 16, extra5-1,
+ *  the covered sign), so an author element over a picture's sign that a page class, its style or the inert attribute would have let a
+ *  press pass through takes the press, and the hit test at a gesture's start reads it (signUncovered): on
+ *  the sanitizer's body, before any pass of the viewer's own, every element loses the classes of SHEET_PRESS_THROUGH_CLASSES, the
+ *  inert attribute (the sanitizer keeps it, and the hit test skips an inert element and everything inside it, in Chromium, Firefox and
+ *  WebKit alike), and each pointer-events declaration of its style attribute (the sanitizer's colour-only rule, md-sanitize.ts
+ *  colorOnlyStyle, drops one already; this keeps the drop the viewer's own, the name read as CSS reads it, declaredProperty, over the
+ *  attribute's text with its comments taken out, and the attribute untouched where it holds none). Every element, not a figure's
+ *  ancestors alone: an element laid over a picture may stand anywhere in the document, and the property is inherited from any
+ *  ancestor of it. Its cost: an author's element of one of these page classes loses what that class gave it, and an inert part of a
+ *  note takes presses. The chat's md() does not run it (the pass is the viewer's, not md-sanitize.ts's). */
+function dropPressThrough(root: Element): void {
+  root.querySelectorAll("[class], [inert], [style]").forEach((e) => {
+    const pass = (e.getAttribute("class") || "").split(/\s+/).filter((c) => SHEET_PRESS_THROUGH_CLASSES.has(c));
+    if (pass.length) e.classList.remove(...pass);
+    e.removeAttribute("inert");
+    const style = e.getAttribute("style");
+    if (style === null) return;
+    const decls = style.replace(/\/\*[\s\S]*?(?:\*\/|$)/g, "").split(";");
+    const kept = decls.filter((d) => declaredProperty(d) !== "pointer-events");
+    if (kept.length === decls.length) return;
+    const text = kept.map((d) => d.trim()).filter(Boolean).join("; ");
+    if (text) e.setAttribute("style", text); else e.removeAttribute("style");
+  });
+}
+/** The classes the page's sheets would raise to the picture's control's stacking level or past it (the file review's round 16,
+ *  extra5-1, the covered sign): each class a rule of a sheet some page of either host loads (ui/webview/host-sheets.mjs hostSheets)
+ *  gives a z-index at or above the control's, or an animation whose keyframes do, a value the reader cannot read as an integer
+ *  counted as at or above (the safe side); taken from the rule's subject as SHEET_PRESS_THROUGH_CLASSES's are (the classes of its
+ *  last compound outside :not() and :has(), or, where that names none, the classes of its other compounds). What holds (the file
+ *  review's round 17, extra9-1, and the coordinator's decision 4 on it): the control rests positioned at z-index 1 (these sheets'
+ *  `.fileview-md .fv-figopen` rule), and that z-index, not its place in the document, keeps it above every author element the
+ *  sheets leave at z-index auto or 0, before the picture or after it, wherever no stacking context stands around the picture
+ *  inside the Rendered box's own. What keeps it so: dropStackClasses takes these classes off every element of a
+ *  file document's author markup, so no author element is left at or above the control's level (measured in Chromium, Firefox and
+ *  WebKit on the chat modal and the Files pane: with these classes gone, no author-reachable rule leaves an author element at or
+ *  above the control), and takes SHEET_CONTEXT_CLASSES, the classes that would make an element around the picture a stacking
+ *  context, off each figure and every element above it; and the viewer's own rule for a top-level table shifts it with a position
+ *  and a left, which make no stacking context; and the sanitizer removes an author's marquee, whose own rendering made one around
+ *  what it held with no page class in Chromium and Firefox, while in WebKit it makes none and its own scroll and clip carried the
+ *  control outside the page (md-sanitize.ts MD_FORBID_TAGS; the file review's round 18, extra7-2). A stacking context around the picture would hold the control's
+ *  z-index inside it, and author paint the hit test does not see could then cover the control. None of this holds for the outbound
+ *  mark a picture
+ *  with no control wears, which has no stacking level of its own (the file review's round 17, fresh-1 and extra7-1), nor for a
+ *  sheet hostSheets does not read (katex's vendored one). Held to the sheets both ways by file-figure-open.test.ts, which derives
+ *  the list by this rule, names each class the sheets would raise that the list lacks and each listed class they no longer raise,
+ *  and names each rule that gives the z-index with no class to take and no id in its subject: an author's id is prefixed
+ *  user-content-, so an id-keyed rule reaches no author element, while an element- or attribute-keyed one would reach one, and no
+ *  drop of a class undoes it. */
+const SHEET_STACK_CLASSES: ReadonlySet<string> = new Set([
+  "branch-chips", "chat-theme-yatharth", "cite-preview", "cmt-pop", "cmt-rail", "cmt-tick", "code-copy", "col-dragging",
+  "ctx-menu", "ctx-sub", "ctx-text", "dot", "dot-nav", "drop-over", "emoji-sec-h", "fc-float", "fconfirm-back", "feed-col",
+  "feed-col-head", "feed-sessmenu", "feed-toast", "file-preview-pop", "fileview-btn", "fileview-gutter", "fileview-outline",
+  "fileview-zoom-menu", "fitem-absorbing", "fl-hover", "focus-gutter", "fv-figopen", "glow-ruler", "locate-toast", "mention-pop",
+  "meta-menu", "meta-sub", "on", "pickdlg-overlay", "picker-dir-menu", "picker-overlay", "rail-band", "rail-day", "rail-ring",
+  "rail-sticky", "romp-tip", "romp-tl-tip", "rs-sub", "scroll-marks", "slash-pop", "tab-tip", "time-marker", "tx-landing-notice",
+  "tx-loading-anchor", "unread"
+]);
+/** The classes the page's sheets would make a stacking context around a picture, beyond the classes the other lists take (the file
+ *  review's round 17, extra9-1, and the coordinator's decision 4 on it): each class a rule of a sheet some page of either host loads
+ *  (ui/webview/host-sheets.mjs hostSheets) names where that rule, whatever state pseudo-class its subject carries (a hover's, a
+ *  press's), gives the element a property that makes it a stacking context: a transform, translate, rotate, scale or perspective
+ *  other than none; a filter, backdrop-filter, clip-path, mask, mask-image, mask-border, mask-box-image, view-transition-name or
+ *  offset-path other than none, each under its -webkit- name too; an opacity under 1; a mix-blend-mode other than normal; an isolation other than auto; contain with layout or paint (strict and content hold both); a
+ *  content-visibility other than visible; a position of fixed or sticky; a z-index other than auto; a will-change naming one of
+ *  these; or an animation whose keyframes set one; a value the reader cannot read counted (the safe side). container-type is none of
+ *  them: it applies style and size containment, which make no stacking context (measured in Chromium, Firefox and WebKit). Taken
+ *  from the rule's subject as SHEET_STACK_CLASSES's are, less a rule whose subject is a pseudo-element, whose box holds no picture,
+ *  and a rule under print media, where no gesture reaches the page and no control prints; and less the classes SHEET_STACK_CLASSES
+ *  and SHEET_PRESS_THROUGH_CLASSES take off every element and SHEET_DIM_CLASSES off a figure's ancestors. A stacking context around
+ *  a picture holds its control's z-index 1 inside it (SHEET_STACK_CLASSES's docstring says what that z-index keeps), so
+ *  dropStackClasses takes these off each figure and every element above it. The rule counts on the safe side: a class whose only
+ *  stacking rules no element around a picture can match (a subject that also needs a class another list takes, an id, a data-
+ *  attribute the sanitizer strips, a form control it removes, the body) is listed too. Held to the sheets both ways by file-figure-open.test.ts, which derives the list by this rule, names each class the sheets
+ *  would make a stacking context around a picture that the list lacks and each listed class they no longer do, and names each rule
+ *  that would make an element a stacking context with no class in its subject, an element that could hold a picture's control
+ *  (no void element and no tag the sanitizer removes) and no id: no drop of a class undoes such a rule's reach. Its cost, as
+ *  dropDimmingClasses states its own: an author element of a listed class around a picture loses what that class gave it, its
+ *  layout included, a class listed on the safe side too, and one class's drop hides a picture outright: an element of the
+ *  classes picker-error and show loses show and stands at picker-error's display none, the picture inside it hidden, which
+ *  fails closed (the file review's round 18, extra6-1 and extra7-5). */
+const SHEET_CONTEXT_CLASSES: ReadonlySet<string> = new Set([
+  "ask-btn", "composer-stage-btn", "ctx-swatch", "fask-secbtn", "fc-arrivals", "fc-clip", "fc-replies", "fc-sec", "fconfirm-btn",
+  "feed-cols", "fileview-load", "fl-prov-swirl", "fold-caret", "host-dial-swirl", "meta-held-mark", "path-load-spin",
+  "picker-dir-hint", "pulse", "ra-group", "ra-metric", "ra-openbtn", "ra-periods", "rail-hit", "rl-o", "romp-lightbox-img",
+  "rs-lifted", "rs-nudge", "show", "slash-spin", "stop-btn", "tab-group-caret", "tab-ph-swirl", "tab-widgets-gear", "wt-hostload"
+]);
+/** A file document's author markup with the classes that would lift an element over the picture's control taken off it: on the
+ *  sanitizer's body, before any pass of the viewer's own, every element loses the classes of SHEET_STACK_CLASSES, which the sheets
+ *  would raise to the control's stacking level or past it (the file review's round 16, extra5-1, the covered sign), and each img
+ *  and each svg image, and every element above it up to the body, loses the classes of SHEET_CONTEXT_CLASSES, which would make it
+ *  a stacking context around the picture that holds the control's z-index inside it (the file review's round 17, extra9-1, and the
+ *  coordinator's decision 4 on it). Every element for the first list, since an element the sheets would raise may stand anywhere in
+ *  the document; a figure's ancestors for the second, the dimming drop's scope, since the control stands beside the figure's anchor
+ *  and a stacking context holds it only from an element above it (an svg image as dropDimmingClasses reads one, since the fence
+ *  pass can make an HTML img of it). Its cost, as dropDimmingClasses states its own: an author's element of one of these page classes
+ *  loses what that class gave it, its layout included (SHEET_CONTEXT_CLASSES's docstring names the drop that hides a picture; the
+ *  file review's round 18, extra6-1 and extra7-5). The chat's md() does not run it (the pass is the viewer's, not md-sanitize.ts's). */
+function dropStackClasses(root: Element): void {
+  root.querySelectorAll("[class]").forEach((e) => {
+    const stack = (e.getAttribute("class") || "").split(/\s+/).filter((c) => SHEET_STACK_CLASSES.has(c));
+    if (stack.length) e.classList.remove(...stack);
+  });
+  root.querySelectorAll("img, image").forEach((fig) => {
+    for (let e: Element | null = fig; e && e !== root; e = e.parentElement) {
+      const ctx = (e.getAttribute("class") || "").split(/\s+/).filter((c) => SHEET_CONTEXT_CLASSES.has(c));
+      if (ctx.length) e.classList.remove(...ctx);
+    }
+  });
+}
 // Markdown rendered as the prose it means (the user 2026-08-09: Rendered is the default, Raw one click
 // away). The file is arbitrary bytes off a disk and marked emits raw HTML verbatim, so, exactly like the
 // chat's md() in render.ts, the output goes through the shared sanitizer (sanitizeMd, md-sanitize.ts)
@@ -4185,6 +4768,9 @@ function mdBlock(text: string, doc?: MdDocLoc): HTMLElement {
   // above renders as literal text, so the slug takes the tag's characters too (md-results-b), where GitHub reads the
   // tag as HTML (results).
   const clean = sanitizeMd(dirty, mintHeadingIds);   // the sanitized <body>: DOMPurify's own document's, which never loads (below)
+  if (doc && doc.kind === "file") dropDimmingClasses(clean);   // an author's dimming class off every figure's ancestors, before any pass of the viewer's own (dropDimmingClasses)
+  if (doc && doc.kind === "file") dropPressThrough(clean);     // and off every author element what would let a press pass through it, so the hit test reads it (dropPressThrough)
+  if (doc && doc.kind === "file") dropStackClasses(clean);     // and off every author element the classes that would raise it to the control's stacking level, and off a figure's ancestors the classes that would make one a stacking context around it, each such element losing what that class gave it, its layout included (dropStackClasses)
   // Fenced blocks: highlight only a language the fence NAMES and this bundle registers (the same no-guessing rule as
   // langFor; an unnamed block stays plain rather than being painted at random). Then, for EVERY fence, named or not, the
   // chat's own dress (code-block.ts): the per-line rows that number the lines and make a soft-wrap read distinctly from a
@@ -4270,13 +4856,19 @@ function mdBlock(text: string, doc?: MdDocLoc): HTMLElement {
   // section names them). The fence pass (above) is the one pass
   // that re-parses markup, so it runs before this block and this block judges what its re-parse creates (its comment says
   // what that is). The passes after the adoption write a video's style, a list item's class, anchors' attributes (class,
-  // title, data-*, target, rel, tabindex, role, an href set, resolved or removed) and new anchors and spans in place of the
-  // prose's and the code blocks' text nodes, and none re-parses: after the adoption line this function, and every module a pass
-  // after it reaches (the callees' modules and their imports, derived from the code), holds no write of innerHTML or outerHTML
-  // and no insertAdjacentHTML, insertAdjacentElement, createContextualFragment, DOMParser, document.write, setHTML,
-  // setHTMLUnsafe, parseHTMLUnsafe or template element; file-view-seam.test.ts derives that population from the
-  // comment-stripped code (its RE_PARSE pattern) and pins it, so a new such site after the adoption is red there until it is
-  // judged.
+  // title, data-*, target, rel, tabindex, role, an href set, resolved or removed), new anchors and spans in place of the
+  // prose's and the code blocks' text nodes, and the figure controls, each a clone of a glyph parsed once onto a holder that
+  // enters no document (the one such line a reached local holds, file-view.ts's figureControlGlyph), and none re-parses under
+  // `box`: after the adoption line this function, and every
+  // module a pass after it reaches (the callees' modules, the reached locals' imported callees' modules and their imports under
+  // every import form, transitively, derived from the code), holds no use of innerHTML or outerHTML and no insertAdjacentHTML,
+  // insertAdjacentElement, createContextualFragment, DOMParser, document.write, setHTML, setHTMLUnsafe, parseHTMLUnsafe or
+  // template element beyond the sites file-view-seam.test.ts judges, each with its reason (the viewer's own constant markup on a
+  // node outside the Rendered box, a write onto a node that enters no document, the figure control's glyph among them, a parse
+  // into a document of its own, a type annotation naming the property, and wrapCodeLines before the adoption; JUDGED_SITES per
+  // module, and file-view.ts's own by its whole-file count); that test derives the population from the comment-stripped code (its
+  // RE_PARSE pattern) and pins it, so a new such site in this function after the adoption or anywhere in a reached module is red
+  // there until it is judged.
   if (doc && doc.kind === "url") {
     // Every attribute a figure fetches through resolves against the document (resolveFigureRefs, below): this arm read
     // `img[src]` alone, so a relative `srcset` candidate, a video's `src` or `poster`, an audio's, a `source`'s or a
@@ -4366,6 +4958,14 @@ function mdBlock(text: string, doc?: MdDocLoc): HTMLElement {
     // walks every `a`, the SVG anchor included (its xlink:href is a plain href by now, above), and writes each
     // attribute as one, so an SVG link is stamped like an HTML one.
     linkMarkdownAnchors(box, doc.path);
+    // Then every figure's "Open the picture" control decided (L3 of the link-navigation follow-on; decideFigureControl and the
+    // section above it). After the anchors, so a link holding the figure alone is sorted before the control goes in after it:
+    // the control is no part of the author's link (figureAnchor climbs the link). In a browser a figure the browser is still
+    // fetching here gets none and its control at its load (armFigureControls, in openFileView); a figure the browser already
+    // holds (the report re-opened: Back, Forward, a second open) is complete here and decided now, from its natural size, since
+    // this box is not in the document yet, and decided again at its load event, which fires all the same, over the laid-out box;
+    // a gated placeholder's comes at the load its click starts; a stand-in is decided from its source.
+    addFigureControls(box, doc.path);
   } else {
     // A URL document (openUrlView), or a caller with no location: links open a NEW tab, for the same reason. One
     // kind stays in the viewer: an IN-DOCUMENT `#fragment` link, which lands on its heading through the body's
@@ -4454,7 +5054,10 @@ export function rewriteFigureSrcs(root: ParentNode, dir: string, sid: string | n
   // candidate by candidate, its descriptors kept (`1x`, `100w`); the authored spelling stays in `data-fv-src` for the
   // img's src alone, the one attribute the comments panel pairs an embed by, and in `data-fv-srcset` (FV_SRCSET) for a
   // rewritten srcset, the img's or a `<source>`'s, so a failed figure's label can name the candidate the browser asked for
-  // as the author wrote it (failedSource; Slice 7 of plans/markdown-viewer.md, item 2, the review's round 1). An svg
+  // as the author wrote it (failedSource; Slice 7 of plans/markdown-viewer.md, item 2, the review's round 1), except that
+  // the label shows a candidate with a scheme or a leading // through shownSource: its origin alone, in the spelling URL
+  // parsing gives it (the scheme and the host lower-cased), and a source that appears to carry a sign-in as the withheld
+  // address (figureSourceCredentialed). An svg
   // image's xlink:href is moved to the plain `href` as the anchors' is in mdBlock, so the element carries one attribute
   // every reader agrees on.
   const path = (src: string): string | null => {
@@ -4524,6 +5127,181 @@ export function rewriteFigureSrcs(root: ParentNode, dir: string, sid: string | n
 const FIGERR_MARK = "data-fv-figerr";
 /** The label's class, for the sheets alone (`.fileview-md .fv-figerr`: the gate's dress in the error dress's ink). */
 const FIGERR_CLASS = "fv-figerr";
+/** The mark on a figure's "Open the picture" control (decideFigureControl, in the section after the labels): the control is
+ *  found by it, never by its class, as the label is by FIGERR_MARK. */
+const FIGOPEN_MARK = "data-fv-figopen";
+/** The control's class, for the sheets alone (`.fileview-md .fv-figopen`); with `-left` or `-right` after it, the float of a
+ *  figure the author aligned, which the control follows (the sheets' two float rules). */
+const FIGOPEN_CLASS = "fv-figopen";
+/** The control's words, its title and aria-label, for a picture of the session's disk. */
+export const FIGURE_OPEN_TITLE = "Open the picture";
+/** The control's class for a picture from the web, beside FIGOPEN_CLASS (`.fileview-md .fv-figopen-web`, the sheets' dress for a
+ *  control whose open leaves for another host), keyed on figureTarget's kind and re-decided with the control (dressFigureControl;
+ *  the file review's round 11, ui-1 with extra8-1: the owner's decision of 2026-09-22 kept every gesture that opens a web picture's
+ *  address in a tab and asked that the case show before the click, where a remote and a local picture had presented one surface). */
+const FIGOPEN_WEB_CLASS = FIGOPEN_CLASS + "-web";
+/** The control's words for a picture from the web: the open is a new tab at the address's host (targetHost), in words a hover and a
+ *  screen reader both read. The host is the parse's, and the URL parser can read a sign-in part as a host and a port, so a source
+ *  that appears to carry a sign-in never reaches these words: its control reads FIGURE_OPEN_WEB_WITHHELD (figureSourceCredentialed,
+ *  dressFigureControl), at that rule's stated cost: a harmless address with an at sign after its scheme, https://cdn/img/a@2x.png, is withheld too. */
+export function figureOpenWebTitle(host: string): string { return "Open the picture in a new tab at " + host; }
+/** The line the picture itself carries in its title for a web target, for the two gestures that have no control to carry words (the
+ *  plain click and the Cmd/Ctrl-click on the picture where the press reaches it): the address the open leaves for, as shownAddress
+ *  shows it (its origin), or FIGURE_ADDRESS_WITHHELD when the source appears to carry a sign-in. An author's own title stands before
+ *  it on its own line (dressFigureTitle). */
+export function figureWebTitleLine(address: string): string { return "Opens in a new tab: " + address; }
+/** The words that stand in an address's place when its source appears to carry a sign-in (figureSourceCredentialed), inside each
+ *  surface's own frame: the picture's title line (figureWebTitleLine), the failed figure's label (shownSource, after
+ *  FIGURE_FAILED) and the web control's words (FIGURE_OPEN_WEB_WITHHELD). No part of the address appears beside them. */
+export const FIGURE_ADDRESS_WITHHELD = "address withheld because it appears to carry a sign-in";
+/** The web control's title and aria-label when the picture's source appears to carry a sign-in: the open and the new tab, and the
+ *  withheld address in place of the host (dressFigureControl). */
+export const FIGURE_OPEN_WEB_WITHHELD = "Open the picture in a new tab (" + FIGURE_ADDRESS_WITHHELD + ")";
+/** The mark on a picture whose title the viewer composed (dressFigureTitle): it holds the author's own title, "" for none, so a
+ *  decision that finds the picture's candidate local again restores that title and takes the mark off. Found by the mark, never
+ *  by the title's text: the sanitizer keeps an author's `title` and lets no data-* attribute through. */
+const FIGTITLE_MARK = "data-fv-figtitle";
+/** The mark on a picture from the web that wears NO control (a loaded picture under the floor, FIGOPEN_MIN_PX): the picture itself
+ *  carries the control's outbound dress, a dashed outline the sheets key on this attribute (`.fileview-md img[data-fv-figweb]`), on
+ *  hover where the device has one and at rest where it has none or where any pointer is a finger (a phone; a touchscreen laptop, whose
+ *  primary pointer hovers), as the control's own reveal is, so the plain
+ *  tap's open is shown before it happens where the title is no surface (a tooltip never shows on touch; the file review's round 12,
+ *  fresh-1). Set and taken off at every decision beside the title (dressFigureMark): the population is the title's (FIGTITLE_MARK, a
+ *  web target whose click is the figure's own) less the pictures a control stands on, whose control carries the dress. A data-*
+ *  attribute, never a class: the sanitizer keeps an author's `class` and lets no data-* attribute through, so no authored picture
+ *  wears the mark. The outline wears the outbound dress's own token (var(--outbound-line), a grey clearing 3:1 over the page in both
+ *  themes; the file review's round 13, ui-1 with extra6-1), the one the control's dashed border wears at rest, so the two dresses are
+ *  one colour (the owner's call with that ruling). Inside an href-less dead link, from which a tap opens the tab too (no click of its
+ *  own, not in FIGURE_LINK_SET), the mark paints at the token's own ratio, since a dead link holding the dress dims by colour and not by
+ *  opacity (the sheets' rule; read by pixels in file-figure-open-browser.test.ts's paintedRatio, and composed from the declared
+ *  opacities in theme-parity.test.ts; the painted-contrast ask of 2026-09-23, where the anchor's opacity 0.7 had painted it at 2.82:1
+ *  in the light theme). */
+const FIGWEB_MARK = "data-fv-figweb";
+/** The three at signs the sign-in rule reads (figureSourceCredentialed): the ASCII one, the fullwidth commercial at (U+FF20) and
+ *  the small commercial at (U+FE6B). marked writes a markdown-authored lookalike into the src percent-encoded, and the URL parser
+ *  writes it so when it resolves a source, so the rule reads them after decodeEscapes. */
+const AT_SIGNS = /[@\uFF20\uFE6B]/;
+/** One pass of percent-decoding for the sign-in rule: each maximal run of `%XX` escapes is read as UTF-8, sequence by sequence,
+ *  and an invalid or malformed sequence keeps its first byte as written (upper-cased) while the rest of the run is still read.
+ *  A decodeURIComponent over the whole run would throw on one bad byte and hide a %40 beside it (`%FF%40`). */
+function decodeEscapesOnce(s: string): string {
+  return s.replace(/(?:%[0-9A-Fa-f]{2})+/g, (run) => {
+    const bytes = (run.match(/%[0-9A-Fa-f]{2}/g) || []).map((x) => parseInt(x.slice(1), 16));
+    let out = "", i = 0;
+    while (i < bytes.length) {
+      const b = bytes[i];
+      const n = b < 0x80 ? 1 : (b & 0xe0) === 0xc0 ? 2 : (b & 0xf0) === 0xe0 ? 3 : (b & 0xf8) === 0xf0 ? 4 : 0;
+      let ok = n > 0 && i + n <= bytes.length;
+      for (let k = 1; ok && k < n; k++) if ((bytes[i + k] & 0xc0) !== 0x80) ok = false;
+      if (ok) {
+        const seq = bytes.slice(i, i + n).map((x) => "%" + x.toString(16).padStart(2, "0")).join("");
+        try { out += decodeURIComponent(seq); i += n; continue; } catch { /* a malformed sequence: its first byte as written */ }
+      }
+      out += "%" + b.toString(16).toUpperCase().padStart(2, "0"); i += 1;
+    }
+    return out;
+  });
+}
+/** The most passes decodeEscapes runs. Eight reach every honest spelling (an at sign encoded twice, `%2540`, settles in three),
+ *  and each pass is linear in the text, so the bound keeps the read linear where a loop to the fixed point was quadratic: a `%25`
+ *  chain loses one level per pass, and one source 256 KB long held the page's thread about 21 s, a failed local picture's source
+ *  and one on raw.githubusercontent.com alike (the file review's round 16, regression-2). */
+const DECODE_PASSES = 8;
+/** The passes decodeEscapes has run since the module loaded, read by the node suite through decodePasses so the bound is held by
+ *  a count of passes and never by a time. */
+let decodePassCount = 0;
+/** decodePassCount, for the node suite (file-view-outline.test.ts, the bounded decode's case). */
+export function decodePasses(): number { return decodePassCount; }
+/** The text with its percent-escapes decoded until it stops changing (decodeEscapesOnce), so a double-encoded at sign (`%2540`)
+ *  reads as one, in at most DECODE_PASSES passes: a pass that decodes an escape shortens the text and upper-casing a malformed
+ *  escape changes it once, and null answers a text still changing at the last pass, which the sign-in rule reads as carrying a
+ *  sign-in (figureSourceCredentialed, at both of its reads), failing closed, since a source nested that deep has no honest
+ *  spelling. The cost: a source whose escapes nest past the bound is withheld wherever its address shows, and a local picture
+ *  whose name nests them loses its label's words. */
+function decodeEscapes(s: string): string | null {
+  for (let n = 0; n < DECODE_PASSES; n++) {
+    decodePassCount++;
+    const next = decodeEscapesOnce(s);
+    if (next === s) return s;
+    s = next;
+  }
+  return null;
+}
+/** Whether a picture's source appears to carry a sign-in: the ONE rule every visible word of an address reads (the file review's
+ *  round 15, correctness-1 with extra5-1, extra6-2, tests-1 and extra9-3, on the coordinator's decision: the URL parser reads more
+ *  spellings of a sign-in than the two once disclosed as a host, a port or a path, and each printed, so the rule reads the text and
+ *  not the parse). Its readers are the picture's title line (dressFigureTitle), the web control's title and aria-label
+ *  (dressFigureControl) and the failed figure's label (shownSource, which figureLabelText calls); each shows
+ *  FIGURE_ADDRESS_WITHHELD in its own frame, and no part of the address, when this answers true. It reads the source the viewer
+ *  holds, as the author wrote it where the viewer keeps that (chosenSource's answer: data-fv-src, FV_SRCSET or the attribute as
+ *  written), and on a URL document the address resolveFigureRefs resolved: the text with every ASCII tab and line break removed
+ *  and leading control characters and spaces trimmed, as the parser reads it. An at sign (AT_SIGNS) is looked for in the text
+ *  with its percent-escapes decoded until it stops changing (decodeEscapes), so an encoded or a double-encoded one counts and no
+ *  list of encoded forms is kept, and a text still changing after DECODE_PASSES passes counts as carrying a sign-in, since no
+ *  honest spelling nests that deep (so a source whose escapes nest past the bound is withheld too, a cost of the same kind as
+ *  the one below). Where it must stand: anywhere after a scheme other than data: (in any letter case), in the
+ *  authority, the path, the query or the fragment; anywhere after a leading run of two or more slashes or backslashes; in a
+ *  data: source, only in the head the label prints (through the first comma, else the first forty characters), so an inline
+ *  image's payload is not read; and in a source with neither, after a colon. The cost, stated and accepted: no rule on the text
+ *  or the parse tells a sign-in part holding a slash from an at sign in a path, so every address with an at sign after its
+ *  scheme is withheld, https://cdn/img/a@2x.png and a profile path such as https://social.example/@api/avatar.png among them, a
+ *  relative a@2x.png on a URL document (its label reads the resolved address) and a workspace file name with a colon before an
+ *  at sign; the cost is an address missing from a tooltip or a label, with no privacy or activation effect. Outside the rule,
+ *  as stated boundaries that print and are not chased: a data: source whose sign-in part runs past the head the label prints,
+ *  and a source with no scheme, no leading run and no ASCII colon before its at sign after the decode (a fullwidth colon does
+ *  not count), which the Files pane and the modals' file view show as a workspace path. */
+export function figureSourceCredentialed(src: string): boolean {
+  const read = src.replace(/[\t\n\r]/g, "").replace(/^[\u0000-\u0020]+/, "");
+  const atIn = (text: string): boolean => { const d = decodeEscapes(text); return d === null || AT_SIGNS.test(d); };   // still changing at the bound: read as a sign-in (decodeEscapes)
+  const scheme = /^([a-z][a-z0-9+.-]*):/i.exec(read);
+  if (scheme) {
+    if (scheme[1].toLowerCase() !== "data") return atIn(read.slice(scheme[0].length));
+    const comma = read.indexOf(",");
+    return atIn(comma >= 0 ? read.slice(0, comma + 1) : read.slice(0, 40));
+  }
+  const lead = /^[/\\]{2,}/.exec(read);
+  if (lead) return atIn(read.slice(lead[0].length));
+  const plain = decodeEscapes(read);
+  if (plain === null) return true;                        // still changing at the bound: read as a sign-in, as atIn reads it
+  const colon = plain.indexOf(":");
+  return colon >= 0 && AT_SIGNS.test(plain.slice(colon + 1));
+}
+/** A refused address cut at its authority, for shownAddress and targetHost: the scheme with its slashes, or a leading run of two
+ *  slashes or backslashes, then the text up to the first slash, backslash, question mark or hash, so no path, query or fragment
+ *  prints (an out-of-range port: http://example.test:99999/a.png shows http://example.test:99999). A refused address holding an
+ *  at sign never reaches it: figureSourceCredentialed withholds it first. */
+function authorityCut(s: string): string {
+  const lead = (/^(?:[a-z][a-z0-9+.-]*:[/\\]*|[/\\]{2})/i.exec(s) || [""])[0];
+  const rest = s.slice(lead.length), end = rest.search(/[/\\?#]/);
+  return lead + (end >= 0 ? rest.slice(0, end) : rest);
+}
+/** The host the control's words name for a web target: the address's host, with its port when one is written, and for an address
+ *  the parser refuses its authority cut (authorityCut). It prints the parse, which can read a sign-in part as a host and a port,
+ *  so a source that appears to carry a sign-in never reaches it (figureSourceCredentialed, read first by dressFigureControl),
+ *  at that rule's stated cost: a harmless address with an at sign after its scheme, https://cdn/img/a@2x.png, is withheld too. */
+function targetHost(href: string): string {
+  try { return new URL(href).host; } catch { return authorityCut(href); }
+}
+/** A picture's address as the viewer's words show it, in the picture's title (dressFigureTitle) and in the failed figure's
+ *  label (shownSource): its origin alone, the scheme, the host and the port, never a path, a path parameter, a query, a fragment
+ *  or a userinfo (the file review's round 15, extra9-2, on the coordinator's answer: a ;jsessionid= parameter or an opaque
+ *  token segment in the path printed while the file review's round 14, correctness-1 with extra5-3, kept origin plus path,
+ *  having dropped the userinfo, the query and the fragment). A source that appears to carry a sign-in never reaches it:
+ *  figureSourceCredentialed decides that first, for every surface, and the address is withheld whole, at that rule's stated cost: a harmless address with an at sign after its scheme, https://cdn/img/a@2x.png, is withheld too. An address that parses,
+ *  against `base` when one is given (a protocol-relative source has no scheme of its own), is printed as its protocol, two
+ *  slashes and its host, never as `origin`, which prints "null" for a file: address or for one resolved against a VS Code
+ *  webview; a blob: address as blob: and the origin of the address it wraps; an address with no host (s3:bucket/key.png,
+ *  file:///srv/x.png) as its scheme alone. An address the parser refuses (an out-of-range port, say) is cut at its authority
+ *  (authorityCut). URL parsing normalises the spelling (the scheme and the host lower-cased). The cost: neither the tooltip
+ *  nor the label names the file on the web, and on a URL document a relative figure's failed label names the document's
+ *  origin, since resolveFigureRefs resolved it against the document, while an absolute one names its own. */
+export function shownAddress(href: string, base?: string): string {
+  try {
+    const u = new URL(href, base);
+    if (u.host) return u.protocol + "//" + u.host;
+    return u.protocol === "blob:" ? u.protocol + shownAddress(u.pathname) : u.protocol;
+  } catch { return authorityCut(href); }
+}
 /** The element the label follows: the img, or the outermost of the wrappers standing between it and its block that the label
  *  must not go inside, climbed while one stands: a `<picture>` (a span is not a picture's content), the regions layer's
  *  `span.fc-imgwrap` (file-comments-regions.ts wraps THE img while the Comments panel is open, before the error fires, and its
@@ -4552,27 +5330,72 @@ function oneImg(p: Element): boolean {
 function linkAround(p: Element, a: Element): boolean {
   return p.localName === "a" && p.children.length === 1 && p.children[0] === a && (p.textContent || "").trim() === "";
 }
-/** The label standing right after `anchor` (its next sibling carrying the mark), when one does. */
+/** The label standing right after `anchor`, when one does: its next sibling carrying the mark, or the sibling after the
+ *  figure's "Open the picture" control when that stands at the anchor's side (figureControlAfter). The rule over the two
+ *  writers: a control stands on a LOADED figure alone (decideFigureControl) and a label on a FAILED one, so in a browser the
+ *  two meet only inside one error dispatch, where the labels' listener, armed first, puts the label past a control an earlier
+ *  load had added and the controls' listener then removes that control (a heal's retry that fails again); the read steps past
+ *  the control so that dispatch finds its label, and a control added at a later load goes in at the anchor's side ahead of a
+ *  label the same dispatch removes. A stand-in outside a browser (the node suites' DOM) is decided from its source at the paint
+ *  and keeps that control through a fired error, its label after it (the file review's round 2, fresh-2: this doc had said the
+ *  control goes in at the paint before any error can fire, which a browser's fetching figure made false). */
 function figureLabelAfter(anchor: Element): Element | null {
-  const n = anchor.nextSibling;
+  const n = (figureControlAfter(anchor) || anchor).nextSibling;
   return n && n.nodeType === 1 && (n as Element).hasAttribute(FIGERR_MARK) ? n as Element : null;
+}
+/** The "Open the picture" control standing right after `anchor` (its next sibling carrying FIGOPEN_MARK), when one does. */
+function figureControlAfter(anchor: Element): HTMLElement | null {
+  const n = anchor.nextSibling;
+  return n && n.nodeType === 1 && (n as Element).hasAttribute(FIGOPEN_MARK) ? n as HTMLElement : null;
 }
 /** `u` resolved against the document, as the browser resolves a figure's candidates for `currentSrc`; as written when it cannot be. */
 function absUrl(u: string): string {
   try { return new URL(u, document.baseURI).href; } catch { return u; }
 }
-/** The source the browser asked for and could not load, as the author wrote it. The browser picks ONE candidate for an img (the
- *  first `<source>` of an enclosing `<picture>` whose media and type match, else the img's own srcset by density, else its
- *  src), fetches that one and fires the img's `error` when it fails, with no fall back to another candidate or to the src; so
- *  a label naming `src` for a picture or a srcset img named a file the browser never asked for, one that may well be there
- *  (the review's round 1). `img.currentSrc` is the browser's answer: when it is set and is not the img's own src, the
+/** preview.ts parkMdImg's record of a parked img's address: the chat page's heal moves a failed img's resolved src here and
+ *  removes the src (failedSource reads it). */
+const HEAL_RECORD = "data-md-src";
+/** The source the browser asked for and could not load, as the author wrote it: the candidate it chose for the figure
+ *  (chosenSource). The browser picks ONE candidate for an img (the first `<source>` of an enclosing `<picture>` whose media
+ *  and type match, else the img's own srcset by density, else its src), fetches that one and fires the img's `error` when it
+ *  fails, with no fall back to another candidate or to the src; so a label naming `src` for a picture or a srcset img named a
+ *  file the browser never asked for, one that may well be there (the Slice 7 review's round 1). On the chat modal the page's
+ *  heal (preview.ts installMdImgHeal, a capture listener on the document, so it runs before the viewer's on the body) parks a
+ *  failed img first: it records the img's resolved src in HEAL_RECORD and removes the src, so chosenSource named nothing and
+ *  the label of every failed web picture whose address was its own src read "the source is empty" (the file review's round 15,
+ *  fresh-1). When chosenSource names nothing and the img has no src, the heal's record is read. It is a resolved address, so
+ *  the sign-in rule withholds it and any other shows its origin, as shownSource shows every address. A record equal to the
+ *  address an empty source resolves to (absUrl(""), the document's base without its fragment) is an empty destination and
+ *  is not read, so the label says the source is empty: the heal parks an img whose src is empty or blank too and records
+ *  its resolved src, which for such a src is that address, and the label of `![diagram]()`, `<img src="">` and `<img src="   ">` had
+ *  named the page's own origin on the chat modal (the file review's round 16, correctness-1). Compared with absUrl(""), not
+ *  document.URL: the resolved src drops a fragment the chat page's address can carry (#only=web). The cost: a figure whose source is
+ *  the page's own address reads as empty on the chat modal. It is read here and never
+ *  in chosenSource, which also feeds figureTarget, the reader of the outbound open. A srcset or `<picture>` figure's first label
+ *  on chat is transient: once the heal has removed the src there is no currentSrc to match, so it names the fallback src (its
+ *  workspace path by pictureDest's rule, or the heal's record of a web one); the browser, choosing again with the src gone,
+ *  fails the candidate a second time, and that error rewrites the label from currentSrc to name the candidate
+ *  (file-view-figure-error-browser.test.ts's chat cells read the label after the second error). */
+function failedSource(img: Element): string | null {
+  const chosen = chosenSource(img);
+  if (chosen || img.hasAttribute("src")) return chosen;
+  const parked = img.getAttribute(HEAL_RECORD);
+  return parked && parked !== absUrl("") ? parked : chosen;
+}
+/** The candidate the browser chose for a figure, as the author wrote it: the source the picture shows once it has loaded,
+ *  the one that failed when it has not (failedSource), and the file "Open the picture" opens (figureTarget), so the picture
+ *  opened is the one shown and its request is the one the paint made, never the fallback src a `<picture>` or a srcset
+ *  figure skipped (the link-navigation follow-on's review, round 2: read from the src alone, the control opened the fallback
+ *  for every such shape). `img.currentSrc` is the browser's answer: when it is set and is not the img's own src, the
  *  candidate it names is matched against the srcset carriers (the picture's sources, then the img) and named by the authored
  *  spelling rewriteFigureSrcs kept beside the rewritten candidates (FV_SRCSET), or as written when the candidates were left as
  *  written (a remote host's absolute ones; a URL document's relative candidates are rewritten to absolute URLs by
  *  resolveFigureRefs with no data-fv-src and no FV_SRCSET stamp, so its label names the resolved URL). The img's own src, or an
- *  img with no currentSrc to read (the node stand-in), keeps pictureDest's rule: `data-fv-src` when the viewer rewrote the src,
- *  else `src`; a figure with neither names nothing. */
-function failedSource(img: Element): string | null {
+ *  img with no currentSrc to read (the node stand-in, whose control is decided from the src alone; in a browser a figure the
+ *  browser has not answered for is fetching, figureState, and figureTarget names nothing for it until its load or its error,
+ *  so this reader is never asked for a control or an open before the browser has picked), keeps pictureDest's rule:
+ *  `data-fv-src` when the viewer rewrote the src, else `src`; a figure with neither names nothing. */
+function chosenSource(img: Element): string | null {
   const cur = (img as HTMLImageElement).currentSrc || "";
   if (!cur || cur === absUrl(img.getAttribute("src") || "")) return pictureDest(img);
   const picture = img.closest("picture");
@@ -4587,11 +5410,19 @@ function failedSource(img: Element): string | null {
 /** The source as the label shows it: a `data:` URI is an inline image's whole encoded payload, thousands of characters that
  *  the sheet's wrap turns into a box the height of the column (the review's round 1: a label 1518 px tall at 380 px, two
  *  screens of base64 where the note should go on), so it is cut to its head, the scheme and the media type through the
- *  comma, with an ellipsis; any other source as written. */
-function shownSource(src: string): string {
-  if (!/^data:/i.test(src)) return src;
-  const comma = src.indexOf(",");
-  return (comma >= 0 ? src.slice(0, comma + 1) : src.slice(0, 40)) + "…";
+ *  comma, with an ellipsis. A source with any other scheme, or a protocol-relative one, is shown as shownAddress shows an
+ *  address, resolved against `base`, the document's own address by default, as the browser resolved the fetch: its origin
+ *  alone, never a path, a query, a fragment or a userinfo in a visible word. The scheme is read as the URL parser reads it (an
+ *  ASCII tab or line break removed, leading control characters and spaces trimmed), so a tab inside `http` does not hide an
+ *  address from the rule. A source with no scheme and no leading // (a workspace path) is shown as written. First of all, a
+ *  source that appears to carry a sign-in (figureSourceCredentialed, the one rule every surface reads) is shown as
+ *  FIGURE_ADDRESS_WITHHELD, whatever its form: a web address, a data: source's head and a workspace path alike. */
+export function shownSource(src: string, base: string | undefined = typeof document !== "undefined" ? document.baseURI : undefined): string {
+  const read = src.replace(/[\t\n\r]/g, "").replace(/^[\u0000-\u0020]+/, "");
+  if (figureSourceCredentialed(src)) return FIGURE_ADDRESS_WITHHELD;
+  if (/^data:/i.test(read)) { const comma = read.indexOf(","); return (comma >= 0 ? read.slice(0, comma + 1) : read.slice(0, 40)) + "…"; }
+  if (/^[a-z][a-z0-9+.-]*:/i.test(read) || read.startsWith("//")) return shownAddress(read, base);
+  return src;
 }
 /** The words in the source's place when the figure names none (the Slice 7 review's round 2): an empty destination
  *  (`![alt]()`, which marked renders as `<img src="" alt="alt">`, or an authored `<img src="">`) fires the img's `error` with
@@ -4601,8 +5432,10 @@ function shownSource(src: string): string {
 const FIGURE_NO_SOURCE = "the source is empty";
 /** The label's words (the slice's contract C2, and its round 1 line): FIGURE_FAILED, the source the browser asked for as the
  *  author wrote it (failedSource: pictureDest's rule, `data-fv-src` when rewriteFigureSrcs rewrote the src, else `src`, or
- *  the srcset candidate the browser chose; a data: source cut to its head, shownSource) or FIGURE_NO_SOURCE when there is
- *  none to name, and the alt in parentheses when it is not empty. */
+ *  the srcset candidate the browser chose), as shownSource shows it (a source that appears to carry a sign-in as
+ *  FIGURE_ADDRESS_WITHHELD, a data: source cut to its head, a source with a scheme or a leading // as its origin alone, in the
+ *  spelling URL parsing gives it), or FIGURE_NO_SOURCE when there is none to name, and the alt in parentheses when it is not
+ *  empty. */
 function figureLabelText(img: Element): string {
   const alt = img.getAttribute("alt");
   const src = failedSource(img);
@@ -4630,7 +5463,7 @@ function armFigureLabels(body: HTMLElement): () => void {
     label.setAttribute(FIGERR_MARK, "");
     label.textContent = words;
     const parent = anchor.parentNode;
-    if (parent) parent.insertBefore(label, anchor.nextSibling);
+    if (parent) parent.insertBefore(label, (figureControlAfter(anchor) || anchor).nextSibling);   // after the figure's control when one stands at the anchor's side (figureLabelAfter reads it back the same way)
   };
   const onLoad = (e: Event): void => {
     const img = figureOf(e);
@@ -4674,6 +5507,653 @@ function resolveFigureRefs(root: ParentNode, base: string): void {
     }
     if (abs !== ref.value) el.setAttribute(ref.attr, abs);
   }
+}
+
+// ── a figure opens in detail (plans/markdown-viewer.md, "Follow-on: Link navigation", L3) ─────────────────────────
+// Every picture a rendered FILE embeds (`![]()`, an `<img>`, an image wikilink embed) wears an "Open the picture" control, a
+// glyph button of the bar's family (ICON_EXPAND, the words in its title and aria-label), that opens the picture's file in this
+// viewer through openFigureInViewer, so the shown file goes onto the trail and Back returns to it at the figure's place. The
+// control is the img's SIBLING, put right after figureAnchor's climb (the img, its <picture>, the regions layer's wrap, a link
+// holding the figure alone), never a wrapper around it: the panel pairs pictures by img order and data-fv-src, the regions
+// layer wraps THE img, the reader's place and the anchor map read the flow as the browser laid it, and a wrapper standing in
+// the author's flow changed a figure's own layout (the regions layer's 2026-09-06 review). Outside a link holding the figure,
+// so the author's link keeps the figure's click and the control's click is its own. A figure inside a link a click can follow
+// (FIGURE_LINK_SET, figureLinkOf: a web address, a section, a file) that holds MORE than the figure (text beside it,
+// `[![alt](src) caption](https://...)`, an `<a href>` with a caption) gets no control (linkAbove): the climb leaves such a
+// link standing over the img, so the control went inside the author's link, nested interactive content whose one click the
+// links listener took as the link's and this one as the control's, two opens and a phantom entry on the trail (the review's
+// round 1); there the figure is the author's link, as its plain click is. A dead link or an author's named anchor is not
+// such a link, since no click of theirs owns the figure, so a captioned picture inside one keeps its control, after the
+// picture inside the anchor (the file review's round 12, correctness-1 with ui-1). Nor is a fold's own summary, whose click
+// the picture's yields to (figureFoldOf): linkAbove does not read it, so a picture there keeps its control, which opens it.
+// Whether the control stands is DECIDED FROM THE FIGURE AS IT IS NOW, by one function (decideFigureControl, the one place a
+// control is added or removed), and decided again at every event that changes what it reads: the paint (mdBlock,
+// addFigureControls), the picture's load and its error (armFigureControls, one capture-phase pair on the body), and each
+// change of the figure's OWN laid-out box (watchFigureBoxes: one ResizeObserver per open over the figures of the Rendered
+// box, armed at each text paint through the seam's onRendered, the first paint's included), which is the reflow itself
+// whatever caused it: the pane dragged, the Comments aside
+// opened or closed, the window resized, or a text-size step (A-, A+, Ctrl/Cmd + wheel), which re-measures the 80ch column
+// at a CONSTANT body width and so reflows every column-capped figure with no width report (the file review's round 2:
+// decided from the width watch's repaint alone, the floor went stale both ways across a step, a control on a figure the step
+// had narrowed under 48 px and none on one it had widened past). Where ResizeObserver is missing (a stand-in outside a
+// browser) nothing reflows and the paint's decision stands. The verdict (figureWantsControl)
+// reads the figure's state off the element (figureState: `complete` and `naturalWidth`, the browser's own record). A figure
+// still FETCHING gets none: nothing about it is known yet, not its size and not the candidate the browser will show (the
+// file review: a `<picture>` or a srcset figure read before its load had an empty currentSrc, which chosenSource took as
+// the src, so the control and the plain click opened the fallback src the browser never asked for and put that file on the
+// trail; a control added then was never re-judged, so a srcset figure whose chosen candidate is a `data:` URI kept a control
+// whose click did nothing). A figure that FAILED gets none, and its clicks open nothing (figureTarget refuses the failed state
+// as it refuses the fetching one, so the control and the click agree): there is no picture to open and, with an empty alt,
+// no box (a 0 by 0 figure wore a control laid 28 px to its left, over the prose before it, which took the click meant for
+// that prose). A
+// LOADED figure under the floor on either side (FIGOPEN_MIN_PX, figureTooSmall: a badge, an inline icon, a figure the column
+// narrowed under it) gets none, one with nothing to open (figureTarget: no source, a `data:` candidate) gets none, one
+// inside a link a click can follow that holds more than it (linkAbove over FIGURE_LINK_SET, a dead link or a named anchor
+// not one) gets none, and every other loaded figure gets one. A verdict that changed
+// removes the control that stands (handing the keyboard to the viewer's body first when the control holds it,
+// removeFigureControl) or adds the one that is missing; one that did not leaves the figure as it is, so every
+// caller runs the decision as often as its event fires. This is the class the file review named: a value measured once
+// against a condition that can change is re-read on the event that changes it (the floor read once at the load: a 761 by 76
+// figure narrowed to 323 by 32 kept its control, which hung over the figure and took the click meant for the prose, where the
+// note reopened at that width had none). currentSrc changes only with a new fetch (a `<picture>` re-selecting its source at
+// a media change, the chat page's heal retrying a failed figure), and a fetch ends in a load or an error, both heard. A
+// stand-in outside a browser (the node suites' DOM) carries no `complete` and is decided from its source alone, as a loaded
+// figure of unknown size. In a browser the paint adds nothing to a figure still on the wire: it is fetching then, and its
+// control arrives at its load, when the picture it opens is on the screen. A picture the browser already holds (the report
+// re-opened after a close, Back, Forward, a second open: no request leaves for it) is complete at the paint and decided then,
+// from its natural size, since mdBlock's box is not in the document yet and has no laid-out box; its load event fires all the
+// same and decides it again over the laid-out box (the file review's closing check, file-view-figure-floor-browser.test.ts: at
+// a 381 px re-open the 761 by 76 picture's paint-time control left at its load, the picture laid out 324 by 32; at 900 it
+// stood).
+// The sheets lay it over the figure's top corner on the side where its line ends, the top-right in left-to-right text and the top-left in right-to-left text, from that place with no measuring (`.fileview-md .fv-figopen`: a zero-width margin box of logical margins aligned to the line's top), transparent until the pointer is over the figure or over
+// the control, or a keyboard focus reaches it, and the web control under any focus, and kept visible at rest where hover is
+// none or any pointer is coarse (the sheets' at-rest rule, under screen: a local control at 0.8, a web one at 1, never in
+// print); always in the tab order. No mouse press focuses the
+// web control (the body's mousedown listener), and every gesture on a picture from the web, the control's click and Enter or
+// Space on it among them, opens the tab only while the picture's sign is in view and uncovered at the gesture's start
+// (signShown, the one gate in openFigure and the key gate; the file review's round 16, extra5-1). A figure
+// the author floated by its align attribute stacks sideways, so the control floats with it (the -left and -right classes). It has no text of its own and the text walks skip
+// it as a control (anchor-map.ts and reader-place.ts CONTROL_CLASSES). A URL document (openUrlView) gets none: its figures
+// are the web's, and it is no file of a session.
+// What the control opens (figureTarget): the candidate the browser chose for the figure, as the author wrote it
+// (chosenSource: the `<source>` or srcset candidate `currentSrc` names, else the src by pictureDest's rule), so a `<picture>`
+// or a srcset figure opens the picture shown and not the fallback src the browser never asked for (the review's round 2:
+// read from the src alone, the control opened a file the paint never requested, and a remote picture's tab was an address
+// the page never fetched). For a remote candidate (an http or https source, a protocol-relative one), the address in a tab,
+// never the viewer, read FIRST; else the file the candidate names on the session's disk (the model's figurePath, the join
+// rewriteFigureSrcs fetched through, so the open's request is the paint's). A figure with nothing to open gets no control:
+// no source, a `data:` URL (inline bytes, which a tab will not show), any other scheme. A figure still fetching has no
+// target yet (figureState): its control waits for the load and its plain click opens nothing, since the candidate the
+// browser will show is not known (currentSrc is empty while the source is on the wire, and chosenSource read that as the
+// src); nor has a figure that FAILED: there is no picture to open, so its plain click and its Cmd/Ctrl-click open nothing,
+// as its control is withheld on the same verdict; the two are the refused states of one rule, a target only for a state
+// with a picture to name (figureHasPicture: loaded, or a stand-in outside a browser), so a state the type gains later is
+// refused too (the file review's round 2: the target refused the fetching state alone,
+// so a failed local figure's click opened the missing path in the viewer and pushed it onto the trail, and a failed remote
+// figure's click opened a tab at a host whose image request had answered 404, while the control was already withheld; the
+// two readers of "is there something to open" now answer alike). The target is read again at the click. A gated
+// placeholder (figure-gate.ts) gets none until its figure is loaded: armFigureControls hears the load on the body.
+/** What "Open the picture" opens for a figure, or null when there is nothing to open. `filePath` is the shown file's. A web
+ *  target carries the resolved address its tab opens (`href`) and the source as the author wrote it (`src`, chosenSource's
+ *  answer), which the words read for the sign-in rule (figureSourceCredentialed, in dressFigureTitle and dressFigureControl). */
+type FigureTarget = { kind: "file"; path: string } | { kind: "web"; href: string; src: string };
+function figureTarget(img: Element, filePath: string): FigureTarget | null {
+  const state = figureState(img);
+  if (!figureHasPicture(state)) return null;   // the rule, not a list: a target only for a state with a picture to name (loaded; a stand-in outside a browser). Fetching (the browser has not answered, no candidate to name until the load or the error decides) and failed (no picture to open) are the refused states today, and a state the type gains later is refused with them; the control is withheld on the same rule (figureWantsControl), so the click and the control agree (the file review's round 2 made the two readers agree; the guard became a rule before its round 3)
+  const dest = chosenSource(img);                      // the candidate the browser chose, as the author wrote it: the picture's source or the srcset candidate in currentSrc, else the src by pictureDest's rule
+  if (dest === null) return null;
+  // The web address FIRST, before the model's join: figurePath reads a protocol-relative source (`//host/pic.svg`) as an
+  // absolute path of the disk (its one test is for a scheme, and `//` has none), where rewriteFigureSrcs left it alone as a
+  // web address and the browser fetched it from the web (file-view-figures-absolute.test.ts). Read after the join, the web
+  // arm was unreachable for that source, and the control opened the viewer on the kernel's /file route at path `//host/pic.svg`
+  // (a 404 and a bogus entry on the trail) in place of the tab (the review's round 1).
+  if (/^https?:/i.test(dest) || dest.startsWith("//")) return { kind: "web", href: absUrl(dest), src: dest };   // resolved against the page, as the browser resolved the fetch, and the source as written beside it for the words
+  const p = figurePath(filePath, dest);
+  if (p !== null) return { kind: "file", path: p };
+  return null;
+}
+/** The control a click landed on, inside `within`: the element carrying FIGOPEN_MARK at or above the target, else null. */
+function figureControlOf(target: Element | null, within: Element): HTMLElement | null {
+  const c = target && typeof target.closest === "function" ? target.closest("[" + FIGOPEN_MARK + "]") as HTMLElement | null : null;
+  return c && within.contains(c) ? c : null;
+}
+/** Whether a control is in view now, on the screen and not only laid out: its box intersects every region that decides what
+ *  is shown, and it is out when any of them leaves nothing or any read fails. Its readers are the one gate between a gesture and
+ *  a web picture's tab (signShown, which openFigure's gate and the key gate read at the gesture's start, and openFigure again at a
+ *  pointer's click) and the key gate's reads of a held key and of Space's release; the reads are inViewPart's, which also hands
+ *  the hit test the in-view part of the box (the file review's round 16, extra5-1). The
+ *  regions, in order: the viewer's layout viewport (in VS Code the webview's); the scrollports of the control's ancestors
+ *  (clipToScrollports), so the viewer's body counts and so does a table that scrolls on its own, while the Rendered box, which
+ *  clips nothing, does not, and neither does an ancestor on which overflow clips nothing whatever its computed value, one with
+ *  display: contents, or one whose display overflow does not apply to (inline, ruby, ruby-text, a table's row or column and
+ *  their groups; clipToScrollports), which is passed over (the file review's round 16, regression-1 with the coordinator's
+ *  decision 1, which passes over every ancestor on which overflow clips nothing: read as a clip, the dashboard's pane wrapper, display: contents in its narrow and touch layout, put every web
+ *  control of the chat column and the Files pane out of view, and an author's inline span of a page class that sets overflow
+ *  hidden kept the picture inside it from opening on any gesture); then, for each same-origin frame that hosts this window,
+ *  walked up while the frame element can be read (the dashboard hosts the viewer in same-origin iframes), the box moved into
+ *  the parent's coordinates by the frame element's box and its border (clientLeft, clientTop), the parent's layout viewport,
+ *  and the scrollports of the frame element's ancestors in the parent's document; last, the visual viewport of the topmost
+ *  window the walk reached, the part of its layout viewport a pinch zoom leaves on the screen (a window without one skips that
+ *  term). Inside a frame the window's own visual viewport is the frame's whole layout viewport while the top page is zoomed, so
+ *  the walk reads the top's. A parent of another origin ends the walk with the reads made so far: its frameElement reads null
+ *  in Chromium, or throws, and that stop is not an out, since VS Code's webview host is of another origin and an out there
+ *  would refuse every key. So in VS Code the walk stops at the webview's own window, and whether that host lets a pinch zoom
+ *  the webview at all is unmeasured. The top window, its own parent, ends the walk too. A frame element's CSS padding is not
+ *  read: the walk moves the box by the frame element's box and its border alone, so inside a frame padded on its top or left
+ *  the window's content stands further in than the walk places it, and a control past the parent's edge by less than that
+ *  padding reads as in view (an iframe with 60px of top padding kept Enter and Space on a control wholly below the top page);
+ *  the kernel's pages give their frames a border of 0 and no padding. Every read is in one coordinate space, the window's
+ *  viewport pixels: an ancestor's and a frame element's border and client size, which are in the element's own CSS pixels, are
+ *  scaled by its zoom (cssScale), since under a body zoom, the one VS Code's webviews apply for an editor font over 13px, they
+ *  were read unscaled against a scaled box, so a control wholly visible in the body's bottom band or at its right edge read out
+ *  at 1.25 and one past the body's edge, clipped, read in at 0.8 (the file review's round 16, fresh-1). A transform is not read:
+ *  a scale or a turn on a scrollport or above it changes its box and not its zoom (cssScale), so under one the client size and the
+ *  box fall in two spaces, and the read errs both ways; a clip read too large counts a hidden sign in, which the hit test at the
+ *  gesture's start refuses (signUncovered: elementFromPoint does not reach a clipped sign), and one read too small refuses a sign
+ *  on the screen, a stated limit (a table inside a page class's quarter turn, measured in Chromium, opened on no gesture). A zoomed same-origin
+ *  parent would need the box moved into it scaled as well, which the walk does not do: no page of either host zooms one (in VS
+ *  Code the walk stops at the webview's own window, and the kernel writes no zoom). Reachability: the zoomed pages are VS
+ *  Code's webviews alone, whose policy loads no remote picture (img-src the webview's own source and data:) and whose origin
+ *  has no /file route for a local one, so no figure with a target stands under a zoom today; the zoomed cells hold the geometry
+ *  on a harness page without that policy. Read at the call and never kept; a control partly in view is in view. */
+function controlInView(control: Element): boolean {
+  return inViewPart(control) !== null;
+}
+/** The part of `control`'s box that is in view by controlInView's regions, moved back into the viewport coordinates of the
+ *  control's own window (the frame walk's moves taken off again, so a hit test in that window's document reads it), or null when
+ *  no part is in view or any read fails. */
+function inViewPart(control: Element): ViewBox | null {
+  try {
+    const r = control.getBoundingClientRect();
+    const box: ViewBox = { x0: Math.max(r.left, 0), y0: Math.max(r.top, 0), x1: Math.min(r.right, window.innerWidth), y1: Math.min(r.bottom, window.innerHeight) };
+    clipToScrollports(control, window, box);
+    let w: Window = window, mx = 0, my = 0;               // mx, my: the frame walk's moves so far, taken off the in-view part at the end
+    while (w.parent !== w) {                              // the top window is its own parent, where the walk ends
+      let frame: Element | null;
+      try { frame = w.frameElement; } catch { frame = null; }
+      if (!frame) break;                                  // a parent of another origin: the walk stops, the reads so far stand
+      const p = w.parent, fr = frame.getBoundingClientRect(), [fx, fy] = cssScale(frame, fr);
+      const dx = fr.left + frame.clientLeft * fx, dy = fr.top + frame.clientTop * fy;   // the border in the parent's viewport pixels (cssScale)
+      box.x0 += dx; box.x1 += dx; box.y0 += dy; box.y1 += dy;                      // into the parent's coordinates
+      mx += dx; my += dy;
+      box.x0 = Math.max(box.x0, 0); box.y0 = Math.max(box.y0, 0); box.x1 = Math.min(box.x1, p.innerWidth); box.y1 = Math.min(box.y1, p.innerHeight);   // the parent's layout viewport
+      clipToScrollports(frame, p, box);                   // the frame element's ancestors in the parent's document
+      w = p;
+    }
+    const vv = w.visualViewport;
+    if (vv) { box.x0 = Math.max(box.x0, vv.offsetLeft); box.y0 = Math.max(box.y0, vv.offsetTop); box.x1 = Math.min(box.x1, vv.offsetLeft + vv.width); box.y1 = Math.min(box.y1, vv.offsetTop + vv.height); }
+    if (!(box.x1 > box.x0 && box.y1 > box.y0)) return null;
+    return { x0: box.x0 - mx, y0: box.y0 - my, x1: box.x1 - mx, y1: box.y1 - my };
+  } catch { return null; }
+}
+/** A box in a window's viewport coordinates, controlInView's running intersection. */
+type ViewBox = { x0: number; y0: number; x1: number; y1: number };
+/** Clips `box`, in the viewport coordinates of `view`, the window whose document holds `el`, to the padding box, the
+ *  scrollport with any scrollbar left out, of every ancestor of `el` whose computed overflow on that axis is not visible. Passed
+ *  over: the document's body and root, since their overflow is the viewport's, which controlInView reads itself; and an
+ *  ancestor on which overflow clips nothing whatever its computed value, one with display: contents, which generates no box, and
+ *  one whose display overflow does not apply to, since it applies to block, flex and grid containers alone: inline, ruby and
+ *  ruby-text, and a table's row, row group, header group, footer group, column and column group. An inline or ruby box reads a
+ *  client size of 0 by 0 (and display: contents a box of 0 by 0), and a table row reads its own height while a cell that spans the
+ *  rows below it lays its content past it, so read as a clip each put a control on the screen inside it out of view (measured in
+ *  Chromium: an author's ruby, ruby text or table row of a page class that sets overflow hidden kept the picture inside it from
+ *  opening on any gesture). A table's cell and caption are block containers and clip. The padding box is read in the window's
+ *  viewport pixels: the ancestor's box as getBoundingClientRect gives it, and its border and client size, which are in the
+ *  ancestor's own CSS pixels, scaled by cssScale, since under a body zoom the two spaces differ. */
+function clipToScrollports(el: Element, view: Window, box: ViewBox): void {
+  const d = view.document;
+  for (let a = el.parentElement; a && a !== d.body && a !== d.documentElement; a = a.parentElement) {
+    const cs = view.getComputedStyle(a);
+    if (/^(?:contents|inline|ruby|ruby-text|table-(?:row|row-group|header-group|footer-group|column|column-group))$/.test(cs.display)) continue;   // overflow clips nothing on any of these (the docstring)
+    const clipX = cs.overflowX !== "visible", clipY = cs.overflowY !== "visible";
+    if (!clipX && !clipY) continue;
+    const ar = a.getBoundingClientRect(), [zx, zy] = cssScale(a, ar), padLeft = ar.left + a.clientLeft * zx, padTop = ar.top + a.clientTop * zy;
+    if (clipX) { box.x0 = Math.max(box.x0, padLeft); box.x1 = Math.min(box.x1, padLeft + a.clientWidth * zx); }
+    if (clipY) { box.y0 = Math.max(box.y0, padTop); box.y1 = Math.min(box.y1, padTop + a.clientHeight * zy); }
+  }
+}
+/** The factor on each axis from an element's own CSS pixels, the space of its clientLeft, clientTop, clientWidth and
+ *  clientHeight, to its window's viewport pixels, the space of its getBoundingClientRect (`r`): its effective zoom
+ *  (currentCSSZoom, Chromium 128 and later), which Chromium gives for every element, 1 where nothing zooms it, so in a browser
+ *  this first road always answers; else, where no zoom is given (the node suites' stand-ins), the ratio of its rendered box to its
+ *  layout box (r's size over offsetWidth and offsetHeight), which reads the zoom the same way while no transform stands; else 1,
+ *  where neither can be read. A transform is not read: a scale or a turn on the element or above it changes its rendered box and
+ *  not its zoom, so under one the two spaces this factor joins still differ (controlInView states what that costs). */
+function cssScale(el: Element, r: DOMRect): [number, number] {
+  const z = el.currentCSSZoom;
+  if (z > 0) return [z, z];
+  const h = el as HTMLElement;
+  return [h.offsetWidth > 0 ? r.width / h.offsetWidth : 1, h.offsetHeight > 0 ? r.height / h.offsetHeight : 1];
+}
+/** The outbound sign of a picture from the web, what a gesture on it must find shown before its tab opens (the file review's
+ *  round 16, extra5-1): the web control standing after the figure's anchor (figureControlAfter over figureAnchor, so a picture
+ *  inside a `<picture>`, the regions layer's wrap, a dead link or a named anchor finds its control), else the picture itself where
+ *  it wears the mark (FIGWEB_MARK: a picture from the web that wears no control). Null when it wears neither, and a web target
+ *  with no sign opens nothing. */
+function figureSign(img: Element): Element | null {
+  const c = figureControlAfter(figureAnchor(img));
+  if (c && c.classList.contains(FIGOPEN_WEB_CLASS)) return c;
+  return img.hasAttribute(FIGWEB_MARK) ? img : null;
+}
+/** Whether a web picture's sign is shown to the person about to open it: in view (inViewPart, controlInView's regions) and
+ *  uncovered (signUncovered). The one verdict of the gate on every gesture that opens a web picture's tab, read at the gesture's
+ *  start: at the press of a pointer or a finger, at the first keydown of Enter or Space, and at the click itself for a click no
+ *  press or key began (a script's). A read that fails answers not shown. */
+function signShown(sign: Element): boolean {
+  const part = inViewPart(sign);
+  return part !== null && signUncovered(sign, part);
+}
+/** Whether nothing covers the sign where it is in view: the element at five sample points of `part`, the in-view part of its box
+ *  in its own window's coordinates, is the sign or inside it, in the sign's own document (elementFromPoint, which reads the element
+ *  a press there would reach, so it sees the viewer's Outline popover, the text-size flyout and an author's element laid over the
+ *  figure, from whose markup dropPressThrough has taken the page classes, the inert attribute and the style declarations that would
+ *  let a press pass through it, while a control transparent at rest still counts as its own; author content the hit test does not see
+ *  stays below the control, whose z-index keeps it on top where no stacking context stands around the picture, since dropStackClasses
+ *  took off the classes that would have raised that content to the control's level or made such a context, and SHEET_STACK_CLASSES's
+ *  docstring says what holds and where it does not, the outbound mark among them).
+ *  The samples are the part's centre and its four quarter points:
+ *  inside the part, since a sign partly in view is in view and samples over its whole box meet the chrome above the body where
+ *  the box leaves it (the sliver of a control's bottom inside the body); and a quarter of the way in, since the control's corners
+ *  are rounded, and under a body zoom of 1.25 a point 2px in from a corner falls outside the curve onto the picture. A same-origin
+ *  parent's own chrome over the frame is not read, as a parent of another origin's cannot be: the test reads the sign's document
+ *  alone. A document with no elementFromPoint, or a read that throws, answers covered. */
+function signUncovered(sign: Element, part: ViewBox): boolean {
+  try {
+    const d = sign.ownerDocument || document;
+    if (typeof d.elementFromPoint !== "function") return false;
+    const w = part.x1 - part.x0, h = part.y1 - part.y0;
+    return [[0.5, 0.5], [0.25, 0.25], [0.75, 0.25], [0.25, 0.75], [0.75, 0.75]].every(([fx, fy]) => {
+      const at = d.elementFromPoint(part.x0 + w * fx, part.y0 + h * fy);
+      return !!at && (at === sign || sign.contains(at));
+    });
+  } catch { return false; }
+}
+/** A refused gesture's reveal: the sign scrolled into view in each of its scroll containers, the same-origin frames above
+ *  included (block and inline "nearest"), so the next gesture opens. It moves no focus: a refused key already holds the control,
+ *  and a pointer's or a finger's refusal leaves the keyboard where it was, as no press of the pointer ever focuses the web control
+ *  (the file review's round 14, ui-1 with extra9-1; its round 16, extra5-1, kept that). Where it cannot put the sign on the
+ *  screen the gate stays closed, stated limits measured in Chromium: what covers the sign it cannot move (a press outside the
+ *  Outline popover or the text-size flyout closes it, the key gate closes the flyout on a refused key, and an author's element laid
+ *  over the figure stays); and from the chat page's modal framed by the dashboard it pans no visual viewport of a pinch-zoomed top page,
+ *  since the viewer's card is fixed in its frame (the viewer as the top page and the Files pane's frame pan), so there a gesture
+ *  opens nothing until the reader pans by hand. */
+function revealSign(sign: Element): void {
+  try { sign.scrollIntoView({ block: "nearest", inline: "nearest" }); } catch { /* no reveal: the gesture has already opened nothing */ }
+}
+/** The figure a control stands after: the img its anchor is or holds (the element before the control: the img itself, its
+ *  picture, the regions layer's wrap or the link holding it). Null when nothing stands before it or it holds no img. */
+function figureOfControl(control: Element): Element | null {
+  const a = control.previousElementSibling;
+  if (!a) return null;
+  return a.localName === "img" ? a : a.querySelector("img");
+}
+/** The bare figure a click landed on, inside `within`: an img of the Rendered box outside a gate's placeholder (figureOf's
+ *  rule, for a target rather than an event), else null. The media view's own picture stands outside the box and is none. */
+function bareFigureOf(target: Element | null, within: Element): Element | null {
+  const t = target;
+  if (!t || t.nodeType !== 1 || t.localName !== "img" || !within.contains(t)) return null;
+  if (!t.closest(".fileview-md") || t.closest('[data-act="' + GATE_ACT + '"]')) return null;
+  return t;
+}
+/** What the browser has done with a figure's picture, read off the element as it stands: `fetching` while the request is
+ *  open (`complete` false: from the paint to the first answer, and again through a heal's retry), `loaded` once a picture is
+ *  there (`complete` and a natural width; a dimensionless svg reports the browsers' default 300 by 150), `failed` when the
+ *  request ended with no picture (`complete` and no natural width: a 404, a file that is no image, an empty source, whose
+ *  error fires with no request), and `standin` where the element is no browser's img (the node suites' DOM carries no
+ *  `complete`). The figure's own record, so a decision read from it is the figure's current state and not a value some
+ *  earlier event captured. */
+type FigureState = "standin" | "fetching" | "loaded" | "failed";
+function figureState(img: Element): FigureState {
+  const i = img as HTMLImageElement;
+  if (typeof i.complete !== "boolean") return "standin";
+  if (!i.complete) return "fetching";
+  return i.naturalWidth > 0 ? "loaded" : "failed";
+}
+/** Whether a figure's state names a picture there is to open, the one rule figureTarget and figureWantsControl refuse on: in a
+ *  browser `loaded` alone (the browser has answered with a picture; in any other state there is no picture on the page to name a
+ *  host or a file for), and outside one `standin` (the node suites' DOM carries no `complete`, so the source is the figure's only
+ *  record and the paint decides from it). A rule over the states and not a list of the refused ones: `fetching`, `failed` and any
+ *  state FigureState gains later fall on the refusing side with no edit here, where a guard naming the two it refused would have
+ *  let a new value through to a target (the file review, before its round 3). */
+function figureHasPicture(state: FigureState): boolean {
+  return state === "loaded" || state === "standin";
+}
+/** The least a figure measures on each side, in CSS pixels, for a control: the control's 22px box and its 6px inset from the
+ *  corner (the sheets' rest rule), and as much figure again beside them, so the control covers a corner of the picture and a
+ *  click on the picture itself (the author's link, the panel's offer, the plain open) keeps most of it. A badge (a 100 by 20
+ *  svg) and an inline icon (16 by 16) measure under it: laid from the sheets' fixed margins, the transparent control on one
+ *  hung below the badge and over the prose before the icon and took the click meant for the link or the text (the review's
+ *  round 1). Their plain click still opens them where no link holds them. The floor is read in the figure's own CSS pixels at
+ *  every zoom, the space the control's box is laid out in (figureBox divides the laid-out box by the figure's zoom; the file
+ *  review's round 16, fresh-1: under a body zoom of 1.25 a 40 CSS px picture measured 50 and got a control, and at 0.8 a 48 and
+ *  a 50 measured 38.4 and 40 and got none), rounded to 1/16 of a pixel, which the browser's own zoom on the web dashboard needs:
+ *  at 90% a picture laid out at 48 CSS px measured 47.986 and wore the mark in place of a control (figureBox). */
+const FIGOPEN_MIN_PX = 48;
+/** A LOADED figure's box (figureState): its laid-out box while it is in the document, whatever that box is (the width the
+ *  author or the column gave it; 0 by 0 for a figure with no box, an author's `hidden` or `width="0"`, or with the viewer
+ *  hidden; a figure inside a closed `<details>` keeps its laid-out size on this read, so it is decided over that size and wears
+ *  a control the closed details keeps from the pointer with the figure, measured in Chromium by the author's closing pass after the file review's round 3, behaviour-5: the
+ *  img 300 by 200 with `checkVisibility()` false, and the point over its control hit-testing to the figure laid out beneath),
+ *  else the picture's own size (mdBlock's box at the paint, not in the document yet); null for
+ *  any other state (nothing to measure on a fetching or a failed figure, and a stand-in has no picture to ask), so the floor
+ *  applies to a loaded figure alone and the fetching and failed verdicts are figureWantsControl's own. A figure in the document
+ *  with no box is under the floor by this read, so a loaded figure the author gave no box gets no control: before the file
+ *  review's round 3 (correctness-1) the fallback ran for ANY zero-sided rect, so such a figure was measured over the floor at
+ *  its own size and kept a control the sheets lay 28 px into the prose before it, where it took the click meant for those
+ *  words and opened a picture the author hid. The box is in the figure's own CSS pixels, the floor's space: the laid-out box,
+ *  which getBoundingClientRect gives in the window's viewport pixels, divided by the figure's zoom (currentCSSZoom, Chromium
+ *  128 and later, and 1 where the browser gives none), so a body zoom does not move the floor (the file review's round 16,
+ *  fresh-1), and rounded to 1/16 of a CSS pixel, since the layout puts a box's edges on a grid of 1/64 of a layout pixel, whose
+ *  size is the device scale times the CSS zoom, and wherever that product is not 1 the grid falls between CSS pixels. The browser's
+ *  own zoom reaches that on the web dashboard (its zoom is in the device scale): laid out at 48 CSS px, a picture measured 47.988
+ *  CSS px at a device scale of 0.8, 47.986 at 0.9 and 47.997 at 1.1, and wore the mark with no control at the head the file
+ *  review's round 16 read (measured in Chromium, the device scale forced); under a body zoom it measures 38.390625 window pixels at
+ *  0.8 (47.988 CSS px) and 51.6875 at 14/13, VS Code's zoom for its default editor font of 14px (47.9965). Rounded to 1/16, the
+ *  grid's error is absorbed wherever the product is above 0.5 (a 48 px picture's box, snapped at most one step of the grid under it, rounds back to 48), and the verdict on a picture laid out within 1/32 of a pixel under
+ *  the floor depends on the zoom: laid out at 47.97 px one gets a control at zoom 1 and at a device scale of 0.9, and none at a
+ *  body zoom of 1.25 or a device scale of 1.25 (measured). A transform on the figure or above it is not taken off, as the box read
+ *  it before the zoom was: a picture under a scale is measured at its scaled size (40 CSS px under scale(1.5) reads 60 and gets a
+ *  control, 60 under scale(0.6) reads 36 and wears the mark). Not offsetWidth and offsetHeight, which round to an integer, so a
+ *  picture laid out at 47.6 px would read 48 and get a control at every zoom, 1 included. Reachability: a CSS zoom stands on VS
+ *  Code's webviews alone, where no figure has a target (controlInView's docstring), and the browser's own zoom on the web
+ *  dashboard wherever a reader sets one, which is where the rounding is needed. */
+function figureBox(img: Element): { w: number; h: number } | null {
+  if (figureState(img) !== "loaded") return null;
+  const i = img as HTMLImageElement;
+  const r = i.isConnected && typeof i.getBoundingClientRect === "function" ? i.getBoundingClientRect() : null;
+  const z = i.currentCSSZoom > 0 ? i.currentCSSZoom : 1;   // the figure's zoom: its box in its own CSS pixels, to 1/16 of a pixel (the docstring)
+  return r ? { w: Math.round(r.width / z * 16) / 16, h: Math.round(r.height / z * 16) / 16 } : { w: i.naturalWidth, h: i.naturalHeight };
+}
+/** Whether the figure measures under the floor on either side (figureBox), so that no control goes on it. */
+function figureTooSmall(img: Element): boolean {
+  const b = figureBox(img);
+  return b !== null && (b.w < FIGOPEN_MIN_PX || b.h < FIGOPEN_MIN_PX);
+}
+/** The links whose click owns a figure inside them, ONE selector for the three readers of "is this click a link's" (the figures'
+ *  click listener's yield, dressFigureTitle's withholding of the picture's address line, linkAbove's withholding of the
+ *  control). The one owner of a figure's click outside the links, a summary that toggles a fold, is figureFoldOf's, a sibling
+ *  and not a member, since linkAbove does not read it and the control stays on a picture in a summary. In the set: an anchor with an href (a web address of the markdown, `[![alt](src)](https://...)`, whose href the local-anchor
+ *  pass leaves in place and the links listener leaves to the browser), a URL link and a section link (URL_LINK_CLASS,
+ *  FRAG_LINK_CLASS, the links listener's own), and a path link (`[data-act="openpath"]`, its href taken off at mark time).
+ *  NOT in the set, so a figure's click inside one stays the figure's: a dead link (file-view-links.ts DEAD_LINK_CLASS with its
+ *  href removed: a host with a port, a refused scheme, an empty target) and an author's named anchor (`<a name>`, `<a id>`,
+ *  no href), which no listener and no browser acts on. Before the file review's round 12 (correctness-1 with ui-1) each reader
+ *  spelt its own set: the title and the control read ANY anchor while the click read this one, so a remote picture inside a
+ *  dead link or a named anchor opened its tab on a plain click with no title and, captioned or under the floor, no control. */
+export const FIGURE_LINK_SET = 'a[href], a.' + URL_LINK_CLASS + ', a.' + FRAG_LINK_CLASS + ', [data-act="openpath"]';
+/** The link of FIGURE_LINK_SET at or above `from` (closest), else null: the one predicate of a figure's click belonging to a
+ *  link. The click listener and dressFigureTitle start it from the img; linkAbove from the parent of figureAnchor's climb. */
+export function figureLinkOf(from: Element): Element | null {
+  return from.closest(FIGURE_LINK_SET);
+}
+/** The summary at or above `from` whose click toggles a fold, inside the Rendered box: a details element's own first summary child,
+ *  found by closest('summary') and bounded to the box, else null. A summary outside a details, or a later summary of one, toggles
+ *  nothing and is none. The other owner of a figure's click beside the links of FIGURE_LINK_SET, and a sibling of that set, not a
+ *  member: read by the figures' click listener (the fold takes the click, plain or modified), by dressFigureTitle (the picture's
+ *  address line withheld, since no click on the picture opens it) and by dressFigureMark (no outbound mark), and NOT by linkAbove,
+ *  so a picture inside such a summary keeps its control, whose click opens it and toggles nothing (measured in Chromium: a button
+ *  inside a summary does not toggle it; the file review's round 14, fresh-1: the summary had not been read, so one click on a
+ *  picture there toggled the fold and opened the picture as well, a credentialed tab for a remote picture and, for a local one,
+ *  the picture in the viewer in place of the report). A link of the set inside the summary still takes the click first (the
+ *  listener's figureLinkOf return), and a dead link or a named anchor, in no set, leaves the click to the fold. */
+export function figureFoldOf(from: Element): Element | null {
+  const box = from.closest(".fileview-md");
+  const s = from.closest("summary");
+  if (!box || !s || !box.contains(s)) return null;
+  const d = s.parentElement;
+  if (!d || d.localName !== "details") return null;
+  for (let c = d.firstElementChild; c; c = c.nextElementSibling) if (c.localName === "summary") return c === s ? s : null;
+  return null;
+}
+/** The link above `anchor` that figureAnchor's climb did not leave, one of FIGURE_LINK_SET (figureLinkOf). A control inside one
+ *  is nested interactive content and the link's click too: a web address, a section, a file. A dead link, an anchor the
+ *  sanitizer or the viewer stripped of its href (file-view-links.ts DEAD_LINK_CLASS), and an author's named target with no
+ *  href (`<a id="fig1">` around a captioned picture) are NOT in the set: no click of theirs owns the figure, so a captioned
+ *  picture inside one keeps its control, after the picture inside the anchor, and its title (the file review's round 12,
+ *  correctness-1 with ui-1: read as ANY anchor, as its round 2 had it, the control and the title were both withheld while the
+ *  plain click opened the remote picture's tab, nothing on the surface saying so; inside a dead link the picture and its caption
+ *  take the anchor's help cursor while the control keeps the button family's pointer, and the control inherited the anchor's
+ *  opacity, kept by the owner with that ruling, until the painted-contrast ask of 2026-09-23: at 0.8 x 0.7 the web control at rest
+ *  read 2.47:1 dark and 2.40:1 light by pixels over the leg's #333 picture, so a dead link holding the outbound dress now dims by
+ *  colour and not by opacity, styles.css's figure rules, and the web control inside it paints its line at the token's own ratio
+ *  at rest, under a focus and under a Space press, and the family's accent border under the pointer and in a pointer press at its
+ *  own; a local control inside a dead link that holds no web dress keeps the anchor's opacity). A link holding the figure alone IS
+ *  the anchor (figureAnchor climbed it) and is not read. */
+function linkAbove(anchor: Element): Element | null {
+  const p = anchor.parentElement;
+  return p ? figureLinkOf(p) : null;
+}
+/** Whether a control belongs on `img`, whose figureAnchor is `anchor`, as the figure stands now (the section header): none
+ *  inside a gate's placeholder (its figure loads on the click), none for a state without a picture to name (figureHasPicture over
+ *  figureState: fetching, failed, and any state the type gains later), none
+ *  on a loaded figure under the floor (figureTooSmall), none for a figure with nothing to open (figureTarget), none inside a
+ *  link the climb did not leave (linkAbove); one for every other figure. */
+function figureWantsControl(img: Element, anchor: Element, filePath: string): boolean {
+  if (img.closest('[data-act="' + GATE_ACT + '"]')) return false;
+  const state = figureState(img);
+  if (!figureHasPicture(state)) return false;
+  if (figureTooSmall(img)) return false;
+  if (figureTarget(img, filePath) === null) return false;
+  return linkAbove(anchor) === null;
+}
+/** The ONE place a control is added or removed: the verdict (figureWantsControl) against the control standing after `img`'s
+ *  anchor (figureControlAfter). Wanted and standing, or unwanted and absent: nothing happens. Run at the paint
+ *  (addFigureControls), at the figure's load and error (armFigureControls) and at each change of the figure's own laid-out box
+ *  (watchFigureBoxes). A control removed while it holds the keyboard hands it to the viewer's body first (removeFigureControl). */
+function decideFigureControl(img: Element, filePath: string): void {
+  const anchor = figureAnchor(img);
+  const standing = figureControlAfter(anchor);
+  const want = figureWantsControl(img, anchor, filePath);
+  const target = figureTarget(img, filePath);   // the kind the dress is keyed on, read at every decision (a standing control's included), as the click reads it
+  dressFigureTitle(img, target);
+  dressFigureMark(img, want);
+  if (standing) { if (!want) removeFigureControl(standing); else dressFigureControl(standing, target); return; }
+  if (!want) return;
+  const b = el("button", "fileview-btn fileview-icon " + FIGOPEN_CLASS) as HTMLButtonElement;
+  b.type = "button"; b.dataset.icon = "1";
+  b.setAttribute(FIGOPEN_MARK, "");
+  dressFigureControl(b, target);
+  const align = (img.getAttribute("align") || "").toLowerCase();
+  if (align === "left" || align === "right") b.classList.add(FIGOPEN_CLASS + "-" + align);   // the figure floats that way (the sanitizer keeps `align`); the control floats with it
+  const parent = anchor.parentNode;
+  if (parent) parent.insertBefore(b, anchor.nextSibling);
+}
+/** The control's dress, keyed on the target's kind and applied at every decision, to a control just made and to one standing (a
+ *  `<picture>` re-selecting between a local and a remote candidate at a media change flips the kind with no add or remove, and a
+ *  control dressed once at its add kept stale words; the file review's round 11, ui-1 with extra8-1): for a picture from the web
+ *  the words name the host and the new tab (figureOpenWebTitle), or the new tab and the withheld address when the source appears
+ *  to carry a sign-in (FIGURE_OPEN_WEB_WITHHELD, on figureSourceCredentialed over the source the target carries, read before
+ *  targetHost's parse, which can name a sign-in part as a host and a port), the class FIGOPEN_WEB_CLASS carries the sheets' dress,
+ *  and the glyph is the outbound one (ICON_OUTBOUND); for a file of the session the one word set, no web class and the corner
+ *  arrows.
+ *  The glyph is swapped only when the kind it was drawn for differs (the web class on the control is that record) or none stands
+ *  yet, so a decision that changes nothing writes nothing. */
+function dressFigureControl(b: HTMLElement, target: FigureTarget | null): void {
+  const web = target !== null && target.kind === "web";
+  const words = target !== null && target.kind === "web" ? (figureSourceCredentialed(target.src) ? FIGURE_OPEN_WEB_WITHHELD : figureOpenWebTitle(targetHost(target.href))) : FIGURE_OPEN_TITLE;
+  if (b.title !== words) { b.title = words; b.setAttribute("aria-label", words); }
+  const drawn = b.firstElementChild;
+  if (!drawn || b.classList.contains(FIGOPEN_WEB_CLASS) !== web) { const glyph = figureControlGlyph(web); if (drawn) drawn.remove(); if (glyph) b.appendChild(glyph); }
+  b.classList.toggle(FIGOPEN_WEB_CLASS, web);
+}
+/** The picture's own title, for the two gestures that have no control to carry words (the plain click and the Cmd/Ctrl-click on the
+ *  picture, where the press reaches it): for a web target whose click is the figure's own (no link of FIGURE_LINK_SET holds the
+ *  figure, figureLinkOf from the img as the click listener reads it: inside an anchor with an href, a URL, section or path link
+ *  the click is the link's and the line is withheld; inside a dead link or an author's named anchor the click is the figure's
+ *  and the line stands; and no summary that toggles a fold holds it, figureFoldOf, since the fold takes the click on the picture,
+ *  plain or modified, and the control there carries its own words; the control after a link holding the figure alone carries its own words)
+ *  the outbound address, its origin alone (shownAddress over the resolved address), or FIGURE_ADDRESS_WITHHELD when the source
+ *  the target carries appears to carry a sign-in (figureSourceCredentialed), on a line of its own after the author's title when
+ *  one stands (figureWebTitleLine); for a file, or nothing to open, the author's title alone or none. The author's title is kept under FIGTITLE_MARK while the viewer's
+ *  line stands, so the next decision restores it when the candidate is local again (a `<picture>` at a media change) and a
+ *  decision never appends the line twice. Whatever the control's verdict: a remote picture under the floor wears no control and,
+ *  outside a fold's summary, its plain click still opens the tab (the guide's sentence), so its title says so too, and the mark for the picture no control
+ *  stands on is dressFigureMark's, decided after it. Cursor unchanged. */
+function dressFigureTitle(img: Element, target: FigureTarget | null): void {
+  const web = target !== null && target.kind === "web" && figureLinkOf(img) === null && figureFoldOf(img) === null;
+  const held = img.getAttribute(FIGTITLE_MARK);
+  if (web) {
+    const author = held !== null ? held : img.getAttribute("title") || "";
+    const t = target as { href: string; src: string };
+    const title = (author ? author + "\n" : "") + figureWebTitleLine(figureSourceCredentialed(t.src) ? FIGURE_ADDRESS_WITHHELD : shownAddress(t.href));
+    if (held === null) img.setAttribute(FIGTITLE_MARK, author);
+    if (img.getAttribute("title") !== title) img.setAttribute("title", title);
+  } else if (held !== null) {
+    if (held) img.setAttribute("title", held); else img.removeAttribute("title");
+    img.removeAttribute(FIGTITLE_MARK);
+  }
+}
+/** The picture's own outbound mark (FIGWEB_MARK): on a picture whose title carries the viewer's line (FIGTITLE_MARK, set by
+ *  dressFigureTitle at this decision), on which no control stands (`want` false: a loaded picture under the floor) and which no
+ *  summary that toggles a fold holds (figureFoldOf, whose click the fold takes: no click on the picture opens it there; the
+ *  title's own read of the same predicate already withholds FIGTITLE_MARK inside such a summary, so this read restates the
+ *  mark's population rather than narrowing it); taken off otherwise, so a picture that grows past the floor, or whose candidate turns local, loses it at that decision, as the title does. */
+function dressFigureMark(img: Element, want: boolean): void {
+  if (!want && img.hasAttribute(FIGTITLE_MARK) && figureFoldOf(img) === null) img.setAttribute(FIGWEB_MARK, "");
+  else img.removeAttribute(FIGWEB_MARK);
+}
+/** The control's glyph (ICON_EXPAND, the bar's family, and ICON_OUTBOUND for a picture from the web), the two drawings parsed ONCE
+ *  in one write onto a holder that enters no document and cloned into each control. The control is placed under the Rendered box during the render, and a write of innerHTML on a live-document
+ *  element that ends up under the box is a re-parse the gate-before-adoption scene records and refuses
+ *  (file-view-figures-gate-adopt.test.ts, its Reparse record; the author's closing pass after the file review's round 5,
+ *  records-1: the control had written its glyph through innerHTML, two live re-parses under the box per render of that
+ *  scene's file, red at the merge of the fork's main). The bar's glyphs keep the write: the bar stands outside the box. A
+ *  stand-in document that parses no markup, or answers no firstElementChild, yields no glyph, and the control stands bare there,
+ *  as it did: the drawings are read through firstElementChild and nextElementSibling, never through children[], which the
+ *  outline suite's stand-in answers with an element that has no cloneNode, and the first shape of the web dress (the file review's
+ *  round 11, ui-1 with extra8-1) read children[0] and children[1], so the clone threw inside the paint and the Rendered view fell
+ *  to Raw over a heading holding a picture (file-view-outline.test.ts). */
+let figureGlyph: Element | null = null;
+let figureWebGlyph: Element | null = null;
+function figureControlGlyph(web = false): Node | null {
+  if (!figureGlyph) { const holder = el("span"); holder.innerHTML = ICON_EXPAND + ICON_OUTBOUND; figureGlyph = holder.firstElementChild ?? null; figureWebGlyph = figureGlyph ? figureGlyph.nextElementSibling : null; }
+  const drawing = web ? figureWebGlyph : figureGlyph;
+  return drawing ? drawing.cloneNode(true) : null;
+}
+/** Per open, the viewer body's takeKeyboard (openFileView), for a control removed while it holds the keyboard: the decision is
+ *  module-level and the hand-over is the open's, so the open registers it against its body and removeFigureControl finds it
+ *  through the control's body. Dropped with the viewer (a WeakMap, so a body that is gone holds nothing either way). */
+const keyboardTakers = new WeakMap<HTMLElement, (ring?: boolean) => void>();
+/** The control removed, the keyboard handed on first when the control holds it (the file review's round 2, ui-4): a removed
+ *  holder drops the browser's focus to the document's body, where PageDown, the arrows and End scroll nothing until a click, the
+ *  class this file treats as a defect at its other removals (the Outline popover's close, the changed-on-disk bar's landing). The
+ *  holder and its ring are read before the removal (ringOf: the ring is the holder's, not the body's), the control goes, and the
+ *  body's takeKeyboard runs after it, through its own gate (the focus is on the document's body then, which the gate admits). */
+function removeFigureControl(control: HTMLElement): void {
+  const a = document.activeElement;
+  const held = !!a && control.contains(a);
+  const ring = held ? ringOf(a) : false;
+  const body = held ? control.closest(".fileview-body") as HTMLElement | null : null;
+  control.remove();
+  const take = body ? keyboardTakers.get(body) : undefined;
+  if (take) take(ring);
+}
+/** Every figure of a freshly painted Rendered box decided (mdBlock, the file kind, after the links are sorted): in a browser a
+ *  figure still fetching gets none here and its control at its load; one the browser already holds is complete here and is
+ *  decided now, from its natural size (the box is not in the document yet), then again at its load over the laid-out box; a
+ *  stand-in is decided from its source. */
+function addFigureControls(box: HTMLElement, filePath: string): void {
+  box.querySelectorAll("img").forEach((img) => { decideFigureControl(img, filePath); });
+}
+/** A figure decided again at its load and at its error, the two events that end a fetch (the first paint's, a gated
+ *  placeholder restored by its click or a settings change, the chat page's heal landing a retry, a `<picture>` re-selecting
+ *  its source): one capture-phase pair on the body per open (an img's load and error do not bubble; armFigureLabels's
+ *  idiom), dropped by the function returned. The decision reads the browser's record on the element (figureState), which a
+ *  stand-in outside a browser does not carry, so a stand-in is left as the paint decided it (the node suites fire these
+ *  events on stand-ins for the labels' sake). */
+function armFigureControls(body: HTMLElement, filePath: string): () => void {
+  const decide = (e: Event): void => { const img = figureOf(e); if (img && figureState(img) !== "standin") decideFigureControl(img, filePath); };
+  body.addEventListener("load", decide, true);
+  body.addEventListener("error", decide, true);
+  return () => { body.removeEventListener("load", decide, true); body.removeEventListener("error", decide, true); };
+}
+/** Every figure of the body's Rendered box watched for a change of ITS OWN laid-out box, one ResizeObserver per open, the event
+ *  the floor's measure depends on: a figure the column narrowed under the floor loses its control and one it widened past gets
+ *  it back, whatever reflowed it (the pane dragged, the Comments aside opened or closed, the window resized, a text-size step
+ *  re-measuring the 80ch column at a constant body width), with no call from any road (the file review's round 2: a call from
+ *  the width watch's repaint ran on one road of two and missed the text-size step). The observer's first report describes each
+ *  figure's box at observe(), the decision the paint took over a box not yet laid out, run again over the laid-out one. A report's
+ *  decision runs at the next animation frame, over the figures reported with a box since the last one, never inside the observers'
+ *  delivery, where a decision that dresses a figure grew a top-level table the tables' observer had been handed at its old size
+ *  (the file review's round 18, extra6-3; the comment in the callback says how); a report of 0 by 0 runs no decision: the skip is a rule over the report, whatever produced it. A 0 by 0 report decides nothing, and the
+ *  figure is decided by its load or its error (armFigureControls), by the gate's restore, or by its next report with a box (the
+ *  file review's round 4, regression-3: the reason before it named two roads to such a report as the only ones, and a loaded
+ *  figure the author gave no box was a third). Two reports are transient, the viewer's hide (display:none on the pane or its
+ *  page) and a gated placeholder's img before its click: the show or the restore reports the real box, which is decided, where
+ *  a decision over the hide's report would take a standing control off a figure that is merely hidden and the show would put it
+ *  back, a remove and an add the reader never sees; a figure the browser has not answered for at the paint's arm reports 0 by 0
+ *  too and is decided at its load, the report of its real box following. One report is final: a loaded figure whose REAL box is
+ *  0 by 0 (an author's `hidden` or `width="0"`) reports 0 by 0 for as long as it stands, and the skip is no guard for it and
+ *  needs to be none, since the floor refused it at its load (figureBox reads its laid-out box; the file review's round 3,
+ *  correctness-1: the skip's reason had claimed the show or the restore reports every such figure's real box). The residual the
+ *  skip leaves: a figure hidden AFTER its load by any other road keeps a standing control until its next report with a box. The
+ *  product has one such road, a `<details>` folded by the reader (an expanded callout, `> [!note]+`, renders as a `<details open>`
+ *  in md-config.ts), and
+ *  the control is harmless there, by a mechanism that is not this skip: the fold reports nothing (the engines report no box for
+ *  skipped content, so nothing reaches the observer while the callout is folded), the control is folded with the figure, so
+ *  neither is visible or hit-testable and the control stands over no prose, and the first report with a box after the reopen
+ *  decides the figure again, none firing when the box did not change while folded, where the standing control is already right
+ *  (the file review's round 4, ui-1, its probe folding the callout by a real click, measured in the three engines: folded at
+ *  1200 px, the figure kept its 735 by 73 box and its control, both checkVisibility() false and elementFromPoint over the
+ *  control's square answering the content laid out below the callout; reopened at 1200 px, no report and the control stood;
+ *  reopened after a narrowing to 420 px, the report of 334 by 33 removed the control under the floor). A road added later that
+ *  hides a figure and reports for it decides the figure itself or lifts this skip for it. Armed at
+ *  each text paint (`onRendered` with any `why` but "reflow": a reflow keeps the figure nodes, a paint replaces them) over the
+ *  figures the box holds then, and dropped by the function returned; the body is empty when the open sets this up, before its
+ *  first paint (renderBody runs after the setup), so nothing is observed until that paint. Null where ResizeObserver is missing
+ *  (a stand-in outside a browser), where nothing reflows and the paint's decision stands. */
+function watchFigureBoxes(body: HTMLElement, filePath: string, onRendered: (cb: (why?: FileViewRenderWhy) => void) => void): (() => void) | null {
+  if (typeof ResizeObserver !== "function") return null;
+  const due = new Set<Element>();                      // the figures reported with a box since the last frame's decision
+  let frame = 0;                                       // the pending animation frame's handle, 0 when none is pending
+  const ro = new ResizeObserver((entries) => {
+    for (const e of entries) {
+      // A 0 by 0 report is skipped: a 0 by 0 report decides nothing, whatever produced it; the figure is decided by its load or
+      // its error (armFigureControls), by the gate's restore, or by its next report with a box (the file review's round 4,
+      // regression-3: the reason before it named the roads to such a report as two, and a loaded figure the author gave no box
+      // was a third). The viewer's hide (display:none on the pane or its page, the dashboard at a viewport where the pane hides)
+      // and a gated placeholder's img before its click are transient: the show or the restore reports the real box, which is
+      // decided; decided here, a standing control would leave at the hide and return at the show, a remove and an add the
+      // reader never sees (before the file review's round 3, with figureBox falling back to the picture's own size over a
+      // zero-sided rect, the hide ADDED a control to a figure under the floor at its real width and the show removed it). A
+      // loaded figure whose real box is 0 by 0 (an author's `hidden` or `width="0"`) is final: it reports 0 by 0 for as long as
+      // it stands, and the skip is no guard for it and needs to be none, since the floor refused it at its load, figureBox
+      // reading the laid-out box of a figure in the document as it is (the file review's round 3, correctness-1). The residual
+      // the skip leaves: a figure hidden after its load by any other road keeps a standing control until its next report with
+      // a box; the product's one such road, a `<details>` folded by the reader (an expanded callout renders as one), reports
+      // nothing while folded and folds the control with the figure, and the first report with a box after the reopen decides
+      // the figure again (the docstring
+      // above; the file review's round 4, ui-1).
+      if (e.contentRect.width === 0 || e.contentRect.height === 0) continue;
+      due.add(e.target);
+    }
+    // The decision runs at the next animation frame, a layout event and never a timer, not inside this delivery: a decision that
+    // dresses a figure with the outbound mark gives it a margin, which grows a top-level table holding it, and the tables' observer
+    // (watchBodyWidth) was handed that table's old size in the same delivery, so the table's new size was skipped and WebKit raised a
+    // window error, a loop of undelivered notifications, as a small picture in a table loaded beside others (the file review's round
+    // 18, extra6-3). At the frame the table's new size is the first report of that frame's delivery.
+    if (due.size && !frame) frame = requestAnimationFrame(decideDue);
+  });
+  // The frame's decision over the figures reported since the last one: a figure the paint replaced (no longer connected) or a
+  // stand-in is passed over, as at the report, and so is a figure with no box at the frame (the viewer's hide came between the report
+  // and the frame; the show reports the box again), so a skip the report makes holds at the decision too.
+  const decideDue = (): void => {
+    frame = 0;
+    const figs = Array.from(due);
+    due.clear();
+    for (const img of figs) {
+      if (!img.isConnected || figureState(img) === "standin") continue;
+      const r = img.getBoundingClientRect();
+      if (r.width === 0 || r.height === 0) continue;
+      decideFigureControl(img, filePath);
+    }
+  };
+  const rearm = (): void => { ro.disconnect(); due.clear(); body.querySelectorAll(".fileview-md img").forEach((img) => { ro.observe(img); }); };
+  onRendered((why) => { if (why !== "reflow") rearm(); });
+  // No arm here: the open runs this before its first paint, so an arm at this point observed nothing (the file review's round 3,
+  // tests-4: measured in Chromium at the fix over the fresh open, the replace, Back, Forward and a reopen after a close, the body
+  // holding no `.fileview-md img` on any of the five, the loader alone), and the first paint's arm follows.
+  return () => { ro.disconnect(); due.clear(); if (frame) cancelAnimationFrame(frame); frame = 0; };
 }
 
 /** A pixel-sized `<video>` keeps the shape its `width` and `height` attributes give it, capped or not. The viewer's sheets

@@ -9,16 +9,24 @@
 // (both sheets) close them together, as the browser lays them out. Each test opens the viewer on a synthetic
 // note through openFileView and reads the rendered DOM: styles resolved, boxes measured, elementFromPoint at the
 // close button's centre. Content wider than the column is measured too: under containment the body cannot scroll
-// to it, so an inline svg, canvas or video is capped at the column and a table scrolls sideways on its own. Skips
-// with a stated reason when no playwright browser is installed (CI installs none; tests/test_spend_modal_headless_served.py
-// is the precedent, skipping without a playwright install). Synthetic values only: an invented note under a
-// TESTHOST path, a placeholder sid. The design is plans/markdown-viewer.md, Slice 1 (sanitize as GitHub does); the
-// first two fixtures are the audit's two High defects.
+// to it, so an inline svg, canvas or video is capped at the column and a table scrolls sideways on its own. Since the
+// link-navigation follow-on (plans/markdown-viewer.md, "Follow-on: Link navigation (2026-09-19)", L3) the viewer takes the
+// page classes the sheets raise to its control's stacking level off a file document's author markup, so the containment
+// test's author element of a fixed page class lays out in the note's flow and the fixed box it measures is one put into
+// the note after render, read where the body scrolled to as well. That test also reads at run time that no page class the
+// viewer keeps on a file document's author markup makes an element fixed, over every sheet a page of either host loads
+// (ui/webview/host-sheets.mjs). The leg launches through real-viewer-leg.ts's inBrowser, as every browser leg of that follow-on
+// does, and the helper skips with a stated reason when no playwright browser is installed (CI installs none;
+// tests/test_spend_modal_headless_served.py is the precedent, skipping without a playwright install). Synthetic values
+// only: an invented note under a TESTHOST path, a placeholder sid. The design is plans/markdown-viewer.md, Slice 1
+// (sanitize as GitHub does); the first two fixtures are the audit's two High defects.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { createRequire } from "node:module";
+import { inBrowser } from "./real-viewer-leg";
+import { hostSheets } from "./host-sheets.mjs";
 
 const EXT = process.cwd();                                        // npm test runs in vscode-extension
 // resolve playwright and esbuild from the extension, not from wherever this bundle was written
@@ -55,21 +63,14 @@ const PAGE_HTML = `<!DOCTYPE html><html><head><meta charset=utf-8><style>${STYLE
 <script>window.acquireVsCodeApi=function(){return{postMessage:function(){}}};</script>
 <script src=/dist/viewer.js></script></body></html>`;
 
-let pw: any = null;
-try { pw = requireCjs("playwright"); } catch { pw = null; }
-
 // What the page's own events say happened over a test: every main-frame navigation (the load is one), and every
 // request whose host is not the page's (a submitted `<form action=https://example.invalid/go>` would be one)
 type Seen = { navigations: string[]; foreignRequests: string[] };
 
 async function withNote(t: any, note: string, body: (page: any, errors: string[], seen: Seen) => Promise<void>, via: "file" | "url" = "file"): Promise<void> {
-  if (!pw) { t.skip("playwright is not installed under vscode-extension; the browser leg needs it (CI installs no browsers)"); return; }
-  let browser: any;
-  try { browser = await pw.chromium.launch(); }
-  catch (e) { t.skip("no playwright browser on this machine; the browser leg needs one (CI installs none): " + String((e as Error).message).split("\n")[0]); return; }
-  const errors: string[] = [];
-  const seen: Seen = { navigations: [], foreignRequests: [] };
-  try {
+  await inBrowser(t, async (browser) => {
+    const errors: string[] = [];
+    const seen: Seen = { navigations: [], foreignRequests: [] };
     const js = bundle();
     const page = await browser.newPage({ viewport: { width: 900, height: 600 } });
     page.on("pageerror", (e: Error) => { errors.push(e.message); });
@@ -95,9 +96,7 @@ async function withNote(t: any, note: string, body: (page: any, errors: string[]
     // attached, not visible: a note whose <style> hides the viewer is one of the cases under test
     await page.waitForSelector("#romp-fileview .fileview-body .fileview-md", { state: "attached", timeout: 10000 });
     await body(page, errors, seen);
-  } finally {
-    await browser.close();
-  }
+  });
 }
 
 // The legs of this family (md-sanitize*-browser and the file-view-links leg they run beside) resolve playwright and esbuild
@@ -120,6 +119,11 @@ test("every md-sanitize browser leg resolves its runtime requires from the exten
 
 type Rect = { left: number; top: number; right: number; bottom: number; width: number; height: number };
 const near = (a: number, b: number, msg: string, tol = 1) => assert.ok(Math.abs(a - b) <= tol, msg + ": " + a + " vs " + b);
+/** One selector of a fixed rule as the containment test's fixed-rule pin plants it: the sheet it came from, the selector as the sheet
+ *  spells it, the selector matched (a context compound typed html, head or body read as a div), its subject compound alone and its
+ *  pseudo-element, the markup built for it with the plant id its subject element carries in its title, and whether that markup matches
+ *  the selector and its subject compound alone outside the note. */
+type PlantRow = { sheet: string; selector: string; sel: string; subj: string; pseudo: string; html: string; plantId: string; reach: boolean; subjectNotAuthored: boolean; typed: boolean };
 
 test("a file's <style> block and a position: fixed div neither hide the viewer nor cover its close button", { timeout: 60000 }, async (t) => {
   const note = [
@@ -311,32 +315,51 @@ test("layout containment: a fixed box inside the note spans the note, not the vi
       const hitClose = () => { const c = rect(close); const e = document.elementFromPoint(c.left + c.width / 2, c.top + c.height / 2); return e === close ? "close" : (e ? e.tagName + "." + e.className : "nothing"); };
       body.scrollTop = 0;
       const mdAt0 = rect(md);
-      // an element wearing one of the PAGE's fixed classes (the chat's .cite-preview): laid out inside the note, scrolling with it
+      // an author's element wearing one of the PAGE's fixed classes (the chat's .cite-preview): the viewer takes that class off a
+      // file document's author markup (file-view.ts dropStackClasses, .cite-preview being on SHEET_STACK_CLASSES, the page classes
+      // the sheets raise to the stacking level of the viewer's own control), keeps the author's own class, and the element is laid
+      // out in the note's flow, inside its box and scrolling with it. No page class the viewer keeps on a file document's author
+      // markup makes an element fixed, so no author box can stand in as the fixed box: the fixed-rule pin at the end of this test
+      // reads that at run time, over every sheet a page of either host loads. So the fixed box whose containment is measured is the
+      // one injected below, and the class still gives position: fixed to an element of the page's own (the precondition, read on a
+      // probe outside the note).
       const classed = md.querySelector(".fx-classed") as HTMLElement;
+      const classedClass = classed.getAttribute("class");
       const classedPosition = getComputedStyle(classed).position;
       const classedAt0 = rect(classed);
+      const probe = document.createElement("div"); probe.className = "cite-preview"; document.body.appendChild(probe);
+      const pagePosition = getComputedStyle(probe).position;
+      probe.remove();
       const inject = document.createElement("div"); inject.style.cssText = "position:fixed;inset:0;z-index:2147483647;background:red;";
       (md.querySelector("p") as HTMLElement).appendChild(inject);
       const injectAt0 = rect(inject);
       const hitAt0 = hitClose();
       body.scrollTop = 300;
       const scrolled = body.scrollTop;
+      // the fixed box itself, read where the body scrolled to: contained, it moved with the note and still spans the note's box
+      // there, where a box fixed to the viewport would have stayed put while the note moved up
+      const injectScrolled = rect(inject);
+      const mdScrolled = rect(md);
       const hitScrolled = hitClose();
       const classedScrolled = rect(classed);
       inject.remove();
       body.scrollTop = 0;
-      return { mdContain: getComputedStyle(md).contain, mdAt0, injectAt0, hitAt0, scrolled, hitScrolled, classedPosition, classedAt0, classedScrolled };
+      return { mdContain: getComputedStyle(md).contain, mdAt0, injectAt0, hitAt0, scrolled, injectScrolled, mdScrolled, hitScrolled, classedClass, classedPosition, pagePosition, classedAt0, classedScrolled };
     });
     assert.equal(contained.mdContain, "layout", ".fileview-md is layout-contained under the real sheet");
     for (const k of ["left", "top", "right", "bottom"] as const) near((contained.injectAt0 as Rect)[k], (contained.mdAt0 as Rect)[k], "an injected inset:0 fixed box spans exactly the note's box (" + k + ")");
     assert.equal(contained.hitAt0, "close", "elementFromPoint at the close button's centre is the close button, with a full-inset fixed box in the note");
     assert.ok(contained.scrolled >= 299, "the body scrolled: " + contained.scrolled);
-    assert.equal(contained.hitScrolled, "close", "and still after the body scrolled under it");
-    assert.equal(contained.classedPosition, "fixed", "precondition: the fixture class (.cite-preview) still gives position: fixed in styles.css; pick another class if not");
+    near((contained.mdAt0 as Rect).top - (contained.mdScrolled as Rect).top, contained.scrolled, "the note moved up by the body's scroll");
+    for (const k of ["left", "top", "right", "bottom"] as const) near((contained.injectScrolled as Rect)[k], (contained.mdScrolled as Rect)[k], "after the body scrolled, the injected fixed box still spans exactly the note's box, having moved with it (" + k + ")");
+    assert.equal(contained.hitScrolled, "close", "and the close button is still the element at its centre after the body scrolled under it");
+    assert.equal(contained.pagePosition, "fixed", "precondition: the fixture class (.cite-preview) still gives position: fixed to an element of the page's own in styles.css; pick another fixed class the viewer takes off author markup if not");
+    assert.equal(contained.classedClass, "fx-classed", "the viewer took the page's fixed class off the author's element (dropStackClasses) and kept the author's own class");
+    assert.equal(contained.classedPosition, "static", "so the author's element is not fixed: it lays out in the note's flow");
     const c0 = contained.classedAt0 as Rect, m0 = contained.mdAt0 as Rect;
     assert.ok(c0.top >= m0.top - 1 && c0.bottom <= m0.bottom + 1 && c0.left >= m0.left - 1 && c0.right <= m0.right + 1,
-      "the fixed-class element is laid out inside the note's box: " + JSON.stringify([c0, m0]));
-    near(c0.top - (contained.classedScrolled as Rect).top, contained.scrolled, "the fixed-class element moved WITH the note when the body scrolled (its containing block is the note, not the viewport)");
+      "the author's element is laid out inside the note's box: " + JSON.stringify([c0, m0]));
+    near(c0.top - (contained.classedScrolled as Rect).top, contained.scrolled, "the author's element moved WITH the note when the body scrolled");
     // the body still scrolls to the end of a long note: layout containment does not eat vertical overflow
     const scroll = await page.evaluate(() => {
       const body = document.querySelector("#romp-fileview .fileview-body") as HTMLElement;
@@ -351,6 +374,178 @@ test("layout containment: a fixed box inside the note spans the note, not the vi
     assert.ok(scroll.atEnd, "the body scrolled to its end");
     assert.ok(scroll.lastVisible, "the last paragraph is in view at the end");
     assert.equal(scroll.lastText, "Last line.");
+    // The fixed-rule pin: no page class the viewer keeps on a file document's author markup makes an element fixed, read at run
+    // time. Every sheet a page of either host loads (host-sheets.mjs hostSheets) is put into this page beside the chat's, the
+    // sheets they name by @import are served (katex's, from the extension), and every rule that sets position: fixed is read off
+    // the page's styleSheets, at any depth of a grouping rule or an imported sheet, a value no keyword reading can settle (a var())
+    // counted as fixed. For each selector of such a rule, markup is built that the selector matches: each compound's type, classes
+    // and id, nested for a descendant or child combinator and side by side for a sibling one. A compound before the subject typed
+    // html, head or body is built and matched as a div, since the page's own root and body can carry a page class and stand above
+    // every author element, and a rule whose subject is one of those three is left out, since no author element is the page's root
+    // or body. The markup is checked to match its selector, and the selector's subject compound alone, outside the note, then
+    // written into a second file note, which the viewer opens and renders with its drops. Each element so planted must not match
+    // its rule in the note, must not match the rule's subject compound alone, and must not compute position: fixed there (on its
+    // pseudo-element, for a rule on one). The subject compound is read alone because the page's own root, body or chrome can supply
+    // the rule's other compounds whatever the viewer took off the author's markup: for a rule keyed on a theme class the page's
+    // body wears, the viewer takes the theme class off the planted ancestor and the plant computes static on this page, whose body
+    // wears no theme, while an author's element of the subject's class is fixed whenever the body wears it. A selector the built
+    // markup does not match outside the note (a pseudo-class, an attribute) fails by name, to extend the build, and an element the
+    // sanitizer does not keep is no author element and passes. So a fixed rule whose subject compound a kept author element can
+    // match turns this red, whatever page class its other compounds key on; a subject that also needs a dropped class, an id
+    // (the sanitizer prefixes an author's) or a removed tag cannot match a kept author element, and passes rightly.
+    const sheets = hostSheets(path.resolve(EXT, "..")).filter((s) => s.name !== "ui/webview/styles.css").map((s) => ({ name: s.name, css: s.css }));
+    const stylesImports = (fs.readFileSync(path.join(UI, "styles.css"), "utf8").match(/^@import [^\n]*$/gm) || []).join("\n");
+    sheets.push({ name: "ui/webview/styles.css (the @import lines this page's copy drops)", css: stylesImports });
+    const katex = fs.readFileSync(requireCjs.resolve("katex/dist/katex.min.css"), "utf8");
+    await page.route("http://romp.test/katex/dist/katex.min.css", (route: any) => route.fulfill({ status: 200, contentType: "text/css", body: katex }));
+    await page.evaluate((extra: { name: string; css: string }[]) => {
+      for (const s of extra) { const st = document.createElement("style"); st.setAttribute("data-host-sheet", s.name); st.textContent = s.css; document.head.appendChild(st); }
+    }, sheets);
+    // every sheet a loaded sheet names by @import has loaded, with rules to read
+    await page.waitForFunction(() => {
+      const loaded = (list: CSSRuleList): boolean => Array.from(list).every((r) => !(r instanceof CSSImportRule) || (!!r.styleSheet && r.styleSheet.cssRules.length > 0 && loaded(r.styleSheet.cssRules)));
+      return Array.from(document.styleSheets).every((s) => loaded(s.cssRules));
+    }, null, { timeout: 10000 });
+    const derived: { walked: string[]; rows: PlantRow[] } = await page.evaluate(() => {
+      type Compound = { type: string; classes: string[]; ids: string[] };
+      const walked: string[] = [];
+      const rules: { sheet: string; selector: string }[] = [];
+      const pageCopy = document.head.querySelector("style");
+      const nameOf = (s: CSSStyleSheet): string => !s.ownerNode ? "@import " + s.href
+        : (s.ownerNode instanceof Element && s.ownerNode.getAttribute("data-host-sheet")) || (s.ownerNode === pageCopy ? "ui/webview/styles.css (this page's copy)" : "a sheet the page added (" + (s.ownerNode as Element).tagName + ")");
+      const walk = (list: CSSRuleList, sheet: string): void => {
+        for (const r of Array.from(list)) {
+          if (r instanceof CSSImportRule) { if (r.styleSheet) { walked.push(nameOf(r.styleSheet)); walk(r.styleSheet.cssRules, nameOf(r.styleSheet)); } continue; }
+          if (r instanceof CSSStyleRule && /^fixed$|var\(/i.test(r.style.getPropertyValue("position").trim())) rules.push({ sheet, selector: r.selectorText });
+          const inner = (r as any).cssRules as CSSRuleList | undefined;
+          if (inner && !(r instanceof CSSKeyframesRule)) walk(inner, sheet);
+        }
+      };
+      for (const s of Array.from(document.styleSheets)) { walked.push(nameOf(s)); walk(s.cssRules, nameOf(s)); }
+      // a selector's text cut at a character that stands outside any quote, bracket or parenthesis (a comma, or a combinator)
+      const topLevel = (s: string, at: (c: string) => boolean): { parts: string[]; cuts: string[] } => {
+        const parts: string[] = [], cuts: string[] = [];
+        let depth = 0, quote = "", cur = "";
+        for (let i = 0; i < s.length; i++) {
+          const c = s[i];
+          if (c === "\\") { cur += c + (s[i + 1] ?? ""); i++; continue; }
+          if (quote) { cur += c; if (c === quote) quote = ""; continue; }
+          if (c === '"' || c === "'") { quote = c; cur += c; continue; }
+          if (c === "(" || c === "[") depth++;
+          if (c === ")" || c === "]") depth--;
+          if (depth === 0 && at(c)) { parts.push(cur); cuts.push(c); cur = ""; continue; }
+          cur += c;
+        }
+        parts.push(cur);
+        return { parts, cuts };
+      };
+      const ident = (s: string, i: number): [string, number] => {
+        let out = "";
+        while (i < s.length) {
+          const c = s[i];
+          if (/[-_a-zA-Z0-9\u0080-\uffff]/.test(c)) { out += c; i++; continue; }
+          if (c === "\\") {
+            const hex = /^\\([0-9a-fA-F]{1,6})[ \t\n\r\f]?/.exec(s.slice(i));
+            if (hex) { out += String.fromCodePoint(Math.min(parseInt(hex[1], 16), 0x10ffff)); i += hex[0].length; } else { out += s[i + 1] ?? ""; i += 2; }
+            continue;
+          }
+          break;
+        }
+        return [out, i];
+      };
+      const compoundOf = (text: string): Compound => {
+        const c: Compound = { type: "", classes: [], ids: [] };
+        let i = 0;
+        if (text[0] === "*") i = 1;
+        else if (/[-_a-zA-Z\u0080-\uffff\\]/.test(text[0] || "")) { const [t, j] = ident(text, 0); c.type = t.toLowerCase(); i = j; }
+        let depth = 0;
+        while (i < text.length) {
+          const ch = text[i];
+          if (depth === 0 && ch === ".") { const [n, j] = ident(text, i + 1); c.classes.push(n); i = j; continue; }
+          if (depth === 0 && ch === "#") { const [n, j] = ident(text, i + 1); c.ids.push(n); i = j; continue; }
+          if (ch === "(" || ch === "[") depth++;
+          if (ch === ")" || ch === "]") depth--;
+          i++;
+        }
+        return c;
+      };
+      const esc = (v: string) => v.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+      const NO_AUTHOR = new Set(["html", "head", "body"]);
+      const VOID = new Set(["area", "br", "col", "embed", "hr", "img", "input", "link", "meta", "source", "track", "wbr"]);
+      const rows: PlantRow[] = [];
+      for (const rule of rules) {
+        for (const raw of topLevel(rule.selector, (c) => c === ",").parts.map((p) => p.trim()).filter(Boolean)) {
+          // a pseudo-element at the end is read as its element's, and its computed style is read on the pseudo-element
+          let sel = raw, pseudo = "";
+          const pe = /(?:::([-a-zA-Z]+)|:(before|after|first-line|first-letter))$/i.exec(raw);
+          if (pe) { sel = raw.slice(0, pe.index) || "*"; pseudo = "::" + (pe[1] || pe[2]).toLowerCase(); }
+          const cut = topLevel(sel.trim(), (c) => c === " " || c === ">" || c === "+" || c === "~");
+          // the compounds and the combinator between each two: a `>`, `+` or `~` among the cuts between them, else a descendant
+          const texts: string[] = [], combs: string[] = [];
+          let between = "";
+          cut.parts.forEach((p, k) => {
+            if (k > 0) { const c = cut.cuts[k - 1]; if (c !== " ") between = c; else if (!between) between = " "; }
+            if (p.trim()) { if (texts.length) combs.push(between || " "); texts.push(p.trim()); between = ""; }
+          });
+          const comps = texts.map(compoundOf);
+          const last = comps.length - 1;
+          // a compound before the subject typed html, head or body is built as a div and matched as one: the page's own root and
+          // body carry page classes an author's markup never sets, so such a rule is read as if an author's element stood there
+          const matched = texts.map((t, j) => (j < last && NO_AUTHOR.has(comps[j].type) ? t.replace(/^[-_a-zA-Z0-9]+/, "div") : t))
+            .reduce((acc, t, j) => (j === 0 ? t : acc + (combs[j - 1] === " " ? " " : " " + combs[j - 1] + " ") + t), "");
+          const plantId = "fx-plant-" + rows.length;
+          const tagOf = (c: Compound) => (!c.type || NO_AUTHOR.has(c.type) ? "div" : c.type);
+          const render = (j: number): string => {
+            const c = comps[j], tag = tagOf(c), end = j === last;
+            const open = "<" + tag + (c.classes.length ? ' class="' + esc(c.classes.join(" ")) + '"' : "") + (c.ids.length ? ' id="' + esc(c.ids[0]) + '"' : "") + (end ? ' title="' + plantId + '"' : "") + ">";
+            const close = VOID.has(tag) ? "" : "</" + tag + ">";
+            if (end) return open + (VOID.has(tag) ? "" : "x") + close;
+            return combs[j] === "+" || combs[j] === "~" ? open + close + render(j + 1) : open + render(j + 1) + close;
+          };
+          const html = comps.length ? "<div>" + render(0) + "</div>" : "";
+          const outside = document.createElement("div");
+          outside.innerHTML = html;
+          const built = outside.querySelector('[title="' + plantId + '"]');
+          // the subject compound alone, as the sheet spells it: what an author's element must not match whatever supplies the rest.
+          // The built markup must match it outside the note as well, so a subject the page cannot parse alone fails by name here
+          // rather than reading as no match in the note
+          const subj = texts.length ? texts[last] : "*";
+          let reach = false;
+          try { reach = !!built && built.matches(matched) && built.matches(subj); } catch { reach = false; }
+          rows.push({ sheet: rule.sheet, selector: raw, sel: matched, subj, pseudo, html, plantId, reach, subjectNotAuthored: comps.length > 0 && NO_AUTHOR.has(comps[last].type), typed: comps.some((c) => !!c.type && c.type !== "div" && !NO_AUTHOR.has(c.type)) });
+        }
+      }
+      return { walked, rows };
+    });
+    const rows = derived.rows;
+    for (const s of sheets) assert.ok(derived.walked.includes(s.name), "the pin read " + s.name + " off the page's styleSheets: " + derived.walked.join(", "));
+    assert.ok(derived.walked.some((w) => w.startsWith("@import ")), "the pin read a sheet a loaded sheet names by @import: " + derived.walked.join(", "));
+    assert.ok(rows.some((r) => r.selector === ".cite-preview"), "the pin found the sheets' fixed rules, .cite-preview's among them: " + rows.map((r) => r.selector).join(", "));
+    assert.deepEqual(rows.filter((r) => !r.reach && !r.subjectNotAuthored).map((r) => r.sheet + " " + r.selector), [],
+      "every fixed rule's selector, and its subject compound alone, matches the markup built for it outside the note (a rule whose subject is the page's root or body, which no author element is, excepted); a selector named here is one the build does not reach yet, to extend it");
+    const PLANT_PATH = "/tmp/TESTHOST/notes-api/plants.md";
+    const plantNote = ["# Plants", "", ...rows.filter((r) => r.html).flatMap((r) => [r.html, ""]), "Plants end.", ""].join("\n");
+    await page.route((u: URL) => u.hostname === "romp.test" && u.pathname === "/file" && u.searchParams.get("path") === PLANT_PATH,
+      (route: any) => route.fulfill({ status: 200, contentType: "text/plain; charset=utf-8", headers: { "X-Romp-Mtime-Ns": "2", "X-Romp-Text-Utf8": "1" }, body: plantNote }));
+    await page.evaluate(([p, sid]: [string, string]) => { (window as any).__openNote(p, sid); }, [PLANT_PATH, SID] as [string, string]);
+    await page.waitForFunction(() => { const md = document.querySelector("#romp-fileview .fileview-md"); return !!md && (md.textContent || "").includes("Plants end."); }, null, { timeout: 10000 });
+    const planted: { found: boolean; matches: boolean; subjMatches: boolean; position: string; cls: string | null }[] = await page.evaluate((list: { plantId: string; sel: string; subj: string; pseudo: string }[]) => {
+      const md = document.querySelector("#romp-fileview .fileview-md") as HTMLElement;
+      return list.map((r) => {
+        const e = md.querySelector('[title="' + r.plantId + '"]');
+        if (!e) return { found: false, matches: false, subjMatches: false, position: "", cls: null as string | null };
+        let matches = false, subjMatches = false;
+        try { matches = e.matches(r.sel); } catch { matches = false; }
+        try { subjMatches = e.matches(r.subj); } catch { subjMatches = false; }
+        return { found: true, matches, subjMatches, position: getComputedStyle(e, r.pseudo || null).position, cls: e.getAttribute("class") };
+      });
+    }, rows.map((r) => ({ plantId: r.plantId, sel: r.sel, subj: r.subj, pseudo: r.pseudo })));
+    assert.ok(planted.some((p) => p.found), "the plants reached the rendered note");
+    assert.deepEqual(rows.filter((r, i) => !planted[i].found && !r.typed).map((r) => r.sheet + " " + r.selector), [],
+      "every plant built of elements the sanitizer keeps reached the rendered note");
+    assert.deepEqual(rows.map((r, i) => ({ r, p: planted[i] })).filter(({ p }) => p.found && (p.matches || p.subjMatches || p.position === "fixed"))
+      .map(({ r, p }) => r.sheet + " " + r.selector + " (the author's element kept class " + JSON.stringify(p.cls) + ", matches " + p.matches + ", matches the subject " + JSON.stringify(r.subj) + " alone " + p.subjMatches + ", position " + p.position + ")"), [],
+      "no fixed rule of a sheet a page of either host loads reaches an author element of a file document, by its whole selector or by its subject compound alone, whose other compounds the page's own root, body or chrome can supply: a rule named here makes an element the viewer keeps fixed, so its subject's class belongs on a drop list (or the rule off the page)");
     assert.deepEqual(errors, [], "no page errors");
   });
 });

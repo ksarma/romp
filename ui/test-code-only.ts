@@ -1,10 +1,12 @@
 // The comment stripper every source pin that imports it reads through, so a pin reads code and a comment quoting the pinned
 // lines cannot satisfy it. The readers are the modules importing this one, `grep -l 'from "../test-code-only"' ui/webview/*.test.ts`,
-// five at the fork PR review's round 2 (regression-3, 2026-09-20; the header before it named three): file-view-seam.test.ts's
-// inertness premise guard and re-parse population, md-url-view.test.ts's and md-sanitize-viewer-links.test.ts's order pins over
-// mdBlock, code-block.test.ts's slice of the fence pass and file-view-links.test.ts's index compare of the fence pass against the
-// two link passes over the adopted box; tools/markdown-viewer-plan-gate-adopt.test.mjs derives that list from the tree and holds
-// this header and the plan to it, so a sixth reader is red there until named. An edit here reaches every one of them. The comments are the TypeScript compiler's own comment
+// six since the file review's round 13 (extra7-1; five at the fork PR review's round 2, regression-3, 2026-09-20, and the header
+// before that named three): file-view-seam.test.ts's inertness premise guard and re-parse population, md-url-view.test.ts's and
+// md-sanitize-viewer-links.test.ts's order pins over mdBlock, code-block.test.ts's slice of the fence pass, file-view-links.test.ts's
+// index compare of the fence pass against the two link passes over the adopted box, and file-figure-open.test.ts's count of
+// figureLinkOf's calls and its census of the arguments of the Playwright Mouse calls its compiler walk reads (mouseCalls, whose
+// census pin's title names the receiver shapes it leaves out); tools/markdown-viewer-plan-gate-adopt.test.mjs derives that list
+// from the tree and holds this header and the plan to it, so a seventh reader is red there until named. An edit here reaches every one of them. The comments are the TypeScript compiler's own comment
 // ranges: the source is parsed (ts.createSourceFile), every token of the tree is visited, and the comment ranges the
 // scanner reports before each token (ts.getLeadingCommentRanges at the token's full start) and after it on the same line
 // (ts.getTrailingCommentRanges at its end) are the ranges removed, and nothing else is. A string, a template and a regex

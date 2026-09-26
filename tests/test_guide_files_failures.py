@@ -70,8 +70,10 @@ RENDER_FELL_SAYS = ("When a file cannot be shown as rendered Markdown, its text 
                     "it, under a line that says so and names the error; **Rendered** stays chosen, and the next reload "
                     "or click of that button tries again.")
 FIGURE_SAYS = ("A figure that cannot be loaded, because its file is missing or is not an image, shows a line where the "
-               "picture would be: **Image failed to load**, then the figure's path as written in the file, and its alt "
-               "text when it has one.")
+               "picture would be: **Image failed to load**, then the figure's path as written in the file (for a web "
+               "address, only its origin: its scheme, host and port; for a source with an @ that may be a sign-in, "
+               "**address withheld because it appears to carry a sign-in** in its place), and its alt text when it "
+               "has one.")
 DECODE_SAYS = ("A picture opened as a file of its own whose bytes will not decode, because it is still being written or "
                "was cut short, shows a line in its place (**this image failed to decode: it may be mid-write or "
                "truncated**), then the file's path, and **Download**, which saves the file to your device.")
@@ -91,6 +93,7 @@ ENDINGS_SAYS = ("Without pending changes such a file can be edited, and when its
 SHARED = {
     "RENDER_FELL": (RENDER_FELL_SAYS, ("shown as rendered Markdown", "shown as written")),
     "FIGURE_FAILED": (FIGURE_SAYS, ("Image failed to load",)),
+    "FIGURE_ADDRESS_WITHHELD": (FIGURE_SAYS, ("withheld", "sign-in")),
     "DECODE_FAILED": (DECODE_SAYS, ("failed to decode", "mid-write or truncated")),
     "BYTES_FAILED": (BYTES_SAYS, ("could not be read again",)),
     "EMPTY_FILE": (EMPTY_SAYS, ("This file is empty",)),
@@ -103,6 +106,7 @@ SHARED = {
 EXPORTS = {
     "RENDER_FELL": 'export const RENDER_FELL = "This file could not be shown as rendered Markdown, so its text is shown as written";',
     "FIGURE_FAILED": 'export const FIGURE_FAILED = "Image failed to load:";',
+    "FIGURE_ADDRESS_WITHHELD": 'export const FIGURE_ADDRESS_WITHHELD = "address withheld because it appears to carry a sign-in";',
     "DECODE_FAILED": 'export const DECODE_FAILED = "this image failed to decode: it may be mid-write or truncated";',
     "BYTES_FAILED": 'export const BYTES_FAILED = "The file could not be read again";',
     "EMPTY_FILE": 'export const EMPTY_FILE = "This file is empty.";',
@@ -235,8 +239,10 @@ class TheViewerDoesIt(unittest.TestCase):
 
     def test_a_failed_figure_wears_a_label_the_body_hears_the_error_for_and_both_text_walks_skip(self):
         # the source the label names: the candidate the browser asked for as the author wrote it (failedSource: pictureDest's rule
-        # for the img's own src, the srcset candidate in currentSrc otherwise), a data: source cut to its head (shownSource); the
-        # Slice 7 review's round 1
+        # for the img's own src, the srcset candidate in currentSrc otherwise), a data: source cut to its head and a source with a
+        # scheme or a leading // shown as its origin alone, and a source that appears to carry a sign-in as the withheld address
+        # (shownSource, whose rule file-view-figure-error.test.ts and file-view-outline.test.ts execute); the Slice 7 review's
+        # round 1, and the file review's round 15 (correctness-1 with extra9-2)
         # ...and the words in the source's place when the figure names none (an empty destination; the review's round 2)
         self.assertIn('const src = failedSource(img);', self.viewer)
         self.assertIn('return FIGURE_FAILED + " " + (src ? shownSource(src) : FIGURE_NO_SOURCE) + (alt ? " (" + alt + ")" : "");', self.viewer)
@@ -244,10 +250,20 @@ class TheViewerDoesIt(unittest.TestCase):
         # the img's error does not bubble: one capture-phase listener on the body per open, its twin removing the label
         self.assertIn('body.addEventListener("error", onError, true);', self.viewer)
         self.assertIn('const FIGERR_MARK = "data-fv-figerr";', self.viewer)
-        # "where the picture would be": the label is the note's neighbour, not its text, to the pairing and the place
+        # "where the picture would be": the label is the note's neighbour, not its text, to the pairing and the place. These two
+        # pins read the lists' CONTENTS (Slice 7's entry in each), not whether a walk reads them. The figure's "Open the picture"
+        # control (the link-navigation follow-on's L3), the figure's other text-free neighbour, is kept out of the text walks and
+        # of the structural read the same way, and no list pin for it stands here: a pin on a list's membership stayed green while
+        # the structural read ignored both lists, and Python cannot execute readPlace, so its guards are the executed cases in
+        # ui/webview/file-view-place-blocks.test.ts (readPlace over a top-level figure wearing the control reads the figure, at the
+        # root and nested in a wrapper), ui/webview/anchor-map.test.ts (the control at the box's top level is no block's node, and
+        # the caption beside a labelled control maps) and ui/webview/md-config-figure-gate-place.test.ts (the place beside a
+        # glyph-only and a labelled control): the place-blocks case and anchor-map's top-level case red under the predicate's
+        # removal, the two labelled scenes red under their entry's removal, and md-config's glyph-only scenes holding the pairing
+        # and the place while reding on neither, a text-free control contributing nothing to the text read whether listed or
+        # not (the file review's round 8, correctness-1 with extra9-1)
         self.assertRegex(_read("ui", "webview", "anchor-map.ts"), re.compile(r'^  "fv-figerr",', re.M))
-        self.assertIn('const CONTROL_CLASSES = ["code-copy", "katex", "md-fnback", "md-frontmatter-head", "fv-gate", "fv-figerr"];',
-                      _read("ui", "webview", "reader-place.ts"))
+        self.assertRegex(_read("ui", "webview", "reader-place.ts"), re.compile(r'^const CONTROL_CLASSES = \[.*"fv-figerr".*\];$', re.M))
         for sheet in ("styles.css", "feed.css"):
             self.assertRegex(_read("ui", "webview", sheet), re.compile(r"^\.fileview-md \.fv-figerr \{", re.M), sheet)
 

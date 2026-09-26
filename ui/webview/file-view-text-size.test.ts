@@ -802,13 +802,17 @@ test("both sheets: the measure is the root's own inline padding; a table takes t
       ["border-collapse: collapse", "margin: 0.6em 0", "display: block", "width: max-content", "max-width: 100%", "overflow-x: auto", "overflow-wrap: normal"],
       name + ": a table is a block as wide as its columns need up to its container, scrolling inside beyond it, whole words kept");
     // a table of the page's own may grow out of the column, evenly into both gutters, up to the body's content width less
-    // the root's 18px inset (--fv-body-w, written by the viewer's width observer on each top-level table); unset, both
-    // declarations read the column and the shift is none
+    // the root's 18px inset (--fv-body-w, written by the viewer's width observer on each top-level table), shifted by a
+    // position and a left over its own width (--fv-table-w, written by the same watch's observer of the tables), never a
+    // translate, which made every top-level table a stacking context (the file review's round 17, the coordinator's decision
+    // 4); unset, both declarations read the column and the shift is none
     const top = decls(ruleOf(css, ".fileview-md > table {"));
     assert.equal(top[0], "max-width: calc(var(--fv-body-w, calc(100% + 36px)) - 36px)", name + ": the cap is the body less the inset, the column before the first report");
-    assert.equal(top[1], "translate: min(0px, round(calc(var(--fv-body-w, calc(100% + 36px)) / 2 - max(18px, round(down, (var(--fv-body-w, calc(100% + 36px)) - 80ch) / 2, 1px)) - 50%), 1px))", name + ": the shift left is half of what the table exceeds the column by, whole pixels, never right");
-    assert.equal(top.length, 2);
+    assert.equal(top[1], "position: relative", name + ": the table is positioned with no z-index, which makes no stacking context");
+    assert.equal(top[2], "left: min(0px, round(calc((100% - var(--fv-table-w, 100%)) / 2), 1px))", name + ": the shift left is half of what the table exceeds the column by (a left's percentage is of the column), whole pixels, never right, and none before the table's width is reported");
+    assert.equal(top.length, 3, name + ": no translate, transform, z-index or other declaration on the rule");
     assert.match(css, /^@property --fv-body-w \{ syntax: "\*"; inherits: false; \}$/m, name + ": the property is registered non-inherited, so a write restyles the tables alone");
+    assert.match(css, /^@property --fv-table-w \{ syntax: "\*"; inherits: false; \}$/m, name + ": the table's width is registered non-inherited too");
     assert.deepEqual(decls(ruleOf(css, ".fileview-body {")), ["flex: 1 1 auto", "min-height: 0", "overflow: auto"], name + ": the body reserves no scrollbar gutter and is no size container (review round 2 of Slice 3 of plans/markdown-viewer.md: the gutter was a blank strip beside every body that does not scroll; the cap reads the observer's width instead)");
     assert.ok(decls(ruleOf(css, ".fileview-md {")).includes("overflow-wrap: anywhere"), name + ": prose still breaks an unbreakable string");
     assert.ok(decls(ruleOf(css, ".fileview-md pre {")).includes("overflow-x: auto"), name + ": a code block scrolls on its own");
@@ -964,9 +968,12 @@ type Step = { width?: number; size?: number; prep?: string; media?: string; meas
 type Case = { name: string; html: string; width: number; measure: string; steps: Step[]; inline?: string[] };   // inline: script text added to the page after its HTML
 type Rows = Record<string, { rows: Array<{ step: Step; got: any }>; errors: string[] }>;
 /** A step, and the body's content width written on each top-level table the way the viewer's width observer writes it
- *  (file-view.ts watchBodyWidth: --fv-body-w on the tables themselves, after every paint and every width change); the
- *  page here carries no script, so the prep stands in for the observer. */
-const step = (n: number) => `(() => { document.getElementById("root").dataset.fvText = "${n}"; const w = document.getElementById("body").clientWidth + "px"; for (const t of document.querySelectorAll("#md > table")) t.style.setProperty("--fv-body-w", w); })()`;
+ *  (file-view.ts watchBodyWidth: --fv-body-w on the tables themselves, after every paint and every width change), then
+ *  each such table's own border-box width as --fv-table-w, read after the cap has taken, as the same watch writes it at its stamp
+ *  and from its observer of the tables, which write that width's whole pixels (offsetWidth) where this prep writes the unrounded
+ *  read, so the prep's shift can stand a pixel from the viewer's; the page here carries no script, so the prep stands in for both
+ *  observers. */
+const step = (n: number) => `(() => { document.getElementById("root").dataset.fvText = "${n}"; const w = document.getElementById("body").clientWidth + "px"; const ts = Array.from(document.querySelectorAll("#md > table")); for (const t of ts) t.style.setProperty("--fv-body-w", w); for (const t of ts) t.style.setProperty("--fv-table-w", t.getBoundingClientRect().width + "px"); })()`;
 function cases(): Case[] {
   const out: Case[] = [];
   const sanitizer = sanitizerJs();
@@ -1296,7 +1303,11 @@ const SCRIPTED = ROOT + "/docs/scripted.md";
 const SCRIPTED_MD = "# Report\n\nA paragraph before the script.\n\n<script>alert(1)</script>\n\n`</script>` inside a code span, and `<!--` before it.\n\nAfter the script.\n";
 const README = `<img src="${TALL_SVG(1600)}" width="1600" height="200">\n\n# Report\n\nProse ${"lorem ipsum ".repeat(60)}\n\n![plot](${TALL_SVG(1600)})\n\n<div align="center"><img src="${TALL_SVG(1600)}" width="1600" height="200"></div>\n\n\`\`\`\nconst x = 1;\nconst y = 2;\n\`\`\`\n\n\`\`\`\n${"const z = 1; ".repeat(20)}\n\`\`\`\n\n| run | p95 |\n| --- | --- |\n| a | 120 |\n`;
 /** The file table the page inlines (scriptLiteral: `<` as `\u003c`, so SCRIPTED's `</script>` cannot end the script). */
-const DOCS: Record<string, string> = { [REPORT]: README, [SNIPPET]: SNIPPET_MD, [BREAK]: BREAK_MD, [SCRIPTED]: SCRIPTED_MD };
+// a short note linking the report: the bar case follows its link so the trail has a step behind and the Back and Forward group
+// shows (a fresh open hides it, T367), and the two glyphs are measured inside the card with the rest of the row
+const LINKED = ROOT + "/docs/linked.md";
+const LINKED_MD = "# Linked\n\nSee [the report](report.md) for the figures.\n";
+const DOCS: Record<string, string> = { [REPORT]: README, [SNIPPET]: SNIPPET_MD, [BREAK]: BREAK_MD, [SCRIPTED]: SCRIPTED_MD, [LINKED]: LINKED_MD };
 /** The page a viewer surface is: the chat modal (styles.css), the feed modal (feed.css) or the Files pane (styles.css +
  *  files-pane.css under body.fileview-pane), the bundle, a fetch that serves the README with the kernel's headers, and two
  *  registered actions standing in for Comments and the GitHub unit (both mount once the kernel answers; the row is measured
@@ -1459,25 +1470,40 @@ test("in a browser, the real module: a bare <img> line, an image paragraph and a
   });
 });
 
-test("in a browser, the real module: the bar wraps, so the close button and every action stay inside the card at 380, 420, 480 and 600px in the chat and feed modals, with the kernel-answered row, at the default and with the readout showing", async (t) => {
+test("in a browser, the real module: the bar wraps, so the close button and every action stay inside the card at 380, 420, 480 and 600px in the chat and feed modals, with the kernel-answered row, at the default and with the readout showing; on a fresh open the trail's group is hidden and takes no room (T367), and once a link inside a file has been followed its two glyphs at the bar's left are among the actions measured, Back live and Forward dimmed", async (t) => {
   await inBrowser(t, async (browser) => {
     for (const mode of ["chat", "feed"] as const) for (const width of [380, 420, 480, 600]) for (const size of [100, 115]) {
       const cell = `${mode} ${width}px @${size}%`;
-      const { page, errors } = await openReal(browser, mode, width, size);
+      // the linked note first: a fresh open has nothing to step to either way, so the group is hidden and rows no glyph (T367; the
+      // file review's round 2, extra8-2); its link to the report then puts the note behind, and the report's bar is measured with
+      // the group showing
+      const { page, errors } = await openReal(browser, mode, width, size, false, { path: LINKED, raw: false });
+      const fresh = await page.evaluate(() => {
+        const nav = document.querySelector(".fileview .fileview-nav") as HTMLElement;
+        return { hidden: nav.hidden, boxes: nav.getClientRects().length, back: (document.querySelector(".fileview-nav-back") as HTMLElement).getAttribute("aria-disabled"), forward: (document.querySelector(".fileview-nav-forward") as HTMLElement).getAttribute("aria-disabled") };
+      });
+      assert.deepEqual(fresh, { hidden: true, boxes: 0, back: "true", forward: "true" }, cell + ": a fresh open hides the trail's group, which takes no room, both buttons aria-disabled");
+      await page.locator(".fileview-md a", { hasText: "the report" }).click();
+      await page.waitForFunction(() => !!document.querySelector(".fileview-md > pre") && /report\.md$/.test((document.querySelector(".fileview-base") as HTMLElement).textContent || ""), null, { timeout: 10000 });
+      await page.evaluate(() => new Promise<null>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r(null)))));
       const m = await page.evaluate(() => {
         const root = document.querySelector(".fileview") as HTMLElement;
         const bar = root.querySelector(".fileview-bar") as HTMLElement;
         // the buttons that render: a hidden one, or one inside a hidden unit (the module's own GitHub action, mounted and
         // waiting for a kernel that never answers here), has no box; the readout's empty slot (visibility) keeps its box
-        const btns = (Array.from(bar.querySelectorAll(".fileview-acts .fileview-btn")) as HTMLElement[]).filter((b) => b.getClientRects().length > 0);
+        // …and the trail's Back and Forward, the bar's first group (file-trail.ts; plans/markdown-viewer.md, "Follow-on: Link navigation", L2)
+        const btns = (Array.from(bar.querySelectorAll(".fileview-nav .fileview-btn, .fileview-acts .fileview-btn")) as HTMLElement[]).filter((b) => b.getClientRects().length > 0);
         const box = (e: Element) => { const b = e.getBoundingClientRect(); return { left: b.left, right: b.right, top: b.top, bottom: b.bottom }; };
         // a glyph button's word rides its aria-label (T367)
         return { labels: btns.map((b) => b.getAttribute("aria-label") || b.textContent), root: box(root), minLeft: Math.min(...btns.map((b) => box(b).left)), maxRight: Math.max(...btns.map((b) => box(b).right)),
           close: box(bar.querySelector(".fileview-close")!), main: box(root.querySelector(".fileview-main")!), barOver: bar.scrollWidth - bar.clientWidth,
-          name: (bar.querySelector(".fileview-name") as HTMLElement).getBoundingClientRect().width, nameFont: parseFloat(getComputedStyle(bar.querySelector(".fileview-name")!).fontSize) };
+          name: (bar.querySelector(".fileview-name") as HTMLElement).getBoundingClientRect().width, nameFont: parseFloat(getComputedStyle(bar.querySelector(".fileview-name")!).fontSize),
+          navLeft: bar.querySelector(".fileview-nav")!.getBoundingClientRect().left, nameLeft: bar.querySelector(".fileview-name")!.getBoundingClientRect().left };
       });
-      // A− and A+ live in the zoom glyph's flyout since T367 (hidden until the glyph is pressed), so the glyph stands for them in the row
-      for (const l of ["Rendered", "Raw", "Text size", "Edit", "Comments", "GitHub", "Download", "Copy path", "Close the file viewer"]) assert.ok(m.labels.includes(l), cell + ": the row measured is the kernel-answered one, with " + l + ": " + m.labels.join(","));
+      // A− and A+ live in the zoom glyph's flyout since T367 (hidden until the glyph is pressed), so the glyph stands for them in the row;
+      // Back names the note behind and Forward, with nothing ahead, wears its word alone under aria-disabled: the group shows for the one
+      for (const l of ["Back to linked.md", "Forward", "Rendered", "Raw", "Text size", "Edit", "Comments", "GitHub", "Download", "Copy path", "Close the file viewer"]) assert.ok(m.labels.includes(l), cell + ": the row measured is the kernel-answered one, with " + l + ": " + m.labels.join(","));
+      assert.ok(m.navLeft <= m.nameLeft + 0.5, cell + ": the two glyphs stand at the bar's left, before the path: " + m.navLeft + " vs " + m.nameLeft);
       assert.ok(m.close.left >= m.root.left - 0.5 && m.close.right <= m.root.right + 0.5, cell + `: the close button lies inside the card: x ${m.close.left}-${m.close.right} in ${m.root.left}-${m.root.right}`);
       assert.ok(m.minLeft >= m.root.left - 0.5 && m.maxRight <= m.root.right + 0.5, cell + `: every action lies inside the card: x ${m.minLeft}-${m.maxRight} in ${m.root.left}-${m.root.right}`);
       assert.ok(m.close.bottom <= m.main.top + 0.5, cell + ": the wrapped actions sit above the body, not over it");
