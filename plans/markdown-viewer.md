@@ -8703,7 +8703,10 @@ marquee, whose own rendering made one around what it held in Chromium and Firefo
 clip carried the control outside the page), so author content the hit test does not see stays below the control where no stacking
 context stands around the picture (`dropStackClasses` over `SHEET_STACK_CLASSES` and `SHEET_CONTEXT_CLASSES`, each held to the
 sheets both ways by file-figure-open.test.ts, and md-sanitize.ts's forbidden tags; the file review's round 16, extra5-1, its round
-17, extra9-1, with the coordinator's decision 4 on it, and its round 18, extra7-1 and extra7-2), and an author's own link opens its address with no dress, as before this follow-on; the painted-contrast ask of 2026-09-23, the press cue on the maintainer's ruling within it,
+17, extra9-1, with the coordinator's decision 4 on it, and its round 18, extra7-1 and extra7-2; the context drop's cost, as the
+dimming drop states its own: an author element of a listed class around a picture loses what that class gave it, its layout
+included, and an element of the classes picker-error and show loses show and stands at picker-error's display none, the picture
+inside it hidden, which fails closed, its round 18, extra6-1 and extra7-5), and an author's own link opens its address with no dress, as before this follow-on; the painted-contrast ask of 2026-09-23, the press cue on the maintainer's ruling within it,
 where at 0.8 the control read 2.46:1 by pixels on a
 VS Code editor ground of #404040 and, at 0.8 x 0.7 inside a captioned dead link, 2.47:1 dark and 2.40:1 light), measured in its own
 CSS pixels from the loaded picture's laid-out box while it is in the document (the box divided by the picture's zoom, so a body zoom
