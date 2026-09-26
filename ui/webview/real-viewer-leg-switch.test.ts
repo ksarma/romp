@@ -12,11 +12,17 @@
 // reads a lost browser by, read at run time from vscode-extension/scripts/ci-browser-legs.sh, which 860 does not have, so
 // that assertion stays this branch's and the offer to 860 is the third arm alone.
 // The leg it drives is this file's own, above it, which opens a page through inBrowser. The mechanism: a child
-// `node --test --test-name-pattern=<leg> <this bundle>` with an env BUILT from four variables (never inherited: the runner's
-// NODE_TEST_CONTEXT would put the child's report on this process's channel, and an ambient switch would leak into the
-// "unset" arm) and PLAYWRIGHT_BROWSERS_PATH pointed at a fresh empty directory, so the real pw.chromium.launch() throws; with
-// the switch the child records `# fail 1` and a line carrying the switch's name and this machine's reason, without it
-// `# skipped 1` and the reason. On a box with a browser the outer leg launches and passes; the switch test passes on any box,
+// `node --test --test-name-pattern=<leg> <this bundle>` with an env BUILT from three of this process's variables, PATH, HOME
+// and NODE_OPTIONS (never inherited: the runner's NODE_TEST_CONTEXT would put the child's report on this process's channel,
+// and an ambient switch would leak into the "unset" arm), PLAYWRIGHT_BROWSERS_PATH pointed at a fresh empty directory, so the
+// real pw.chromium.launch() throws, and TMPDIR set to a fresh directory of the child's own; with the switch the child records
+// `# fail 1` and a line carrying the switch's name and this machine's reason, without it `# skipped 1` and the reason. Each
+// failed launch leaves a playwright-artifacts-* and a playwright_chromiumdev_profile-* directory in the child's temporary
+// directory (Playwright makes both before it finds no browser, and removes neither), so the empty browsers directory and
+// each child's temporary directory sit in one scratch directory under out-tests/ that the test removes, and the test asserts
+// that each child's leg reports its own temporary directory, under that scratch directory, and that the scratch directory is
+// gone after the children ran. This branch adds those temporary directories and their two assertions, which 860's copy does
+// not have (the review's round 11, regression-1: each run left six such directories in this process's temporary directory). On a box with a browser the outer leg launches and passes; the switch test passes on any box,
 // since its child never sees the browser. tools/ci-browser-legs.test.mjs pins the phrase the step's script reads a lost
 // browser by to the helper's source text and names this file as the test of the behaviour; a green there with a red here is
 // a helper that carries the words and not the behaviour. Rostered in vscode-extension/ci-browser-legs.txt, so the step runs
@@ -24,11 +30,15 @@
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 import { spawnSync } from "node:child_process";
 import { EXT, inBrowser, playwrightInstalled } from "./real-viewer-leg";   // the shared launch, used by the legs that launch through it, and its switch read
 
 test("the launcher's own leg opens a page through the shared launch", { timeout: 60000 }, async (t) => {
+  // the temporary directory Playwright makes its launch directories in, reported for the switch test below, whose children
+  // each run this leg with a temporary directory of their own
+  t.diagnostic("temporary directory: " + os.tmpdir());
   await inBrowser(t, async (browser) => {
     const page = await browser.newPage();
     await page.setContent("<!DOCTYPE html><p>a page</p>");
@@ -57,14 +67,30 @@ test("ROMP_BROWSER_LEGS_REQUIRE, read in the shared launch helper, turns the ski
   // the failure's TAP error field, from its start: quoted, or a block scalar whose value opens the next line
   const begins = new RegExp("^\\s*error: [\"'|-]*\\s*" + esc(phrase), "m");
   t.diagnostic("the reason a browser leg names on this machine: " + why);
-  const empty = fs.mkdtempSync(path.join(EXT, "out-tests", "no-browsers-"));
+  // one scratch directory holds the empty browsers directory and each child's temporary directory, made before the try so
+  // that the finally removes everything the children leave, the directories of their failed launches among it
+  const scratch = fs.mkdtempSync(path.join(EXT, "out-tests", "switch-scratch-"));
   try {
+    const empty = path.join(scratch, "no-browsers");
+    fs.mkdirSync(empty);
     // the child's environment is built, not inherited: under `node --test` this process carries the runner's NODE_TEST_CONTEXT,
-    // and a child inheriting it reports on the runner's channel instead of its stdout
+    // and a child inheriting it reports on the runner's channel instead of its stdout. TMPDIR is the child's own, a fresh
+    // directory under the scratch directory: a failed launch leaves a playwright-artifacts-* and a
+    // playwright_chromiumdev_profile-* directory there, which a TMPDIR copied from this process would leave behind
     const base: Record<string, string> = {};
-    for (const k of ["PATH", "HOME", "TMPDIR", "NODE_OPTIONS"]) if (process.env[k] !== undefined) base[k] = process.env[k] as string;
-    const run = (env: Record<string, string>) => spawnSync(process.execPath, ["--test", "--test-name-pattern=launcher's own leg", __filename],
-      { cwd: EXT, encoding: "utf8", timeout: 100000, env: { ...base, ...env, PLAYWRIGHT_BROWSERS_PATH: empty } });
+    for (const k of ["PATH", "HOME", "NODE_OPTIONS"]) if (process.env[k] !== undefined) base[k] = process.env[k] as string;
+    const run = (env: Record<string, string>) => {
+      const tmp = fs.mkdtempSync(path.join(scratch, "tmp-"));
+      const r = spawnSync(process.execPath, ["--test", "--test-name-pattern=launcher's own leg", __filename],
+        { cwd: EXT, encoding: "utf8", timeout: 100000, env: { ...base, ...env, PLAYWRIGHT_BROWSERS_PATH: empty, TMPDIR: tmp } });
+      // the child's leg reports the temporary directory it ran with (node's TAP output escapes a backslash or a # in a
+      // diagnostic, so the report is read by its last two parts, the scratch directory's and the child's, which mkdtemp names
+      // from letters and digits)
+      const told = /^\s*# temporary directory: (.*)$/m.exec(r.stdout);
+      assert.ok(told && told[1].endsWith(path.join(path.basename(scratch), path.basename(tmp))), "the child's leg reports its own temporary directory, " + tmp + ", under the scratch directory the test removes, not this process's, where Playwright's playwright-artifacts-* and playwright_chromiumdev_profile-* directories from its failed launch would be left: " + (told ? told[1] : "no report") + "\n" + r.stdout.slice(-1500));
+      t.diagnostic("a child's temporary directory after its run holds " + JSON.stringify(fs.readdirSync(tmp).sort()));
+      return r;
+    };
     const req = run({ ROMP_BROWSER_LEGS_REQUIRE: "1" });
     assert.match(req.stdout, /^# fail 1$/m, "the leg failed under the switch\n" + req.stdout.slice(-1500));
     assert.match(req.stdout, new RegExp("ROMP_BROWSER_LEGS_REQUIRE[^\\n]*" + esc(why)), "the switch: a failure naming it and the reason (" + why + ") on one line\n" + req.stdout.slice(-1500));
@@ -78,6 +104,9 @@ test("ROMP_BROWSER_LEGS_REQUIRE, read in the shared launch helper, turns the ski
     assert.match(plain.stdout, /^# skipped 1$/m, "without the switch the leg skips\n" + plain.stdout.slice(-1500));
     assert.match(plain.stdout, new RegExp(esc(why)), "and the skip names the reason (" + why + ")\n" + plain.stdout.slice(-1500));
   } finally {
-    fs.rmSync(empty, { recursive: true, force: true });
+    fs.rmSync(scratch, { recursive: true, force: true });
   }
+  // nothing the children made is left: their temporary directories, and every playwright-artifacts-* and
+  // playwright_chromiumdev_profile-* directory their failed launches left in them, were in the scratch directory
+  assert.ok(!fs.existsSync(scratch), "the scratch directory that held the children's temporary directories is gone after the test: " + scratch);
 });
