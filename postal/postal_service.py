@@ -5049,19 +5049,29 @@ def _remote_sids_document(now, previous, owned=frozenset(), lost=None):
           caches), whose word a heard hub last gossiped unanswered, keeps that word held after the hub omits it, so for
           such a host whose sessions have really ended every sid on this machine stays at cannot-determine. How long,
           by population: a far bus from a release before this PR (the hosts on v0.15.0 to v0.17.1, blink-honest but
-          sending no presenceAnswered, among them), until this bus restarts, or until that host runs a release carrying
-          presenceAnswered and is heard answering; the hub naming the host again gives another unanswered word, and
-          its own row never speaks here, since _direct_row_speaks needs presenceAnswered True
-          (tests/test_dead_session_staleness.py ReaderFollowsTheWriter
+          sending no presenceAnswered, among them), until this bus restarts, or until the hub names that host again
+          with an answered word, which needs the host on a release carrying presenceAnswered, with a session of it in
+          that hub's roster. While the host stays on its release the hub naming it again gives another unanswered
+          word, and its own row never speaks here, since _direct_row_speaks needs presenceAnswered True. Once it runs
+          such a release (a new process, with a new bus id), being heard answering by another road (its own exchange
+          here, another hub's gossip) does not end it: the held word carries the older process's bus id, never heard
+          answering, and the host's own row here, where its exchange made one, carries the new process's, so that row
+          does not speak for the word (_direct_row_speaks); the hub naming it again with an unanswered word makes that
+          word the new process's, held or released on that process's own evidence (round 6 of fork PR #897, the
+          reviewer's verifier at the fifty-sixth commit, by execution; the witnesses, tests/test_dead_session_staleness.py
+          ReaderFollowsTheWriter
           test_cost_a_a_far_host_on_a_release_before_this_pr_whose_sessions_end_holds_its_word_until_the_hub_names_it_again_or_our_bus_restarts,
-          and for a far host with no bus id
+          with its leg after the host upgrades, and for a far host with no bus id
           test_a_far_host_with_no_bus_id_keeps_its_word_held_when_the_same_hub_process_omits_it_on_the_road_that_named_it
           there); a current bus heard only over caches, until the hub relays its answered word, its own row speaks for
-          it here (_direct_row_speaks), or this bus restarts
-          (test_cost_a_a_current_far_host_heard_here_only_over_caches_that_answers_its_hub_empty_holds_its_word_until_its_answer_is_relayed
-          there), and a current far host whose first answered exchange with the hub carries an empty listing reads the
-          same, since a hub stamps a far host's bit only on that host's session rows (presence_payload). The carrier
-          fix closes the two current-far-bus cases; for a far bus from a release before this PR nothing here closes it;
+          it here (_direct_row_speaks), this bus restarts, or, once any hub relays its answered word or its own
+          exchange here answers, the same hub process's next omission of it on the road that named it, the release for
+          a far bus heard answering (the same verifier; the witness,
+          test_cost_a_a_current_far_host_heard_here_only_over_caches_that_answers_its_hub_empty_holds_its_word_until_its_answer_is_relayed
+          there, with its leg where another hub relays); and a current far host whose first answered exchange with the
+          hub carries an empty listing reads the same, since a hub stamps a far host's bit only on that host's session
+          rows (presence_payload). The carrier fix closes the two current-far-bus cases; for a far bus from a release
+          before this PR nothing here closes it;
       (b) so does a heard peer whose kernel never answers (the second road's witness above, its host heard again
           over its cache);
       (c) so does a heard row with no link state (an origin-only row, a host the kernel never notified, a far bus
