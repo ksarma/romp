@@ -133,6 +133,7 @@ import inspect
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -150,6 +151,10 @@ else:                                  # nor its derived() (module_level_env_cen
     import parse_cache as PC           # noqa: E402
 sys.path.insert(0, HERE)
 import test_ship_reship_served as _lab   # noqa: E402  the lab kernel's environment (the module, not its classes)
+if __package__:                        # fork PR #916's evaluator of CI's Run pytest step, its one copy (_proof_options):
+    from .test_ci_pytest_workers import command_on, matrix_os_labels, python_job_steps, worker_counts
+else:                                  # the functions, not its classes, so pytest collects no test of it here
+    from test_ci_pytest_workers import command_on, matrix_os_labels, python_job_steps, worker_counts   # noqa: E402
 
 CALL = re.compile(r"(?:subprocess\.(?:Popen|run|check_output|check_call|call)|(?<![\w.])Popen)\s*\(")
 # the kernel's path as an argv spells it: the script's name, the bare CLI (not the other bin/romp-* scripts), a path
@@ -3425,10 +3430,14 @@ def _conftest_reasserted_names(src=None, where=None):
     files in the order of _proof_module_files: the first probe module at the first place, the two dummy modules, each
     one test that sets each probed name and leaves it, at the second and the third, and the second probe module at the
     fourth. Each run is made in two forms of command line (the ruling of 2026-09-25 09:17Z, (11); _PROOF_MODE_RUNS),
-    each form's runs handed four modules of their own (_proof_numbers): CI's, with the options of CI's pytest step
-    (_proof_options, read from .github/workflows/ci.yml) and so the cache plugin loaded, and a developer's, with none
-    of those options and with -p no:cacheprovider and -k reassert (_PROOF_DEVELOPER_OPTIONS), which blocks the cache
-    plugin and deselects none of the four.
+    each form's runs handed four modules of their own (_proof_numbers). CI's form has the options of CI's Run pytest
+    step as a runner runs it (_proof_options: the step read from .github/workflows/ci.yml, its expressions valued for
+    each runner label by fork PR #916's evaluator, as GitHub values them; the reviewer's hold of 2026-09-25 22:24Z), and
+    so the cache plugin loaded: its run with no worker has the options of the runners whose step sets no worker (-n 0,
+    on macos-latest) and its run with workers those of the runners whose step sets some (-n 2, on ubuntu-latest;
+    _proof_ci_forms, _proof_mode_options). The developer's form has none of those options and has -p no:cacheprovider
+    and -k reassert (_PROOF_DEVELOPER_OPTIONS), which blocks the cache plugin and deselects none of the four, and -n 2
+    in its run with workers.
     THE PROOF'S LIMIT, IN THREE TIERS (the reviewer's ruling of 2026-09-25 08:14Z on round 2 of fork PR #894, (10)). The
     proof refuses an unconditional removal of a counted fixture's re-assert (from every test), the class of the bug, and
     any removal keyed on a fact of the first tier. The second and third tiers are what it grants although pytest may not
@@ -3436,19 +3445,21 @@ def _conftest_reasserted_names(src=None, where=None):
     FIRST, MATCHED, by construction, the child's context: V1, a directory named tests; the package;
     the start, the conftest loaded when pytest starts; V3, the first module collected and the fourth, and so a condition
     on a module's place that holds at either (the fourth is third or later, where the verifier's X7 keyed its road); V4,
-    in each, function tests and a unittest TestCase; V5, a run with no xdist worker, none of this process's
-    PYTEST_XDIST_* variables in its environment, and, where pytest-xdist is installed, a run with -n 2; and THE PAIR OF
-    FORMS, each run of V5 made in both: whether each option that one form gives and the other does not is given, CI's
-    -q, --durations, --timeout and --timeout-method (the last two where pytest-timeout is installed) and the developer's
-    -p no:cacheprovider and -k, read as words of the command line and as pytest reads them (the cache plugin loaded or
-    not, a -k or none, --durations or none, --timeout or none, -q by the verbosity). The pair covers whether an option
-    is given, and no condition on its value. A road in the conftest's own code, in the code that runs before it or in
-    pytest that keeps pytest from running that re-assert in a test of that context, keyed on those facts alone, or
-    together where one read has them all (V1, the package, the start, V3, V4 and V5 with either form, and one form's
-    options with one another), is refused, named above or not (planted: the module road's residuals and every facet of
-    _proof_facets; _proof_context_roads, a road keyed on each part of each fact, on the complement of each fact a read
-    can lack, and on two conjunctions; _proof_option_roads, a road keyed on each form's options leading its command line
-    and on each option of either form given and not given; and the copy test's roads, keyed on the verifier's three
+    in each, function tests and a unittest TestCase; V5, a run with no xdist worker (CI's with -n 0 where pytest-xdist
+    is installed, the developer's with no -n), none of this process's PYTEST_XDIST_* variables in its environment, and,
+    where pytest-xdist is installed, a run with -n 2; and THE PAIR OF FORMS, each run of V5 made in both: whether each
+    option that one run gives and another does not is given, CI's -q, --durations, --timeout and --timeout-method (the
+    last two where pytest-timeout is installed) and -n (where pytest-xdist is installed; every run gives it but the
+    developer's with no worker), and the developer's -p no:cacheprovider and -k, read as words of the command line and,
+    all but -n, as pytest reads them (the cache plugin loaded or not, a -k or none, --durations or none, --timeout or
+    none, -q by the verbosity). The pair covers whether an option is given, and no condition on its value. A road in
+    the conftest's own code, in the code that runs before it or in pytest that keeps pytest from running that re-assert
+    in a test of that context, keyed on those facts alone, or together where one read has them all (V1, the package,
+    the start, V3, V4 and V5 with either form, and one run's options with one another), is refused, named above or not
+    (planted: the module road's residuals and every facet of _proof_facets; _proof_context_roads, a road keyed on each
+    part of each fact, on the complement of each fact a read can lack, and on two conjunctions; _proof_option_roads, a
+    road keyed on each run's options leading its command line and on each option word of either form given and not
+    given; and the copy test's roads, keyed on the verifier's three
     facts of the package, on every entry of the checkout in its place in the copy, on the child's command line in each
     form (_proof_command_roads), and on a test module's place in the order: the first, the third or later (the
     verifier's X7) and the second to the six-hundredth (its Y1)). The pair adds runs: the developer's form doubles each
@@ -3464,13 +3475,15 @@ def _conftest_reasserted_names(src=None, where=None):
     run collects hundreds after most modules, so a count that is neither, four or more after, say (the verifier's ZL at
     the forty-first commit). Which modules come before or after it (the builder's R7, a module named
     test_kernel_env_floor.py collected earlier). And the run's arguments, which decide what it collects: the child hands
-    its four modules as files where CI's pytest step hands no path and a developer's run may hand tests/ (and two of
-    its runs add -n 2). Matching these is a child that collects every test module of tests/: a run that collects tests/
-    took 41 to 44 s at the thirty-ninth and forty-second commits, and at the fortieth, whose child did so, this module
-    ran serially in 395 to 403 s on 3.12 and 361 to 371 s on 3.10, against 62 to 63 s and 67 to 68 s at the thirty-ninth
-    (three runs each, side by side; measured at those heads, not enforced). That would put CI's slowest cell past its
-    time limit and hold fork PR #894 on the CI-headroom decision, so the tier is stated and not matched; it becomes
-    matchable, and this choice open again, if that decision gives that cell more time. The witness is
+    its four modules as files where CI's pytest step hands no path and a developer's run may hand tests/ (and its
+    developer's run with workers adds -n 2). Matching these is a child that collects every test module of tests/: a run
+    that collects tests/ took 41 to 44 s at the thirty-ninth and forty-second commits, and at the fortieth, whose child
+    did so, this module ran serially in 395 to 403 s on 3.12 and 361 to 371 s on 3.10, against 62 to 63 s and 67 to 68
+    s at the thirty-ninth (three runs each, side by side; measured at those heads, not enforced). With CI's cells
+    serial under the time limit they had then, that would have put the slowest cell past it and held fork PR #894 on
+    the CI-headroom decision, so the tier was stated and not matched, to become matchable if that decision gave the
+    cell more time. That change has since landed (fork PR #916: two workers on the Linux cells, and more time on every
+    cell); this tier is not measured under it here, and stays stated. The witness is
     test_the_proofs_stated_limits_on_order_and_arguments_are_granted_and_a_real_run_of_each_reads_the_write: a copy
     whose hook keys one road on a module named test_kernel_env_floor.py collected earlier, one on the module collected
     exactly third, one on a module collected fifth or later, one on a module with four or more modules collected after
@@ -3628,16 +3641,18 @@ _REASSERT_PROBE = textwrap.dedent('''\
 #   skips no frame of os's (the verifier's finding at round 2's thirty-fourth commit of fork PR #894: that skip had no
 #   plant, and no write or pop the filter counts runs through os's own code, so it is cut)
 
-_PROOF_MODES = {"serial": "in a run with CI's options and no xdist worker",
-                "xdist": "on an xdist worker of a run with CI's options and -n 2",
+_PROOF_MODES = {"serial": "in a run in CI's form with no xdist worker",
+                "xdist": "on an xdist worker of a run in CI's form with workers",
                 "developer": "in a developer's form of run with no xdist worker",
                 "developer-xdist": "on an xdist worker of a developer's form of run with -n 2"}
 _PROOF_MODE_RUNS = {"serial": ("ci", False), "xdist": ("ci", True), "developer": ("developer", False),
                     "developer-xdist": ("developer", True)}
-#   THE RUNS THE PROOF MAKES, by mode (_proof_modes): the form of each run's command line, "ci" (_proof_options) or
-#   "developer" (_proof_developer_options), and whether it has xdist workers (-n 2). The two forms are a matched pair,
-#   as the runs with and without a worker are (the reviewer's ruling of 2026-09-25 09:17Z on round 2 of fork PR #894,
-#   (11)), and every form runs with and without a worker
+#   THE RUNS THE PROOF MAKES, by mode (_proof_modes): the form of each run's command line, "ci" (CI's Run pytest step
+#   as a runner runs it, _proof_ci_forms) or "developer" (_proof_developer_options), and whether it has xdist workers;
+#   each run's options are _proof_mode_options'. The two forms are a matched pair, as the runs with and without a
+#   worker are (the reviewer's ruling of 2026-09-25 09:17Z on round 2 of fork PR #894, (11)), and every form runs with
+#   and without a worker: in CI's form, as the step runs on its runners with none (-n 0 on macos-latest) and on those
+#   with workers (-n 2 on ubuntu-latest), and in the developer's, with no -n and with -n 2
 _PROOF_READS = tuple(((module, cls, test), "the %s test of %s, %s" % (when, where, kind))
                      for module, where in (("a", "the first module collected"), ("b", "the fourth module collected"))
                      for cls, kind in (("", "a function test"), ("ProbeCase", "a unittest TestCase test"))
@@ -3651,7 +3666,7 @@ _PROOF_READS = tuple(((module, cls, test), "the %s test of %s, %s" % (when, wher
 #   _proof_module_files (test_the_added_modules_names_sort_in_the_order_of_proof_module_files), and a run in the copy is
 #   handed the four added modules as files in that order; it collects them so, the first probe module first and the
 #   second fourth, after two dummy modules (V3; the ruling of 2026-09-25 04:01Z, (8)), each probe read as
-#   function tests and as a unittest TestCase (V4), and the run is made with no xdist worker and with -n 2 (V5): every
+#   function tests and as a unittest TestCase (V4), and the run is made with no xdist worker and with two (V5): every
 #   combination of V3, V4 and V5 is read, _proof_context_roads plants a road keyed on each fact, and the copy test's
 #   roads one keyed on the verifier's three facts of the package, on every entry of the checkout in its place in the
 #   copy, on the child's command line and on a test module's place in the order; each run is made in each form of
@@ -3660,10 +3675,13 @@ _PROOF_READS = tuple(((module, cls, test), "the %s test of %s, %s" % (when, wher
 
 
 def _proof_modes():
-    """The runs the execution proof makes (_PROOF_MODE_RUNS): in each form of command line, CI's (_proof_options) and
-    a developer's (_proof_developer_options), one run with no xdist worker, and one with -n 2 where pytest-xdist is
-    installed in this interpreter: four runs where it is installed, two where it is not. Where it is not, no run of
-    the suite in this interpreter has an xdist worker, so no road keyed on one can keep a fixture from a test here."""
+    """The runs the execution proof makes (_PROOF_MODE_RUNS): in each form of command line, CI's (_proof_ci_forms) and
+    a developer's (_proof_developer_options), one run with no xdist worker, and one with two where pytest-xdist is
+    installed in this interpreter: four runs where it is installed, two where it is not. The proof makes the same
+    runs whatever run of the suite it is in, a run on xdist workers included, so it makes four in each of CI's cells,
+    whose python job installs pytest-xdist (the ubuntu-latest cells run the suite with -n 2 and the macos-latest cells
+    with -n 0), and two on a machine without it. Where it is not installed, no run of the suite in this interpreter has
+    an xdist worker, so no road keyed on one can keep a fixture from a test here."""
     if importlib.util.find_spec("xdist") is not None:
         return ("serial", "xdist", "developer", "developer-xdist")
     return ("serial", "developer")
@@ -3675,7 +3693,7 @@ _PROOF_DEVELOPER_OPTIONS = (("-p", "no:cacheprovider"), ("-k", "reassert"))
 #   absence was granted, and a developer's run leaked): the options of the proof's runs in that form, none of CI's
 #   options and the two a developer's run of this suite passes that CI's step does not, the cache plugin blocked, as
 #   this repository's sweeps run, and a -k, which selects a test by name ("reassert" is in the name of each module the
-#   proof adds, so it deselects none)
+#   proof adds, so it deselects none); its run with workers adds -n 2 (_proof_mode_options)
 
 
 def _proof_developer_options():
@@ -3684,22 +3702,93 @@ def _proof_developer_options():
     return [word for option in _PROOF_DEVELOPER_OPTIONS for word in option]
 
 
-def _proof_options(root=None):
-    """The options every child of the execution proof in CI's form passes: those of CI's pytest step, the words after
-    `pytest` on the one `run: python -m pytest` line of .github/workflows/ci.yml under `root` (default the checkout this
-    module sits in), today -q --durations=10 --timeout=600 --timeout-method=thread. No such line, or more than one,
-    raises: the workflow is the source, and a guess would hide its change. Where pytest-timeout is not installed in this
-    interpreter the options that begin --timeout are left out (pytest would refuse them), and no run of the suite in
-    this interpreter can pass them, as _proof_modes leaves out the -n 2 runs where pytest-xdist is not."""
-    root = os.path.dirname(HERE) if root is None else root
-    with open(os.path.join(root, ".github", "workflows", "ci.yml"), encoding="utf-8") as f:
-        lines = re.findall(r"^[ \t]*run:[ \t]*python -m pytest\b(.*)$", f.read(), re.M)
-    if len(lines) != 1:
-        raise AssertionError("the execution proof reads its children's options from the one `run: python -m pytest` line of "
-                             ".github/workflows/ci.yml, and found %d" % len(lines))
-    words = lines[0].split()
+def _proof_ci_yml(root=None):
+    """The path of .github/workflows/ci.yml under `root`, default the checkout this module sits in."""
+    return os.path.join(os.path.dirname(HERE) if root is None else root, ".github", "workflows", "ci.yml")
+
+
+def _proof_options(os_label, root=None):
+    """CI'S FORM, EVALUATED (the reviewer's hold of 2026-09-25 22:24Z on round 2 of fork PR #894, after fork PR #916 put
+    an expression on matrix.os in the step's -n): the options of CI's Run pytest step on a cell whose matrix.os is
+    `os_label`, as GitHub runs them, read from the python job of _proof_ci_yml(root) by fork PR #916's evaluator,
+    imported from tests/test_ci_pytest_workers.py, not copied: python_job_steps gives the step's one-line command,
+    command_on values each `${{ }}` expression in it for `os_label` as GitHub values it, and the words after
+    `python -m pytest` are returned, today with -n 2 on ubuntu-latest and with -n 0 on macos-latest. What the evaluator
+    does not read is REFUSED by name (AssertionError), never read by a default: an expression of any other shape, which
+    command_on's LookupError names (planted: an expression on matrix.python-version), a python job with no single Run
+    pytest step with a one-line command (planted: the step renamed), and a command that is not one `python -m pytest`
+    line (planted: `pytest` run bare)."""
+    path = _proof_ci_yml(root)
+    try:
+        runs = [run for name, run in python_job_steps(path) if name == "Run pytest"]
+        if len(runs) != 1 or not runs[0]:
+            raise LookupError("the python job has %d steps named Run pytest with a one-line command (%r); the proof reads "
+                              "one" % (len([r for r in runs if r]), runs))
+        words = shlex.split(command_on(runs[0], os_label))
+    except LookupError as e:
+        raise AssertionError("the execution proof reads CI's form from the Run pytest step of %s, as a cell on %s runs it, "
+                             "and refuses what fork PR #916's evaluator does not read: %s" % (path, os_label, e))
+    if words[:3] != ["python", "-m", "pytest"]:
+        raise AssertionError("the execution proof reads CI's form from the Run pytest step of %s, and on %s its command is "
+                             "not one `python -m pytest` line: %r" % (path, os_label, words))
+    return words[3:]
+
+
+def _proof_ci_forms(root=None):
+    """CI'S FORMS, BY WORKERS: {"serial": (runner labels, options), "xdist": (runner labels, options)}, the runner labels
+    of the python job's matrix (fork PR #916's matrix_os_labels) whose Run pytest step (_proof_options) sets no xdist
+    worker, and those whose step sets some, each with the options those runners share: today macos-latest's with -n 0,
+    xdist's in-process run, and ubuntu-latest's with -n 2. The count is read by fork PR #916's worker_counts, as
+    pytest's parser reads it: none, or one whole number, 0 being no worker. REFUSED by name (AssertionError): a count it
+    reads that is not one whole number (planted: -n auto), two runners of one kind whose options differ (planted: a
+    second expression that gives one of them -x), and no runner of a kind (planted: a step with no -n, and one that
+    gives every runner -n 2), since the proof makes one run in CI's form with no worker and one with workers."""
+    path = _proof_ci_yml(root)
+    try:
+        labels = matrix_os_labels(path)
+    except LookupError as e:
+        raise AssertionError("the execution proof reads CI's runners from the python job of %s: %s" % (path, e))
+    kinds = {"serial": collections.OrderedDict(), "xdist": collections.OrderedDict()}
+    for label in labels:
+        words = _proof_options(label, root)
+        counts = worker_counts(" ".join(shlex.quote(w) for w in words))
+        if counts and (len(counts) != 1 or not counts[0].isdigit()):
+            raise AssertionError("the execution proof reads CI's worker count on %s as none or one whole number, and the Run "
+                                 "pytest step of %s sets %r there: %s" % (label, path, counts, " ".join(words)))
+        kinds["xdist" if counts and int(counts[0]) > 0 else "serial"].setdefault(tuple(words), []).append(label)
+    out = {}
+    for kind, forms in kinds.items():
+        if len(forms) != 1:
+            raise AssertionError("the execution proof makes one run in CI's form %s, and the runners of %s give %d forms of "
+                                 "it: %s" % ("with no xdist worker" if kind == "serial" else "with xdist workers", path,
+                                             len(forms), "; ".join("%s on %s" % (" ".join(w), ", ".join(r))
+                                                                   for w, r in forms.items()) or "none"))
+        (words, runners), = forms.items()
+        out[kind] = (runners, list(words))
+    return out
+
+
+def _proof_mode_options(mode, root=None):
+    """The options of the proof's run in `mode` (_PROOF_MODE_RUNS), as words in their order. In CI's form, the options
+    of the runners of _proof_ci_forms with no worker for "serial" and of those with workers for "xdist", as the step
+    passes them, its -n and count included: today the macos-latest cells' -n 0 and the ubuntu-latest cells' -n 2. In
+    the developer's form, _proof_developer_options, and -n 2 after them for its run with workers. Left out of CI's
+    form, since no run of the suite in this interpreter can pass them: the words that begin --timeout where
+    pytest-timeout is not installed, and -n with the word after it where pytest-xdist is not (pytest would refuse
+    each; a worker count spelled otherwise refuses there, by name, planted by -n with its count attached). `root` is
+    _proof_ci_forms'."""
+    form, worker = _PROOF_MODE_RUNS[mode]
+    if form == "developer":
+        return _proof_developer_options() + (["-n", "2"] if worker else [])
+    words = list(_proof_ci_forms(root)[mode][1])
     if importlib.util.find_spec("pytest_timeout") is None:
         words = [w for w in words if not w.startswith("--timeout")]
+    if importlib.util.find_spec("xdist") is None:
+        kept = [w for i, w in enumerate(words) if w != "-n" and (i == 0 or words[i - 1] != "-n")]
+        if worker_counts(" ".join(shlex.quote(w) for w in kept)):
+            raise AssertionError("pytest-xdist is not installed, and CI's form %s sets its worker count by a spelling the "
+                                 "proof does not leave out (it leaves out -n and the word after it)" % " ".join(words))
+        words = kept
     return words
 
 
@@ -3942,9 +4031,10 @@ def _reassert_proof(cases, real=False):
     with no closed boundary is replaced by the property, run, here in the context of the ruling of 23:17Z, (4); its
     limit, in three tiers, is stated at the end of _conftest_reasserted_names' docstring). For each case of `cases` ((label,
     conftest text, or None for tests/conftest.py itself, {helper file: text}, sites in _reassert_sites' form)) and each
-    run of _proof_modes (_PROOF_MODE_RUNS: in CI's form of command line, with _proof_options, and in a developer's, with
-    _proof_developer_options, the ruling of 2026-09-25 09:17Z, (11); each with no xdist worker and, where pytest-xdist
-    is installed, with -n 2), a child pytest over the four modules of _proof_module_files: two probe modules
+    run of _proof_modes (_PROOF_MODE_RUNS: in CI's form of command line, as its Run pytest step runs on a runner with
+    no worker and on one with workers, and in a developer's, with _proof_developer_options, the ruling of 2026-09-25
+    09:17Z, (11); each with no xdist worker and, where pytest-xdist is installed, with two; each run's options
+    _proof_mode_options'), a child pytest over the four modules of _proof_module_files: two probe modules
     (_REASSERT_PROBE) over the names of the case's sites, the first collected first and the second fourth, after two
     dummy modules (_REASSERT_DUMMY), each probe test writing its report under the case's reports directory, in a
     directory of its form, outside the package. With `real` (the ruling of 2026-09-25 01:54Z, (6), and its application
@@ -3971,7 +4061,7 @@ def _reassert_proof(cases, real=False):
     the two forms' -n 2 runs shared one; test_each_run_of_the_proof_has_a_temporary_directory_of_its_own). Returns
     ({label: _proof_verdicts over the case's reports}, 0 or the first nonzero return code of the runs, their output)."""
     modes = _proof_modes()
-    options = {"ci": _proof_options(), "developer": _proof_developer_options()}
+    options = {mode: _proof_mode_options(mode) for mode in modes}
     forms = sorted({_PROOF_MODE_RUNS[mode][0] for mode in modes})
     probed = {n for _l, _t, _h, sites in cases for n in sites}
     reports, conftests, rcs = ([{} for _c in cases] for _x in range(3))
@@ -3986,9 +4076,8 @@ def _reassert_proof(cases, real=False):
 
     def run(job):
         mode, cwd, args, tmp = job
-        form, worker = _PROOF_MODE_RUNS[mode]
         os.makedirs(tmp, exist_ok=True)
-        return subprocess.run([sys.executable, "-m", "pytest"] + options[form] + (["-n", "2"] if worker else []) + args,
+        return subprocess.run([sys.executable, "-m", "pytest"] + options[mode] + args,
                               cwd=cwd, env=dict(child, TMPDIR=tmp), stdin=subprocess.DEVNULL, capture_output=True,
                               text=True, timeout=180)
 
@@ -7063,14 +7152,14 @@ class HermeticKernelPostal(unittest.TestCase):
         (11), after the verifier's finding N4 at the forty-third commit, where a road keyed on the cache plugin not
         loaded, on no --durations or on a -k was granted): every run is made in CI's form and in a developer's
         (_PROOF_MODE_RUNS), and each road of _proof_option_roads, in one case with a fixture per road
-        (_proof_option_case), keyed on each form's options leading its command line or on an option one form gives and
-        the other does not, given or not, is refused for the reads of that form's runs and no others; the roads keyed on
-        an option neither form gives (--rootdir), on a combination of options neither form has (the cache plugin not
-        loaded with no -k given) and on an option's value (a --durations of 5) are granted. The proof runs here with
-        this process's environment carrying the variables pytest-xdist sets in a worker, as on a worker of a sweep with
-        -n 8, and its runs with no worker drop them (_proof_child_env), so the variable's road is refused for the -n 2
-        runs' reads alone. V5's worker roads and the conjunctions are refused only where the proof makes the -n 2 runs:
-        where pytest-xdist is not installed, no run there has a worker, and the proof makes one run in
+        (_proof_option_case), keyed on each run's options leading its command line or on an option word one run gives
+        and another does not, given or not, is refused for the reads of the runs that have its fact and no others; the
+        roads keyed on an option neither form gives (--rootdir), on a combination of options neither form has (the cache
+        plugin not loaded with no -k given) and on an option's value (a --durations of 5) are granted. The proof runs
+        here with this process's environment carrying the variables pytest-xdist sets in a worker, as on a worker of a
+        sweep with -n 8, and its runs with no worker drop them (_proof_child_env), so the variable's road is refused for
+        the -n 2 runs' reads alone. V5's worker roads and the conjunctions are refused only where the proof makes the
+        runs with -n 2: where pytest-xdist is not installed, no run there has a worker, and the proof makes one run in
         each form and grants them, which this test reads from _proof_modes and runs for the worker road with
         pytest-xdist taken out of reach."""
         try:
@@ -7122,20 +7211,20 @@ class HermeticKernelPostal(unittest.TestCase):
             listed = {ctx for ctx, _k, _m in reads if ctx in why or "in each of the %d reads" % len(reads) in why}
             self.assertEqual(listed, {ctx for ctx, key, m in reads if facts[label](key, m)},
                              "%s: refused for the reads that share its fact and no others: %s" % (label, why))
-        self.assertEqual({label: got["the pair of forms"][name] is not None for name, (label, forms) in option_roads.items()},
-                         {label: forms is not None for name, (label, forms) in option_roads.items()},
-                         "THE PAIR OF FORMS: the proof refuses each road keyed on a form's options leading its command line or "
-                         "on an option one form gives and the other does not, given or not, and grants the roads keyed on an "
+        self.assertEqual({label: got["the pair of forms"][name] is not None for name, (label, runs) in option_roads.items()},
+                         {label: runs is not None for name, (label, runs) in option_roads.items()},
+                         "THE PAIR OF FORMS: the proof refuses each road keyed on a run's options leading its command line or "
+                         "on an option word one run gives and another does not, given or not, and grants the roads keyed on an "
                          "option neither form gives, on a combination of options neither form has and on an option's value:\n%s"
                          % "\n".join("%s: %s" % (label, got["the pair of forms"][name] or "granted")
                                      for name, (label, _f) in option_roads.items()))
-        for name, (label, forms) in option_roads.items():
-            if forms is None:
+        for name, (label, runs) in option_roads.items():
+            if runs is None:
                 continue
             why = got["the pair of forms"][name]
             listed = {ctx for ctx, _k, _m in reads if ctx in why or "in each of the %d reads" % len(reads) in why}
-            self.assertEqual(listed, {ctx for ctx, _key, m in reads if _PROOF_MODE_RUNS[m][0] in forms},
-                             "%s: refused for the reads of the runs in %s and no others: %s" % (label, " and ".join(forms), why))
+            self.assertEqual(listed, {ctx for ctx, _key, m in reads if m in runs},
+                             "%s: refused for the reads of the runs %s and no others: %s" % (label, ", ".join(runs), why))
         # with pytest-xdist taken out of reach, the proof makes the run with no worker alone in each form and grants
         # V5's worker road
         find = importlib.util.find_spec
@@ -7159,6 +7248,79 @@ class HermeticKernelPostal(unittest.TestCase):
         for n in range(100):
             names = [name for _letter, name, _kind in _proof_module_files(n)]
             self.assertEqual(sorted(names), names, "case %d: the added modules' names sort in the order the child collects them" % n)
+
+    def test_the_proofs_ci_form_is_the_run_pytest_step_valued_per_runner_and_a_shape_it_does_not_read_is_refused(self):
+        """CI'S FORM, EVALUATED (the reviewer's hold of 2026-09-25 22:24Z on round 2 of fork PR #894: fork PR #916 put
+        `-n ${{ matrix.os == 'ubuntu-latest' && '2' || '0' }}` in CI's Run pytest step, and the proof, which split that
+        line into words, handed pytest '${{' as a worker count and every child refused to start). From the real
+        .github/workflows/ci.yml, read through fork PR #916's evaluator: the ubuntu-latest form sets two workers and the
+        macos-latest form none (-n 0), each count read by its worker_counts; _proof_ci_forms files the first as CI's form
+        with workers and the second as CI's form with none; and where pytest-xdist and pytest-timeout are installed the
+        proof's runs in CI's form pass those two forms word for word (_proof_mode_options). With pytest-xdist out of
+        reach, each run in CI's form leaves out -n and its count and nothing else; with pytest-timeout out of reach, the
+        words that begin --timeout. REFUSED BY NAME, each over a copy of ci.yml with one change: an expression on another
+        matrix key (matrix.python-version), the Run pytest step renamed, `pytest` run bare, a worker count of auto, a
+        second expression that gives one of two runners with no worker -x, a step with no -n, and a step that gives every
+        runner -n 2; and, with pytest-xdist out of reach, -n with its count attached, which the run with no worker cannot
+        leave out."""
+        from unittest import mock
+        ubuntu, macos = _proof_options("ubuntu-latest"), _proof_options("macos-latest")
+        self.assertEqual((worker_counts(" ".join(ubuntu)), worker_counts(" ".join(macos))), (["2"], ["0"]),
+                         "from the real ci.yml, the ubuntu-latest form sets two workers and the macos-latest form none (-n 0): "
+                         "%s | %s" % (" ".join(ubuntu), " ".join(macos)))
+        self.assertEqual(_proof_ci_forms(), {"serial": (["macos-latest"], macos), "xdist": (["ubuntu-latest"], ubuntu)},
+                         "CI's form with no worker is macos-latest's and CI's form with workers ubuntu-latest's")
+        find = importlib.util.find_spec
+        for hidden in ((), ("xdist",), ("pytest_timeout",)):
+            here = lambda name, *a, h=hidden: None if name in h else object() if name in ("xdist", "pytest_timeout") else find(name, *a)
+            with mock.patch.object(importlib.util, "find_spec", here):
+                got = {mode: _proof_mode_options(mode) for mode in ("serial", "xdist")}
+            want = {"serial": macos, "xdist": ubuntu}
+            if hidden == ("xdist",):
+                at = macos.index("-n")
+                want = {"serial": macos[:at] + macos[at + 2:], "xdist": ubuntu[:ubuntu.index("-n")] + ubuntu[ubuntu.index("-n") + 2:]}
+            elif hidden == ("pytest_timeout",):
+                want = {mode: [w for w in words if not w.startswith("--timeout")] for mode, words in want.items()}
+            self.assertEqual(got, want, "the proof's runs in CI's form, with %s out of reach" % (" and ".join(hidden) or "nothing"))
+        self.assertNotEqual(want["serial"], macos, "with pytest-timeout out of reach the words change")
+        with open(_proof_ci_yml(), encoding="utf-8") as f:
+            real = f.read()
+        expression = "matrix.os == 'ubuntu-latest' && '2' || '0'"
+        self.assertEqual(real.count(expression), 1, "the step's expression, which the plants below change")
+        plants = (("an expression on another matrix key", real.replace(expression, "matrix.python-version == '3.12' && '2' || '0'"),
+                   "matrix.python-version == '3.12' && '2' || '0'"),
+                  ("the Run pytest step renamed", real.replace("      - name: Run pytest\n", "      - name: Run the tests\n"),
+                   "0 steps named Run pytest"),
+                  ("pytest run bare", real.replace("run: python -m pytest -q -n", "run: pytest -q -n"),
+                   "is not one `python -m pytest` line"),
+                  ("a worker count of auto", real.replace(expression, "matrix.os == 'ubuntu-latest' && 'auto' || '0'"),
+                   "sets ['auto'] there"),
+                  ("two runners with no worker whose options differ",
+                   real.replace("        include:\n", "        include:\n          - os: windows-latest\n            python-version: '3.12'\n", 1)
+                   .replace("--timeout-method=thread\n", "--timeout-method=thread ${{ matrix.os == 'windows-latest' && '-x' || '' }}\n", 1),
+                   "give 2 forms of it"),
+                  ("a step with no -n", real.replace("-n ${{ %s }} " % expression, ""), "with xdist workers, and the runners"),
+                  ("a step that gives every runner -n 2", real.replace(expression, "matrix.os == 'ubuntu-latest' && '2' || '2'"),
+                   "with no xdist worker, and the runners"))
+        root = os.path.realpath(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, root, True)
+        os.makedirs(os.path.join(root, ".github", "workflows"))
+        for label, text, named in plants:
+            self.assertNotEqual(text, real, "%s: the plant changes ci.yml" % label)
+            with open(_proof_ci_yml(root), "w", encoding="utf-8") as f:
+                f.write(text)
+            with self.subTest(plant=label):
+                with self.assertRaises(AssertionError) as caught:
+                    _proof_ci_forms(root)
+                self.assertIn(named, str(caught.exception), "%s: refused by name" % label)
+        with open(_proof_ci_yml(root), "w", encoding="utf-8") as f:
+            f.write(real.replace("-n ${{ %s }}" % expression, "-n${{ %s }}" % expression))
+        self.assertEqual(_proof_ci_forms(root)["serial"][1][:2], ["-q", "-n0"], "-n0, its count attached, is filed as CI's form with no worker")
+        hide = lambda name, *a: None if name == "xdist" else find(name, *a)
+        with mock.patch.object(importlib.util, "find_spec", hide), self.assertRaises(AssertionError) as caught:
+            _proof_mode_options("serial", root)
+        self.assertIn("sets its worker count by a spelling the proof does not leave out", str(caught.exception),
+                      "with pytest-xdist out of reach, -n0 is refused by name")
 
     def test_each_run_of_the_proof_has_a_temporary_directory_of_its_own(self):
         """EACH RUN'S OWN TEMPORARY DIRECTORY (the builder's red at round 2's forty-fourth commit of fork PR #894, and
@@ -7365,12 +7527,13 @@ class HermeticKernelPostal(unittest.TestCase):
         X7, a module collected third or later) and the one _no_real_claude_config re-asserts (its Y1, a module collected
         second to six-hundredth) in the reads of the fourth module collected and in no other, and the two _no_cli_scope
         re-asserts (a module collected first) in the reads of the first and in no other, and grants the one other; and
-        each child process that collects, in each form of _PROOF_MODE_RUNS (the reviewer's ruling of 2026-09-25 09:17Z,
-        (11)), records every condition of _proof_copy_roads true (the verifier's Q1, Q2 and Q3, true in a real run and
-        false under the thirty-seventh commit's shim) and each condition of _proof_command_roads true where its form's
-        runs have the fact and false where they do not (in CI's form CI's options leading the command line and the
-        verifier's X1, Y2, Y3 and Y3T, in the developer's form the developer's options leading it and its X1N, Y2N and
-        Y3N, and X2 in both), the modules under tests/ in the order it collected them and the files of the tests it
+        each child process that collects, in each run of _proof_modes (in both forms of _PROOF_MODE_RUNS, the reviewer's
+        ruling of 2026-09-25 09:17Z, (11)), records every condition of _proof_copy_roads true (the verifier's Q1, Q2 and
+        Q3, true in a real run and false under the thirty-seventh commit's shim) and each condition of
+        _proof_command_roads true where its run has the fact and false where it does not (in each of CI's runs its own
+        options leading the command line and the verifier's X1, Y2, Y3 and Y3T, in the developer's runs the developer's
+        options leading it and its X1N, Y2N and Y3N, -n in each run that passes it, and X2 in every run), the modules
+        under tests/ in the order it collected them and the files of the tests it
         collected in any directory in their order, each the four of _proof_module_files its form's runs are handed, in
         their order, and no other, and the ten tests of the four left to run. ONE COPY, SHARED: the proof ran in the copy
         this test read, still the module run's one copy after it, and the copy is the checkout again after the case: its
@@ -7428,9 +7591,9 @@ class HermeticKernelPostal(unittest.TestCase):
         shutil.rmtree(values, True)
         os.makedirs(values)
         self.addCleanup(shutil.rmtree, values, True)
-        forms = ("ci", "developer")
+        modes = _proof_modes()
         planted = (open(os.path.join(HERE, "conftest.py"), encoding="utf-8").read()
-                   + hook.replace("__CONDITIONS__", repr([(label, c, forms) for label, c in roads] + list(commands)))
+                   + hook.replace("__CONDITIONS__", repr([(label, c, modes) for label, c in roads] + list(commands)))
                    .replace("__VALUES__", repr(values)))
         numbers = _proof_numbers(_PROOF_RUN["real cases"])
         got, rc, out = _reassert_proof([("copy", planted, {}, sites)], real=True)
@@ -7438,18 +7601,18 @@ class HermeticKernelPostal(unittest.TestCase):
         for fn in sorted(os.listdir(values)):
             with open(os.path.join(values, fn), encoding="utf-8") as f:
                 recorded.append(json.load(f))
-        modes = _proof_modes()
-        facts = {form: dict(dict.fromkeys(labels, True), **{label: form in f for label, _c, f in commands}) for form in forms}
-        lead = "CI's options leading the command line: %s" % " ".join(_proof_options())
+        facts = {mode: dict(dict.fromkeys(labels, True), **{label: mode in runs for label, _c, runs in commands}) for mode in modes}
+        form_of = {json.dumps(facts[mode], sort_keys=True): _PROOF_MODE_RUNS[mode][0] for mode in modes}
         self.assertEqual(sorted(json.dumps(r["facts"], sort_keys=True) for r in recorded),
-                         sorted(json.dumps(facts[form], sort_keys=True) for form in forms for _p in range(1 + 2 * ("xdist" in modes))),
-                         "each child process that collected, in each form (the run with no worker, and each worker of the -n 2 "
-                         "run), records each condition true where its form's runs have the fact and false where they do not "
+                         sorted(json.dumps(facts[mode], sort_keys=True) for mode in modes
+                                for _p in range(2 if _PROOF_MODE_RUNS[mode][1] else 1)),
+                         "each child process that collected, in each run (a run with no worker, and each worker of a run "
+                         "with two), records each condition true where its run has the fact and false where it does not "
                          "(rc %d): %s\n%s" % (rc, recorded, out[-3000:]))
         kind = lambda path: "probe" if "_reassert_probe_" in path else "dummy" if "_reassert_dummy_" in path else path
         for r in recorded:
             four = [os.path.join("tests", name) for _letter, name, _t in
-                    _proof_module_files(numbers["ci" if r["facts"].get(lead) else "developer"])]
+                    _proof_module_files(numbers[form_of[json.dumps(r["facts"], sort_keys=True)]])]
             order = [os.path.relpath(m, checkout) for m in r["modules"]]
             files = [os.path.relpath(m, checkout) for m in r["item_modules"]]
             self.assertEqual(([kind(p) for p in order], order, files), (["probe", "dummy", "dummy", "probe"], four, four),
@@ -10870,7 +11033,7 @@ _COPY_ROAD_HOOK = textwrap.dedent("""\
     import pytest as _cr_pytest
 
     _CR_FACTS = {}
-    _CR_FORMS = {}
+    _CR_RUNS = {}
     _CR_MODULES = []
     _CR_MODS = []
     _CR_ITEM_MODULES = {}
@@ -10908,15 +11071,16 @@ _COPY_ROAD_HOOK = textwrap.dedent("""\
 
     def _cr_facts(item):
         if not _CR_FACTS:
-            for label, condition, forms in __CONDITIONS__:
+            for label, condition, runs in __CONDITIONS__:
                 _CR_FACTS[label] = bool(eval(condition, dict(globals(), item=item)))
-                _CR_FORMS[label] = forms
+                _CR_RUNS[label] = runs
         return _CR_FACTS
 
 
     def _cr_road(item):
         facts = _cr_facts(item)
-        return any(all(v for label, v in facts.items() if form in _CR_FORMS[label]) for form in ("ci", "developer"))
+        return any(all(v for label, v in facts.items() if run in _CR_RUNS[label])
+                   for run in {r for runs in _CR_RUNS.values() for r in runs})
 
 
     def pytest_collectstart(collector):
@@ -10950,18 +11114,17 @@ _COPY_ROAD_HOOK = textwrap.dedent("""\
                            "selected": [os.path.basename(str(i.path)) for i in session.items]}, f)
 """)
 #   the hook the copy test's roads ride on, appended to a copy of tests/conftest.py, the verifier's plants' shape: a
-#   listed pytest_collectreport takes _dead_manager_port out of each test when, for one form of _PROOF_MODE_RUNS, every
-#   condition of _proof_copy_roads and every condition of _proof_command_roads that the form's runs have holds (each
+#   listed pytest_collectreport takes _dead_manager_port out of each test when, for one run of _proof_modes, every
+#   condition of _proof_copy_roads and every condition of _proof_command_roads that the run has holds (each
 #   evaluated once per process, at the first test collected, in the conftest's own namespace with that test as `item`;
 #   _cr_road); and by a test module's place in the order, _CR_MODS listing the modules of the
 #   tests reported so far as the verifier's plants list them: _no_real_service_env out of each test of a module
 #   collected third or later (the verifier's X7, word for word but its list's name), _no_real_claude_config out of each
 #   test of one collected second to six-hundredth (its Y1, the same) and _no_cli_scope out of each test of the first. At
-#   the end of its collection each process that collects (in each form, the run with no worker and each worker of the -n
-#   2 run) records
-#   in <pid>.json under __VALUES__ the conditions' values; the modules under tests/ in the order pytest collected them
-#   (pytest_collectstart, which pytest calls on this conftest for the modules of its own directory alone); the files of
-#   the tests collected in any directory, in their order, before any deselection (a tryfirst
+#   the end of its collection each process that collects (a run with no worker, and each worker of a run with workers)
+#   records in <pid>.json under __VALUES__ the conditions' values; the modules under tests/ in the order pytest
+#   collected them (pytest_collectstart, which pytest calls on this conftest for the modules of its own directory
+#   alone); the files of the tests collected in any directory, in their order, before any deselection (a tryfirst
 #   pytest_collection_modifyitems, which pytest calls for the whole session); and the file of each test left to run.
 #   _cr_walk lists a tree's files, links and directories, less __pycache__, as _proof_checkout_files does; _cr_in_place
 #   holds each path under `base` to the checkout's: a link with the same target, else an entry at that realpath under
@@ -11004,41 +11167,54 @@ def _proof_option_roads():
     """THE PAIR OF FORMS, PLANTED (the reviewer's ruling of 2026-09-25 09:17Z on round 2 of fork PR #894, (11), after
     the verifier's finding N4 at the forty-third commit: every child passed CI's options, and a hook keyed on the cache
     plugin not loaded, on no --durations given or on a -k given, its X1N, Y3N and Y2N, was granted, and a developer's
-    run of each read the module-level write): (label, condition on `item`, the forms of _PROOF_MODE_RUNS whose runs have
-    the fact, or None): each form's options leading its command line, and each option one form's command line gives and
-    the other's does not, given and not given, each fact held by the runs of one form alone. Read two ways: as words of
-    the command line (each of CI's options, _proof_options, and each of the developer's, _PROOF_DEVELOPER_OPTIONS), and
-    as pytest reads the option (-q by the verbosity; the verifier's X1, Y2, Y3 and Y3T at the thirty-ninth and fortieth
-    commits and X1N, Y2N and Y3N at the forty-third, word for word, and --timeout not given), the --timeout options only
-    where pytest-timeout is installed (_proof_options). What the pair does not match, each road granted (None): an
-    option neither form gives, given (--rootdir, the verifier's X2 negated), and a combination of options neither form
-    has (the cache plugin not loaded with no -k given), both in the proof's second tier; and a condition on an option's
-    value (a --durations of 5, where CI's step gives 10), in its third, the open-valued."""
+    run of each read the module-level write): (label, condition on `item`, the runs of _proof_modes that have the fact,
+    or None): each run's options leading its command line (_proof_mode_options: CI's form as its runners with no
+    worker and with workers run it, and the developer's options), and each option word one run's command line gives
+    and another's does not, given and not given, each fact's runs derived from the options each run passes. Read two
+    ways: as words of the command line (each of CI's option words, the words of _proof_mode_options' CI runs that begin
+    with a dash, the worker count's value being V5's, and each of the developer's, _PROOF_DEVELOPER_OPTIONS), and as
+    pytest reads the option (-q by the verbosity; the verifier's X1, Y2, Y3 and Y3T at the thirty-ninth and fortieth
+    commits and X1N, Y2N and Y3N at the forty-third, word for word, and --timeout not given; -n is read as a word
+    alone), the --timeout options only where pytest-timeout is installed and -n only where pytest-xdist is
+    (_proof_mode_options). What the pair does not match, each road granted (None): an option neither form gives, given
+    (--rootdir, the verifier's X2 negated), and a combination of options neither form has (the cache plugin not loaded
+    with no -k given), both in the proof's second tier; and a condition on an option's value (a --durations of 5,
+    where CI's step gives 10), in its third, the open-valued."""
     args = "item.config.invocation_params.args"
     line = "(' ' + ' '.join(%s) + ' ')" % args
-    options, developer = _proof_options(), _proof_developer_options()
-    roads = [("CI's options leading the command line: %s" % " ".join(options),
-              "list(%s[:%d]) == %r" % (args, len(options), options), ("ci",)),
-             ("the developer's options leading the command line: %s" % " ".join(developer),
-              "list(%s[:%d]) == %r" % (args, len(developer), developer), ("developer",))]
-    for word in options:
-        roads += [("CI's option %s given" % word, "%r in %s" % (word, args), ("ci",)),
-                  ("CI's option %s not given" % word, "%r not in %s" % (word, args), ("developer",))]
+    modes = _proof_modes()
+    given = {mode: _proof_mode_options(mode) for mode in modes}
+    ci = tuple(m for m in modes if _PROOF_MODE_RUNS[m][0] == "ci")
+    developer = tuple(m for m in modes if _PROOF_MODE_RUNS[m][0] == "developer")
+
+    def having(test):
+        return tuple(m for m in modes if test(given[m]))
+    roads = []
+    leads = [("CI's options leading the command line: %s", given[m]) for m in ci]
+    leads.append(("the developer's options leading the command line: %s", _proof_developer_options()))
+    for label, words in leads:
+        roads.append((label % " ".join(words), "list(%s[:%d]) == %r" % (args, len(words), words),
+                      having(lambda g, w=words: g[:len(w)] == w)))
+    for word in dict.fromkeys(w for m in ci for w in given[m] if w.startswith("-")):
+        roads += [("CI's option %s given" % word, "%r in %s" % (word, args), having(lambda g, w=word: w in g)),
+                  ("CI's option %s not given" % word, "%r not in %s" % (word, args), having(lambda g, w=word: w not in g))]
     for option in _PROOF_DEVELOPER_OPTIONS:
         words = " %s " % " ".join(option)
-        roads += [("the developer's option %s given" % words.strip(), "%r in %s" % (words, line), ("developer",)),
-                  ("the developer's option %s not given" % words.strip(), "%r not in %s" % (words, line), ("ci",))]
-    roads += [("-q given, by the verbosity", "item.config.getoption('verbose') < 0", ("ci",)),
-              ("-q not given, by the verbosity", "item.config.getoption('verbose') >= 0", ("developer",)),
-              ("X1: the cache plugin loaded", "hasattr(item.config, 'cache')", ("ci",)),
-              ("X1N: the cache plugin not loaded", "not hasattr(item.config, 'cache')", ("developer",)),
-              ("Y2: no -k on the command line", "not item.config.getoption('keyword')", ("ci",)),
-              ("Y2N: a -k on the command line", "bool(item.config.getoption('keyword'))", ("developer",)),
-              ("Y3: --durations given", "bool(item.config.getoption('durations'))", ("ci",)),
-              ("Y3N: no --durations given", "not item.config.getoption('durations')", ("developer",))]
+        roads += [("the developer's option %s given" % words.strip(), "%r in %s" % (words, line),
+                   having(lambda g, w=words: w in " %s " % " ".join(g))),
+                  ("the developer's option %s not given" % words.strip(), "%r not in %s" % (words, line),
+                   having(lambda g, w=words: w not in " %s " % " ".join(g)))]
+    roads += [("-q given, by the verbosity", "item.config.getoption('verbose') < 0", ci),
+              ("-q not given, by the verbosity", "item.config.getoption('verbose') >= 0", developer),
+              ("X1: the cache plugin loaded", "hasattr(item.config, 'cache')", ci),
+              ("X1N: the cache plugin not loaded", "not hasattr(item.config, 'cache')", developer),
+              ("Y2: no -k on the command line", "not item.config.getoption('keyword')", ci),
+              ("Y2N: a -k on the command line", "bool(item.config.getoption('keyword'))", developer),
+              ("Y3: --durations given", "bool(item.config.getoption('durations'))", ci),
+              ("Y3N: no --durations given", "not item.config.getoption('durations')", developer)]
     if importlib.util.find_spec("pytest_timeout") is not None:
-        roads += [("Y3T: pytest-timeout's --timeout given", "bool(item.config.getoption('timeout', None))", ("ci",)),
-                  ("pytest-timeout's --timeout not given", "not item.config.getoption('timeout', None)", ("developer",))]
+        roads += [("Y3T: pytest-timeout's --timeout given", "bool(item.config.getoption('timeout', None))", ci),
+                  ("pytest-timeout's --timeout not given", "not item.config.getoption('timeout', None)", developer)]
     roads += [("the second tier: an option neither form gives, --rootdir, given", "bool(item.config.getoption('rootdir'))", None),
               ("the second tier: a combination of options neither form has, the cache plugin not loaded and no -k given",
                "not hasattr(item.config, 'cache') and not item.config.getoption('keyword')", None),
@@ -11063,9 +11239,10 @@ _OPTION_ROAD_HOOK = textwrap.dedent('''\
 
 def _proof_option_case():
     """THE PAIR OF FORMS IN ONE CASE (_proof_option_roads): (conftest text, sites in _reassert_sites' form, {probe name:
-    (road label, forms)}). One autouse fixture per road, _o<NN>, popping its own probe name, ROMP_PROBE_OPTION_<NN>, and
-    a listed pytest_collectreport (_OPTION_ROAD_HOOK) that takes each out of each test where its road's condition
-    holds, so one case reads every road, each by its own name; the sites are handed to the proof, as for the facets."""
+    (road label, the runs that have its fact, or None)}). One autouse fixture per road, _o<NN>, popping its own probe
+    name, ROMP_PROBE_OPTION_<NN>, and a listed pytest_collectreport (_OPTION_ROAD_HOOK) that takes each out of each
+    test where its road's condition holds, so one case reads every road, each by its own name; the sites are handed to
+    the proof, as for the facets."""
     roads = _proof_option_roads()
     text = "import os, pytest\n"
     for i in range(len(roads)):
@@ -11075,7 +11252,7 @@ def _proof_option_case():
     lines = {fn.name: (fn.decorator_list[0] if fn.decorator_list else fn).lineno
              for fn in ast.parse(text).body if isinstance(fn, ast.FunctionDef)}
     sites = {"ROMP_PROBE_OPTION_%02d" % i: frozenset({("_o%02d" % i, lines["_o%02d" % i], "pop")}) for i in range(len(roads))}
-    return text, sites, {"ROMP_PROBE_OPTION_%02d" % i: (label, forms) for i, (label, _c, forms) in enumerate(roads)}
+    return text, sites, {"ROMP_PROBE_OPTION_%02d" % i: (label, runs) for i, (label, _c, runs) in enumerate(roads)}
 
 
 def _proof_command_roads():
@@ -11083,20 +11260,21 @@ def _proof_command_roads():
     keyed on the child's own --rootdir or -p no:cacheprovider granted, at its fortieth, R3 and R4, a hook keyed on no
     -k, on --durations or on --timeout granted, and at its forty-third, N4, a hook keyed on the cache plugin not
     loaded, on no --durations or on a -k granted, a real run of each reading the module-level write): (label,
-    condition on `item`, a test of the child's, the forms of _PROOF_MODE_RUNS whose runs have the fact) for each fact of
-    the child's command line, `python -m pytest` from the checkout's root with its form's options, each on the road of
-    _COPY_ROAD_HOOK beside _proof_copy_roads'. Of one form alone, _proof_option_roads' roads with forms: each form's
-    options leading its command line in their order (CI's read from .github/workflows/ci.yml), which pytest-xdist hands
-    its workers too, and each option of either form given in its runs and not given in the other's. Of both: the
-    verifier's X2, no --rootdir given, and the rootdir the copy's root, where pytest puts it for a run from there. Read
-    in the child alone: this process's command line is its own (a sweep's run may pass -p no:cacheprovider). What the
-    child's command line does not share with a real run, its four modules handed as files and the -n 2 of two of its
-    runs, is among what the proof does not read (_conftest_reasserted_names)."""
-    both = ("ci", "developer")
-    roads = [(label, condition, forms) for label, condition, forms in _proof_option_roads() if forms is not None]
-    roads += [("X2: no --rootdir on the command line", "not item.config.getoption('rootdir')", both),
+    condition on `item`, a test of the child's, the runs of _proof_modes that have the fact) for each fact of the
+    child's command line, `python -m pytest` from the checkout's root with its run's options (_proof_mode_options),
+    each on the road of _COPY_ROAD_HOOK beside _proof_copy_roads'. Of some runs alone, _proof_option_roads' roads with
+    runs: each run's options leading its command line in their order (CI's read from .github/workflows/ci.yml as each
+    of its runners runs the step), which pytest-xdist hands its workers too, and each option word one run gives and
+    another does not, given and not given. Of every run: the verifier's X2, no --rootdir given, and the rootdir the
+    copy's root, where pytest puts it for a run from there. Read in the child alone: this process's command line is
+    its own (a sweep's run may pass -p no:cacheprovider). What the child's command line does not share with a real
+    run, its four modules handed as files and the -n 2 of the developer's form's run with workers, is among what the
+    proof does not read (_conftest_reasserted_names)."""
+    every = _proof_modes()
+    roads = [(label, condition, runs) for label, condition, runs in _proof_option_roads() if runs is not None]
+    roads += [("X2: no --rootdir on the command line", "not item.config.getoption('rootdir')", every),
               ("the rootdir the copy's root, the conftest's parent",
-               "str(item.config.rootpath) == os.path.dirname(os.path.dirname(os.path.realpath(__file__)))", both)]
+               "str(item.config.rootpath) == os.path.dirname(os.path.dirname(os.path.realpath(__file__)))", every)]
     return tuple(roads)
 
 

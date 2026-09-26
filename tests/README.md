@@ -182,11 +182,21 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   child collects those four modules and no other: it runs from the copy's root
   with no `--rootdir` and is handed the four as files, so it collects the first
   probe module first, then the two dummy modules, then the second probe module
-  fourth. Each run is made in two forms of command line: CI's, with the options
-  of CI's pytest step (read from `.github/workflows/ci.yml`), so the cache
-  plugin is loaded, and a developer's, with none of those options and with
+  fourth. Each run is made in two forms of command line. CI's form has the
+  options of CI's `Run pytest` step as a runner runs it, read from
+  `.github/workflows/ci.yml` with the step's expressions valued for each runner
+  label by fork PR #916's evaluator, as GitHub values them, so the cache plugin
+  is loaded: its run with no worker has the options of the runners whose step
+  sets no worker (`-n 0`, on `macos-latest`), and its run with workers those of
+  the runners whose step sets some (`-n 2`, on `ubuntu-latest`). The
+  developer's form has none of those options and has
   `-p no:cacheprovider -k reassert`, which blocks the cache plugin and
-  deselects none of the four. The run's limit comes in three tiers. It refuses
+  deselects none of the four, and `-n 2` in its run with workers. Where
+  pytest-xdist is installed, as it is in each of CI's cells, the run makes
+  four children per case, whatever run of the suite it is in: the two forms,
+  each with no worker and with two. On a machine without pytest-xdist it makes
+  two, one in each form with no worker, and leaves `-n` and its count out of
+  CI's options. The run's limit comes in three tiers. It refuses
   an unconditional removal of the fixture (from every test), which is the class
   of the bug, and any removal keyed on a fact of the first tier. First, matched
   by construction: the conftest and the probe modules in a directory named
@@ -196,9 +206,10 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   third or later is caught; function tests and a `unittest.TestCase` in each; a
   run with no xdist worker (and none of the variables pytest-xdist sets in one)
   and, where pytest-xdist is installed, one with `-n 2`; and the pair of forms,
-  each of those runs made in both: whether each option that one form gives and
-  the other does not is given (CI's `-q`, `--durations`, `--timeout` and
-  `--timeout-method`, the developer's `-p no:cacheprovider` and `-k`). The pair
+  each of those runs made in both: whether each option that one run gives and
+  another does not is given (CI's `-q`, `--durations`, `--timeout`,
+  `--timeout-method` and `-n`, which every run gives but the developer's with
+  no worker, and the developer's `-p no:cacheprovider` and `-k`). The pair
   covers whether an option is given, not its value. Code that stops the fixture
   from running in any of those tests, keyed on those facts alone or on facts one
   run has together, named or not, is refused by the run. The pair doubles each
@@ -219,9 +230,12 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   hands no path and a developer's run may hand `tests/`). Matching these takes a
   child that collects every test module of `tests/`, about 40 s per child. When
   the child did that, at the fortieth commit of fork PR #894, this module ran
-  for about six minutes where it had run for about one, which would put CI's
-  slowest cell past its time limit. So this tier stays stated, not matched,
-  until the CI-headroom decision gives that cell more time. A copy of the
+  for about six minutes where it had run for about one, which, with CI's cells
+  serial under the time limit they had then, would have put the slowest cell
+  past it. So this tier was stated rather than matched, to be revisited if the
+  CI-headroom decision gave that cell more time. That change has since landed
+  (fork PR #916: two workers on the Linux cells, and more time on every cell);
+  the tier is not measured under it here, and stays stated. A copy of the
   conftest that keys a hook on a module named `test_kernel_env_floor.py` coming
   earlier, on the module collected exactly third, on a module collected fifth or
   later, on a module that four or more modules follow, or on a directory among
