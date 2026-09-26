@@ -258,8 +258,10 @@ test("with a page key both fileUrl builders append the cap for the host, path an
 });
 
 test("the page reads its key only through window.__rompPageKey: no ui/ source names a storage slot of its own", () => {
-  // the kernel keys the slot by its own cookie name (kernel.py _PAGE_KEY_SLOT), so two kernels on one host keep two keys;
-  // a page module that read a fixed slot would read another kernel's key, or none
+  // the kernel names the slot after its own cookie (kernel.py _PAGE_KEY_SLOT). Site storage is per origin, port included,
+  // so the name is for one address over time: a key minted under one serve token is never read under another there.
+  // A page module that named a slot itself would read one the page-key script does not write, so it reads the key only
+  // through __rompPageKey
   const UI_ROOT = path.join(ROOT, "ui");
   const hits: string[] = [];
   const walk = (dir: string) => {

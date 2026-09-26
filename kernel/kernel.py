@@ -4067,9 +4067,12 @@ def _one_file_term_each(q):
     return all(len(q.get(k) or ()) <= 1 for k in ("path", "sid", "cap"))
 
 
-# The localStorage slot for THIS kernel's page key, keyed by the cookie name so a second kernel on
-# this host keeps its key under its own slot rather than one shared slot (the cookie name is already
-# per-kernel; the key slot follows it).
+# The localStorage slot for THIS kernel's page key, named after the session cookie, whose name is a
+# function of the serve token. Site storage is partitioned by origin, port included, so kernels on two
+# ports never share a slot whatever it is named. The name is for one address over time: the same kernel
+# finds its key again after a restart (the same token names the same slot), and a key minted under one
+# serve token is never read under another at the same address (after a rotation, or when a reused port
+# or an ssh forward is answered by another kernel).
 _PAGE_KEY_SLOT = "romp.pageKey." + _SESSION_COOKIE
 
 # The first script in every authorized page document, injected at serve time by _send (so the page

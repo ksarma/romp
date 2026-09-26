@@ -6,7 +6,10 @@ browser's cookies for that host, one cookie jar. The session cookie's name is a 
 (kernel.py _SESSION_COOKIE), and the slot the page key is stored under follows it (_PAGE_KEY_SLOT), so each kernel's
 sign-in is kept under a name of its own. With one fixed name, signing in to the second kernel would replace the first
 kernel's session cookie, and every keyed read an open tab of the first kernel makes would be refused. With a name drawn
-at random when the kernel starts, a restart would rename the cookie and sign every browser out.
+at random when the kernel starts, a restart would rename the cookie and sign every browser out. Site storage, unlike the
+cookie jar, is partitioned by origin, port included, so two kernels on two ports never share a key slot whatever it is
+named. The slot's name is for one address over time: a key minted under one serve token is never read under another
+there (after a rotation, or when a reused port or an ssh forward is answered by another kernel).
 
 This module loads the kernel twice in this process under two serve tokens (two private module names), and once more in
 a child process under the first token (a restart), and asserts:
