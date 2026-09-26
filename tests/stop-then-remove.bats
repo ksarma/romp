@@ -3,31 +3,46 @@
 # tests/stop-then-remove.bash stops a test's background process and removes the test's directory only
 # once that process has exited. These cases run it against a stand-in that keeps writing under the
 # directory after its TERM, the way bin/romp-manager's shutdown writes its restart audit there: nothing
-# may be left behind, a process that ignores TERM is KILLed at the bound, and a directory that cannot be
-# removed still fails the call. The last case checks that tests/romp-manager-origin.bats's teardown goes
-# through the helper. Nothing below starts a manager.
+# may be left behind, the call returns at the stand-in's exit and not after a fixed time, a process that
+# ignores TERM is KILLed at the bound, and a directory that cannot be removed still fails the call. The
+# last case checks that tests/romp-manager-origin.bats's teardown goes through the helper. Nothing below
+# starts a manager.
+#
+# Two parts of the helper are not exercised. One is the branch for a pid still running five seconds
+# after its KILL: a KILL cannot be caught or ignored, so no stand-in can reach it. The other is the
+# `wait` that reaps a pid that is this shell's child: bash reaps its children on its own and keeps their
+# exit status, so a later `wait` in a case returns the same status with or without it.
 
 load stop-then-remove
+
+# The wall clock in microseconds, for the bounds on when a call returns: bash 5's EPOCHREALTIME where it
+# is set, else perl's Time::HiRes, since the macOS cell's bash is 3.2 and has no EPOCHREALTIME. The
+# stand-in carries a copy (setup writes it in), so both sides read the same clock.
+_now_us() {
+    local t="${EPOCHREALTIME:-}"
+    [ -n "$t" ] || t="$(perl -MTime::HiRes=time -e 'printf "%.6f", time')"
+    printf '%s\n' "${t//[!0-9]/}"
+}
 
 setup() {
     TEST_DIR="$(mktemp -d)"
     # The stand-in. $1 the directory to write under, $2 a file it creates once its TERM disposition is
-    # set, $3 what a TERM does: `burst` writes a row every 0.05 s for about a second (recreating the
-    # directory with mkdir -p, as the manager's mkdirSync does), then creates $2.burst-done and exits;
-    # `ignore` ignores TERM and writes until it is KILLed, with builtins only, so no child of its own can
-    # write after the KILL, and marks $2.wrote-after-removal if a write finds the directory gone.
+    # set, $3 what a TERM does, $4 how many rows a burst writes (20 by default): `burst` writes a row
+    # every 0.05 s, so 20 rows take about a second (recreating the directory with mkdir -p, as the
+    # manager's mkdirSync does), then writes the clock's reading into $2.burst-done and exits; `ignore`
+    # ignores TERM and writes until it is KILLed, with builtins only, so no child of its own can write
+    # after the KILL, and marks $2.wrote-after-removal if a write finds the directory gone.
     STANDIN="$TEST_DIR/standin"
-    cat > "$STANDIN" <<'EOF'
-#!/usr/bin/env bash
-dir="$1"; ready="$2"; mode="$3"
+    { echo '#!/usr/bin/env bash'; declare -f _now_us; cat <<'EOF'; } > "$STANDIN"
+dir="$1"; ready="$2"; mode="$3"; rows="${4:-20}"
 burst() {
     local i
-    for i in $(seq 1 20); do
+    for i in $(seq 1 "$rows"); do
         mkdir -p "$dir/state/romp" 2>/dev/null
         printf 'row\n' 2>/dev/null >> "$dir/state/romp/restart-audit.jsonl"
         sleep 0.05
     done
-    : > "$ready.burst-done"
+    _now_us > "$ready.burst-done"
     exit 0
 }
 case "$mode" in
@@ -64,16 +79,31 @@ _await_ready() {   # the stand-in has set its TERM disposition, so the TERM belo
     return 1
 }
 
+_returned_at_the_exit() {   # $1 and $2 the call's start and end (microseconds), after a burst stand-in has exited
+    # The call returned after the stand-in's last write, and less than a second after it: it waited for
+    # the exit, not for a fixed time.
+    local done_us
+    done_us="$(cat "$TEST_DIR/ready.burst-done")"
+    echo "the call started at $1, the stand-in's last write was at $done_us, the call returned at $2 (microseconds)"
+    [ "$2" -ge "$done_us" ]
+    [ $(( $2 - done_us )) -lt 1000000 ]
+}
+
 @test "the directory is removed only once a process still writing after its TERM has exited" {
     "$STANDIN" "$TEST_DIR/target" "$TEST_DIR/ready" burst &
     STANDIN_PID=$!
     _await_ready
-    stop_then_remove "$STANDIN_PID" "$TEST_DIR/target"   # in this shell, as teardown() calls it
+    local start end
+    start="$(_now_us)"
+    stop_then_remove "$STANDIN_PID" "$TEST_DIR/target" 2>"$TEST_DIR/stderr"   # in this shell, as teardown() calls it
+    end="$(_now_us)"
     # A writer the helper did not wait for is still writing here; let it finish, so every write it
     # makes lands before the check below.
     wait "$STANDIN_PID" 2>/dev/null || true
     [ -e "$TEST_DIR/ready.burst-done" ]   # the premise: the stand-in wrote for its whole second after the TERM
     [ ! -e "$TEST_DIR/target" ]           # and no write of that second outlived the removal
+    [[ "$(cat "$TEST_DIR/stderr")" != *KILL* ]]   # the TERM ended it; no KILL was sent
+    _returned_at_the_exit "$start" "$end"
 }
 
 @test "the same holds when the process is not this shell's child (the call under run)" {
@@ -82,11 +112,16 @@ _await_ready() {   # the stand-in has set its TERM disposition, so the TERM belo
     "$STANDIN" "$TEST_DIR/target" "$TEST_DIR/ready" burst &
     STANDIN_PID=$!
     _await_ready
+    local start end
+    start="$(_now_us)"
     run stop_then_remove "$STANDIN_PID" "$TEST_DIR/target"
+    end="$(_now_us)"
     [ "$status" -eq 0 ]
+    [[ "$output" != *KILL* ]]             # the TERM ended it; no KILL was sent
     wait "$STANDIN_PID" 2>/dev/null || true
     [ -e "$TEST_DIR/ready.burst-done" ]
     [ ! -e "$TEST_DIR/target" ]
+    _returned_at_the_exit "$start" "$end"
 }
 
 @test "a process that ignores TERM is KILLed at the bound, the KILL is said on stderr, and the directory is removed" {
@@ -96,6 +131,7 @@ _await_ready() {   # the stand-in has set its TERM disposition, so the TERM belo
     run stop_then_remove "$STANDIN_PID" "$TEST_DIR/target" 1
     [ "$status" -eq 0 ]
     [[ "$output" == *"stop-then-remove: pid $STANDIN_PID still running 1s after TERM; sending KILL"* ]]
+    [[ "$output" != *"after KILL"* ]]     # the poll after the KILL saw it exit
     [ ! -e "$TEST_DIR/target" ]
     local st rc=0
     st="$(ps -o stat= -p "$STANDIN_PID" 2>/dev/null | tr -d ' ')"
@@ -109,9 +145,12 @@ _await_ready() {   # the stand-in has set its TERM disposition, so the TERM belo
     # A zombie still answers kill -0, and a parent that never reaps (here a sleep that bash exec'd into
     # after starting the child) keeps it one. It can write nothing, so the poll must stop at it.
     # The child exits only on a flag raised once its parent has become the sleep: a child that exits
-    # before the exec can be reaped by bash first, and then no zombie is left (seen in CI).
-    bash -c 'while [ ! -e "$2" ]; do sleep 0.02; done & printf "%s\n" "$!" > "$1"; exec sleep 30' \
-        _ "$TEST_DIR/zombie.pid" "$TEST_DIR/zombie.go" &
+    # before the exec can be reaped by bash first, and then no zombie is left (seen in CI). Its loop also
+    # ends once that parent is gone ($$ in it is the pid that becomes the sleep, which teardown KILLs and
+    # reaps), and the command runs with fd 3 closed. A child that polled on after a failed premise below
+    # held bats' fd 3 open, and the bats run did not exit after reporting the failure.
+    bash -c 'while [ ! -e "$2" ] && kill -0 $$ 2>/dev/null; do sleep 0.02; done & printf "%s\n" "$!" > "$1"; exec sleep 30' \
+        _ "$TEST_DIR/zombie.pid" "$TEST_DIR/zombie.go" 3>&- &
     STANDIN_PID=$!   # the sleep, which teardown KILLs; the zombie goes with it
     local zpid="" comm="" st="" i
     for ((i = 0; i < 100; i++)); do
@@ -134,6 +173,26 @@ _await_ready() {   # the stand-in has set its TERM disposition, so the TERM belo
     [ "$SECONDS" -lt 2 ]
     [[ "$output" != *"sending KILL"* ]]
     [ ! -e "$TEST_DIR/target" ]
+}
+
+@test "a process that writes for three seconds after its TERM is waited for, not cut off after a fixed time" {
+    # 60 rows, three seconds or more: longer than a fixed time a helper might wait in place of the exit.
+    # A fixed wait shorter than this burst KILLs the stand-in before it has finished; one longer than it
+    # makes cases 1 and 2 return more than a second after their one-second burst has ended.
+    "$STANDIN" "$TEST_DIR/target" "$TEST_DIR/ready" burst 60 &
+    STANDIN_PID=$!
+    _await_ready
+    local start end
+    start="$(_now_us)"
+    run stop_then_remove "$STANDIN_PID" "$TEST_DIR/target"
+    end="$(_now_us)"
+    [ "$status" -eq 0 ]
+    [[ "$output" != *KILL* ]]             # the TERM ended it; no KILL was sent
+    wait "$STANDIN_PID" 2>/dev/null || true
+    [ -e "$TEST_DIR/ready.burst-done" ]   # the premise: it wrote all 60 rows after its TERM
+    [ $(( $(cat "$TEST_DIR/ready.burst-done") - start )) -ge 3000000 ]   # which took three seconds or more
+    [ ! -e "$TEST_DIR/target" ]
+    _returned_at_the_exit "$start" "$end"
 }
 
 @test "an empty pid skips the stop and still removes the directory" {
