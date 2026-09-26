@@ -29,9 +29,12 @@
 // The kernel's inline pages are read as text, pattern by pattern, over kernel.py, where a quote inside a page's script
 // may be written escaped in its Python literal. The names a pattern cannot follow (an alias of WebSocket or Worker,
 // either read as a member or by a string key, a registration or a submit reached through an alias, createElement read by
-// a string key) are counted over kernel.py's string constants alone, read with Python's own parser so that comments and
-// docstrings are not counted. That read runs python3, as the kernel does, and a machine where it cannot is red, not
-// skipped.
+// a string key) are counted over every str constant of kernel.py that is not a docstring, read with Python's own parser
+// so that comments and docstrings are not counted. That population is wider than the inline scripts, which are Python
+// string constants like any other: nothing in the parse tells a string of JavaScript from a string of Python, so the
+// scripts alone cannot be derived. The wider read errs on one side only. A Python string that names one of these names
+// raises its count, a false red that its wording or the list settles, and no script is left out, so it gives no false
+// green. That read runs python3, as the kernel does, and a machine where it cannot is red, not skipped.
 //
 // Stated limits, on the precondition that the sources are written in good faith: a primitive reached through a name
 // assembled at run time (`window["Web" + "Socket"]`) or through a value that never names it (a socket's own
@@ -435,13 +438,19 @@ const KERNEL_SITES: { name: string; re: RegExp; count: number; road: string }[] 
     road: "register('/sw.js'): the worker script is the static class; its own requests are listed below" },
 ];
 
-/** Names counted over the inline scripts alone: kernel.py's string constants, docstrings left out, so a name in a comment,
- *  a docstring or a Python header name (`Sec-WebSocket-Key`, a hyphen before the name) is not counted. Each catches what
- *  a pattern above cannot follow: an alias, a member or a string key of a global, a call through an alias. */
+/** Names counted over every str constant of kernel.py that is not a docstring (bytes left out), so a name in a comment, a
+ *  docstring or a Python header name (`Sec-WebSocket-Key`, a hyphen before the name) is not counted. The population is
+ *  wider than the inline scripts, which are string constants like the Python ones: the parse cannot tell a string of
+ *  JavaScript from a string of Python, so the scripts alone cannot be derived. A Python string that names one of these
+ *  names raises its count, a false red and never a false green, since every script is among the strings read. Each
+ *  catches what a pattern above cannot follow: an alias, a member or a string key of a global, a call through an alias.
+ *  A renamed entry keeps its name's first words, which the tests below find it by. */
 const KERNEL_NAMES: { name: string; re: RegExp; count: number; road: string }[] = [
-  { name: "WebSocket named in an inline script", re: /(?<![\w$-])WebSocket/g, count: 2,
-    road: "the two socket dials above; a third is an alias, a member or string-key read, or a dial the pattern does not read" },
-  { name: "Worker or SharedWorker named in an inline script", re: /(?<![\w$-])(?:Shared)?Worker/g, count: 0, road: "none" },
+  { name: "WebSocket named in a string constant of kernel.py", re: /(?<![\w$-])WebSocket/g, count: 2,
+    road: "the two socket dials above; a third is an alias, a member or string-key read, a dial the pattern does not read, " +
+      "or a Python string that names it" },
+  { name: "Worker or SharedWorker named in a string constant of kernel.py", re: /(?<![\w$-])(?:Shared)?Worker/g, count: 0,
+    road: "none; one here is a worker an inline script makes, or a Python string that names it" },
   { name: "a register call on any receiver", re: /\.\s*register\s*\(|\[\s*['"`]register['"`]\s*\]/g, count: 1,
     road: "the one service worker registration above; a second is a registration through an alias" },
   { name: "a submit member", re: /\.\s*(?:requestSubmit|submit)\b|\[\s*['"`](?:requestSubmit|submit)['"`]\s*\]/g, count: 0, road: "none" },
@@ -497,7 +506,7 @@ test("every request primitive in the kernel's inline pages is a listed site, at 
   assert.doesNotMatch(form, /method=|action=/i, "and names no method or action");
 });
 
-test("the names the patterns cannot follow are counted over the kernel's string constants, at the count the tree holds", () => {
+test("the names the patterns cannot follow are counted over every string constant of kernel.py that is not a docstring, at the count the tree holds", () => {
   const texts = kernelConstants();
   assert.ok(texts.length > 1000, "the kernel's string constants were read (a census of nothing proves nothing): " + texts.length);
   assert.ok(countIn(/<script\b/g, texts) > 0, "and they hold the inline pages' scripts");
@@ -505,7 +514,7 @@ test("the names the patterns cannot follow are counted over the kernel's string 
     const n = countIn(s.re, texts);
     assert.equal(n, s.count, s.name + ": " + n + " in kernel.py's string constants; list each with the road it takes to the kernel (" + s.road + ")");
   }
-  assert.equal(KERNEL_NAMES.find((s) => s.name.startsWith("WebSocket"))!.count, dialCount(), "every WebSocket an inline script names is one of the dials the key check reads");
+  assert.equal(KERNEL_NAMES.find((s) => s.name.startsWith("WebSocket"))!.count, dialCount(), "every WebSocket a string constant of kernel.py names is one of the dials the key check reads");
 });
 
 test("the kernel half's readers take every spelling they name, and each stated limit stays unread", () => {
@@ -531,12 +540,14 @@ test("the kernel half's readers take every spelling they name, and each stated l
     "B = b\"var X=WebSocket;\"",
     "A = \"var W=window.WebSocket;new W(u);\"",
     "C = \"var X=window['WebSocket'];var s=new WebSocketStream(u);\"",
+    "M = \"the WebSocket relay closed\"",
     "R = \"var c=navigator.serviceWorker;c.register('/x.js');f.submit;new SharedWorker(u);d['createElement']('form');\"",
     "def f():",
     "    \"\"\"WebSocket, a docstring\"\"\"",
     "    return 1",
   ].join("\n"));
-  assert.equal(countIn(named("WebSocket"), texts), 3, "the alias, the string key and the WebSocketStream; not the docstrings, the comment, the header name or the bytes");
+  assert.equal(countIn(named("WebSocket"), texts), 4,
+    "the alias, the string key, the WebSocketStream and a Python message string, since every str constant is read; not the docstrings, the comment, the header name or the bytes");
   assert.equal(countIn(named("Worker"), texts), 1);
   assert.equal(countIn(named("a register call"), texts), 1);
   assert.equal(countIn(named("a submit member"), texts), 1);
