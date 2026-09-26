@@ -21,7 +21,7 @@ import urllib.request
 import urllib.error
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from romp_load import load_source
-from tests.document_navigations import NAVIGATIONS   # the navigations each opener-policy shape is asked under
+from tests.document_navigations import NAVIGATIONS, credential   # the navigations each opener-policy shape is asked under
 import tempfile
 
 HERE = os.path.dirname(os.path.realpath(__file__))
@@ -266,7 +266,8 @@ class RemoteFileRelay(unittest.TestCase):
     # off the wire, every copy: exactly one header, since a browser that receives two cannot parse it and applies no
     # policy (a dict of the headers keeps one copy and would hide the second). Each shape is asked once per entry of
     # NAVIGATIONS (tests/document_navigations.py): bare, and with the headers a browser sends on a navigation, typed,
-    # opened by the dashboard and opened by another origin, since a browser reads the policy on a navigation only. The
+    # opened by the dashboard and opened by another origin, since a browser reads the policy on a navigation only, and
+    # each with that entry's credential (a navigation's romp_token cookie, a bare request's header: credential). The
     # fake remote sends its own copy on each of its replies, as a real romp kernel does
     # (_FakeRemoteFileHandler._opener_policy), so a relay that mirrored the remote's header beside its own fails here.
     # One test per shape, since each one's extra headers (the mirrored mtimes, the SVG sandbox, the PDF's name, the 404's
@@ -277,7 +278,7 @@ class RemoteFileRelay(unittest.TestCase):
         {entry: (body, header message)}."""
         seen = {}
         for how, nav in NAVIGATIONS:
-            status, body, msg = self._get_msg(path, headers=dict(nav))
+            status, body, msg = self._get_msg(path, headers=dict(nav, **credential(nav, km.TOKEN)), token=False)
             self.assertEqual(status, want_status, "%s: %r" % (how, body[:80]))
             self.assertEqual(msg.get_all("Cross-Origin-Opener-Policy"), ["same-origin"],
                              how + ": one Cross-Origin-Opener-Policy header on the wire, same-origin")
@@ -618,12 +619,14 @@ class RemoteFileRelay(unittest.TestCase):
         status, _, _ = self._get("/remote/gpu1/file?path=%2Ftmp%2Fplot.png")
         self.assertEqual(status, 502)
 
-    def _get_msg(self, path, method="GET", headers=None):
+    def _get_msg(self, path, method="GET", headers=None, token=True):
         # the raw header MESSAGE: a dict keeps one value per name, and the SVG sandbox policy rides beside
-        # _send's frame-ancestors one under the same header name
+        # _send's frame-ancestors one under the same header name. `token`: present the X-Romp-Token header (a caller
+        # that brings its own credential in `headers`, a navigation's cookie, passes False)
         req = urllib.request.Request("http://127.0.0.1:%d%s" % (self.port, path), method=method,
                                      headers=headers or {})
-        req.add_header("X-Romp-Token", km.TOKEN)
+        if token:
+            req.add_header("X-Romp-Token", km.TOKEN)
         try:
             with urllib.request.urlopen(req, timeout=10) as r:
                 return r.status, r.read(), r.headers

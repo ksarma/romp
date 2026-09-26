@@ -26,7 +26,7 @@ import unittest
 from http.client import HTTPMessage
 from http.server import ThreadingHTTPServer
 from romp_load import load_source
-from tests.document_navigations import NAVIGATIONS   # the navigations each opener-policy shape is served under
+from tests.document_navigations import NAVIGATIONS, credential   # the navigations each opener-policy shape is served under
 import tempfile
 
 HERE = os.path.dirname(os.path.realpath(__file__))
@@ -496,7 +496,7 @@ class OpenerIsolation(unittest.TestCase):
     reason), the 413 page a PDF's own tab shows, and both 415 refusals (a file no view shows, a text-named file that is
     not text). Each shape is served once per entry of NAVIGATIONS (tests/document_navigations.py): bare, and with the
     headers a browser sends on a navigation typed, opened by the dashboard, and opened by another origin, which is where
-    a browser reads the policy. Read off a live socket (_wire_get), so a header written anywhere, a send_response or
+    a browser reads the policy, signed in by the romp_token cookie as a browser's navigation is. Read off a live socket (_wire_get), so a header written anywhere, a send_response or
     end_headers override included, is seen, and each carries it exactly once: a second copy, even of the same value,
     leaves a browser with a header it cannot parse and so with no policy. The /remote/<host>/file relay's shapes are
     tests/test_kernel_remote_file_relay.py's, read the same way."""
@@ -512,12 +512,13 @@ class OpenerIsolation(unittest.TestCase):
         cls.srv.shutdown()
         cls.srv.server_close()
 
-    def _coop(self, path, want_status, headers=None):
-        """GET `path` once per NAVIGATIONS entry, `headers` beside that entry's; assert the status and exactly one
-        Cross-Origin-Opener-Policy header, same-origin, each time. Returns {entry: (header message, body)}."""
+    def _coop(self, path, want_status, signed_in=True):
+        """GET `path` once per NAVIGATIONS entry, with that entry's credential when `signed_in` (a navigation's cookie, a
+        bare request's header: credential); assert the status and exactly one Cross-Origin-Opener-Policy header,
+        same-origin, each time. Returns {entry: (header message, body)}."""
         seen = {}
         for how, nav in NAVIGATIONS:
-            status, msg, body = _wire_get(self.port, path, dict(nav, **(headers or {})))
+            status, msg, body = _wire_get(self.port, path, dict(nav, **(credential(nav, TOK) if signed_in else {})))
             self.assertEqual(status, want_status, "%s, %s: %r" % (path[:60], how, body[:120]))
             self.assertEqual(msg.get_all("Cross-Origin-Opener-Policy"), ["same-origin"],
                              "%s, %s: one header, same-origin" % (path[:60], how))
@@ -525,15 +526,15 @@ class OpenerIsolation(unittest.TestCase):
         return seen
 
     def test_every_page_the_kernel_serves_carries_coop_same_origin(self):
-        self._coop("/?token=" + TOK, 200)
+        self._coop("/?token=" + TOK, 200, signed_in=False)   # the shell's bootstrap: the token rides the URL
         for path in ("/chat", "/feed", "/fleet", "/waiting", "/files", "/timeline", "/settings",
                      "/media/romp-swirl-glyph.svg"):
             with self.subTest(path=path):
-                self._coop(path, 200, headers={"X-Romp-Token": TOK})
+                self._coop(path, 200)
 
     def test_the_sign_in_page_carries_it_too(self):
         # an unauthorized browser load of the shell gets the token sign-in page: a top-level document as well
-        for how, (_msg, body) in self._coop("/", 200).items():
+        for how, (_msg, body) in self._coop("/", 200, signed_in=False).items():
             self.assertEqual(body.decode("utf-8"), km._TOKEN_LOGIN_HTML, how + ": no credential, the sign-in page, not the dashboard")
 
     def _file_coop(self, name, data, want_status, cap=None):
@@ -547,7 +548,7 @@ class OpenerIsolation(unittest.TestCase):
                 with open(p, "wb") as f:
                     f.write(data)
             with mock.patch.object(km, "_MEDIA_MAX_BYTES", cap if cap is not None else km._MEDIA_MAX_BYTES):
-                return self._coop("/file?path=" + quote(p), want_status, headers={"X-Romp-Token": TOK})
+                return self._coop("/file?path=" + quote(p), want_status)
 
     def test_a_file_the_dashboard_opens_in_its_own_tab_carries_the_same_policy(self):
         png = bytes.fromhex(

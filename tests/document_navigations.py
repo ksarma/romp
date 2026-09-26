@@ -9,6 +9,10 @@ review's mutants did, 2026-09-26). Each test serves every document shape once pe
   - the dashboard opening a tab of its own, a /file image or PDF (ui/webview/preview.ts openFileTab; same-origin);
   - the case the policy exists for: a page on another origin opening a dashboard page with window.open (cross-site).
 
+A navigation authenticates the way a browser's does, with the romp_token cookie (credential below): a top-level GET
+sends no Origin header, so the cookie authorizes it, and a kernel whose header depended on how a request was
+authorized would pass a test that authorized every request by the X-Romp-Token header.
+
 Imports nothing, so a test module may import it anywhere, its state preamble included.
 """
 
@@ -26,3 +30,9 @@ NAVIGATIONS = (
     ("the dashboard opening a tab of its own", dict(_NAVIGATE, **{"Sec-Fetch-Site": "same-origin"})),
     ("a page on another origin opening it", dict(_NAVIGATE, **{"Sec-Fetch-Site": "cross-site"})),
 )
+
+
+def credential(nav, token):
+    """The credential a request of this kind presents: a navigation (a non-empty entry of NAVIGATIONS) the romp_token
+    cookie, as a browser does; a bare request the X-Romp-Token header, as the CLI and the hooks do."""
+    return {"Cookie": "romp_token=" + token} if nav else {"X-Romp-Token": token}
