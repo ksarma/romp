@@ -8,7 +8,8 @@
 // pane until a reload. Since the round-1 fold the sanitizer forbids map, area and usemap outright (GitHub's rule;
 // a prefixed map name could never bind), so the area is a second guard in the delegate's selector. Two legs: the
 // delegate's contract over raw markup (what it must do with each shape, whatever a profile lets through), and the
-// chat's own markdown pipeline (marked + sanitizeMd, as md() runs it) end to end: whatever survives, a click never
+// chat's own markdown pipeline (the chat instance's parse, chat-md.ts chatMdHtml, then sanitizeMd, as md() runs it) end to
+// end: whatever survives, a click never
 // navigates the document, and the image map is gone. Skips LOUDLY without a playwright browser (CI installs none),
 // as the other browser legs do. Synthetic values only: example.invalid URLs.
 import { test } from "node:test";
@@ -56,14 +57,15 @@ function bundle(entry: string): string {
   const r = requireCjs("esbuild").buildSync({ ...BUILD, entryPoints: [path.join(UI, entry)] });
   return r.outputFiles[0].text;
 }
-// md() as render.ts runs it, minus the PR-ref linkifier: marked with the chat's options and extensions, then sanitizeMd
+// md() as render.ts runs it, minus the PR-ref linkifier: the chat's own marked instance (chat-md.ts chatMdHtml, which
+// render.ts's md() parses through since the chat's path-aware emphasis of 2026-09-19; before that the probe stood the
+// singleton in, a grammar the chat no longer renders on), then sanitizeMd. Importing chat-md.ts brings md-config.ts
+// with it, which registers the math fill as sanitizeMd's post-pass at load; nothing here configures the singleton.
 function probeBundle(): string {
   const contents = [
-    'import { marked } from "marked";',
+    'import { chatMdHtml } from "./chat-md";',
     'import { sanitizeMd } from "./md-sanitize";',
-    'import { applyMdConfig } from "./md-config";',
-    "applyMdConfig();",
-    "(window as any).__mdProbe = (s: string) => sanitizeMd(marked.parse(s) as string).innerHTML;",
+    "(window as any).__mdProbe = (s: string) => sanitizeMd(chatMdHtml(s)).innerHTML;",
   ].join("\n");
   const r = requireCjs("esbuild").buildSync({ ...BUILD, stdin: { contents, resolveDir: UI, sourcefile: "md-probe.ts", loader: "ts" } });
   return r.outputFiles[0].text;
@@ -166,8 +168,12 @@ test("the chat's link delegate: an image map's area and an SVG xlink:href anchor
       assert.deepEqual(r.opens, [[s.href, "_blank", "noopener,noreferrer"]], s.name + ": the delegate opened the link in the user's browser");
       assert.equal(page.url(), "http://romp.test/chat", s.name + ": the chat page is where it was");
     }
-    // 2. the chat's own pipeline: a message carrying either shape, through marked and sanitizeMd as md() runs
-    //    them; whatever the sanitizer lets through, a click never moves the document, and what it drops is gone
+    // 2. the chat's own pipeline. First the probe's aim: it renders the chat's instance, not the singleton, so a path's
+    //    underscores stay literal (md-config.ts pathAwareEmphasis; the singleton would pair them as emphasis). Then a
+    //    message carrying either shape, through the chat's instance and sanitizeMd as md() runs them; whatever the
+    //    sanitizer lets through, a click never moves the document, and what it drops is gone
+    const aim = await show(page, "see /a-_b/c_/d.md today", true);
+    assert.doesNotMatch(aim, /<em>/, "the probe renders the chat instance's grammar (chat-md.ts chatMdHtml), on which a path's underscores are literal: " + aim);
     for (const m of MESSAGES) {
       const html = await show(page, m.md, true);
       if (m.dropped) assert.doesNotMatch(html, m.dropped, m.name + " in a message: the sanitizer drops the image map whole (map, area, usemap): " + html);
@@ -204,7 +210,7 @@ const OLDER = '<p id="dup" class="fx-dup-older">the older dup</p>\n\nolder text'
 
 test("a footnote's back link and a link over the reply's own <a name> land again: resolved under the prefix, in the message first, hash untouched; a fragment with no target is left to the browser", { timeout: 90000 }, async (t) => {
   await inBrowser(t, async (page, errors, navs) => {
-    // two messages through the chat's own pipeline (marked + sanitizeMd, as md() runs them): the older one first
+    // two messages through the chat's own pipeline (the chat instance's parse + sanitizeMd, as md() runs them): the older one first
     const shape = await page.evaluate(([older, newer]: [string, string]) => {
       document.querySelectorAll(".fx-turn").forEach((n) => n.remove());
       const content = document.getElementById("content") as HTMLElement;
@@ -284,7 +290,7 @@ test("a footnote's back link and a link over the reply's own <a name> land again
 // left to the default action, which navigated the chat document in the same frame (the round-4 review of Slice 1). The scope
 // is `.md, .cmt-msg.agent` now (chat-link-open.test.ts pins it against commentMsgEl). The reply is mounted here
 // the way the popover mounts it: `div#cmt-pop.cmt-pop` on document.body, sized inline as at open (70% by 60% of the window),
-// a `.cmt-msgs` list inside, the reply filled from the chat's own pipeline (marked + sanitizeMd, as md() runs them).
+// a `.cmt-msgs` list inside, the reply filled from the chat's own pipeline (the chat instance's parse + sanitizeMd, as md() runs them).
 const REPLY = [
   '<a href="#tgt" class="fx-cmt-hash">to the target</a> and <a href="/x" class="fx-cmt-rel">a root-relative link</a>',
   FILLER,

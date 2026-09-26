@@ -1,8 +1,8 @@
 // Strikethrough must require DOUBLE tildes (the user 2026-06-26): marked's built-in GFM `del` fires on a
 // SINGLE tilde, so prose with two "approximately" tildes ("~21 Wh … ~1.5 days") rendered as one big struck-
 // through run. The chat overrides the `del` tokenizer to require ~~ (matching GitHub). The override lives in
-// ui/webview/md-config.ts (the one configuration the assistant singleton, the viewer, the anchor map and the user-text
-// instance share), so this test runs the REAL definition (no mirrored copy to drift) and source-pins that
+// ui/webview/md-config.ts (the one configuration the viewer's singleton, the anchor map and the chat's two instances share; the chat's
+// instances add pathAwareEmphasis, chat-md.ts), so this test runs the REAL definition (no mirrored copy to drift) and source-pins that
 // render.ts wires it into its marked.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";

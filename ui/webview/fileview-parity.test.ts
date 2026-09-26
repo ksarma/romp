@@ -75,7 +75,7 @@ const RULES = [
   // math in every bundle (Slice 4 of plans/markdown-viewer.md, decision 1): the feed sheet imports the KaTeX CSS as styles.css does, and the display box's twin
   ".katex-display {",
   // the Obsidian constructs and the figure gate (Slice 4; md-config.ts and figure-gate.ts render them, anchor-map.ts maps them)
-  // (doubled `.md X, .fileview-md X`: the grammar sits on the marked singleton, so the chat's markdown bodies render the constructs too)
+  // (doubled `.md X, .fileview-md X`: the chat's instances take the singleton's list, chat-md.ts, so the chat's markdown bodies render the constructs too)
   ".md details.md-frontmatter, .fileview-md details.md-frontmatter {", ".md .md-frontmatter-head, .fileview-md .md-frontmatter-head {", ".md details.md-frontmatter pre, .fileview-md details.md-frontmatter pre {",
   ".md sup.md-fnref, .fileview-md sup.md-fnref {", ".md sup.md-fnref a, .fileview-md sup.md-fnref a {", ".md .md-footnote, .fileview-md .md-footnote {", ".md .md-footnote p, .fileview-md .md-footnote p {", ".md .md-fnback, .fileview-md .md-fnback {",
   ".md .md-callout, .fileview-md .md-callout {", ".md .md-callout-title, .fileview-md .md-callout-title {", ".md details.md-callout .md-callout-title, .fileview-md details.md-callout .md-callout-title {",

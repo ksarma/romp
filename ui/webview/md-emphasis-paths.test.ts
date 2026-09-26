@@ -1,0 +1,516 @@
+// Emphasis never cuts a file path in the chat (md-config.ts pathAwareEmphasis, on chat-md.ts's two instances),
+// executed over the REAL marked. The class, measured row by row before the fix (the population note,
+// md-emphasis-population.md, a note kept outside the repo: 55 rows and 20 adversarial ones, the rows executed and
+// count-asserted below): the chat renders a reply with marked and then links
+// the file paths it finds in the rendered text, one text node at a time (path-links.ts linkifyPathTokens), and a
+// path's own punctuation makes its underscores legal emphasis delimiters under CommonMark's flanking rules, so
+// `/a-_b/c_/d.md` rendered `/a-<em>b/c</em>/d.md`, `__init__.py` rendered strong, the walk never saw the token whole
+// and the kernel's key for it matched no text node (the 2026-09-19 browser census, Entry 5: a temp directory whose
+// random name began with an underscore). marked is spec-correct on every row, so the fix is a tokenizer override on
+// the chat's instances that refuses an opener or closer lying strictly inside a token the walk's own scanner and
+// gates would link, hides a run inside such a token from the built-in's closer scan (md-emphasis-override.test.ts
+// pins that edge and the mechanism's cost), and makes a token holding a run beside punctuation inside it one word whole,
+// its edge runs too (md-emphasis-atomic.test.ts). Pinned here, by execution: every member row renders literal on both chat renderers and the walk
+// then links every wanted token (C36 both of its two); every other row is byte-identical to the base grammar (the
+// singleton's configuration on a private instance), real emphasis, strong, strikethrough, autolinks, code spans and
+// fences included; the adversarial rows change only where the note says, A08 the one accepted loss; the base grammar
+// still cuts every member row (the defect, reproduced, so the reason for the road is on record); a footnote reference
+// inside a refused pair is numbered once (the built-in lexes a pair's body before it returns, so the override runs it
+// dry); the instance boundary: the singleton, which the viewer and the hover preview render on, keeps GitHub's
+// rendering of `foo/__pycache__/bar.pyc`, and a census over ui/webview of every product module that imports marked, so
+// a renderer added later takes a verdict here; and THE RULE, one grammar decides linking and protection, by execution:
+// md-config.ts is bundled at test time with a stub in path-links.ts's place and the override's answer follows the stub
+// (the 2026-09-21 review, F: a source grep for five spellings of the path grammar could not see a fresh restatement).
+// The walk runs over a small DOM stand-in fed marked's HTML (no jsdom), the
+// chat's own options minus the fenced gate, with a map holding the wanted tokens, as the kernel's verdict would.
+// Synthetic fixtures only: invented paths (`/a-_b/c_/d.md` and the like), a placeholder session id.
+import { test } from "node:test";
+import * as assert from "node:assert/strict";
+import * as fs from "node:fs";
+import { createRequire } from "node:module";
+import * as os from "node:os";
+import * as path from "node:path";
+import { Marked, marked } from "marked";
+import { hideEdges } from "../test-dom-shim";
+import * as chatMd from "./chat-md";
+import { applyMdConfig, mdExtensions } from "./md-config";
+import { BARE_FILE_EXTS, isFileUri, linkifyPathTokens, looksLikeBareFileName, looksLikeFilePath, PathTokenScanner, trailingPunct } from "./path-links";
+
+const UI = path.resolve(process.cwd(), "..", "ui", "webview");
+const read = (f: string): string => fs.readFileSync(path.join(UI, f), "utf8");
+const pkgRequire = createRequire(path.resolve(process.cwd(), "package.json"));
+const SID = "11111111-2222-3333-4444-555555555555";
+
+// the road before the fix: the singleton's configuration (gfm, breaks off, the shared list, nothing else) on a private
+// instance, so this file leaves the singleton as the other tests find it
+const base = new Marked({ gfm: true, breaks: false }, ...mdExtensions);
+const baseHtml = (src: string): string => base.parse(src) as string;
+// the chat's two renderers: a reply's (render.ts md() parses through chatMdHtml) and the user's own words' (userMd). Every
+// table test runs over both, the user's first: that renderer exists on the tree before this change too, so a run there
+// reports the rendering the class produced, not a missing export.
+const chatExported = (): void => assert.equal(typeof chatMd.chatMdHtml, "function", "chat-md.ts exports chatMdHtml, the reply renderer render.ts md() parses through");
+const chatHtml = (src: string): string => { chatExported(); return chatMd.chatMdHtml(src); };
+const userHtml = (src: string): string => chatMd.userMdHtml(src);
+const RENDERERS: Array<[string, (src: string) => string]> = [["the user's own words (userMdHtml)", userHtml], ["a reply (chatMdHtml)", chatHtml]];
+
+// ── the population: id, text, the chat's HTML where it differs from the base grammar (`after`), a shape the base and the
+// chat must both keep (`keeps`: real emphasis and the like, so "identical" is not vacuous), the tokens the walk must link
+// over the chat's DOM (`links`, in order), and the keys the map holds beyond those (`keys`: a bare name in prose, which the
+// override protects and the walk still does not link) ──
+type Row = { id: string; text: string; after?: string; keeps?: string[]; links: string[]; keys?: string[] };
+const P = "/a-_b/c_/d.md";
+const CASES: Row[] = [
+  { id: "C01", text: "notes outside the project sit at /tmp/lab-_abc/preview-xyz_/outside/notes.md.", after: "<p>notes outside the project sit at /tmp/lab-_abc/preview-xyz_/outside/notes.md.</p>\n", links: ["/tmp/lab-_abc/preview-xyz_/outside/notes.md"] },
+  { id: "C02", text: "see /a-_b/c_/d.md today", after: "<p>see /a-_b/c_/d.md today</p>\n", links: [P] },
+  { id: "C03", text: "snake_case_name", links: [] },
+  { id: "C04", text: "a_b_c", links: [] },
+  { id: "C05", text: "__init__.py", after: "<p>__init__.py</p>\n", links: [], keys: ["__init__.py"] },
+  { id: "C06", text: "foo/__pycache__/bar.pyc", after: "<p>foo/__pycache__/bar.pyc</p>\n", links: ["foo/__pycache__/bar.pyc"] },
+  { id: "C07", text: "_private", links: [] },
+  { id: "C08", text: "trailing_", links: [] },
+  { id: "C09", text: "-_x", links: [] },
+  { id: "C10", text: "x_-", links: [] },
+  { id: "C11", text: "a-_b/c_/d.md", after: "<p>a-_b/c_/d.md</p>\n", links: ["a-_b/c_/d.md"] },
+  { id: "C12", text: "*.py", links: [] },
+  { id: "C13", text: "src/*.py", links: [] },
+  { id: "C14", text: "**/*.ts", links: [] },
+  { id: "C15", text: "~/code/romp", links: ["~/code/romp"] },
+  { id: "C16", text: "~~/x", links: [] },
+  { id: "C17", text: "a*b*c", keeps: ["a<em>b</em>c"], links: [] },
+  { id: "C18", text: "2*3*4", keeps: ["2<em>3</em>4"], links: [] },
+  { id: "C19", text: "\\_escaped\\_", keeps: ["<p>_escaped_</p>"], links: [] },
+  { id: "C20", text: "_", links: [] },
+  { id: "C21", text: "__", links: [] },
+  { id: "C22", text: "___", keeps: ["<hr>"], links: [] },
+  { id: "C23", text: "foo _bar_ baz", keeps: ["foo <em>bar</em> baz"], links: [] },
+  { id: "C24", text: "**bold**", keeps: ["<strong>bold</strong>"], links: [] },
+  { id: "C25", text: "*em*", keeps: ["<em>em</em>"], links: [] },
+  { id: "C26", text: "https://example.test/a_b_c/d_", keeps: ['<a href="https://example.test/a_b_c/d">https://example.test/a_b_c/d</a>_'], links: [] },
+  { id: "C27", text: "first_last@example.test", keeps: ['<a href="mailto:first_last@example.test">'], links: [] },
+  { id: "C28", text: "C:\\dir_\\_x", keeps: ["<p>C:\\dir__x</p>"], links: [] },
+  { id: "C29", text: "see `/a-_b/c_/d.md` now", keeps: ["<code>/a-_b/c_/d.md</code>"], links: [P] },
+  { id: "C30", text: "```\n/a-_b/c_/d.md\n```", keeps: ["<pre><code>/a-_b/c_/d.md\n</code></pre>"], links: [P] },
+  { id: "C31", text: "/a-_b/c_/d.md is the note", after: "<p>/a-_b/c_/d.md is the note</p>\n", links: [P] },
+  { id: "C32", text: "the note is /a-_b/c_/d.md", after: "<p>the note is /a-_b/c_/d.md</p>\n", links: [P] },
+  { id: "C33", text: "see /a-_b/c_/d.md.", after: "<p>see /a-_b/c_/d.md.</p>\n", links: [P] },
+  { id: "C34", text: "see /a-_b/c_/d.md, then", after: "<p>see /a-_b/c_/d.md, then</p>\n", links: [P] },
+  { id: "C35", text: "see /a-_b/c_/d.md and /e-_f/g_/h.md today", after: "<p>see /a-_b/c_/d.md and /e-_f/g_/h.md today</p>\n", links: [P, "/e-_f/g_/h.md"] },
+  { id: "C36", text: "see /tmp/a-_b/c.md and /tmp/d_/e.md today", after: "<p>see /tmp/a-_b/c.md and /tmp/d_/e.md today</p>\n", links: ["/tmp/a-_b/c.md", "/tmp/d_/e.md"] },
+  { id: "C37", text: "_private_ sits beside /a-_b/c_/d.md", after: "<p><em>private</em> sits beside /a-_b/c_/d.md</p>\n", links: [P] },
+  { id: "C38", text: "_private /a-b/c_/d.md", after: "<p>_private /a-b/c_/d.md</p>\n", links: ["/a-b/c_/d.md"] },
+  { id: "C39", text: "__init__.py and __main__.py", after: "<p>__init__.py and __main__.py</p>\n", links: [], keys: ["__init__.py", "__main__.py"] },
+  { id: "C40", text: "src/*.py and lib/*.ts", keeps: ["src/<em>.py and lib/</em>.ts"], links: [] },   // a boundary, not a member: `*` is no path character on the path arms, so this glob is no token to the walk or the kernel and was never linked (inside a file URI a star is part of the token, md-config.ts's boundaries); both grammars pair the stars, as GitHub does
+  // C41 to C43 are the two parity follow-ups the ledger entry records (the kernel tokenises the raw markdown, the walk the
+  // rendered DOM; not this change's): `links` holds the DOM token the walk sees, and the kernel's own key differs (C41 three
+  // tokens, `/a-`, `_b/c`, `_/d.md`; C42 `_docs/notes.md_`; C43 `~~/old/notes.md`) and would link nothing, so these rows
+  // show the DOM token whole under a map that holds it, not that the kernel's map links a wrapped or escaped path
+  { id: "C41", text: "see /a-\\_b/c\\_/d.md today", keeps: ["<p>see /a-_b/c_/d.md today</p>"], links: [P] },
+  { id: "C42", text: "_docs/notes.md_", keeps: ["<em>docs/notes.md</em>"], links: ["docs/notes.md"] },
+  { id: "C43", text: "~~/old/notes.md~~", keeps: ["<del>/old/notes.md</del>"], links: ["/old/notes.md"] },
+  { id: "C44", text: "/x/_y_/z.md", after: "<p>/x/_y_/z.md</p>\n", links: ["/x/_y_/z.md"] },
+  { id: "C45", text: "https://example.test/a-_b/c_/d", keeps: ['<a href="https://example.test/a-_b/c_/d">https://example.test/a-_b/c_/d</a>'], links: [] },
+  { id: "C46", text: "/tmp/x_/y.md", links: ["/tmp/x_/y.md"] },
+  { id: "C47", text: "/tmp/-_x/y.md", links: ["/tmp/-_x/y.md"] },
+  { id: "C48", text: "/pkg/__init__.py", after: "<p>/pkg/__init__.py</p>\n", links: ["/pkg/__init__.py"] },
+  { id: "C49", text: "/a/_b/c_/d.md", after: "<p>/a/_b/c_/d.md</p>\n", links: ["/a/_b/c_/d.md"] },
+  { id: "C50", text: "[x](/a-_b/c_/d.md)", keeps: ['<a href="/a-_b/c_/d.md">x</a>'], links: [] },
+  { id: "C51", text: "`/a-_b/c_/d.md` then /e-_f/g_/h.md", after: "<p><code>/a-_b/c_/d.md</code> then /e-_f/g_/h.md</p>\n", links: [P, "/e-_f/g_/h.md"] },
+  { id: "C52", text: "see *a-_b/c_/d.md* now", after: "<p>see <em>a-_b/c_/d.md</em> now</p>\n", links: ["a-_b/c_/d.md"] },
+  { id: "C53", text: "/tmp/a_/b-_c/d.md", links: ["/tmp/a_/b-_c/d.md"] },
+  { id: "C54", text: "/tmp/x__/y-__z/w.md", links: ["/tmp/x__/y-__z/w.md"] },
+  { id: "C55", text: "see /tmp/a-__b/c__/d.md now", after: "<p>see /tmp/a-__b/c__/d.md now</p>\n", links: ["/tmp/a-__b/c__/d.md"] },
+];
+const MEMBERS = ["C01", "C02", "C05", "C06", "C11", "C31", "C32", "C33", "C34", "C35", "C36", "C37", "C38", "C39", "C44", "C48", "C49", "C51", "C52", "C55"];
+const ADVERSARIAL: Row[] = [
+  { id: "A01", text: "the _docs/notes.md_.", keeps: ["<em>docs/notes.md</em>."], links: ["docs/notes.md"] },
+  { id: "A02", text: "_notes.md_", keeps: ["<em>notes.md</em>"], links: [], keys: ["notes.md"] },
+  { id: "A03", text: "**docs/a.md**", keeps: ["<strong>docs/a.md</strong>"], links: ["docs/a.md"] },
+  { id: "A04", text: "*docs/a_b.md*", keeps: ["<em>docs/a_b.md</em>"], links: ["docs/a_b.md"] },
+  { id: "A05", text: "_a/b.md_ and _c/d.md_", keeps: ["<em>a/b.md</em> and <em>c/d.md</em>"], links: ["a/b.md", "c/d.md"] },
+  { id: "A06", text: "see _the docs/notes.md_ file", keeps: ["<em>the docs/notes.md</em>"], links: ["docs/notes.md"] },
+  { id: "A07", text: "a _b/c_ d", keeps: ["a <em>b/c</em> d"], links: [] },
+  { id: "A08", text: "_foo_-bar/baz.md", after: "<p>_foo_-bar/baz.md</p>\n", links: ["_foo_-bar/baz.md"] },   // the accepted loss: emphasis glued to a path
+  { id: "A09", text: "*foo*/bar.md", keeps: ["<em>foo</em>/bar.md"], links: ["/bar.md"] },
+  { id: "A10", text: "run `__init__.py` and **stop**", keeps: ["<code>__init__.py</code> and <strong>stop</strong>"], links: ["__init__.py"] },
+  { id: "A11", text: "_/abs/x.md_", keeps: ["<em>/abs/x.md</em>"], links: ["/abs/x.md"] },
+  { id: "A12", text: "see _/a-_b/c_/d.md_ now", after: "<p>see <em>/a-_b/c_/d.md</em> now</p>\n", links: [P] },
+  { id: "A13", text: "__init__", keeps: ["<strong>init</strong>"], links: [] },
+  { id: "A14", text: "the _x_ in a-_b/c_/d.md", after: "<p>the <em>x</em> in a-_b/c_/d.md</p>\n", links: ["a-_b/c_/d.md"] },
+  { id: "A15", text: "_ab12cd/file-preview-ef34gh_", keeps: ["<em>ab12cd/file-preview-ef34gh</em>"], links: [] },
+  { id: "A16", text: "a/b_c/d_ and _e", keeps: ["<p>a/b_c/d_ and _e</p>"], links: [] },
+  { id: "A17", text: "[x](/a-\\_b/c\\_/d.md)", keeps: ['<a href="/a-_b/c_/d.md">x</a>'], links: [] },
+  { id: "A18", text: "2026-09-19_notes/run_1.log", links: ["2026-09-19_notes/run_1.log"] },
+  { id: "A19", text: "dir_/_file.md", links: ["dir_/_file.md"] },
+  { id: "A20", text: "see ~/code/my_proj/_drafts/a_.md now", after: "<p>see ~/code/my_proj/_drafts/a_.md now</p>\n", links: ["~/code/my_proj/_drafts/a_.md"] },
+];
+const ADVERSARIAL_CHANGED = ["A08", "A12", "A14", "A20"];
+const byId = (rows: Row[], id: string): Row => rows.find((r) => r.id === id)!;
+
+// ── a DOM stand-in: text nodes, elements with attributes and a tag-and-class selector engine, fragments, a tree walker;
+// every node hides its edges at creation (ui/test-dom-shim.ts hideEdges), so a failing assertion dumps a node's primitives
+// and never its tree ──
+type Compound = { tag: string | null; classes: string[] };
+function parseSel(sel: string): Compound[] {
+  return sel.split(",").map((s) => s.trim()).filter(Boolean).map((s) => {
+    const m = /^([a-zA-Z][\w-]*)?((?:\.[\w-]+)*)$/.exec(s);
+    if (!m) throw new Error("stand-in: unsupported selector " + s);
+    return { tag: m[1] ? m[1].toUpperCase() : null, classes: (m[2].match(/\.[\w-]+/g) || []).map((c) => c.slice(1)) };
+  });
+}
+class Txt {
+  nodeType = 3;
+  parentNode: El | null = null;
+  constructor(public data: string) { hideEdges(this); }
+  get textContent(): string { return this.data; }
+  get parentElement(): El | null { return this.parentNode; }
+  replaceWith(n: El | Txt | Frag): void {
+    const p = this.parentNode!;
+    const i = p.childNodes.indexOf(this);
+    const kids = n instanceof Frag ? n.childNodes.slice() : [n];
+    for (const k of kids) { if (k.parentNode) k.parentNode.removeChild(k); k.parentNode = p; }
+    p.childNodes.splice(i, 1, ...kids);
+    this.parentNode = null;
+  }
+}
+class Frag { childNodes: Array<El | Txt> = []; constructor() { hideEdges(this); } appendChild(c: El | Txt): void { this.childNodes.push(c); } }
+const kebab = (k: string): string => k.replace(/[A-Z]/g, (c) => "-" + c.toLowerCase());
+class El {
+  nodeType = 1;
+  tagName: string;
+  parentNode: El | null = null;
+  childNodes: Array<El | Txt> = [];
+  attrs = new Map<string, string>();
+  role: string | null = null;
+  onkeydown: unknown = null; onmousedown: unknown = null; onmouseup: unknown = null; onmouseleave: unknown = null; oncontextmenu: unknown = null; ondragstart: unknown = null;
+  constructor(tag: string) { this.tagName = tag.toUpperCase(); hideEdges(this); }
+  get tabIndex(): number { return this.attrs.has("tabindex") ? Number(this.attrs.get("tabindex")) : -1; } set tabIndex(v: number) { this.attrs.set("tabindex", String(v)); }
+  get parentElement(): El | null { return this.parentNode; }
+  get className(): string { return this.attrs.get("class") || ""; } set className(v: string) { this.attrs.set("class", v); }
+  get classes(): string[] { return this.className.split(/\s+/).filter(Boolean); }
+  dataset: Record<string, string> = new Proxy({} as Record<string, string>, {
+    get: (_, k) => this.attrs.get("data-" + kebab(String(k))) as string,
+    set: (_, k, v) => { this.attrs.set("data-" + kebab(String(k)), String(v)); return true; },
+    has: (_, k) => this.attrs.has("data-" + kebab(String(k))),
+  });
+  get textContent(): string { return this.childNodes.map((c) => c.textContent).join(""); }
+  set textContent(v: string) { for (const c of this.childNodes) c.parentNode = null; this.childNodes = []; if (v !== "") this.appendChild(new Txt(v)); }
+  private detach(n: El | Txt): void { const p = n.parentNode; if (p) { const i = p.childNodes.indexOf(n); if (i >= 0) p.childNodes.splice(i, 1); n.parentNode = null; } }
+  appendChild<T extends El | Txt>(n: T): T { this.detach(n); this.childNodes.push(n); n.parentNode = this; return n; }
+  removeChild<T extends El | Txt>(n: T): T { this.detach(n); return n; }
+  setAttribute(k: string, v: string): void { this.attrs.set(k, v); }
+  getAttribute(k: string): string | null { return this.attrs.has(k) ? (this.attrs.get(k) as string) : null; }
+  hasAttribute(k: string): boolean { return this.attrs.has(k); }
+  removeAttribute(k: string): void { this.attrs.delete(k); }
+  matches(sel: string): boolean { return parseSel(sel).some((c) => (!c.tag || c.tag === this.tagName) && c.classes.every((k) => this.classes.includes(k))); }
+  closest(sel: string): El | null { for (let x: El | null = this; x; x = x.parentNode) if (x.matches(sel)) return x; return null; }
+  querySelectorAll(sel: string): El[] {
+    const out: El[] = [];
+    const visit = (n: El) => { for (const c of n.childNodes) if (c instanceof El) { if (c.matches(sel)) out.push(c); visit(c); } };
+    visit(this);
+    return out;
+  }
+}
+/** Document-order nodes under `root`, as a browser's tree walker answers them (SHOW_ELEMENT = 1, SHOW_TEXT = 4). */
+function walkNodes(root: El, what: number): Array<El | Txt> {
+  const out: Array<El | Txt> = [];
+  const walk = (n: El) => { for (const c of n.childNodes) { if (c instanceof Txt) { if (what & 4) out.push(c); } else { if (what & 1) out.push(c); walk(c); } } };
+  walk(root);
+  return out;
+}
+(globalThis as any).NodeFilter = { SHOW_ELEMENT: 1, SHOW_TEXT: 4 };
+(globalThis as any).document = {
+  createElement: (tag: string) => new El(tag),
+  createTextNode: (s: string) => new Txt(s),
+  createDocumentFragment: () => new Frag(),
+  createTreeWalker: (root: El, what = 4) => { const nodes = walkNodes(root, what); let i = 0; return { nextNode: () => (i < nodes.length ? nodes[i++] : null) }; },
+  activeElement: null as El | null,
+};
+// marked's HTML read into the stand-in: tags and text, the class attribute kept, the entities marked writes decoded
+const VOID_TAGS = new Set(["BR", "HR", "IMG", "INPUT", "WBR"]);
+const ENTITIES: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: "\"", "#39": "'" };
+const unescapeHtml = (s: string): string => s.replace(/&(amp|lt|gt|quot|#39);/g, (_, k: string) => ENTITIES[k]);
+function fromHtml(html: string): El {
+  const root = new El("DIV");
+  let cur = root;
+  const re = /<\/([A-Za-z][\w-]*)\s*>|<([A-Za-z][\w-]*)([^>]*)>|([^<]+)/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(html))) {
+    if (m[1]) { cur = cur.parentNode || root; continue; }
+    if (m[2]) {
+      const e = cur.appendChild(new El(m[2]));
+      const c = /class="([^"]*)"/.exec(m[3] || "");
+      if (c) e.className = c[1];
+      if (!VOID_TAGS.has(e.tagName) && !/\/\s*$/.test(m[3] || "")) cur = e;
+      continue;
+    }
+    cur.appendChild(new Txt(unescapeHtml(m[4])));
+  }
+  return root;
+}
+/** The chat's walk over `html`, the kernel's verdict standing in as a map that holds `keys`: what it linked, by target, in
+ *  document order. The options are render.ts's FENCE_WALK minus its fenced gate (the file viewer's, on the kind of file;
+ *  every fenced token here is a markdown file that gate admits). */
+function walkLinks(html: string, keys: string[]): string[] {
+  const root = fromHtml(html);
+  const map: Record<string, string> = {};
+  for (const k of keys) map[k] = k;
+  const hits = linkifyPathTokens(root as unknown as HTMLElement, SID, map, { inPre: true, preVerified: true, unit: ".cl" });
+  const marked_ = root.querySelectorAll(".file-uri-link").map((a) => a.dataset.path);
+  assert.deepEqual(hits.map((h) => h.open), marked_, "the hits the walk returns are the links it marked");
+  return marked_;
+}
+const keysOf = (r: Row): string[] => [...r.links, ...(r.keys || [])];
+
+// ── the tables, rendered ─────────────────────────────────────────────────────────────────────────────────────────────
+
+test("the chat renders every member row literal, on both of its renderers: exactly the 20 member rows change against the base grammar and none of the other 35", () => {
+  for (const [who, render] of RENDERERS) {
+    for (const id of MEMBERS) {
+      const r = byId(CASES, id);
+      assert.equal(render(r.text), r.after, id + ", " + who + ": " + JSON.stringify(r.text));
+    }
+    const changed = CASES.filter((r) => render(r.text) !== baseHtml(r.text)).map((r) => r.id);
+    assert.deepEqual(changed, MEMBERS, who + ": the rows whose rendering changed are the member rows, all of them and no other");
+  }
+  assert.equal(CASES.length, 55); assert.equal(MEMBERS.length, 20);
+});
+
+test("every other row is byte-identical to the base grammar, and its emphasis, strong, strikethrough, autolink, link, code span or fence is kept", () => {
+  for (const [who, render] of RENDERERS) for (const r of CASES) {
+    if (MEMBERS.includes(r.id)) continue;
+    const b = baseHtml(r.text), c = render(r.text);
+    assert.equal(c, b, r.id + ", " + who + ": " + JSON.stringify(r.text));
+    for (const k of r.keeps || []) { assert.ok(b.includes(k), r.id + " base keeps " + k + ": " + b); assert.ok(c.includes(k), r.id + ", " + who + " keeps " + k + ": " + c); }
+  }
+  // the rows that decide the boundary: real emphasis the user or the session typed, at a token's edge or around one, and
+  // the glob C40, whose stars pair on text that is no token to the walk
+  // (a non-empty list: an empty array is truthy, and the loop above asserts nothing over it)
+  for (const id of ["C17", "C23", "C24", "C25", "C40", "C42", "C43"]) assert.ok((byId(CASES, id).keeps || []).length > 0, id + " asserts a kept shape");
+});
+
+test("the adversarial rows change only where the note says: A08 the accepted loss (emphasis glued to a path), A12, A14 and A20 to the literal path; the other 16 stand", () => {
+  for (const [who, render] of RENDERERS) {
+    for (const r of ADVERSARIAL) {
+      const b = baseHtml(r.text), c = render(r.text);
+      if (r.after !== undefined) { assert.equal(c, r.after, r.id + ", " + who + ": " + JSON.stringify(r.text)); assert.notEqual(c, b, r.id + " changes"); }
+      else { assert.equal(c, b, r.id + ", " + who + ": " + JSON.stringify(r.text)); for (const k of r.keeps || []) assert.ok(c.includes(k), r.id + " keeps " + k + ": " + c); }
+    }
+    assert.deepEqual(ADVERSARIAL.filter((r) => render(r.text) !== baseHtml(r.text)).map((r) => r.id), ADVERSARIAL_CHANGED, who);
+    const loss = byId(ADVERSARIAL, "A08");
+    assert.equal(baseHtml(loss.text), "<p><em>foo</em>-bar/baz.md</p>\n", "the base grammar emphasised the word");
+    assert.equal(render(loss.text), "<p>_foo_-bar/baz.md</p>\n", who + ": the accepted loss: the closer lies inside the token the walk links, so the pair is refused");
+  }
+  assert.equal(ADVERSARIAL.length, 20);
+});
+
+test("the user's own words take the same grammar: identical HTML to a reply's on every row of both tables", () => {
+  chatExported();
+  for (const r of [...CASES, ...ADVERSARIAL]) assert.equal(userHtml(r.text), chatHtml(r.text), r.id);
+});
+
+// ── the walk over the rendered DOM ───────────────────────────────────────────────────────────────────────────────────
+
+test("the chat's walk links every wanted token whole over the chat's rendering, with the kernel's map holding the keys: both of C36's, the code span's, the fenced one's; a bare name in prose still does not link", () => {
+  for (const [who, render] of RENDERERS) for (const r of [...CASES, ...ADVERSARIAL]) {
+    assert.deepEqual(walkLinks(render(r.text), keysOf(r)), r.links, r.id + ", " + who + ": " + JSON.stringify(r.text) + " -> " + render(r.text));
+  }
+  for (const id of ["C05", "C39"]) {
+    const r = byId(CASES, id);
+    assert.deepEqual(r.links, [], id + ": a bare filename in prose is protected and not linked (the bare gate needs a code span)");
+    assert.ok((r.keys || []).length > 0, id + " puts the bare names in the map to show that");
+  }
+  assert.deepEqual(byId(CASES, "C36").links.length, 2, "C36: one pair across two tokens, both linked");
+});
+
+test("the base grammar cuts every member row's token: the defect, reproduced (an em or strong opened or closed inside the path, and the walk finds no whole token)", () => {
+  for (const id of MEMBERS) {
+    const r = byId(CASES, id);
+    const b = baseHtml(r.text);
+    assert.match(b, /<(em|strong)>/, id + ": the base grammar emphasises inside the path: " + b);
+    if (r.links.length === 0) continue;
+    const got = walkLinks(b, keysOf(r));
+    assert.ok(r.links.some((t) => !got.includes(t)), id + ": a wanted token is lost to the cut; the base walk linked " + JSON.stringify(got));
+  }
+});
+
+// ── the mechanism's edges ────────────────────────────────────────────────────────────────────────────────────────────
+
+test("a footnote reference inside a refused pair is numbered once: the built-in's body lex runs dry, and the body is lexed only when the pair stands", () => {
+  for (const [who, render] of RENDERERS) {
+    const out = render("_private [^1] /a-b/c_/d.md\n\n[^1]: the note");
+    assert.match(out, /^<p>_private <sup class="md-fnref"><a href="#fn-1" id="fnref-1">1<\/a><\/sup> \/a-b\/c_\/d\.md<\/p>\n/, who + ": the pair refused, the reference numbered 1 with its first id: " + out);
+    assert.doesNotMatch(out, /fnref-1-2/, "no second reference was counted for the same citation");
+    assert.equal((out.match(/id="fnref-1"/g) || []).length, 1);
+    const kept = render("_private [^1] word_ and /a-b/c_/d.md\n\n[^1]: the note");
+    assert.match(kept, /^<p><em>private <sup class="md-fnref"><a href="#fn-1" id="fnref-1">1<\/a><\/sup> word<\/em> and \/a-b\/c_\/d\.md<\/p>\n/, who + ": a pair that stands keeps its body, the reference numbered once: " + kept);
+  }
+});
+
+test("a file:// URI, a table cell, a list item, a heading and a quote are protected too; a `*` pair and the prose around a path render as before", () => {
+  assert.equal(baseHtml("see file:///a-_b/c_/d.md now"), "<p>see file:///a-<em>b/c</em>/d.md now</p>\n");
+  for (const [who, render] of RENDERERS) {
+    assert.equal(render("see file:///a-_b/c_/d.md now"), "<p>see file:///a-_b/c_/d.md now</p>\n", who + ": the URI arm is a token the walk links, ungated");
+    assert.match(render("| a | b |\n|---|---|\n| x | /a-_b/c_/d.md |"), /<td>\/a-_b\/c_\/d\.md<\/td>/, who);
+    assert.equal(render("- see /a-_b/c_/d.md\n- and __init__.py"), "<ul>\n<li>see /a-_b/c_/d.md</li>\n<li>and __init__.py</li>\n</ul>\n", who);
+    assert.equal(render("## /a-_b/c_/d.md"), "<h2>/a-_b/c_/d.md</h2>\n", who);
+    assert.equal(render("> the note is /a-_b/c_/d.md"), "<blockquote>\n<p>the note is /a-_b/c_/d.md</p>\n</blockquote>\n", who);
+    assert.equal(render("_x_ /a-_b/c_/d.md _y_"), "<p><em>x</em> /a-_b/c_/d.md <em>y</em></p>\n", who + ": emphasis on either side of a path stands");
+    assert.equal(render("**x**/a-_b/c_/d.md"), "<p><strong>x</strong>/a-_b/c_/d.md</p>\n", who + ": a `*` pair glued to a path stands: `*` is not a path character");
+  }
+  assert.equal(userHtml("see /a-_b/c_/d.md\nnext _em_ line"), "<p>see /a-_b/c_/d.md<br>next <em>em</em> line</p>\n", "the user renderer keeps its one difference, hard breaks");
+});
+
+test("the instance boundary: the singleton (the viewer, the hover preview, the anchor map) keeps GitHub's rendering; the chat's two instances take the override and the shared list does not", () => {
+  applyMdConfig();
+  assert.equal(marked.parse("foo/__pycache__/bar.pyc"), "<p>foo/<strong>pycache</strong>/bar.pyc</p>\n", "the singleton renders a note as GitHub does (whether the viewer should follow is a separate decision)");
+  chatExported();
+  assert.equal(chatHtml("foo/__pycache__/bar.pyc"), "<p>foo/__pycache__/bar.pyc</p>\n");
+  const CONFIG = read("md-config.ts"), CHAT = read("chat-md.ts"), RENDER = read("render.ts");
+  const list = CONFIG.match(/export const mdExtensions: MarkedExtension\[\] = \[[\s\S]*?\n\];/)?.[0] || "";
+  assert.ok(list, "the shared list is there");
+  assert.doesNotMatch(list, /pathAwareEmphasis/, "the shared list, which the singleton takes, does not carry the override");
+  assert.match(CONFIG, /^export const pathAwareEmphasis = \{\n {2}tokenizer: \{\n {4}emStrong\(this: Tokenizer, src: string, maskedSrc: string, prevChar = ""\) \{/m, "the override is an emStrong tokenizer override, delDoubleTilde's shape");
+  assert.match(CONFIG, /^import \{ isFileUri, looksLikeBareFileName, looksLikeFilePath, PathTokenScanner, trailingPunct \} from "\.\/path-links";/m, "the scanner and the gates are the walk's own, imported");
+  const override = CONFIG.slice(CONFIG.indexOf("const DRY_LEXER = "), CONFIG.indexOf("} as MarkedExtension;", CONFIG.indexOf("export const pathAwareEmphasis")));
+  assert.ok(override.includes("function linkableRuns(") && override.includes("emStrong(this: Tokenizer"), "the override's code, from its first constant to its close");
+  assert.doesNotMatch(override, /\[~\.|BARE_FILE_EXTS|A-Za-z0-9|\\\.\[|new RegExp\(/, "none of these five path-grammar spellings appears in the override's code: a verbatim copy of path-links.ts's grammar shows here; a fresh restatement would not, and the stub test below catches that by execution (the override's one regex of its own is the emphasis spec's flanking class, not a path grammar)");
+  assert.match(CONFIG, /Tokenizer\.prototype\.emStrong\.call\(dry, src, tokens\.hidden, prevChar\)/, "the built-in decides the pair, on the dry stand-in, over the masked string with every run inside a token hidden");
+  assert.match(CHAT, /^export const chatMarked = new Marked\(\{ gfm: true, breaks: false \}, \.\.\.mdExtensions, pathAwareEmphasis\);/m, "the reply instance");
+  assert.match(CHAT, /^export const userMarked = new Marked\(\{ gfm: true, breaks: true \}, \.\.\.mdExtensions, pathAwareEmphasis\);/m, "the user instance");
+  assert.match(RENDER, /^import \{ chatMdHtml, userMdHtml \} from "\.\/chat-md";/m);
+  const mdFn = RENDER.match(/\nfunction md\(src: string[^\n]*?\): string \{[\s\S]*?\n\}/)?.[0] || "";
+  assert.match(mdFn, /const dirty = chatMdHtml\(src\);/, "md() parses a reply on the chat instance");
+  assert.doesNotMatch(mdFn, /marked\.parse/, "and no longer on the singleton");
+  assert.match(RENDER, /function previewMdClean\(src: string\): HTMLElement \{\n\s*let clean: HTMLElement;\n\s*try \{ clean = sanitizeMd\(marked\.parse\(src\) as string\); \}/, "the hover preview stays on the singleton: a previewed file is a note, rendered as the viewer renders it");
+  assert.doesNotMatch(read("file-view.ts"), /pathAwareEmphasis|chatMarked|chatMdHtml/, "the viewer takes none of it");
+  const FEED = read("feed.ts");
+  assert.match(FEED, /^const noticeMarked = new Marked\(\{ gfm: true, breaks: true \}\);/m, "the feed's notice cards render on a bare instance of their own, on neither the singleton nor the chat's instances");
+  // the subject is the bare noticeMarked instance and feed.ts's own imports; the feed PAGE still configures the singleton,
+  // through the file-view.ts its bundle carries (applyMdConfig at load), for the viewer it embeds and not for the cards
+  assert.doesNotMatch(FEED, /from "\.\/md-config"|from "\.\/chat-md"|from "\.\/path-links"/, "noticeMarked takes nothing from the grammar modules and links no paths (chat-md.ts's header says so)");
+});
+
+// ── the census: every product module under ui/webview that imports marked, and the instance each renders or lexes on ──
+// A hand list of source greps sees only the modules it names (the 2026-09-21 review, extra9-2: a markdown renderer added
+// later took no verdict at all), so the boundary is pinned as a census read from the directory: every non-test .ts file
+// whose import lines name the marked module, `import type` included (three importers take types alone), whatever marked API
+// the module calls (a new Marked, marked.parse, the static Lexer.lex, Parser.parseInline, a hook on Lexer.prototype). The
+// expected set names, per module, the instance it renders or lexes on, so a reader of a red here takes the verdict: the
+// singleton (GitHub's rendering, no override), the chat's two (pathAwareEmphasis), the feed's bare instance, or the static
+// lexer and parser, which read the singleton's module defaults.
+const MARKED_IMPORTERS: Record<string, string> = {
+  "anchor-map": "the static Lexer.lex and Parser.parseInline over the singleton's module defaults (applyMdConfig at load)",
+  "chat-md": "chatMarked and userMarked, the chat's two instances, both taking pathAwareEmphasis",
+  feed: "noticeMarked, a bare instance of its own for the notice cards",
+  "file-view": "viewerHtml on the singleton's defaults (marked.lexer, marked.parser; applyMdConfig at load)",
+  math: "types only; its extensions live in mdExtensions and run inside whichever instance is parsing",
+  "md-block-start": "a hook on Lexer.prototype, every instance's block-start memo; renders nothing",
+  "md-config": "applyMdConfig configures the singleton; pathAwareEmphasis reaches Tokenizer.prototype.emStrong from the chat's instances",
+  "md-literal-tags": "types only; a token walk viewerHtml and the anchor map call",
+  "md-wiki": "types only; referenced by no product module",
+  "reader-place": "the static Lexer.lex, an html-block test for the reader's place; renders nothing",
+  render: "marked.parse on the singleton for the hover preview (previewMdClean); md() and userMd() through chat-md's two instances",
+};
+test("the instance boundary as a census over the tree: exactly these eleven product modules under ui/webview import marked, each on a named instance; a module added later that imports marked, whatever API it calls, goes red here and takes a verdict", () => {
+  const importers = fs.readdirSync(UI)
+    .filter((f) => f.endsWith(".ts") && !f.endsWith(".test.ts") && !f.endsWith(".d.ts"))
+    .filter((f) => /^import\b[^;]*?\bfrom\s+["']marked["']|require\(["']marked["']\)/m.test(read(f)))
+    .map((f) => f.slice(0, -3))
+    .sort();
+  assert.deepEqual(importers, Object.keys(MARKED_IMPORTERS).sort(), "the product modules under ui/webview importing marked changed; a module new to this list renders or lexes markdown on SOME instance and must say which: the singleton (GitHub's rendering, no override), the chat's two (pathAwareEmphasis), the feed's bare noticeMarked, or the static lexer and parser (the singleton's defaults). Known: " + JSON.stringify(MARKED_IMPORTERS, null, 1));
+  assert.equal(importers.length, 11);
+  const typeOnly = importers.filter((m) => /^import type\b[^;]*?\bfrom\s+["']marked["']/m.test(read(m + ".ts")) && !/^import\s+(?!type\b)[^;]*?\bfrom\s+["']marked["']/m.test(read(m + ".ts")));
+  assert.deepEqual(typeOnly, ["math", "md-literal-tags", "md-wiki"], "the importers that take types alone (the census must accept `import type`, or it misses them)");
+  assert.match(read("reader-place.ts").split("\n").slice(200).join("\n"), /^import\b[^;]*?\bfrom\s+["']marked["']/m, "reader-place.ts imports marked mid-file: the census reads whole files, not a header");
+});
+
+// ── THE RULE by execution: the override obtains its grammar by import from path-links.ts ─────────────────────────────
+// One grammar decides linking and protection: the walk's own scanner, trailing-punctuation trim and shape gates, imported
+// and never restated. A source grep for five spellings of that grammar (the boundary test above keeps it as a secondary
+// guard) cannot see a restatement under a sixth spelling (the 2026-09-21 review, F), so the property is checked by
+// execution: md-config.ts is bundled here with esbuild's build API and a plugin that resolves its `./path-links` import to
+// a stub of this test's making (esbuild's alias option is for bare package names), a Marked is built from the bundle's
+// own mdExtensions and pathAwareEmphasis (and the bundle's own marked, so the built-in the override reaches is the
+// bundle's), and the override's answer must FOLLOW the stub: with every gate refusing, or a scanner that yields no token,
+// the override protects nothing and renders every member row as the base grammar does; with a bare gate that admits
+// `.zzz` alone, `the _final_.zzz file` turns literal and `the _final_.pdf file` keeps its emphasis. A path grammar restated
+// inside the override under any spelling protects rows the stub refused and reds here.
+function stubBuild(stub: string | null): Promise<{ parse(src: string): string }> {
+  const esbuild = pkgRequire("esbuild") as typeof import("esbuild");
+  const plugin: import("esbuild").Plugin = {
+    name: "path-links-stub",
+    setup(build) {
+      build.onResolve({ filter: /^\.\/path-links$/ }, (args) => (stub && args.importer.endsWith("md-config.ts") ? { path: stub } : undefined));
+    },
+  };
+  return esbuild.build({
+    stdin: { contents: 'export * from "./md-config";\nexport { Marked } from "marked";\n', resolveDir: UI, loader: "ts", sourcefile: "stub-entry.ts" },
+    bundle: true, platform: "node", format: "cjs", target: "node18", write: false, logLevel: "silent", plugins: stub ? [plugin] : [],
+    nodePaths: [path.resolve(process.cwd(), "node_modules")],   // marked, katex and dompurify live under vscode-extension/, as the single-file recipe's NODE_PATH says
+  }).then((r) => {
+    const mod = { exports: {} as Record<string, unknown> };
+    new Function("module", "exports", "require", r.outputFiles[0].text)(mod, mod.exports, pkgRequire);
+    const { Marked: M, mdExtensions: exts, pathAwareEmphasis: pae } = mod.exports as { Marked: typeof Marked; mdExtensions: unknown[]; pathAwareEmphasis: unknown };
+    assert.equal(typeof pae, "object", "the bundle exports the override");
+    const m = new M({ gfm: true, breaks: false }, ...(exts as ConstructorParameters<typeof Marked>), pae as ConstructorParameters<typeof Marked>[0]);
+    return { parse: (src: string) => m.parse(src) as string };
+  });
+}
+test("THE RULE by execution: the override's protection follows the grammar it imports from path-links.ts. With a stub in that module's place whose gates refuse every token, or whose scanner yields none, every member row renders as the base grammar does; with a stub whose bare gate admits `.zzz` alone, `_final_.zzz` turns literal and `_final_.pdf` keeps its emphasis; the unstubbed bundle renders as the shipped chat does", async () => {
+  const REAL = JSON.stringify(path.join(UI, "path-links.ts"));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "romp-md-emphasis-stub-"));
+  try {
+    const stubFile = (name: string, body: string): string => { const f = path.join(dir, name + ".ts"); fs.writeFileSync(f, body); return f; };
+    const refuse = stubFile("refuse", `export { PathTokenScanner, trailingPunct } from ${REAL};\nexport const isFileUri = (): boolean => false;\nexport const looksLikeFilePath = (): boolean => false;\nexport const looksLikeBareFileName = (): boolean => false;\n`);
+    const noToken = stubFile("no-token", `export { trailingPunct, isFileUri, looksLikeFilePath, looksLikeBareFileName } from ${REAL};\nexport class PathTokenScanner { constructor(_text: string) {} next(_from: number): [number, number] | null { return null; } }\n`);
+    const zzz = stubFile("zzz", `export { PathTokenScanner, trailingPunct, isFileUri, looksLikeFilePath } from ${REAL};\nexport const looksLikeBareFileName = (tok: string): boolean => /\\.zzz$/.test(tok);\n`);
+    const [control, refused, scanless, admitting] = await Promise.all([stubBuild(null), stubBuild(refuse), stubBuild(noToken), stubBuild(zzz)]);
+    const members = MEMBERS.map((id) => byId(CASES, id));
+    // the control: the bundle machinery renders as the shipped chat does (a Marked from the bundle's own exports and marked)
+    for (const r of members) assert.equal(control.parse(r.text), r.after, "the unstubbed bundle, " + r.id + ": " + JSON.stringify(r.text));
+    assert.equal(control.parse("the _final_.zzz file"), "<p>the <em>final</em>.zzz file</p>\n", "the shipped bare gate refuses .zzz");
+    assert.equal(chatMd.chatMdHtml("the _final_.zzz file"), "<p>the <em>final</em>.zzz file</p>\n");
+    // every gate refusing, or no token at all: the override protects nothing, so every row of both tables and every probe
+    // beside them renders as the base grammar does (the member rows show the arm is not vacuous: the shipped override
+    // changes all twenty); the probes beside the tables are the shapes a restatement would reach first, a bare name with an
+    // extension the shipped gate does not know, a path with a run inside, a URI, a pair spanning a path
+    for (const r of members) assert.notEqual(baseHtml(r.text), r.after, r.id + " is a member row: the shipped override changes it");
+    const probes = [...CASES, ...ADVERSARIAL].map((r) => r.text).concat(["the _final_.zzz file", "__init__.xyz", "see _final_.qqq and old_ now", "_see drafts/a_.md and old_ now", "_see file:///x/a*_b/c_ now", "_see /tmp/_build/out.md now_", "the _final_.pdf file"]);
+    for (const text of probes) {
+      const b = baseHtml(text);
+      assert.equal(refused.parse(text), b, "every gate refusing: the override still changed " + JSON.stringify(text) + " (a path grammar of its own decided, not the imported gates)");
+      assert.equal(scanless.parse(text), b, "no token from the scanner: the override still changed " + JSON.stringify(text) + " (a tokenisation of its own decided, not the imported scanner)");
+    }
+    // a bare gate of the stub's own: the override follows it both ways
+    assert.equal(admitting.parse("the _final_.zzz file"), "<p>the _final_.zzz file</p>\n", "the stub's bare gate admits .zzz, so the override protects the name the shipped gate leaves emphasised");
+    assert.equal(admitting.parse("the _final_.pdf file"), "<p>the <em>final</em>.pdf file</p>\n", "and refuses .pdf, so the name the shipped gate protects keeps its emphasis");
+    assert.equal(admitting.parse("see /a-_b/c_/d.md today"), "<p>see /a-_b/c_/d.md today</p>\n", "the file gate, re-exported real, still protects a path");
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("the bare-name gate's live values decide, not a hand list: `the _final_.<ext> file` renders literal exactly when the imported gates admit the token the scanner and the trim derive from it, over every member of BARE_FILE_EXTS and non-members beside them", () => {
+  const exts = [...BARE_FILE_EXTS, "zzz", "xyz", "Md", "abcdefghi", "0", "q"];
+  const literal: string[] = [], emphasised: string[] = [];
+  for (const ext of exts) {
+    const text = "the _final_." + ext + " file";
+    // the token as the override derives it: the walk's scanner, then the trailing-punctuation trim, then the gates
+    const scan = new PathTokenScanner(text);
+    let tok = "", m: [number, number] | null, from = 0;
+    while ((m = scan.next(from))) {
+      let t = text.slice(m[0], m[1]);
+      const trail = trailingPunct(t);
+      if (trail) t = t.slice(0, t.length - trail[0].length);
+      if (t.includes("final")) { tok = t; break; }
+      from = m[1];
+    }
+    assert.ok(tok, "the scanner yields the token for " + JSON.stringify(text));
+    const gated = isFileUri(tok) || looksLikeFilePath(tok) || looksLikeBareFileName(tok);
+    (gated ? literal : emphasised).push(ext);
+    const want = gated ? "<p>the _final_." + ext + " file</p>\n" : "<p>the <em>final</em>." + ext + " file</p>\n";
+    for (const [who, render] of RENDERERS) assert.equal(render(text), want, who + ", ." + ext + " (" + JSON.stringify(tok) + (gated ? " passes" : " fails") + " the imported gates): " + JSON.stringify(text));
+  }
+  assert.ok(literal.length >= BARE_FILE_EXTS.size, "the members of BARE_FILE_EXTS all render literal: " + literal.length);
+  assert.deepEqual(emphasised.sort(), ["0", "abcdefghi", "q", "xyz", "zzz"].sort(), "the non-members keep their emphasis (`Md` is a member: the gate lowercases)");
+});

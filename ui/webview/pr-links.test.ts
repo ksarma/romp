@@ -9,8 +9,8 @@ import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { Marked } from "marked";
 import { inspect } from "node:util";
+import { chatMdHtml } from "./chat-md";
 import { hideEdges, staysEnumerable } from "../test-dom-shim";
 
 // ── a DOM stand-in: text and element nodes with the handful of members the applier touches, plus the
@@ -444,12 +444,17 @@ function fromHtml(html: string): E {
 const shape = (e: E): string[] => e.childNodes.map((c) => (c instanceof T ? c.textContent : c.tagName));
 /** the links this module made, in order; an anchor marked wrote (`[text](url)`) is not one */
 const linked = (root: E): string[] => anchors(root).filter((a) => a.classList.contains(PR_LINK_CLASS)).map((a) => a.textContent);
-// the chat's options (render.ts md()); its extensions and the sanitizer play no part in the shapes read here,
-// and an instance of our own leaves the shared singleton as the other tests find it
-const chatMarked = new Marked({ gfm: true, breaks: false });
-const md = (src: string): E => fromHtml(chatMarked.parse(src) as string);
+// the chat's own instance (chat-md.ts chatMdHtml, what render.ts's md() parses through); the sanitizer plays no part in
+// the shapes read here. Until 2026-09-21 a bare gfm instance named chatMarked stood in, with neither the shared list nor
+// the chat's pathAwareEmphasis: a grammar the chat never rendered on under that name. The import leaves the shared
+// singleton as the other tests find it (md-config.ts's module body registers the math post-pass only; applyMdConfig is
+// not called by the import).
+const md = (src: string): E => fromHtml(chatMdHtml(src));
 
 test("a line or block edge is a boundary with no whitespace node: marked's hard-break <br>, abutting paragraphs, list items, table cells; an inline element with no text is not", () => {
+  // the stand-in's aim first: the chat's instance keeps a path's underscores literal (md-config.ts pathAwareEmphasis),
+  // where the singleton or a bare instance renders an <em> in the paragraph
+  assert.deepEqual(shape(md("see /a-_b/c_/d.md #12").childNodes[0] as E), ["see /a-_b/c_/d.md #12"], "md here is the chat instance's parse: one text node, no EM");
   // a GFM hard break (two trailing spaces, or a backslash): <br> with NO text node between it and the `#`
   let root = md("done  \n#12 next");
   assert.deepEqual(shape(root.childNodes[0] as E), ["done", "BR", "#12 next"], "marked's shape: no whitespace after the <br>");
