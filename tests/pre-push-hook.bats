@@ -11687,11 +11687,12 @@ r11b_empty_path_case() {   # <the empty string, quoted>: S1's rule with that pat
 # UTF-16 log or commit encoding, passes where 93684a4d1 refused it; a census over the hook's git calls holds the pins,
 # its list of reads derived from the hook, each pin's removal planted and red. D (extra6-2): the per-piece
 # directories made by xargs (piece_dirs), which sizes each mkdir around the environment, its status judged and each
-# directory tested, so case 446's first push passes under an exported 80 KB variable where 93684a4d1 ended on bash's
-# Argument list too long line, and a mkdir that fails refuses with a romp line, never bash's; the new read's table
-# and short cases. And romp-manager's 06:29Z ruling on round 11b's flag 7: the empty path exempt in all four quote
-# forms, one pin per form. A title that says a witness is refused at 93684a4d1 records the run made against that
-# hook for the round's log; every credential-shaped string is assembled at run time.
+# directory tested, so the first push of round 10b's G case (the path-scoped copies' directories are made past the
+# argument limit) passes under an exported 80 KB variable where 93684a4d1 ended on bash's Argument list too long line,
+# and a mkdir that fails refuses with a romp line, never bash's; the new read's table and short cases. And
+# romp-manager's 06:29Z ruling on round 11b's flag 7: the empty path exempt in all four quote forms, one pin per
+# form. A title that says a witness is refused at 93684a4d1 records the run made against that hook for the round's
+# log; every credential-shaped string is assembled at run time.
 
 r11c_blank_context_history() {   # r9d_base, then a clean history whose edits sit beside blank lines: an edit, a rename with an edit, a mode change, a deletion, a file with no final newline edited, and a two-parent merge adding a clean line of its own beside blank lines while auto-merging a path under a committed -diff attribute (its combined diff a Binary notice, read whole)
     r9d_base
@@ -11775,8 +11776,13 @@ r11c_git_calls() {   # <bash file>: one line per git command the census finds (a
     done < <(census_records "$1" calls)
 }
 r11c_pins_check() {   # <bash file>: prints the first git read lacking its pin and returns 1, 0 when every pin is carried: the feed's diff-tree (the one git read given diff-tree, --stdin and --text) runs under env -u GIT_DIFF_OPTS with -c diff.suppressBlankEmpty=false among git's own options; every git log or rev-list given --format or --pretty carries --encoding=UTF-8, or -c i18n.logOutputEncoding=UTF-8 among git's own options; any other git read given a format is a for-each-ref whose format is %(refname) alone, the stated exemption (ref names are not re-encoded); and the reads given a format number as many as the lines of the text that run git log or git rev-list with one, a second derivation
-    local ln pre args sub g n i x fmt enc feed=0 formats=0 lines
+    local ln pre args sub g n i x fmt enc feed=0 formats=0 lines calls
     local -a a
+    # The list is read whole before the loop, never through a pipe the loop reads: the loop returns at the first read
+    # lacking its pin, and a pipe closed while r11c_git_calls still writes gives its printf EPIPE, which, with SIGPIPE
+    # ignored (a systemd service; a CI runner may run so), bash prints as a write error into run's output, where the
+    # case asserts the output exactly (round 11e; with SIGPIPE at its default the writer died silently)
+    calls=$(r11c_git_calls "$1")
     while IFS=$'\037' read -r ln pre args; do
         read -r -a a <<< "$args"
         g=" "; n=1
@@ -11807,7 +11813,7 @@ r11c_pins_check() {   # <bash file>: prints the first git read lacking its pin a
                 [ "$fmt" = "--format=%(refname)" ] || { echo "the git for-each-ref at line $ln is given the format $fmt, not %(refname) alone"; return 1; } ;;
             *) echo "the git $sub at line $ln is given a format, of no kind the encoding rule reads"; return 1 ;;
         esac
-    done < <(r11c_git_calls "$1")
+    done <<< "$calls"
     [ "$feed" -eq 1 ] || { echo "the hook holds $feed feed reads (git diff-tree given --stdin and --text), where it holds one"; return 1; }
     [ "$formats" -ge 1 ] || { echo "no git log or rev-list read given a format was found"; return 1; }
     lines=$(grep -cE '^[^#]*git (-c [^ ]+ )*(log|rev-list) .*--(format|pretty)' "$1" || true)
@@ -11890,7 +11896,7 @@ r11c_yaml_files() {   # <directory> <count>: that many one-line .yaml files unde
     git -C "$REPO" commit -qm "$2 yaml files"
 }
 
-@test "round 11c (D, the witness): case 446's first push under an exported variable of about 80 KB: 4,000 one-line .yaml files in one commit, pushed for real with the stack limit lowered to 512 KB and an exported 80,000-byte variable, pass, both byte figures agreeing, xargs sizing each mkdir's arguments around the environment (refused at 93684a4d1 with bash's Argument list too long line and no romp line: its batches of 64 KB of arguments did not fit beside the environment)" {
+@test "round 11c (D, the witness): the first push of round 10b's G case (the path-scoped copies' directories are made past the argument limit) under an exported variable of about 80 KB: 4,000 one-line .yaml files in one commit, pushed for real with the stack limit lowered to 512 KB and an exported 80,000-byte variable, pass, both byte figures agreeing, xargs sizing each mkdir's arguments around the environment (refused at 93684a4d1 with bash's Argument list too long line and no romp line: its batches of 64 KB of arguments did not fit beside the environment)" {
     r9d_base
     r11c_yaml_files k8s 4000
     R11C_PAD="$(head -c 80000 /dev/zero | tr '\0' x)"
