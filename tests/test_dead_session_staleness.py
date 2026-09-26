@@ -1097,7 +1097,13 @@ class ReaderFollowsTheWriter(unittest.TestCase):
     exchanges (the writer's docstring, THE PREMISE), while the release's third race stays the transient case, one
     window; and the far host's answer ends the windows only for the sessions it names: after its kernel blinks again,
     a session started since, whose mail rides its cached exchange, answers rule 5 at the second machine's next
-    exchange.
+    exchange. Since round 6 of fork PR #897 (the reviewer's round-5 ruling B, the fifty-fourth commit) the release by
+    the same hub process's omission counts only for a far bus heard answering in this process: a far host from before
+    the blink honesty, whose kernel's blink gossips an empty roster, keeps its word held and its session's card
+    unsettled (THE ROAD, beside the blink-honest far host with no presenceAnswered as its control), and so do a far host
+    with no bus id, a current far host heard only over caches and a far host on v0.15.0 to v0.17.1 whose sessions end
+    (cost (a)'s witnesses); face (1)'s empty-cache road relays F's restarted process's answered word first, and the road
+    without that step holds.
     The control isolates the old path: with the bus's file removed and a line at STATE/remote-sids, the
     judge's read path until 2026-09-22, the reader answers cannot-determine, so the read MOVED to the
     bus's file rather than widening to both, and a reverted read fails this pin by its own message. The
@@ -2168,13 +2174,17 @@ def park(src, frm, mid):                           # src's session frm mails OUR
                                                          "frm": "s" + frm[-3:], "frm_id": frm, "body": "please take this",
                                                          "kind": "delegate", "t": int(time.time())})
     return got
-def mail_dial(src, src_name, dst, dst_name):       # src dials dst carrying its parked relays: what the request carried, the acks
-    with As(src):
+def mail_dial(src, src_name, dst, dst_name, strip_answered=False):   # src dials dst carrying its parked relays: what the request
+    with As(src):                                  # carried, the acks (strip_answered: src's payloads lack the field, as dial's)
         req = src.build_exchange_request(dst_name, wait=False)
     req["host"] = src_name
+    if strip_answered:
+        req.pop("presenceAnswered", None)
     with As(dst):
         resp, status = dst.peer_exchange_handle(req)
     if status == 200:
+        if strip_answered:
+            resp.pop("presenceAnswered", None)
         with As(src):
             src.peer_exchange_apply(dst_name, req, resp)
     return {"status": status, "reqAnswered": req.get("presenceAnswered", "absent"),
@@ -2410,6 +2420,9 @@ def held_words(bus, host):                         # the words our bus holds on 
     return sorted([pa.get("via"), pa.get("id")] for pa in (bus.PEER_STATE.get(host) or {}).get("viaHeld") or [])
 def roster_via(bus, host):                         # the far hosts' sessions a hub's current roster here names: [far host, sid]
     return sorted([pa.get("via"), pa.get("id")] for pa in (bus.PEER_STATE.get(host) or {}).get("presence") or [] if pa.get("via"))
+def answered_here(bus, bus_id):                    # whether our bus heard `bus_id` answer in this process (None: it keeps no record)
+    seen = getattr(bus, "_ANSWERED_BUSES", None)
+    return None if seen is None else str(bus_id) in seen
 # THE SETTLE IN A WINDOW (round 4 of fork PR #897, the forty-sixth commit; the reviewer's verifier at the forty-fifth, by
 # execution): while a false rule 5 stands, our session web completes the work the new session delegated to it, and the
 # real run_propagate, the courier's pass, rolls the new session's tracker up (planted here when its mail landed); a
@@ -2465,6 +2478,7 @@ step(road, "farAnswersHubEmpty", us, newOnFar=S["new"], nobody=S["nobody"])
 dial(hub, HUB, us, US)                             # the same hub process dials us: its roster omits F
 out["roads"][road]["rosterVia"], out["roads"][road]["heldAfter"] = roster_via(us, HUB), held_words(us, HUB)
 step(road, "released", us, newOnFar=S["new"], nobody=S["nobody"], other=S["other"])
+out["roads"][road]["farBusAnswered"] = answered_here(us, f.BUS_ID)   # heard answering through the hub (B)
 def held_stamps(bus, host):                        # [far host, sid, the road whose roster last named it] per held word
     return sorted([pa.get("via"), pa.get("id"), pa.get("hubRoad")] for pa in (bus.PEER_STATE.get(host) or {}).get("viaHeld") or [])
 road = "farAnswersEmptyOurDial"                    # ...through our dial (our fold of the hub's response), the road that named F
@@ -2576,7 +2590,7 @@ LISTINGS["f"] = []                                 # every session on F ends: F'
 dial(f, F, hub, HUB, strip_answered=True)
 dial(hub, HUB, us, US)                             # the same hub process's dial omits F: the road that named it
 out["roads"][road]["heldAfter"] = held_words(us, HUB)
-step(road, "released", us, other=S["other"], nobody=S["nobody"])
+step(road, "hubOmitsF", us, other=S["other"], nobody=S["nobody"])
 def split_dial(src, src_name, dst, dst_name):      # src's real builder and dst's real handler NOW, so the answer's roster is
     with As(src):                                  # taken now; src's real fold of that answer returned, to run LATER
         req = src.build_exchange_request(dst_name, wait=False)
@@ -2662,38 +2676,154 @@ dial(hub, HUB, us, US)                             # the next word about F: the 
 step(road, "hubDialsAgain", us, newOnFar=S["new"])
 settle_after(out["roads"][road]["settle"])
 # face (1) in one hub process over an EMPTY CACHE (the forty-seventh commit; the reviewer's re-verifier at the forty-sixth,
-# by execution): the hub builds the older dial while its word about F is F's empty cache, F's bus restarted with no twin
-road = "hubDialsOutOfOrderOverEmptyCache"
-us, f, hub, c = far_behind_hub(road, HUB)
-LISTINGS["f"] = None                               # F's kernel blinks, and F's disk twin of its last answered listing is gone
-f._PRESENCE_GOOD_FILE.unlink()
-f = load_bus("f", Path(others_root) / road / "f")  # F's bus restarts over its own root, its kernel not answering
+# by execution): the hub builds the older dial while its word about F is F's empty cache, F's bus restarted with no twin.
+# Since round 6 of fork PR #897 (the reviewer's round-5 ruling B) the release by the same hub process's omission counts
+# only for a far bus heard answering in this process, and F's restarted process is a new bus id: the witness road relays
+# that process's answered word here before its blink (`relay`), and the road without that step holds the word
+def face_1_over_empty_cache(road, mid, relay):
+    us, f, hub, c = far_behind_hub(road, HUB)
+    LISTINGS["f"] = None                           # F's kernel blinks, and F's disk twin of its last answered listing is gone
+    f._PRESENCE_GOOD_FILE.unlink()
+    f = load_bus("f", Path(others_root) / road / "f")   # F's bus restarts over its own root, its kernel not answering
+    with As(f):
+        f.peer_update({"host": HUB, "port": 50002, "up": True})
+    out["roads"][road] = {"farEmptyCacheDial": dial(f, F, hub, HUB)}   # F's exchange with the hub serves an empty cache
+    heard = hub.PEER_STATE.get(F) or {}            # what the hub had heard from F when it built the older dial
+    out["roads"][road]["hubHeardF"] = [heard.get("presenceAnswered"), sorted(pa.get("id") for pa in heard.get("presence") or [])]
+    with As(hub):
+        older = hub.build_exchange_request(US, wait=False)   # the hub's dial built now, over F's empty cache; delivered last
+    older["host"] = HUB
+    out["roads"][road]["olderDialVia"] = sorted([pa.get("via"), pa.get("id")] for pa in older.get("presence") or [] if pa.get("via"))
+    LISTINGS["f"] = [S["other"]]                   # F's kernel answers the hub, naming a session
+    dial(f, F, hub, HUB)
+    if relay:                                      # the hub's dial relays F's restarted process's ANSWERED word here
+        out["roads"][road]["relayDial"] = dial(hub, HUB, us, US)
+        out["roads"][road]["relayedVia"] = sorted([pa.get("via"), pa.get("id"), pa.get("viaAnswered")]
+                                                  for pa in us.PEER_STATE[HUB]["presence"] if pa.get("via"))
+    out["roads"][road]["farBusAnswered"] = answered_here(us, f.BUS_ID)
+    LISTINGS["f"] = None                           # F's kernel blinks; the new session starts on F and mails ours
+    out["roads"][road]["park"] = park(f, S["new"], mid)
+    out["roads"][road]["landingAtHub"] = mail_dial(f, F, hub, HUB)
+    out["roads"][road]["landingHere"] = mail_dial(hub, HUB, us, US)   # the NEWER dial lands first: F's cached word and the mail
+    step(road, "newerDialRecorded", us, newOnFar=S["new"], nobody=S["nobody"])
+    out["roads"][road]["newerRecorded"] = [roster_via(us, HUB), us.PEER_STATE[HUB].get("road"),
+                                           bool(older.get("busId")) and us.PEER_STATE[HUB].get("busId") == older.get("busId")]
+    with As(us):
+        out["roads"][road]["olderDialStatus"] = us.peer_exchange_handle(older)[1]   # the older dial arrives last
+    out["roads"][road]["heldAfter"] = held_words(us, HUB)
+    step(road, "olderDialLanded", us, newOnFar=S["new"], nobody=S["nobody"])
+    out["roads"][road]["settle"] = settle_in_window(mid)
+    dial(hub, HUB, us, US)                         # the next word about F: the hub's next roster names F's cached word again
+    step(road, "hubDialsAgain", us, newOnFar=S["new"])
+    settle_after(out["roads"][road]["settle"])
+face_1_over_empty_cache("hubDialsOutOfOrderOverEmptyCache", "px-hub20", True)
+face_1_over_empty_cache("hubDialsOutOfOrderOverEmptyCacheNeverHeardAnswering", "px-older3", False)
+# AN OLDER FAR HOST'S BLINK (round 6 of fork PR #897, the reviewer's round-5 ruling B on its refuters' extra5-2, which both
+# votes drove with a real v0.14.0 bus as the far host): a far bus from before the blink honesty of 2026-09-01 gossips an
+# EMPTY roster at each kernel blink, which the same hub process's omission cannot tell from an empty answer, and nothing on
+# the wire marks the honesty (PEER_PROTO is 1 before and after it). So that release counts only for a far bus heard
+# ANSWERING in this process (_ANSWERED_BUSES: its own exchange here, or a hub's gossip row, carrying its answered bit), and
+# every other far bus's omitted word stays held, cost (a). F here lacks presenceAnswered (strip_answered), as every
+# release before this PR does; pre_honesty also takes its last-answered cache away, as every release up to v0.14.0 has none
+def pre_honesty(bus):                              # a far bus from before the blink honesty: no last-answered cache, so its listing
+    bus._remember_presence = lambda rows: None     # not answering gossips an EMPTY roster (the fetch collapsed to [])
+    return bus
+def older_far_behind_hub(road, honest):            # F on a release before this PR behind the hub, its word here unanswered
+    us = fresh_us(); f, hub, c = other(road, "f"), other(road, "hub"), other(road, "c")
+    if not honest:
+        pre_honesty(f)
+    LISTINGS["f"], LISTINGS["hub"], LISTINGS["c"], LISTINGS["us"] = [S["other"]], [S["hubsid"]], [S["csid"]], [S["web"]]
+    notify(us, HUB, True); notify(us, C, True)
+    with As(hub):
+        hub.peer_update({"host": US, "port": 50001, "up": True})
+        hub.peer_update({"host": F, "port": 50003, "up": True})
+    with As(f):
+        f.peer_update({"host": HUB, "port": 50002, "up": True})
+    dial(c, C, us, US)
+    dial(hub, HUB, us, US)                         # the hub learns our roster from our response
+    dial(f, F, hub, HUB, strip_answered=True)      # F learns it through the hub's gossip; the hub hears F, its bit absent
+    dial(hub, HUB, us, US)                         # the hub gossips F's word here: its viaBus, viaAnswered False
+    out["roads"][road] = {"gossip": sorted([pa.get("via"), pa.get("id"), bool(pa.get("viaBus")), pa.get("viaAnswered")]
+                                           for pa in us.PEER_STATE[HUB]["presence"] if pa.get("via"))}
+    return us, f, hub, c
+def older_far_blinks(road, honest, mid):           # F's kernel blinks; a session starts there and mails ours on F's next exchange
+    us, f, hub, c = older_far_behind_hub(road, honest)
+    step(road, "farWordHere", us, other=S["other"], nobody=S["nobody"])
+    LISTINGS["f"] = None
+    out["roads"][road]["park"] = park(f, S["new"], mid)
+    out["roads"][road]["landingAtHub"] = mail_dial(f, F, hub, HUB, strip_answered=True)   # F's blink roster and the mail
+    heard = hub.PEER_STATE.get(F) or {}
+    out["roads"][road]["hubHeardF"] = [heard.get("presenceAnswered"), sorted(pa.get("id") for pa in heard.get("presence") or [])]
+    out["roads"][road]["landingHere"] = mail_dial(hub, HUB, us, US)   # the hub's next dial, the road that named F; the mail lands
+    out["roads"][road]["rosterVia"], out["roads"][road]["heldAfter"] = roster_via(us, HUB), held_words(us, HUB)
+    out["roads"][road]["farBusAnswered"] = answered_here(us, f.BUS_ID)
+    step(road, "hubDialed", us, newOnFar=S["new"], nobody=S["nobody"], other=S["other"])
+    out["roads"][road]["settle"] = settle_in_window(mid)   # a courier pass while the session live on F is in no roster
+    LISTINGS["f"] = [S["other"], S["new"]]         # the next word about F: its kernel answers, naming the new session
+    dial(f, F, hub, HUB, strip_answered=True); dial(hub, HUB, us, US)
+    step(road, "farAnswersHub", us, newOnFar=S["new"], nobody=S["nobody"])
+    settle_after(out["roads"][road]["settle"])
+older_far_blinks("olderFarBlinksEmpty", False, "px-older1")   # THE ROAD: a far host from before the honesty (v0.14.0 and earlier)
+older_far_blinks("olderHonestFarBlinks", True, "px-older2")   # the control: blink-honest, no presenceAnswered (v0.15.0 to v0.17.1)
+# DECISION 3's witness (the coordinator's decisions on round 5's open items): a far host on v0.15.0 to v0.17.1, blink-honest
+# and with no presenceAnswered, whose sessions all end: the hub's omission holds its word, every sid cannot-determine, until
+# the hub names the host again (another unanswered word, the same state) or this bus restarts
+road = "olderHonestFarEnds"
+us, f, hub, c = older_far_behind_hub(road, True)
+LISTINGS["f"] = []                                 # every session on F ends: F answers the hub with an empty listing
+out["roads"][road]["farEmptyDial"] = dial(f, F, hub, HUB, strip_answered=True)
+dial(hub, HUB, us, US)                             # the same hub process's dial, the road that named F, omits F
+out["roads"][road]["heldAfter"] = held_words(us, HUB)
+out["roads"][road]["farBusAnswered"] = answered_here(us, f.BUS_ID)
+step(road, "hubOmitsF", us, nobody=S["nobody"], other=S["other"])
+dial(hub, HUB, us, US)
+out["roads"][road]["heldAfterAgain"] = held_words(us, HUB)
+step(road, "hubOmitsFAgain", us, nobody=S["nobody"])
+LISTINGS["f"] = [S["goss"]]                        # a session starts on F; the hub names F again
+dial(f, F, hub, HUB, strip_answered=True); dial(hub, HUB, us, US)
+out["roads"][road]["rosterViaNamed"], out["roads"][road]["heldAfterNamed"] = roster_via(us, HUB), held_words(us, HUB)
+step(road, "hubNamesFAgain", us, nobody=S["nobody"], goss=S["goss"])
+LISTINGS["f"] = []                                 # it ends; the hub omits F again, and our bus restarts
+dial(f, F, hub, HUB, strip_answered=True); dial(hub, HUB, us, US)
+out["roads"][road]["heldBeforeRestart"] = held_words(us, HUB)
+us = load_bus("us2")                               # our bus restarts over the same root: the held word was this process's
+notify(us, HUB, True); notify(us, C, True)
+dial(c, C, us, US); dial(hub, HUB, us, US)
+step(road, "ourBusRestarted", us, nobody=S["nobody"])
+# THE COST WITNESS (the reviewer's round-5 ruling B): a CURRENT far host heard here only over caches (the hub heard F answer
+# and relayed nothing until F's kernel blinked), then answering the hub with an empty listing: its word stays held across
+# two of the hub's dials, until the hub relays its answered word
+road = "farHeardOnlyOverCaches"
+us = fresh_us(); f, hub, c = other(road, "f"), other(road, "hub"), other(road, "c")
+LISTINGS["f"], LISTINGS["hub"], LISTINGS["c"], LISTINGS["us"] = [S["other"]], [S["hubsid"]], [S["csid"]], [S["web"]]
+notify(us, HUB, True); notify(us, C, True)
+with As(hub):
+    hub.peer_update({"host": US, "port": 50001, "up": True})
+    hub.peer_update({"host": F, "port": 50003, "up": True})
 with As(f):
     f.peer_update({"host": HUB, "port": 50002, "up": True})
-out["roads"][road] = {"farEmptyCacheDial": dial(f, F, hub, HUB)}   # F's exchange with the hub serves an empty cache
-heard = hub.PEER_STATE.get(F) or {}                # what the hub had heard from F when it built the older dial
-out["roads"][road]["hubHeardF"] = [heard.get("presenceAnswered"), sorted(pa.get("id") for pa in heard.get("presence") or [])]
-with As(hub):
-    older = hub.build_exchange_request(US, wait=False)   # the hub's dial built now, over F's empty cache; delivered last
-older["host"] = HUB
-out["roads"][road]["olderDialVia"] = sorted([pa.get("via"), pa.get("id")] for pa in older.get("presence") or [] if pa.get("via"))
-LISTINGS["f"] = [S["other"]]                       # F's kernel answers the hub, naming a session
+dial(c, C, us, US)
+dial(hub, HUB, us, US)                             # the hub learns our roster
+dial(f, F, hub, HUB)                               # F answers the hub; the hub relays nothing here yet
+LISTINGS["f"] = None
+dial(f, F, hub, HUB)                               # F's kernel blinks: its exchange with the hub serves its cache
+dial(hub, HUB, us, US)                             # the hub's first word about F here: F's cache, unanswered
+out["roads"][road] = {"gossip": sorted([pa.get("via"), pa.get("id"), pa.get("viaAnswered")]
+                                       for pa in us.PEER_STATE[HUB]["presence"] if pa.get("via")),
+                      "farBusAnswered": answered_here(us, f.BUS_ID)}
+step(road, "cachedWordHere", us, nobody=S["nobody"], other=S["other"])
+LISTINGS["f"] = []                                 # every session on F ends: F answers the hub with an empty listing
 dial(f, F, hub, HUB)
-LISTINGS["f"] = None                               # F's kernel blinks; the new session starts on F and mails ours
-out["roads"][road]["park"] = park(f, S["new"], "px-hub20")
-out["roads"][road]["landingAtHub"] = mail_dial(f, F, hub, HUB)
-out["roads"][road]["landingHere"] = mail_dial(hub, HUB, us, US)  # the NEWER dial lands first: F's cached word and the mail
-step(road, "newerDialRecorded", us, newOnFar=S["new"], nobody=S["nobody"])
-out["roads"][road]["newerRecorded"] = [roster_via(us, HUB), us.PEER_STATE[HUB].get("road"),
-                                       bool(older.get("busId")) and us.PEER_STATE[HUB].get("busId") == older.get("busId")]
-with As(us):
-    out["roads"][road]["olderDialStatus"] = us.peer_exchange_handle(older)[1]   # the older dial arrives last
+dial(hub, HUB, us, US)                             # the same hub process's dial omits F
 out["roads"][road]["heldAfter"] = held_words(us, HUB)
-step(road, "olderDialLanded", us, newOnFar=S["new"], nobody=S["nobody"])
-out["roads"][road]["settle"] = settle_in_window("px-hub20")
-dial(hub, HUB, us, US)                             # the next word about F: the hub's next roster names F's cached word again
-step(road, "hubDialsAgain", us, newOnFar=S["new"])
-settle_after(out["roads"][road]["settle"])
+step(road, "hubOmitsF", us, nobody=S["nobody"], other=S["other"])
+dial(hub, HUB, us, US)                             # ...and again
+out["roads"][road]["heldAfterAgain"] = held_words(us, HUB)
+step(road, "hubOmitsFAgain", us, nobody=S["nobody"])
+LISTINGS["f"] = [S["goss"]]                        # F answers naming a session, and the hub relays that answered word
+dial(f, F, hub, HUB); dial(hub, HUB, us, US)
+out["roads"][road]["heldAfterAnswered"], out["roads"][road]["farBusAnsweredAfter"] = held_words(us, HUB), answered_here(us, f.BUS_ID)
+step(road, "answeredRelayed", us, nobody=S["nobody"], goss=S["goss"])
 # face (2) by the SAME road (the forty-seventh commit; the reviewer's re-verifier at the forty-sixth, by execution): the
 # hub's older dial names F's ANSWERED word, another session, and lands after the newer dial naming F's cached word
 road = "olderAnsweredDialSameRoad"
@@ -4553,7 +4683,11 @@ print(json.dumps(out))
         next through our dial (our fold of the hub's response) once our dial's answer has named F, and the one after
         through the fold of a hub known by its declared name (_drop_peer_name_dupes), which holds the word until the
         hub's next dial (the thirty-third commit: the release needs the road that named the host). F's answering
-        exchange with the hub alone releases nothing here."""
+        exchange with the hub alone releases nothing here. F's bus has been heard answering here (the hub relayed its
+        answered word before its kernel blinked), so this is also the control of the reviewer's round-5 ruling B, which
+        counts the release only for such a far bus: the release fires, as the 10:19Z ruling kept it (THE ROAD beside it,
+        test_an_older_far_hosts_blink_omitted_by_the_same_hub_process_holds_its_word_and_its_session_stays_cannot_determine,
+        records this road's far bus among the ids heard answering)."""
         S = ROAD_SIDS
         via = UNANSWERED(R_VIA_F + " (listing unanswered)")
         carried = [False, False, True, False, False, False, [S["other"]]]
@@ -4762,13 +4896,22 @@ print(json.dumps(out))
     # after the dial is recorded; so the same hub process's omission releases a held word only on the road whose roster
     # last named the host (postal_service.py _via_held, `hubRoad`) ──
 
-    def test_a_far_host_with_no_bus_id_is_released_by_the_same_hub_processs_omission_on_the_road_that_named_it(self):
-        """The verifier's mutant N9 at the thirty-second commit (the release fired only for a far host whose rows carry a
-        viaBus) passed every module, since every release road here gossiped a far host with a bus id. F here is a bus from
-        before busId and presenceAnswered: its exchanges carry neither, so the hub stamps viaBus "" and viaAnswered False
-        on F's rows, and F's word here is unanswered (cost (a)), the arm holding the sid nothing names. F's sessions all
-        end; its next exchange carries no session row, and the same hub process's dial, the road that named F, omits F:
-        the release, whatever bus id F carries. Rule 5 for the sid nothing names; F's word carried, heard false."""
+    def test_a_far_host_with_no_bus_id_keeps_its_word_held_when_the_same_hub_process_omits_it_on_the_road_that_named_it(self):
+        """Named test_a_far_host_with_no_bus_id_is_released_by_the_same_hub_processs_omission_on_the_road_that_named_it
+        from the thirty-third commit until round 6 of fork PR #897, when the reviewer's round-5 ruling B flipped it to the
+        hold. F here is a bus from before busId and presenceAnswered: its exchanges carry neither, so the hub stamps viaBus
+        "" and viaAnswered False on F's rows, and F's word here is unanswered (cost (a)), the arm holding the sid nothing
+        names. F's sessions all end; its next exchange carries no session row, and the same hub process's dial, the road
+        that named F, omits F. Until round 6 that omission released the word whatever bus id F carried (the verifier's
+        mutant N9 at the thirty-second commit, a release only for a word carrying a viaBus, had passed every module). The
+        ruling counts that release only for a far bus heard ANSWERING in this process (_ANSWERED_BUSES), and a word with
+        no viaBus never qualifies, since there is no bus id to find there: such a word comes from a far bus from before
+        busId, through a hub from before viaBus, or through a hub that stamps busId after it stores the row, and the far
+        bus behind it may be one from before the blink honesty of 2026-09-01, whose kernel's blink gossips an empty
+        roster that the omission cannot tell from this empty answer. So the word stays held, heard, its bit False, and the
+        sid nothing names stays cannot-determine: the restricted side, cost (a) through the omission (the writer's
+        docstring). Its red is THE ROAD's (test_an_older_far_hosts_blink_omitted_by_the_same_hub_process_holds_its_word_and_its_session_stays_cannot_determine):
+        at the forty-ninth commit this omission released the word, rule 5 for the sid nothing names."""
         S = ROAD_SIDS
         via = UNANSWERED(R_VIA_F + " (listing unanswered)")
         for shape, got in self.roads.items():
@@ -4778,12 +4921,185 @@ print(json.dumps(out))
                                  "the hub's gossip about F carries no bus id and F's unanswered bit")
                 self.assertEqual((self._road(got, "farWithNoBusId", "farWordHere", "other"),
                                   self._road(got, "farWithNoBusId", "farWordHere", "nobody")), (RULE_4, via))
-                self.assertEqual((self._road(got, "farWithNoBusId", "released", "nobody"),
-                                  self._road(got, "farWithNoBusId", "released", "other"), road["heldAfter"]),
-                                 (RULE_5, LOST(R_VIA_F + " (not heard)"), []),
-                                 "THE RELEASE for a far host with no bus id: the same hub process omits F on the road that named "
-                                 "it (a release keyed on a viaBus answers listing-unanswered here, the word held)")
-                self.assertEqual(road["released"]["rows"][R_VIA_F], [False, False, True, False, False, False, [S["other"]]])
+                self.assertEqual((self._road(got, "farWithNoBusId", "hubOmitsF", "nobody"),
+                                  self._road(got, "farWithNoBusId", "hubOmitsF", "other"), road["heldAfter"]),
+                                 (via, RULE_4, [[R_F, S["other"]]]),
+                                 "HELD for a far host with no bus id: the same hub process omits F on the road that named it, "
+                                 "and a word with no viaBus is never a far bus heard answering (at the forty-ninth commit "
+                                 "released: rule 5 for the sid nothing names, F's word carried, heard false)")
+                self.assertEqual(road["hubOmitsF"]["rows"][R_VIA_F], [True, False, True, False, True, False, [S["other"]]],
+                                 "the hub's word about F stays heard, its bit False: the arm's row")
+
+    # ── AN OLDER FAR HOST'S BLINK (round 6 of fork PR #897, the reviewer's round-5 ruling B on its refuters' extra5-2): the
+    # release by the same hub process's omission counts only for a far bus heard ANSWERING in this process
+    # (postal_service.py _ANSWERED_BUSES, _heard_answering, _via_held) ──
+
+    def test_an_older_far_hosts_blink_omitted_by_the_same_hub_process_holds_its_word_and_its_session_stays_cannot_determine(self):
+        """THE ROAD (the reviewer's round-5 ruling B; its refuters' extra5-2, driven by both votes with a real v0.14.0 bus
+        module as the far host, which a test cannot load from git history, so this road stands a far bus of that shape
+        in for it): F runs a release from before the blink honesty of 2026-09-01 and before presenceAnswered. Every
+        release up to v0.14.0 gossips an EMPTY roster while its kernel listing does not answer (it keeps no last-answered
+        rows; pre_honesty takes them away), and none sends presenceAnswered (strip_answered), so F's word through the
+        current hub is unanswered (cost (a)). F names a session through the hub; in its kernel's blink a new session starts
+        on F and mails ours on F's next exchange with the hub, whose roster is empty; the hub's next dial, the road that
+        named F, carries the mail and omits F. At the forty-ninth commit the same hub process's omission released F's
+        word, and the session live on F answered rule 5 while the hub and C vouched: a courier pass in that window settled
+        its card 'completed' for good, and the road recurs at every blink of such a host. Now that release counts only
+        for a far bus heard answering in this process, which F never is: the word stays held and the session reads
+        listing-unanswered, its card 'working', until the next word about F names it (rule 4). The control beside it,
+        a blink-honest far host with no presenceAnswered (v0.15.0 to v0.17.1): its blink serves its last answered rows,
+        so the hub still names F and the session reads listing-unanswered at both heads. The release's own control, a
+        current far host heard answering through the hub that then answers it with an empty listing, still releases, as
+        the reviewer's 10:19Z ruling kept it: test_a_far_hosts_empty_answer_through_the_same_hub_process_releases_its_held_word,
+        whose far bus is among the ids heard answering, as its road records (the last assertion here)."""
+        S = ROAD_SIDS
+        via = UNANSWERED(R_VIA_F + " (listing unanswered)")
+        for shape, got in self.roads.items():
+            road, control = got["roads"]["olderFarBlinksEmpty"], got["roads"]["olderHonestFarBlinks"]
+            with self.subTest(shape=shape, leg="the road"):
+                self.assertEqual(road["gossip"], [[R_F, S["other"], True, False]],
+                                 "the hub's gossip about F carries F's bus id and F's unanswered bit (F sends no presenceAnswered)")
+                self.assertEqual((self._road(got, "olderFarBlinksEmpty", "farWordHere", "other"),
+                                  self._road(got, "olderFarBlinksEmpty", "farWordHere", "nobody")), (RULE_4, via),
+                                 "cost (a): while the hub names F, F's unanswered word holds every sid nothing names")
+                self.assertEqual((road["landingAtHub"]["reqAnswered"], road["hubHeardF"], road["landingHere"]["acks"]),
+                                 ("absent", [False, []], ["px-older1"]),
+                                 "F's blink roster is EMPTY and lacks the bit, and the new session's mail rode it to the hub "
+                                 "and landed here on the hub's dial")
+                self.assertEqual(self._road(got, "olderFarBlinksEmpty", "hubDialed", "newOnFar"), via,
+                                 "THE ROAD: the same hub process's dial omits F, whose kernel's blink gossiped an empty roster, "
+                                 "and F's word stays held: the session live on F is cannot-determine (at the forty-ninth commit "
+                                 "rule 5, no-reachable-host-names-it, the word released)")
+                self.assertEqual((road["rosterVia"], road["heldAfter"]), ([], [[R_F, S["other"]]]),
+                                 "the hub's roster names no far host, and our bus holds F's word on the hub's row")
+                self.assertEqual(self._road(got, "olderFarBlinksEmpty", "farAnswersHub", "newOnFar"), RULE_4,
+                                 "the next word about F names the session: rule 4")
+                self.assertEqual((road["farBusAnswered"], control["farBusAnswered"],
+                                  got["roads"]["farAnswersEmptyAtHub"]["farBusAnswered"]), (False, False, True),
+                                 "the reason: neither older far bus has been heard answering here, and the release's control's "
+                                 "far bus has (the hub relayed its answered word)")
+            with self.subTest(shape=shape, leg="the settle"):
+                self.assertEqual((tuple(road["settle"]["verdictAtCompletion"]), road["settle"]["pass1"]), (via, [1, "working"]),
+                                 "THE ROAD'S SETTLE: the completion propagates through the real run_propagate and the tracker "
+                                 "of the session live on F stays 'working' (at the forty-ninth commit rule 5 and 'completed', "
+                                 "settled for good)")
+                self.assertEqual((road["settle"]["pass2"], road["settle"]["rolledUpAgain"]), ([0, "working"], "working"),
+                                 "after the next word about F the card is still unsettled, the session live")
+            with self.subTest(shape=shape, leg="the control"):
+                self.assertEqual((control["hubHeardF"], control["rosterVia"], control["heldAfter"],
+                                  self._road(got, "olderHonestFarBlinks", "hubDialed", "newOnFar"), control["settle"]["pass1"]),
+                                 ([False, [S["other"]]], [[R_F, S["other"]]], [], via, [1, "working"]),
+                                 "THE CONTROL: a blink-honest far host with no presenceAnswered serves its last answered rows "
+                                 "through the blink, so the hub still names F: no omission, the session cannot-determine at "
+                                 "both heads")
+
+    def test_residual_3d_face_1_over_an_empty_cache_from_a_far_process_never_heard_answering_here_holds_the_word(self):
+        """The reviewer's round-5 ruling B on face (1)'s empty-cache shape: F's bus restarts during its kernel's blink with
+        no twin, so its restarted process is a new bus id, and here the hub never relays that process's answered word
+        before its next blink (the witness road, test_residual_3d_face_1_in_one_hub_process_an_older_dial_over_the_far_hosts_empty_cache_answers_rule_5,
+        relays it, so face (1) stays witnessed at rule 5 there). The older dial, built over F's empty cache, lands after the
+        newer dial naming F's cached word, on the road and from the hub process that named F; F's restarted bus is not
+        among the ids heard answering, so the omission releases nothing: the session live on F stays listing-unanswered
+        and its card 'working' (at the forty-ninth commit rule 5 and 'completed', the release), until the hub's next
+        roster names F's cached word again."""
+        S = ROAD_SIDS
+        via = UNANSWERED(R_VIA_F + " (listing unanswered)")
+        name = "hubDialsOutOfOrderOverEmptyCacheNeverHeardAnswering"
+        for shape, got in self.roads.items():
+            road = got["roads"][name]
+            with self.subTest(shape=shape, leg="the road"):
+                self.assertEqual((road["farEmptyCacheDial"], road["hubHeardF"], road["olderDialVia"]),
+                                 ([200, False, []], [False, []], []),
+                                 "F's exchange with the hub served an empty cache, and the hub built the older dial over it")
+                self.assertEqual((road["landingAtHub"]["reqAnswered"], road["landingHere"]["acks"]), (False, ["px-older3"]),
+                                 "the new session's mail rode F's CACHED exchange with the hub and landed here")
+                self.assertEqual((self._road(got, name, "newerDialRecorded", "newOnFar"), road["newerRecorded"]),
+                                 (via, [[[R_F, S["other"]]], "dial", True]),
+                                 "the newer roster, recorded by the hub's dial, named F's cached word, and the older dial is the "
+                                 "same hub process's: the release's three conditions of the forty-ninth commit")
+                self.assertEqual((road["olderDialStatus"], self._road(got, name, "olderDialLanded", "newOnFar"), road["heldAfter"]),
+                                 (200, via, [[R_F, S["other"]]]),
+                                 "HELD: the older dial's omission is not the answer of a far bus heard answering here, so the "
+                                 "session live on F stays cannot-determine (at the forty-ninth commit rule 5, the word released)")
+                self.assertEqual(self._road(got, name, "hubDialsAgain", "newOnFar"), via)
+                self.assertEqual((road["farBusAnswered"], got["roads"]["hubDialsOutOfOrderOverEmptyCache"]["farBusAnswered"]),
+                                 (False, True),
+                                 "the reason: F's restarted process was never heard answering on this road, and on the "
+                                 "witness road the hub relayed its answered word")
+            with self.subTest(shape=shape, leg="the settle"):
+                self.assertEqual((tuple(road["settle"]["verdictAtCompletion"]), road["settle"]["pass1"]), (via, [1, "working"]),
+                                 "a courier pass there leaves the card 'working' (at the forty-ninth commit rule 5 and "
+                                 "'completed')")
+
+    def test_cost_a_a_current_far_host_heard_here_only_over_caches_that_answers_its_hub_empty_holds_its_word_until_its_answer_is_relayed(self):
+        """THE COST WITNESS (the reviewer's round-5 ruling B): cost (a) through the omission reaches a CURRENT far bus this
+        bus has heard only over caches. The hub heard F answer and relayed nothing here until F's kernel blinked, so the
+        hub's first word about F here is F's cache (viaAnswered False), and F's bus id is not among the ids heard
+        answering. F's sessions all end and F answers the hub with an empty listing; the same hub process's dials omit F,
+        and F's word stays held across two of them, the sid nothing names cannot-determine (at the forty-ninth commit the
+        first released it, rule 5): the restricted side, which the ruling accepts. It lasts until the hub relays F's
+        answered word, F's own row speaks for it here, or this bus restarts; here the hub relays F's answer naming a
+        session, F's bus joins the set, the held word goes (the hub names F again, answered) and the sid nothing names is
+        rule 5's. A current far host whose first answered exchange with the hub carries an empty listing reads the same,
+        since a hub stamps a far host's bit only on that host's session rows (presence_payload). The carrier fix, each
+        heard far host's answered bit carried independent of session rows, closes both."""
+        S = ROAD_SIDS
+        via = UNANSWERED(R_VIA_F + " (listing unanswered)")
+        for shape, got in self.roads.items():
+            with self.subTest(shape=shape):
+                name = "farHeardOnlyOverCaches"
+                road = got["roads"][name]
+                self.assertEqual((road["gossip"], self._road(got, name, "cachedWordHere", "nobody"),
+                                  self._road(got, name, "cachedWordHere", "other")), ([[R_F, S["other"], False]], via, RULE_4),
+                                 "the hub's first word about F here is F's cache")
+                self.assertEqual((self._road(got, name, "hubOmitsF", "nobody"), road["heldAfter"]), (via, [[R_F, S["other"]]]),
+                                 "COST (a) THROUGH THE OMISSION: the same hub process's dial omits F after F's empty answer, "
+                                 "and F's word stays held, the sid nothing names cannot-determine (at the forty-ninth commit "
+                                 "released: rule 5)")
+                self.assertEqual((self._road(got, name, "hubOmitsFAgain", "nobody"), road["heldAfterAgain"]),
+                                 (via, [[R_F, S["other"]]]), "...across the hub's next dial too")
+                self.assertEqual((self._road(got, name, "answeredRelayed", "nobody"), self._road(got, name, "answeredRelayed", "goss"),
+                                  road["heldAfterAnswered"]), (RULE_5, RULE_4, []),
+                                 "the hub relays F's answered word: the held word goes, rule 5 for the sid nothing names")
+                self.assertEqual((road["farBusAnswered"], road["farBusAnsweredAfter"]), (False, True),
+                                 "F's bus joins the ids heard answering only with the relayed answered word")
+
+    def test_cost_a_a_far_host_on_a_release_before_this_pr_whose_sessions_end_holds_its_word_until_the_hub_names_it_again_or_our_bus_restarts(self):
+        """DECISION 3 of the reviewer's decisions on round 5's open items: with no wire marker for blink honesty, a far
+        host is trusted to release only after it has answered in this process, so a host on a shipped release v0.15.0 to
+        v0.17.1 (blink-honest, sending no presenceAnswered) holds behind a current hub. F here is such a host, its word
+        here unanswered (cost (a) already holds every sid while the hub names it). Its sessions all end, it answers the
+        hub with an empty listing, and the same hub process's dials, the road that named F, omit it: F's word stays held
+        across two dials, the sid nothing names cannot-determine (at the forty-ninth commit released, rule 5, as the
+        reviewer's 10:19Z ruling kept it for every far host). The hub naming F again replaces the held word with another
+        unanswered word, the same state (such a bus never sends presenceAnswered, so it never joins the set); F's
+        sessions ending again hold that word; this bus's restart ends it (PEER_STATE and the set start empty, and the
+        restarted process holds no word the hub omits): rule 5 for the sid nothing names. For a host that stays on its
+        release nothing sooner ends it: it lasts until that host runs a release carrying presenceAnswered and is heard
+        answering, or this bus restarts."""
+        S = ROAD_SIDS
+        via = UNANSWERED(R_VIA_F + " (listing unanswered)")
+        for shape, got in self.roads.items():
+            with self.subTest(shape=shape):
+                name = "olderHonestFarEnds"
+                road = got["roads"][name]
+                self.assertEqual((road["gossip"], road["farEmptyDial"]), ([[R_F, S["other"], True, False]], [200, "absent", []]),
+                                 "the hub's gossip about F carries F's bus id and its unanswered bit; F answers empty, the "
+                                 "bit absent")
+                self.assertEqual((self._road(got, name, "hubOmitsF", "nobody"), road["heldAfter"]), (via, [[R_F, S["other"]]]),
+                                 "DECISION 3: the same hub process's dial omits F, a far bus never heard answering, and F's word "
+                                 "stays held (at the forty-ninth commit released: rule 5)")
+                self.assertEqual((self._road(got, name, "hubOmitsFAgain", "nobody"), road["heldAfterAgain"]),
+                                 (via, [[R_F, S["other"]]]), "...across the hub's next dial too")
+                self.assertEqual((self._road(got, name, "hubNamesFAgain", "nobody"), self._road(got, name, "hubNamesFAgain", "goss"),
+                                  road["rosterViaNamed"], road["heldAfterNamed"]),
+                                 (via, RULE_4, [[R_F, S["goss"]]], []),
+                                 "the hub names F again: its new word replaces the held one and is unanswered, the same state")
+                self.assertEqual((road["heldBeforeRestart"], self._road(got, name, "ourBusRestarted", "nobody")),
+                                 ([[R_F, S["goss"]]], RULE_5),
+                                 "F's sessions end again and its word is held again; this bus's restart ends it: rule 5 for the "
+                                 "sid nothing names")
+                self.assertEqual(road["farBusAnswered"], False, "F's bus is not among the ids heard answering")
 
     def test_an_older_answer_folded_after_the_hubs_newer_dial_keeps_the_far_hosts_word_held(self):
         """The verifier's R1 at the thirty-second commit, as a pin: F answered through the hub; the hub's bus restarts;
@@ -4979,8 +5295,12 @@ print(json.dumps(out))
         """RESIDUAL (3d)'s face (1) with no hub restart and the older dial built over F's EMPTY CACHE (the reviewer's
         re-verifier at the forty-sixth commit, by execution): F's bus restarts during its kernel's blink with its disk
         twin gone, so its exchange with the hub serves an empty cache (presenceAnswered False, no session row), and the
-        hub builds a dial to us then, which is delivered last; F's kernel answers the hub naming a session, then blinks,
-        and a new session starts on F and mails ours on F's cached exchange; the hub's newer dial lands first, naming F's
+        hub builds a dial to us then, which is delivered last; F's kernel answers the hub naming a session, and the hub's
+        next dial relays that answered word here (the step the reviewer's round-5 ruling B added: the release by the same
+        hub process's omission counts only for a far bus heard answering in this process, and F's restarted process is a
+        new bus id; without the step the word stays held, the B pin
+        test_residual_3d_face_1_over_an_empty_cache_from_a_far_process_never_heard_answering_here_holds_the_word); then F
+        blinks, and a new session starts on F and mails ours on F's cached exchange; the hub's newer dial lands first, naming F's
         cached word and carrying the mail (the arm, cannot-determine); the older dial lands after it, omitting F, on the
         road and from the hub process that named F: the release, and the session live on F answers rule 5 while the hub
         and C vouch, until the hub's next roster names F's cached word again (a completion, reply or resolve for the
@@ -5004,6 +5324,8 @@ print(json.dumps(out))
                                  "F's exchange with the hub served an empty cache, and the hub built the older dial over it: "
                                  "the hub's word about F then was unanswered and named no session, and the older dial names "
                                  "no session of F's")
+                self.assertEqual((road["relayDial"][0], road["relayedVia"]), (200, [[R_F, S["other"], True]]),
+                                 "the hub's dial relayed F's restarted process's ANSWERED word here before its blink")
                 self.assertEqual((road["landingAtHub"]["reqAnswered"], road["landingHere"]["acks"]), (False, ["px-hub20"]),
                                  "the new session's mail rode F's CACHED exchange with the hub and landed here")
                 self.assertEqual(self._road(got, "hubDialsOutOfOrderOverEmptyCache", "newerDialRecorded", "newOnFar"), via)
@@ -5037,7 +5359,9 @@ print(json.dumps(out))
         from the live registry, and rollup_status's sticky completion keeps each settle alike. The six windows: five
         from the release's three races, residual (3a)'s second face (the next word names the session: rule 4), residual
         (3d)'s face (1) in its three shapes (a restarted hub's older dial, one hub process's older dial carrying F's
-        answered empty listing, and one built over F's empty cache) and the release's third race, a second machine
+        answered empty listing, and one built over F's empty cache, whose restarted process the hub relayed answering
+        here first, since the reviewer's round-5 ruling B counts the release only for a far bus heard answering in this
+        process) and the release's third race, a second machine
         answering the hub under F's name with an empty listing once (the next word is F's cached word again:
         cannot-determine); and a sixth on the third race's road, the same second machine's next exchange, which opens the
         window again while F's word at the hub is a cache (the next word F's cached word again), found by the reviewer's
