@@ -96,8 +96,6 @@ _scan() {   # $@ files: every non-comment line holding a construct, as "family: 
     [[ "$output" == *"/hooks/romp-wake.sh"* ]]
     [[ "$output" == *"/.githooks/pre-push"* ]]
     [[ "$output" == *"/vscode-extension/install.sh"* ]]
-    # the shell job's macOS cell executes this one too, through tools/ci-browser-legs.test.mjs, which runs a copy of it under
-    # bash with a stub node; the browser-legs step itself runs on ubuntu alone
     [[ "$output" == *"/vscode-extension/scripts/ci-browser-legs.sh"* ]]   # the extension's CI scripts
     [[ "$output" == *"/tools/romp-lab/lab.sh"* ]]      # the tools live one directory down: tools/*/*.sh
     [[ "$output" == *"/tools/ui-verify/shot.sh"* ]]
