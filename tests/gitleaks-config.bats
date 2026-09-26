@@ -235,7 +235,9 @@ hook_repo() {
 # Since round 9 the hook reads the lines a push adds itself, writes them into numbered files
 # (pieces) of at most 98,304 bytes, each beginning with a line holding ~, and runs `gitleaks dir .`
 # from inside their directory, so gitleaks runs no git. Each case below pins one premise of that
-# design against the installed scanner; tests/pre-push-hook.bats drives the hook itself.
+# design against the installed scanner, G2 with the cap read from the hook's awk text and G4 with
+# the names the hook's own piecing awk gives its copies; tests/pre-push-hook.bats drives the hook
+# itself, through pushes.
 
 scan_pieces() {   # <piece directory> [gitleaks options...]: scanned from inside it, as the hook runs it
     local d=$1
@@ -250,23 +252,9 @@ dense_tokens() {
 }
 
 # The five default rules that key on a file's path (the same five in gitleaks 8.28.0 and 8.30.1),
-# each with the names the hook gives its copies and a probe it reports.
+# each with a probe it reports (path_rule_probe). The names the hook gives their copies are read
+# from the hook (hook_copy_names, above G4), never spelled here.
 PATH_RULES="pkcs12-file nuget-config-password kubernetes-secret-yaml hashicorp-tf-password freemius-secret-key"
-
-# The names the hook's path-scoped run gives a rule's copies, one per suffix its selection takes
-# for that rule: the piece number and the suffix the selection matched, lower-cased, nuget.config
-# whole, in a directory named by the piece number (round 10b, from the round 9 rulings' group F
-# and the coordinator's decision 4; until then each copy took the pushed file's basename, which
-# cert.p12, nuget.config, secret.yaml, main.tf and fs.php stood for here).
-path_rule_copies() {
-    case $1 in
-        pkcs12-file) echo 1.p12 1.pfx ;;
-        nuget-config-password) echo nuget.config ;;
-        kubernetes-secret-yaml) echo 1.yaml 1.yml ;;
-        hashicorp-tf-password) echo 1.tf 1.hcl ;;
-        freemius-secret-key) echo 1.php ;;
-    esac
-}
 
 path_rule_probe() {
     case $1 in
@@ -368,31 +356,155 @@ hook_constant() {   # <CAP | V>
     done
 }
 
-@test "round 9d, G4: each path-scoped rule fires under the name the hook gives its copy, the piece number and the suffix the rule keys on, which a piece named by number alone lacks" {
+# The hook's piecing awk, CRED_PIECES_AWK, read from the hook's own text and never restated here:
+# the text between the quote that opens its one assignment and the next quote, which closes it (the
+# hook holds the text in single quotes, so it contains none). No assignment opening a line (a
+# rename, a move) or two, and the premise is gone, so say so.
+hook_pieces_awk() {
+    local hook="$ROMP_DIR/.githooks/pre-push" n text
+    n=$(grep -c "^CRED_PIECES_AWK='" "$hook" || true)
+    [ "$n" -eq 1 ] || { echo "expected exactly one line of the hook ($hook) opening CRED_PIECES_AWK='...', found $n" >&2; return 1; }
+    text=$(< "$hook")
+    text=${text#*$'\n'"CRED_PIECES_AWK='"}
+    printf '%s' "${text%%"'"*}"
+}
+
+# The hook's piecing awk run as its feed runs it at a file's first added line: choose over the
+# path, then newpiece, once for each path of the list, in order, so each path is one piece,
+# numbered from 1. The hook's own code writes the pieces (the ~ line each), the index (piece,
+# commit, path, closing field) and the path-scoped index (piece, the copy's name, the second copy's
+# name, the rule, closing field), the files the hook's shell reads to write and scan the copies.
+# This driver adds one line per piece of what choose answered (sfx, the suffix it matched,
+# lower-cased, and osfx, the same bytes as the path spells them), which G4's shape check composes
+# its expected names from. Its status is the awk's: 1 when the list cannot be read.
+hook_copy_names() {   # <list of paths> <piece directory> <index> <path-scoped index> <choose's answers>
+    local text
+    text=$(hook_pieces_awk) || return 1
+    LC_ALL=C ROMP_LIST_FILE=$1 ROMP_PIECE_DIR=$2 ROMP_INDEX_FILE=$3 ROMP_PATH_INDEX_FILE=$4 ROMP_CHOSEN_FILE=$5 awk "$text"'
+        BEGIN {
+            list = ENVIRON["ROMP_LIST_FILE"]; dir = ENVIRON["ROMP_PIECE_DIR"]; chosen = ENVIRON["ROMP_CHOSEN_FILE"]
+            idx = ENVIRON["ROMP_INDEX_FILE"]; pidx = ENVIRON["ROMP_PATH_INDEX_FILE"]
+            pieces_begin(); sha = "TESTSHA"
+            while ((r = (getline p < list)) > 0) { choose(p); forget(); newpiece(0); printf "%d\t%s\t%s\t.\n", pieces, sfx, osfx > chosen }
+            shut()
+            if (r < 0) exit 1
+        }'
+}
+
+# One sample path per suffix the hook's path-scoped selection takes, each after the rule that
+# suffix answers to: two for nuget.config (a bare basename and one with a stem), the case varied so
+# the second copy's name shows the suffix as the path spells it, and ten paths so a piece's number
+# reaches two digits (10, whose letters are ba). These are the case's inputs, not the names under
+# test, and G4 checks each against gitleaks at its real path, as main's hook scanned it.
+G4_SAMPLES='pkcs12-file keys/app.p12
+pkcs12-file certs/Store.PFX
+nuget-config-password src/NuGet.Config
+nuget-config-password prod.nuget.config
+kubernetes-secret-yaml deploy/secret.yaml
+kubernetes-secret-yaml ci/Build.YML
+hashicorp-tf-password infra/main.tf
+hashicorp-tf-password infra/job.HCL
+freemius-secret-key www/index.php
+freemius-secret-key lib/Settings.PHP'
+
+@test "round 9d, G4: each path-scoped rule fires under both names the hook gives a selected file's piece, read from the hook by running its piecing awk (choose, then newpiece) over a sample path per suffix: the copy's, in the piece's directory, and the second copy's, at the probe run's root, each in the shape the hook's texts state; none of the five fires under the piece's number alone" {
     # Five default rules key on the file's path. A piece named by number carries no such name, so
     # the hook's main run cannot fire them (until round 9 the hook ran gitleaks over git, where the
-    # path is real, and they fired), and the hook scans the pushed files whose paths match those
-    # rules a second time, each copy named by its piece number and the suffix the selection
-    # matched, lower-cased (1.p12, 1.yaml; nuget.config whole), in a directory named by the piece
-    # number, with --enable-rule naming the five. Until round 10b each copy took the pushed file's
-    # git-quoted basename, and a selected file whose quoted basename passes 255 bytes could not be
-    # written (the round 9 rulings' group F); the fixed name keeps what the five rules' paths key
-    # on and nothing of the pushed name. Both halves per rule, in that second run's shape: the
-    # probe under each of its copy names, in a directory named by number, is reported under the
-    # rule; the same bytes named by number give no finding.
+    # path is real, and they fired), and the hook scans each selected file's pieces again under
+    # names that keep what those paths key on: a COPY in a directory named by the piece's number,
+    # for the additive run (the piece's number and the suffix the selection matched, lower-cased,
+    # or nuget.config alone; round 10b, from the round 9 rulings' group F), and since round 11b a
+    # SECOND COPY at the probe run's root (romp-copy-, the piece's number in letters, a dot when the
+    # suffix holds none, and the suffix as the path spells it; the round 10 rulings' group A). Both
+    # names are read from the hook: hook_copy_names runs the hook's own piecing awk over the sample
+    # paths and the names come from the path-scoped index newpiece writes. Until round 11c this
+    # case spelled the copy names itself (1.p12, nuget.config, 1.yaml and the rest) and stayed
+    # green whatever names the hook gave its copies (the round 10 rulings, group F).
+    # Checked, in this order:
+    # - each sample is one piece of the index and one row of the path-scoped index, which names
+    #   the rule the sample stands for (the probe run picks its probe by that field);
+    # - each rule fires under each name, in the probe run's layout (the copy at <piece>/<name>,
+    #   the second copy at the root), with the five rules alone as the hook runs them, the report
+    #   read by file and rule; the same bytes at the sample's real path, where main's hook scanned
+    #   them, fire too (so each sample is a path its rule keys on), and named by the piece's number
+    #   alone they fire under none of the five;
+    # - each name has the shape the header, the hook's comments and the rulings state and reason
+    #   from, composed from choose's own answers (whose osfx must end the path, sfx its lower
+    #   case). This check keys on that spelling, not on a property: a rename that keeps every rule
+    #   firing (a prefix on the copy's name, another stem for the second copy's) is red here alone,
+    #   and owes those texts the same change.
+    # Red, each in a scratch copy of the hook under gitleaks 8.28.0 and 8.30.1 (round 11c): under
+    # the stemless mutant of the copy's name (the piece's number with no suffix, so only the
+    # nuget.config copies fire), under an "x" prefixed to it (the shape check) and under the second
+    # copy renamed (romp-dup- for romp-copy-: the shape check). The executed proof that the hook's
+    # own copies fire in a push stays in tests/pre-push-hook.bats: its round 10b cases titled
+    # "round 10b (F, the coordinator's decision 4)" and its round 11b section's witnesses.
+    local -a rules paths pcs cnames snames irow prow crow
+    local l r p k piece cname sname prule fterm extra ipiece isha ipath iterm cpiece sfx osfx cterm want lt dot five
     five=${PATH_RULES// /,}
-    for r in $PATH_RULES; do
-        for c in $(path_rule_copies "$r"); do
-            rm -rf "$TEST_DIR/p" "$TEST_DIR/r.json"; mkdir -p "$TEST_DIR/p/1"
-            path_rule_probe "$r" > "$TEST_DIR/p/1/$c"
-            run scan_pieces "$TEST_DIR/p" --config "$CFG" --enable-rule "$five" --report-format json --report-path "$TEST_DIR/r.json"
-            [ "$status" -eq 2 ] && grep -q "\"RuleID\": \"$r\"" "$TEST_DIR/r.json" || {
-                echo "$r: not reported for its copy named 1/$c (exit $status):"; echo "$output"; false; }
-        done
-        rm -rf "$TEST_DIR/p"; mkdir "$TEST_DIR/p"
-        path_rule_probe "$r" > "$TEST_DIR/p/1"
-        run scan_pieces "$TEST_DIR/p" --config "$CFG" --enable-rule "$five"
-        [ "$status" -eq 0 ] || { echo "$r: reported for the same bytes named by number (exit $status):"; echo "$output"; false; }
+    while read -r r p; do rules+=("$r"); paths+=("$p"); done <<< "$G4_SAMPLES"
+    printf '%s\n' "${paths[@]}" > "$TEST_DIR/paths"
+    mkdir "$TEST_DIR/pieces" "$TEST_DIR/q" "$TEST_DIR/real" "$TEST_DIR/num"
+    hook_copy_names "$TEST_DIR/paths" "$TEST_DIR/pieces" "$TEST_DIR/index" "$TEST_DIR/pindex" "$TEST_DIR/chosen" || {
+        echo "the hook's piecing awk, run over the sample paths, failed"; false; }
+    while IFS= read -r l; do irow+=("$l"); done < "$TEST_DIR/index"      # read loops, not mapfile: a stock mac's bash is 3.2
+    while IFS= read -r l; do prow+=("$l"); done < "$TEST_DIR/pindex"
+    while IFS= read -r l; do crow+=("$l"); done < "$TEST_DIR/chosen"
+    [ "${#irow[@]}" -eq "${#paths[@]}" ] && [ "${#prow[@]}" -eq "${#paths[@]}" ] && [ "${#crow[@]}" -eq "${#paths[@]}" ] || {
+        echo "the hook's piecing awk wrote ${#irow[@]} index rows, ${#prow[@]} path-scoped rows and ${#crow[@]} answers of choose for ${#paths[@]} sample paths, each of which its selection takes:"
+        cat "$TEST_DIR/index" "$TEST_DIR/pindex"; false; }
+    for k in "${!paths[@]}"; do
+        IFS=$'\t' read -r ipiece isha ipath iterm <<< "${irow[$k]}"
+        IFS=$'\t' read -r piece cname sname prule fterm extra <<< "${prow[$k]}"
+        [ "$iterm" = . ] && [ "$ipiece" = "$((k + 1))" ] && [ "$ipath" = "${paths[$k]}" ] || {
+            echo "index row $((k + 1)) is not piece $((k + 1)) for ${paths[$k]} with its closing field: ${irow[$k]}"; false; }
+        [ "$fterm" = . ] && [ -z "$extra" ] && [ "$piece" = "$ipiece" ] || {
+            echo "path-scoped index row $((k + 1)) is not piece $ipiece, the copy's name, the second copy's name, the rule and a closing field: ${prow[$k]}"; false; }
+        [ "$prule" = "${rules[$k]}" ] || {
+            echo "the path-scoped index names $prule for ${paths[$k]}, whose suffix answers to ${rules[$k]}"; false; }
+        pcs+=("$piece"); cnames+=("$cname"); snames+=("$sname")
+        mkdir -p "$TEST_DIR/q/$piece" "$TEST_DIR/real/$(dirname "${paths[$k]}")"
+        path_rule_probe "${rules[$k]}" > "$TEST_DIR/q/$piece/$cname"
+        path_rule_probe "${rules[$k]}" > "$TEST_DIR/q/$sname"
+        path_rule_probe "${rules[$k]}" > "$TEST_DIR/real/${paths[$k]}"
+        path_rule_probe "${rules[$k]}" > "$TEST_DIR/num/$piece"
+    done
+    printf '{{range .}}{{.File}}\t{{.RuleID}}\t.\n{{end}}' > "$TEST_DIR/tpl"
+    run scan_pieces "$TEST_DIR/q" --config "$CFG" --enable-rule "$five" -f template --report-template "$TEST_DIR/tpl" -r "$TEST_DIR/q.rep"
+    [ "$status" -eq 2 ] || { echo "no finding under the names the hook gives the copies (exit $status):"; echo "$output"; false; }
+    run scan_pieces "$TEST_DIR/real" --config "$CFG" --enable-rule "$five" -f template --report-template "$TEST_DIR/tpl" -r "$TEST_DIR/real.rep"
+    [ "$status" -eq 2 ] || { echo "no finding at the sample paths themselves (exit $status):"; echo "$output"; false; }
+    for k in "${!paths[@]}"; do
+        grep -qxF "${paths[$k]}"$'\t'"${rules[$k]}"$'\t.' "$TEST_DIR/real.rep" || {
+            echo "${rules[$k]} did not fire at the sample's real path, ${paths[$k]}, so the sample is not one its rule keys on:"; cat "$TEST_DIR/real.rep"; false; }
+        grep -qxF "${pcs[$k]}/${cnames[$k]}"$'\t'"${rules[$k]}"$'\t.' "$TEST_DIR/q.rep" || {
+            echo "${rules[$k]} did not fire at ${pcs[$k]}/${cnames[$k]}, the copy's name the hook gives ${paths[$k]}:"; cat "$TEST_DIR/q.rep"; false; }
+        grep -qxF "${snames[$k]}"$'\t'"${rules[$k]}"$'\t.' "$TEST_DIR/q.rep" || {
+            echo "${rules[$k]} did not fire at ${snames[$k]}, the second copy's name the hook gives ${paths[$k]}:"; cat "$TEST_DIR/q.rep"; false; }
+    done
+    run scan_pieces "$TEST_DIR/num" --config "$CFG" --enable-rule "$five"
+    [ "$status" -eq 0 ] || { echo "a path-scoped rule fired on a probe named by its piece's number alone (exit $status):"; echo "$output"; false; }
+    # The shape check: the names as the texts state them, composed from choose's own answers.
+    for k in "${!paths[@]}"; do
+        IFS=$'\t' read -r cpiece sfx osfx cterm <<< "${crow[$k]}"
+        [ "$cterm" = . ] && [ "$cpiece" = "${pcs[$k]}" ] && [ -n "$osfx" ] && [[ "${paths[$k]}" == *"$osfx" ]] &&
+            [ "$(printf '%s' "$osfx" | LC_ALL=C tr A-Z a-z)" = "$sfx" ] || {
+            echo "choose answered \"${crow[$k]}\" for ${paths[$k]}: not its piece, the matched suffix lower-cased and the same bytes as the path ends in them"; false; }
+        if [ "$sfx" = nuget.config ]; then want=$sfx; else want=${pcs[$k]}$sfx; fi
+        [ "${cnames[$k]}" = "$want" ] || {
+            echo "the hook names the copy of ${paths[$k]} ${cnames[$k]}, not $want, the shape its texts state (the piece's number and the"
+            echo "suffix the selection matched, lower-cased, or nuget.config alone). This check keys on that spelling; the scan above"
+            echo "pins the firing property, so a rename that keeps every rule firing owes the header and the comments the same change."
+            false; }
+        lt=$(printf '%s' "${pcs[$k]}" | tr 0123456789 abcdefghij)
+        case $osfx in .*) dot="" ;; *) dot=. ;; esac
+        want=romp-copy-$lt$dot$osfx
+        [ "${snames[$k]}" = "$want" ] || {
+            echo "the hook names the second copy of ${paths[$k]} ${snames[$k]}, not $want, the shape its texts state (romp-copy-, the"
+            echo "piece's number in letters a to j, a dot when the suffix holds none, and the suffix as the path spells it). This check keys"
+            echo "on that spelling; the scan above pins the firing property, so a rename that keeps every rule firing owes the header,"
+            echo "the comments and the rulings' texts the same change."
+            false; }
     done
 }
 
