@@ -123,11 +123,27 @@ function jobs(text) {
  *  Its env, the env reader, which reads every step and fails closed: a line it cannot read is refused, named by its
  *  line (the step's envRefused), rather than read past. A line of the step holding a carriage return or a Unicode line
  *  break (U+0085, U+2028, U+2029) is refused wherever it sits in the step, a # line included: YAML ends a line there,
- *  and this reader, which splits at a line feed alone, would read what follows the break as part of the line. An env
- *  line is a code line of exactly eight spaces and then `env:`, and the block begins after the step's env line when
- *  only whitespace follows its colon. An env line with anything else after its colon (an inline mapping, a comment, an
- *  alias) is refused, and so is a second env line in the step, each opening a block read the same way (an inline
- *  mapping is a flow collection, below). Outside a quoted value (below), the block runs to the first line that is not
+ *  and this reader, which splits at a line feed alone, would read what follows the break as part of the line. The
+ *  reader reads the key of each line at the step's own level: the opener's, after its `- `, and that of each line
+ *  of exactly eight spaces that is not blank, not a comment and not inside a quoted scalar or flow collection the
+ *  reader follows (below). A plain key's text runs from the key place to the line's first colon (the whole line when
+ *  it has none), a single- or double-quoted key's is the text inside its quotes, closed on its line, and a key whose
+ *  text, trimmed, is env in any case is an env key (`env :`, `ENV:`, `env:x:`, which YAML reads as the key env:x,
+ *  `"env":`, `'env':`, `"env ":`). A key the reader cannot tell is refused and opens no block: a key place that is
+ *  empty or begins with a space or a tab (an opener with nothing, or more than one space, after its `- `, which puts
+ *  the step's keys on later lines or at another column) or with a YAML indicator other than a sequence entry's `- `
+ *  and a quote (a tag's `!` or an anchor's `&`, whatever key follows, an alias's `*`, a flow collection's `[` or `{`,
+ *  a flow-mapping step among them, an explicit key's `? ` and its value's `: `, and `,`, `]`, `}`, `#`, `|`, `>`,
+ *  `%`, `@` and a backquote), the plain key `<<` (the merge key, `<< :` among it), a quoted key its line does not
+ *  close, and a double-quoted key holding a backslash, since an escape can spell env. A sequence entry at the step's
+ *  column (the value of the key before it) and every other line at the step's level are neither read nor refused,
+ *  and so is a key nested deeper (an env key under `with:`, at ten spaces). The env line is a line of exactly eight
+ *  spaces, then `env:` and whitespace alone, and the block begins after it. Every other env key (on the opener,
+ *  spelled any other way, or with anything else after its colon: an inline mapping, a comment, an alias) is refused,
+ *  and so is each env key after the step's first, each opening a block read the same way (an inline mapping is a
+ *  flow collection, below). YAML keeps one of two env keys (PyYAML the later), and GitHub's handling of a duplicate
+ *  key, or of a key's case, is unverified, so the reader refuses a step with two, whatever their spellings, their
+ *  order and the keys between them. Outside a quoted value (below), the block runs to the first line that is not
  *  blank, not a comment, and whose leading run of spaces and tabs holds no tab and eight spaces or fewer. A blank line
  *  (empty, or whitespace alone by \s at any length) and a comment (spaces and tabs alone before its #, at any indent,
  *  inside a block scalar's text too) neither end the block nor are read, and a line with any other character before
@@ -138,18 +154,18 @@ function jobs(text) {
  *  is refused: a quoted key, a key led by a digit, a key holding another character (a hyphen, a dot, the YAML merge key
  *  `<<`), a key with a space before its colon, a key whose colon ends its line, a line led by nine, or eleven or more,
  *  spaces (a block scalar's text, a value continued on the next line, a key at another depth), and a line with a tab in
- *  its leading whitespace. A quoted scalar or a flow collection that a line of the block begins, the env line among
- *  them, is followed as YAML follows it. Its node begins at the line's key place (after its leading whitespace, any
- *  `- `, `? ` or `: ` indicator, and any tag or anchor) or at its value place (after a plain key's colon and a space, a
- *  tab or the line's end, or after a quoted key closed on the line and its colon, then any such indicator, tag or
- *  anchor, as at the key place), and a quote anywhere else, inside a plain scalar (`NOTE: a'b`) or in a comment, begins
- *  nothing. A line that begins a single- or double-quoted scalar and does not close it (inside single quotes two single
- *  quotes are a quote, and inside double quotes a backslash escapes the next character) is refused, and so is each
- *  later line up to and including the line that closes it, whatever its indent, a # line, an env line and a key line
- *  among them, since YAML reads them as the value's text (a blank line among them is neither read nor refused). The
- *  block goes on after the closing line, as YAML's does: a key after the value, which YAML keeps in the step's env, is
- *  read or refused, and a later line of eight spaces or fewer ends the block. A line that begins a flow collection ([
- *  or {) is refused, closed on its line or not, and so is every later line of the step that is not blank: the reader
+ *  its leading whitespace. A quoted scalar or a flow collection that a line of the block begins, an env key's line
+ *  among them, is followed as YAML follows it. Its node begins at the line's key place (after its leading whitespace,
+ *  any `- `, `? ` or `: ` indicator, and any tag or anchor) or at its value place (after a plain key's colon and a
+ *  space, a tab or the line's end, or after a quoted key closed on the line and its colon, then any such indicator, tag
+ *  or anchor, as at the key place), and a quote anywhere else, inside a plain scalar (`NOTE: a'b`) or in a comment,
+ *  begins nothing. A line that begins a single- or double-quoted scalar and does not close it (inside single quotes two
+ *  single quotes are a quote, and inside double quotes a backslash escapes the next character) is refused, and so is
+ *  each later line up to and including the line that closes it, whatever its indent, a # line, an env line and a key
+ *  line among them, since YAML reads them as the value's text (a blank line among them is neither read nor refused).
+ *  The block goes on after the closing line, as YAML's does: a key after the value, which YAML keeps in the step's env,
+ *  is read or refused, and a later line of eight spaces or fewer ends the block. A line that begins a flow collection
+ *  ([ or {) is refused, closed on its line or not, and so is every later line of the step that is not blank: the reader
  *  does not follow a collection to its closing bracket, which can sit on a later line of eight spaces or fewer that
  *  YAML reads past, as a quoted scalar's closing line can. The first test asserts the Browser legs step's refused lines
  *  are none and its env the switch alone. Its table: ENV_ROWS, run by the test after STEPS_ROWS' test. */
@@ -183,6 +199,19 @@ function steps(job) {
       key = false;
     }
   };
+  // the env reader's read of a key at the step's own level (its docstring): from index i, the key place of the step's
+  // opener or of a line of eight spaces, 'env' for an env key, 'unknown' for a key the reader cannot tell, and 'other'
+  const stepKey = (l, i) => {
+    const r = l.slice(i);
+    if (/^(?:$|[ \t,[\]{}#&*!|>%@`]|[?:](?:[ \t]|$))/.test(r)) return 'unknown';
+    let k = r.split(':')[0];
+    if (r[0] === '"' || r[0] === "'") {
+      const m = r[0] === '"' ? /^"((?:[^"\\]|\\.)*)"/.exec(r) : /^'((?:[^']|'')*)'/.exec(r);
+      if (!m || (r[0] === '"' && m[1].includes('\\'))) return 'unknown';
+      k = m[1];
+    } else if (k.trim() === '<<') return 'unknown';
+    return k.trim().toLowerCase() === 'env' ? 'env' : 'other';
+  };
   const out = [];
   for (const l of job.lines) {
     if (/^      - /.test(l)) out.push({ name: null, lines: [] });
@@ -200,8 +229,8 @@ function steps(job) {
     }
     s.env = {};
     s.envRefused = [];
-    let block = false, envLines = 0, open = null;
-    for (const l of s.lines) {
+    let block = false, envKeys = 0, open = null;
+    for (const [n, l] of s.lines.entries()) {
       if (/[\r\u0085\u2028\u2029]/.test(l)) { s.envRefused.push(l); continue; }
       if (open) {
         if (open !== FLOW) open = opens(l, 0, open, false);
@@ -209,20 +238,24 @@ function steps(job) {
         continue;
       }
       if (/^\s*$/.test(l) || /^[ \t]*#/.test(l)) continue;
-      if (/^        env:/.test(l)) {
-        envLines++;
-        block = true;
-        open = opens(l, 8, null, true);
-        if (envLines > 1 || !/^        env:\s*$/.test(l)) s.envRefused.push(l);
+      const lead = /^[ \t]*/.exec(l)[0];
+      if (block && (lead.includes('\t') || lead.length > 8)) {
+        open = opens(l, lead.length, null, true);
+        const e = !open && /^          ([A-Za-z_][A-Za-z0-9_]*): (.*)$/.exec(l);
+        if (e) s.env[e[1]] = e[2].trim();
+        else s.envRefused.push(l);
         continue;
       }
-      if (!block) continue;
-      const lead = /^[ \t]*/.exec(l)[0];
-      if (!lead.includes('\t') && lead.length <= 8) { block = false; continue; }
-      open = opens(l, lead.length, null, true);
-      const e = !open && /^          ([A-Za-z_][A-Za-z0-9_]*): (.*)$/.exec(l);
-      if (e) s.env[e[1]] = e[2].trim();
-      else s.envRefused.push(l);
+      block = false;
+      // a key at the step's own level: the opener's, after its "- ", and a line of exactly eight spaces
+      if (n > 0 && lead !== '        ') continue;
+      const key = stepKey(l, 8);
+      if (key === 'unknown') { s.envRefused.push(l); continue; }
+      if (key !== 'env') continue;
+      envKeys++;
+      block = true;
+      open = opens(l, 8, null, true);
+      if (envKeys > 1 || !/^        env:\s*$/.test(l)) s.envRefused.push(l);
     }
   }
   return out;
@@ -265,9 +298,9 @@ test('steps()\' table: each row\'s steps, names and fields read as steps()\' doc
   }
   assert.deepEqual(wrong, [], 'each row of steps()\' table is read as its docstring states; the rows read otherwise: ' + JSON.stringify(wrong));
 });
-/** The env reader's table: each row a step's lines after its `      - name: S` opener, with `        run: x` after them, and
- *  the env and the refused lines steps() reads from them, one spelling inside and one outside each family its docstring
- *  names. */
+/** The env reader's table: each row a step's lines after its `      - name: S` opener, with `        run: x` after them, or,
+ *  for a row about the opener, the whole step's lines (its step), and the env and the refused lines steps() reads from
+ *  them, one spelling inside and one outside each family its docstring names. */
 const ENV_ON = '          ' + SWITCH + ': "1"', ENV_NO = '          NODE_OPTIONS: --test-only';
 const ENV_SW = { [SWITCH]: '"1"' }, ENV_BOTH = { [SWITCH]: '"1"', NODE_OPTIONS: '--test-only' };
 const ENV_ROWS = [
@@ -301,6 +334,31 @@ const ENV_ROWS = [
   { what: 'a comment after env:, refused, its block read', lines: ['        env: # the switch', ENV_ON], env: ENV_SW, refused: ['        env: # the switch'] },
   { what: 'an alias after env:, refused', lines: ['        env: *x'], env: {}, refused: ['        env: *x'] },
   { what: 'a second env line, refused, its block read', lines: ['        env:', ENV_ON, '        timeout-minutes: 5', '        env:', ENV_NO], env: ENV_BOTH, refused: ['        env:'] },
+  { what: 'a second env key spelled plain with a space before its colon, refused, its block read', lines: ['        env:', ENV_ON, '        env :', ENV_NO], env: ENV_BOTH, refused: ['        env :'] },
+  { what: 'a second env key in capitals, refused, its block read', lines: ['        env:', ENV_ON, '        ENV:', ENV_NO], env: ENV_BOTH, refused: ['        ENV:'] },
+  { what: 'a second env key double-quoted, refused, its block read', lines: ['        env:', ENV_ON, '        "env":', ENV_NO], env: ENV_BOTH, refused: ['        "env":'] },
+  { what: 'a second env key single-quoted, refused, its block read', lines: ['        env:', ENV_ON, '        \'env\':', ENV_NO], env: ENV_BOTH, refused: ['        \'env\':'] },
+  { what: 'a quoted key whose text is env and a space, refused, its block read', lines: ['        env:', ENV_ON, '        "env ":', ENV_NO], env: ENV_BOTH, refused: ['        "env ":'] },
+  { what: 'a plain key whose text before its first colon is env, refused, its block read', lines: ['        env:', ENV_ON, '        env:x: y'], env: ENV_SW, refused: ['        env:x: y'] },
+  { what: 'a double-quoted key holding a backslash, which can spell env by an escape, refused and its block not read', lines: ['        env:', ENV_ON, '        "\\x65nv":', ENV_NO], env: ENV_SW, refused: ['        "\\x65nv":'] },
+  { what: 'a second env key with a tag, refused and its block not read', lines: ['        env:', ENV_ON, '        !!str env:', ENV_NO], env: ENV_SW, refused: ['        !!str env:'] },
+  { what: 'a second env key with an anchor, refused and its block not read', lines: ['        env:', ENV_ON, '        &a env:', ENV_NO], env: ENV_SW, refused: ['        &a env:'] },
+  { what: 'an explicit key, "? env", and its ": " line, both refused', lines: ['        env:', ENV_ON, '        ? env', '        :', ENV_NO], env: ENV_SW, refused: ['        ? env', '        :'] },
+  { what: 'an alias key naming an anchor on the text env, refused', step: ['      - name: &e env', '        env:', ENV_ON, '        *e :', ENV_NO, '        run: x'], env: ENV_SW, refused: ['        *e :'] },
+  { what: 'a merge key at the step\'s level, with a space before its colon, refused', lines: ['        env:', ENV_ON, '        << : { env: { NODE_OPTIONS: --test-only } }'], env: ENV_SW, refused: ['        << : { env: { NODE_OPTIONS: --test-only } }'] },
+  { what: 'a flow collection at the key place of a line of eight spaces, refused', lines: ['        env:', ENV_ON, '        [env]: x'], env: ENV_SW, refused: ['        [env]: x'] },
+  { what: 'a key place beginning with another indicator, refused', lines: ['        env:', ENV_ON, '        @env: x'], env: ENV_SW, refused: ['        @env: x'] },
+  { what: 'a quoted key its line does not close, refused with the line that closes it', lines: ['        env:', ENV_ON, '        \'env', '        \': x'], env: ENV_SW, refused: ['        \'env', '        \': x'] },
+  { what: 'an env key on the step\'s opener, refused with the env line after it, both blocks read', step: ['      - env:', ENV_NO, '        name: S', '        env:', ENV_ON, '        run: x'], env: ENV_BOTH, refused: ['      - env:', '        env:'] },
+  { what: 'a flow-mapping step carrying env twice, its opener refused', step: ['      - { name: S, env: { NODE_OPTIONS: --test-only }, env: { ' + SWITCH + ': "1" }, run: x }'], env: {}, refused: ['      - { name: S, env: { NODE_OPTIONS: --test-only }, env: { ' + SWITCH + ': "1" }, run: x }'] },
+  { what: 'a flow-mapping step carrying env, with an env line after it, its opener refused', step: ['      - { name: S, env: { NODE_OPTIONS: --test-only } }', '        env:', ENV_ON, '        run: x'], env: ENV_SW, refused: ['      - { name: S, env: { NODE_OPTIONS: --test-only } }'] },
+  { what: 'an opener with more than one space after its "- ", whose keys sit at another column, refused', step: ['      -   name: S', '        env:', ENV_ON, '        run: x'], env: ENV_SW, refused: ['      -   name: S'] },
+  { what: 'an opener with nothing after its "- ", its keys on the lines below, refused', step: ['      - ', '        name: S', '        env:', ENV_ON, '        run: x'], env: ENV_SW, refused: ['      - '] },
+  { what: 'a second env key after other keys, refused, its block read', lines: ['        env:', ENV_ON, '        timeout-minutes: 5', '        "env":', ENV_NO], env: ENV_BOTH, refused: ['        "env":'] },
+  { what: 'a quoted env key before the env line: both refused, both blocks read', lines: ['        "env":', ENV_NO, '        env:', ENV_ON], env: ENV_BOTH, refused: ['        "env":', '        env:'] },
+  { what: 'an env key under with:, at ten spaces beside the step\'s env, neither read nor refused', lines: ['        env:', ENV_ON, '        with:', '          env:', '            NODE_OPTIONS: --test-only'], env: ENV_SW, refused: [] },
+  { what: 'a sequence entry at the step\'s column, the value of the key before it, neither read nor refused', lines: ['        env:', ENV_ON, '        with:', '        - env: x'], env: ENV_SW, refused: [] },
+  { what: 'keys whose text holds env and more, neither read nor refused', lines: ['        env:', ENV_ON, '        environment: x', '        "envx": y'], env: ENV_SW, refused: [] },
   { what: 'a # line holding a carriage return with NODE_OPTIONS after it, refused', lines: ['        env:', ENV_ON, '          # a comment\r' + ENV_NO], env: ENV_SW, refused: ['          # a comment\r' + ENV_NO] },
   { what: 'a # line holding U+0085 with NODE_OPTIONS after it, refused', lines: ['        env:', ENV_ON, '          # a comment\u0085' + ENV_NO], env: ENV_SW, refused: ['          # a comment\u0085' + ENV_NO] },
   { what: 'a # line holding U+2029 with NODE_OPTIONS after it, refused', lines: ['        env:', ENV_ON, '          # a comment\u2029' + ENV_NO], env: ENV_SW, refused: ['          # a comment\u2029' + ENV_NO] },
@@ -336,9 +394,9 @@ const ENV_ROWS = [
 test('the env reader\'s table: each row\'s env and refused lines read as steps()\' docstring states', () => {
   const wrong = [];
   for (const row of ENV_ROWS) {
-    const [s] = steps({ lines: ['      - name: S', ...row.lines, '        run: x'] });
+    const [s] = steps({ lines: row.step || ['      - name: S', ...row.lines, '        run: x'] });
     const got = { env: s.env, refused: s.envRefused }, want = { env: row.env, refused: row.refused };
-    if (!isDeepStrictEqual(got, want)) wrong.push(row.what + ': steps() over ' + JSON.stringify(row.lines) + ' reads ' + JSON.stringify(got) + ', not ' + JSON.stringify(want));
+    if (!isDeepStrictEqual(got, want)) wrong.push(row.what + ': steps() over ' + JSON.stringify(row.step || row.lines) + ' reads ' + JSON.stringify(got) + ', not ' + JSON.stringify(want));
   }
   assert.deepEqual(wrong, [], 'each row of the env reader\'s table is read as steps()\' docstring states; the rows read otherwise: ' + JSON.stringify(wrong));
 });
