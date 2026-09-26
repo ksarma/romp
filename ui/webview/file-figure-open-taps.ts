@@ -13,7 +13,8 @@
 // click finds its press in the slot. The cells, on the chat modal and the Files pane at 900 by 700, on a phone's pages (hasTouch and
 // isMobile at a device scale of 1 with the kernel's viewport meta, which WebKit's mobile layout needs: without it a tap on the
 // control lands off target) and on a hybrid page (hasTouch with a mouse), Firefox on the hybrid page alone since its engine takes no
-// isMobile, each a count of [popups, document requests], the pictures from the web routed at the context and every value synthetic:
+// isMobile, each a count of [popups, document requests] taken by the gate's own window.open calls (file-figure-open-stacking.ts
+// opensCounter; the file review's round 18, extra6-2), the pictures from the web routed at the context and every value synthetic:
 // - a tap on a loaded remote picture with its control in view and uncovered opens once, and so does a tap on the control, and a
 //   tap on a remote picture under the floor that wears the mark and no control;
 // - the control out of view: the first tap opens nothing and leaves the control in view, and the next tap opens once;
@@ -70,6 +71,7 @@
 // kept out of the tree. file-view-outline.test.ts drives the same orders over the stand-in in CI, where these legs launch no browser.
 import * as assert from "node:assert/strict";
 import { openViewer, frames, PARA, REPORT } from "./real-viewer-leg";
+import { RECORD_OPENS, opensCounter } from "./file-figure-open-stacking";
 
 export type TapEngine = "chromium" | "firefox" | "webkit";
 export type TapDevice = "phone" | "hybrid";
@@ -146,7 +148,8 @@ type Read = { inView: boolean; outside: boolean; pt: { x: number; y: number }; p
 type PtrEv = { type: string; pid: number; ptype: string; detail: number; trusted: boolean };
 type Scene = {
   page: any;
-  /** The opens since the last read, as [popups, document requests]. */
+  /** The opens since the last read, as [popups, document requests], counted by the gate's own window.open calls, each call's popup and
+   *  request awaited with a failure bound (file-figure-open-stacking.ts opensCounter, whose scene end reads after the last cell). */
   opens: () => Promise<[number, number]>;
   read: (alt: string) => Promise<Read>;
   place: (alt: string, dy: number) => Promise<Read>;
@@ -159,12 +162,13 @@ type Scene = {
 };
 /** `text` open on the surface in a page of the device's, the remote pictures routed and loaded through the gate, the helpers
  *  installed, and `body` run with the scene; the page errors asserted empty after it. */
-async function tapScene(browser: any, engine: TapEngine, device: TapDevice, surface: TapSurface, text: string, body: (s: Scene) => Promise<void>, mouseOnly = false): Promise<void> {
+async function tapScene(browser: any, engine: TapEngine, device: TapDevice, surface: TapSurface, text: string, name: string, body: (s: Scene) => Promise<void>, mouseOnly = false): Promise<void> {
   const docReqs: string[] = [], popups: any[] = [];
+  let wake = (): void => { /* no counter yet */ };
   const before = async (pg: any): Promise<void> => {
     await pg.context().route((u: URL) => u.href.startsWith(WEB + "/"), async (route: any) => {
       const req = route.request();
-      if (req.resourceType() === "document") { docReqs.push(req.url()); return route.fulfill({ status: 200, contentType: "text/html", body: "<p>third party</p>" }); }
+      if (req.resourceType() === "document") { docReqs.push(req.url()); wake(); return route.fulfill({ status: 200, contentType: "text/html", body: "<p>third party</p>" }); }
       const sz = SIZES[new URL(req.url()).pathname] || [300, 200];
       return route.fulfill({ status: 200, contentType: "image/svg+xml", body: sized(sz[0], sz[1], "#6a3d9a") });
     });
@@ -176,22 +180,16 @@ async function tapScene(browser: any, engine: TapEngine, device: TapDevice, surf
     await page.waitForFunction(() => Array.from(document.querySelectorAll(".fileview-md img")).every((i) => (i as HTMLImageElement).complete && (i as HTMLImageElement).naturalWidth > 0), null, { timeout: 15000 });
     await frames(page, 4);
     await page.evaluate(INSTALL);
-    page.context().on("page", (p: any) => { popups.push(p); });
+    await page.evaluate(RECORD_OPENS);
+    const counter = opensCounter(page, popups, docReqs, engine + ", " + (mouseOnly ? "a plain page" : device) + ", " + surface + ", the scene " + name);
+    wake = counter.wake;
+    page.context().on("page", (p: any) => { popups.push(p); wake(); });
     const cdp = engine === "chromium" ? await page.context().newCDPSession(page) : null;
-    let p0 = 0, d0 = 0;
     const read = (alt: string): Promise<Read> => page.evaluate((a: string) => (window as any).__tread(a), alt);
     const events = (): Promise<PtrEv[]> => page.evaluate(() => (window as any).__tev.splice(0));
     const scene: Scene = {
       page, read, events,
-      opens: async () => {
-        for (let i = 0; i < 12; i++) await frames(page, 2);
-        await new Promise((r) => setTimeout(r, 350));   // a bounded settle for an open that must not come (a popup is a new page, no event of this one)
-        const np = popups.slice(p0), nd = docReqs.slice(d0);
-        p0 = popups.length; d0 = docReqs.length;
-        for (const p of np) await p.close().catch(() => null);
-        await page.bringToFront().catch(() => null);
-        return [np.length, nd.length];
-      },
+      opens: counter.opens,
       place: async (alt, dy) => { await page.evaluate(([a, d]: [string, number]) => (window as any).__tplace(a, d), [alt, dy]); await frames(page, 3); return read(alt); },
       tap: async (x, y) => { await events(); await page.touchscreen.tap(x, y); await frames(page, 2); return events(); },
       pressNoClick: async (alt, a, b) => {
@@ -214,6 +212,7 @@ async function tapScene(browser: any, engine: TapEngine, device: TapDevice, surf
       flyout: () => page.evaluate(() => { const w = window as any; const c = w.__tctl("w490").getBoundingClientRect(); const e = document.elementFromPoint((c.left + c.right) / 2, (c.top + c.bottom) / 2); const m = document.querySelector(".fileview-zoom-menu") as HTMLElement; return { open: !m.hidden, overCentre: !!e && (!!e.closest(".fileview-zoom-menu") || !!e.closest(".fileview-size-reset")) }; }),
     };
     await body(scene);
+    await counter.end();
   } finally {
     await page.close();
   }
@@ -238,7 +237,7 @@ export async function tapCells(browser: any, engine: TapEngine, device: TapDevic
     else assert.ok(clicks[0].pid !== downs[0].pid && clicks[0].ptype === "mouse" && downs[0].ptype === "touch", at + what + ": the tap's click carries a pointerId other than its press's in Playwright's WebKit on Linux under touch emulation, of type mouse where the press's is touch (a precondition): " + JSON.stringify(evs));
     return clicks[0];
   };
-  await tapScene(browser, engine, device, surface, TALL_TEXT, async (s) => {
+  await tapScene(browser, engine, device, surface, TALL_TEXT, "tall", async (s) => {
     const rec: Record<string, unknown> = {};
     const r = await s.place("tall", 120);
     rec.inView = r;
@@ -295,7 +294,7 @@ export async function tapCells(browser: any, engine: TapEngine, device: TapDevic
     cell("a press with no click begun with the control out of view (" + how + "), the control then in view, then Enter on it: [the press's opens, Enter's]", [[0, 0], [1, 1]], [k1press, await s.opens()]);
     note("record " + JSON.stringify({ engine, device, surface, scene: "tall", ...rec }));
   });
-  await tapScene(browser, engine, device, surface, COVER_TEXT, async (s) => {
+  await tapScene(browser, engine, device, surface, COVER_TEXT, "cover", async (s) => {
     const rec: Record<string, unknown> = {};
     const openFlyout = async (): Promise<void> => { await s.page.evaluate(() => { (document.querySelector(".fileview-zoom-btn") as HTMLElement).click(); }); await frames(s.page, 3); };
     const covered = async (what: string, open: () => Promise<void>, dy: number, pre: () => Promise<{ open: boolean; overCentre: boolean }>, closed: () => Promise<boolean>): Promise<void> => {
@@ -423,7 +422,7 @@ async function dragThenClick(browser: any, engine: TapEngine, surface: TapSurfac
   };
   /** The first click after a drag with the control shown and uncovered: WebKit's opens nothing, the stated cost, and Chromium's and Firefox's open once. */
   const shownWant = lost ? [0, 0] : [1, 1];
-  await tapScene(browser, engine, "hybrid", surface, COVER_TEXT, async (s) => {
+  await tapScene(browser, engine, "hybrid", surface, COVER_TEXT, "drag-cover", async (s) => {
     const rec: Record<string, unknown> = {};
     const covers: Array<[string, () => Promise<void>, number, () => Promise<{ open: boolean; overCentre: boolean }>]> = [
       ["the text-size flyout", () => openFlyoutBy(s, "script"), 3, s.flyout],
@@ -461,7 +460,7 @@ async function dragThenClick(browser: any, engine: TapEngine, surface: TapSurfac
     cell("a mouse drag of the picture with the control shown" + on + ", then a click of the mouse on the same picture, the control shown and uncovered, a stated cost in WebKit: [the drag's opens, the click's, the next click's]", [[0, 0], shownWant, [1, 1]], [dragOpens, first, await s.opens()]);
     note("record " + JSON.stringify({ engine, surface, page: mouseOnly ? "plain" : "hybrid", scene: "drag-cover", ...rec, shown: fmt(dragEvs) }));
   }, mouseOnly);
-  await tapScene(browser, engine, "hybrid", surface, TWO_TEXT, async (s) => {
+  await tapScene(browser, engine, "hybrid", surface, TWO_TEXT, "drag-other", async (s) => {
     const a = await s.place("first", 60);
     const b = await s.read("second");
     assert.ok(a.inView && a.hit === "the picture" && b.inView && b.hit === "the picture", at + "both pictures' controls in view, each point on its picture" + on + " (a precondition): " + JSON.stringify([a, b]));
@@ -491,7 +490,7 @@ async function dragThenClick(browser: any, engine: TapEngine, surface: TapSurfac
 async function otherPane(browser: any, engine: TapEngine, surface: TapSurface, mouseOnly: boolean, at: string, cell: CellFn, note: (m: string) => void): Promise<void> {
   const on = mouseOnly ? " (a plain page)" : " (the hybrid page)";
   const lost = engine === "webkit";
-  await tapScene(browser, engine, "hybrid", surface, COVER_TEXT, async (s) => {
+  await tapScene(browser, engine, "hybrid", surface, COVER_TEXT, "other-pane", async (s) => {
     const rec: Record<string, unknown> = {};
     const frame = await s.page.evaluate(async () => {
       const f = document.createElement("iframe");
@@ -582,7 +581,7 @@ async function chordCells(browser: any, engine: TapEngine, surface: TapSurface, 
     return evs;
   };
   const rec: Record<string, unknown> = {};
-  await tapScene(browser, engine, "hybrid", surface, COVER_TEXT, async (s) => {
+  await tapScene(browser, engine, "hybrid", surface, COVER_TEXT, "chord", async (s) => {
     const covers: Array<[string, () => Promise<void>, number, () => Promise<{ open: boolean; overCentre: boolean }>]> = [
       ["the text-size flyout", () => openFlyoutBy(s, "script"), 3, s.flyout],
       ["the Outline popover", () => openOutline(s), 42, () => outlineOver(s)],
@@ -602,7 +601,7 @@ async function chordCells(browser: any, engine: TapEngine, surface: TapSurface, 
       cell(what + " over the control" + on + ", then a left press on the picture chorded by a " + button + " press: [the chord's click's opens, the next click's]", [[0, 0], [1, 1]], [first, await s.opens()]);
     }
   }, mouseOnly);
-  await tapScene(browser, engine, "hybrid", surface, TALL_TEXT, async (s) => {
+  await tapScene(browser, engine, "hybrid", surface, TALL_TEXT, "chord-out-of-view", async (s) => {
     for (const button of ["middle", "right"] as const) {
       const out = await s.place("tall", -60);
       assert.ok(out.outside && out.hit === "the picture", at + "the control out of view above the body, the press's point on the picture" + on + " (a precondition): " + JSON.stringify(out));
@@ -625,7 +624,7 @@ async function chordCells(browser: any, engine: TapEngine, surface: TapSurface, 
  *  and pointercancel, the swipe scrolling the control into view), then the mouse's release: its click opens nothing; and each of the
  *  two scenes with no finger and mouse click before it. */
 async function touchBesideMouse(browser: any, surface: TapSurface, at: string, cell: CellFn, note: (m: string) => void): Promise<void> {
-  await tapScene(browser, "chromium", "hybrid", surface, COVER_TEXT, async (s) => {
+  await tapScene(browser, "chromium", "hybrid", surface, COVER_TEXT, "touch-beside-mouse", async (s) => {
     const cdp = await s.page.context().newCDPSession(s.page);
     const rec: Record<string, unknown> = {};
     const beside = (): Promise<{ x: number; y: number }> => s.page.evaluate(() => { const w = window as any; const ir = w.__timg("w490").getBoundingClientRect(); return { x: Math.round(Math.min(ir.right + 80, innerWidth - 30)), y: Math.round(Math.max(ir.top, 80) + 60) }; });

@@ -6,8 +6,8 @@
 // top-level table shifts it with a position and a left, which make no stacking context, and file-view.ts dropStackClasses takes off
 // each figure and every element above it the page classes the sheets would make a stacking context there (SHEET_CONTEXT_CLASSES,
 // held to the sheets both ways by file-figure-open.test.ts). The cells, on the chat modal and the Files pane at 900 by 700 on a page
-// with a touchscreen beside the mouse, each a reading off the page or a count of [popups, document requests], the pictures from the
-// web routed at the context and every value synthetic:
+// with a touchscreen beside the mouse, each a reading off the page or a count of [popups, document requests] taken by the gate's own
+// calls (opensCounter, below), the pictures from the web routed at the context and every value synthetic:
 // - the table road, two scenes: a loaded remote picture in a plain top-level table, then a kept positioned author element after the
 //   table (fc-overlay, absolute over the Rendered box); and the same table, then a later author svg whose shadow is placed over
 //   the control. In the first the table is positioned relative with no translate, no transform and z-index auto, a press at the
@@ -110,6 +110,65 @@ function pngPixels(buf: Buffer): number[][] {
   for (let i = 0; i < out.length; i += bpp) px.push([out[i], out[i + 1], out[i + 2]]);
   return px;
 }
+/** The page-side record of every window.open call, installed in the viewer's page before a scene's first gesture (the viewer opens a
+ *  web picture's tab on the dashboard through openUrlTab's window.open alone): each call is recorded synchronously, as it is made,
+ *  with whether it came inside an event's dispatch (window.event set, as it is while a gesture's listeners run) or outside one (a
+ *  timer's), and the window.open it wraps still runs. */
+export const RECORD_OPENS = (): void => {
+  const w = window as any;
+  if (w.__opensLog) return;
+  w.__opensLog = [];
+  const open = window.open;
+  window.open = function (...a: unknown[]) { w.__opensLog.push({ inEvent: !!w.event, type: w.event ? String(w.event.type) : null }); return (open as any).apply(window, a); } as typeof window.open;
+};
+/** How long a read waits for the popups and document requests the recorded calls owe before it fails, loudly: a failure bound, which
+ *  decides no count. */
+const OPENS_BOUND = 20000;
+/** A scene's opens counted by the gate's own calls (the file review's round 18, extra6-2): the counters of a time window (24
+ *  animation frames and a 350 ms settle) charged a popup WebKit delivered later to the next cell, or lost it after the scene's last
+ *  cell. `popups` and `docReqs` are the scene's, filled by its page listener and its route, each of which calls `wake`. `opens` reads
+ *  the calls recorded since the last read (RECORD_OPENS) and, where there are any made inside an event's dispatch, waits, with a
+ *  bound that fails loudly, until that many popups and document requests have arrived since the last read, so a late popup lands
+ *  in its own cell; a read whose gesture made no call waits for nothing more, and reads what has arrived, its [0,0] exact; it returns
+ *  [popups, document requests] since the last read, and closes the popups. `end`, after the scene's last cell, waits the same way for
+ *  every call the scene recorded and holds the popups and document requests seen equal to the calls, every call one a cell read
+ *  inside an event's dispatch, so a stray open, a call outside a dispatch or after the last cell or a popup no call made, is charged to
+ *  its scene and never lost. */
+export function opensCounter(page: any, popups: any[], docReqs: string[], scene: string): { opens: () => Promise<[number, number]>; end: () => Promise<void>; wake: () => void } {
+  const waiters: Array<() => void> = [];
+  const wake = (): void => { for (const f of waiters.splice(0)) f(); };
+  const until = async (np: number, nd: number, why: string): Promise<void> => {
+    const stop = Date.now() + OPENS_BOUND;
+    while (popups.length < np || docReqs.length < nd) {
+      const left = stop - Date.now();
+      assert.ok(left > 0, scene + ": " + why + ": " + popups.length + " popups and " + docReqs.length + " document requests of " + np + " and " + nd + " after " + OPENS_BOUND + " ms (a failure bound, which decides no count)");
+      await new Promise<void>((r) => { waiters.push(r); setTimeout(r, left); });   // the next popup or request, or the bound
+    }
+  };
+  const log = (): Promise<Array<{ inEvent: boolean; type: string | null }>> => page.evaluate(() => ((window as any).__opensLog || []).slice());
+  let p0 = 0, d0 = 0, c0 = 0, stray = 0;
+  const opens = async (): Promise<[number, number]> => {
+    const all = await log();
+    const fresh = all.slice(c0);
+    c0 = all.length;
+    const calls = fresh.filter((c) => c.inEvent).length;
+    stray += fresh.length - calls;
+    if (calls) await until(p0 + calls, d0 + calls, "the popups and document requests the cell's " + calls + " window.open call(s) owe");
+    const np = popups.slice(p0), nd = docReqs.slice(d0);
+    p0 = popups.length; d0 = docReqs.length;
+    for (const p of np) await p.close().catch(() => null);
+    await page.bringToFront().catch(() => null);
+    return [np.length, nd.length];
+  };
+  const end = async (): Promise<void> => {
+    const all = await log();
+    stray += all.length - c0;   // a call after the last cell's read is no cell's
+    c0 = all.length;
+    await until(all.length, all.length, "the popups and document requests the scene's " + all.length + " window.open call(s) owe");
+    assert.deepEqual({ stray, popups: popups.length, requests: docReqs.length }, { stray: 0, popups: all.length, requests: all.length }, scene + ": every window.open call was a gesture's, read by its cell, and the popups and document requests seen equal the " + all.length + " call(s) recorded (a stray open, charged to this scene)");
+  };
+  return { opens, end, wake };
+}
 /** The red pixels of the shadow inside the control's box, 4px in from each edge (clear of its rounded corners and its dashed line), and
  *  the pixels read. */
 async function redInside(page: any, box: NonNullable<Read["box"]>): Promise<[number, number]> {
@@ -120,14 +179,15 @@ async function redInside(page: any, box: NonNullable<Read["box"]>): Promise<[num
 }
 
 /** `text` open on the surface in a page with a touchscreen beside the mouse, the remote picture routed and loaded through the gate, the
- *  helpers installed and the control scrolled to the body's middle, and `body` run with the page and an opens counter; the page errors
- *  asserted empty after it. */
-async function stackScene(browser: any, engine: StackEngine, surface: StackSurface, text: string, body: (page: any, opens: () => Promise<[number, number]>, read: () => Promise<Read>) => Promise<void>, wrapper: string | null): Promise<void> {
+ *  helpers installed and the control scrolled to the body's middle, and `body` run with the page and an opens counter that counts by
+ *  the gate's calls (opensCounter), its scene's end read after the last cell under `name`; the page errors asserted empty after it. */
+async function stackScene(browser: any, engine: StackEngine, surface: StackSurface, text: string, body: (page: any, opens: () => Promise<[number, number]>, read: () => Promise<Read>) => Promise<void>, wrapper: string | null, name: string): Promise<void> {
   const docReqs: string[] = [], popups: any[] = [];
+  let wake = (): void => { /* no counter yet */ };
   const before = async (pg: any): Promise<void> => {
     await pg.context().route((u: URL) => u.href.startsWith(WEB + "/"), async (route: any) => {
       const req = route.request();
-      if (req.resourceType() === "document") { docReqs.push(req.url()); return route.fulfill({ status: 200, contentType: "text/html", body: "<p>third party</p>" }); }
+      if (req.resourceType() === "document") { docReqs.push(req.url()); wake(); return route.fulfill({ status: 200, contentType: "text/html", body: "<p>third party</p>" }); }
       return route.fulfill({ status: 200, contentType: "image/svg+xml", body: sized(300, 200, "#6a3d9a") });
     });
   };
@@ -141,19 +201,13 @@ async function stackScene(browser: any, engine: StackEngine, surface: StackSurfa
     await page.evaluate(() => (window as any).__scentre());
     await page.mouse.move(2, 690);
     await frames(page, 4);
-    page.context().on("page", (p: any) => { popups.push(p); });
-    let p0 = 0, d0 = 0;
-    const opens = async (): Promise<[number, number]> => {
-      for (let i = 0; i < 12; i++) await frames(page, 2);
-      await new Promise((r) => setTimeout(r, 350));   // a bounded settle for an open that must not come (a popup is a new page, no event of this one)
-      const np = popups.slice(p0), nd = docReqs.slice(d0);
-      p0 = popups.length; d0 = docReqs.length;
-      for (const p of np) await p.close().catch(() => null);
-      await page.bringToFront().catch(() => null);
-      return [np.length, nd.length];
-    };
+    await page.evaluate(RECORD_OPENS);
+    const counter = opensCounter(page, popups, docReqs, engine + ", " + surface + ", the scene " + name);
+    wake = counter.wake;
+    page.context().on("page", (p: any) => { popups.push(p); wake(); });
     const read = (): Promise<Read> => page.evaluate((w: string | null) => (window as any).__sread(w), wrapper);
-    await body(page, opens, read);
+    await body(page, counter.opens, read);
+    await counter.end();
   } finally {
     await page.close();
   }
@@ -200,7 +254,7 @@ export async function stackCells(browser: any, engine: StackEngine, surface: Sta
       rec.pictureBodyClick = await opens();
       cell(s.what + ", then a positioned element: a click on the picture's own body, which the element takes, opens", [0, 0], rec.pictureBodyClick);
       note("record " + JSON.stringify({ engine, surface, scene: s.key + "+later", ...rec }));
-    }, s.wrapper);
+    }, s.wrapper, s.key + "+later");
   }
   // the svg whose shadow is placed over the control: first read where the control and the svg stand, then open with the shadow moved
   const place = async (s: Around): Promise<[number, number]> => {
@@ -209,7 +263,7 @@ export async function stackCells(browser: any, engine: StackEngine, surface: Sta
       const r = await read();
       assert.ok(r.box && r.cover, at + s.key + ": the control and the svg stand in the document (a precondition): " + JSON.stringify(r));
       off = [Math.round(r.box!.cx - r.cover!.x - 25), Math.round(r.box!.cy - r.cover!.y - 25)];
-    }, s.wrapper);
+    }, s.wrapper, s.key + "+place");
     return off;
   };
   for (const s of [TABLE, HELD, PRESS, MARQUEE]) {
@@ -252,7 +306,7 @@ export async function stackCells(browser: any, engine: StackEngine, surface: Sta
         cell(s.what + ", then an svg's shadow over the control: Enter on the control opens", [1, 1], await opens());
       }
       note("record " + JSON.stringify({ engine, surface, scene: s.key + "+cover", ...rec }));
-    }, s.wrapper);
+    }, s.wrapper, s.key + "+cover");
   }
   return cells;
 }

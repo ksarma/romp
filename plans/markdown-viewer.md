@@ -9000,7 +9000,10 @@ for that round's extra9-1 (with the coordinator's decision 4), ui/webview/file-f
 cells, a module of the cells alone that the same two legs run in the three engines, on the chat modal and the Files pane: a remote
 picture in a top-level table, inside author elements of page classes that would make a stacking context around it and inside an
 author's marquee, each followed by a positioned author element or by an svg whose shadow is placed over the control, and a click on the
-picture's own body under the positioned element, a stated cost). The review's round 1 added two modules outside those two stems:
+picture's own body under the positioned element, a stated cost; both cell modules count a gesture's opens by the gate's own
+window.open calls, recorded in the page as each is made, each call's popup and document request awaited with a bound that
+fails loudly, so a late popup lands in its own cell, and each scene's end holds the popups and requests seen equal to the calls,
+so a stray open is charged to its scene, the file review's round 18, extra6-2). The review's round 1 added two modules outside those two stems:
 ui/webview/file-view-figure-shapes.test.ts (the source pins for L3's round-1 rules: figureTarget's web test before
 the model's join, the one decision's order in figureWantsControl (the state, the floor, the target, any link above),
 the measure's reads, the bare
