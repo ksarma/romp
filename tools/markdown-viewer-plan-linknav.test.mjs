@@ -967,6 +967,14 @@ const offRoute = (code) => {
 /** The browser legs among `files` (paths from the repo root, the delta's) that `legs` (the derived legs, basenames) does not hold:
  *  a leg the branch touched that names no follow-on, so no derivation above reaches it and no record names it. */
 const legsOffRoster = (files, legs) => files.filter((f) => /^ui\/webview\/[\w-]+-browser\.test\.ts$/.test(f)).map((f) => f.replace(/^ui\/webview\//, '')).filter((f) => !legs.includes(f)).sort();
+/** The follow-on's legs that stay off the shared roster, each with the words its own header gives for it: a leg that launches an
+ *  engine the roster's job does not install, where a test in a rostered file would not run (the file review's round 17, tests-1 with
+ *  regression-1, and the coordinator's decision 2 on it: the one gate's tap cells in WebKit and Firefox). Each is a derived leg whose
+ *  header carries those words, the plan's disclosure names it, a leg whose code names Firefox or WebKit as a string literal is among
+ *  them, and where the tree carries the convention (state A) it is an exclusions line and no roster line. */
+const OFF_ROSTER = [['file-figure-open-engines-browser.test.ts', 'that roster\'s job installs Chromium alone']];
+/** The legs among `legs` whose comment-stripped code names Firefox or WebKit as a whole string literal, the engine a launch names. */
+const otherEngineLegs = (legs, codeOf) => legs.filter((f) => /(["'`])(?:firefox|webkit)\1/.test(codeOf(f))).sort();
 
 /** The shared convention for browser legs in the gating job, by the names fixed with the sibling PRs: the roster (one compiled
  *  bundle path per line, `#` comments), the exclusions (bundle path, a tab, a reason), the step in the vscode-extension job,
@@ -1123,7 +1131,7 @@ const DISCLOSURE_CLAUSES = [
 /** The clauses of DISCLOSURE_CLAUSES a disclosure sentence lacks, each with what it says. */
 const missingClauses = (sentence) => DISCLOSURE_CLAUSES.filter(([clause]) => !sentence.includes(clause));
 
-test('the follow-on\'s browser legs and the job that gates a landing, a two-state pin over the shared convention: the legs are derived by name from the tree (the -browser.test.ts modules whose own text names the follow-on; the property-keyed definition of a browser leg is PR 887\'s compiler census, once it lands) and each launches through real-viewer-leg.ts\'s inBrowser, the helper a roster\'s switch reaches, read comment-stripped under any launch spelling, with no launch and no stand-down (a skip or todo call, option or option assignment, read as \' + STAND_DOWN_COUNT + \' spellings of the leg\'s own source and not as the property) of its own; where the tree carries the roster, the exclusions, the step directly after the Chromium install in the vscode-extension job and the helper\'s switch (state A) every leg is a roster line and no exclusions line and the roster\'s tree test exists, and the Tests paragraph no longer says none of their browser scenarios runs where landing is gated; where it carries none of the four (state B) the Tests paragraph discloses that the legs skip in the gating job\'s Test step, what gates the follow-on there and the roster by name as the road, with no count of the legs in any wording; a tree with some of the four is refused, naming them; behind L6\'s gate every browser leg the delta adds or modifies is among the derived legs', (t) => {
+test('the follow-on\'s browser legs and the job that gates a landing, a two-state pin over the shared convention: the legs are derived by name from the tree (the -browser.test.ts modules whose own text names the follow-on; the property-keyed definition of a browser leg is PR 887\'s compiler census, once it lands) and each launches through real-viewer-leg.ts\'s inBrowser, the helper a roster\'s switch reaches, read comment-stripped under any launch spelling, with no launch and no stand-down (a skip or todo call, option or option assignment, read as \' + STAND_DOWN_COUNT + \' spellings of the leg\'s own source and not as the property) of its own; where the tree carries the roster, the exclusions, the step directly after the Chromium install in the vscode-extension job and the helper\'s switch (state A) every leg is a roster line and no exclusions line, but a leg that launches Firefox or WebKit, which is an exclusions line and no roster line, and the roster\'s tree test exists, and the Tests paragraph no longer says none of their browser scenarios runs where landing is gated; where it carries none of the four (state B) the Tests paragraph discloses that the legs skip in the gating job\'s Test step, what gates the follow-on there and the roster by name as the road, with no count of the legs in any wording; a tree with some of the four is refused, naming them; behind L6\'s gate every browser leg the delta adds or modifies is among the derived legs', (t) => {
   const legs = browserLegs();
   assert.ok(legs.length > 0, 'browser legs naming the follow-on are on disk');
   const tests = section.slice(section.indexOf('**Tests.**'));
@@ -1199,6 +1207,15 @@ test('the follow-on\'s browser legs and the job that gates a landing, a two-stat
   assert.equal(offRoute(codeLines('import { inBrowser } from "./real-viewer-leg";\nconst b = 1; // t.skip("x")\n')), STAND_DOWN + '.skip(', 'a stand-down quoted in a comment after code reds too, the stripper\'s safe side');
   assert.equal(offRoute(codeLines('import { inBrowser } from "./real-viewer-leg";\nconst b = await pw.chromium.launch();\nt.skip("x");\n')), 'a launch outside the helper: .launch(', 'a leg with both halves is refused for the launch first');
   for (const f of legs) assert.equal(offRoute(codeLines(read('ui', 'webview', f))), null, f + ' launches through the helper alone: it imports inBrowser from real-viewer-leg.ts at a line\'s start, calls launch on nothing and stands itself down nowhere (a private launch, skip or todo would skip under a roster\'s switch)');
+  // the legs off the roster (the file review's round 17, tests-1 with regression-1): each a derived leg whose own header says why, and
+  // every leg whose code names Firefox or WebKit among them, driven first on synthetic code
+  assert.deepEqual(otherEngineLegs(['a-browser.test.ts', 'b-browser.test.ts', 'c-browser.test.ts'], (f) => ({ 'a-browser.test.ts': 'inBrowser(t, body, { engine: "webkit" });', 'b-browser.test.ts': 'const e = "chromium"; const w = "WebKit\'s tap";', 'c-browser.test.ts': "for (const e of ['firefox']) inBrowser(t, body, { engine: e });" })[f]), ['a-browser.test.ts', 'c-browser.test.ts'], 'the census, driven: a leg naming webkit or firefox as a literal is read, one naming chromium or the word in prose is not');
+  const offNames = OFF_ROSTER.map(([f]) => f).sort();
+  for (const [f, why] of OFF_ROSTER) {
+    assert.ok(legs.includes(f), f + ' is a derived leg of the follow-on (a leg kept off the roster is still held to the helper and to the Tests paragraph)');
+    assert.ok(read('ui', 'webview', f).includes(why), f + '\'s own header says why it stays off the roster: ' + JSON.stringify(why));
+  }
+  assert.deepEqual(otherEngineLegs(legs, (f) => codeLines(read('ui', 'webview', f))), offNames, 'the legs whose code names Firefox or WebKit as a literal are the legs kept off the roster, OFF_ROSTER, and no other (a leg launching another engine inside the roster would not run in its job)');
   // the step's state, driven on synthetic workflows before the tree's is read
   const job = (name, steps) => '  ' + name + ':\n    steps:\n' + steps.map(([n, run]) => '      - name: ' + n + '\n' + (run ? '        run: ' + run + '\n' : '')).join('');
   const wf = (steps, ...more) => 'jobs:\n' + job(JOB, steps) + more.map(([name, steps]) => job(name, steps)).join('');
@@ -1254,18 +1271,23 @@ test('the follow-on\'s browser legs and the job that gates a landing, a two-stat
     const roster = rosterLines(read(...ROSTER));
     const excluded = excludedBundles(read(...EXCLUDED));
     for (const f of legs) {
+      if (offNames.includes(f)) {
+        assert.ok(excluded.includes(bundleOf(f)) && !roster.includes(bundleOf(f)), f + ' is an exclusions line and no roster line (' + bundleOf(f) + ' in ' + EXCLUDED.join('/') + '): it launches Firefox or WebKit, which the roster\'s job does not install');
+        continue;
+      }
       assert.ok(roster.includes(bundleOf(f)), f + ' is a roster line (' + bundleOf(f) + ' in ' + ROSTER.join('/') + '): the gating job runs it with a browser through the step ' + JSON.stringify(STEP) + '; a leg of the follow-on missing from the roster runs where landing is gated only where it skips');
       assert.ok(!excluded.includes(bundleOf(f)), f + ' is not an exclusions line (' + bundleOf(f) + ' in ' + EXCLUDED.join('/') + '): a leg is in one file or the other, and the follow-on\'s legs run');
     }
     assert.ok(exists(...ROSTER_TEST), ROSTER_TEST.join('/') + ' exists: the convention\'s own tree test, which holds every browser leg in the tree to one file or the other');
     assert.equal(disclosureAt, -1, 'the Tests paragraph no longer says the legs skip in the gating job and none of their browser scenarios runs where landing is gated: with the roster in the tree and the legs its lines, that sentence is false and is reworded to say the roster runs them');
-    t.diagnostic('state A: the roster, the exclusions, the step and the helper\'s switch are in the tree; ' + legs.length + ' legs are roster lines and no exclusions line');
+    t.diagnostic('state A: the roster, the exclusions, the step and the helper\'s switch are in the tree; ' + (legs.length - offNames.length) + ' legs are roster lines and no exclusions line, and ' + offNames.length + ' an exclusions line');
   } else {
     assert.ok(disclosureAt >= 0, 'the Tests paragraph discloses that the legs skip in the gating job\'s Test step (the tree carries none of the roster, the exclusions, the step and the switch: ' + picture + '); the sentence opens ' + JSON.stringify(DISCLOSURE));
     const sentence = tests.slice(disclosureAt, tests.indexOf('as SKIP). ', disclosureAt) + 'as SKIP).'.length);
     assert.ok(sentence.length > DISCLOSURE.length && sentence.endsWith('as SKIP).'), 'the disclosure runs to its closing citation of the gating run\'s log: ' + sentence.slice(-120));
     assert.deepEqual(missingClauses(sentence).map(([clause, what]) => what + ' (' + JSON.stringify(clause) + ')'), [], 'the disclosure carries every clause; the ones it lacks say: ' + sentence);
     assert.equal(legsCount(sentence), null, 'the sentence counts no legs (the legs are derived here, never typed there): ' + legsCount(sentence) + ' in: ' + sentence);
+    for (const f of offNames) assert.ok(sentence.includes('all but ui/webview/' + f + ', which launches WebKit and Firefox'), 'the disclosure names ' + f + ' as the leg that stays off the roster, and why');
     assert.equal((tests.match(new RegExp(ROSTER.join('\\/'), 'g')) || []).length, 1, 'the roster is named once in the Tests paragraph, as the road');
     t.diagnostic('state B: the tree carries none of the roster, the exclusions, the step and the switch; the Tests paragraph discloses the skip and names the roster as the road');
   }

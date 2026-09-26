@@ -152,6 +152,8 @@ export const CREATED = [
   "ui/webview/css-rules.d.mts",
   "ui/webview/css-rules.mjs",
   "ui/webview/file-figure-open-browser.test.ts",
+  "ui/webview/file-figure-open-engines-browser.test.ts",
+  "ui/webview/file-figure-open-taps.ts",
   "ui/webview/file-figure-open.test.ts",
   "ui/webview/file-trail-browser.test.ts",
   "ui/webview/file-trail.test.ts",

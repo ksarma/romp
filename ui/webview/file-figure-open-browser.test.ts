@@ -114,10 +114,12 @@
 // head, where the title and the control read any anchor while the click did not, and the two under-the-floor cases red at that head too, the hover read and the at-rest read, where no rule dressed the picture. The one gate
 // between every gesture and a web picture's tab is read in cases of their own at the file's end (the file review's round 16, extra5-1,
 // with the coordinator's decisions 2 to 5 on it): a tap, a phone's tap, the laptop's finger, a click and a Ctrl-click on a picture
-// whose control stands off the screen, Enter and Space on that control, a double click, a double tap and held keys, the control under
+// whose control stands off the screen, Enter and Space on that control, a double click, a double tap (Chromium's, whose second tap's
+// click carries detail 2) and held keys, the control under
 // the Outline popover, the text-size flyout and an author's element, the mark, the anchors, the row, a local picture and a pinch zoom,
 // each opening nothing where the sign is off the screen or covered and revealing it, the next gesture opening, the section's own
-// header naming each cell's red. The predicate that gate and the key gate read is read for its accuracy in cases of their own after
+// header naming each cell's red; and the one gate's tap cells in Chromium (the file review's round 17, tests-1 with regression-1),
+// the set file-figure-open-taps.ts holds and file-figure-open-engines-browser.test.ts runs in WebKit and Firefox. The predicate that gate and the key gate read is read for its accuracy in cases of their own after
 // those (the file review's round 16, regression-1 with the coordinator's decision 1, and fresh-1): the dashboard's pane wrapper in its
 // narrow and touch layout and an author's span around the picture, on which overflow clips nothing, and a body zoom of 1.25, 0.8 and
 // 14/13 beside the zoom-1 twins, the floor among them, the section's own header naming each cell's red. Skips LOUDLY without a playwright browser (in CI the Test step runs before the job's Chromium install, so the leg skips there; the launch is real-viewer-leg.ts's inBrowser, the shared helper). Synthetic values only: the notes-api world, a placeholder session id, example.invalid and example.test addresses,
@@ -129,6 +131,7 @@ import * as zlib from "node:zlib";   // paintedRatio's PNG decode: the dress rea
 import * as fs from "node:fs";       // the dashboard's pane wrapper, its rules read from kernel/kernel.py at run time (the predicate's cells)
 import * as path from "node:path";
 import { inBrowser, openViewer, openPanel, frames, topBlock, putAtTop, pageHtml, ROOT, REPORT, SID, PARA, ORIGIN } from "./real-viewer-leg";
+import { phonePages, tapCells, type TapDevice as TapCellDevice, type TapSurface } from "./file-figure-open-taps";   // a phone's pages, and the one gate's tap cells, one set for the three engines
 
 const NOTES = ROOT + "/docs/notes.md";
 const PLOT = ROOT + "/docs/figs/plot.svg";
@@ -2816,30 +2819,6 @@ test("in a browser (a fine pointer), a remote picture under the floor in a detai
 // are the control's under CDP touch and on the laptop, where the 0.18 black darkens the line and its ground alike and the tap's
 // lowest read stays above 3:1 (4.211:1 dark, 3.416:1 light). Only the phone's highlight takes the line under 3:1, so the phone's
 // cells are the ones red without the rule.
-/** A browser whose pages are a phone's: hasTouch and isMobile at a device scale of 1 (hover none, a coarse pointer, touch events),
- *  the served page carrying the kernel pages' own viewport meta (`width=device-width, initial-scale=1`, which kernel.py writes on
- *  every dashboard page), so the layout viewport is the 900 px window at scale 1 and a screenshot pixel is a CSS pixel, as
- *  paintedRatio asserts. The meta goes in after the page's `<meta charset=utf-8>`, and a page without that tag throws rather than
- *  open at the mobile default of a 980 px viewport scaled down. */
-function phonePages(browser: any): any {
-  const META = '<meta name="viewport" content="width=device-width, initial-scale=1">';
-  return {
-    newPage: async (o: any) => {
-      const pg = await browser.newPage({ ...o, hasTouch: true, isMobile: true, deviceScaleFactor: 1 });
-      const route = pg.route.bind(pg);
-      pg.route = (match: any, handler: any) => route(match, (r: any, req: any) => handler({
-        request: () => r.request(),
-        fulfill: (f: any) => {
-          if (!(f && f.contentType === "text/html" && typeof f.body === "string")) return r.fulfill(f);
-          assert.ok(f.body.includes("<meta charset=utf-8>"), "the served page carries <meta charset=utf-8>, after which the phone's viewport meta goes");
-          return r.fulfill({ ...f, body: f.body.replace("<meta charset=utf-8>", "<meta charset=utf-8>" + META) });
-        },
-        continue: (...a: any[]) => r.continue(...a), fallback: (...a: any[]) => r.fallback(...a), abort: (...a: any[]) => r.abort(...a),
-      }, req));
-      return pg;
-    },
-  };
-}
 type TapDevice = "phone" | "touch" | "laptop";
 const TAP_ON: Record<TapDevice, string> = { phone: "a phone (hasTouch and isMobile at a device scale of 1)", touch: "CDP touch emulation", laptop: "the touchscreen laptop" };
 /** The web control after `alt` (kind "control") or the picture `alt` wearing the mark (kind "mark"): its centre, its :active and
@@ -3040,8 +3019,10 @@ for (const surface of ["chat", "feed", "pane"] as Surface[]) for (const width of
 // - the keys, a fine pointer: Enter and Space on the control reached by Tab and scrolled out of view: the first key opens nothing and
 //   reveals the control, Space leaving it unpressed, and the second opens once (red at the head the file review's round 16 read by the second key, since
 //   nothing revealed the control); with the control centred each key opens once (keep);
-// - one gesture's later events (decision 2): a double click and a double tap on the out-of-view picture open nothing (two at the
-//   round-16 head), Enter and Space held on the out-of-view control through two repeats open nothing (none at the head the file review's round 16 read either,
+// - one gesture's later events (decision 2): a double click and, in Chromium, a double tap on the out-of-view picture open nothing
+//   (two at the round-16 head), the second click of each carrying detail 2 (in Firefox and WebKit each tap's click carries detail 1,
+//   so the second tap is read at its own start and opens once after the first tap's reveal, the tap cells' double tap; the
+//   coordinator's decision 1 on the file review's round 17), Enter and Space held on the out-of-view control through two repeats open nothing (none at the head the file review's round 16 read either,
 //   by design; red under a gate that reads the repeat and the release afresh, since the first keydown's reveal put the control on the
 //   screen);
 // - covered signs (decisions 4 and 5), each red at the head the file review's round 16 read by one open: the Outline popover over the control of a picture
@@ -3071,9 +3052,13 @@ for (const surface of ["chat", "feed", "pane"] as Surface[]) for (const width of
 // - the pinch zoom, a fine pointer on the focus report: the top page zoomed to 3 with the big picture's control outside the top's
 //   visual viewport and a click on the picture inside it, the viewer as the top page and in the dashboard's same-origin frame: the
 //   click opens nothing and the control is inside the visual viewport after, and a second click opens once (red at the head the file review's round 16 read
-//   by one open on the first click).
+//   by one open on the first click);
+// - the tap cells (the file review's round 17, tests-1 with regression-1): file-figure-open-taps.ts's set, run here in Chromium on a
+//   phone's pages and on a hybrid page, after the covered signs, where each tap's click carries its press's pointerId and every cell
+//   reads the same at 0ab74924c as at the fix, by design; its header names each cell and the reds in WebKit, which
+//   file-figure-open-engines-browser.test.ts runs with Firefox.
 // Each case collects its cells and asserts them once, so a red names every cell that differs; property pins read off the page, and
-// file-view-outline.test.ts runs the gate's click and key guards in CI over the stand-in.
+// file-view-outline.test.ts runs the gate's click and key guards in CI over the stand-in, WebKit's tap order among them.
 const GATE_SIZES: Record<string, [number, number]> = { "/tall.svg": [300, 1400], "/w490.svg": [490, 900], "/tiny.svg": [20, 20], "/pp.svg": [300, 1400], "/dl.svg": [300, 1400], "/ov.svg": [300, 200] };
 const GATE_LOCAL = ROOT + "/docs/figs/gate-tall.svg";
 const GATE_TEXT = "# Report\n\n" + PARA(1) + "\n\n![tall](" + WEB + "/tall.svg)\n\n" + Array.from({ length: 8 }, (_, i) => PARA(i + 2)).join("\n\n")
@@ -3181,7 +3166,7 @@ async function gateCase(t: any, device: GateDevice, surface: Surface, text: stri
           else if (how === "double") { await page.mouse.move(x, y); await page.mouse.dblclick(x, y); }
           else if (how === "middle") { await page.mouse.move(x, y); await page.mouse.click(x, y, { button: "middle" }); }
           else if (how === "phone") await page.touchscreen.tap(x, y);
-          else if (how === "doubletap") { await touch(x, y); await new Promise((r) => setTimeout(r, 90)); await touch(x, y); }   // two taps 90 ms apart at one point: the second tap's click carries detail 2
+          else if (how === "doubletap") { await touch(x, y); await new Promise((r) => setTimeout(r, 90)); await touch(x, y); }   // two taps 90 ms apart at one point: in Chromium, which this leg launches, the second tap's click carries detail 2 (Firefox's and WebKit's carry 1)
           else await touch(x, y);   // CDP touch emulation, and the laptop's finger
           await frames(page, 2);
         },
@@ -3277,7 +3262,7 @@ for (const surface of ["chat", "pane"] as Surface[]) for (const key of ["Enter",
   });
 }
 for (const surface of ["chat", "pane"] as Surface[]) {
-  test("in a browser (" + (surface === "chat" ? "the chat modal" : "the Files pane") + "), the one gate's later events of one gesture (the coordinator's decision 2, by the events' own fields and never by time): a fine double click and, under CDP touch emulation, a double tap 90 ms apart on the out-of-view picture open nothing, the second click of each carrying detail 2 (two opens at the head the file review's round 16 read); Enter and Space held on the out-of-view control through two repeats open nothing, and the held Space leaves the control unpressed after its second repeat and after its release (none at the head the file review's round 16 read either, and unpressed there, by design; each red under a gate that reads the repeats and the release afresh, the first keydown's reveal having put the control on the screen, where a repeat presses it)", { timeout: 180000 }, async (t) => {
+  test("in a browser (" + (surface === "chat" ? "the chat modal" : "the Files pane") + "), the one gate's later events of one gesture (the coordinator's decision 2, by the events' own fields and never by time): a fine double click and, in Chromium under CDP touch emulation, a double tap 90 ms apart on the out-of-view picture open nothing, the second click of each carrying detail 2 (two opens at the head the file review's round 16 read; in Firefox and WebKit each tap's click carries detail 1 and the second tap opens once, the tap cells' double tap); Enter and Space held on the out-of-view control through two repeats open nothing, and the held Space leaves the control unpressed after its second repeat and after its release (none at the head the file review's round 16 read either, and unpressed there, by design; each red under a gate that reads the repeats and the release afresh, the first keydown's reveal having put the control on the screen, where a repeat presses it)", { timeout: 180000 }, async (t) => {
     const rec: Record<string, unknown> = { scene: "one gesture" };
     await gateCase(t, "fine", surface, GATE_TEXT, rec, async (g) => {
       let out = await g.place("tall", -60);
@@ -3303,7 +3288,7 @@ for (const surface of ["chat", "pane"] as Surface[]) {
       await g.gesture("doubletap", out.pt.x, out.pt.y);
       const taps = await g.clicks();
       rec.doubletap = taps;
-      assert.deepEqual(taps.map((c) => c.detail), [1, 2], "a double tap: two clicks, of detail 1 and 2 (a precondition)");
+      assert.deepEqual(taps.map((c) => c.detail), [1, 2], "a double tap in Chromium: two clicks, of detail 1 and 2 (a precondition)");
       g.cell("a double tap's opens", [0, 0], opensOf(await g.opens()));
     });
   });
@@ -3388,6 +3373,26 @@ for (const surface of ["chat", "pane"] as Surface[]) {
         g.cell("a tap at the picture's point (" + r.hit + "): its opens", [1, 1], opensOf(await g.opens()));
       }
     });
+  });
+}
+// ── the one gate's tap cells in Chromium (the file review's round 17, tests-1 with regression-1, and the coordinator's decisions 1
+// to 3 on it) ── file-figure-open-taps.ts holds the cells and says what each reads; file-figure-open-engines-browser.test.ts runs the
+// same set in WebKit and Firefox, a leg of its own off the shared roster of browser legs. Chromium gives a tap's click the touch's own
+// pointerId, so each tap's click finds the record under it, a precondition each tap cell asserts, and every cell reads the same at
+// 0ab74924c as at the fix, by design (the stale records too: there the covered tap's own press was the record its click read);
+// the double tap's second click carries detail 2 and opens nothing. The press with no click is a real two-finger touch here.
+for (const device of ["phone", "hybrid"] as TapCellDevice[]) for (const surface of ["chat", "pane"] as TapSurface[]) {
+  test("in Chromium on " + (device === "phone" ? "a phone's pages (hasTouch and isMobile at a device scale of 1, the kernel's viewport meta)" : "a hybrid page (hasTouch with a mouse)") + ", the " + (surface === "chat" ? "chat modal" : "Files pane") + ": the one gate's tap cells (the file review's round 17, tests-1 with regression-1): a tap on a loaded remote picture with its control in view opens once, on its control once, on a remote picture that wears the mark once; with the control out of view the first tap opens nothing and reveals it and the next opens once; a double tap there opens nothing, its second click of detail 2; under the text-size flyout or the Outline popover a tap opens nothing and closes it and the next opens once; " + (device === "hybrid" ? "after a right press of the mouse, or a mouse drag of the picture, with the control shown, then the flyout over the control, a tap opens nothing and the next opens once; " : "") + "Enter on the control opens once, after a refused tap too; a press with no click (a two-finger touch) begun out of view then Enter in view opens once, and one begun shown then the flyout over the control then a script's click opens nothing (every cell reading the same at 0ab74924c as at the fix, by design, Chromium's tap click carrying its press's pointerId; the Enter cells red under a gate that reads a key's click as a pointer's, the press cells under one that lets a key's or a script's click read the slot with the keydown's clear dropped)", { timeout: 300000 }, async (t) => {
+    let cells: Array<[string, unknown, unknown]> = [];
+    let ran = false;
+    await inBrowser(t, async (browser) => {
+      ran = true;
+      cells = await tapCells(browser, "chromium", device, surface, (m) => t.diagnostic(m));
+    });
+    if (!ran) return;   // no browser: inBrowser skipped the case loudly
+    for (const [what, , got] of cells) t.diagnostic("cell " + what + ": " + JSON.stringify(got));
+    assert.ok(cells.length > 0, "the case ran its cells");
+    assert.deepEqual(cells.map(([what, , got]) => [what, got]), cells.map(([what, want]) => [what, want]), "each cell's reading, [cell, reading] (property pins read off the page)");
   });
 }
 // ── what lets a press pass through an author's element, or raises it over the control, off the markup (the file review's round 16,

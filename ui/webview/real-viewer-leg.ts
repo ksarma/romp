@@ -1,8 +1,9 @@
 // The real viewer in a real page, first for the Slice 2 browser legs (plans/markdown-viewer.md, "layout follows the
 // pane, reader keeps their place") and then for every browser leg after them: file-view.ts bundled from this tree as the
 // webview build bundles it (and through it the REAL Comments panel, which the module registers itself), served into
-// headless Chromium under each surface's own sheet (the chat modal: styles.css; the feed modal: feed.css; the Files
-// pane: styles.css and files-pane.css under body.fileview-pane), with a fetch that answers the kernel's file route from
+// headless Chromium (or Firefox or WebKit, for the one gate's tap cells: inBrowser's engine) under each surface's own
+// sheet (the chat modal: styles.css; the feed modal: feed.css; the Files pane: styles.css and files-pane.css under
+// body.fileview-pane), with a fetch that answers the kernel's file route from
 // a table the test edits (so a reload can bring different bytes under a new mtime) and a poster that answers the
 // panel's status ask the way the kernel would, so the real aside opens on a click. A probe action stashes the seam
 // (window.__seam) and counts its paints, the way file-view-text-size.test.ts's page does. Every value the page inlines
@@ -156,14 +157,17 @@ window.putAtTop = function (text) {
 let pw: any = null;
 try { pw = requireCjs("playwright"); } catch { pw = null; }
 
-/** Launch headless Chromium and run `body` with it, or skip LOUDLY (CI installs no browsers), as the other legs do. `launch` is
- *  handed to playwright's launch: a case that needs Chromium's own device settings (the touchscreen laptop, a `--blink-settings`
- *  flag, since CDP's touch emulation flips the primary pointer and cannot build it; tab-hide-browser.test.ts's precedent) passes
- *  `{ args }`. */
-export async function inBrowser(t: any, body: (browser: any) => Promise<void>, launch: { args?: string[] } = {}): Promise<void> {
+/** Launch a headless browser and run `body` with it, or skip LOUDLY (CI installs no browsers), as the other legs do: Chromium
+ *  unless `launch.engine` names Firefox or WebKit, which the one gate's tap cells launch from a leg of their own
+ *  (file-figure-open-engines-browser.test.ts, off the shared roster of browser legs, whose job installs Chromium alone; the file
+ *  review's round 17, tests-1 with regression-1). `launch.args` is handed to playwright's launch: a case that needs Chromium's own
+ *  device settings (the touchscreen laptop, a `--blink-settings` flag, since CDP's touch emulation flips the primary pointer and
+ *  cannot build it; tab-hide-browser.test.ts's precedent) passes `{ args }`. */
+export async function inBrowser(t: any, body: (browser: any) => Promise<void>, launch: { args?: string[]; engine?: "chromium" | "firefox" | "webkit" } = {}): Promise<void> {
   if (!pw) { t.skip("playwright is not installed under vscode-extension; the browser leg needs it (CI installs no browsers)"); return; }
   let browser: any;
-  try { browser = await pw.chromium.launch(launch); }
+  const { engine, ...opts } = launch;
+  try { browser = await pw[engine || "chromium"].launch(opts); }
   catch (e) { t.skip("no playwright browser on this box; the browser leg needs one (CI installs none): " + String((e as Error).message).split("\n")[0]); return; }
   try { await body(browser); } finally { await browser.close(); }
 }

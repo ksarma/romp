@@ -8868,11 +8868,14 @@ bypassed: no request reaches a host the gate still holds. The build's record her
 the contract said the same; the claim was false, and the follow-on is a privacy surface, landing on the owner's word, given on 2026-09-22
 (open point 11: all three gestures kept, the outbound case made visible before it happens). The verifications: `git diff --stat $(git merge-base origin/main HEAD) HEAD -- kernel/` is empty and
 `git diff --name-only $(git merge-base origin/main HEAD) HEAD` lists files under ui, docs, plans, tools,
-upstream or tests alone (55 files, the ledger entry's where line; run 2026-09-26 at the head that carries the fixes ruled in the
-file review's round 16, the author's closing pass over them and the re-aimed containment test of the sanitizer's browser leg,
+upstream or tests alone (57 files, the ledger entry's where line; run 2026-09-26 at the head that carries the fixes for the
+file review's round 17, tests-1 with regression-1,
 where the merge-base is fa3ef54b5, the fork's main the
 branch merged after the painted-contrast ask of 2026-09-23, its tip the merge of the fork's batch PR 907, and the listing is the
-branch's whole delta over it; the run at the head before that test was re-aimed, from the merge-base fa3ef54b5, listed 54, before
+branch's whole delta over it; the run at the head that carries the fixes ruled in the file review's round 16, the author's closing
+pass over them and the re-aimed containment test of the sanitizer's browser leg, from the merge-base fa3ef54b5, listed 55, before
+ui/webview/file-figure-open-taps.ts and ui/webview/file-figure-open-engines-browser.test.ts, the one gate's tap cells, joined the
+delta; the run at the head before that test was re-aimed, from the merge-base fa3ef54b5, listed 54, before
 ui/webview/md-sanitize-browser.test.ts, a module of main whose containment test the drop of the stacking page classes re-aimed,
 joined the delta; the run at the head that carries the fixes ruled in the file review's round 16, from the
 merge-base fa3ef54b5, listed 53, before ui/webview/file-view-decisions.test.ts, a module of main whose pin that pass re-aimed,
@@ -8926,18 +8929,22 @@ merge-base with main, never from a fixed sha a merge can move behind. The files 
 tests/test_guide_files_failures.py, re-aimed in the review's round 1, and
 tests/test_guide_trail_chords_and_figure_button.py, added in its round 2, both named in the Tests paragraph below.
 
-**Tests.** `ls ui/webview/file-trail*.test.ts ui/webview/file-figure-open*.test.ts` lists the follow-on's four
+**Tests.** `ls ui/webview/file-trail*.test.ts ui/webview/file-figure-open*.test.ts` lists the follow-on's five
 modules: ui/webview/file-trail.test.ts (the pure functions, the chord table, the titles, and the wiring pinned at
 source: the one tag, both exits, the reload, the bar and the listener), ui/webview/file-trail-browser.test.ts
 (Chromium over the real Files page and a chat-modal page: the contract's cases 1 to 5 and 7, and the Files page's
 boundary of the road L1 names beyond the contract, the same-origin .md URL opening a tab there; the replace under the
 chat's opener is a source pin in the tree, L1 says where),
-ui/webview/file-figure-open.test.ts (L3's source pins) and ui/webview/file-figure-open-browser.test.ts (Chromium over
+ui/webview/file-figure-open.test.ts (L3's source pins), ui/webview/file-figure-open-browser.test.ts (Chromium over
 the real chat modal: case 6 and L4; since the author's closing pass after the file review's round 8,
 a top-level html-block figure wearing the production control with the reader partway into it, the control's box
 measured at 22px at the figure's top, the Raw switch landing on the img's own row and Rendered putting the figure back,
 the structural read's exclusion of the control in the real layout, which the node scene in
-ui/webview/file-view-place-blocks.test.ts stands in for with a fixture box). The review's round 1 added two modules outside those two stems:
+ui/webview/file-view-place-blocks.test.ts stands in for with a fixture box) and, since the fixes for the file review's round 17
+(tests-1 with regression-1), ui/webview/file-figure-open-engines-browser.test.ts (the one gate's tap cells in WebKit, on a
+phone's pages and a hybrid page, and in Firefox, on the hybrid page, each engine launched through real-viewer-leg.ts's inBrowser
+with the engine named; the cells are ui/webview/file-figure-open-taps.ts's, a module of the cells alone that the Chromium leg
+runs too, so one set reads all three engines). The review's round 1 added two modules outside those two stems:
 ui/webview/file-view-figure-shapes.test.ts (the source pins for L3's round-1 rules: figureTarget's web test before
 the model's join, the one decision's order in figureWantsControl (the state, the floor, the target, any link above),
 the measure's reads, the bare
@@ -8998,7 +9005,8 @@ or re-aimed, tests/test_guide_trail_chords_and_figure_button.py and tests/test_g
 and the road that runs the legs with a browser where landing is gated is the shared roster of browser legs,
 vscode-extension/ci-browser-legs.txt, one compiled bundle path per line, read by a step of that job after its Chromium
 install, a change of its own that this branch does not carry, so this follow-on's legs join the roster once both are in
-the tree; tools/markdown-viewer-plan-linknav.test.mjs derives the legs BY NAME, the modules under ui/webview whose file name
+the tree, all but ui/webview/file-figure-open-engines-browser.test.ts, which launches WebKit and Firefox and so stands in the
+roster's exclusions file with that reason, since the roster's job installs Chromium alone; tools/markdown-viewer-plan-linknav.test.mjs derives the legs BY NAME, the modules under ui/webview whose file name
 carries the suffix -browser before .test.ts and whose own text names this follow-on, a name and not the property that makes a module a browser leg
 (that property, a call of the shared launcher's inBrowser through any binding or a playwright package named, is what the
 census of browser legs PR 887 brings reads off each module's tree with the compiler,
@@ -9037,7 +9045,8 @@ no leg to stand down privately), and reads
 the tree for the roster, its exclusions file (vscode-extension/ci-browser-legs-excluded.txt),
 that step in the vscode-extension job and the switch (ROMP_BROWSER_LEGS_REQUIRE, reached by inBrowser through
 ui/webview/browser-legs-require.ts): where the tree carries none of the four it holds this sentence, where it carries all
-four it holds every leg to a roster line outside the exclusions and the roster's own tree test to exist, and a tree with
+four it holds every leg to a roster line outside the exclusions, the leg that launches WebKit and Firefox to an exclusions
+line and no roster line, and the roster's own tree test to exist, and a tree with
 some of the four it refuses, naming them (the file review's round 8, extra8-2: the legs were the feature's evidence and none of them ran where
 landing is gated, the gating run's log showing every browser scenario of theirs as SKIP). Twenty-two standing suites were re-aimed, not undone:
 ui/webview/file-view-text-size.test.ts (its real-module bar leg at 380, 420, 480 and 600 px in the chat and feed modals
@@ -9092,7 +9101,8 @@ extra5-2, dropDimmingClasses's classList.remove, the classes the sheets dim read
 figure, and since its extra5-1, dropPressThrough's, the classes that let a press pass through read the same way off every author
 element, and dropStackClasses's, the classes the sheets would raise to the control's stacking level read the same way) and ui/webview/spacer-measure.test.ts (its roster of
 the modules under ui/webview that no page bundle loads names css-rules.mjs, host-sheets.mjs and source-units.ts, the readers
-this follow-on's tests import, and its closed multiset of the writes of a view property names the trail's two, trailSetView's
+this follow-on's tests import, and since the fixes for the file review's round 17, tests-1 with regression-1,
+file-figure-open-taps.ts, the one gate's tap cells the two open legs run, and its closed multiset of the writes of a view property names the trail's two, trailSetView's
 and moveTrail's, each kept in the page's trail state and never posted), and since the fixes for the file review's round 16,
 extra5-2, ui/webview/file-view-decisions.test.ts (its pin on the word the viewer no longer uses for the editor's decisions lets
 the one quoted page class inside SHEET_DIM_CLASSES's literal through by value, since the list holds another page's tree-node
