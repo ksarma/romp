@@ -78,7 +78,8 @@ breaks the roster rule, since `inBrowser` launches Chromium alone. On the runner
 failed launch the leg does not swallow is node's red, but a leg can be built that holds such a test and
 reads green there when the bundle has a passing test of its own (the witness spelling: one that registers
 the test only where that engine is installed): a leg built to pass without a browser is outside what the
-step can detect.
+step can detect. That witness is recorded from a run by hand on 2026-09-26, not executed:
+`tools/ci-browser-legs.test.mjs` runs a witness of each example above, and no witness of this spelling.
 
 The step's script, `vscode-extension/scripts/ci-browser-legs.sh`, refuses before `node --test` a roster
 line that is malformed, duplicated or names a source that moved or was deleted, and a rostered bundle
