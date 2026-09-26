@@ -591,6 +591,10 @@
 // THE EVIDENCE A ROW NEEDS (E, regression-3): the matrices' NOT RUN skip is keyed on the fixture's `needs`, the programs a row's
 // evidence needs, derived by hiding each named program behind a scratch PATH, so a row the running shell writes before the named
 // consumer is reached is measured on a runner without that consumer; a runner lacking zsh is reproduced in the test file itself.
+// Since round 7 of fork PR #780 (the reviewer narrowed round 5's ruling E at 12:24Z), a row outside `needs` whose write the test's
+// recorder places inside the program the row names (no shell the runner has writes it, and that program is handed the row's text)
+// is not re-measured where that program is absent either: its verdict alone is compared, NOT RUN with a line of its own (THE
+// WRITE'S PLACE, in the test file).
 // The construct matrix pins the key set of CONSTRUCT_HEADS by kind (F), derives its population sentence from its tables (G), and
 // the four constructs the param-word note named without a row have rows.
 //

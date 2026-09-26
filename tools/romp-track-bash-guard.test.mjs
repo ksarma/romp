@@ -203,16 +203,22 @@ const programsNamed = (cmd, table = NAMED_PROBE) => Object.keys(table).filter((p
 // are read the same way, to a depth of eight: a shell's operands that hold a blank or an operator (its -c text, however its options are
 // spelled), the here-documents and here-strings it is fed, what echo, printf or cat pipe into it or print in a process substitution it reads,
 // and the texts eval, trap, emulate -c, alias (a global alias's value aside), env -S, flock -c, su -c, find -exec and capsh's `--` run, each
-// as far as THE NON-LITERAL WORDS allow. The
+// as far as THE NON-LITERAL WORDS allow, and the text of mapfile -C (readarray -C), env -S, su, runuser or script -c and emulate -c only where
+// its option is a word of its own (a text glued to the option, after `=` or after an option word clustering other letters is in the class
+// of what the derivation does not read). The
 // rows here bind and make their own programs on purpose, so three readings keep the gate to programs this machine is asked for: a name the
-// command binds (a function, an alias, a path a hash binds it to, zsh's `=name` and its function table) is no program; a name the text
-// rebinds is no program, and since the fifty-sixth commit a text that rebinds one name no longer sets aside every other (THE REBOUND NAMES,
-// the reviewer's ruling at 01:00Z): it sets aside an alias's name, a hashed (THE HASHED NAMES), an autoloaded or an enabled name, a function,
-// command or alias table entry, the builtins of a zsh module it loads (a table measured with `zmodload -lF`), and a name it spells as a file
-// under a literal directory of a PATH it sets; and a path the text also spells whole elsewhere, as a word of its own (a copy of cp it makes,
-// or links, before it runs it; since the fifty-seventh commit a longer path it starts, `./tool.bak` for `./tool`, is no such spelling), is no
-// program of this machine's (since the fifty-ninth commit, "elsewhere" is counted: the text spells the path whole more often than a first
-// walk, which steps past every wrapper's path, reads it as the program a segment runs; THE WRAPPER'S PATH, at programsInvoked). The walk stops at
+// command spells in a binding shape (a function, an alias, a path a hash binds it to, zsh's `=name` and its function table) is no program; a
+// name the text spells in a rebinding shape is no program: the two readers take such a shape anywhere in the raw text as a binding, a
+// command word or not (an echo or printf operand, a comment, a quoted string such as a grep pattern, a file spelled under a literal
+// directory of a PATH the text sets), and since the fifty-sixth commit a text that rebinds one name no longer sets aside every other (THE
+// REBOUND NAMES, the reviewer's ruling at 01:00Z): it sets aside an alias's name, a hashed (THE HASHED NAMES), an autoloaded or an enabled
+// name, a function, command or alias table entry, the builtins of a zsh module it loads (a table measured with `zmodload -lF`), and a name
+// it spells as a file under a literal directory of a PATH it sets; and a path the text also spells whole elsewhere, as a word of its own (a
+// copy of cp it makes, or links, before it runs it; since the fifty-seventh commit a longer path it starts, `./tool.bak` for `./tool`, is
+// no such spelling), is no program of this machine's (since the fifty-ninth commit, "elsewhere" is counted: the text spells the path whole
+// more often than a first walk reads it as the program a segment runs; the first walk, like every walk, stops at a name or path the
+// reading binds or rebinds, so a whole spelling behind it counts toward setting that path aside; THE WRAPPER'S PATH, at programsInvoked).
+// The walk stops at
 // each name these readings set aside, and at each such path that names a wrapper (on a second walk, run only where the first sets such a
 // path aside), and does not step past it, so what that name or path runs is not read (below): the path reading sets a wrapper's path aside
 // where the raw text spells that path whole more often than the first walk reads it as a program, and a wrapper's path these readings do
@@ -267,7 +273,51 @@ const programsNamed = (cmd, table = NAMED_PROBE) => Object.keys(table).filter((p
 // ../base/report.md report.md'` is NOT RUN naming time in a world without it, measured in one with it); no committed row takes either
 // road: of the commands the legs gate (GATED_ROWS), eight spell time, each in the row's own text alone, so none has a leading redirection
 // or a quoted time at the head of a bash or zsh text, or a time in a busybox text (the sixty-fifth commit, on the reviewer's call after
-// its re-verifiers); and a
+// its re-verifiers);
+// a name the text spells in a binding shape at a place no shell binds it, which the two binding readers set aside all the same, since they
+// take the shape anywhere in the raw text (above), a slash name among them, which bash never binds as an alias's name: `echo alias
+// q780-no-such-program=cp; q780-no-such-program ../base/report.md report.md` and `alias /nonexistent/q780/tool=cp; /nonexistent/q780/tool
+// ../base/report.md report.md`, where bash refuses the name, are measured, each control, the same text with `zz` in the binding shape, is
+// NOT RUN, and so is a different missing name beside the first binding shape (`q780-other-missing`); a name in the gate's table (bash, zsh,
+// dash, sh, ksh, busybox) is read wherever the text spells it as a word, a binding shape of it in an echo operand notwithstanding, so the
+// road holds only for names outside the table; no committed row takes it to a program a machine may lack: in every committed row whose text
+// sets aside a name, some shell binds that name where the row runs it, but for 17 commands whose binding the shells do not apply at the use
+// (AL-same-line and AL-unalias among them; a name bound anywhere is no program anywhere), which set aside only env and names no system
+// ships (c, foo, s, report.md, x.md), and the five rows a reading of command words alone would change bind their name by a file the row
+// writes and sources or by an env operand (the sixty-sixth commit, on the reviewer's ruling A and decision 9: the test of THE STATED
+// LIMIT's roads of round 8 pins each witness here and below beside its control, a gate call each); a path the text spells whole more often
+// than the first walk reads it as a program, which the path reading sets aside whether or not the text makes it, a path the text only
+// tests, removes, echoes, quotes or comments among them (`[ -x /nonexistent/q780/tool ] && /nonexistent/q780/tool x` is measured, its
+// control `/nonexistent/q780/tool x` NOT RUN); committed rows take it only where the path, if made, runs as a child whose effect cannot
+// reach the write: the 17 commands whose derivation the filter changes each spell their path as the target of cp, ln -s or `cat >`, 13 of
+// them make it, and in four (S21-bound-set, S21-bound-cd, S21-bound-bare-set, S21-bound-rel-set) the copy's source is absent here and on
+// the runner, so the path is set aside unmade, and where it is made it runs as a child that cannot change the parent's `$1` or cwd (bash,
+// zsh and dash write report.md either way); a path rm removes is no false pass, since it is then absent on every machine (the sixty-sixth
+// commit, on the reviewer's ruling C); the text of mapfile -C (readarray -C), env -S, su, runuser or script -c and emulate -c where it is
+// glued to its option or given after `=` (`-C'..'`, `-S'..'`, `-c'..'`, `--split-string=..`, `--command=..`), or follows an option word
+// clustering other letters (`-tC '..'`, `-vS '..'`, `-lc '..'`, `-qc '..'`, `emulate sh -Lc '..'`), since the walk reads such a text only
+// where its option is a word of its own (`mapfile -C'q780-no-such-program x #' -c 1 <<< x` is measured, its control with `-C` apart NOT
+// RUN, and each other form's witness likewise beside its control); the 20 S21 rows with a glued -C, S20-mapfile-glued-set,
+// RT-script-wrapper and RT-script-typescript take it, and none hides a missing program (a reader of these forms would add cp or mv, present
+// wherever the suite runs, to 14 of them and nothing to the rest); the walk does not learn the glued forms, since it would need each
+// program's option grammar (S21-ctl-mapfile-dC's `mapfile -dC '..'` is -d with `C` as its delimiter) (the sixty-sixth commit, on the
+// reviewer's ruling E, correctness-1); in a case whose `case` begins its segment, every `)`-closed segment, since the walk takes each for a
+// pattern, a subshell's body among them (`case a in a) (q780-no-such-program x) ;; esac` is measured), and after zsh's brace-form case,
+// which no `esac` closes, every such segment to the end of the text (`case a { a) true }; (q780-no-such-program x)`, whose subshell zsh
+// runs, is measured), the control `(q780-no-such-program x)` outside any case NOT RUN; no committed gated row takes either road (with the
+// pattern skip removed, four commands change, each gaining only its pattern word) (the sixty-sixth commit, on the reviewer's ruling E,
+// correctness-2); what runs behind a path the reading binds as a name, since the first walk stops there as every walk does, so a truly
+// missing path run behind it and again bare is spelled whole more often than read, and set aside: "binds" is the reading's (for a hash or
+// an alias of a slash name bash binds nothing), and the witness is one bash and zsh bind, `function /usr/bin/env { :; }; /usr/bin/env
+// ./tool x; ./tool y`, measured, its control without the function NOT RUN; no committed row runs a path the reading binds as a name:
+// definedNames' `function NAME` pattern binds `../base/report.md` after the word `function` in five rows (S11-kd-alias-function,
+// S11-kd-bound-function, S11-kd-alias-function-fed, S11-kd-alias-function-notes, S11-kd-twin-hash-function), where the walk stops at
+// `function` and reads no program (the sixty-sixth commit, on the reviewer's ruling E, extra6-1); a text reached behind `builtin` (an eval,
+// trap, emulate -c, alias or mapfile -C text alike), and an eval text after eval's own `--`, since the walk reads neither (`builtin eval
+// 'q780-no-such-program x'`, `builtin trap 'q780-no-such-program x' EXIT` and `eval -- 'q780-no-such-program x'`, each of which bash and
+// zsh run, are measured, their control `eval 'q780-no-such-program x'` NOT RUN, and the other three behind `builtin` likewise beside
+// theirs); the rows that take it (R6Q-O-builtin-eval-dashdash, the three R6Q-O-eval-dashdash forms, R6Q-O-untracked-twin, E29-trap-builtin)
+// hide only cp, echo and builtin (the sixty-sixth commit, on the reviewer's ruling E, extra6-2); and a
 // program a shell reaches by a road the list above does not follow (a script file's own lines, a `(( ))` or `$((` body read as
 // commands, an array's elements, a pattern a `case` or zsh's `for NAME (..)` holds). A miss there runs the leg. Where the leg asserts that
 // a shell writes, the absent program then reds it by name on that machine (no shell writes), never a false pass; where the leg asserts
@@ -348,9 +398,10 @@ const hashBound = (ws) => {
   }
   return ws.slice(k).flatMap((w) => (w.indexOf('=') > 0 ? [[w.slice(0, w.indexOf('=')), w]] : bound && !prints ? [[w, w]] : []));
 };
-// the names a command binds as a function, an alias or a hashed path, read over its whole text (a name bound anywhere is no program anywhere
-// in it): `f()` (zsh's `f g ()` too), `function f`, `alias f=..`, `hash -p PATH f` (the path glued or apart) and zsh's `hash f=PATH` as THE
-// HASHED NAMES read them, `functions[f]=..`, `autoload f` and an exported function's `BASH_FUNC_f%%=..`, which the bash it reaches defines as f
+// the names the text spells in the shapes that bind a function, an alias or a hashed path, read over its whole raw text, a command word or
+// not (a name so spelled anywhere is no program anywhere in it): `f()` (zsh's `f g ()` too), `function f`, `alias f=..`, `hash -p PATH f` (the
+// path glued or apart) and zsh's `hash f=PATH` as THE HASHED NAMES read them, `functions[f]=..`, `autoload f` and an exported function's
+// `BASH_FUNC_f%%=..`, which the bash it reaches defines as f
 const hashedNames = (text) => [...text.matchAll(/(?:^|[\s;&|(){}`'"])hash\s+([^\n;&|'"]*)/g)].flatMap((m) => hashBound(m[1].trim().split(/\s+/).filter(Boolean)).map(([name]) => name));
 const definedNames = (text) => new Set([
   ...[...text.matchAll(/(?:^|[\s;&|(){}`'"])(?:function\s+)?((?:[A-Za-z_][\w.:+-]*[ \t]+)*[A-Za-z_][\w.:+-]*)\s*\(\s*\)/g)].flatMap((m) => m[1].split(/[ \t]+/)),
@@ -362,11 +413,14 @@ const definedNames = (text) => new Set([
   ...[...text.matchAll(/(?:^|[\s;&|(){}`'"])BASH_FUNC_([^\s%=;&|'"]+)%%=/g)].map((m) => m[1]),   // an exported function bash takes from its environment (the fifty-second commit)
 ]);
 // THE REBOUND NAMES (round 7 of fork PR #780 review, fifty-sixth commit; the reviewer's rulings at 00:32Z and 01:00Z). A text that rebinds how
-// a name resolves sets aside, as no program of this machine's, only the names it rebinds, each read over the whole text as definedNames reads
-// its names: an alias's name (a suffix alias's: a word ending in its suffix), a name a hash binds to a path (THE HASHED NAMES), an autoloaded
-// or an enabled name, a `functions[NAME]`, `commands[NAME]` or `aliases[NAME]` entry, the builtins a zsh module it loads adds
-// (ZSH_MODULE_BUILTINS, measured with `zmodload -lF` under zsh 5.9), and a name the text spells as a file under a literal directory of a PATH
-// it sets (a file it makes, copies or links there). The walk stops at each such name and does not step past it, so what a rebound wrapper's
+// a name resolves no longer sets aside every other name: the reading sets aside, as no program of this machine's, each name the text spells in
+// a rebinding shape, read over the whole raw text as definedNames reads its names, a command word or not (an echo or printf operand, a
+// comment, a quoted string such as a grep pattern, a file spelled under a literal directory of a PATH the text sets; a shape at a place no
+// shell binds it is in the header's class of what the derivation does not read): an alias's name (a suffix alias's: a word ending in its
+// suffix), a name a hash binds to a path (THE HASHED NAMES), an autoloaded or an enabled name, a `functions[NAME]`, `commands[NAME]` or
+// `aliases[NAME]` entry, the builtins a zsh module it loads adds (ZSH_MODULE_BUILTINS, measured with `zmodload -lF` under zsh 5.9), and a
+// name the text spells as a file under a literal directory of a PATH it sets (a file it makes, copies or links there). The walk stops at
+// each such name and does not step past it, so what a rebound wrapper's
 // or shell's name runs is not read (the fifty-seventh commit cut this text's claim that every other name is read, on the reviewer's
 // verifier: `aliases[env]=env`, then env running a missing program, is measured; THE STATED LIMIT, in the header's class of what the
 // derivation does not read). Every other name the walk reaches where a program stands is read as a program, and the walk reads an alias's
@@ -596,11 +650,12 @@ const reboundBy = (r, text, word) => r.names.has(word) || [...r.suffixes].some((
 // once: by name unless the text binds or rebinds that name (definedNames, THE REBOUND NAMES), and by path unless the text spells that path
 // whole more often than the walk reads it as the program a segment runs, so elsewhere too (a word of its own, as an operand or a
 // redirection's target: a file the text makes, copies or links before it runs it; a longer path it starts or ends is none, since the
-// fifty-seventh commit), the reads counted on a first walk that steps past every wrapper's path (THE WRAPPER'S PATH, below). The walk stops
-// at a name so set aside, and at a path so set aside that names a wrapper (on a second walk, run only where the first sets such a path
-// aside), so what it runs is not read (THE STATED LIMIT, in the header); a wrapper's path neither so set aside nor bound as a name
-// (definedNames) is stepped past (the fifty-ninth commit: the stop counted the path's own program words; the sixtieth and sixty-first cut
-// this comment's sentences on the runs of such a path); at any other path so set aside it
+// fifty-seventh commit), the reads counted on a first walk, which, like every walk, stops at a name or path the reading binds or rebinds, so
+// a whole spelling behind it counts toward setting that path aside (THE WRAPPER'S PATH, below). The walk stops at a name so set aside, and at
+// a path so set aside that names a wrapper (on a second walk, run only where the first sets such a path aside), so what it runs is not
+// read (THE STATED LIMIT, in the header); a wrapper's path neither so set aside nor bound as a name (definedNames) is stepped past (the
+// fifty-ninth commit: the stop counted the path's own program words; the sixtieth and sixty-first cut this comment's sentences on the runs
+// of such a path); at any other path so set aside it
 // reads on as at the program the path names (a shell's texts, find's -exec), and the filter at its end sets the path aside (the fifty-eighth
 // commit cut this comment's claim that the walk stops at every path so set aside). `unknown`, when given, receives each rebinding whose
 // names the reader cannot know (THE REBOUND NAMES' `unknowable`, and a global alias's name standing where a command stands), for namedPresent's
@@ -620,8 +675,9 @@ const programsInvoked = (cmd, { collect = null, unknown = null } = {}) => {
   const tell = (why) => { if (unknown && !unknown.includes(why)) unknown.push(why); };
   rebinding.unknowable.forEach(tell);
   // THE WRAPPER'S PATH (the fifty-ninth commit; the reviewer's re-verifier on the fifty-eighth, under the condition at 00:29Z): the state of
-  // the walk under way. A path is set aside where the text spells it whole more often than a FIRST walk, which steps past every wrapper's
-  // path, reads it as the program a segment runs (`made`, below); where one such path names a wrapper, a second walk stops there (`stops`),
+  // the walk under way. A path is set aside where the text spells it whole more often than a FIRST walk reads it as the program a segment
+  // runs (`made`, below; the first walk, like every walk, stops at a name or path the reading binds or rebinds, so a whole spelling behind it
+  // counts toward setting that path aside); where one such path names a wrapper, a second walk stops there (`stops`),
   // so the stop and the filter at the end ask the same question on the same counts. The stop asked instead whether the text spelled a
   // wrapper's path twice, which counted the path's own program words: `/usr/bin/env q780-no-such-program x; /usr/bin/env ..` stopped at
   // both runs, and a missing program behind a wrapper's path the text runs twice, or runs again in a pipe, a substitution or a -c text, was
@@ -9119,9 +9175,10 @@ test("round 6, second commit, THE RESIDUAL TABLE: every shape the round could na
     }
     console.log(`# the residual table: ${RESIDUAL_TABLE.length} rows, ${ran} measured, ${lacking + refusing} not run (${lacking} for a program this box lacks, ${refusing} for a program that refuses to run here); classes ${Object.keys(RESIDUAL_CLASSES).length}`);
     assert.ok(ran >= 25, `most rows measured here (${ran})`);
-    // the rows this box cannot run, derived from its programs alone (absent by `command -v` or by name; refusing by the probe): the rows
-    // not run are exactly these, so a NOT RUN never stands in for a miss the box could have measured, and on a box whose every program
-    // runs (this one: the list is empty) the table is a full measurement
+    // the rows this box cannot run, derived from its programs alone (absent by THE ONE PRESENCE FUNCTION, its PATH lookup and THE OVERRIDE,
+    // for the row's program or for one namedPresent derives from its command, `command -v` before the fiftieth commit; refusing by the
+    // probe): the rows not run are exactly these, so a NOT RUN never stands in for a miss the box could have measured, and on a box whose
+    // every program runs (this one: the list is empty) the table is a full measurement
     const presentShells = shellsFor(A, null, SHELL_PROBE, () => {});   // the probe's lines stand above, once per row
     const cannot = RESIDUAL_TABLE.filter(([id, , program, raw, writers, cwd = 'nad']) => { const cmd = w.fill(raw); return (program && !toolPresent(program)) || !namedPresent(cmd, `the residual table's ${id}, whose command names it`, NAMED_PROBE, () => {}, { cwd: w.cwds[cwd] }) || (program && refusalOf(cmd, w.cwds[cwd], w.env, presentShells.filter((s) => writers.includes(s)), { program, witness: witnessOf(id) }) !== null); }).map((r) => r[0]);
     assert.deepEqual(notRunIds, cannot, `the rows not run are exactly the rows this box cannot run, derived from its programs (${cannot.length}: ${cannot.join(', ') || 'none'})`);
@@ -11306,8 +11363,9 @@ test("round 6, fifteenth commit, the runner's shape reproduced: the escape reade
 // execute after the program; a program's own bad-option failure; a program that runs the command and then fails with a message), so
 // dropping any one condition reds a named pin; and the recorded shapes are measured against the real programs' refusals where the box
 // has the program. THE LABELS of the recorded outputs are the recorder's own, read from the shells it ran. The runner's shape (no zsh,
-// perf present and refusing) is reasoned over what is present: every leg over a shell asks shellsFor, every leg over a program asks
-// `command -v`, and a program that is absent, or runs a probe it would refuse elsewhere, prints a NOT RUN line naming why.
+// perf present and refusing) is reasoned over what is present: every leg over a shell asks shellsFor, every leg over a program asks THE ONE
+// PRESENCE FUNCTION (its PATH lookup and THE OVERRIDE; `command -v` before the fiftieth commit), and a program that is absent, or runs a
+// probe it would refuse elsewhere, prints a NOT RUN line naming why.
 const refusalWorld = () => {
   const dir = outsideDir();
   for (const d of ['docs', 'base', 'scratch']) fs.mkdirSync(path.join(dir, d));
@@ -12614,7 +12672,7 @@ const clearedLegs = (shells, cwds, build, measure, gate = {}, legs = CLEARED_LEG
   }
   return { got, lacking, faults, legitimate, searchers, roads };
 };
-test("round 7 of fork PR #780 review, thirty-third commit, THE CLEARED ENVIRONMENT by execution: every command CLEARED_LEGS lists, run in every present shell over a fresh world from its row's cwd under strace (every process traced, the startup files under the account's home watched), opens none of them, while the instrument sees the roads it watches in a world's home: a bash leg with no SHLVL whose standard input is a socket opens the world's ~/.bashrc, and so does a bash a dash leg starts, a zsh leg opens the world's .zshenv, and SHLVL 1 or zsh's -f shuts each; where strace is absent, or refuses to run in its recorded shape, a NOT RUN line, and any other failure of it reds; since the fifty-first commit a command that runs a program this box lacks, the row's own or one THE INVOKED PROGRAM derives from its text, is NOT RUN with the reason and counted as lacking; since the fifty-second (THE EXECVE RECORD) a leg reds where its execve record shows a program absent or holds no invocation of a program word the walk reads; since the fifty-third (THE LOOKUP RECORD) a leg reds where a name its processes looked up, or a path one ran, was found nowhere in the leg; since the fifty-fourth (the reviewer's ruling at 17:18Z) a leg reds where a program word the walk cannot resolve has no execve its literal operands attribute to it, where a name was found only outside the directories the record shows or every execve of it there failed, and where a probe failed in a directory the record does not show, unless a LEGITIMATE LOOKUPS entry excuses it, and the road of every lookup a leg made is the road of a plant's lookup", () => {
+test("round 7 of fork PR #780 review, thirty-third commit, THE CLEARED ENVIRONMENT by execution: every command CLEARED_LEGS lists, run in every present shell over a fresh world from its row's cwd under strace (every process traced, the startup files under the account's home watched), opens none of them, while the instrument sees the roads it watches in a world's home: a bash leg with no SHLVL whose standard input is a socket opens the world's ~/.bashrc, and so does a bash a dash leg starts, a zsh leg opens the world's .zshenv, and SHLVL 1 or zsh's -f shuts each; where strace is absent, or refuses to run in its recorded shape, a NOT RUN line, and any other failure of it reds; since the fifty-first commit a command that runs a program this box lacks, the row's own or one THE INVOKED PROGRAM derives from its text, is NOT RUN with the reason and counted as lacking; since the fifty-second (THE EXECVE RECORD) a leg reds where its execve record shows a program absent or holds no invocation of a program word the walk reads; since the fifty-third (THE LOOKUP RECORD) a leg reds where a name its processes looked up, or a path one ran, was found nowhere in the leg; since the fifty-fourth (the reviewer's ruling at 17:18Z) a leg reds where a program word the walk cannot resolve has no execve its literal operands attribute to it, where a name was found only outside the directories the record shows or at least one execve of it there failed and none succeeded (M2 reads the execve road only), and where a probe failed in a directory the record does not show, unless a LEGITIMATE LOOKUPS entry excuses it, and the road of every lookup a leg made is the road of a plant's lookup", () => {
   const WHAT = CLEARED_WHAT;
   if (!straceUsable(WHAT)) return;
   const w = sixthPassWorld();
@@ -16845,7 +16903,7 @@ test("round 7 of fork PR #780 review, fifty-sixth commit, A BOUND NAME beside a 
   }
   assert.deepEqual(got, want, 'each missing program beside a bound name is NOT RUN by name, and the binding alone runs');
 });
-test("round 7 of fork PR #780 review, fifty-sixth commit, THE REBOUND NAMES (the reviewer's rulings at 00:32Z and 01:00Z): a text that rebinds names sets aside only the names it rebinds (the walk not stepping past them, THE STATED LIMIT at the fifty-seventh commit's test), so a different missing name beside each rebinding form is NOT RUN by name; a rebinding the reader cannot know makes the row NOT RUN with that reason, never measured and never every name set aside (an unknowable alias name beside a missing program); an alias name that is one variable's expansion is followed where the text spells that variable once before the alias, in a literal write, `n=c` or `read n <<< c`, at top level (AL-name-var and AL-name-read-var measured), and the variable is no parameter THE SHELLS' PARAMETERS lists (since the sixty-second commit an alias of `$RANDOM` or `${RANDOM}` goes NOT RUN with that reason, beside the missing program it would have bound); a second spelling of the variable, a conditional, a later or a non-literal write, or one in a subshell, a group, a loop or a function, goes NOT RUN (a write that never spells the name is not seen: the stated limit, at the sixty-second commit's test); a PATH of literal directories and the PATH it replaces is known, one with any other expansion is not; an alias of an alias is followed one level; `aliases[` binds as `functions[` does; a global alias's value is never read as a command line and its name where a command stands goes NOT RUN; a zsh module outside the measured table, a handler for every name not found and a hashed name that is an expansion go NOT RUN; since the sixty-second commit, one plant per rebinding form (a `commands[` and a `functions[` entry, zsh's `hash NAME=PATH`, `path=(..)`, `path+=(..)`, `path[1]=..`, `PATH+=:..`, a suffix alias, and a zmodload of each module in the table), each beside a missing program that is NOT RUN by name, and each red under a mutant that sets every bare name aside where its form appears; and the table's builtins are zsh's own, by execution where zsh is here", () => {
+test("round 7 of fork PR #780 review, fifty-sixth commit, THE REBOUND NAMES (the reviewer's rulings at 00:32Z and 01:00Z): a text that rebinds names no longer sets aside every other name: it sets aside each name it spells in a rebinding shape, wherever in the raw text that shape stands, a command word or not (the walk not stepping past them, THE STATED LIMIT at the fifty-seventh commit's test; a shape at a place no shell binds it, at the test of THE STATED LIMIT's roads of round 8), so a different missing name beside each rebinding form is NOT RUN by name; a rebinding the reader cannot know makes the row NOT RUN with that reason, never measured and never every name set aside (an unknowable alias name beside a missing program); an alias name that is one variable's expansion is followed where the text spells that variable once before the alias, in a literal write, `n=c` or `read n <<< c`, at top level (AL-name-var and AL-name-read-var measured), and the variable is no parameter THE SHELLS' PARAMETERS lists (since the sixty-second commit an alias of `$RANDOM` or `${RANDOM}` goes NOT RUN with that reason, beside the missing program it would have bound); a second spelling of the variable, a conditional, a later or a non-literal write, or one in a subshell, a group, a loop or a function, goes NOT RUN (a write that never spells the name is not seen: the stated limit, at the sixty-second commit's test); a PATH of literal directories and the PATH it replaces is known, one with any other expansion is not; an alias of an alias is followed one level; `aliases[` binds as `functions[` does; a global alias's value is never read as a command line and its name where a command stands goes NOT RUN; a zsh module outside the measured table, a handler for every name not found and a hashed name that is an expansion go NOT RUN; since the sixty-second commit, one plant per rebinding form (a `commands[` and a `functions[` entry, zsh's `hash NAME=PATH`, `path=(..)`, `path+=(..)`, `path[1]=..`, `PATH+=:..`, a suffix alias, and a zmodload of each module in the table), each beside a missing program that is NOT RUN by name, and each red under a mutant that sets every bare name aside where its form appears; and the table's builtins are zsh's own, by execution where zsh is here", () => {
   const M = Q780_MISSING;
   const RUN = '../base/report.md report.md';
   const MISS = `NOT RUN: real ${M} is not on this runner`;
@@ -17060,8 +17118,9 @@ test("round 7 of fork PR #780 review, fifty-eighth commit, THE STATED LIMIT's al
 // path asked whether the text spelled that path whole twice, a count that took in the path's own program words, while the filter at the end
 // sets a path aside only where the text spells it more often than the walk reads it as a program. So a wrapper's path the text runs twice,
 // or runs again in a pipe, a substitution or a -c text, stopped the walk though the text made nothing, and a truly missing program behind it
-// was measured. The stop now asks the filter's question, on the counts of a first walk that steps past every wrapper's path (THE WRAPPER'S
-// PATH, at programsInvoked). And the rule that reads no text of a command one of whose words the lexer does not hold as literal was stated
+// was measured. The stop now asks the filter's question, on the counts of a first walk, which, like every walk, stops at a name or path the
+// reading binds or rebinds, so a whole spelling behind it counts toward setting that path aside (THE WRAPPER'S PATH, at programsInvoked).
+// And the rule that reads no text of a command one of whose words the lexer does not hold as literal was stated
 // for alias alone, where it holds for eval, trap, emulate -c, mapfile -C and what echo or printf print into a shell, for a shell's operand,
 // and for an assignment's word, where the walk stops: the header states it once (THE NON-LITERAL WORDS), the claim cut, the check not
 // widened, and its witnesses are pinned below as measured.
@@ -17274,5 +17333,86 @@ test("round 8 of fork PR #780 review, sixty-second commit, THE TIME WORD on the 
     const got = ids.map((id) => { const [cmd, what] = rowOf.get(id); return [id, programsInvoked(cmd).includes('time'), gate(cmd, what, false), gate(cmd, what, true)]; });
     assert.deepEqual(got, ids.map((id) => [id, true, [false, ['NOT RUN: real time is not on this runner']], [true, []]]), 'each committed row whose dash leg runs /usr/bin/time reads it as a program: NOT RUN naming time where no time is on the PATH, measured where one is');
     console.log(`# THE TIME WORD on the committed rows: ${ids.length} commands, each NOT RUN naming time with no time on its PATH and measured with one: ${ids.join(', ')}`);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+// ── round 8 of fork PR #780 review, sixty-sixth commit (2026-09-26): the stated limits of rulings A, C and E ────────────────────────────────
+//
+// The reviewer's rulings on round 8, sections A, C and E, under the loop stop at 17:18Z, and the reviewer's decisions 4, 5 and 9: the texts
+// that claimed more than the walk does are cut, no check is widened, and each road becomes one stated limit in the header's class of what the
+// derivation does not read, its witnesses pinned below as measured beside their NOT RUN controls, a gate call each. A: the binding readers
+// take a binding shape anywhere in the raw text, so a name the text spells in one at a place no shell binds it is set aside all the same
+// (decision 9: a slash name, which bash never binds as an alias's, is one), and a different missing name on the same text is still NOT RUN
+// (the ratification plant). C: a path the text spells whole more often than the first walk reads it is set aside whether or not the text
+// makes it. E: a text glued to its option, after `=` or after a clustered option word is not read (correctness-1); a subshell's body in a
+// case arm, and every `)`-closed segment after zsh's brace-form case, is taken for a pattern (correctness-2); the first walk stops at a path
+// the reading binds as a name (extra6-1); and no text behind `builtin`, or after eval's own `--`, is read (extra6-2).
+test("round 8 of fork PR #780 review, sixty-sixth commit, THE STATED LIMIT's roads of round 8 (the reviewer's rulings A, C and E and decisions 4, 5 and 9; the claims cut, the check not widened, under the loop stop at 17:18Z): a name the text spells in a binding shape at a place no shell binds it (an alias shape in an echo operand; a slash name, which bash never binds as an alias's name) is set aside, so a missing program by that name is measured, while a different missing name beside the same shape, and a program of the gate's table beside a binding shape of its name, are NOT RUN by name; a path the text spells whole more often than the first walk reads it is set aside whether or not the text makes it (a path it only tests); the text of mapfile -C, readarray -C, env -S, su, runuser or script -c and emulate -c glued to its option, after `=` or after an option word clustering other letters is not read; in a case, a subshell's body in an arm is taken for a pattern, and so is every `)`-closed segment after zsh's brace-form case; the first walk stops at a wrapper's path the reading binds as a function's name; and no text behind `builtin` (an eval, trap, emulate -c, alias or mapfile -C text), and no eval text after eval's own `--`, is read: each witness is measured and each control NOT RUN (a change that reads such a road reds here, and the header's sentence changes with it)", () => {
+  const RUN = '../base/report.md report.md';
+  const M = Q780_MISSING;
+  const MISS = `NOT RUN: real ${M} is not on this runner`;
+  const TOOL = '/nonexistent/q780/tool';
+  const TOOL_MISS = `NOT RUN: real ${TOOL} ${BY_PATH_WHY}`;
+  const TOOL_REL_MISS = `NOT RUN: real ./tool ${BY_PATH_WHY}`;
+  // a witness or a control whose command runs a program this machine may lack (env, su, runuser, script): that program's own line beside
+  const measuredWith = (...ps) => [missingLines(...ps).length === 0, missingLines(...ps)];
+  const notRunWith = (...ps) => [false, [...missingLines(...ps), MISS]];
+  const dir = outsideDir();
+  try {
+    const cwd = path.join(dir, 'project', 'cwd');   // a cwd with no ./tool
+    fs.mkdirSync(cwd, { recursive: true });
+    const withBusyboxAbsent = { ...NAMED_PROBE, busybox: { ok: false, why: 'is not on this runner' } };
+    // [road, label, command, ok, lines, table]
+    const cases = [
+      // ruling A: a binding shape at a place no shell binds it; decision 9: a slash name
+      ['A', 'an alias shape in an echo operand', `echo alias ${M}=cp; ${M} ${RUN}`, true, []],
+      ['A', 'the control: the echo spells zz in the shape', `echo alias zz=cp; ${M} ${RUN}`, false, [MISS]],
+      ['A', 'the ratification plant: a different missing name beside the same shape', `echo alias ${M}=cp; q780-other-missing ${RUN}`, false, ['NOT RUN: real q780-other-missing is not on this runner']],
+      ['A', "a program of the gate's table beside an alias shape of its name, read wherever the text spells it", `echo alias busybox=cp; busybox cp ${RUN}`, false, ['NOT RUN: real busybox is not on this runner'], withBusyboxAbsent],
+      ['9', "a slash name, which bash refuses as an alias's name", `alias ${TOOL}=cp; ${TOOL} ${RUN}`, true, []],
+      ['9', 'the control: the alias binds zz', `alias zz=cp; ${TOOL} ${RUN}`, false, [TOOL_MISS]],
+      // ruling C: a path spelled whole more often than the first walk reads it, made or not
+      ['C', 'a path the text only tests', `[ -x ${TOOL} ] && ${TOOL} x`, true, []],
+      ['C', 'the control: the path run alone', `${TOOL} x`, false, [TOOL_MISS]],
+      // ruling E, correctness-1: a text glued to its option, after `=` or after a clustered option word
+      ['E1', 'mapfile -C glued', `mapfile -C'${M} x #' -c 1 <<< x`, true, []],
+      ['E1', 'readarray -C glued', `readarray -C'${M} x #' -c 1 <<< x`, true, []],
+      ['E1', 'mapfile -tC, clustered', `mapfile -tC '${M} x #' -c 1 <<< x`, true, []],
+      ['E1', 'the control: mapfile -C apart', `mapfile -C '${M} x #' -c 1 <<< x`, false, [MISS]],
+      ['E1', 'env -S glued', `env -S'${M} x'`, ...measuredWith('env')],
+      ['E1', 'env --split-string=', `env --split-string='${M} x'`, ...measuredWith('env')],
+      ['E1', 'env -vS, clustered', `env -vS '${M} x'`, ...measuredWith('env')],
+      ['E1', 'the control: env -S apart', `env -S '${M} x'`, ...notRunWith('env')],
+      ['E1', 'su -c glued', `su -c'${M} x'`, ...measuredWith('su')],
+      ['E1', 'su --command=', `su --command='${M} x'`, ...measuredWith('su')],
+      ['E1', 'su -lc, clustered', `su -lc '${M} x'`, ...measuredWith('su')],
+      ['E1', 'the control: su -c apart', `su -c '${M} x'`, ...notRunWith('su')],
+      ['E1', 'runuser --command=', `runuser --command='${M} x' root`, ...measuredWith('runuser')],
+      ['E1', 'the control: runuser --command apart', `runuser --command '${M} x' root`, ...notRunWith('runuser')],
+      ['E1', 'script -qc, clustered', `script -qc '${M} x' /dev/null`, ...measuredWith('script')],
+      ['E1', 'the control: script -c apart', `script -c '${M} x' /dev/null`, ...notRunWith('script')],
+      ['E1', 'emulate -Lc, clustered', `emulate sh -Lc '${M} x'`, true, []],
+      ['E1', 'the control: emulate -c apart', `emulate sh -c '${M} x'`, false, [MISS]],
+      // ruling E, correctness-2: a case's `)`-closed segments taken for patterns
+      ['E2', 'a subshell in a case arm', `case a in a) (${M} x) ;; esac`, true, []],
+      ['E2', "a subshell after zsh's brace-form case", `case a { a) true }; (${M} x)`, true, []],
+      ['E2', 'the control: the subshell outside any case', `(${M} x)`, false, [MISS]],
+      // ruling E, extra6-1: the first walk stops at a wrapper's path the reading binds as a name
+      ['E6-1', "a wrapper's path bound as a function's name, run with a missing path that runs again bare", 'function /usr/bin/env { :; }; /usr/bin/env ./tool x; ./tool y', true, []],
+      ['E6-1', 'the control: no function', '/usr/bin/env ./tool x; ./tool y', false, [TOOL_REL_MISS]],
+      // ruling E, extra6-2: no text behind `builtin`, and no eval text after eval's own `--`
+      ['E6-2', 'builtin eval', `builtin eval '${M} x'`, true, []],
+      ['E6-2', 'builtin trap', `builtin trap '${M} x' EXIT`, true, []],
+      ['E6-2', "eval's own --", `eval -- '${M} x'`, true, []],
+      ['E6-2', 'the control: eval', `eval '${M} x'`, false, [MISS]],
+      ['E6-2', 'builtin emulate -c (its control: the emulate -c control above)', `builtin emulate sh -c '${M} x'`, true, []],
+      ['E6-2', 'builtin mapfile -C (its control: the mapfile -C control above)', `builtin mapfile -C '${M} x #' -c 1 <<< x`, true, []],
+      ['E6-2', 'builtin alias', `builtin alias c='${M} x'`, true, []],
+      ['E6-2', 'the control: alias', `alias c='${M} x'`, false, [MISS]],
+    ];
+    const got = cases.map(([road, label, cmd, , , table]) => [road, label, ...gateLines(cmd, `synthetic: ${cmd}`, table || { ...NAMED_PROBE }, { cwd })]);
+    assert.deepEqual(got, cases.map(([road, label, , ok, lines]) => [road, label, ok, [...lines].sort()]), "each witness of THE STATED LIMIT's roads of round 8 is measured, each control and plant is NOT RUN by name");
+    assert.ok(cases.filter(([, label]) => label.startsWith('the control') || label.startsWith('the ratification plant')).every(([, , , ok]) => ok === false), 'every control and plant expects NOT RUN');
+    console.log(`# THE STATED LIMIT's roads of round 8: ${got.length} gate calls, ${got.filter((g) => g[2]).length} measured, ${got.filter((g) => !g[2]).length} NOT RUN; by road ${[...new Set(cases.map((c) => c[0]))].map((r) => `${r} ${cases.filter((c) => c[0] === r).length}`).join(', ')}`);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
